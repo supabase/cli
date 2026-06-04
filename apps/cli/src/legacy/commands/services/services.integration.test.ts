@@ -1,8 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { mockLegacyTelemetryStateTracked } from "../../../../tests/helpers/legacy-mocks.ts";
@@ -19,12 +21,15 @@ function setup(
     interactive: (opts.format ?? "text") === "text",
   });
   const telemetry = mockLegacyTelemetryStateTracked();
+  const cachedRefs: string[] = [];
 
   return {
     out,
     telemetry,
+    cachedRefs,
     layer: Layer.mergeAll(
       BunServices.layer,
+      FetchHttpClient.layer,
       out.layer,
       telemetry.layer,
       Layer.succeed(LegacyOutputFlag, opts.goOutput ?? Option.none()),
@@ -41,6 +46,15 @@ function setup(
         }),
       ),
       Layer.succeed(LegacyCredentials, LegacyCredentials.of(legacyCredentialsMock)),
+      Layer.succeed(
+        LegacyLinkedProjectCache,
+        LegacyLinkedProjectCache.of({
+          cache: (ref) =>
+            Effect.sync(() => {
+              cachedRefs.push(ref);
+            }),
+        }),
+      ),
     ),
   };
 }
@@ -93,6 +107,38 @@ describe("legacy services", () => {
       }>;
       expect(rows).toHaveLength(10);
       expect(rows[0]).toMatchObject({ name: "supabase/postgres", local: "17.6.1.132" });
+    });
+  });
+
+  it.live("emits structured JSON for --output pretty combined with --output-format json", () => {
+    // Regression guard (CLI-1546): a Go `--output pretty` must defer to the TS
+    // `--output-format json` flag instead of forcing the human-readable table.
+    const { layer, out } = setup({ format: "json", goOutput: Option.some("pretty") });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      const success = out.messages.find((message) => message.type === "success");
+      expect(success?.data).toMatchObject({
+        services: expect.arrayContaining([
+          expect.objectContaining({ name: "supabase/postgres", local: "17.6.1.132" }),
+        ]),
+      });
+    });
+  });
+
+  it.live("emits structured JSON for --output-format stream-json", () => {
+    const { layer, out } = setup({ format: "stream-json" });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      const success = out.messages.find((message) => message.type === "success");
+      expect(success?.data).toMatchObject({
+        services: expect.arrayContaining([
+          expect.objectContaining({ name: "supabase/postgres", local: "17.6.1.132" }),
+        ]),
+      });
     });
   });
 

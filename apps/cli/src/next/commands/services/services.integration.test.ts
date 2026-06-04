@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Redacted } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import {
   ProjectLinkState,
@@ -11,11 +12,29 @@ import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { CommandRuntime } from "../../../shared/runtime/command-runtime.service.ts";
 import { services } from "./services.handler.ts";
 
+const LINKED_REF = "abcdefghijklmnopqrst";
+
+function linkedStateFixture(): ProjectLinkStateValue {
+  return {
+    project: {
+      ref: LINKED_REF,
+      name: "Linked Project",
+      organization_id: "org-id",
+      organization_slug: "org",
+    },
+    active_branch: { ref: "branch-ref", name: "main", is_default: true },
+    fetchedAt: "2026-03-13T12:00:00.000Z",
+    versions: {},
+  };
+}
+
 function setup(
   opts: {
     format?: "text" | "json" | "stream-json";
     linkedState?: Option.Option<ProjectLinkStateValue>;
     invalidLinkedState?: boolean;
+    accessToken?: string;
+    apiUrl?: string;
   } = {},
 ) {
   const out = mockOutput({
@@ -28,10 +47,11 @@ function setup(
     out,
     layer: Layer.mergeAll(
       out.layer,
+      FetchHttpClient.layer,
       Layer.succeed(
         CliConfig,
         CliConfig.of({
-          apiUrl: "https://api.supabase.com",
+          apiUrl: opts.apiUrl ?? "https://api.supabase.com",
           dashboardUrl: "https://supabase.com/dashboard",
           projectHost: "supabase.co",
           telemetryPosthogHost: "https://ph.supabase.com",
@@ -48,7 +68,11 @@ function setup(
       Layer.succeed(
         Credentials,
         Credentials.of({
-          getAccessToken: Effect.succeed(Option.none()),
+          getAccessToken: Effect.succeed(
+            opts.accessToken === undefined
+              ? Option.none()
+              : Option.some(Redacted.make(opts.accessToken)),
+          ),
           saveAccessToken: () => Effect.die("unexpected saveAccessToken"),
           deleteAccessToken: Effect.die("unexpected deleteAccessToken"),
         }),
@@ -119,5 +143,69 @@ describe("next services", () => {
       expect(out.stdoutText).toContain("supabase/postgres");
       expect(out.stderrText).toBe("");
     });
+  });
+
+  it.live("merges linked service versions and warns on a version mismatch", () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === `/v1/projects/${LINKED_REF}/api-keys`) {
+          return Response.json([
+            {
+              name: "anon",
+              id: "publishable-id",
+              type: "publishable",
+              api_key: "publishable-key",
+              description: null,
+            },
+          ]);
+        }
+
+        if (url.pathname === `/v1/projects/${LINKED_REF}`) {
+          return Response.json({
+            id: LINKED_REF,
+            ref: LINKED_REF,
+            organization_id: "org-id",
+            organization_slug: "org",
+            name: "Linked Project",
+            region: "us-east-1",
+            created_at: "2026-03-13T12:00:00.000Z",
+            status: "ACTIVE_HEALTHY",
+            database: {
+              host: "db.supabase.internal",
+              version: "17.6.1.200",
+              postgres_engine: "17",
+              release_channel: "ga",
+            },
+          });
+        }
+
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    const { layer, out } = setup({
+      format: "json",
+      linkedState: Option.some(linkedStateFixture()),
+      accessToken: "sbp_token",
+      apiUrl: server.url.origin,
+    });
+
+    return Effect.gen(function* () {
+      yield* services().pipe(Effect.provide(layer));
+
+      const success = out.messages.find((message) => message.type === "success");
+      expect(success?.data).toMatchObject({
+        services: expect.arrayContaining([
+          expect.objectContaining({
+            name: "supabase/postgres",
+            local: "17.6.1.132",
+            remote: "17.6.1.200",
+          }),
+        ]),
+      });
+      expect(out.stderrText).toContain("WARNING:");
+    }).pipe(Effect.ensuring(Effect.promise(() => server.stop(true))));
   });
 });

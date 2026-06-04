@@ -1,7 +1,7 @@
-import { styleText } from "node:util";
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
+import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -9,6 +9,7 @@ import { encodeGoJson, encodeToml, encodeYaml } from "../../shared/legacy-go-out
 import {
   encodeLegacyTomlRows,
   fetchLinkedServiceVersions,
+  formatServicesWarning,
   listLocalServiceVersions,
   mergeRemoteServiceVersions,
   renderServicesTable,
@@ -22,28 +23,38 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
   const legacyOutput = yield* LegacyOutputFlag;
   const cliConfig = yield* LegacyCliConfig;
   const credentials = yield* LegacyCredentials;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
+  const projectRefPath = path.join(cliConfig.workdir, "supabase", ".temp", "project-ref");
+  const linkedProjectRef = yield* Effect.gen(function* () {
+    if (Option.isSome(cliConfig.projectId)) {
+      return cliConfig.projectId;
+    }
+
+    const exists = yield* fs.exists(projectRefPath).pipe(Effect.orElseSucceed(() => false));
+    if (!exists) {
+      return Option.none<string>();
+    }
+
+    const content = yield* fs.readFileString(projectRefPath).pipe(Effect.orElseSucceed(() => ""));
+    const trimmed = content.trim();
+    return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
+  });
+
+  // Mirror Go's PersistentPostRun (`apps/cli-go/cmd/root.go:176`): when a project
+  // ref is resolved, refresh the linked-project cache on success and failure so
+  // PostHog org/project groups stay attached. Persist the telemetry state too.
+  const cacheLinkedProject = Option.match(linkedProjectRef, {
+    onNone: () => Effect.void,
+    onSome: (ref) => linkedProjectCache.cache(ref),
+  });
+
   yield* Effect.gen(function* () {
-    const projectRefPath = path.join(cliConfig.workdir, "supabase", ".temp", "project-ref");
     const accessTokenExit = yield* credentials.getAccessToken.pipe(Effect.exit);
     const accessToken = Exit.isSuccess(accessTokenExit) ? accessTokenExit.value : Option.none();
-    const linkedProjectRef = yield* Effect.gen(function* () {
-      if (Option.isSome(cliConfig.projectId)) {
-        return cliConfig.projectId;
-      }
-
-      const exists = yield* fs.exists(projectRefPath).pipe(Effect.orElseSucceed(() => false));
-      if (!exists) {
-        return Option.none<string>();
-      }
-
-      const content = yield* fs.readFileString(projectRefPath).pipe(Effect.orElseSucceed(() => ""));
-      const trimmed = content.trim();
-      return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
-    });
 
     let rows = listLocalServiceVersions();
     if (Option.isSome(linkedProjectRef) && Option.isSome(accessToken)) {
@@ -59,18 +70,10 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
 
     const warning = renderServicesWarning(rows);
     if (warning !== undefined) {
-      const lines = warning.split("\n");
-      const prefix = output.format === "text" ? styleText("yellow", "WARNING:") : "WARNING:";
-      const [first, ...rest] = lines;
-      yield* output.raw(`${prefix} ${first}\n${rest.join("\n")}\n`, "stderr");
+      yield* output.raw(formatServicesWarning(warning, output.format === "text"), "stderr");
     }
 
     const goOutput = Option.getOrUndefined(legacyOutput);
-
-    if (goOutput === undefined && (output.format === "json" || output.format === "stream-json")) {
-      yield* output.success("", { services: rows });
-      return;
-    }
 
     if (goOutput === "env") {
       return yield* Effect.fail(
@@ -95,6 +98,15 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
       return;
     }
 
+    // goOutput is undefined or "pretty" — defer to the TS --output-format flag for
+    // machine output, otherwise render the Go `--output pretty` table. Guarding the
+    // table behind this (rather than treating "pretty" as force-table) keeps
+    // `--output pretty --output-format json` emitting JSON, per CLI-1546.
+    if (output.format === "json" || output.format === "stream-json") {
+      yield* output.success("", { services: rows });
+      return;
+    }
+
     yield* output.raw(renderServicesTable(rows));
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  }).pipe(Effect.ensuring(cacheLinkedProject), Effect.ensuring(telemetryState.flush));
 });

@@ -1,4 +1,3 @@
-import { styleText } from "node:util";
 import { Effect, Exit, Option } from "effect";
 import { Credentials } from "../../auth/credentials.service.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
@@ -10,18 +9,12 @@ import {
 } from "../../../shared/runtime/command-runtime.service.ts";
 import {
   fetchLinkedServiceVersions,
+  formatServicesWarning,
   listLocalServiceVersions,
   mergeRemoteServiceVersions,
   renderServicesTable,
   renderServicesWarning,
 } from "../../../shared/services/services.shared.ts";
-
-function warningText(message: string, textMode: boolean): string {
-  const lines = message.split("\n");
-  const prefix = textMode ? styleText("yellow", "WARNING:") : "WARNING:";
-  const [first, ...rest] = lines;
-  return `${prefix} ${first}\n${rest.join("\n")}\n`;
-}
 
 export const services = Effect.fnUntraced(function* () {
   const output = yield* Output;
@@ -41,7 +34,7 @@ export const services = Effect.fnUntraced(function* () {
       projectHost: cliConfig.projectHost,
       projectRef: linkedState.value.project.ref,
       accessToken: accessToken.value,
-      userAgent: "supabase",
+      userAgent: "@supabase/cli",
       headers: {
         "X-Supabase-Command": getCommandRuntimeCommand(commandRuntime),
         "X-Supabase-Command-Run-ID": commandRuntime.commandRunId,
@@ -52,7 +45,7 @@ export const services = Effect.fnUntraced(function* () {
 
   const warning = renderServicesWarning(rows);
   if (warning !== undefined) {
-    yield* output.raw(warningText(warning, output.format === "text"), "stderr");
+    yield* output.raw(formatServicesWarning(warning, output.format === "text"), "stderr");
   }
 
   if (output.format === "text") {

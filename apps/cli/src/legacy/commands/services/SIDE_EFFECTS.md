@@ -9,19 +9,27 @@
 
 ## Files Written
 
-| Path                         | Format | When                                                                   |
-| ---------------------------- | ------ | ---------------------------------------------------------------------- |
-| `~/.supabase/telemetry.json` | JSON   | always (`Effect.ensuring(telemetryState.flush)`) at end of the command |
+| Path                                 | Format | When                                                                                                                                             |
+| ------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `supabase/.temp/linked-project.json` | JSON   | when a project ref resolves and no cache exists yet (`Effect.ensuring(linkedProjectCache.cache(ref))`, mirrors Go's `ensureProjectGroupsCached`) |
+| `~/.supabase/telemetry.json`         | JSON   | always (`Effect.ensuring(telemetryState.flush)`) at end of the command                                                                           |
 
 ## API Routes
 
-| Method | Path                                           | Auth         | Request body | Response (used fields)                                             |
-| ------ | ---------------------------------------------- | ------------ | ------------ | ------------------------------------------------------------------ |
-| `GET`  | `/v1/projects/{ref}`                           | Bearer token | none         | `{ref, name, region, status, organization_slug, database.version}` |
-| `GET`  | `/v1/projects/{ref}/api-keys?reveal=true`      | Bearer token | none         | `[{name, type, api_key, secret_jwt_template}]`                     |
-| `GET`  | `https://{ref}.supabase.co/auth/v1/health`     | service key  | none         | `{version}`                                                        |
-| `GET`  | `https://{ref}.supabase.co/rest/v1/`           | service key  | none         | `{info.version}`                                                   |
-| `GET`  | `https://{ref}.supabase.co/storage/v1/version` | service key  | none         | plain text version body                                            |
+The resolved project ref must match `^[a-z]{20}$` (Go's `utils.ProjectRefPattern`)
+before any remote lookup runs; a malformed ref skips the linked-version checks
+and only the local matrix is printed. Tenant calls send `apikey: <serviceKey>`
+and additionally `Authorization: Bearer <serviceKey>` unless the key is a
+new-style `sb_…` key (which authenticates via the `apikey` header alone),
+matching `apps/cli-go/pkg/fetcher/gateway.go`.
+
+| Method | Path                                           | Auth                           | Request body | Response (used fields)                                             |
+| ------ | ---------------------------------------------- | ------------------------------ | ------------ | ------------------------------------------------------------------ |
+| `GET`  | `/v1/projects/{ref}`                           | Bearer token                   | none         | `{ref, name, region, status, organization_slug, database.version}` |
+| `GET`  | `/v1/projects/{ref}/api-keys?reveal=true`      | Bearer token                   | none         | `[{name, type, api_key, secret_jwt_template}]`                     |
+| `GET`  | `https://{ref}.supabase.co/auth/v1/health`     | apikey (+ Bearer if non-`sb_`) | none         | `{version}`                                                        |
+| `GET`  | `https://{ref}.supabase.co/rest/v1/`           | apikey (+ Bearer if non-`sb_`) | none         | `{info.version}`                                                   |
+| `GET`  | `https://{ref}.supabase.co/storage/v1/version` | apikey (+ Bearer if non-`sb_`) | none         | plain text version body                                            |
 
 ## Environment Variables
 

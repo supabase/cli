@@ -1,5 +1,6 @@
 import { Layer } from "effect";
 import { Command } from "effect/unstable/cli";
+import { FetchHttpClient } from "effect/unstable/http";
 import { credentialsLayer } from "../../auth/credentials.layer.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { provideProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
@@ -9,7 +10,14 @@ import { withCommandInstrumentation } from "../../../shared/telemetry/command-in
 import { services } from "./services.handler.ts";
 
 const servicesRuntimeLayer = provideProjectCommandRuntime(
-  Layer.mergeAll(credentialsLayer, projectLinkStateLayer, commandRuntimeLayer(["services"])),
+  Layer.mergeAll(
+    credentialsLayer,
+    projectLinkStateLayer,
+    commandRuntimeLayer(["services"]),
+    // `fetchLinkedServiceVersions` builds its management/tenant API clients from
+    // the ambient HttpClient rather than self-provisioning one.
+    FetchHttpClient.layer,
+  ),
 );
 
 export const servicesCommand = Command.make("services").pipe(

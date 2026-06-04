@@ -1,12 +1,18 @@
+import { styleText } from "node:util";
 import { makeApiClient, type ApiClient } from "@supabase/api/effect";
 import { Data, Duration, Effect, Exit, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { FetchHttpClient } from "effect/unstable/http";
 import { renderGlamourTable } from "../../legacy/output/legacy-glamour-table.ts";
 
 export type RemoteServiceName = "postgres" | "auth" | "postgrest" | "storage";
 export type OptionalRemoteServiceName = Exclude<RemoteServiceName, "postgres">;
+
+// Mirrors Go's `utils.ProjectRefPattern` (`apps/cli-go/internal/utils/misc.go`).
+// Validating the ref before it reaches the management API path param or the
+// tenant gateway hostname keeps a tampered/malformed value from redirecting the
+// service-role key to an attacker-controlled host.
+const PROJECT_REF_PATTERN = /^[a-z]{20}$/;
 
 interface ServiceImageSpec {
   readonly image: string;
@@ -99,7 +105,7 @@ function stringField(value: unknown, key: string): string | undefined {
 
 function selectTenantAccessKey<T extends ProjectApiKey>(
   keys: ReadonlyArray<T>,
-): string | undefined {
+): Redacted.Redacted<string> | undefined {
   for (const key of keys) {
     const template = key.secret_jwt_template;
     if (
@@ -111,13 +117,13 @@ function selectTenantAccessKey<T extends ProjectApiKey>(
       typeof template.role === "string" &&
       template.role.toLowerCase() === "service_role"
     ) {
-      return key.api_key;
+      return Redacted.make(key.api_key);
     }
   }
 
   for (const key of keys) {
     if (key.name === "service_role" && typeof key.api_key === "string") {
-      return key.api_key;
+      return Redacted.make(key.api_key);
     }
   }
 }
@@ -151,16 +157,21 @@ function hasProjectAccessKey<T extends ProjectApiKey>(keys: ReadonlyArray<T>): b
   });
 }
 
-const authenticatedRequest = (url: string, accessKey: string) =>
-  HttpClientRequest.get(url).pipe(
-    HttpClientRequest.setHeader("Authorization", `Bearer ${accessKey}`),
-    HttpClientRequest.setHeader("apikey", accessKey),
-  );
+const authenticatedRequest = (url: string, accessKey: Redacted.Redacted<string>) => {
+  const key = Redacted.value(accessKey);
+  const request = HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader("apikey", key));
+  // New-style `sb_…` keys authenticate via the `apikey` header alone; older JWT
+  // keys additionally require a bearer token. Mirrors the conditional auth in
+  // `apps/cli-go/pkg/fetcher/gateway.go` and `legacy/shared/legacy-tenant-versions.ts`.
+  return key.startsWith("sb_")
+    ? request
+    : request.pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${key}`));
+};
 
 const fetchJson = Effect.fnUntraced(function* (
   client: HttpClient.HttpClient,
   url: string,
-  accessKey: string,
+  accessKey: Redacted.Redacted<string>,
 ) {
   const request = authenticatedRequest(url, accessKey).pipe(HttpClientRequest.acceptJson);
   const response = yield* client.execute(request);
@@ -170,7 +181,7 @@ const fetchJson = Effect.fnUntraced(function* (
 const fetchText = Effect.fnUntraced(function* (
   client: HttpClient.HttpClient,
   url: string,
-  accessKey: string,
+  accessKey: Redacted.Redacted<string>,
 ) {
   const response = yield* client.execute(authenticatedRequest(url, accessKey));
   return yield* response.text;
@@ -179,7 +190,7 @@ const fetchText = Effect.fnUntraced(function* (
 const fetchPostgrestVersion = Effect.fnUntraced(function* (
   client: HttpClient.HttpClient,
   baseUrl: string,
-  accessKey: string,
+  accessKey: Redacted.Redacted<string>,
 ) {
   const body = yield* fetchJson(client, `${baseUrl}/rest/v1/`, accessKey);
   const version =
@@ -204,7 +215,7 @@ const fetchPostgrestVersion = Effect.fnUntraced(function* (
 const fetchAuthVersion = Effect.fnUntraced(function* (
   client: HttpClient.HttpClient,
   baseUrl: string,
-  accessKey: string,
+  accessKey: Redacted.Redacted<string>,
 ) {
   const body = yield* fetchJson(client, `${baseUrl}/auth/v1/health`, accessKey);
   const version = stringField(body, "version")?.trim();
@@ -219,7 +230,7 @@ const fetchAuthVersion = Effect.fnUntraced(function* (
 const fetchStorageVersion = Effect.fnUntraced(function* (
   client: HttpClient.HttpClient,
   baseUrl: string,
-  accessKey: string,
+  accessKey: Redacted.Redacted<string>,
 ) {
   const version = (yield* fetchText(client, `${baseUrl}/storage/v1/version`, accessKey)).trim();
   if (version.length === 0 || version === "0.0.0") {
@@ -280,6 +291,18 @@ export function renderServicesWarning(rows: ReadonlyArray<ServiceVersionRow>): s
   ].join("\n");
 }
 
+/**
+ * Renders the linked-version mismatch warning for stderr. In text mode the
+ * `WARNING:` prefix is colorized (matching Go's `utils.Yellow`); machine modes
+ * keep it plain so the stderr line stays parseable.
+ */
+export function formatServicesWarning(message: string, textMode: boolean): string {
+  const lines = message.split("\n");
+  const prefix = textMode ? styleText("yellow", "WARNING:") : "WARNING:";
+  const [first, ...rest] = lines;
+  return `${prefix} ${first}\n${rest.join("\n")}\n`;
+}
+
 export function encodeLegacyTomlRows(rows: ReadonlyArray<ServiceVersionRow>) {
   return { services: rows } as const;
 }
@@ -287,6 +310,16 @@ export function encodeLegacyTomlRows(rows: ReadonlyArray<ServiceVersionRow>) {
 export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
   return Effect.gen(function* () {
     const exit = yield* Effect.gen(function* () {
+      // Reject malformed refs before they reach the management API path param or
+      // the tenant gateway hostname (`https://<ref>.<host>`). The override is
+      // test-only, so it bypasses the check.
+      if (
+        input.tenantBaseUrlOverride === undefined &&
+        !PROJECT_REF_PATTERN.test(input.projectRef)
+      ) {
+        return {} as Partial<Record<RemoteServiceName, string>>;
+      }
+
       const client = yield* makeConfiguredApiClient(input);
       const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
 
@@ -344,7 +377,7 @@ export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {
       }
 
       return versions;
-    }).pipe(Effect.provide(FetchHttpClient.layer), Effect.exit);
+    }).pipe(Effect.exit);
     return Exit.isSuccess(exit) ? exit.value : ({} as Partial<Record<RemoteServiceName, string>>);
   });
 }
