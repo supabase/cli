@@ -33,6 +33,11 @@ on:
         description: Release tag to propose notes for (e.g. v2.101.0 or v2.99.0-beta.1)
         required: true
         type: string
+      non_blocking:
+        description: Do not fail the workflow run when proposing fails
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
