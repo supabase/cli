@@ -13,6 +13,7 @@ import {
   LegacyWorkdirFlag,
 } from "../../shared/legacy/global-flags.ts";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
+import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
 import { legacyCliConfigLayer } from "./legacy-cli-config.layer.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 
@@ -27,6 +28,7 @@ function makeLayer(opts: {
   const profileFlag = opts.profileFlag ?? "supabase";
   const workdirFlag = opts.workdirFlag ?? Option.none<string>();
   return legacyCliConfigLayer.pipe(
+    Layer.provide(legacyDebugLoggerLayer),
     Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
     Layer.provide(Layer.succeed(LegacyProfileFlag, profileFlag)),
     Layer.provide(Layer.succeed(LegacyWorkdirFlag, workdirFlag)),

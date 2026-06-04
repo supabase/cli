@@ -2,7 +2,7 @@ import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { normalizeKeyringToken } from "../../shared/auth/keyring-token.ts";
-import { LegacyDebugFlag } from "../../shared/legacy/global-flags.ts";
+import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import {
@@ -141,10 +141,6 @@ function normalizeGoWindowsPassword(value: string): string {
     if (high !== 0) bytes.push(high);
   }
   return Buffer.from(bytes).toString("utf8");
-}
-
-function debugLog(debug: boolean, message: string): void {
-  if (debug) process.stderr.write(`${message}\n`);
 }
 
 function writeGoWindowsTarget(module: KeyringModule, account: string, token: string): boolean {
@@ -323,7 +319,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
   const cliConfig = yield* LegacyCliConfig;
-  const debug = yield* LegacyDebugFlag;
+  const debugLogger = yield* LegacyDebugLogger;
   const profileAccount = cliConfig.profile;
 
   // ~/.supabase/access-token — fallback file path
@@ -354,7 +350,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
       runtimeInfo.platform,
     );
     if (Option.isSome(profileResult)) {
-      debugLog(debug, `Using access token for profile: ${profileAccount}`);
+      yield* debugLogger.debug(`Using access token for profile: ${profileAccount}`);
       return profileResult;
     }
     const legacyResult = yield* tryKeyringRead(
@@ -363,7 +359,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
       runtimeInfo.platform,
     );
     if (Option.isSome(legacyResult)) {
-      debugLog(debug, "Using access token from credentials store...");
+      yield* debugLogger.debug("Using access token from credentials store...");
     }
     return legacyResult;
   });
@@ -380,7 +376,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
     getAccessToken: Effect.gen(function* () {
       // Env takes precedence (matches access_token.go:38).
       if (Option.isSome(cliConfig.accessToken)) {
-        debugLog(debug, "Using access token from env var...");
+        yield* debugLogger.debug("Using access token from env var...");
         yield* validate(Redacted.value(cliConfig.accessToken.value));
         return Option.some(cliConfig.accessToken.value);
       }
@@ -395,7 +391,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
       // Filesystem fallback at ~/.supabase/access-token.
       const fileValue = yield* readFile;
       if (Option.isSome(fileValue)) {
-        debugLog(debug, `Using access token from file: ${fallbackPath}`);
+        yield* debugLogger.debug(`Using access token from file: ${fallbackPath}`);
         yield* validate(fileValue.value);
         return Option.some(Redacted.make(fileValue.value));
       }

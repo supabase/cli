@@ -14,6 +14,7 @@ import {
 } from "../../shared/legacy/global-flags.ts";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
+import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
 import { legacyCredentialsLayer } from "./legacy-credentials.layer.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import {
@@ -114,6 +115,7 @@ function makeLayer(
     platform: opts.platform,
   });
   const cliConfigLayer = legacyCliConfigLayer.pipe(
+    Layer.provide(legacyDebugLoggerLayer),
     Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
     Layer.provide(Layer.succeed(LegacyProfileFlag, "supabase")),
     Layer.provide(Layer.succeed(LegacyWorkdirFlag, Option.none<string>())),
@@ -123,6 +125,7 @@ function makeLayer(
   );
   return legacyCredentialsLayer.pipe(
     Layer.provide(cliConfigLayer),
+    Layer.provide(legacyDebugLoggerLayer),
     Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(BunServices.layer),
@@ -427,6 +430,7 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
         }),
       );
       const cliConfigLayer = legacyCliConfigLayer.pipe(
+        Layer.provide(legacyDebugLoggerLayer),
         Layer.provide(Layer.succeed(LegacyDebugFlag, false)),
         Layer.provide(Layer.succeed(LegacyProfileFlag, "supabase")),
         Layer.provide(Layer.succeed(LegacyWorkdirFlag, Option.none<string>())),
@@ -436,6 +440,7 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
       );
       const layer = legacyCredentialsLayer.pipe(
         Layer.provide(cliConfigLayer),
+        Layer.provide(legacyDebugLoggerLayer),
         Layer.provide(Layer.succeed(LegacyDebugFlag, false)),
         Layer.provide(runtimeInfoLayer),
         Layer.provide(fsLayer),

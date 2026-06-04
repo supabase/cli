@@ -13,6 +13,7 @@ import { LegacyDebugFlag } from "../../shared/legacy/global-flags.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import { legacyPlatformApiLayer } from "./legacy-platform-api.layer.ts";
 import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
@@ -177,6 +178,7 @@ function withBaseDeps(
           isCi: opts.isCi,
         }),
       ),
+      Layer.provide(legacyDebugLoggerLayer),
       Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
       Layer.provide(nodeFileSystemLayer()),
       Layer.provide(nodePathLayer()),
