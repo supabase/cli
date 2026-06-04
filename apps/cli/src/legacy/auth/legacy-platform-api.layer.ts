@@ -3,6 +3,8 @@ import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import { CLI_VERSION } from "../../shared/cli/version.ts";
+import { LegacyDebugFlag } from "../../shared/legacy/global-flags.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
@@ -15,6 +17,19 @@ const MISSING_TOKEN_MESSAGE =
 
 const HEADER_GOTRUE_ID = "x-gotrue-id";
 const TELEMETRY_SCHEMA_VERSION = 1;
+
+const pad = (n: number): string => String(n).padStart(2, "0");
+
+function formatTimestamp(now: Date): string {
+  return (
+    `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())} ` +
+    `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
+  );
+}
+
+function debugLog(debug: boolean, message: string): void {
+  if (debug) process.stderr.write(`${message}\n`);
+}
 
 interface LegacyTelemetryState {
   readonly enabled: boolean;
@@ -67,6 +82,7 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
   const runtime = yield* TelemetryRuntime;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const debug = yield* LegacyDebugFlag;
   let stitchAttempted = false;
 
   const needsIdentityStitch =
@@ -111,9 +127,18 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
       yield* fs.writeFileString(telemetryPath, JSON.stringify(state));
     });
 
-  const transformClient = (client: HttpClient.HttpClient) =>
-    Effect.succeed(
-      HttpClient.transform(client, (requestEffect) =>
+  const transformClient = (client: HttpClient.HttpClient) => {
+    const debugClient = debug
+      ? HttpClient.mapRequest(client, (request) => {
+          process.stderr.write(
+            `${formatTimestamp(new Date())} HTTP ${request.method}: ${request.url}\n`,
+          );
+          return request;
+        })
+      : client;
+
+    return Effect.succeed(
+      HttpClient.transform(debugClient, (requestEffect) =>
         requestEffect.pipe(
           Effect.tap((response) => {
             const gotrueId = gotrueIdFromResponse(response);
@@ -123,14 +148,26 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
         ),
       ),
     );
+  };
 
-  // Env takes precedence over keyring/file (already inside LegacyCredentials), but
-  // LegacyCliConfig.accessToken is the env value alone — read in the same order Go uses.
   const configuredToken = cliConfig.accessToken;
-  const storedToken = Option.isSome(configuredToken)
-    ? configuredToken
-    : yield* credentials.getAccessToken;
+  const resolveAccessToken = Effect.gen(function* () {
+    if (Option.isSome(configuredToken)) {
+      debugLog(debug, "Using access token from env var...");
+      return configuredToken;
+    }
+    return yield* credentials.getAccessToken;
+  });
 
+  const authGateToken = yield* resolveAccessToken;
+  if (Option.isNone(authGateToken)) {
+    return yield* Effect.fail(
+      new LegacyPlatformAuthRequiredError({ message: MISSING_TOKEN_MESSAGE }),
+    );
+  }
+  debugLog(debug, `Supabase CLI ${CLI_VERSION}`);
+  debugLog(debug, `Using profile: ${cliConfig.profile} (${cliConfig.projectHost})`);
+  const storedToken = yield* resolveAccessToken;
   if (Option.isNone(storedToken)) {
     return yield* Effect.fail(
       new LegacyPlatformAuthRequiredError({ message: MISSING_TOKEN_MESSAGE }),

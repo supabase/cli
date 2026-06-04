@@ -7,7 +7,11 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, FileSystem, Layer, Option, PlatformError, Redacted } from "effect";
 import { afterEach, beforeEach, vi } from "vitest";
 
-import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
+import {
+  LegacyDebugFlag,
+  LegacyProfileFlag,
+  LegacyWorkdirFlag,
+} from "../../shared/legacy/global-flags.ts";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
 import { legacyCredentialsLayer } from "./legacy-credentials.layer.ts";
@@ -99,6 +103,7 @@ function makeLayer(
     env?: Record<string, string | undefined>;
     home?: string;
     platform?: NodeJS.Platform;
+    debug?: boolean;
   } = {},
 ) {
   const home = opts.home ?? tempHome;
@@ -109,6 +114,7 @@ function makeLayer(
     platform: opts.platform,
   });
   const cliConfigLayer = legacyCliConfigLayer.pipe(
+    Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
     Layer.provide(Layer.succeed(LegacyProfileFlag, "supabase")),
     Layer.provide(Layer.succeed(LegacyWorkdirFlag, Option.none<string>())),
     Layer.provide(runtimeInfoLayer),
@@ -117,6 +123,7 @@ function makeLayer(
   );
   return legacyCredentialsLayer.pipe(
     Layer.provide(cliConfigLayer),
+    Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(BunServices.layer),
     Layer.provide(processEnvLayer(env)),
@@ -158,6 +165,10 @@ const expectSomeToken = (token: Option.Option<Redacted.Redacted<string>>, expect
   }
 };
 
+function captureStderr() {
+  return vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+}
+
 describe("legacyCredentialsLayer.getAccessToken", () => {
   it.effect("returns the SUPABASE_ACCESS_TOKEN env value (highest precedence)", () => {
     passwords.set("Supabase CLI/supabase", "sbp_" + "9".repeat(40));
@@ -175,6 +186,22 @@ describe("legacyCredentialsLayer.getAccessToken", () => {
       const token = yield* getAccessToken;
       expectSomeToken(token, VALID_TOKEN);
     }).pipe(Effect.provide(makeLayer()));
+  });
+
+  it.effect("debug logs the access token source", () => {
+    passwords.set("Supabase CLI/supabase", VALID_TOKEN);
+    const stderr = captureStderr();
+    return Effect.gen(function* () {
+      const { getAccessToken } = yield* LegacyCredentials;
+      const token = yield* getAccessToken;
+      expectSomeToken(token, VALID_TOKEN);
+      expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join("")).toContain(
+        "Using access token for profile: supabase\n",
+      );
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => stderr.mockRestore())),
+      Effect.provide(makeLayer({ debug: true })),
+    );
   });
 
   it.effect("decodes Go keyring base64 values from the keyring profile account", () => {
@@ -400,6 +427,7 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
         }),
       );
       const cliConfigLayer = legacyCliConfigLayer.pipe(
+        Layer.provide(Layer.succeed(LegacyDebugFlag, false)),
         Layer.provide(Layer.succeed(LegacyProfileFlag, "supabase")),
         Layer.provide(Layer.succeed(LegacyWorkdirFlag, Option.none<string>())),
         Layer.provide(runtimeInfoLayer),
@@ -408,6 +436,7 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
       );
       const layer = legacyCredentialsLayer.pipe(
         Layer.provide(cliConfigLayer),
+        Layer.provide(Layer.succeed(LegacyDebugFlag, false)),
         Layer.provide(runtimeInfoLayer),
         Layer.provide(fsLayer),
         Layer.provide(BunServices.layer),

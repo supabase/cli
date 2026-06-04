@@ -1,11 +1,15 @@
 import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { parse as parseYaml } from "yaml";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
-import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
+import {
+  LegacyDebugFlag,
+  LegacyProfileFlag,
+  LegacyWorkdirFlag,
+} from "../../shared/legacy/global-flags.ts";
 import { legacyProjectHost } from "../shared/legacy-profile.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig, type LegacyProfileName } from "./legacy-cli-config.service.ts";
-import { readLegacyProfileFile } from "./legacy-profile-file.ts";
+import { legacyProfileFilePath } from "./legacy-profile-file.ts";
 
 interface ResolvedProfile {
   readonly name: string;
@@ -48,6 +52,14 @@ function safeParseYaml(
   }
 }
 
+function debugLog(debug: boolean, message: string): void {
+  if (debug) process.stderr.write(`${message}\n`);
+}
+
+function unknownMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Resolves the profile that produces the API URL. Mirrors Go's `LoadProfile`
  * (`apps/cli-go/internal/utils/profile.go:96-118`):
@@ -71,18 +83,41 @@ function resolveProfile(
   fs: FileSystem.FileSystem,
   path: Path.Path,
   homeDir: string,
+  debug: boolean,
 ): Effect.Effect<ResolvedProfile> {
   return Effect.gen(function* () {
     let token: string;
     if (flagValue !== "supabase") {
+      debugLog(debug, `Loading profile from flag: ${flagValue}`);
       token = flagValue;
     } else if (envValue !== undefined && envValue.length > 0) {
+      // Go reads SUPABASE_PROFILE through viper's PROFILE key, so debug output
+      // cannot distinguish env from an explicitly changed flag.
+      debugLog(debug, `Loading profile from flag: ${envValue}`);
       token = envValue;
     } else {
       // Lowest precedence: the persisted `~/.supabase/profile` file (Go's
       // `getProfileName` file fallback, `profile.go:129-131`).
-      const fileName = yield* readLegacyProfileFile(fs, path, homeDir);
-      token = Option.getOrElse(fileName, () => "supabase");
+      const filePath = legacyProfileFilePath(path, homeDir);
+      const content = yield* fs.readFileString(filePath).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => debugLog(debug, `Loading profile from file: ${filePath}`)),
+        ),
+        Effect.map(Option.some),
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            debugLog(debug, unknownMessage(error));
+            return Option.none<string>();
+          }),
+        ),
+      );
+      token = Option.match(content, {
+        onNone: () => "supabase",
+        onSome: (value) => {
+          const trimmed = value.trim();
+          return trimmed.length === 0 ? "supabase" : trimmed;
+        },
+      });
     }
 
     if (isBuiltinProfileName(token)) {
@@ -141,6 +176,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
   Effect.gen(function* () {
     const profileFlag = yield* LegacyProfileFlag;
     const workdirFlag = yield* LegacyWorkdirFlag;
+    const debug = yield* LegacyDebugFlag;
 
     return Layer.effect(
       LegacyCliConfig,
@@ -160,6 +196,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
           fs,
           path,
           runtimeInfo.homeDir,
+          debug,
         );
 
         const rawAccessToken = env["SUPABASE_ACCESS_TOKEN"];

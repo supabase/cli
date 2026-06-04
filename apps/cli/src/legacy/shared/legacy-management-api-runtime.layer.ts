@@ -1,5 +1,6 @@
 import { Layer } from "effect";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import { LegacyCredentials } from "../auth/legacy-credentials.service.ts";
 import { legacyCredentialsLayer } from "../auth/legacy-credentials.layer.ts";
@@ -18,11 +19,12 @@ import { CommandRuntime } from "../../shared/runtime/command-runtime.service.ts"
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 
 // Shared platform-API stack used by every Management-API legacy subcommand.
-// `legacyHttpClientLayer` wraps the default fetch transport with a debug logger when `--debug` is set.
+// `legacyPlatformApiLayer` applies typed API debug logging after generated
+// requests have been prefixed with the active profile's API URL.
 const legacyPlatformApiStack = legacyPlatformApiLayer.pipe(
   Layer.provide(legacyCredentialsLayer),
   Layer.provide(legacyCliConfigLayer),
-  Layer.provide(legacyHttpClientLayer),
+  Layer.provide(FetchHttpClient.layer),
 );
 
 /**
