@@ -38,7 +38,7 @@ func TestRunCommand(t *testing.T) {
 			Query(DISABLE_PGTAP).
 			Reply("DROP EXTENSION")
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		containerId := "test-pg-prove"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(config.Images.PgProve), containerId)
@@ -87,7 +87,7 @@ func TestRunCommand(t *testing.T) {
 			Query(DISABLE_PGTAP).
 			Reply("DROP EXTENSION")
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(config.Images.PgProve) + "/json").

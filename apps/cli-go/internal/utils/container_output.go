@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/moby/moby/api/types/jsonstream"
 )
 
 func ProcessPullOutput(out io.ReadCloser, p Program) error {
@@ -21,7 +21,7 @@ func ProcessPullOutput(out io.ReadCloser, p Program) error {
 	downloads := make(map[string]struct{ current, total int64 })
 
 	for {
-		var progress jsonmessage.JSONMessage
+		var progress jsonstream.Message
 
 		if err := dec.Decode(&progress); err == io.EOF {
 			break

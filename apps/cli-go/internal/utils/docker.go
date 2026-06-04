@@ -21,17 +21,13 @@ import (
 	dockerConfig "github.com/docker/cli/cli/config"
 	dockerFlags "github.com/docker/cli/cli/flags"
 	"github.com/docker/cli/cli/streams"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/versions"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/jsonmessage"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/go-errors/errors"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
+	"github.com/moby/moby/client/pkg/jsonmessage"
 	"github.com/spf13/viper"
 	"go.opentelemetry.io/otel"
 )
@@ -65,7 +61,7 @@ func DockerNetworkCreateIfNotExists(ctx context.Context, mode container.NetworkM
 	if !isUserDefined(mode) {
 		return nil
 	}
-	_, err := Docker.NetworkCreate(ctx, mode.NetworkName(), network.CreateOptions{Labels: labels})
+	_, err := Docker.NetworkCreate(ctx, mode.NetworkName(), client.NetworkCreateOptions{Labels: labels})
 	// if error is network already exists, no need to propagate to user
 	if errdefs.IsConflict(err) || errors.Is(err, podman.ErrNetworkExists) {
 		return nil
@@ -96,7 +92,7 @@ var NoBackupVolume = false
 func DockerRemoveAll(ctx context.Context, w io.Writer, projectId string) error {
 	fmt.Fprintln(w, "Stopping containers...")
 	args := CliProjectFilter(projectId)
-	containers, err := Docker.ContainerList(ctx, container.ListOptions{
+	containers, err := Docker.ContainerList(ctx, client.ContainerListOptions{
 		All:     true,
 		Filters: args,
 	})
@@ -105,11 +101,11 @@ func DockerRemoveAll(ctx context.Context, w io.Writer, projectId string) error {
 	}
 	// Gracefully shutdown containers
 	var ids []string
-	for _, c := range containers {
+	for _, c := range containers.Items {
 		ids = append(ids, c.ID)
 	}
 	result := WaitAll(ids, func(id string) error {
-		if err := Docker.ContainerStop(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotModified(err) {
+		if _, err := Docker.ContainerStop(ctx, id, client.ContainerStopOptions{}); err != nil && !errdefs.IsNotModified(err) {
 			return errors.Errorf("failed to stop container: %w", err)
 		}
 		return nil
@@ -117,43 +113,34 @@ func DockerRemoveAll(ctx context.Context, w io.Writer, projectId string) error {
 	if err := errors.Join(result...); err != nil {
 		return err
 	}
-	if report, err := Docker.ContainersPrune(ctx, args); err != nil {
+	if result, err := Docker.ContainerPrune(ctx, client.ContainerPruneOptions{Filters: args}); err != nil {
 		return errors.Errorf("failed to prune containers: %w", err)
 	} else if viper.GetBool("DEBUG") {
-		fmt.Fprintln(os.Stderr, "Pruned containers:", report.ContainersDeleted)
+		fmt.Fprintln(os.Stderr, "Pruned containers:", result.Report.ContainersDeleted)
 	}
 	// Remove named volumes
 	if NoBackupVolume {
-		vargs := args.Clone()
-		if versions.GreaterThanOrEqualTo(Docker.ClientVersion(), "1.42") {
-			// Since docker engine 25.0.3, all flag is required to include named volumes.
-			// https://github.com/docker/cli/blob/master/cli/command/volume/prune.go#L76
-			vargs.Add("all", "true")
-		}
-		if report, err := Docker.VolumesPrune(ctx, vargs); err != nil {
+		if result, err := Docker.VolumePrune(ctx, client.VolumePruneOptions{All: true, Filters: args.Clone()}); err != nil {
 			return errors.Errorf("failed to prune volumes: %w", err)
 		} else if viper.GetBool("DEBUG") {
-			fmt.Fprintln(os.Stderr, "Pruned volumes:", report.VolumesDeleted)
+			fmt.Fprintln(os.Stderr, "Pruned volumes:", result.Report.VolumesDeleted)
 		}
 	}
 	// Remove networks.
-	if report, err := Docker.NetworksPrune(ctx, args); err != nil {
+	if result, err := Docker.NetworkPrune(ctx, client.NetworkPruneOptions{Filters: args}); err != nil {
 		return errors.Errorf("failed to prune networks: %w", err)
 	} else if viper.GetBool("DEBUG") {
-		fmt.Fprintln(os.Stderr, "Pruned network:", report.NetworksDeleted)
+		fmt.Fprintln(os.Stderr, "Pruned network:", result.Report.NetworksDeleted)
 	}
 	return nil
 }
 
-func CliProjectFilter(projectId string) filters.Args {
+func CliProjectFilter(projectId string) client.Filters {
+	args := make(client.Filters)
 	if len(projectId) == 0 {
-		return filters.NewArgs(
-			filters.Arg("label", CliProjectLabel),
-		)
+		return args.Add("label", CliProjectLabel)
 	}
-	return filters.NewArgs(
-		filters.Arg("label", CliProjectLabel+"="+projectId),
-	)
+	return args.Add("label", CliProjectLabel+"="+projectId)
 }
 
 var (
@@ -204,14 +191,15 @@ func GetRegistryImageUrl(imageName string) string {
 }
 
 func DockerImagePull(ctx context.Context, imageTag string, w io.Writer) error {
-	out, err := Docker.ImagePull(ctx, imageTag, image.PullOptions{
+	out, err := Docker.ImagePull(ctx, imageTag, client.ImagePullOptions{
 		RegistryAuth: GetRegistryAuth(),
 	})
 	if err != nil {
 		return errors.Errorf("failed to pull docker image: %w", err)
 	}
 	defer out.Close()
-	if err := jsonmessage.DisplayJSONMessagesToStream(out, streams.NewOut(w), nil); err != nil {
+	outStream := streams.NewOut(w)
+	if err := jsonmessage.DisplayJSONMessagesStream(out, outStream, outStream.FD(), outStream.IsTerminal(), nil); err != nil {
 		return errors.Errorf("failed to display json stream: %w", err)
 	}
 	return nil
@@ -294,7 +282,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 	} else {
 		// Create named volumes with labels
 		for _, name := range sources {
-			if _, err := Docker.VolumeCreate(ctx, volume.CreateOptions{
+			if _, err := Docker.VolumeCreate(ctx, client.VolumeCreateOptions{
 				Name:   name,
 				Labels: config.Labels,
 			}); err != nil {
@@ -303,12 +291,17 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 		}
 	}
 	// Create container from image
-	resp, err := Docker.ContainerCreate(ctx, &config, &hostConfig, &networkingConfig, nil, containerName)
+	resp, err := Docker.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:           &config,
+		HostConfig:       &hostConfig,
+		NetworkingConfig: &networkingConfig,
+		Name:             containerName,
+	})
 	if err != nil {
 		return "", errors.Errorf("failed to create docker container: %w", err)
 	}
 	// Run container in background
-	err = Docker.ContainerStart(ctx, resp.ID, container.StartOptions{})
+	_, err = Docker.ContainerStart(ctx, resp.ID, client.ContainerStartOptions{})
 	if err != nil {
 		if hostPort := parsePortBindError(err); len(hostPort) > 0 {
 			CmdSuggestion = suggestDockerStop(ctx, hostPort)
@@ -328,7 +321,7 @@ func DockerStart(ctx context.Context, config container.Config, hostConfig contai
 }
 
 func DockerRemove(containerId string) {
-	if err := Docker.ContainerRemove(context.Background(), containerId, container.RemoveOptions{
+	if _, err := Docker.ContainerRemove(context.Background(), containerId, client.ContainerRemoveOptions{
 		RemoveVolumes: true,
 		Force:         true,
 	}); err != nil {
@@ -376,8 +369,8 @@ func DockerRunOnceWithConfig(ctx context.Context, config container.Config, hostC
 
 var ErrContainerKilled = errors.New("exit 137")
 
-func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io.Writer, opts ...func(*container.LogsOptions)) error {
-	logsOptions := container.LogsOptions{
+func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io.Writer, opts ...func(*client.ContainerLogsOptions)) error {
+	logsOptions := client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 		Follow:     true,
@@ -395,23 +388,23 @@ func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io
 		return errors.Errorf("failed to copy docker logs: %w", err)
 	}
 	// Check exit code
-	resp, err := Docker.ContainerInspect(ctx, containerId)
+	resp, err := Docker.ContainerInspect(ctx, containerId, client.ContainerInspectOptions{})
 	if err != nil {
 		return errors.Errorf("failed to inspect docker container: %w", err)
 	}
-	switch resp.State.ExitCode {
+	switch resp.Container.State.ExitCode {
 	case 0:
 		return nil
 	case 137:
 		err = ErrContainerKilled
 	default:
-		err = errors.Errorf("exit %d", resp.State.ExitCode)
+		err = errors.Errorf("exit %d", resp.Container.State.ExitCode)
 	}
 	return errors.Errorf("error running container: %w", err)
 }
 
 func DockerStreamLogsOnce(ctx context.Context, containerId string, stdout, stderr io.Writer) error {
-	logs, err := Docker.ContainerLogs(ctx, containerId, container.LogsOptions{
+	logs, err := Docker.ContainerLogs(ctx, containerId, client.ContainerLogsOptions{
 		ShowStdout: true,
 		ShowStderr: true,
 	})
@@ -438,7 +431,7 @@ func DockerExecOnce(ctx context.Context, containerId string, env []string, cmd [
 
 func DockerExecOnceWithStream(ctx context.Context, containerId, workdir string, env, cmd []string, stdout, stderr io.Writer) error {
 	// Reset shadow database
-	exec, err := Docker.ContainerExecCreate(ctx, containerId, container.ExecOptions{
+	exec, err := Docker.ExecCreate(ctx, containerId, client.ExecCreateOptions{
 		Env:          env,
 		Cmd:          cmd,
 		WorkingDir:   workdir,
@@ -449,7 +442,7 @@ func DockerExecOnceWithStream(ctx context.Context, containerId, workdir string, 
 		return errors.Errorf("failed to exec docker create: %w", err)
 	}
 	// Read exec output
-	resp, err := Docker.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
+	resp, err := Docker.ExecAttach(ctx, exec.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return errors.Errorf("failed to exec docker attach: %w", err)
 	}
@@ -459,7 +452,7 @@ func DockerExecOnceWithStream(ctx context.Context, containerId, workdir string, 
 		return errors.Errorf("failed to copy docker logs: %w", err)
 	}
 	// Get the exit code
-	iresp, err := Docker.ContainerExecInspect(ctx, exec.ID)
+	iresp, err := Docker.ExecInspect(ctx, exec.ID, client.ExecInspectOptions{})
 	if err != nil {
 		return errors.Errorf("failed to exec docker inspect: %w", err)
 	}
@@ -470,7 +463,7 @@ func DockerExecOnceWithStream(ctx context.Context, containerId, workdir string, 
 }
 
 func IsDockerRunning(ctx context.Context) bool {
-	_, err := Docker.Ping(ctx)
+	_, err := Docker.Ping(ctx, client.PingOptions{})
 	return !client.IsErrConnectionFailed(err)
 }
 
@@ -485,8 +478,8 @@ func parsePortBindError(err error) string {
 }
 
 func suggestDockerStop(ctx context.Context, hostPort string) string {
-	if containers, err := Docker.ContainerList(ctx, container.ListOptions{}); err == nil {
-		for _, c := range containers {
+	if containers, err := Docker.ContainerList(ctx, client.ContainerListOptions{}); err == nil {
+		for _, c := range containers.Items {
 			for _, p := range c.Ports {
 				if fmt.Sprintf("%s:%d", p.IP, p.PublicPort) == hostPort {
 					if project, ok := c.Labels[CliProjectLabel]; ok {

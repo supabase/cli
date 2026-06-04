@@ -17,11 +17,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
 	"github.com/h2non/gock"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/volume"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -191,7 +191,7 @@ func TestRunDockerUnbundle(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		dockerHost := utils.Docker.DaemonHost()
 
 		// Setup mock api
@@ -283,7 +283,7 @@ func TestRunDockerUnbundle(t *testing.T) {
 		token := apitest.RandomAccessToken(t)
 		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
 
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		dockerHost := utils.Docker.DaemonHost()
 
 		// Setup mock api
@@ -291,6 +291,9 @@ func TestRunDockerUnbundle(t *testing.T) {
 
 		gock.New(dockerHost).
 			Head("/_ping").
+			ReplyError(errors.New("docker unavailable"))
+		gock.New(dockerHost).
+			Get("/_ping").
 			ReplyError(errors.New("docker unavailable"))
 
 		mockMultipartBody(t, project, slugDocker, bundleMetadata{"/source/index.ts"}, []multipartPart{

@@ -60,7 +60,7 @@ func TestDeployCommand(t *testing.T) {
 				Reply(http.StatusCreated).
 				JSON(api.FunctionResponse{Id: fmt.Sprintf("%d", i)})
 			// Setup mock docker
-			require.NoError(t, apitest.MockDocker(utils.Docker))
+			require.NoError(t, apitest.MockDocker(&utils.Docker))
 			apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 			require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		}
@@ -123,7 +123,7 @@ import_map = "./import_map.json"
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		// Setup output file
@@ -176,7 +176,7 @@ import_map = "./import_map.json"
 			MatchParam("slug", "enabled-func").
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		// Setup output file
@@ -243,7 +243,7 @@ verify_jwt = false
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		// Setup output file
@@ -289,7 +289,7 @@ verify_jwt = false
 			Reply(http.StatusCreated).
 			JSON(api.FunctionResponse{Id: "1"})
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "bundled"))
 		// Setup output file

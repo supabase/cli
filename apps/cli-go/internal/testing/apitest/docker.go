@@ -2,36 +2,65 @@ package apitest
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 
-	"github.com/docker/docker/api"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/versions"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
-	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/go-errors/errors"
 	"github.com/h2non/gock"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/volume"
+	"github.com/moby/moby/client"
 )
 
 const mockHost = "http://127.0.0.1"
+const mockAPIVersion = "1.54"
 
-func MockDocker(docker *client.Client) error {
+type stdWriter struct {
+	io.Writer
+	stream stdcopy.StdType
+}
+
+func (w stdWriter) Write(p []byte) (int, error) {
+	if len(p) > math.MaxUint32 {
+		return 0, fmt.Errorf("docker stdcopy frame too large: %d", len(p))
+	}
+	header := [8]byte{byte(w.stream)}
+	//nolint:gosec // len(p) is checked against math.MaxUint32 above.
+	binary.BigEndian.PutUint32(header[4:], uint32(len(p)))
+	if _, err := w.Writer.Write(header[:]); err != nil {
+		return 0, err
+	}
+	if _, err := w.Writer.Write(p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+
+func NewStdoutWriter(w io.Writer) io.Writer {
+	return stdWriter{Writer: w, stream: stdcopy.Stdout}
+}
+
+func MockDocker(docker **client.Client) error {
 	// Skip setup if docker is already mocked
-	if docker.DaemonHost() == mockHost {
+	if (*docker).DaemonHost() == mockHost {
 		return nil
 	}
-	if err := client.WithVersion(api.DefaultVersion)(docker); err != nil {
+	mock, err := client.New(
+		client.WithHost(mockHost),
+		client.WithAPIVersion(mockAPIVersion),
+		client.WithHTTPClient(&http.Client{Transport: gock.NewTransport()}),
+	)
+	if err != nil {
 		return err
 	}
-	// Safe to ignore errors as transport will be replaced by gock
-	_ = client.WithHost(mockHost)(docker)
-	return client.WithHTTPClient(http.DefaultClient)(docker)
+	*docker = mock
+	return nil
 }
 
 // Ref: internal/utils/docker.go::DockerStart
@@ -68,12 +97,6 @@ func MockDockerStop(docker *client.Client) {
 		Post("/v" + docker.ClientVersion() + "/containers/prune").
 		Reply(http.StatusOK).
 		JSON(container.PruneReport{})
-	if !versions.GreaterThanOrEqualTo(docker.ClientVersion(), "1.42") {
-		gock.New(docker.DaemonHost()).
-			Post("/v"+docker.ClientVersion()+"/volumes/prune").
-			MatchParam("filters", `"all":{"true":true}`).
-			ReplyError(errors.New(`failed to parse filters for all=true&label=com.supabase.cli.project%3Dtest: "all" is an invalid volume filter`))
-	}
 	gock.New(docker.DaemonHost()).
 		Post("/v" + docker.ClientVersion() + "/volumes/prune").
 		Reply(http.StatusOK).
@@ -95,7 +118,7 @@ func setupDockerLogs(docker *client.Client, containerID, stdout string, exitCode
 
 func MockDockerLogsStream(docker *client.Client, containerID string, exitCode int, r io.Reader) error {
 	var body bytes.Buffer
-	writer := stdcopy.NewStdWriter(&body, stdcopy.Stdout)
+	writer := NewStdoutWriter(&body)
 	_, err := io.Copy(writer, r)
 	gock.New(docker.DaemonHost()).
 		Get("/v"+docker.ClientVersion()+"/containers/"+containerID+"/logs").
@@ -105,10 +128,11 @@ func MockDockerLogsStream(docker *client.Client, containerID string, exitCode in
 	gock.New(docker.DaemonHost()).
 		Get("/v" + docker.ClientVersion() + "/containers/" + containerID + "/json").
 		Reply(http.StatusOK).
-		JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+		JSON(container.InspectResponse{
 			State: &container.State{
 				ExitCode: exitCode,
-			}}})
+			},
+		})
 	return err
 }
 

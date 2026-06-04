@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/moby/moby/api/types/jsonstream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -65,12 +65,12 @@ func TestProcessDiffOutput(t *testing.T) {
 
 func TestProcessPullOutput(t *testing.T) {
 	t.Run("processes docker pull messages", func(t *testing.T) {
-		messages := []jsonmessage.JSONMessage{
+		messages := []jsonstream.Message{
 			{Status: "Pulling from library/postgres"},
 			{ID: "layer1", Status: "Pulling fs layer"},
-			{ID: "layer1", Status: "Downloading", Progress: &jsonmessage.JSONProgress{Current: 50, Total: 100}},
+			{ID: "layer1", Status: "Downloading", Progress: &jsonstream.Progress{Current: 50, Total: 100}},
 			{ID: "layer2", Status: "Pulling fs layer"},
-			{ID: "layer2", Status: "Downloading", Progress: &jsonmessage.JSONProgress{Current: 75, Total: 100}},
+			{ID: "layer2", Status: "Downloading", Progress: &jsonstream.Progress{Current: 75, Total: 100}},
 		}
 
 		// Create a pipe to write messages

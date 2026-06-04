@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/docker/docker/api/types/volume"
+	"github.com/moby/moby/client"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -33,9 +33,9 @@ func Run(ctx context.Context, backup bool, projectId string, all bool, fsys afer
 	}
 
 	fmt.Println("Stopped " + utils.Aqua("supabase") + " local development setup.")
-	if resp, err := utils.Docker.VolumeList(ctx, volume.ListOptions{
+	if resp, err := utils.Docker.VolumeList(ctx, client.VolumeListOptions{
 		Filters: utils.CliProjectFilter(searchProjectIdFilter),
-	}); err == nil && len(resp.Volumes) > 0 {
+	}); err == nil && len(resp.Items) > 0 {
 		if len(searchProjectIdFilter) > 0 {
 			listVolume := fmt.Sprintf("docker volume ls --filter label=%s=%s", utils.CliProjectLabel, searchProjectIdFilter)
 			utils.CmdSuggestion = "Local data are backed up to docker volume. Use docker to show them: " + utils.Aqua(listVolume)

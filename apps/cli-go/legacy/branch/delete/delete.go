@@ -7,9 +7,9 @@ import (
 	"io"
 	"path/filepath"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/go-errors/errors"
+	"github.com/moby/moby/api/pkg/stdcopy"
+	"github.com/moby/moby/client"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
@@ -59,7 +59,7 @@ func deleteBranchDir(branch string, fsys afero.Fs) error {
 }
 
 func deleteBranchPG(ctx context.Context, branch string) error {
-	exec, err := utils.Docker.ContainerExecCreate(ctx, utils.DbId, container.ExecOptions{
+	exec, err := utils.Docker.ExecCreate(ctx, utils.DbId, client.ExecCreateOptions{
 		Cmd:          []string{"dropdb", "--username", "postgres", "--host", "127.0.0.1", branch},
 		AttachStderr: true,
 		AttachStdout: true,
@@ -68,7 +68,7 @@ func deleteBranchPG(ctx context.Context, branch string) error {
 		return err
 	}
 	// Read exec output
-	resp, err := utils.Docker.ContainerExecAttach(ctx, exec.ID, container.ExecStartOptions{})
+	resp, err := utils.Docker.ExecAttach(ctx, exec.ID, client.ExecAttachOptions{})
 	if err != nil {
 		return err
 	}
@@ -79,7 +79,7 @@ func deleteBranchPG(ctx context.Context, branch string) error {
 		return err
 	}
 	// Get the exit code
-	iresp, err := utils.Docker.ContainerExecInspect(ctx, exec.ID)
+	iresp, err := utils.Docker.ExecInspect(ctx, exec.ID, client.ExecInspectOptions{})
 	if err != nil {
 		return err
 	}

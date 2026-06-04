@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
+	"github.com/moby/moby/api/types/container"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,7 +52,7 @@ func TestBranchCreation(t *testing.T) {
 
 	t.Run("docker exec failure", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/exec").
@@ -66,7 +66,7 @@ func TestBranchCreation(t *testing.T) {
 
 	t.Run("docker attach failure", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/exec").
@@ -75,7 +75,7 @@ func TestBranchCreation(t *testing.T) {
 		// Run test
 		err := createBranch(context.Background(), "test-branch")
 		// Validate api
-		assert.ErrorContains(t, err, "unable to upgrade to tcp, received 404")
+		assert.ErrorContains(t, err, "cannot connect to the Docker daemon")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
@@ -92,7 +92,7 @@ func TestCreateCommand(t *testing.T) {
 		fsys := &afero.MemMapFs{}
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").

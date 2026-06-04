@@ -7,11 +7,10 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
+	"github.com/moby/moby/api/types/container"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,7 +39,7 @@ func TestResetCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
@@ -56,12 +55,12 @@ func TestResetCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: container.Healthy},
 				},
-			}})
+			})
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
@@ -79,12 +78,12 @@ func TestResetCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: container.Healthy},
 				},
-			}})
+			})
 		gock.New(utils.Config.Api.ExternalUrl).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
@@ -119,7 +118,7 @@ func TestResetCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
@@ -137,7 +136,7 @@ func TestResetCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
@@ -284,7 +283,7 @@ func TestRestartDatabase(t *testing.T) {
 	t.Run("restarts affected services", func(t *testing.T) {
 		utils.DbId = "test-reset"
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		// Restarts postgres
 		gock.New(utils.Docker.DaemonHost()).
@@ -293,12 +292,12 @@ func TestRestartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: container.Healthy},
 				},
-			}})
+			})
 		// Restarts services
 		utils.StorageId = "test-storage"
 		utils.GotrueId = "test-auth"
@@ -319,7 +318,7 @@ func TestRestartDatabase(t *testing.T) {
 	t.Run("throws error on service restart failure", func(t *testing.T) {
 		utils.DbId = "test-reset"
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		// Restarts postgres
 		gock.New(utils.Docker.DaemonHost()).
@@ -328,12 +327,12 @@ func TestRestartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: container.Healthy},
 				},
-			}})
+			})
 		// Restarts services
 		utils.StorageId = "test-storage"
 		utils.GotrueId = "test-auth"
@@ -359,7 +358,7 @@ func TestRestartDatabase(t *testing.T) {
 	t.Run("throws error on db restart failure", func(t *testing.T) {
 		utils.DbId = "test-reset"
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		// Restarts postgres
 		gock.New(utils.Docker.DaemonHost()).
@@ -375,7 +374,7 @@ func TestRestartDatabase(t *testing.T) {
 	t.Run("throws error on health check timeout", func(t *testing.T) {
 		utils.DbId = "test-reset"
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/test-reset/restart").
@@ -383,12 +382,12 @@ func TestRestartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-reset/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: false,
 					Status:  "exited",
 				},
-			}})
+			})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-reset/logs").
 			Reply(http.StatusServiceUnavailable)

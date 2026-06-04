@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgerrcode"
+	"github.com/moby/moby/api/types/container"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,7 +29,7 @@ func TestSwitchCommand(t *testing.T) {
 		require.NoError(t, fsys.Mkdir(branchPath, 0755))
 		require.NoError(t, afero.WriteFile(fsys, utils.CurrBranchPath, []byte("main"), 0644))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
@@ -77,7 +77,7 @@ func TestSwitchCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
@@ -94,7 +94,7 @@ func TestSwitchCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
@@ -112,7 +112,7 @@ func TestSwitchCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
@@ -130,7 +130,7 @@ func TestSwitchCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
@@ -154,7 +154,7 @@ func TestSwitchCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
@@ -178,7 +178,7 @@ func TestSwitchCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
@@ -241,7 +241,7 @@ func TestSwitchDatabase(t *testing.T) {
 			Query("ALTER DATABASE postgres RENAME TO main;").
 			ReplyError(pgerrcode.DuplicateDatabase, `database "main" already exists`)
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
@@ -276,7 +276,7 @@ func TestSwitchDatabase(t *testing.T) {
 			Query("ALTER DATABASE main RENAME TO postgres;").
 			ReplyError(pgerrcode.DuplicateDatabase, `database "postgres" already exists`)
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").

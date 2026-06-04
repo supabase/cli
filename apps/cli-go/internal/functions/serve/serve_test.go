@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
+	"github.com/moby/moby/api/types/container"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +33,7 @@ func TestServeCommand(t *testing.T) {
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackEnvFilePath, []byte{}, 0644))
 		require.NoError(t, afero.WriteFile(fsys, utils.FallbackImportMapPath, []byte("{}"), 0644))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
@@ -56,7 +56,7 @@ func TestServeCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/exec/kong-reload/json").
 			Reply(http.StatusOK).
-			JSON(container.ExecInspect{ExitCode: 0})
+			JSON(map[string]int{"ExitCode": 0})
 		// Run test with timeout context
 		err := Run(context.Background(), "", nil, "", RuntimeOption{}, fsys)
 		// Check error
@@ -79,7 +79,7 @@ func TestServeCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
@@ -95,7 +95,7 @@ func TestServeCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
@@ -115,7 +115,7 @@ func TestServeCommand(t *testing.T) {
 		entrypoint := filepath.Join(utils.FunctionsDir, "hello", "index.ts")
 		require.NoError(t, afero.WriteFile(fsys, entrypoint, []byte{}, 0644))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
@@ -136,7 +136,7 @@ func TestServeFunctions(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.FromIOFS{FS: testdata}
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), utils.EdgeRuntimeId)
 		// Run test

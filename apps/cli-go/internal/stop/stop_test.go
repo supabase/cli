@@ -8,11 +8,10 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
-	"github.com/docker/docker/client"
 	"github.com/h2non/gock"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/volume"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,7 +25,7 @@ func TestStopCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
@@ -43,7 +42,7 @@ func TestStopCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes").
 			Reply(http.StatusOK).
-			JSON(volume.ListResponse{Volumes: []*volume.Volume{{
+			JSON(volume.ListResponse{Volumes: []volume.Volume{{
 				Name: utils.DbId,
 			}}})
 		// Run test
@@ -58,7 +57,7 @@ func TestStopCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 
 		projects := []string{"project1", "project2"}
@@ -78,7 +77,7 @@ func TestStopCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes").
 			Reply(http.StatusOK).
 			JSON(volume.ListResponse{
-				Volumes: []*volume.Volume{
+				Volumes: []volume.Volume{
 					{Name: "volume1", Labels: map[string]string{utils.CliProjectLabel: "project1"}},
 					{Name: "volume2", Labels: map[string]string{utils.CliProjectLabel: "project2"}},
 				},
@@ -111,7 +110,7 @@ func TestStopCommand(t *testing.T) {
 				Get("/v"+utils.Docker.ClientVersion()+"/volumes").
 				MatchParam("filters", fmt.Sprintf(`{"label":{"com.supabase.cli.project=%s":true}}`, projectId)).
 				Reply(http.StatusOK).
-				JSON(volume.ListResponse{Volumes: []*volume.Volume{{Name: "volume-" + projectId}}})
+				JSON(volume.ListResponse{Volumes: []volume.Volume{{Name: "volume-" + projectId}}})
 		}
 
 		// Mock final ContainerList to verify all containers are stopped
@@ -148,7 +147,7 @@ func TestStopCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
@@ -168,7 +167,7 @@ func TestStopServices(t *testing.T) {
 			{ID: "c2", State: "exited"},
 		}
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
@@ -201,24 +200,7 @@ func TestStopServices(t *testing.T) {
 		utils.EdgeRuntimeId = "test-functions"
 		utils.InbucketId = "test-inbucket"
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		defer gock.OffAll()
-		apitest.MockDockerStop(utils.Docker)
-		// Run test
-		err := stop(context.Background(), false, io.Discard, utils.Config.ProjectId)
-		// Check error
-		assert.NoError(t, err)
-		assert.Empty(t, apitest.ListUnmatchedRequests())
-	})
-
-	t.Run("skips all filter when removing data volumes with Docker version pre-v1.42", func(t *testing.T) {
-		utils.DbId = "test-db"
-		utils.StorageId = "test-storage"
-		utils.EdgeRuntimeId = "test-functions"
-		utils.InbucketId = "test-inbucket"
-		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
-		require.NoError(t, client.WithVersion("1.41")(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStop(utils.Docker)
 		// Run test
@@ -230,7 +212,7 @@ func TestStopServices(t *testing.T) {
 
 	t.Run("throws error on prune failure", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").

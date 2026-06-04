@@ -6,11 +6,11 @@ import (
 	_ "embed"
 	"strings"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/config"

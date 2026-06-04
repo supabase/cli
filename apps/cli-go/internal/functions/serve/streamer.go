@@ -7,8 +7,8 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
+	"github.com/moby/moby/client"
 	"github.com/supabase/cli/internal/utils"
 )
 
@@ -34,7 +34,7 @@ func (s *logStreamer) Start(containerID string) {
 	// Retry indefinitely until stream is closed
 	policy := backoff.WithContext(backoff.NewConstantBackOff(retryInterval), s.ctx)
 	fetch := func() error {
-		if err := utils.DockerStreamLogs(s.ctx, containerID, os.Stdout, os.Stderr, func(lo *container.LogsOptions) {
+		if err := utils.DockerStreamLogs(s.ctx, containerID, os.Stdout, os.Stderr, func(lo *client.ContainerLogsOptions) {
 			lo.Timestamps = true
 		}); errdefs.IsNotFound(err) || errdefs.IsConflict(err) || errors.Is(err, utils.ErrContainerKilled) {
 			return err

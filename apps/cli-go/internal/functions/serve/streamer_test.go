@@ -20,7 +20,7 @@ func TestLogStreamer(t *testing.T) {
 
 	t.Run("streams logs from container", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		require.NoError(t, apitest.MockDockerLogsStream(utils.Docker, containerID, 1, strings.NewReader("")))
 		// Run test
@@ -38,7 +38,7 @@ func TestLogStreamer(t *testing.T) {
 
 	t.Run("retries on container exit", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		require.NoError(t, apitest.MockDockerLogsStream(utils.Docker, containerID, 0, strings.NewReader("")))
 		require.NoError(t, apitest.MockDockerLogsStream(utils.Docker, containerID, 137, strings.NewReader("")))
@@ -58,7 +58,7 @@ func TestLogStreamer(t *testing.T) {
 
 	t.Run("retries on missing container", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + containerID + "/logs").

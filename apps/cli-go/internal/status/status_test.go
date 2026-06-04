@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
+	"github.com/moby/moby/api/types/container"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,16 +28,16 @@ func TestStatusCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_test/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
 				},
-			}})
+			})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
 			Reply(http.StatusOK).
@@ -63,7 +63,7 @@ func TestStatusCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_").
@@ -85,7 +85,7 @@ func TestServiceHealth(t *testing.T) {
 			})
 		}
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
@@ -101,7 +101,7 @@ func TestServiceHealth(t *testing.T) {
 
 	t.Run("shows stopped container", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
@@ -118,7 +118,7 @@ func TestServiceHealth(t *testing.T) {
 	t.Run("throws error on network error", func(t *testing.T) {
 		errNetwork := errors.New("network error")
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").

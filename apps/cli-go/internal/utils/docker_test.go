@@ -7,12 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/pkg/jsonmessage"
-	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/h2non/gock"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/jsonstream"
+	"github.com/moby/moby/api/types/network"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,7 +28,7 @@ func TestPullImage(t *testing.T) {
 
 	t.Run("pulls image if missing", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		gock.New(Docker.DaemonHost()).
 			Get("/v" + Docker.ClientVersion() + "/images/" + imageId + "/json").
@@ -47,7 +46,7 @@ func TestPullImage(t *testing.T) {
 
 	t.Run("does nothing if image exists", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		gock.New(Docker.DaemonHost()).
 			Get("/v" + Docker.ClientVersion() + "/images/" + imageId + "/json").
@@ -61,7 +60,7 @@ func TestPullImage(t *testing.T) {
 
 	t.Run("throws error if docker is unavailable", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		gock.New(Docker.DaemonHost()).
 			Get("/v" + Docker.ClientVersion() + "/images/" + imageId + "/json").
@@ -75,7 +74,7 @@ func TestPullImage(t *testing.T) {
 	t.Run("throws error on failure to pull image", func(t *testing.T) {
 		timeUnit = time.Duration(0)
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		gock.New(Docker.DaemonHost()).
 			Get("/v" + Docker.ClientVersion() + "/images/" + imageId + "/json").
@@ -91,13 +90,13 @@ func TestPullImage(t *testing.T) {
 			MatchParam("fromImage", imageId).
 			MatchParam("tag", "latest").
 			Reply(http.StatusAccepted).
-			JSON(jsonmessage.JSONMessage{Error: &jsonmessage.JSONError{Message: "toomanyrequests"}})
+			JSON(jsonstream.Message{Error: &jsonstream.Error{Message: "toomanyrequests"}})
 		gock.New(Docker.DaemonHost()).
 			Post("/v"+Docker.ClientVersion()+"/images/create").
 			MatchParam("fromImage", imageId).
 			MatchParam("tag", "latest").
 			Reply(http.StatusAccepted).
-			JSON(jsonmessage.JSONMessage{Error: &jsonmessage.JSONError{Message: "no space left on device"}})
+			JSON(jsonstream.Message{Error: &jsonstream.Error{Message: "no space left on device"}})
 		// Run test
 		err := DockerPullImageIfNotCached(context.Background(), imageId)
 		// Validate api
@@ -111,7 +110,7 @@ func TestRunOnce(t *testing.T) {
 
 	t.Run("runs once in container", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(Docker, imageId, containerId)
 		require.NoError(t, apitest.MockDockerLogs(Docker, containerId, "hello world"))
@@ -125,7 +124,7 @@ func TestRunOnce(t *testing.T) {
 
 	t.Run("throws error on container create", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		gock.New(Docker.DaemonHost()).
 			Get("/v" + Docker.ClientVersion() + "/images/" + imageId + "/json").
@@ -147,7 +146,7 @@ func TestRunOnce(t *testing.T) {
 
 	t.Run("throws error on container start", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		gock.New(Docker.DaemonHost()).
 			Get("/v" + Docker.ClientVersion() + "/images/" + imageId + "/json").
@@ -173,7 +172,7 @@ func TestRunOnce(t *testing.T) {
 
 	t.Run("removes container on cancel", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(Docker, imageId, containerId)
 		gock.New(Docker.DaemonHost()).
@@ -195,7 +194,7 @@ func TestRunOnce(t *testing.T) {
 
 	t.Run("throws error on failure to parse logs", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(Docker, imageId, containerId)
 		gock.New(Docker.DaemonHost()).
@@ -215,20 +214,20 @@ func TestRunOnce(t *testing.T) {
 
 	t.Run("throws error on failure to inspect", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(Docker, imageId, containerId)
 		// Setup docker style logs
 		var body bytes.Buffer
-		writer := stdcopy.NewStdWriter(&body, stdcopy.Stdout)
+		writer := apitest.NewStdoutWriter(&body)
 		_, err := writer.Write([]byte("hello world"))
 		require.NoError(t, err)
-		gock.New("http:///var/run/docker.sock").
+		gock.New(Docker.DaemonHost()).
 			Get("/v"+Docker.ClientVersion()+"/containers/"+containerId+"/logs").
 			Reply(http.StatusOK).
 			SetHeader("Content-Type", "application/vnd.docker.raw-stream").
 			Body(&body)
-		gock.New("http:///var/run/docker.sock").
+		gock.New(Docker.DaemonHost()).
 			Get("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/json").
 			Reply(http.StatusServiceUnavailable)
 		gock.New(Docker.DaemonHost()).
@@ -243,26 +242,27 @@ func TestRunOnce(t *testing.T) {
 
 	t.Run("throws error on non-zero exit code", func(t *testing.T) {
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(Docker, imageId, containerId)
 		// Setup docker style logs
 		var body bytes.Buffer
-		writer := stdcopy.NewStdWriter(&body, stdcopy.Stdout)
+		writer := apitest.NewStdoutWriter(&body)
 		_, err := writer.Write([]byte("hello world"))
 		require.NoError(t, err)
-		gock.New("http:///var/run/docker.sock").
+		gock.New(Docker.DaemonHost()).
 			Get("/v"+Docker.ClientVersion()+"/containers/"+containerId+"/logs").
 			Reply(http.StatusOK).
 			SetHeader("Content-Type", "application/vnd.docker.raw-stream").
 			Body(&body)
-		gock.New("http:///var/run/docker.sock").
+		gock.New(Docker.DaemonHost()).
 			Get("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					ExitCode: 1,
-				}}})
+				},
+			})
 		gock.New(Docker.DaemonHost()).
 			Delete("/v" + Docker.ClientVersion() + "/containers/" + containerId).
 			Reply(http.StatusOK)
@@ -277,7 +277,7 @@ func TestRunOnce(t *testing.T) {
 func TestExecOnce(t *testing.T) {
 	t.Run("throws error on failure to exec", func(t *testing.T) {
 		// Setup mock server
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		gock.New(Docker.DaemonHost()).
 			Post("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/exec").
@@ -291,7 +291,7 @@ func TestExecOnce(t *testing.T) {
 
 	t.Run("throws error on failure to hijack", func(t *testing.T) {
 		// Setup mock server
-		require.NoError(t, apitest.MockDocker(Docker))
+		require.NoError(t, apitest.MockDocker(&Docker))
 		defer gock.OffAll()
 		gock.New(Docker.DaemonHost()).
 			Post("/v" + Docker.ClientVersion() + "/containers/" + containerId + "/exec").

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"

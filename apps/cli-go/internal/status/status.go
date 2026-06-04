@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/Netflix/go-env"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
 	"github.com/go-errors/errors"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/afero"
@@ -120,14 +120,14 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 }
 
 func checkServiceHealth(ctx context.Context) ([]string, error) {
-	resp, err := utils.Docker.ContainerList(ctx, container.ListOptions{
+	resp, err := utils.Docker.ContainerList(ctx, client.ContainerListOptions{
 		Filters: utils.CliProjectFilter(utils.Config.ProjectId),
 	})
 	if err != nil {
 		return nil, errors.Errorf("failed to list running containers: %w", err)
 	}
-	running := make(map[string]struct{}, len(resp))
-	for _, c := range resp {
+	running := make(map[string]struct{}, len(resp.Items))
+	for _, c := range resp.Items {
 		for _, n := range c.Names {
 			running[n] = struct{}{}
 		}
@@ -141,13 +141,13 @@ func checkServiceHealth(ctx context.Context) ([]string, error) {
 	return stopped, nil
 }
 
-func assertContainerHealthy(ctx context.Context, container string) error {
-	if resp, err := utils.Docker.ContainerInspect(ctx, container); err != nil {
+func assertContainerHealthy(ctx context.Context, containerId string) error {
+	if resp, err := utils.Docker.ContainerInspect(ctx, containerId, client.ContainerInspectOptions{}); err != nil {
 		return errors.Errorf("failed to inspect container health: %w", err)
-	} else if !resp.State.Running {
-		return errors.Errorf("%s container is not running: %s", container, resp.State.Status)
-	} else if resp.State.Health != nil && resp.State.Health.Status != types.Healthy {
-		return errors.Errorf("%s container is not ready: %s", container, resp.State.Health.Status)
+	} else if !resp.Container.State.Running {
+		return errors.Errorf("%s container is not running: %s", containerId, resp.Container.State.Status)
+	} else if resp.Container.State.Health != nil && resp.Container.State.Health.Status != container.Healthy {
+		return errors.Errorf("%s container is not ready: %s", containerId, resp.Container.State.Health.Status)
 	}
 	return nil
 }

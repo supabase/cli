@@ -13,12 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
+	"github.com/moby/moby/api/types/container"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,18 +52,18 @@ func TestSquashCommand(t *testing.T) {
 		require.NoError(t, afero.WriteFile(fsys, paths[0], []byte(sql), 0644))
 		require.NoError(t, afero.WriteFile(fsys, paths[1], []byte{}, 0644))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: container.Healthy},
 				},
-			}})
+			})
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
@@ -179,7 +178,7 @@ func TestSquashVersion(t *testing.T) {
 		path = filepath.Join(utils.MigrationsDir, "1_target.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
@@ -200,7 +199,7 @@ func TestSquashMigrations(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
@@ -217,18 +216,18 @@ func TestSquashMigrations(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: false,
 					Status:  "exited",
 				},
-			}})
+			})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/logs").
 			Reply(http.StatusServiceUnavailable)
@@ -247,18 +246,18 @@ func TestSquashMigrations(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, flags.LoadConfig(fsys))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: container.Healthy},
 				},
-			}})
+			})
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
@@ -282,18 +281,18 @@ func TestSquashMigrations(t *testing.T) {
 		sql := "create schema test"
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(sql), 0644))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), "test-shadow-db")
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: container.Healthy},
 				},
-			}})
+			})
 		gock.New(utils.Docker.DaemonHost()).
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)

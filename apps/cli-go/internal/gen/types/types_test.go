@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
+	"github.com/moby/moby/api/types/container"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -37,7 +37,7 @@ func TestGenLocalCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
@@ -58,7 +58,7 @@ func TestGenLocalCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
@@ -74,7 +74,7 @@ func TestGenLocalCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
@@ -95,7 +95,7 @@ func TestGenLocalCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId).
@@ -177,7 +177,7 @@ func TestGenRemoteCommand(t *testing.T) {
 		const containerId = "test-pgmeta"
 		imageUrl := utils.GetRegistryImageUrl(utils.Config.Studio.PgmetaImage)
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))

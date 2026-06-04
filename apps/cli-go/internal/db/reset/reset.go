@@ -12,13 +12,13 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/apply"
@@ -62,8 +62,8 @@ func Run(ctx context.Context, version string, last uint, config pgconn.Config, f
 		return err
 	}
 	// Seed objects from supabase/buckets directory
-	if resp, err := utils.Docker.ContainerInspect(ctx, utils.StorageId); err == nil {
-		if resp.State.Health == nil || resp.State.Health.Status != types.Healthy {
+	if resp, err := utils.Docker.ContainerInspect(ctx, utils.StorageId, client.ContainerInspectOptions{}); err == nil {
+		if resp.Container.State.Health == nil || resp.Container.State.Health.Status != container.Healthy {
 			if err := start.WaitForHealthyService(ctx, 30*time.Second, utils.StorageId); err != nil {
 				return err
 			}
@@ -111,10 +111,10 @@ func resetDatabase14(ctx context.Context, version string, fsys afero.Fs, options
 }
 
 func resetDatabase15(ctx context.Context, version string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if err := utils.Docker.ContainerRemove(ctx, utils.DbId, container.RemoveOptions{Force: true}); err != nil {
+	if _, err := utils.Docker.ContainerRemove(ctx, utils.DbId, client.ContainerRemoveOptions{Force: true}); err != nil {
 		return errors.Errorf("failed to remove container: %w", err)
 	}
-	if err := utils.Docker.VolumeRemove(ctx, utils.DbId, true); err != nil {
+	if _, err := utils.Docker.VolumeRemove(ctx, utils.DbId, client.VolumeRemoveOptions{Force: true}); err != nil {
 		return errors.Errorf("failed to remove volume: %w", err)
 	}
 	config := start.NewContainerConfig()
@@ -214,7 +214,7 @@ func RestartDatabase(ctx context.Context, w io.Writer) error {
 	fmt.Fprintln(w, "Restarting containers...")
 	// Some extensions must be manually restarted after pg_terminate_backend
 	// Ref: https://github.com/citusdata/pg_cron/issues/99
-	if err := utils.Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{}); err != nil {
+	if _, err := utils.Docker.ContainerRestart(ctx, utils.DbId, client.ContainerRestartOptions{}); err != nil {
 		return errors.Errorf("failed to restart container: %w", err)
 	}
 	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, utils.DbId); err != nil {
@@ -227,7 +227,7 @@ func restartServices(ctx context.Context) error {
 	// No need to restart PostgREST because it automatically reconnects and listens for schema changes
 	services := listServicesToRestart()
 	result := utils.WaitAll(services, func(id string) error {
-		if err := utils.Docker.ContainerRestart(ctx, id, container.StopOptions{}); err != nil && !errdefs.IsNotFound(err) {
+		if _, err := utils.Docker.ContainerRestart(ctx, id, client.ContainerRestartOptions{}); err != nil && !errdefs.IsNotFound(err) {
 			return errors.Errorf("failed to restart %s: %w", id, err)
 		}
 		return nil

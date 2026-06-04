@@ -47,7 +47,7 @@ func TestDockerBundle(t *testing.T) {
 			Reply(http.StatusOK).
 			Body(&body)
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogsExitCode(utils.Docker, containerId, 1))
 		// Setup mock bundler

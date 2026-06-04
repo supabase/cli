@@ -62,7 +62,7 @@ func TestPullSchema(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), "test-db")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", "test"))
@@ -90,7 +90,7 @@ func TestPullSchema(t *testing.T) {
 		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
 		require.NoError(t, afero.WriteFile(fsys, path, []byte(""), 0644))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").

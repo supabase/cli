@@ -31,7 +31,7 @@ func TestDumpCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world"))
@@ -50,7 +50,7 @@ func TestDumpCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))
@@ -65,7 +65,7 @@ func TestDumpCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images").
@@ -81,7 +81,7 @@ func TestDumpCommand(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewReadOnlyFs(afero.NewMemMapFs())
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, containerId, "hello world\n"))

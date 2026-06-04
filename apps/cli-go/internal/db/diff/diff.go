@@ -15,12 +15,11 @@ import (
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/start"
@@ -119,7 +118,7 @@ func CreateShadowDatabase(ctx context.Context, port uint16) (string, error) {
 	config := start.NewContainerConfig("-c", "max_worker_processes=0")
 	hostPort := strconv.FormatUint(uint64(port), 10)
 	hostConfig := container.HostConfig{
-		PortBindings: nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
+		PortBindings: network.PortMap{network.MustParsePort("5432/tcp"): []network.PortBinding{{HostPort: hostPort}}},
 		AutoRemove:   true,
 	}
 	networkingConfig := network.NetworkingConfig{}

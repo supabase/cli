@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"net/url"
 	"os"
@@ -22,16 +21,14 @@ import (
 	"github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/cli/cli/command"
 	dockerFlags "github.com/docker/cli/cli/flags"
-	"github.com/docker/compose/v2/pkg/api"
-	"github.com/docker/compose/v2/pkg/compose"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
+	"github.com/docker/compose/v5/pkg/api"
+	"github.com/docker/compose/v5/pkg/compose"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/spf13/afero"
 
 	"github.com/supabase/cli/internal/db/start"
@@ -169,12 +166,30 @@ func isPermanentError(err error) bool {
 	return true
 }
 
+func mustPort(port string) network.Port {
+	return network.MustParsePort(port)
+}
+
+func portSet(ports ...string) network.PortSet {
+	result := make(network.PortSet, len(ports))
+	for _, port := range ports {
+		result[mustPort(port)] = struct{}{}
+	}
+	return result
+}
+
+func portMap(containerPort, hostPort string) network.PortMap {
+	return network.PortMap{
+		mustPort(containerPort): []network.PortBinding{{HostPort: hostPort}},
+	}
+}
+
 // ImagePull wraps the Docker client's ImagePull with retry logic and registry auth
-func (cli *RetryClient) ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error) {
+func (cli *RetryClient) ImagePull(ctx context.Context, refStr string, options client.ImagePullOptions) (client.ImagePullResponse, error) {
 	if len(options.RegistryAuth) == 0 {
 		options.RegistryAuth = utils.GetRegistryAuth()
 	}
-	pull := func() (io.ReadCloser, error) {
+	pull := func() (client.ImagePullResponse, error) {
 		resp, err := cli.Client.ImagePull(ctx, refStr, options)
 		if isPermanentError(err) {
 			return resp, &backoff.PermanentError{Err: err}
@@ -185,9 +200,9 @@ func (cli *RetryClient) ImagePull(ctx context.Context, refStr string, options im
 	return backoff.RetryWithData(pull, policy)
 }
 
-// Also retry ImageInspect: https://github.com/docker/compose/blob/main/pkg/compose/pull.go#L174
-func (cli *RetryClient) ImageInspect(ctx context.Context, refStr string, options ...client.ImageInspectOption) (image.InspectResponse, error) {
-	pull := func() (image.InspectResponse, error) {
+// Also retry ImageInspect when prefetching images before containers are created.
+func (cli *RetryClient) ImageInspect(ctx context.Context, refStr string, options ...client.ImageInspectOption) (client.ImageInspectResult, error) {
+	pull := func() (client.ImageInspectResult, error) {
 		resp, err := cli.Client.ImageInspect(ctx, refStr, options...)
 		if isPermanentError(err) {
 			return resp, &backoff.PermanentError{Err: err}
@@ -198,21 +213,20 @@ func (cli *RetryClient) ImageInspect(ctx context.Context, refStr string, options
 	return backoff.RetryWithData(pull, policy)
 }
 
-// pullImagesUsingCompose pulls all required images using docker-compose service
-func pullImagesUsingCompose(ctx context.Context, project types.Project) error {
-	// Create Docker CLI
+func pullImages(ctx context.Context, project types.Project) {
 	cli, err := command.NewDockerCli()
 	if err != nil {
-		return errors.Errorf("failed to create Docker CLI: %w", err)
+		return
 	}
-	// Initialize Docker CLI
 	opt := command.WithAPIClient(&RetryClient{Client: utils.Docker})
 	if err := cli.Initialize(&dockerFlags.ClientOptions{}, opt); err != nil {
-		return errors.Errorf("failed to initialize Docker CLI: %w", err)
+		return
 	}
-	service := compose.NewComposeService(cli)
-	// Fallback to regular image pull by ignoring failures
-	return service.Pull(ctx, &project, api.PullOptions{IgnoreFailures: true})
+	service, err := compose.NewComposeService(cli)
+	if err != nil {
+		return
+	}
+	_ = service.Pull(ctx, &project, api.PullOptions{IgnoreFailures: true})
 }
 
 func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
@@ -235,9 +249,7 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 		Name:     "supabase-cli",
 		Services: utils.GetServices().Filter(notExcluded),
 	}
-	if err := pullImagesUsingCompose(ctx, project); err != nil {
-		return err
-	}
+	pullImages(ctx, project)
 
 	// Start Postgres.
 	if dbConfig.Host == utils.DbId {
@@ -319,13 +331,11 @@ EOF
 					Retries:     3,
 					StartPeriod: 10 * time.Second,
 				},
-				ExposedPorts: nat.PortSet{"4000/tcp": {}},
+				ExposedPorts: portSet("4000/tcp"),
 			},
 			container.HostConfig{
-				Binds: bind,
-				PortBindings: nat.PortMap{"4000/tcp": []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10),
-				}}},
+				Binds:         bind,
+				PortBindings:  portMap("4000/tcp", strconv.FormatUint(uint64(utils.Config.Analytics.Port), 10)),
 				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
@@ -545,17 +555,11 @@ EOF
 ` + string(utils.Config.Api.Tls.KeyContent) + `
 EOF
 `},
-				ExposedPorts: nat.PortSet{
-					"8000/tcp": {},
-					"8443/tcp": {},
-					nat.Port(fmt.Sprintf("%d/tcp", nginxTemplateServerPort)): {},
-				},
+				ExposedPorts: portSet("8000/tcp", "8443/tcp", fmt.Sprintf("%d/tcp", nginxTemplateServerPort)),
 			},
 			container.HostConfig{
-				Binds: binds,
-				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Api.Port), 10),
-				}}},
+				Binds:         binds,
+				PortBindings:  portMap(fmt.Sprintf("%d/tcp", dockerPort), strconv.FormatUint(uint64(utils.Config.Api.Port), 10)),
 				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
@@ -768,7 +772,7 @@ EOF
 			container.Config{
 				Image:        utils.Config.Auth.Image,
 				Env:          env,
-				ExposedPorts: nat.PortSet{"9999/tcp": {}},
+				ExposedPorts: portSet("9999/tcp"),
 				Healthcheck: &container.HealthConfig{
 					Test: []string{
 						"CMD", "wget", "--no-verbose", "--tries=1", "--spider",
@@ -798,16 +802,16 @@ EOF
 
 	// Start Mailpit
 	if utils.Config.Inbucket.Enabled && !isContainerExcluded(utils.Config.Inbucket.Image, excluded) {
-		inbucketPortBindings := nat.PortMap{"8025/tcp": []nat.PortBinding{{
+		inbucketPortBindings := network.PortMap{mustPort("8025/tcp"): []network.PortBinding{{
 			HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Port), 10),
 		}}}
 		if utils.Config.Inbucket.SmtpPort != 0 {
-			inbucketPortBindings["1025/tcp"] = []nat.PortBinding{{
+			inbucketPortBindings[mustPort("1025/tcp")] = []network.PortBinding{{
 				HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.SmtpPort), 10),
 			}}
 		}
 		if utils.Config.Inbucket.Pop3Port != 0 {
-			inbucketPortBindings["1110/tcp"] = []nat.PortBinding{{
+			inbucketPortBindings[mustPort("1110/tcp")] = []network.PortBinding{{
 				HostPort: strconv.FormatUint(uint64(utils.Config.Inbucket.Pop3Port), 10),
 			}}
 		}
@@ -873,7 +877,7 @@ EOF
 					"RUN_JANITOR=true",
 					fmt.Sprintf("MAX_HEADER_LENGTH=%d", utils.Config.Realtime.MaxHeaderLength),
 				},
-				ExposedPorts: nat.PortSet{"4000/tcp": {}},
+				ExposedPorts: portSet("4000/tcp"),
 				Healthcheck: &container.HealthConfig{
 					// Podman splits command by spaces unless it's quoted, but curl header can't be quoted.
 					Test: []string{
@@ -1116,10 +1120,8 @@ EOF
 				},
 			},
 			container.HostConfig{
-				Binds: binds,
-				PortBindings: nat.PortMap{"3000/tcp": []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Studio.Port), 10),
-				}}},
+				Binds:         binds,
+				PortBindings:  portMap("3000/tcp", strconv.FormatUint(uint64(utils.Config.Studio.Port), 10)),
 				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{
@@ -1181,11 +1183,7 @@ EOF
 					"/bin/sh", "-c",
 					fmt.Sprintf("/app/bin/migrate && /app/bin/supavisor eval '%s' && /app/bin/server", poolerTenantBuf.String()),
 				},
-				ExposedPorts: nat.PortSet{
-					"4000/tcp": {},
-					nat.Port(fmt.Sprintf("%d/tcp", portSession)):     {},
-					nat.Port(fmt.Sprintf("%d/tcp", portTransaction)): {},
-				},
+				ExposedPorts: portSet("4000/tcp", fmt.Sprintf("%d/tcp", portSession), fmt.Sprintf("%d/tcp", portTransaction)),
 				Healthcheck: &container.HealthConfig{
 					Test:     []string{"CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/api/health"},
 					Interval: 10 * time.Second,
@@ -1194,9 +1192,7 @@ EOF
 				},
 			},
 			container.HostConfig{
-				PortBindings: nat.PortMap{nat.Port(fmt.Sprintf("%d/tcp", dockerPort)): []nat.PortBinding{{
-					HostPort: strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10),
-				}}},
+				PortBindings:  portMap(fmt.Sprintf("%d/tcp", dockerPort), strconv.FormatUint(uint64(utils.Config.Db.Pooler.Port), 10)),
 				RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 			},
 			network.NetworkingConfig{

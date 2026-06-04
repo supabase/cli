@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/containerd/errdefs"
-	"github.com/docker/docker/client"
 	"github.com/go-errors/errors"
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
+	"github.com/moby/moby/client"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils/agent"
@@ -146,7 +146,7 @@ func AssertSupabaseDbIsRunning() error {
 }
 
 func AssertServiceIsRunning(ctx context.Context, containerId string) error {
-	if _, err := Docker.ContainerInspect(ctx, containerId); err != nil {
+	if _, err := Docker.ContainerInspect(ctx, containerId, client.ContainerInspectOptions{}); err != nil {
 		if errdefs.IsNotFound(err) {
 			return errors.New(ErrNotRunning)
 		}

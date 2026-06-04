@@ -13,12 +13,12 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/containerd/errdefs"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/pgcache"
 	"github.com/supabase/cli/internal/migration/apply"
@@ -117,8 +117,9 @@ EOF`}
 
 func NewHostConfig() container.HostConfig {
 	hostPort := strconv.FormatUint(uint64(utils.Config.Db.Port), 10)
+	dbPort := network.MustParsePort("5432/tcp")
 	hostConfig := container.HostConfig{
-		PortBindings:  nat.PortMap{"5432/tcp": []nat.PortBinding{{HostPort: hostPort}}},
+		PortBindings:  network.PortMap{dbPort: []network.PortBinding{{HostPort: hostPort}}},
 		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
 		Binds: []string{
 			utils.DbId + ":/var/lib/postgresql/data",
@@ -163,7 +164,7 @@ EOF`}
 		hostConfig.Binds = append(hostConfig.Binds, utils.ToDockerPath(fromBackup)+":/etc/backup.sql:ro")
 	}
 	// Creating volume will not override existing volume, so we must inspect explicitly
-	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId)
+	_, err := utils.Docker.VolumeInspect(ctx, utils.DbId, client.VolumeInspectOptions{})
 	utils.NoBackupVolume = errdefs.IsNotFound(err)
 	if utils.NoBackupVolume {
 		fmt.Fprintln(w, "Starting database...")

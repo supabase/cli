@@ -2,7 +2,7 @@
 
 package utils
 
-import "github.com/docker/docker/api/types/container"
+import "github.com/moby/moby/api/types/container"
 
 var extraHosts []string
 

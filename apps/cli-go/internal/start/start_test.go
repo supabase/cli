@@ -10,13 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/image"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/docker/api/types/volume"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/image"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/volume"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,7 +68,7 @@ func TestStartCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
@@ -92,7 +91,7 @@ func TestStartCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
@@ -102,11 +101,11 @@ func TestStartCommand(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_start/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
 				},
-			}})
+			})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
 			Reply(http.StatusOK).
@@ -136,7 +135,7 @@ func TestDatabaseStart(t *testing.T) {
 		}, fsys))
 		ctx := phtelemetry.WithService(context.Background(), service)
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Head("/_ping").
@@ -214,12 +213,12 @@ func TestDatabaseStart(t *testing.T) {
 			gock.New(utils.Docker.DaemonHost()).
 				Get("/v" + utils.Docker.ClientVersion() + "/containers/" + c + "/json").
 				Reply(http.StatusOK).
-				JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				JSON(container.InspectResponse{
 					State: &container.State{
 						Running: true,
-						Health:  &container.Health{Status: types.Healthy},
+						Health:  &container.Health{Status: container.Healthy},
 					},
-				}})
+				})
 		}
 		gock.New(utils.Config.Api.ExternalUrl).
 			Head("/rest-admin/v1/ready").
@@ -231,12 +230,12 @@ func TestDatabaseStart(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: container.Healthy},
 				},
-			}})
+			})
 		gock.New(utils.Config.Api.ExternalUrl).
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
@@ -262,7 +261,7 @@ func TestDatabaseStart(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Head("/_ping").
@@ -289,12 +288,12 @@ func TestDatabaseStart(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: container.Healthy},
 				},
-			}})
+			})
 		// Run test
 		exclude := ExcludableContainers()
 		exclude = append(exclude, "invalid", exclude[0])

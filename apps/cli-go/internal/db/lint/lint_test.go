@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/docker/docker/api/types/container"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
+	"github.com/moby/moby/api/types/container"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +33,7 @@ func TestLintCommand(t *testing.T) {
 	// Setup in-memory fs
 	fsys := afero.NewMemMapFs()
 	// Setup mock docker
-	require.NoError(t, apitest.MockDocker(utils.Docker))
+	require.NoError(t, apitest.MockDocker(&utils.Docker))
 	defer gock.OffAll()
 	gock.New(utils.Docker.DaemonHost()).
 		Get("/v" + utils.Docker.ClientVersion() + "/containers").

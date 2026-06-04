@@ -8,10 +8,9 @@ import (
 	"os"
 	"testing"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/volume"
 	"github.com/h2non/gock"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/volume"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -61,7 +60,7 @@ func TestStartDatabase(t *testing.T) {
 		roles := "create role test"
 		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
@@ -71,12 +70,12 @@ func TestStartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: container.Healthy},
 				},
-			}})
+			})
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Realtime.Image), "test-realtime")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-realtime", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Storage.Image), "test-storage")
@@ -106,7 +105,7 @@ func TestStartDatabase(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
@@ -116,12 +115,12 @@ func TestStartDatabase(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: container.Healthy},
 				},
-			}})
+			})
 		// Run test
 		err := StartDatabase(context.Background(), "", fsys, io.Discard)
 		// Check error
@@ -139,7 +138,7 @@ func TestStartDatabase(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
@@ -171,7 +170,7 @@ func TestStartCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers").
@@ -188,7 +187,7 @@ func TestStartCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/").
@@ -206,7 +205,7 @@ func TestStartCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, utils.WriteConfig(fsys, false))
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/").
@@ -308,7 +307,7 @@ func TestSetupDatabase(t *testing.T) {
 		utils.Config.Realtime.Enabled = true
 		utils.Config.Db.Port = 5432
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Realtime.Image) + "/json").
@@ -328,7 +327,7 @@ func TestSetupDatabase(t *testing.T) {
 		// Setup in-memory fs
 		fsys := &fstest.OpenErrorFs{DenyPath: utils.CustomRolesPath}
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Realtime.Image), "test-realtime")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-realtime", ""))
@@ -358,7 +357,7 @@ func TestStartDatabaseWithCustomSettings(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 
 		// Setup mock docker
-		require.NoError(t, apitest.MockDocker(utils.Docker))
+		require.NoError(t, apitest.MockDocker(&utils.Docker))
 		defer gock.OffAll()
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/volumes/" + utils.DbId).
@@ -368,12 +367,12 @@ func TestStartDatabaseWithCustomSettings(t *testing.T) {
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
 			Reply(http.StatusOK).
-			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			JSON(container.InspectResponse{
 				State: &container.State{
 					Running: true,
-					Health:  &container.Health{Status: types.Healthy},
+					Health:  &container.Health{Status: container.Healthy},
 				},
-			}})
+			})
 
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Realtime.Image), "test-realtime")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-realtime", ""))

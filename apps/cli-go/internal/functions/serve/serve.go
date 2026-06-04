@@ -11,11 +11,11 @@ import (
 	"strings"
 
 	"github.com/docker/cli/cli/compose/loader"
-	"github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/mount"
-	"github.com/docker/docker/api/types/network"
-	"github.com/docker/go-connections/nat"
 	"github.com/go-errors/errors"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/functions/deploy"
@@ -109,7 +109,7 @@ func restartEdgeRuntime(ctx context.Context, envFilePath string, noVerifyJWT *bo
 		return err
 	}
 	// 2. Remove existing container.
-	_ = utils.Docker.ContainerRemove(ctx, utils.EdgeRuntimeId, container.RemoveOptions{
+	_, _ = utils.Docker.ContainerRemove(ctx, utils.EdgeRuntimeId, client.ContainerRemoveOptions{
 		RemoveVolumes: true,
 		Force:         true,
 	})
@@ -199,13 +199,13 @@ func ServeFunctions(ctx context.Context, envFilePath string, noVerifyJWT *bool, 
 EOF
 `}
 	// 4. Parse exposed ports
-	dockerRuntimePort := nat.Port(fmt.Sprintf("%d/tcp", dockerRuntimeServerPort))
-	exposedPorts := nat.PortSet{dockerRuntimePort: struct{}{}}
-	portBindings := nat.PortMap{}
+	dockerRuntimePort := network.MustParsePort(fmt.Sprintf("%d/tcp", dockerRuntimeServerPort))
+	exposedPorts := network.PortSet{dockerRuntimePort: struct{}{}}
+	portBindings := network.PortMap{}
 	if runtimeOption.InspectMode != nil {
-		dockerInspectorPort := nat.Port(fmt.Sprintf("%d/tcp", dockerRuntimeInspectorPort))
+		dockerInspectorPort := network.MustParsePort(fmt.Sprintf("%d/tcp", dockerRuntimeInspectorPort))
 		exposedPorts[dockerInspectorPort] = struct{}{}
-		portBindings[dockerInspectorPort] = []nat.PortBinding{{
+		portBindings[dockerInspectorPort] = []network.PortBinding{{
 			HostPort: strconv.FormatUint(uint64(utils.Config.EdgeRuntime.InspectorPort), 10),
 		}}
 	}
