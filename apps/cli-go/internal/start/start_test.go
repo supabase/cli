@@ -5,16 +5,21 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	composeTypes "github.com/compose-spec/compose-go/v2/types"
+	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
+	"github.com/docker/docker/client"
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
@@ -116,6 +121,64 @@ func TestStartCommand(t *testing.T) {
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestPullImages(t *testing.T) {
+	t.Run("pulls missing images in parallel", func(t *testing.T) {
+		var activePulls, maxActivePulls, startedPulls int32
+		releasePulls := make(chan struct{})
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.Contains(r.URL.Path, "/images/") && strings.HasSuffix(r.URL.Path, "/json"):
+				http.Error(w, "missing", http.StatusNotFound)
+			case strings.HasSuffix(r.URL.Path, "/images/create"):
+				current := atomic.AddInt32(&activePulls, 1)
+				for {
+					maximum := atomic.LoadInt32(&maxActivePulls)
+					if current <= maximum || atomic.CompareAndSwapInt32(&maxActivePulls, maximum, current) {
+						break
+					}
+				}
+				if atomic.AddInt32(&startedPulls, 1) == 2 {
+					close(releasePulls)
+				}
+				select {
+				case <-releasePulls:
+				case <-time.After(time.Second):
+				}
+				atomic.AddInt32(&activePulls, -1)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"status":"done"}` + "\n"))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+
+		oldDocker := utils.Docker
+		docker, err := client.NewClientWithOpts(
+			client.WithHost(server.URL),
+			client.WithHTTPClient(server.Client()),
+			client.WithVersion(api.DefaultVersion),
+		)
+		require.NoError(t, err)
+		utils.Docker = docker
+		defer func() {
+			utils.Docker = oldDocker
+		}()
+
+		pullImages(context.Background(), composeTypes.Project{
+			Services: composeTypes.Services{
+				"one":       {Image: "image-one:1"},
+				"two":       {Image: "image-two:1"},
+				"duplicate": {Image: "image-one:1"},
+			},
+		})
+
+		assert.Equal(t, int32(2), atomic.LoadInt32(&startedPulls))
+		assert.GreaterOrEqual(t, atomic.LoadInt32(&maxActivePulls), int32(2))
 	})
 }
 

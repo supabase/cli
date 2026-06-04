@@ -15,15 +15,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/compose-spec/compose-go/v2/types"
-	"github.com/docker/cli/cli/command"
-	dockerFlags "github.com/docker/cli/cli/flags"
-	"github.com/docker/compose/v2/pkg/api"
-	"github.com/docker/compose/v2/pkg/compose"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
@@ -185,7 +182,7 @@ func (cli *RetryClient) ImagePull(ctx context.Context, refStr string, options im
 	return backoff.RetryWithData(pull, policy)
 }
 
-// Also retry ImageInspect: https://github.com/docker/compose/blob/main/pkg/compose/pull.go#L174
+// Also retry ImageInspect when prefetching images before containers are created.
 func (cli *RetryClient) ImageInspect(ctx context.Context, refStr string, options ...client.ImageInspectOption) (image.InspectResponse, error) {
 	pull := func() (image.InspectResponse, error) {
 		resp, err := cli.Client.ImageInspect(ctx, refStr, options...)
@@ -198,21 +195,33 @@ func (cli *RetryClient) ImageInspect(ctx context.Context, refStr string, options
 	return backoff.RetryWithData(pull, policy)
 }
 
-// pullImagesUsingCompose pulls all required images using docker-compose service
-func pullImagesUsingCompose(ctx context.Context, project types.Project) error {
-	// Create Docker CLI
-	cli, err := command.NewDockerCli()
-	if err != nil {
-		return errors.Errorf("failed to create Docker CLI: %w", err)
+func pullImages(ctx context.Context, project types.Project) {
+	cli := &RetryClient{Client: utils.Docker}
+	var wg sync.WaitGroup
+	pulling := make(map[string]struct{}, len(project.Services))
+	for _, service := range project.Services {
+		if len(service.Image) == 0 {
+			continue
+		}
+		if _, ok := pulling[service.Image]; ok {
+			continue
+		}
+		pulling[service.Image] = struct{}{}
+		if _, err := cli.ImageInspect(ctx, service.Image); err == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(imageName string) {
+			defer wg.Done()
+			out, err := cli.ImagePull(ctx, imageName, image.PullOptions{})
+			if err != nil {
+				return
+			}
+			_, _ = io.Copy(io.Discard, out)
+			_ = out.Close()
+		}(service.Image)
 	}
-	// Initialize Docker CLI
-	opt := command.WithAPIClient(&RetryClient{Client: utils.Docker})
-	if err := cli.Initialize(&dockerFlags.ClientOptions{}, opt); err != nil {
-		return errors.Errorf("failed to initialize Docker CLI: %w", err)
-	}
-	service := compose.NewComposeService(cli)
-	// Fallback to regular image pull by ignoring failures
-	return service.Pull(ctx, &project, api.PullOptions{IgnoreFailures: true})
+	wg.Wait()
 }
 
 func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
@@ -235,9 +244,7 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 		Name:     "supabase-cli",
 		Services: utils.GetServices().Filter(notExcluded),
 	}
-	if err := pullImagesUsingCompose(ctx, project); err != nil {
-		return err
-	}
+	pullImages(ctx, project)
 
 	// Start Postgres.
 	if dbConfig.Host == utils.DbId {
