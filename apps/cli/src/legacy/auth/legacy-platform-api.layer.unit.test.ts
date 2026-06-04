@@ -7,10 +7,13 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { vi } from "vitest";
 
+import { LegacyDebugFlag } from "../../shared/legacy/global-flags.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import { legacyPlatformApiLayer } from "./legacy-platform-api.layer.ts";
 import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
@@ -18,11 +21,17 @@ import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
 const SESSION_LAST_ACTIVE = 1_777_200_000_000;
 
-function mockCliConfig(opts: { accessToken?: string; apiUrl?: string; userAgent?: string }) {
+function mockCliConfig(opts: {
+  accessToken?: string;
+  apiUrl?: string;
+  userAgent?: string;
+  profile?: string;
+  projectHost?: string;
+}) {
   return Layer.succeed(LegacyCliConfig, {
-    profile: "supabase",
+    profile: opts.profile ?? "supabase",
     apiUrl: opts.apiUrl ?? "https://api.supabase.com",
-    projectHost: "supabase.co",
+    projectHost: opts.projectHost ?? "supabase.co",
     accessToken:
       opts.accessToken === undefined ? Option.none() : Option.some(Redacted.make(opts.accessToken)),
     projectId: Option.none(),
@@ -49,6 +58,7 @@ function mockTelemetryRuntime(
     isFirstRun?: boolean;
     isTty?: boolean;
     isCi?: boolean;
+    debug?: boolean;
   } = {},
 ) {
   return Layer.succeed(
@@ -152,6 +162,7 @@ function withBaseDeps(
     isFirstRun?: boolean;
     isTty?: boolean;
     isCi?: boolean;
+    debug?: boolean;
   } = {},
 ) {
   const analytics = opts.analytics ?? mockAnalytics();
@@ -167,6 +178,8 @@ function withBaseDeps(
           isCi: opts.isCi,
         }),
       ),
+      Layer.provide(legacyDebugLoggerLayer),
+      Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
       Layer.provide(nodeFileSystemLayer()),
       Layer.provide(nodePathLayer()),
     );
@@ -280,6 +293,35 @@ describe("legacyPlatformApiLayer", () => {
       yield* api.v1.listAllProjects();
       expect(http.requests[0]?.url).toContain("https://api.supabase.green/");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("debug logs the CLI profile and fully resolved request URL", () => {
+    const http = captureRequests();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const layer = legacyPlatformApiLayer.pipe(
+      Layer.provide(
+        mockCliConfig({
+          accessToken: VALID_TOKEN,
+          apiUrl: "https://api.supabase.green",
+          profile: "supabase-staging",
+          projectHost: "supabase.red",
+        }),
+      ),
+      Layer.provide(mockCredentials(Option.none())),
+      Layer.provide(http.layer),
+      withBaseDeps({ debug: true }),
+    );
+    return Effect.gen(function* () {
+      const api = yield* LegacyPlatformApi;
+      yield* api.v1.listAllProjects();
+      const output = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+      expect(output).toContain("Supabase CLI ");
+      expect(output).toContain("Using profile: supabase-staging (supabase.red)\n");
+      expect(output.match(/Using access token from env var\.\.\.\n/g)).toHaveLength(2);
+      expect(output).toMatch(
+        /\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2} HTTP GET: https:\/\/api\.supabase\.green\/v1\/projects\n/,
+      );
+    }).pipe(Effect.ensuring(Effect.sync(() => stderr.mockRestore())), Effect.provide(layer));
   });
 
   it.effect("stitches identity from X-Gotrue-Id responses outside CI", () => {

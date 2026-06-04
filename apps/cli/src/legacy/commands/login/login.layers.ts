@@ -3,6 +3,7 @@ import { Layer } from "effect";
 import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
 import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
+import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { browserLayer } from "../../../shared/runtime/browser.layer.ts";
@@ -21,16 +22,18 @@ import { legacyLoginCryptoLayer } from "./login-crypto.layer.ts";
 // memoised by reference to avoid building two keyring readers / config loaders.
 // `Analytics`, `Output`, `Stdio`, `Tty`, `TelemetryRuntime`, `FileSystem`, and
 // `Path` come from the root layer.
-const credentials = legacyCredentialsLayer.pipe(Layer.provide(legacyCliConfigLayer));
-const loginApi = legacyLoginApiLayer.pipe(
-  Layer.provide(legacyHttpClientLayer),
-  Layer.provide(legacyCliConfigLayer),
+const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const credentials = legacyCredentialsLayer.pipe(
+  Layer.provide(cliConfig),
+  Layer.provide(legacyDebugLoggerLayer),
 );
+const loginApi = legacyLoginApiLayer.pipe(Layer.provide(httpClient), Layer.provide(cliConfig));
 
 export const legacyLoginRuntimeLayer = Layer.mergeAll(
   credentials,
-  legacyCliConfigLayer,
-  legacyHttpClientLayer,
+  cliConfig,
+  httpClient,
   loginApi,
   legacyLoginCryptoLayer,
   legacyTelemetryStateLayer,
