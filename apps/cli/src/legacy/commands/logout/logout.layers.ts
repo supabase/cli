@@ -2,6 +2,7 @@ import { Layer } from "effect";
 
 import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
+import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 
@@ -16,9 +17,15 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
  * legacy CLAUDE.md item 5). `Analytics`, `Output`, `Stdio`, `FileSystem`,
  * `Path`, `TelemetryRuntime`, and `LegacyYesFlag` come from the root layer.
  */
+const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const credentials = legacyCredentialsLayer.pipe(
+  Layer.provide(cliConfig),
+  Layer.provide(legacyDebugLoggerLayer),
+);
+
 export const legacyLogoutRuntimeLayer = Layer.mergeAll(
-  legacyCredentialsLayer.pipe(Layer.provide(legacyCliConfigLayer)),
-  legacyCliConfigLayer,
+  credentials,
+  cliConfig,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["logout"]),
 );
