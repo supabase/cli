@@ -76,7 +76,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 <!-- Note: start, stop, and status are also wrapped in the legacy shell — see Legacy Shell Wrapping Status below. -->
 
-| `services` | `partial` | `supabase status` + `supabase stack update` | Go-style dedicated `services` command shape | `--stack` | The old version-reporting and linked-version drift behavior exists in TS, but it is split across `status` for per-service versions and `stack update` for refreshing pinned versions instead of a single `services` command. |
+| `services` | `ported` | [`../src/next/commands/services/services.command.ts`](../src/next/commands/services/services.command.ts) | `--output` remains a global legacy-shell concern rather than a next-only command flag | `--output-format` | TS restores the dedicated `services` command, prints the bundled local service image matrix, and best-effort compares linked remote versions without proxying to Go. |
 
 ## Database
 
