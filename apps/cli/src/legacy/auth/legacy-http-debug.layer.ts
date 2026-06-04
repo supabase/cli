@@ -14,9 +14,8 @@ export const legacyHttpClientLayer = Layer.effect(
   Effect.gen(function* () {
     const logger = yield* LegacyDebugLogger;
     const base = yield* HttpClient.HttpClient;
-    return HttpClient.mapRequest(base, (req) => {
-      Effect.runSync(logger.http(req.method, req.url));
-      return req;
-    });
+    return HttpClient.mapRequestEffect(base, (req) =>
+      logger.http(req.method, req.url).pipe(Effect.as(req)),
+    );
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));

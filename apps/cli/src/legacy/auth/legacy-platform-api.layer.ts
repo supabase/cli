@@ -115,10 +115,9 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
     });
 
   const transformClient = (client: HttpClient.HttpClient) => {
-    const debugClient = HttpClient.mapRequest(client, (request) => {
-      Effect.runSync(debugLogger.http(request.method, request.url));
-      return request;
-    });
+    const debugClient = HttpClient.mapRequestEffect(client, (request) =>
+      debugLogger.http(request.method, request.url).pipe(Effect.as(request)),
+    );
 
     return Effect.succeed(
       HttpClient.transform(debugClient, (requestEffect) =>
