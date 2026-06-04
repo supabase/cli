@@ -10,5 +10,6 @@ package config
 // Verdaccio workflow (CLI maintainers only).
 //
 // Typical value when running pg-toolbelt's Verdaccio on Docker Desktop:
-//   PGDELTA_NPM_REGISTRY=http://host.docker.internal:4873
+//
+//	PGDELTA_NPM_REGISTRY=http://host.docker.internal:4873
 const PgDeltaNpmRegistryEnv = "PGDELTA_NPM_REGISTRY"

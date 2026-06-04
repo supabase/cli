@@ -362,7 +362,7 @@ func shouldUseDeclarativePgDeltaPull(usePgDeltaDiff bool) bool {
 	if usePgDeltaDiff {
 		return false
 	}
-	return shouldUsePgDelta() || usePgDelta
+	return shouldUsePgDelta()
 }
 
 func init() {

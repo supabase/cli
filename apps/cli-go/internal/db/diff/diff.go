@@ -212,21 +212,19 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	} else {
 		fmt.Fprintln(w, "Diffing schemas...")
 	}
-	var debugCapture *PgDeltaDebugCapture
 	if IsPgDeltaDebugEnabled() && usePgDelta {
+		// Capture the shadow baseline catalog and edge-runtime stderr so an
+		// empty diff can be inspected later. DiffPgDeltaRefDetailed mirrors the
+		// pg-delta differ but additionally surfaces stderr, which differ() drops.
+		debugCapture := &PgDeltaDebugCapture{}
 		if snapshot, exportErr := exportCatalogPgDelta(ctx, utils.ToPostgresURL(shadowConfig), "postgres", options...); exportErr == nil {
-			debugCapture = &PgDeltaDebugCapture{SourceCatalog: snapshot}
+			debugCapture.SourceCatalog = snapshot
 		} else {
 			fmt.Fprintf(w, "Warning: failed to export shadow pg-delta catalog: %v\n", exportErr)
 		}
-	}
-	if IsPgDeltaDebugEnabled() && usePgDelta {
 		result, err := DiffPgDeltaRefDetailed(ctx, utils.ToPostgresURL(shadowConfig), utils.ToPostgresURL(config), schema, pgDeltaFormatOptions(), options...)
 		if err != nil {
 			return DatabaseDiff{}, err
-		}
-		if debugCapture == nil {
-			debugCapture = &PgDeltaDebugCapture{}
 		}
 		debugCapture.Stderr = result.Stderr
 		return DatabaseDiff{SQL: result.SQL, Debug: debugCapture}, nil
@@ -235,7 +233,7 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	if err != nil {
 		return DatabaseDiff{}, err
 	}
-	return DatabaseDiff{SQL: output, Debug: debugCapture}, nil
+	return DatabaseDiff{SQL: output}, nil
 }
 
 func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
