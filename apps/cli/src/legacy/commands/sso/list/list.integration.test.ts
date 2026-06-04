@@ -151,6 +151,23 @@ describe("legacy sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  // CLI-1558: the Management API list response omits `saml.id` (and can omit
+  // `saml.entity_id`), which the OpenAPI spec wrongly marks required. Strict
+  // schema decoding rejected the payload with
+  // `SchemaError(Missing key at ["items"][0]["saml"]["id"])`. The generated
+  // schema now treats both as optional, matching the Go CLI's tolerant JSON.
+  it.live("renders providers when the API omits saml.id / entity_id (CLI-1558)", () => {
+    const body = {
+      items: [{ ...PROVIDER_ITEM, saml: { metadata_url: "https://example.com" } }],
+    };
+    const { layer, out } = setup({ body });
+    return Effect.gen(function* () {
+      yield* legacySsoList({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
+      expect(out.stdoutText).toContain("SAML 2.0");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("emits a success payload via --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {

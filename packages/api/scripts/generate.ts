@@ -160,7 +160,9 @@ function loadSpec(): OpenApiDocument {
     const schemas: Record<string, OpenApiSchema> = {};
     for (const [name, schema] of Object.entries(parsed.components.schemas)) {
       if (isRecord(schema)) {
-        schemas[name] = schema;
+        schemas[name] = SSO_PROVIDER_RESPONSE_SCHEMAS.has(name)
+          ? relaxSsoSamlRequired(schema)
+          : schema;
       }
     }
     components = { schemas };
@@ -270,6 +272,77 @@ function sanitizeOpenApiSchema(schema: OpenApiSchema, inPropertiesMap = false): 
   }
 
   return sanitized;
+}
+
+// The Management API OpenAPI spec marks the SSO provider `saml` descriptor's
+// `id` and `entity_id` as `required`, but the list/get responses omit them in
+// practice. Strict response decoding then rejects valid payloads with
+// `SchemaError(Missing key at ["items"][0]["saml"]["id"])` (CLI-1558) — the Go
+// CLI tolerated this via `encoding/json`. Relax the `saml` descriptor's
+// `required` set within the SSO provider response schemas so decoding matches
+// the real API. Mirrors the inline UUID patch above; applied in `loadSpec` so
+// both the regenerated `contracts.ts` and `openapi.json` reflect it. The
+// request bodies (`CreateProviderBody`, `UpdateProviderBody`) are intentionally
+// excluded — input validation stays strict.
+const SSO_PROVIDER_RESPONSE_SCHEMAS = new Set([
+  "CreateProviderResponse",
+  "ListProvidersResponse",
+  "GetProviderResponse",
+  "UpdateProviderResponse",
+  "DeleteProviderResponse",
+]);
+const SSO_SAML_OPTIONAL_FIELDS = new Set(["id", "entity_id"]);
+
+function dropSamlRequiredFields(schema: OpenApiSchema): OpenApiSchema {
+  if (!Array.isArray(schema.required)) {
+    return schema;
+  }
+  const required = schema.required.filter((field) => !SSO_SAML_OPTIONAL_FIELDS.has(field));
+  const next: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "required") {
+      continue;
+    }
+    next[key] = value;
+  }
+  if (required.length > 0) {
+    next.required = required;
+  }
+  return next;
+}
+
+// Walks an SSO provider response schema and relaxes the `required` set of any
+// nested `saml` descriptor object. `saml` appears at `properties.saml` for the
+// single-provider responses and at `properties.items.items.properties.saml`
+// for the list response, so we recurse through `properties`, arrays, and
+// nested objects to reach it wherever it lives.
+function relaxSsoSamlRequired(schema: OpenApiSchema): OpenApiSchema {
+  const patched: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "properties" && isRecord(value)) {
+      const properties: Record<string, unknown> = {};
+      for (const [propName, propSchema] of Object.entries(value)) {
+        if (!isRecord(propSchema)) {
+          properties[propName] = propSchema;
+          continue;
+        }
+        const descended = relaxSsoSamlRequired(propSchema);
+        properties[propName] = propName === "saml" ? dropSamlRequiredFields(descended) : descended;
+      }
+      patched[key] = properties;
+      continue;
+    }
+    if (Array.isArray(value)) {
+      patched[key] = value.map((entry) => (isRecord(entry) ? relaxSsoSamlRequired(entry) : entry));
+      continue;
+    }
+    if (isRecord(value)) {
+      patched[key] = relaxSsoSamlRequired(value);
+      continue;
+    }
+    patched[key] = value;
+  }
+  return patched;
 }
 
 function containsBinarySchema(schema: OpenApiSchema): boolean {
