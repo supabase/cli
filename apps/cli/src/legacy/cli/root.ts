@@ -3,6 +3,7 @@ import { Command } from "effect/unstable/cli";
 import { legacyBackupsCommand } from "../commands/backups/backups.command.ts";
 import { legacyBootstrapCommand } from "../commands/bootstrap/bootstrap.command.ts";
 import { legacyBranchesCommand } from "../commands/branches/branches.command.ts";
+import { legacyCompletionCommand } from "../commands/completion/completion.command.ts";
 import { legacyConfigCommand } from "../commands/config/config.command.ts";
 import { legacyDbCommand } from "../commands/db/db.command.ts";
 import { legacyDomainsCommand } from "../commands/domains/domains.command.ts";
@@ -36,6 +37,7 @@ import { legacyUnlinkCommand } from "../commands/unlink/unlink.command.ts";
 import { legacyVanitySubdomainsCommand } from "../commands/vanity-subdomains/vanity-subdomains.command.ts";
 import { OutputFormatFlag } from "../../shared/cli/global-flags.ts";
 import { outputLayerFor } from "../../shared/output/output.layer.ts";
+import { legacyQuietProgressTextOutputLayer } from "../output/legacy-quiet-progress-text-output.layer.ts";
 import { makeGoProxyLayer } from "../../shared/legacy/go-proxy.layer.ts";
 import {
   LEGACY_GLOBAL_FLAGS,
@@ -58,6 +60,7 @@ export const legacyRoot = Command.make("supabase").pipe(
     legacyBackupsCommand,
     legacyBootstrapCommand,
     legacyBranchesCommand,
+    legacyCompletionCommand,
     legacyConfigCommand,
     legacyDbCommand,
     legacyDomainsCommand,
@@ -123,7 +126,18 @@ export const legacyRoot = Command.make("supabase").pipe(
         if (createTicket) globalArgs.push("--create-ticket");
         if (agent !== "auto") globalArgs.push("--agent", agent);
 
-        return Layer.mergeAll(outputLayerFor(outputFormat), makeGoProxyLayer({ globalArgs }));
+        // Go's `-o {json,yaml,toml,env}` selects a machine encoder the handler
+        // writes via `output.raw`. Keep the text layer (so errors still render
+        // as red text on stderr, matching Go), but suppress its progress spinner
+        // — otherwise clack writes ANSI to stdout and corrupts the payload
+        // (CLI-1546). `-o pretty` / no `-o` keep the normal text/json layers.
+        const goFmt = Option.getOrUndefined(goOutput);
+        const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty";
+        const outputLayer = isGoMachineFormat
+          ? legacyQuietProgressTextOutputLayer
+          : outputLayerFor(outputFormat);
+
+        return Layer.mergeAll(outputLayer, makeGoProxyLayer({ globalArgs }));
       }),
     ),
   ),

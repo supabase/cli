@@ -222,13 +222,17 @@ export function mockOutput(
     confirmRelogin?: boolean;
     confirmLogout?: boolean;
     promptTextFail?: boolean;
+    promptConfirmFail?: boolean;
     promptTextResponses?: ReadonlyArray<string>;
     promptSelectResponses?: ReadonlyArray<string>;
+    promptPasswordResponses?: ReadonlyArray<string>;
+    promptConfirmResponses?: ReadonlyArray<boolean>;
   } = {},
 ) {
   const messages: OutputMessage[] = [];
   const progressEvents: ProgressEvent[] = [];
   const events: OutputEvent[] = [];
+  const rawChunks: Array<{ text: string; stream: "stdout" | "stderr" }> = [];
   const promptSelectCalls: Array<{
     message: string;
     options: ReadonlyArray<{
@@ -247,6 +251,8 @@ export function mockOutput(
   }> = [];
   const promptTextResponses = [...(opts.promptTextResponses ?? [])];
   const promptSelectResponses = [...(opts.promptSelectResponses ?? [])];
+  const promptPasswordResponses = [...(opts.promptPasswordResponses ?? [])];
+  const promptConfirmResponses = [...(opts.promptConfirmResponses ?? [])];
   return {
     layer: Layer.succeed(Output, {
       format: opts.format ?? "text",
@@ -368,8 +374,18 @@ export function mockOutput(
           return Effect.succeed(promptTextResponses.shift() ?? "123456");
         };
       })(),
-      promptPassword: () => Effect.succeed(""),
-      promptConfirm: () => Effect.succeed(opts.confirmLogout ?? opts.confirmRelogin ?? true),
+      promptPassword: () => Effect.succeed(promptPasswordResponses.shift() ?? ""),
+      promptConfirm: (_message, _opts) =>
+        opts.promptConfirmFail
+          ? Effect.fail(
+              new NonInteractiveError({
+                detail: "Prompt cancelled",
+                suggestion: "Run in interactive mode",
+              }),
+            )
+          : Effect.succeed(
+              promptConfirmResponses.shift() ?? opts.confirmLogout ?? opts.confirmRelogin ?? true,
+            ),
       promptSelect: (message, options, behavior) =>
         Effect.sync(() => {
           promptSelectCalls.push({ message, options, behavior });
@@ -378,11 +394,28 @@ export function mockOutput(
         }),
       promptMultiSelect: (_message, options) =>
         Effect.succeed(options.map((option) => option.value)),
+      raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
+        Effect.sync(() => {
+          rawChunks.push({ text, stream });
+        }),
     }),
     messages,
     progressEvents,
     events,
     promptSelectCalls,
+    rawChunks,
+    get stdoutText() {
+      return rawChunks
+        .filter((c) => c.stream === "stdout")
+        .map((c) => c.text)
+        .join("");
+    },
+    get stderrText() {
+      return rawChunks
+        .filter((c) => c.stream === "stderr")
+        .map((c) => c.text)
+        .join("");
+    },
   };
 }
 

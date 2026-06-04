@@ -2,59 +2,51 @@
 
 ## Files Read
 
-| Path                              | Format                    | When                                                       |
-| --------------------------------- | ------------------------- | ---------------------------------------------------------- |
-| `~/.supabase/access-token`        | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
-| `<workdir>/.supabase/config.json` | JSON                      | always, to resolve linked project ref                      |
+Same auth fallback chain (env / keyring / `~/.supabase/access-token`) and project-ref discovery (`<workdir>/supabase/.temp/project-ref`) as every Management-API legacy command.
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                             | Format | When                                                                     |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
 
 ## API Routes
 
-| Method | Path                       | Auth         | Request body | Response (used fields)                                                                 |
-| ------ | -------------------------- | ------------ | ------------ | -------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/branches/{branch_id}` | Bearer token | none         | `{db_host, db_port, db_user, db_pass, jwt_secret, ref, postgres_version, status, ...}` |
+| Method | Path                                        | Auth         | When                                                                          | Response (used fields)                                                                  |
+| ------ | ------------------------------------------- | ------------ | ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects/{ref}/branches/{name}`        | Bearer token | input is neither a UUID nor a `^[a-z]{20}$` ref pattern (named-branch lookup) | `{project_ref, ...}`                                                                    |
+| `GET`  | `/v1/branches/{branch_id_or_ref}`           | Bearer token | always — branch detail / config                                               | `{ref, db_host, db_port, db_user?, db_pass?, jwt_secret?, postgres_version, status, …}` |
+| `GET`  | `/v1/projects/{ref}/api-keys`               | Bearer token | only when `--output` is not `pretty`                                          | `[{name, api_key?}]`                                                                    |
+| `GET`  | `/v1/projects/{ref}/config/database/pooler` | Bearer token | only when `--output` is not `pretty`                                          | `[SupavisorConfigResponse]` — handler filters for `database_type === "PRIMARY"`         |
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
+`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`, `SUPABASE_WORKDIR` — same semantics as `branches list`.
 
 ## Exit Codes
 
-| Code | Condition                                                    |
-| ---- | ------------------------------------------------------------ |
-| `0`  | success — branch details printed to stdout                   |
-| `1`  | authentication error — no valid token found                  |
-| `1`  | API error — non-2xx response from `/v1/branches/{branch_id}` |
-| `1`  | network / connection failure                                 |
-| `1`  | branch not found (404)                                       |
+| Code | Condition                                                                               |
+| ---- | --------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                 |
+| `1`  | `LegacyBranchesFindUnexpectedStatusError` / `…NetworkError` — named-lookup phase failed |
+| `1`  | `LegacyBranchesGetUnexpectedStatusError` / `…NetworkError` — detail phase failed        |
+| `1`  | `LegacyBranchesApiKeysUnexpectedStatusError` / `…NetworkError` — api-keys phase failed  |
+| `1`  | `LegacyBranchesPoolerUnexpectedStatusError` / `…NetworkError` — pooler phase failed     |
+| `1`  | `LegacyBranchesPrimaryNotFoundError` — no `database_type === "PRIMARY"` pooler entry    |
+
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties                  |
+| ---------------------- | ------------------------------------------ | ----------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output pretty` (Go default) / `--output-format text`
 
-Prints a table with columns: `HOST`, `PORT`, `USER`, `PASSWORD`, `JWT SECRET`, `POSTGRES VERSION`, `STATUS`.
+Glamour-styled 7-column table: `HOST`, `PORT`, `USER`, `PASSWORD`, `JWT SECRET`, `POSTGRES VERSION`, `STATUS`. Missing `db_user` / `db_pass` / `jwt_secret` render as `******`.
 
-### `--output-format json`
+### `--output {json,yaml,toml,env}` / `--output-format json` / `stream-json`
 
-Single JSON object emitted to stdout on success.
-
-### `--output-format stream-json`
-
-One `result` event on success.
-
-```ndjson
-{"type":"result","data":{...}}
-```
-
-## Notes
-
-- Accepts optional positional `[name]` argument (branch name or ID). If omitted in interactive mode, prompts the user to select from a list of branches.
-- When `--output toml` is used in Go CLI, it emits connection strings as `.env`-style TOML; this format is not reproduced in the TS port.
+Emits the standard-env projection: `POSTGRES_URL` (pooled, falls back to direct on parse failure with `WARNING:` to stderr), `POSTGRES_URL_NON_POOLING` (direct), `SUPABASE_URL = https://<ref>.<project_host>`, `SUPABASE_JWT_SECRET`, plus `SUPABASE_<NAME>_KEY` per API key.

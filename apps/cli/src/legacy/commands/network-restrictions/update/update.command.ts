@@ -1,5 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyNetworkRestrictionsUpdate } from "./update.handler.ts";
 
 const config = {
@@ -24,5 +28,11 @@ export type LegacyNetworkRestrictionsUpdateFlags = CliCommand.Command.Config.Inf
 export const legacyNetworkRestrictionsUpdateCommand = Command.make("update", config).pipe(
   Command.withDescription("Update network restrictions."),
   Command.withShortDescription("Update network restrictions"),
-  Command.withHandler((flags) => legacyNetworkRestrictionsUpdate(flags)),
+  Command.withHandler((flags) =>
+    legacyNetworkRestrictionsUpdate(flags).pipe(
+      withLegacyCommandInstrumentation({ flags }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["network-restrictions", "update"])),
 );

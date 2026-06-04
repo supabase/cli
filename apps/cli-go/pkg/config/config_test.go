@@ -37,6 +37,7 @@ func TestConfigParsing(t *testing.T) {
 		err := config.Load("", fs.MapFS{})
 		// Check error
 		assert.NoError(t, err)
+		assert.True(t, config.Storage.VectorBuckets.Enabled)
 	})
 
 	t.Run("auth external url defaults from api external url", func(t *testing.T) {

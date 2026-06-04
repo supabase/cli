@@ -1,11 +1,18 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyDomainsActivate } from "./activate.handler.ts";
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
+  ),
+  includeRawOutput: Flag.boolean("include-raw-output").pipe(
+    Flag.withDescription("(Deprecated) use -o json instead."),
   ),
 } as const;
 
@@ -22,5 +29,11 @@ export const legacyDomainsActivateCommand = Command.make("activate", config).pip
       description: "Activate the custom hostname for a project",
     },
   ]),
-  Command.withHandler((flags) => legacyDomainsActivate(flags)),
+  Command.withHandler((flags) =>
+    legacyDomainsActivate(flags).pipe(
+      withLegacyCommandInstrumentation({ flags }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["domains", "activate"])),
 );

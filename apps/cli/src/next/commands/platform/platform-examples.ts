@@ -14,7 +14,10 @@ const PARAM_PLACEHOLDERS: Record<string, string | boolean | number> = {
   ref: "project-ref",
   slug: "my-function",
   function_slug: "my-function",
-  branch_id_or_ref: "branch-ref",
+  // 20-letter project ref. The oneOf union for this field accepts either a
+  // project ref (`^[a-z]{20}$`) or an RFC 4122 UUID — a plain placeholder
+  // like "branch-ref" would now be rejected by the schema.
+  branch_id_or_ref: "abcdefghijklmnopqrst",
   id: "resource-id",
   name: "example-name",
 };

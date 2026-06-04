@@ -1,10 +1,8 @@
 import type { CliOutput, HelpDoc } from "effect/unstable/cli";
-import { stripHiddenFlagsFromHelpDoc } from "../cli/hidden-flag.ts";
 
 export function jsonCliOutputFormatter(): CliOutput.Formatter {
   return {
-    formatHelpDoc: (doc: HelpDoc.HelpDoc) =>
-      JSON.stringify({ _tag: "Help", doc: stripHiddenFlagsFromHelpDoc(doc) }),
+    formatHelpDoc: (doc: HelpDoc.HelpDoc) => JSON.stringify({ _tag: "Help", doc }),
     formatCliError: (error) =>
       JSON.stringify({ _tag: "Error", error: { code: error._tag, message: error.message } }),
     formatError: (error) =>

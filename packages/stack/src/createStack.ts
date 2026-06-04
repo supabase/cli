@@ -559,6 +559,7 @@ export async function resolveConfig(
       port: ports.dbPort,
       dataDir: postgresDataDir,
       version: postgresInput.version ?? DEFAULT_VERSIONS.postgres,
+      autoExposeNewTables: postgresInput.autoExposeNewTables ?? true,
     },
     postgrest: resolvePostgrestConfig(postgrestInput, config.postgrest, ports),
     auth: resolveAuthConfig(authInput, config.auth, ports, ports.apiPort),

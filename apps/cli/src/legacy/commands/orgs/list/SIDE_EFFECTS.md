@@ -2,85 +2,100 @@
 
 ## Files Read
 
-| Path                       | Format                    | When                                                       |
-| -------------------------- | ------------------------- | ---------------------------------------------------------- |
-| `~/.supabase/access-token` | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
+| Path                                      | Format                    | When                                                                                          |
+| ----------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliConfig.profile` |
+| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
+| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                         | Format | When                                                        |
+| ---------------------------- | ------ | ----------------------------------------------------------- |
+| `~/.supabase/telemetry.json` | JSON   | always (in `Effect.ensuring`) at end of command — Go parity |
+
+`orgs list` is a user-level command — it does not resolve a `--project-ref`, so the legacy
+linked-project cache (`~/.supabase/<workdir-hash>/linked-project.json`) is never written.
 
 ## API Routes
 
-| Method | Path                | Auth         | Request body | Response (used fields)         |
-| ------ | ------------------- | ------------ | ------------ | ------------------------------ |
-| `GET`  | `/v1/organizations` | Bearer token | none         | `[{id: string, name: string}]` |
+| Method | Path                | Auth         | Request body | Response (used fields)                       |
+| ------ | ------------------- | ------------ | ------------ | -------------------------------------------- |
+| `GET`  | `/v1/organizations` | Bearer token | none         | `[{id: string, slug: string, name: string}]` |
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
+| Variable                | Purpose                                                                                                                                                   | Required?                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                      | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`      | selects API base URL (`supabase`, `supabase-staging`, `supabase-local`), or a filesystem path to a YAML profile (Go parity — used by the cli-e2e harness) | no (defaults to `supabase`)                             |
 
 ## Exit Codes
 
-| Code | Condition                                             |
-| ---- | ----------------------------------------------------- |
-| `0`  | success — organizations printed to stdout             |
-| `1`  | authentication error — no valid token found           |
-| `1`  | API error — non-2xx response from `/v1/organizations` |
-| `1`  | network / connection failure                          |
+| Code | Condition                                                                   |
+| ---- | --------------------------------------------------------------------------- |
+| `0`  | success — organizations printed to stdout                                   |
+| `1`  | `LegacyPlatformAuthRequiredError` — no token in env/keyring/file            |
+| `1`  | `LegacyOrgsListUnexpectedStatusError` — non-2xx response from list endpoint |
+| `1`  | `LegacyOrgsListNetworkError` — transport-level network failure              |
+| `1`  | `LegacyOrgsEnvNotSupportedError` — `--output env` flag is rejected          |
+
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups         |
+| ---------------------- | ------------------------------------------ | ----------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
+
+Matches `apps/cli-go/internal/orgs/list/`. Go does not fire any custom telemetry event for this
+command.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+The legacy `--output {pretty,json,yaml,toml,env}` flag (Go-compatible) and the new global
+`--output-format {text,json,stream-json}` flag are both honored. `--output` wins when both
+are supplied. `pretty` and `text` map to the same Glamour render.
 
-Prints a Markdown-style table to stdout with a header row and one row per organization.
-Column order: `ID`, `NAME`. Columns are separated by two spaces and left-aligned.
-No trailing newline after the last row (matches Go CLI behavior).
+### `--output pretty` (Go default) / `--output-format text`
 
-```
- ID                                    NAME
- xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  My Org
- yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy  Another Org
-```
+Prints a Glamour-styled markdown table with columns `ID`, `NAME`. Byte-matched against the
+Go CLI. The rendered table always ends with a trailing newline (Glamour appends one).
+
+### `--output json` (Go-compat)
+
+Indented JSON of the `OrganizationResponseV1[]` array with alphabetical keys + trailing newline.
+
+### `--output yaml`
+
+YAML document of the organizations array.
+
+### `--output toml`
+
+TOML document wrapping the array as `[[organizations]]` (Go parity).
+
+### `--output env`
+
+Fails with `LegacyOrgsEnvNotSupportedError("--output env flag is not supported")`. Matches
+`apps/cli-go/internal/orgs/list/list.go:32-33`.
 
 ### `--output-format json`
 
-Single JSON array emitted to stdout on success. Each element contains the full
-organization object as returned by the Management API.
-
-```json
-[
-  { "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", "name": "My Org" },
-  { "id": "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy", "name": "Another Org" }
-]
-```
+Single JSON object via `Output.success` with `{organizations: [...]}` data.
 
 ### `--output-format stream-json`
 
-One `result` event on success. No intermediate `log` events (the request is a single fast
-API call with no multi-step progress).
-
-```ndjson
-{"type":"result","data":[{"id":"xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx","name":"My Org"}]}
-```
-
-On failure, an `error` event is emitted instead:
-
-```ndjson
-{"type":"error","code":"ApiError","message":"…"}
-```
+One `result` NDJSON event with `{organizations: [...]}`.
 
 ## Notes
 
-- No `--project-ref` flag. `orgs list` is a user-level command — it lists all organizations
-  the authenticated user has access to, regardless of any linked project.
-- The result set is determined entirely by the access token's scope; no local config is read
-  beyond resolving the token itself.
-- The Go CLI also supports `--output toml` and `--output json` via its own flag. The
-  TypeScript port uses the global `--output-format` flag instead. The `toml` format is not
-  reproduced (not part of the compatibility contract for scripted workflows).
+- No `--project-ref` flag. The result set is determined entirely by the access token's scope.
+- Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth.
+
+## Security Notes
+
+- API-supplied `id` and `name` strings are rendered to stdout without ANSI / control-character
+  sanitization. This is strict Go parity — the Go CLI uses `glamour` which has the same
+  pass-through behaviour. A malicious or compromised Management API could in principle return
+  org names containing terminal escape sequences. If sanitization is added later it should
+  land at the renderer (`legacy-glamour-table.ts`) so both shells inherit the fix.
+- Error response bodies embedded in `LegacyOrgsListUnexpectedStatusError` are sanitized by
+  `mapLegacyHttpError` (control chars stripped, capped at 1024 bytes).

@@ -146,7 +146,10 @@ func initDatabase(ctx context.Context, options ...func(*pgx.ConnConfig)) error {
 		return err
 	}
 	defer conn.Close(context.Background())
-	return start.InitSchema14(ctx, conn)
+	if err := start.InitSchema14(ctx, conn); err != nil {
+		return err
+	}
+	return start.ApplyApiPrivileges(ctx, conn)
 }
 
 // Recreate postgres database by connecting to template1

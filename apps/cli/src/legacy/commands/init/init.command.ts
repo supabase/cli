@@ -1,6 +1,8 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { withHidden, withHiddenFromConfig } from "../../../shared/cli/hidden-flag.ts";
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
 import { legacyInit } from "./init.handler.ts";
 
 const config = {
@@ -14,18 +16,17 @@ const config = {
   force: Flag.boolean("force").pipe(
     Flag.withDescription("Overwrite existing supabase/config.toml."),
   ),
-  withVscodeWorkspace: withHidden(
-    Flag.boolean("with-vscode-workspace").pipe(Flag.withDescription("Generate VS Code workspace.")),
+  withVscodeWorkspace: Flag.boolean("with-vscode-workspace").pipe(
+    Flag.withDescription("Generate VS Code workspace."),
+    Flag.withHidden,
   ),
-  withVscodeSettings: withHidden(
-    Flag.boolean("with-vscode-settings").pipe(
-      Flag.withDescription("Generate VS Code settings for Deno."),
-    ),
+  withVscodeSettings: Flag.boolean("with-vscode-settings").pipe(
+    Flag.withDescription("Generate VS Code settings for Deno."),
+    Flag.withHidden,
   ),
-  withIntellijSettings: withHidden(
-    Flag.boolean("with-intellij-settings").pipe(
-      Flag.withDescription("Generate IntelliJ IDEA settings for Deno."),
-    ),
+  withIntellijSettings: Flag.boolean("with-intellij-settings").pipe(
+    Flag.withDescription("Generate IntelliJ IDEA settings for Deno."),
+    Flag.withHidden,
   ),
 } as const;
 
@@ -34,6 +35,8 @@ export type LegacyInitFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const legacyInitCommand = Command.make("init", config).pipe(
   Command.withDescription("Initialize a local project."),
   Command.withShortDescription("Initialize a local project"),
-  withHiddenFromConfig(config),
-  Command.withHandler((flags) => legacyInit(flags)),
+  Command.withHandler((flags) =>
+    legacyInit(flags).pipe(withLegacyCommandInstrumentation({ flags }), withJsonErrorHandling),
+  ),
+  Command.provide(commandRuntimeLayer(["init"])),
 );

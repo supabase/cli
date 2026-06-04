@@ -62,5 +62,37 @@
         "name": "my-bucket"
       }
     }
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/storage/v1/vector/ListVectorBuckets",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "apikey": "__JWT__",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "content-length": "3",
+        "content-type": "application/json",
+        "host": "localhost:__PORT__",
+        "user-agent": "SupabaseCLI/"
+      },
+      "body": {}
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-type": "application/json; charset=utf-8",
+        "sb-gateway-mode": "direct",
+        "sb-gateway-version": "1",
+        "sb-project-ref": "__PROJECT_REF__",
+        "sb-request-id": "__UUID__",
+        "x-content-type-options": "nosniff"
+      },
+      "body": {
+        "vectorBuckets": []
+      }
+    }
   }
 ]

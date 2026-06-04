@@ -49,9 +49,8 @@ export const analyticsLayer = Layer.effect(
     const runtime = yield* TelemetryRuntime;
     const cliConfig = yield* CliConfig;
     const aiTool = yield* AiTool;
-    const posthogKey = cliConfig.telemetryPosthogKey;
 
-    if (runtime.consent !== "granted") {
+    if (runtime.consent !== "granted" || Option.isNone(cliConfig.telemetryPosthogKey)) {
       return Analytics.of({
         capture: () => Effect.void,
         identify: () => Effect.void,
@@ -60,7 +59,7 @@ export const analyticsLayer = Layer.effect(
       });
     }
 
-    const client = new PostHog(posthogKey, {
+    const client = new PostHog(cliConfig.telemetryPosthogKey.value, {
       host: cliConfig.telemetryPosthogHost,
       flushAt: 1,
       flushInterval: 0,

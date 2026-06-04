@@ -38,10 +38,13 @@
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.146",
+    "@anthropic-ai/sdk": "^0.97.1",
     "@clack/prompts": "^1.4.0",
     "@effect/atom-react": "catalog:",
     "@effect/platform-bun": "catalog:",
     "@effect/vitest": "catalog:",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@napi-rs/keyring": "^1.3.0",
     "@parcel/watcher": "^2.5.6",
     "@supabase/api": "workspace:*",
@@ -50,22 +53,25 @@
     "@supabase/stack": "workspace:*",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
-    "@types/react": "^19.2.14",
+    "@types/react": "^19.2.15",
     "@typescript/native-preview": "catalog:",
     "@vercel/detect-agent": "^1.2.3",
     "@vitest/coverage-istanbul": "catalog:",
+    "dotenv": "^17.4.2",
     "effect": "catalog:",
-    "ink": "^7.0.3",
+    "ink": "^7.0.4",
     "ink-spinner": "^5.0.0",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
-    "posthog-node": "^5.34.3",
+    "posthog-node": "^5.35.5",
     "react": "^19.2.6",
     "react-devtools-core": "^7.0.1",
-    "semantic-release": "^24.2.9",
-    "vitest": "catalog:"
+    "semantic-release": "^25.0.3",
+    "smol-toml": "^1.6.1",
+    "vitest": "catalog:",
+    "yaml": "^2.9.0"
   },
   "optionalDependencies": {
     "@supabase/cli-darwin-arm64": "workspace:*",
@@ -99,7 +105,8 @@
     ],
     "ignore": [
       "scripts/*.ts",
-      "tests/**/*.ts"
+      "tests/**/*.ts",
+      "src/shared/telemetry/event-catalog.ts"
     ],
     "ignoreBinaries": [
       "nx"
@@ -117,7 +124,10 @@
       "oxfmt",
       "oxlint",
       "oxlint-tsgolint",
-      "semantic-release"
+      "semantic-release",
+      "@anthropic-ai/claude-agent-sdk",
+      "@anthropic-ai/sdk",
+      "@modelcontextprotocol/sdk"
     ]
   },
   "nx": {

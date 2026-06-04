@@ -7,10 +7,15 @@ import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
 import { makeEdgeRuntimeServiceDocker, makeEdgeRuntimeServiceNative } from "./edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./imgproxy.ts";
 import { makeMailpitServiceDocker } from "./mailpit.ts";
-import { makePostgresInitService } from "./postgres-init.ts";
+import {
+  makePostgresInitService,
+  REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL,
+} from "./postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService } from "./postgrest.ts";
 import { makePoolerServiceDocker, poolerContainerPorts } from "./pooler.ts";
+import { LOCAL_S3_PROTOCOL_ACCESS_KEY_ID, LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET } from "./storage.ts";
+import { makeStudioServiceDocker } from "./studio.ts";
 import { makeVectorServiceDocker } from "./vector.ts";
 import { DEFAULT_VERSIONS, dockerImageForService } from "../versions.ts";
 
@@ -75,6 +80,39 @@ describe("analyticsDockerRuntimeNetwork", () => {
       listenPort: 4000,
       nodeHost: "0.0.0.0",
     });
+  });
+});
+
+describe("makeStudioServiceDocker", () => {
+  it("injects legacy keys, opaque keys, and S3 protocol credentials", () => {
+    const def = makeStudioServiceDocker({
+      image: dockerImageForService("studio", DEFAULT_VERSIONS.studio),
+      apiPort: API_PORT,
+      port: 54323,
+      apiUrl: "http://host.docker.internal:54321",
+      publicApiUrl: "http://127.0.0.1:54321",
+      pgmetaUrl: "http://host.docker.internal:54322",
+      publishableKey: "sb_publishable_test",
+      secretKey: "sb_secret_test",
+      s3ProtocolAccessKeyId: LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
+      s3ProtocolAccessKeySecret: LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
+      jwtSecret: JWT_SECRET,
+      analyticsEnabled: true,
+      analyticsBackend: "postgres",
+      analyticsUrl: "http://host.docker.internal:54327",
+      analyticsApiKey: "test-api-key",
+      networkArgs: ["-p", "54323:54323"],
+      dependencies: [{ service: "pgmeta", condition: "healthy" }],
+    });
+
+    expect(def.args).toContain("SUPABASE_ANON_KEY=sb_publishable_test");
+    expect(def.args).toContain("SUPABASE_SERVICE_KEY=sb_secret_test");
+    expect(def.args).toContain("SUPABASE_PUBLISHABLE_KEY=sb_publishable_test");
+    expect(def.args).toContain("SUPABASE_SECRET_KEY=sb_secret_test");
+    expect(def.args).toContain(`S3_PROTOCOL_ACCESS_KEY_ID=${LOCAL_S3_PROTOCOL_ACCESS_KEY_ID}`);
+    expect(def.args).toContain(
+      `S3_PROTOCOL_ACCESS_KEY_SECRET=${LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET}`,
+    );
   });
 });
 
@@ -370,6 +408,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
 
     expect(def.name).toBe("postgres-init");
@@ -387,6 +426,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
     expect(script).not.toContain("set -e");
@@ -396,6 +436,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
     expect(script).toContain("authenticator");
@@ -406,6 +447,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
 
@@ -420,12 +462,41 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
+      autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
     expect(script).not.toMatch(/sh .+migrate\.sh/);
     expect(script).toContain("-f $sql");
     expect(script).toContain("init-scripts/*.sql");
     expect(script).toContain("migrations/*.sql");
+  });
+
+  it("does not revoke default Data API privileges when autoExposeNewTables is true", () => {
+    const def = makePostgresInitService({
+      postgresDir: POSTGRES_BIN_PATH,
+      dbPort: DB_PORT,
+      autoExposeNewTables: true,
+    });
+    const script = def.args?.[1] as string;
+    expect(script).not.toContain("alter default privileges");
+    expect(script).not.toContain("revoke select, insert, update, delete on tables");
+  });
+
+  it("revokes default Data API privileges on `public` when autoExposeNewTables is false", () => {
+    const def = makePostgresInitService({
+      postgresDir: POSTGRES_BIN_PATH,
+      dbPort: DB_PORT,
+      autoExposeNewTables: false,
+    });
+    const script = def.args?.[1] as string;
+    expect(script).toContain(REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL);
+    expect(script).toContain(
+      "revoke select, insert, update, delete on tables from anon, authenticated, service_role",
+    );
+    expect(script).toContain(
+      "revoke usage, select on sequences from anon, authenticated, service_role",
+    );
+    expect(script).toContain("revoke execute on functions from anon, authenticated, service_role");
   });
 });
 

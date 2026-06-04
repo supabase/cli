@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { Command } from "effect/unstable/cli";
 import { Output } from "../../../shared/output/output.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -57,7 +57,10 @@ const telemetryStatus = Effect.gen(function* () {
   yield* output.success(`Telemetry is ${effectiveConsent}.`, {
     consent: effectiveConsent,
     config_path: `${configDir}/telemetry.json`,
-    persisted_consent: config?.consent ?? null,
+    persisted_consent: Option.match(config, {
+      onNone: () => null,
+      onSome: (value) => value.consent,
+    }),
   });
 });
 

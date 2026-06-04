@@ -1,4 +1,9 @@
+import type * as CliCommand from "effect/unstable/cli/Command";
 import { Argument, Command, Flag } from "effect/unstable/cli";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacySecretsSet } from "./set.handler.ts";
 
 const config = {
@@ -14,7 +19,9 @@ const config = {
     Argument.withDescription("Secret name=value pairs to set."),
     Argument.variadic(),
   ),
-};
+} as const;
+
+export type LegacySecretsSetFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacySecretsSetCommand = Command.make("set", config).pipe(
   Command.withDescription("Set a secret(s) to the linked Supabase project."),
@@ -30,10 +37,10 @@ export const legacySecretsSetCommand = Command.make("set", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacySecretsSet({
-      projectRef: flags.projectRef,
-      envFile: flags.envFile,
-      secrets: flags.secrets.map(String),
-    }),
+    legacySecretsSet(flags).pipe(
+      withLegacyCommandInstrumentation({ flags }),
+      withJsonErrorHandling,
+    ),
   ),
+  Command.provide(legacyManagementApiRuntimeLayer(["secrets", "set"])),
 );

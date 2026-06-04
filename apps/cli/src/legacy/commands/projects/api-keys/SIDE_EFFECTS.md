@@ -2,10 +2,10 @@
 
 ## Files Read
 
-| Path                              | Format                    | When                                                                     |
-| --------------------------------- | ------------------------- | ------------------------------------------------------------------------ |
-| `~/.supabase/access-token`        | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable               |
-| `<workdir>/.supabase/config.json` | JSON                      | when `--project-ref` flag is not provided, to resolve linked project ref |
+| Path                                   | Format                    | When                                                                    |
+| -------------------------------------- | ------------------------- | ----------------------------------------------------------------------- |
+| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable              |
+| `<workdir>/supabase/.temp/project-ref` | plain text (ref string)   | when `--project-ref` is not provided, to resolve the linked project ref |
 
 ## Files Written
 
@@ -42,28 +42,40 @@
 | `1`  | network / connection failure                                    |
 | `1`  | project ref not provided and no linked project found            |
 
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups                                             |
+| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` is telemetry-safe) |
+
 ## Output
+
+Two-axis: Go's `--output {pretty|json|yaml|toml|env}` wins when set; otherwise the TS
+`--output-format`. go toml/env encode a `SUPABASE_<NAME>_KEY` env map; go json/yaml
+encode the raw `ApiKeyResponse[]`.
 
 ### `--output-format text` (Go CLI compatible)
 
-Prints a Markdown-style table to stdout with a header row and one row per API key.
-Column order: `NAME`, `API KEY`. Null API keys are shown as empty.
+Glamour ASCII table. Column order: `NAME`, `KEY VALUE`. A null api key renders as `******`.
 
 ```
- NAME          API KEY
- anon          eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
- service_role  eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+  NAME         | KEY VALUE
+  -------------|-------------------------------------------
+  anon         | eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+  service_role | ******
 ```
 
 ### `--output-format json`
 
-Single JSON array emitted to stdout on success.
+`success("", { keys })` — the raw `ApiKeyResponse[]` under a `keys` field.
 
 ```json
-[
-  { "name": "anon", "api_key": "eyJ..." },
-  { "name": "service_role", "api_key": "eyJ..." }
-]
+{
+  "keys": [
+    { "name": "anon", "api_key": "eyJ..." },
+    { "name": "service_role", "api_key": null }
+  ]
+}
 ```
 
 ### `--output-format stream-json`
@@ -71,7 +83,7 @@ Single JSON array emitted to stdout on success.
 One `result` event on success.
 
 ```ndjson
-{"type":"result","data":[{"name":"anon","api_key":"eyJ..."},{"name":"service_role","api_key":"eyJ..."}]}
+{"type":"result","data":{"keys":[{"name":"anon","api_key":"eyJ..."},{"name":"service_role","api_key":null}]}}
 ```
 
 On failure, an `error` event is emitted instead:
@@ -82,6 +94,8 @@ On failure, an `error` event is emitted instead:
 
 ## Notes
 
-- API keys with null values (as returned by the API for redacted keys) are shown as
-  empty strings in text mode output.
+- API keys with null values (redacted by the API) render as `******` in text mode and
+  in the toml/env env map; the json/yaml encodings preserve the raw `null`.
 - The `--project-ref` flag is optional when the CLI is linked to a project via `supabase link`.
+  When omitted, the ref is resolved flag → env → `.temp/project-ref` → prompt on a TTY,
+  failing with a not-linked error otherwise.

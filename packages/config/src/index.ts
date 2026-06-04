@@ -1,7 +1,6 @@
 export { ProjectConfigSchema, type ProjectConfig, type ProjectConfigJson } from "./base.ts";
 export {
   MissingProjectConfigValueError,
-  MissingProjectEnvVarError,
   ProjectConfigParseError,
   ProjectEnvParseError,
 } from "./errors.ts";

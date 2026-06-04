@@ -1,5 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacySsoList } from "./list.handler.ts";
 
 const config = {
@@ -19,5 +23,11 @@ export const legacySsoListCommand = Command.make("list", config).pipe(
       description: "List all SSO providers for a project",
     },
   ]),
-  Command.withHandler((flags) => legacySsoList(flags)),
+  Command.withHandler((flags) =>
+    legacySsoList(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["sso", "list"])),
 );
