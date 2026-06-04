@@ -1,16 +1,62 @@
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
 import { CliConfig } from "../../next/config/cli-config.service.ts";
-import { TelemetryConfigSchema, type TelemetryConfig } from "./types.ts";
+import { type ConsentState, TelemetryConfigSchema, type TelemetryConfig } from "./types.ts";
 
 export const getConfigDir = CliConfig.useSync((cliConfig) => cliConfig.supabaseHome);
 
 const TelemetryConfigFileSchema = Schema.fromJsonString(TelemetryConfigSchema);
-const decodeTelemetryConfigFile = Schema.decodeUnknownEffect(TelemetryConfigFileSchema);
+const LegacyTelemetryConfigSchema = Schema.Struct({
+  enabled: Schema.Boolean,
+  device_id: Schema.String,
+  session_id: Schema.String,
+  session_last_active: Schema.String,
+  distinct_id: Schema.optionalKey(Schema.String),
+  schema_version: Schema.optionalKey(Schema.Number),
+});
+type LegacyTelemetryConfig = Schema.Schema.Type<typeof LegacyTelemetryConfigSchema>;
+
+const decodeCurrentTelemetryConfigFile = Schema.decodeUnknownEffect(TelemetryConfigFileSchema);
+const decodeLegacyTelemetryConfigFile = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(LegacyTelemetryConfigSchema),
+);
 const encodeTelemetryConfig = Schema.encodeUnknownSync(TelemetryConfigSchema);
 
 function encodePrettyJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
+
+function legacyConsent(enabled: boolean): ConsentState {
+  return enabled ? "granted" : "denied";
+}
+
+function legacyConfigToTelemetryConfig(
+  legacyConfig: LegacyTelemetryConfig,
+): TelemetryConfig | undefined {
+  const sessionLastActive = Date.parse(legacyConfig.session_last_active);
+  if (!Number.isFinite(sessionLastActive)) return undefined;
+  return {
+    consent: legacyConsent(legacyConfig.enabled),
+    device_id: legacyConfig.device_id,
+    session_id: legacyConfig.session_id,
+    session_last_active: sessionLastActive,
+    ...(legacyConfig.distinct_id === undefined ? {} : { distinct_id: legacyConfig.distinct_id }),
+  };
+}
+
+const decodeTelemetryConfigFile = Effect.fnUntraced(function* (content: string) {
+  return yield* decodeCurrentTelemetryConfigFile(content).pipe(
+    Effect.catch(() =>
+      Effect.gen(function* () {
+        const legacyConfig = yield* decodeLegacyTelemetryConfigFile(content);
+        const config = legacyConfigToTelemetryConfig(legacyConfig);
+        if (config === undefined) {
+          return yield* Effect.fail(new Error("invalid legacy telemetry state"));
+        }
+        return config;
+      }),
+    ),
+  );
+});
 
 export const readTelemetryConfig = Effect.fnUntraced(
   function* (configDir: string) {

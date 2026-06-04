@@ -32,6 +32,16 @@ type State struct {
 	SchemaVersion     int       `json:"schema_version"`
 }
 
+type rawState struct {
+	Enabled           *bool           `json:"enabled"`
+	Consent           *string         `json:"consent"`
+	DeviceID          string          `json:"device_id"`
+	SessionID         string          `json:"session_id"`
+	SessionLastActive json.RawMessage `json:"session_last_active"`
+	DistinctID        string          `json:"distinct_id,omitempty"`
+	SchemaVersion     int             `json:"schema_version"`
+}
+
 func telemetryPath() (string, error) {
 	if home := strings.TrimSpace(os.Getenv("SUPABASE_HOME")); home != "" {
 		return filepath.Join(home, "telemetry.json"), nil
@@ -43,6 +53,71 @@ func telemetryPath() (string, error) {
 	return filepath.Join(home, ".supabase", "telemetry.json"), nil
 }
 
+func parseConsent(raw rawState) (bool, bool, error) {
+	if raw.Consent != nil {
+		switch *raw.Consent {
+		case "granted":
+			return true, true, nil
+		case "denied":
+			return false, true, nil
+		default:
+			return false, false, errors.Errorf("%w: invalid consent", errMalformedState)
+		}
+	}
+	if raw.Enabled == nil {
+		return false, false, errors.Errorf("%w: missing enabled", errMalformedState)
+	}
+	return *raw.Enabled, false, nil
+}
+
+func parseSessionLastActive(raw json.RawMessage, allowUnixMillis bool) (time.Time, error) {
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		parsed, err := time.Parse(time.RFC3339Nano, text)
+		if err != nil {
+			return time.Time{}, errors.Errorf("%w: invalid session_last_active", errMalformedState)
+		}
+		return parsed, nil
+	}
+	if allowUnixMillis {
+		var millis int64
+		if err := json.Unmarshal(raw, &millis); err == nil {
+			return time.UnixMilli(millis).UTC(), nil
+		}
+	}
+	return time.Time{}, errors.Errorf("%w: invalid session_last_active", errMalformedState)
+}
+
+func decodeState(contents []byte) (State, error) {
+	var raw rawState
+	if err := json.Unmarshal(contents, &raw); err != nil {
+		return State{}, errors.Errorf("%w: %v", errMalformedState, err)
+	}
+	enabled, allowUnixMillis, err := parseConsent(raw)
+	if err != nil {
+		return State{}, err
+	}
+	sessionLastActive, err := parseSessionLastActive(raw.SessionLastActive, allowUnixMillis)
+	if err != nil {
+		return State{}, err
+	}
+	if raw.DeviceID == "" || raw.SessionID == "" {
+		return State{}, errors.Errorf("%w: missing identity", errMalformedState)
+	}
+	schemaVersion := raw.SchemaVersion
+	if schemaVersion == 0 {
+		schemaVersion = SchemaVersion
+	}
+	return State{
+		Enabled:           enabled,
+		DeviceID:          raw.DeviceID,
+		SessionID:         raw.SessionID,
+		SessionLastActive: sessionLastActive,
+		DistinctID:        raw.DistinctID,
+		SchemaVersion:     schemaVersion,
+	}, nil
+}
+
 func LoadState(fsys afero.Fs) (State, error) {
 	path, err := telemetryPath()
 	if err != nil {
@@ -52,11 +127,7 @@ func LoadState(fsys afero.Fs) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	var state State
-	if err := json.Unmarshal(contents, &state); err != nil {
-		return State{}, errors.Errorf("%w: %v", errMalformedState, err)
-	}
-	return state, nil
+	return decodeState(contents)
 }
 
 func SaveState(state State, fsys afero.Fs) error {

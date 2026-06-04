@@ -118,6 +118,66 @@ describe("readTelemetryConfig", () => {
     );
   });
 
+  it.live("decodes a legacy disabled telemetry state as denied consent", () => {
+    const dir = makeTempDir();
+    writeTelemetryFile(
+      dir,
+      JSON.stringify({
+        enabled: false,
+        device_id: "legacy-device",
+        session_id: "legacy-session",
+        session_last_active: "2026-04-01T12:00:00Z",
+        schema_version: 1,
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const config = yield* readTelemetryConfig(dir);
+      expect(config).toEqual(
+        Option.some({
+          consent: "denied",
+          device_id: "legacy-device",
+          session_id: "legacy-session",
+          session_last_active: Date.parse("2026-04-01T12:00:00Z"),
+        }),
+      );
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("decodes a legacy enabled telemetry state as granted consent", () => {
+    const dir = makeTempDir();
+    writeTelemetryFile(
+      dir,
+      JSON.stringify({
+        enabled: true,
+        device_id: "legacy-device",
+        session_id: "legacy-session",
+        session_last_active: "2026-04-01T12:00:00Z",
+        distinct_id: "user-123",
+        schema_version: 1,
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const config = yield* readTelemetryConfig(dir);
+      expect(config).toEqual(
+        Option.some({
+          consent: "granted",
+          device_id: "legacy-device",
+          session_id: "legacy-session",
+          session_last_active: Date.parse("2026-04-01T12:00:00Z"),
+          distinct_id: "user-123",
+        }),
+      );
+    }).pipe(
+      Effect.provide(BunServices.layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
   it.live("returns none for malformed JSON instead of throwing", () => {
     const dir = makeTempDir();
     writeTelemetryFile(dir, "");
