@@ -37,6 +37,16 @@ const PROVIDER_ITEM = {
   updated_at: "2023-03-28T13:50:14.464Z",
 };
 
+const PROVIDER_ITEM_WITHOUT_SAML_ID = {
+  ...PROVIDER_ITEM,
+  saml: {
+    entity_id: PROVIDER_ITEM.saml.entity_id,
+    metadata_url: PROVIDER_ITEM.saml.metadata_url,
+    metadata_xml: PROVIDER_ITEM.saml.metadata_xml,
+    attribute_mapping: PROVIDER_ITEM.saml.attribute_mapping,
+  },
+};
+
 const tempRoot = useLegacyTempWorkdir("supabase-sso-list-int-");
 
 interface SetupOpts {
@@ -161,6 +171,32 @@ describe("legacy sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("accepts list responses when saml.id is omitted", () => {
+    const { layer, out } = setup({
+      body: { items: [PROVIDER_ITEM_WITHOUT_SAML_ID] },
+    });
+    return Effect.gen(function* () {
+      yield* legacySsoList({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
+      expect(out.stdoutText).toContain("https://example.com");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("normalizes missing saml.id to an empty string in Go --output=json", () => {
+    const { layer, out } = setup({
+      body: { items: [PROVIDER_ITEM_WITHOUT_SAML_ID] },
+      goOutput: "json",
+    });
+    return Effect.gen(function* () {
+      yield* legacySsoList({ projectRef: Option.none() });
+      const payload = JSON.parse(out.stdoutText) as {
+        providers: Array<{ saml?: { id?: string; entity_id?: string } }>;
+      };
+      expect(payload.providers[0]?.saml?.id).toBe("");
+      expect(payload.providers[0]?.saml?.entity_id).toBe("https://example.com");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("emits a result event via --output-format=stream-json", () => {
     const { layer, out } = setup({ format: "stream-json" });
     return Effect.gen(function* () {
@@ -271,6 +307,19 @@ describe("legacy sso list integration", () => {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("LegacySsoListNetworkError");
         expect(dump).toContain("failed to list sso providers");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports network error when the success response body is malformed", () => {
+    const { layer } = setup({ body: { items: {} } });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoListNetworkError");
+        expect(dump).toContain("response.items was not an array");
       }
     }).pipe(Effect.provide(layer));
   });
