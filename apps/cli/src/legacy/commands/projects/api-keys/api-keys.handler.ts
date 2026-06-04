@@ -1,42 +1,29 @@
 import type { V1GetProjectApiKeysOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { apiKeysToEnv } from "../../../shared/legacy-api-keys.format.ts";
+import { legacyGetProjectApiKeys } from "../../../shared/legacy-get-api-keys.ts";
 import {
   encodeEnv,
   encodeGoJson,
   encodeToml,
   encodeYaml,
 } from "../../../shared/legacy-go-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
-import {
-  LegacyProjectsApiKeysNetworkError,
-  LegacyProjectsApiKeysUnexpectedStatusError,
-} from "../projects.errors.ts";
 import { renderProjectApiKeysTable } from "../projects.format.ts";
 import type { LegacyProjectsApiKeysFlags } from "./api-keys.command.ts";
 
 type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
-
-const mapApiKeysError = mapLegacyHttpError({
-  networkError: LegacyProjectsApiKeysNetworkError,
-  statusError: LegacyProjectsApiKeysUnexpectedStatusError,
-  networkMessage: (cause) => `failed to get api keys: ${cause}`,
-  statusMessage: (status, body) => `unexpected get api keys status ${status}: ${body}`,
-});
 
 export const legacyProjectsApiKeys = Effect.fn("legacy.projects.api-keys")(function* (
   flags: LegacyProjectsApiKeysFlags,
 ) {
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
-  const api = yield* LegacyPlatformApi;
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
@@ -48,9 +35,8 @@ export const legacyProjectsApiKeys = Effect.fn("legacy.projects.api-keys")(funct
   yield* Effect.gen(function* () {
     const fetching =
       output.format === "text" ? yield* output.task("Fetching API keys...") : undefined;
-    const keys: ApiKeys = yield* api.v1.getProjectApiKeys({ ref }).pipe(
+    const keys: ApiKeys = yield* legacyGetProjectApiKeys(ref).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
-      Effect.catch(mapApiKeysError),
     );
     yield* fetching?.clear() ?? Effect.void;
 

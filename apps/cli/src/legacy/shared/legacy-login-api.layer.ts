@@ -2,9 +2,12 @@ import { Effect, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
-import { LegacyLoginApi, type LegacyLoginSessionResponse } from "./login-api.service.ts";
-import { LegacyLoginVerificationError } from "./login.errors.ts";
+import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import {
+  LegacyLoginApi,
+  type LegacyLoginSessionResponse,
+} from "../commands/login/login-api.service.ts";
+import { LegacyLoginVerificationError } from "../commands/login/login.errors.ts";
 
 const POLL_TIMEOUT = "10 seconds";
 

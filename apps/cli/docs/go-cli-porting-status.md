@@ -57,9 +57,9 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 ## Quick Start
 
-| Old command | TS status | TS command path or `missing` | Missing flags/params | Extra TS flags/params | Notes                                       |
-| ----------- | --------- | ---------------------------- | -------------------- | --------------------- | ------------------------------------------- |
-| `bootstrap` | `missing` | `missing`                    | `n/a`                | `n/a`                 | No TS command yet. Wrapped in legacy shell. |
+| Old command | TS status | TS command path or `missing` | Missing flags/params | Extra TS flags/params | Notes                                                                                                                                                                                  |
+| ----------- | --------- | ---------------------------- | -------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bootstrap` | `missing` | `missing`                    | `n/a`                | `n/a`                 | No `next/` command yet. Ported to native TS in the legacy shell; the migration-push sub-step is delegated to the Go binary as a documented interim until `db push` is natively ported. |
 
 ## Project / Stack Lifecycle
 
@@ -265,7 +265,7 @@ Legend:
 | `logout`                               | `ported`      | [`../src/legacy/commands/logout/logout.command.ts`](../src/legacy/commands/logout/logout.command.ts)                                                                                      |
 | `link`                                 | `ported`      | [`../src/legacy/commands/link/link.command.ts`](../src/legacy/commands/link/link.command.ts)                                                                                              |
 | `unlink`                               | `ported`      | [`../src/legacy/commands/unlink/unlink.command.ts`](../src/legacy/commands/unlink/unlink.command.ts)                                                                                      |
-| `bootstrap`                            | `wrapped`     | [`../src/legacy/commands/bootstrap/bootstrap.command.ts`](../src/legacy/commands/bootstrap/bootstrap.command.ts)                                                                          |
+| `bootstrap`                            | `ported`      | [`../src/legacy/commands/bootstrap/bootstrap.command.ts`](../src/legacy/commands/bootstrap/bootstrap.command.ts) (native; `db push` step delegated to the Go binary — interim)            |
 | `init`                                 | `ported`      | [`../src/legacy/commands/init/init.command.ts`](../src/legacy/commands/init/init.command.ts)                                                                                              |
 | `services`                             | `wrapped`     | [`../src/legacy/commands/services/services.command.ts`](../src/legacy/commands/services/services.command.ts)                                                                              |
 | `start`                                | `wrapped`     | [`../src/legacy/commands/start/start.command.ts`](../src/legacy/commands/start/start.command.ts)                                                                                          |
