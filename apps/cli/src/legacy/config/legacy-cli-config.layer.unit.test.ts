@@ -5,10 +5,15 @@ import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option, Redacted } from "effect";
-import { afterEach, beforeEach } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 
-import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
+import {
+  LegacyDebugFlag,
+  LegacyProfileFlag,
+  LegacyWorkdirFlag,
+} from "../../shared/legacy/global-flags.ts";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
+import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
 import { legacyCliConfigLayer } from "./legacy-cli-config.layer.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 
@@ -17,13 +22,17 @@ function makeLayer(opts: {
   workdirFlag?: Option.Option<string>;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  home?: string;
+  debug?: boolean;
 }) {
   const profileFlag = opts.profileFlag ?? "supabase";
   const workdirFlag = opts.workdirFlag ?? Option.none<string>();
   return legacyCliConfigLayer.pipe(
+    Layer.provide(legacyDebugLoggerLayer),
+    Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
     Layer.provide(Layer.succeed(LegacyProfileFlag, profileFlag)),
     Layer.provide(Layer.succeed(LegacyWorkdirFlag, workdirFlag)),
-    Layer.provide(mockRuntimeInfo({ cwd: opts.cwd ?? "/test/cwd" })),
+    Layer.provide(mockRuntimeInfo({ cwd: opts.cwd ?? "/test/cwd", homeDir: opts.home })),
     Layer.provide(BunServices.layer),
     Layer.provide(processEnvLayer(opts.env ?? {})),
   );
@@ -74,6 +83,49 @@ describe("legacyCliConfigLayer", () => {
       expect(config.projectHost).toBe("snapcloud.dev");
     }).pipe(Effect.provide(makeLayer({ profileFlag: "snap", cwd: tempRoot }))),
   );
+
+  it.effect("reads the persisted ~/.supabase/profile file when no flag/env is set", () => {
+    const home = join(tempRoot, "home");
+    mkdirSync(join(home, ".supabase"), { recursive: true });
+    writeFileSync(join(home, ".supabase", "profile"), "supabase-staging\n");
+    return Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.profile).toBe("supabase-staging");
+    }).pipe(Effect.provide(makeLayer({ home, cwd: tempRoot })));
+  });
+
+  it.effect("debug logs the persisted profile file source", () => {
+    const home = join(tempRoot, "home");
+    const profilePath = join(home, ".supabase", "profile");
+    mkdirSync(join(home, ".supabase"), { recursive: true });
+    writeFileSync(profilePath, "supabase-staging\n");
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    return Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.profile).toBe("supabase-staging");
+      expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join("")).toContain(
+        `Loading profile from file: ${profilePath}\n`,
+      );
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => stderr.mockRestore())),
+      Effect.provide(makeLayer({ home, cwd: tempRoot, debug: true })),
+    );
+  });
+
+  it.effect("flag and env take precedence over the persisted profile file", () => {
+    const home = join(tempRoot, "home");
+    mkdirSync(join(home, ".supabase"), { recursive: true });
+    writeFileSync(join(home, ".supabase", "profile"), "supabase-staging");
+    return Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      // SUPABASE_PROFILE wins over the file.
+      expect(config.profile).toBe("supabase-local");
+    }).pipe(
+      Effect.provide(
+        makeLayer({ home, cwd: tempRoot, env: { SUPABASE_PROFILE: "supabase-local" } }),
+      ),
+    );
+  });
 
   it.effect(
     "falls back to supabase profile when SUPABASE_PROFILE is neither a known name nor a readable file",

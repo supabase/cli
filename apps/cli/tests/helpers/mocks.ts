@@ -222,6 +222,7 @@ export function mockOutput(
     confirmRelogin?: boolean;
     confirmLogout?: boolean;
     promptTextFail?: boolean;
+    promptConfirmFail?: boolean;
     promptTextResponses?: ReadonlyArray<string>;
     promptSelectResponses?: ReadonlyArray<string>;
     promptPasswordResponses?: ReadonlyArray<string>;
@@ -374,10 +375,17 @@ export function mockOutput(
         };
       })(),
       promptPassword: () => Effect.succeed(promptPasswordResponses.shift() ?? ""),
-      promptConfirm: () =>
-        Effect.succeed(
-          promptConfirmResponses.shift() ?? opts.confirmLogout ?? opts.confirmRelogin ?? true,
-        ),
+      promptConfirm: (_message, _opts) =>
+        opts.promptConfirmFail
+          ? Effect.fail(
+              new NonInteractiveError({
+                detail: "Prompt cancelled",
+                suggestion: "Run in interactive mode",
+              }),
+            )
+          : Effect.succeed(
+              promptConfirmResponses.shift() ?? opts.confirmLogout ?? opts.confirmRelogin ?? true,
+            ),
       promptSelect: (message, options, behavior) =>
         Effect.sync(() => {
           promptSelectCalls.push({ message, options, behavior });

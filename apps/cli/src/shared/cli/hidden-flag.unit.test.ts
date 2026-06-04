@@ -116,12 +116,6 @@ describe("native hidden flags", () => {
           "--backup=false",
         ]);
         yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-          "init",
-          "--with-vscode-workspace",
-          "--with-vscode-settings",
-          "--with-intellij-settings",
-        ]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
           "functions",
           "download",
           "hello",
@@ -148,7 +142,6 @@ describe("native hidden flags", () => {
     expect(proxy.calls).toEqual([
       ["start", "--preview"],
       ["stop", "--backup=false"],
-      ["init", "--with-vscode-workspace", "--with-vscode-settings", "--with-intellij-settings"],
       ["functions", "download", "hello", "--use-docker", "--legacy-bundle"],
       ["functions", "deploy", "hello", "--use-docker", "--legacy-bundle"],
       ["functions", "serve", "--all=false"],

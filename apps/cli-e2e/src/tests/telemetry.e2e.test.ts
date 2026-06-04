@@ -62,7 +62,7 @@ describe("telemetry", () => {
       writeFileSync(telemetryPath, "{{not valid json}}");
       const result = await run(["telemetry", "status"]);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toMatch(/Telemetry is (enabled|disabled)\./);
+      expect(result.stdout).toContain("Telemetry is enabled.");
       expect(() => JSON.parse(readFileSync(telemetryPath, "utf8"))).not.toThrow();
     });
 

@@ -12011,7 +12011,7 @@ func (r V1RevokeTokenResponse) StatusCode() int {
 type V1ExchangeOauthTokenResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON201      *OAuthTokenResponse
+	JSON200      *OAuthTokenResponse
 }
 
 // Status returns HTTPResponse.Status
@@ -17534,12 +17534,12 @@ func ParseV1ExchangeOauthTokenResponse(rsp *http.Response) (*V1ExchangeOauthToke
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest OAuthTokenResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON201 = &dest
+		response.JSON200 = &dest
 
 	}
 

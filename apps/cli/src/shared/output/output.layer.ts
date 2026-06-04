@@ -307,9 +307,14 @@ export const textOutputLayer = Layer.effect(
           }
           return value.trim();
         }),
-      promptConfirm: (message: string) =>
+      promptConfirm: (message: string, opts?: { defaultValue?: boolean }) =>
         Effect.gen(function* () {
-          const value = yield* Effect.promise(() => confirm({ message }));
+          const value = yield* Effect.promise(() =>
+            confirm({
+              message,
+              initialValue: opts?.defaultValue,
+            }),
+          );
           if (isCancel(value)) {
             cancel("Operation cancelled.");
             return yield* Effect.interrupt;

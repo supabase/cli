@@ -10,6 +10,8 @@ interface DockerStudioOptions {
   readonly pgmetaUrl: string;
   readonly publishableKey: string;
   readonly secretKey: string;
+  readonly s3ProtocolAccessKeyId: string;
+  readonly s3ProtocolAccessKeySecret: string;
   readonly jwtSecret: string;
   readonly analyticsEnabled: boolean;
   readonly analyticsBackend: "postgres" | "bigquery";
@@ -48,6 +50,10 @@ export const makeStudioServiceDocker = (opts: DockerStudioOptions): ServiceDef =
       AUTH_JWT_SECRET: opts.jwtSecret,
       SUPABASE_ANON_KEY: opts.publishableKey,
       SUPABASE_SERVICE_KEY: opts.secretKey,
+      SUPABASE_PUBLISHABLE_KEY: opts.publishableKey,
+      SUPABASE_SECRET_KEY: opts.secretKey,
+      S3_PROTOCOL_ACCESS_KEY_ID: opts.s3ProtocolAccessKeyId,
+      S3_PROTOCOL_ACCESS_KEY_SECRET: opts.s3ProtocolAccessKeySecret,
       LOGFLARE_PRIVATE_ACCESS_TOKEN: opts.analyticsApiKey,
       LOGFLARE_URL: opts.analyticsUrl,
       NEXT_PUBLIC_ENABLE_LOGS: String(opts.analyticsEnabled),

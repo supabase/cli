@@ -1,5 +1,8 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
 import { legacyInit } from "./init.handler.ts";
 
 const config = {
@@ -32,5 +35,8 @@ export type LegacyInitFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const legacyInitCommand = Command.make("init", config).pipe(
   Command.withDescription("Initialize a local project."),
   Command.withShortDescription("Initialize a local project"),
-  Command.withHandler((flags) => legacyInit(flags)),
+  Command.withHandler((flags) =>
+    legacyInit(flags).pipe(withLegacyCommandInstrumentation({ flags }), withJsonErrorHandling),
+  ),
+  Command.provide(commandRuntimeLayer(["init"])),
 );
