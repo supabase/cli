@@ -12,4 +12,3 @@ While the diff command is able to capture most schema changes, there are cases w
 
 - Changes to publication
 - Changes to storage buckets
-- Views with `security_invoker` attributes

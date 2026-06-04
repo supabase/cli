@@ -211,7 +211,13 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	} else {
 		fmt.Fprintln(w, "Diffing schemas...")
 	}
-	return differ(ctx, shadowConfig, config, schema, options...)
+	out, err := differ(ctx, shadowConfig, config, schema, options...)
+	if err != nil {
+		return out, err
+	}
+	// Restore view reloptions that the underlying diff engine dropped
+	// (e.g. WITH (security_invoker=true)). See issue #3973.
+	return applyViewReloptionsFromTarget(ctx, out, config, options...), nil
 }
 
 func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
