@@ -79,6 +79,54 @@ func TestLoadOrCreateState(t *testing.T) {
 		assert.Equal(t, now, state.SessionLastActive)
 	})
 
+	t.Run("reads disabled TypeScript telemetry config", func(t *testing.T) {
+		t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+		fsys := afero.NewMemMapFs()
+		path, err := telemetryPath()
+		require.NoError(t, err)
+		require.NoError(t, fsys.MkdirAll("/tmp/supabase-home", 0755))
+		require.NoError(t, afero.WriteFile(
+			fsys,
+			path,
+			[]byte(`{"consent":"denied","device_id":"ts-device","session_id":"ts-session","session_last_active":1776770348993,"distinct_id":"user-123"}`),
+			0644,
+		))
+
+		state, created, err := LoadOrCreateState(fsys, now)
+
+		require.NoError(t, err)
+		assert.False(t, created)
+		assert.False(t, state.Enabled)
+		assert.Equal(t, "ts-device", state.DeviceID)
+		assert.Equal(t, "ts-session", state.SessionID)
+		assert.Equal(t, "user-123", state.DistinctID)
+		assert.Equal(t, SchemaVersion, state.SchemaVersion)
+	})
+
+	t.Run("reads enabled TypeScript telemetry config", func(t *testing.T) {
+		t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+		fsys := afero.NewMemMapFs()
+		path, err := telemetryPath()
+		require.NoError(t, err)
+		require.NoError(t, fsys.MkdirAll("/tmp/supabase-home", 0755))
+		require.NoError(t, afero.WriteFile(
+			fsys,
+			path,
+			[]byte(`{"consent":"granted","device_id":"ts-device","session_id":"ts-session","session_last_active":1776770348993,"distinct_id":"user-123"}`),
+			0644,
+		))
+
+		state, created, err := LoadOrCreateState(fsys, now)
+
+		require.NoError(t, err)
+		assert.False(t, created)
+		assert.True(t, state.Enabled)
+		assert.Equal(t, "ts-device", state.DeviceID)
+		assert.Equal(t, "ts-session", state.SessionID)
+		assert.Equal(t, "user-123", state.DistinctID)
+		assert.Equal(t, SchemaVersion, state.SchemaVersion)
+	})
+
 	t.Run("recovers from corrupted state file", func(t *testing.T) {
 		// Each entry simulates a real-world corruption shape we've observed.
 		corruptions := map[string][]byte{
