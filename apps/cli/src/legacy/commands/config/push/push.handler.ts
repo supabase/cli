@@ -68,9 +68,14 @@ import {
   LegacyConfigPushStorageReadStatusError,
   LegacyConfigPushStorageUpdateNetworkError,
   LegacyConfigPushStorageUpdateStatusError,
+  LegacyConfigPushUnsupportedRemoteError,
 } from "./push.errors.ts";
 import type { LegacyConfigPushFlags } from "./push.command.ts";
-import { resolveRemoteByProjectRef, type LegacyConfigPushServiceResult } from "./push.types.ts";
+import {
+  matchesRemoteProjectRef,
+  resolveRemoteByProjectRef,
+  type LegacyConfigPushServiceResult,
+} from "./push.types.ts";
 
 const readStatusMessage = (status: number, body: string) => `unexpected status ${status}: ${body}`;
 
@@ -89,6 +94,13 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
 
   yield* Effect.gen(function* () {
     // 1. Load config.toml (TOML parse error aborts before any network call).
+    //
+    // NOTE (CLI-1489): `config push` needs the fully decoded config (every
+    // service subset), so it uses `loadProjectConfig` rather than the tolerant
+    // `LegacyProjectConfig` subtree reader. `loadProjectConfig` raises
+    // `ProjectConfigParseError` on `env(...)` refs over numeric/bool fields,
+    // which Go resolves transparently. Switch to the fixed decoder once
+    // CLI-1489 lands; until then this is the conscious tradeoff for this command.
     const loaded = yield* loadProjectConfig(runtimeInfo.cwd).pipe(
       Effect.catchTag(
         "ProjectConfigParseError",
@@ -103,12 +115,21 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         message: "failed to read supabase/config.toml: file not found",
       });
     }
+    // A matching `[remotes.*]` block cannot be applied without corrupting the
+    // remote (see matchesRemoteProjectRef); abort before any network call.
+    if (matchesRemoteProjectRef(loaded.config, ref)) {
+      return yield* new LegacyConfigPushUnsupportedRemoteError({
+        message: `cannot push config: a [remotes.*] block targets project ${ref}, which config push does not yet support. Remove the matching [remotes.*] block, or run config push from a config without it.`,
+      });
+    }
     const { projectId, config } = resolveRemoteByProjectRef(loaded.config, ref);
 
     // Optional `*pointer` sections (ssl_enforcement, image_transformation,
-    // s3_protocol) are defaulted-present by @supabase/config; re-read the raw
-    // document to recover Go's nil-pointer skip semantics.
-    const presence = yield* loadConfigPresence(runtimeInfo.cwd, ref);
+    // s3_protocol) are defaulted-present by @supabase/config and cannot be
+    // recovered from the decoded config, so we re-read the raw document to
+    // restore Go's nil-pointer skip semantics. (This second read is independent
+    // of loadProjectConfig above, which reads + schema-decodes its own bytes.)
+    const presence = yield* loadConfigPresence(runtimeInfo.cwd);
 
     // 2. Cost matrix (drives cost-aware prompts).
     const cost = yield* getCostMatrix(ref);

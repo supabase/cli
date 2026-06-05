@@ -2453,11 +2453,12 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
   const otpString = mapToEnv(local.sms.test_otp);
   if (otpString.length > 0) {
     body["sms_test_otp"] = otpString;
-    // 10 year validity — Go uses time.Now().UTC().AddDate(10, 0, 0)
-    // We store a sentinel; the orchestrator sets the real timestamp
-    body["sms_test_otp_valid_until"] = new Date(
-      Date.now() + 10 * 365 * 24 * 60 * 60 * 1000,
-    ).toISOString();
+    // 10-year validity, matching Go's time.Now().UTC().AddDate(10, 0, 0):
+    // calendar-exact, so leap days are counted (a flat 3650-day offset would be
+    // 2-3 days short). setUTCFullYear keeps the UTC semantics of Go's .UTC().
+    const validUntil = new Date();
+    validUntil.setUTCFullYear(validUntil.getUTCFullYear() + 10);
+    body["sms_test_otp_valid_until"] = validUntil.toISOString();
   }
 
   switch (true) {

@@ -14,9 +14,9 @@ import * as SmolToml from "smol-toml";
  * `config.toml`/`.json` document and check key presence directly, matching Go's
  * nil-pointer skip semantics.
  *
- * Remote overrides: if a `[remotes.<name>]` block's `project_id` matches the
- * target ref, a section declared only under that remote also counts as present
- * (Go merges the remote section over the base before the nil check).
+ * `[remotes.*]` blocks need no special handling here: the handler aborts before
+ * this runs when a remote block targets the ref (see matchesRemoteProjectRef),
+ * so only the base config's sections are ever inspected.
  */
 export interface LegacyConfigPushPresence {
   readonly sslEnforcement: boolean;
@@ -59,12 +59,10 @@ function presenceIn(doc: RawDoc | undefined): LegacyConfigPushPresence {
 
 /**
  * Reads the raw config document and reports which optional pointer sections are
- * declared (base config OR a matching `[remotes.<ref>]` block). Returns all
- * `false` when no config file exists.
+ * declared in the base config. Returns all `false` when no config file exists.
  */
 export const loadConfigPresence = Effect.fn("legacy.config.push.raw-presence")(function* (
   cwd: string,
-  ref: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const paths = yield* findProjectPaths(cwd);
@@ -73,24 +71,5 @@ export const loadConfigPresence = Effect.fn("legacy.config.push.raw-presence")(f
   }
   const content = yield* fs.readFileString(paths.configPath).pipe(Effect.orElseSucceed(() => ""));
   const doc = parseDocument(paths.configPath, content);
-
-  const base = presenceIn(asRecord(doc));
-
-  // Fold in any matching remote block's declarations.
-  let merged = base;
-  const remotes = asRecord(asRecord(doc)?.["remotes"]);
-  if (remotes !== undefined) {
-    for (const remote of Object.values(remotes)) {
-      const r = asRecord(remote);
-      if (r?.["project_id"] === ref) {
-        const rp = presenceIn(r);
-        merged = {
-          sslEnforcement: merged.sslEnforcement || rp.sslEnforcement,
-          imageTransformation: merged.imageTransformation || rp.imageTransformation,
-          s3Protocol: merged.s3Protocol || rp.s3Protocol,
-        };
-      }
-    }
-  }
-  return merged;
+  return presenceIn(asRecord(doc));
 });

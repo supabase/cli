@@ -64,6 +64,7 @@ when its local gate is off.
 | ---- | ------------------------------------------------------------------------------------- |
 | `0`  | success, **including** declining a confirmation prompt (Go returns nil and continues) |
 | `1`  | malformed `config.toml`                                                               |
+| `1`  | a `[remotes.*]` block targets the project ref (unsupported — see Known Gaps)          |
 | `1`  | list-addons failure (network or non-200)                                              |
 | `1`  | any per-service read/update failure (network or unexpected status)                    |
 
@@ -107,5 +108,7 @@ keys mirror `config.toml` paths.
 
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.
 - Diff bytes are byte-for-byte identical to the Go CLI (BurntSushi TOML encoder + anchored diff ports).
-- Optional `*pointer` sections (`db.ssl_enforcement`, `storage.image_transformation`, `storage.s3_protocol`) are decoded as defaulted-present by `@supabase/config`; their true presence is recovered from the raw `config.toml` (incl. a matching `[remotes.<ref>]` block) so they are skipped when absent, matching Go's nil-pointer behaviour.
-- KNOWN GAPS: a matched `[remotes.*]` override overlays decoded (defaulted) service sections rather than a raw-TOML subtree merge — a remote that sets only a subset of a service's fields resets the rest to defaults (Go-tested paths have no `[remotes.*]`). `encrypted:` (dotenvx) secret decryption is not reproduced.
+- Optional `*pointer` sections (`db.ssl_enforcement`, `storage.image_transformation`, `storage.s3_protocol`) are decoded as defaulted-present by `@supabase/config`; their true presence is recovered from the raw `config.toml` so they are skipped when absent, matching Go's nil-pointer behaviour.
+- KNOWN GAPS:
+  - **`[remotes.*]` overrides are not yet supported.** Faithful subset merging (Go's `mergeRemoteConfig`) requires a raw-TOML subtree merge; applying the decoded remote section verbatim would reset every non-overridden field to its schema default and silently corrupt the remote. Until the merge is implemented, `config push` **aborts with exit 1** (before any network call) when a `[remotes.<name>]` block declares `project_id == <ref>`, rather than pushing wrong values. Go-tested paths have no `[remotes.*]`.
+  - **`encrypted:` (dotenvx) secret decryption is not reproduced.** The Go CLI decrypts `encrypted:` values before hashing and pushes the plaintext; we cannot decrypt here. Rather than push the ciphertext (which would overwrite the remote secret with garbage), `encrypted:` values are treated as unresolved — exactly like `env()` refs: they hash to `""`, so the empty hash gates them out of both the diff and the update body and the remote secret is left untouched.

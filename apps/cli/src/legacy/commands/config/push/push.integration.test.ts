@@ -148,6 +148,23 @@ describe("legacy config push integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("aborts when a [remotes.*] block targets the project, before any network call", () => {
+    const { layer, api } = setup({
+      toml: `${API_ONLY_TOML}[remotes.staging]
+project_id = "abcdefghijklmnopqrst"
+[remotes.staging.api]
+enabled = true
+`,
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      // No network call should have fired (guard runs before the cost matrix).
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails when listing addons returns 503", () => {
     const { layer } = setup({
       toml: API_ONLY_TOML,

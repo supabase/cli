@@ -1414,4 +1414,41 @@ describe("authToUpdateBody secrets", () => {
     const body = authToUpdateBody(local);
     expect("security_captcha_secret" in body).toBe(false);
   });
+
+  it("never pushes dotenvx ciphertext (encrypted: hashes to '' so the gate drops it)", () => {
+    // secretHash returns "" for `encrypted:` values, so the projected captcha
+    // secret is empty even though the raw (ciphertext) value is still present.
+    // The empty hash must gate the ciphertext out of the update body.
+    const local = bareAuth({
+      enabled: true,
+      captcha: { enabled: true, provider: "hcaptcha", secret: "" },
+      rawSecrets: {
+        captcha: "encrypted:BvEYU1pXk9ciphertext",
+        hooks: {},
+        smtp_pass: "",
+        sms: { twilio: "", twilio_verify: "", messagebird: "", textlocal: "", vonage: "" },
+        providers: {},
+      },
+    });
+    const body = authToUpdateBody(local);
+    expect("security_captcha_secret" in body).toBe(false);
+    expect(Object.values(body)).not.toContain("encrypted:BvEYU1pXk9ciphertext");
+  });
+
+  it("sets sms_test_otp_valid_until to a calendar-exact 10 years out (Go AddDate(10,0,0))", () => {
+    const local = bareAuth({
+      enabled: true,
+      sms: { ...bareAuth().sms, test_otp: { "123456": "654321" } },
+    });
+    const body = authToUpdateBody(local);
+    const validUntil = new Date(String(body["sms_test_otp_valid_until"]));
+    // Recompute the expected value the same way the handler does; allow a small
+    // delta for the clock advancing between the two `new Date()` calls.
+    const expected = new Date();
+    expected.setUTCFullYear(expected.getUTCFullYear() + 10);
+    expect(Math.abs(validUntil.getTime() - expected.getTime())).toBeLessThan(5_000);
+    // Flat 3650-day arithmetic would be ~2-3 days short of the calendar value.
+    const flat3650 = Date.now() + 10 * 365 * 24 * 60 * 60 * 1000;
+    expect(validUntil.getTime() - flat3650).toBeGreaterThan(24 * 60 * 60 * 1000);
+  });
 });
