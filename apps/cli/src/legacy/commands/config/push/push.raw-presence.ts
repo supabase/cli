@@ -2,6 +2,8 @@ import { findProjectPaths } from "@supabase/config";
 import { Effect, FileSystem } from "effect";
 import * as SmolToml from "smol-toml";
 
+import type { AuthPresence } from "./config-sync/auth.sync.ts";
+
 /**
  * Which optional `*pointer` sections are actually present in `config.toml`.
  *
@@ -22,12 +24,29 @@ export interface LegacyConfigPushPresence {
   readonly sslEnforcement: boolean;
   readonly imageTransformation: boolean;
   readonly s3Protocol: boolean;
+  /** Presence of the optional `[auth.*]` sub-sections Go skips when nil. */
+  readonly auth: AuthPresence;
 }
+
+const ABSENT_AUTH: AuthPresence = {
+  captcha: false,
+  smtp: false,
+  hooks: {
+    mfa_verification_attempt: false,
+    password_verification_attempt: false,
+    custom_access_token: false,
+    send_sms: false,
+    send_email: false,
+    before_user_created: false,
+  },
+  externalProviders: [],
+};
 
 const ABSENT: LegacyConfigPushPresence = {
   sslEnforcement: false,
   imageTransformation: false,
   s3Protocol: false,
+  auth: ABSENT_AUTH,
 };
 
 type RawDoc = { readonly [key: string]: unknown };
@@ -47,6 +66,26 @@ function parseDocument(configPath: string, content: string): unknown {
   }
 }
 
+function authPresenceIn(doc: RawDoc | undefined): AuthPresence {
+  const auth = asRecord(doc?.["auth"]);
+  const hook = asRecord(auth?.["hook"]);
+  const email = asRecord(auth?.["email"]);
+  const external = asRecord(auth?.["external"]);
+  return {
+    captcha: auth?.["captcha"] !== undefined,
+    smtp: email?.["smtp"] !== undefined,
+    hooks: {
+      mfa_verification_attempt: hook?.["mfa_verification_attempt"] !== undefined,
+      password_verification_attempt: hook?.["password_verification_attempt"] !== undefined,
+      custom_access_token: hook?.["custom_access_token"] !== undefined,
+      send_sms: hook?.["send_sms"] !== undefined,
+      send_email: hook?.["send_email"] !== undefined,
+      before_user_created: hook?.["before_user_created"] !== undefined,
+    },
+    externalProviders: external === undefined ? [] : Object.keys(external),
+  };
+}
+
 function presenceIn(doc: RawDoc | undefined): LegacyConfigPushPresence {
   const db = asRecord(doc?.["db"]);
   const storage = asRecord(doc?.["storage"]);
@@ -54,6 +93,7 @@ function presenceIn(doc: RawDoc | undefined): LegacyConfigPushPresence {
     sslEnforcement: db?.["ssl_enforcement"] !== undefined,
     imageTransformation: storage?.["image_transformation"] !== undefined,
     s3Protocol: storage?.["s3_protocol"] !== undefined,
+    auth: authPresenceIn(doc),
   };
 }
 

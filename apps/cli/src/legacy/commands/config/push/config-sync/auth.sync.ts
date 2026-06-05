@@ -877,12 +877,58 @@ function fromRemoteSecret(sha256: string | null | undefined): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Raw-config presence of the optional `[auth]` sub-sections that Go models as
+ * `*pointer`/map fields (nil when absent in `config.toml`). `@supabase/config`
+ * decodes them as present-with-defaults, so their true presence can't be
+ * recovered from the decoded config; we read it from the raw TOML instead
+ * (see `push.raw-presence.ts`) to reproduce Go's "skip when nil" semantics in
+ * `ToUpdateAuthConfigBody` (`apps/cli-go/pkg/config/auth.go`).
+ *
+ * `externalProviders` is the set of `[auth.external.<name>]` blocks declared in
+ * the raw config; Go additionally always carries the `apple` default from its
+ * embedded template, which {@link authSubsetFromConfig} folds in.
+ */
+export interface AuthPresence {
+  readonly captcha: boolean;
+  readonly smtp: boolean;
+  readonly hooks: {
+    readonly mfa_verification_attempt: boolean;
+    readonly password_verification_attempt: boolean;
+    readonly custom_access_token: boolean;
+    readonly send_sms: boolean;
+    readonly send_email: boolean;
+    readonly before_user_created: boolean;
+  };
+  readonly externalProviders: ReadonlyArray<string>;
+}
+
+/**
  * Port of the local half of `(*auth).DiffWithRemote`.
  * Projects `config.auth` into the push subset, pre-computing all duration and
- * secret fields.  `projectId` is the HMAC key for secret hashing.
+ * secret fields.  `projectId` is the HMAC key for secret hashing. `presence`
+ * carries raw-config presence for the optional sub-sections Go skips when nil.
  */
-export function authSubsetFromConfig(config: ProjectConfig, projectId: string): AuthSubset {
+export function authSubsetFromConfig(
+  config: ProjectConfig,
+  projectId: string,
+  presence: AuthPresence,
+): AuthSubset {
   const a = config.auth;
+
+  // Derived auth URLs — Go computes these during config load (config.go:629-647):
+  //   api.external_url  ← `http://<hostname>:<api.port>` when unset
+  //   auth.external_url ← trimRight(api.external_url, "/") + "/auth/v1" when unset
+  //   auth.jwt_issuer   ← auth.external_url when unset
+  // `@supabase/config` performs no such derivation and has no `auth.external_url`
+  // or `hostname` field, so we reproduce it here. Hostname falls back to Go's
+  // "127.0.0.1" default (no schema field to override it).
+  const apiExternalUrl =
+    config.api.external_url !== undefined && config.api.external_url.length > 0
+      ? config.api.external_url
+      : `${config.api.tls.enabled ? "https" : "http"}://127.0.0.1:${config.api.port}`;
+  const authExternalUrl = `${apiExternalUrl.replace(/\/+$/, "")}/auth/v1`;
+  const jwtIssuer =
+    a.jwt_issuer !== undefined && a.jwt_issuer.length > 0 ? a.jwt_issuer : authExternalUrl;
 
   // Passkey / Webauthn — not in @supabase/config schema → always undefined
   const passkey: AuthSubset["passkey"] = undefined;
@@ -891,10 +937,10 @@ export function authSubsetFromConfig(config: ProjectConfig, projectId: string): 
   // Rate limit
   const rl = a.rate_limit;
 
-  // Captcha
+  // Captcha — Go gates on `a.Captcha != nil`; absent in raw config → skip.
   const captchaConfig = a.captcha;
   const captcha: AuthSubset["captcha"] =
-    captchaConfig === undefined
+    !presence.captcha || captchaConfig === undefined
       ? undefined
       : {
           enabled: captchaConfig.enabled ?? false,
@@ -902,12 +948,13 @@ export function authSubsetFromConfig(config: ProjectConfig, projectId: string): 
           secret: projectSecret(projectId, captchaConfig.secret ?? ""),
         };
 
-  // Hooks
+  // Hooks — Go gates each on `hook.<name> != nil`; absent in raw config → skip.
   const h = a.hook;
   function projectHook(
     hc: { enabled: boolean; uri?: string; secrets?: string } | undefined,
+    present: boolean,
   ): HookConfigSubset | undefined {
-    if (hc === undefined) return undefined;
+    if (!present || hc === undefined) return undefined;
     return {
       enabled: hc.enabled,
       uri: hc.uri ?? "",
@@ -915,12 +962,18 @@ export function authSubsetFromConfig(config: ProjectConfig, projectId: string): 
     };
   }
   const hook: AuthSubset["hook"] = {
-    mfa_verification_attempt: projectHook(h.mfa_verification_attempt),
-    password_verification_attempt: projectHook(h.password_verification_attempt),
-    custom_access_token: projectHook(h.custom_access_token),
-    send_sms: projectHook(h.send_sms),
-    send_email: projectHook(h.send_email),
-    before_user_created: projectHook(h.before_user_created),
+    mfa_verification_attempt: projectHook(
+      h.mfa_verification_attempt,
+      presence.hooks.mfa_verification_attempt,
+    ),
+    password_verification_attempt: projectHook(
+      h.password_verification_attempt,
+      presence.hooks.password_verification_attempt,
+    ),
+    custom_access_token: projectHook(h.custom_access_token, presence.hooks.custom_access_token),
+    send_sms: projectHook(h.send_sms, presence.hooks.send_sms),
+    send_email: projectHook(h.send_email, presence.hooks.send_email),
+    before_user_created: projectHook(h.before_user_created, presence.hooks.before_user_created),
   };
 
   // MFA
@@ -980,10 +1033,10 @@ export function authSubsetFromConfig(config: ProjectConfig, projectId: string): 
   const notification =
     Object.keys(notificationEntries).length > 0 ? notificationEntries : undefined;
 
-  // SMTP
+  // SMTP — Go gates on `a.Email.Smtp != nil`; absent in raw config → skip.
   const smtpConfig = a.email.smtp;
   const smtp: SmtpSubset | undefined =
-    smtpConfig === undefined
+    !presence.smtp || smtpConfig === undefined
       ? undefined
       : {
           enabled: smtpConfig.enabled,
@@ -1036,10 +1089,15 @@ export function authSubsetFromConfig(config: ProjectConfig, projectId: string): 
     test_otp: s.test_otp ?? {},
   };
 
-  // External providers
+  // External providers — Go emits only providers present in its `external` map
+  // (`if p, ok := e[name]; ok`). That map is the `apple` default from Go's
+  // embedded template plus any `[auth.external.<name>]` blocks in config.toml.
+  // @supabase/config defaults *all* providers present, so restrict to Go's set.
   const ext = a.external;
+  const providerNames = new Set<string>(["apple", ...presence.externalProviders]);
   const external: Record<string, ProviderSubset> = {};
   for (const [k, p] of Object.entries(ext ?? {})) {
+    if (!providerNames.has(k)) continue;
     external[k] = {
       enabled: p.enabled,
       client_id: p.client_id ?? "",
@@ -1081,10 +1139,10 @@ export function authSubsetFromConfig(config: ProjectConfig, projectId: string): 
   return {
     enabled: a.enabled,
     site_url: a.site_url,
-    external_url: "", // Not in @supabase/config schema; always ""
+    external_url: authExternalUrl,
     additional_redirect_urls: a.additional_redirect_urls ?? [],
     jwt_expiry: a.jwt_expiry,
-    jwt_issuer: a.jwt_issuer ?? "",
+    jwt_issuer: jwtIssuer,
     enable_refresh_token_rotation: a.enable_refresh_token_rotation,
     refresh_token_reuse_interval: a.refresh_token_reuse_interval,
     enable_manual_linking: a.enable_manual_linking,

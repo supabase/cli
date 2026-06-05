@@ -337,7 +337,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
             }),
           ),
         );
-        let local = authSubsetFromConfig(config, projectId);
+        let local = authSubsetFromConfig(config, projectId, presence.auth);
         const projected = applyRemoteAuthConfig(local, remote);
         // MFA phone/webauthn are paid addons: confirm cost before enabling.
         if (mfaPhoneNewlyEnabled(local, projected) && !(yield* keep("auth_mfa_phone"))) {
