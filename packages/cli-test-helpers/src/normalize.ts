@@ -40,10 +40,10 @@ export function normalize(output: string): string {
       // 1. Strip ANSI escape codes (color, bold, reset, etc.) — \u001b is ESC
       // eslint-disable-next-line no-control-regex
       .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "")
-      // 2. Semantic version strings (e.g. 1.187.0, v2.0.0-rc.1).
+      // 2. Semantic version strings (e.g. 1.187.0, v2.0.0-rc.1, v14.13).
       //    Lookbehind prevents matching mid-IP-address (e.g. 0.0.1 inside 127.0.0.1).
       //    Lookahead prevents matching where more dotted-number segments follow.
-      .replace(/(?<![.\d])\bv?\d+\.\d+\.\d+(?:-[\w.]+)?\b(?!\.)/g, "<VERSION>")
+      .replace(/(?<![.\d])\bv?\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?\b(?!\.)/g, "<VERSION>")
       // 3. ISO-8601 timestamps (2026-04-15T10:46:15Z or with milliseconds)
       .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, "<TIMESTAMP>")
       // 4. Display timestamps (2026-04-15 10:46:15 — space-separated, no T)

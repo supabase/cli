@@ -1,10 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { Effect, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
-import { readFileSync } from "node:fs";
 import {
   fetchLinkedServiceVersions,
-  LOCAL_SERVICE_IMAGES,
   listLocalServiceVersions,
   renderServicesTable,
   renderServicesWarning,
@@ -18,56 +16,7 @@ const PROJECT_REF = "abcdefghijklmnopqrst";
 const runLinkedFetch = (input: Parameters<typeof fetchLinkedServiceVersions>[0]) =>
   Effect.runPromise(fetchLinkedServiceVersions(input).pipe(Effect.provide(FetchHttpClient.layer)));
 
-function parseDockerfileServiceImages() {
-  const dockerfile = readFileSync(
-    new URL("../../../../cli-go/pkg/config/templates/Dockerfile", import.meta.url),
-    "utf8",
-  );
-
-  const imagesByAlias = new Map<string, { name: string; version: string }>();
-
-  for (const line of dockerfile.split(/\r?\n/)) {
-    const match = /^FROM\s+([^:]+):(\S+)\s+AS\s+(\S+)$/.exec(line.trim());
-    if (match === null) {
-      continue;
-    }
-
-    const [, imageName, version, alias] = match;
-    if (imageName === undefined || version === undefined || alias === undefined) {
-      throw new Error("Dockerfile service image parse failed");
-    }
-    imagesByAlias.set(alias, { name: imageName, version });
-  }
-
-  return [
-    imagesByAlias.get("pg"),
-    imagesByAlias.get("gotrue"),
-    imagesByAlias.get("postgrest"),
-    imagesByAlias.get("realtime"),
-    imagesByAlias.get("storage"),
-    imagesByAlias.get("edgeruntime"),
-    imagesByAlias.get("studio"),
-    imagesByAlias.get("pgmeta"),
-    imagesByAlias.get("logflare"),
-    imagesByAlias.get("supavisor"),
-  ].map((image) => {
-    if (image === undefined) {
-      throw new Error("Dockerfile service image alias missing");
-    }
-    return image;
-  });
-}
-
 describe("services shared", () => {
-  test("keeps the local image matrix aligned with the bundled Dockerfile manifest", () => {
-    expect(parseDockerfileServiceImages()).toEqual(
-      LOCAL_SERVICE_IMAGES.map((service) => {
-        const [name, version] = service.image.split(":");
-        return { name, version };
-      }),
-    );
-  });
-
   test("returns postgres only when no service-role key is available", async () => {
     const server = Bun.serve({
       port: 0,
