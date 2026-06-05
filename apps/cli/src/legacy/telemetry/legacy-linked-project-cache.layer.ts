@@ -41,9 +41,9 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
     const path = yield* Path.Path;
 
     return LegacyLinkedProjectCache.of({
-      cache: (ref: string) =>
+      cache: (ref: string, workdir?: string) =>
         Effect.gen(function* () {
-          const cachePath = legacyTempPaths(path, cliConfig.workdir).linkedProjectCache;
+          const cachePath = legacyTempPaths(path, workdir ?? cliConfig.workdir).linkedProjectCache;
           const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
           if (exists) return;
 

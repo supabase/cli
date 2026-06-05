@@ -2584,6 +2584,25 @@ export const V1GetPostgresConfigInput = Schema.Struct({
 export const V1GetPostgresConfigOutput = Schema.Struct({
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "cron.log_statement": Schema.optionalKey(Schema.Boolean),
+  log_autovacuum_min_duration: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+    ),
+  ),
+  log_checkpoints: Schema.optionalKey(Schema.Boolean),
+  log_connections: Schema.optionalKey(Schema.Boolean),
+  log_disconnections: Schema.optionalKey(Schema.Boolean),
+  log_duration: Schema.optionalKey(Schema.Boolean),
+  log_lock_waits: Schema.optionalKey(Schema.Boolean),
+  log_recovery_conflict_waits: Schema.optionalKey(Schema.Boolean),
+  log_replication_commands: Schema.optionalKey(Schema.Boolean),
+  log_startup_progress_interval: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+    ),
+  ),
+  log_temp_files: Schema.optionalKey(Schema.String),
   maintenance_work_mem: Schema.optionalKey(Schema.String),
   track_activity_query_size: Schema.optionalKey(Schema.String),
   max_connections: Schema.optionalKey(
@@ -3555,7 +3574,7 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
       id: Schema.String,
       saml: Schema.optionalKey(
         Schema.Struct({
-          id: Schema.String,
+          id: Schema.optionalKey(Schema.String),
           entity_id: Schema.String,
           metadata_url: Schema.optionalKey(Schema.String),
           metadata_xml: Schema.optionalKey(Schema.String),
@@ -5353,6 +5372,25 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "cron.log_statement": Schema.optionalKey(Schema.Boolean),
+  log_autovacuum_min_duration: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+    ),
+  ),
+  log_checkpoints: Schema.optionalKey(Schema.Boolean),
+  log_connections: Schema.optionalKey(Schema.Boolean),
+  log_disconnections: Schema.optionalKey(Schema.Boolean),
+  log_duration: Schema.optionalKey(Schema.Boolean),
+  log_lock_waits: Schema.optionalKey(Schema.Boolean),
+  log_recovery_conflict_waits: Schema.optionalKey(Schema.Boolean),
+  log_replication_commands: Schema.optionalKey(Schema.Boolean),
+  log_startup_progress_interval: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+    ),
+  ),
+  log_temp_files: Schema.optionalKey(Schema.String),
   maintenance_work_mem: Schema.optionalKey(Schema.String),
   track_activity_query_size: Schema.optionalKey(Schema.String),
   max_connections: Schema.optionalKey(
@@ -5417,6 +5455,25 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
 export const V1UpdatePostgresConfigOutput = Schema.Struct({
   effective_cache_size: Schema.optionalKey(Schema.String),
   logical_decoding_work_mem: Schema.optionalKey(Schema.String),
+  "cron.log_statement": Schema.optionalKey(Schema.Boolean),
+  log_autovacuum_min_duration: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+    ),
+  ),
+  log_checkpoints: Schema.optionalKey(Schema.Boolean),
+  log_connections: Schema.optionalKey(Schema.Boolean),
+  log_disconnections: Schema.optionalKey(Schema.Boolean),
+  log_duration: Schema.optionalKey(Schema.Boolean),
+  log_lock_waits: Schema.optionalKey(Schema.Boolean),
+  log_recovery_conflict_waits: Schema.optionalKey(Schema.Boolean),
+  log_replication_commands: Schema.optionalKey(Schema.Boolean),
+  log_startup_progress_interval: Schema.optionalKey(
+    Schema.String.annotate({ description: "Default unit: ms" }).check(
+      Schema.isPattern(new RegExp("^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$")),
+    ),
+  ),
+  log_temp_files: Schema.optionalKey(Schema.String),
   maintenance_work_mem: Schema.optionalKey(Schema.String),
   track_activity_query_size: Schema.optionalKey(Schema.String),
   max_connections: Schema.optionalKey(
@@ -8359,6 +8416,17 @@ export const operationDefinitions = {
       fields: [
         "effective_cache_size",
         "logical_decoding_work_mem",
+        "cron.log_statement",
+        "log_autovacuum_min_duration",
+        "log_checkpoints",
+        "log_connections",
+        "log_disconnections",
+        "log_duration",
+        "log_lock_waits",
+        "log_recovery_conflict_waits",
+        "log_replication_commands",
+        "log_startup_progress_interval",
+        "log_temp_files",
         "maintenance_work_mem",
         "track_activity_query_size",
         "max_connections",
