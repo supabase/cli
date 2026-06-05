@@ -14,6 +14,7 @@ import type { BugIssueFlags, DocsIssueFlags, FeatureIssueFlags } from "./issue.c
 
 const openIssueUrl = Effect.fnUntraced(function* (url: string, noBrowser: boolean) {
   const output = yield* Output;
+  yield* output.raw(`${url}\n`);
   if (!noBrowser) {
     const browser = yield* Browser;
     yield* browser.open(url);
@@ -21,7 +22,6 @@ const openIssueUrl = Effect.fnUntraced(function* (url: string, noBrowser: boolea
   } else {
     yield* output.info("GitHub issue form URL:");
   }
-  yield* output.raw(`${url}\n`);
 });
 
 export const openBugIssue = Effect.fn("issue.bug")(function* (flags: BugIssueFlags) {

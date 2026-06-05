@@ -208,7 +208,7 @@ describe("issue", () => {
 
       expect(browser.openedUrls).toEqual([]);
       const params = issueParams(out.stdoutText.trim());
-      expect(params.get("install-method")).toBe("asdf");
+      expect(params.get("install-method")).toBe("Other");
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "info", message: "GitHub issue form URL:" }),
       );
@@ -273,6 +273,8 @@ describe("issue", () => {
       }),
     );
 
-    expect(params.get("actual-output")).toBe(`${"x".repeat(1_500)}\n\n[truncated by Supabase CLI]`);
+    const actualOutput = params.get("actual-output");
+    expect(actualOutput).toHaveLength(1_500);
+    expect(actualOutput?.endsWith("[truncated by Supabase CLI]")).toBe(true);
   });
 });

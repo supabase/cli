@@ -2,9 +2,22 @@ import { Option } from "effect";
 
 const ISSUE_NEW_URL = "https://github.com/supabase/cli/issues/new";
 const MAX_FIELD_LENGTH = 1_500;
+const MAX_URL_LENGTH = 8_000;
+const TRUNCATED_SUFFIX = "\n\n[truncated by Supabase CLI]";
 
 export const searchedExistingIssuesValue = "I have searched the existing issues.";
-export const issueInstallMethodValues = ["brew", "bun", "npm", "pnpm", "yarn", "Other"] as const;
+export const issueInstallMethodValues = [
+  "brew",
+  "bun",
+  "npm",
+  "pnpm",
+  "yarn",
+  "Docker image",
+  "GitHub release binary",
+  "Other",
+] as const;
+
+const issueInstallMethodValueSet = new Set<string>(issueInstallMethodValues);
 
 export const issueTemplateContract = {
   bug: {
@@ -71,14 +84,41 @@ export function readIssueFlagValue(value: Option.Option<string>): string | undef
   return trimmed === "" ? undefined : trimmed;
 }
 
-function truncateField(value: string): string {
-  if (value.length <= MAX_FIELD_LENGTH) return value;
-  return `${value.slice(0, MAX_FIELD_LENGTH)}\n\n[truncated by Supabase CLI]`;
+function truncateField(value: string, maxLength = MAX_FIELD_LENGTH): string {
+  if (value.length <= maxLength) return value;
+  if (maxLength <= TRUNCATED_SUFFIX.length) return value.slice(0, maxLength);
+  return `${value.slice(0, maxLength - TRUNCATED_SUFFIX.length)}${TRUNCATED_SUFFIX}`;
+}
+
+function issueUrl(params: URLSearchParams): string {
+  return `${ISSUE_NEW_URL}?${params.toString()}`;
 }
 
 function appendField(params: URLSearchParams, id: string, value: string | undefined) {
   if (value === undefined) return;
   params.set(id, truncateField(value));
+  if (issueUrl(params).length <= MAX_URL_LENGTH) return;
+
+  let bestFit: string | undefined;
+  let lower = 0;
+  let upper = Math.min(value.length, MAX_FIELD_LENGTH);
+  while (lower <= upper) {
+    const midpoint = Math.floor((lower + upper) / 2);
+    const candidate = truncateField(value, midpoint);
+    params.set(id, candidate);
+    if (issueUrl(params).length <= MAX_URL_LENGTH) {
+      bestFit = candidate;
+      lower = midpoint + 1;
+    } else {
+      upper = midpoint - 1;
+    }
+  }
+
+  if (bestFit === undefined) {
+    params.delete(id);
+  } else {
+    params.set(id, bestFit);
+  }
 }
 
 export function buildIssueUrl(input: IssueUrlInput): string {
@@ -87,12 +127,16 @@ export function buildIssueUrl(input: IssueUrlInput): string {
   for (const [id, value] of Object.entries(input.fields)) {
     appendField(params, id, value);
   }
-  return `${ISSUE_NEW_URL}?${params.toString()}`;
+  return issueUrl(params);
+}
+
+function validInstallMethod(value: string): string {
+  return issueInstallMethodValueSet.has(value) ? value : "Other";
 }
 
 export function inferIssueInstallMethod(runtimeInfo: { readonly execPath: string }): string {
   const explicit = process.env["SUPABASE_INSTALL_METHOD"]?.trim();
-  if (explicit) return explicit;
+  if (explicit) return validInstallMethod(explicit);
 
   const userAgent = process.env["npm_config_user_agent"]?.toLowerCase();
   if (userAgent?.startsWith("pnpm/")) return "pnpm";

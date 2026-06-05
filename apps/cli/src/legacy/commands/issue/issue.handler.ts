@@ -18,6 +18,7 @@ import type {
 
 const legacyOpenIssueUrl = Effect.fnUntraced(function* (url: string, noBrowser: boolean) {
   const output = yield* Output;
+  yield* output.raw(`${url}\n`);
   if (!noBrowser) {
     const browser = yield* Browser;
     yield* browser.open(url);
@@ -25,7 +26,6 @@ const legacyOpenIssueUrl = Effect.fnUntraced(function* (url: string, noBrowser: 
   } else {
     yield* output.info("GitHub issue form URL:");
   }
-  yield* output.raw(`${url}\n`);
 });
 
 export const legacyIssueBug = Effect.fn("legacy.issue.bug")(function* (flags: LegacyIssueBugFlags) {
