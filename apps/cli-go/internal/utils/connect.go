@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -173,6 +174,35 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 
 const SuggestEnvVar = "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD"
 
+// ipv6LiteralPattern matches a bracketed IPv6 address (e.g. [2406:da18:...]) as
+// it appears in a Go dial error such as
+// "dial tcp [2406:da18:...]:5432: connect: network is unreachable".
+var ipv6LiteralPattern = regexp.MustCompile(`\[[0-9a-fA-F:]*:[0-9a-fA-F:]*\]`)
+
+// isIPv6ConnectivityError reports whether the connection failure stems from the
+// host resolving to an IPv6 address that the current network cannot route to.
+// Supabase direct database connections (db.<ref>.supabase.co:5432) are
+// IPv6-only unless the IPv4 add-on is enabled, so users on IPv4-only networks
+// (or inside a Docker container without an IPv6 stack, e.g. `supabase db dump`)
+// hit these failures.
+func isIPv6ConnectivityError(msg string) bool {
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "address family for hostname not supported"):
+		// libpq inside the pg_dump container when the host is IPv6-only and the
+		// container has no IPv6 stack: "could not translate host name ... to
+		// address: Address family for hostname not supported".
+		return true
+	case strings.Contains(lower, "network is unreachable"):
+		return true
+	case strings.Contains(lower, "no route to host"):
+		// Require an IPv6 literal so genuine project-not-found errors (which the
+		// branch below maps) keep their existing suggestion.
+		return ipv6LiteralPattern.MatchString(msg)
+	}
+	return false
+}
+
 // Sets CmdSuggestion to an actionable hint based on the given pg connection error.
 func SetConnectSuggestion(err error) {
 	if err == nil {
@@ -190,6 +220,11 @@ func SetConnectSuggestion(err error) {
 	} else if strings.Contains(msg, "SCRAM exchange: Wrong password") || strings.Contains(msg, "failed SASL auth") {
 		// password authentication failed for user / invalid SCRAM server-final-message received from server
 		CmdSuggestion = SuggestEnvVar
+	} else if isIPv6ConnectivityError(msg) {
+		CmdSuggestion = fmt.Sprintf(
+			"Your network does not support IPv6, which is required for direct connections to the database.\nRun %s to connect through the IPv4 connection pooler instead.",
+			Aqua("supabase link"),
+		)
 	} else if strings.Contains(msg, "connect: no route to host") || strings.Contains(msg, "Tenant or user not found") {
 		// Assumes IPv6 check has been performed before this
 		CmdSuggestion = "Make sure your project exists on profile: " + CurrentProfile.Name

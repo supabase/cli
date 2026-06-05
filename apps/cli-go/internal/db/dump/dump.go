@@ -20,7 +20,11 @@ import (
 func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleOnly, dryRun bool, fsys afero.Fs, opts ...migration.DumpOptionFunc) error {
 	// Initialize output stream
 	outStream := (io.Writer)(os.Stdout)
-	exec := DockerExec
+	// Tee pg_dump's stderr so a failed connection (e.g. an IPv6-only host that is
+	// unreachable from inside the container) can be classified into actionable
+	// guidance instead of the bare "error running container: exit 1".
+	var errBuf strings.Builder
+	exec := captureExec(&errBuf)
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: *only* printing the pg_dump script to console.")
 		exec = noExec
@@ -36,15 +40,31 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 	if utils.IsLocalDatabase(config) {
 		db = "local"
 	}
+	var err error
 	if dataOnly {
 		fmt.Fprintf(os.Stderr, "Dumping data from %s database...\n", db)
-		return migration.DumpData(ctx, config, outStream, exec, opts...)
+		err = migration.DumpData(ctx, config, outStream, exec, opts...)
 	} else if roleOnly {
 		fmt.Fprintf(os.Stderr, "Dumping roles from %s database...\n", db)
-		return migration.DumpRole(ctx, config, outStream, exec, opts...)
+		err = migration.DumpRole(ctx, config, outStream, exec, opts...)
+	} else {
+		fmt.Fprintf(os.Stderr, "Dumping schemas from %s database...\n", db)
+		err = migration.DumpSchema(ctx, config, outStream, exec, opts...)
 	}
-	fmt.Fprintf(os.Stderr, "Dumping schemas from %s database...\n", db)
-	return migration.DumpSchema(ctx, config, outStream, exec, opts...)
+	if err != nil {
+		// The container exit code hides why pg_dump failed; its stderr carries
+		// the connection detail, so classify that for an actionable suggestion.
+		utils.SetConnectSuggestion(errors.New(errBuf.String()))
+	}
+	return err
+}
+
+// captureExec wraps DockerExec so the container's stderr is teed into errBuf
+// (in addition to the user's terminal) for post-failure classification.
+func captureExec(errBuf *strings.Builder) migration.ExecFunc {
+	return func(ctx context.Context, script string, env []string, w io.Writer) error {
+		return dockerExec(ctx, script, env, w, io.MultiWriter(os.Stderr, errBuf))
+	}
 }
 
 func noExec(ctx context.Context, script string, env []string, w io.Writer) error {
@@ -69,6 +89,10 @@ func noExec(ctx context.Context, script string, env []string, w io.Writer) error
 }
 
 func DockerExec(ctx context.Context, script string, env []string, w io.Writer) error {
+	return dockerExec(ctx, script, env, w, os.Stderr)
+}
+
+func dockerExec(ctx context.Context, script string, env []string, w, errW io.Writer) error {
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
@@ -82,6 +106,6 @@ func DockerExec(ctx context.Context, script string, env []string, w io.Writer) e
 		network.NetworkingConfig{},
 		"",
 		w,
-		os.Stderr,
+		errW,
 	)
 }

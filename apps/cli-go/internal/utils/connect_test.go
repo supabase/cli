@@ -221,7 +221,27 @@ func TestSetConnectSuggestion(t *testing.T) {
 			suggestion: "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD",
 		},
 		{
-			name:       "no route to host",
+			name:       "ipv6 no route to host",
+			err:        errors.New("dial tcp [2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432: connect: no route to host"),
+			suggestion: "Your network does not support IPv6",
+		},
+		{
+			name:       "ipv6 network is unreachable",
+			err:        errors.New("dial tcp [2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432: connect: network is unreachable"),
+			suggestion: "Your network does not support IPv6",
+		},
+		{
+			name:       "libpq unsupported address family",
+			err:        errors.New(`pg_dump: error: connection to server failed: could not translate host name "db.test.supabase.co" to address: Address family for hostname not supported`),
+			suggestion: "Your network does not support IPv6",
+		},
+		{
+			name:       "libpq network is unreachable without literal",
+			err:        errors.New(`connection to server at "db.test.supabase.co", port 5432 failed: Network is unreachable`),
+			suggestion: "Your network does not support IPv6",
+		},
+		{
+			name:       "no route to host without ipv6 address",
 			err:        errors.New("connect: no route to host"),
 			suggestion: "Make sure your project exists on profile: " + CurrentProfile.Name,
 		},

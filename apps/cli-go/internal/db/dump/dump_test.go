@@ -61,6 +61,25 @@ func TestDumpCommand(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("suggests ipv4 pooler on ipv6 dump failure", func(t *testing.T) {
+		utils.CmdSuggestion = ""
+		t.Cleanup(func() { utils.CmdSuggestion = "" })
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
+		require.NoError(t, apitest.MockDockerErrorLogs(utils.Docker, containerId, 1,
+			`pg_dump: error: connection to server failed: could not translate host name "db.test.supabase.co" to address: Address family for hostname not supported`))
+		// Run test
+		err := Run(context.Background(), "", dbConfig, false, false, false, fsys)
+		// Check error
+		assert.ErrorContains(t, err, "error running container: exit 1")
+		assert.Contains(t, utils.CmdSuggestion, "Your network does not support IPv6")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("throws error on missing docker", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
