@@ -17,6 +17,14 @@ on:
         description: "Close PRs with no activity for this many days"
         type: string
         default: "90"
+      max-items:
+        description: "Maximum number of matching issues and PRs to close in one run"
+        type: string
+        default: "25"
+      exclude-labels:
+        description: "Comma-separated labels that prevent stale cleanup"
+        type: string
+        default: "security,pinned,do-not-close,keep-open"
 
 permissions:
   contents: read
@@ -34,30 +42,50 @@ jobs:
           script: |
             const eventName = context.eventName;
             const execute =
-              eventName === "schedule" ||
+              eventName === "workflow_dispatch" &&
               core.getInput("execute", { required: false }) === "true";
             const issueDays = positiveIntegerInput("issue-days", "90");
             const prDays = positiveIntegerInput("pr-days", "90");
+            const maxItems = positiveIntegerInput("max-items", "25");
+            const excludeLabels = commaSeparatedInput(
+              "exclude-labels",
+              "security,pinned,do-not-close,keep-open",
+            );
             const { owner, repo } = context.repo;
 
             const categories = [
               {
                 kind: "issue",
                 label: "issue",
-                query: `repo:${owner}/${repo} is:issue is:open updated:<${cutoffDate(issueDays)}`,
+                query: staleQuery({
+                  owner,
+                  repo,
+                  type: "issue",
+                  days: issueDays,
+                  excludeLabels,
+                }),
                 message: staleIssueMessage(issueDays),
               },
               {
                 kind: "pull-request",
                 label: "pull request",
-                query: `repo:${owner}/${repo} is:pr is:open updated:<${cutoffDate(prDays)}`,
+                query: staleQuery({
+                  owner,
+                  repo,
+                  type: "pr",
+                  days: prDays,
+                  excludeLabels,
+                }),
                 message: stalePullRequestMessage(prDays),
               },
             ];
 
             core.info(`${execute ? "EXECUTE" : "DRY RUN"} stale cleanup for ${owner}/${repo}`);
+            core.info("Scheduled runs are always dry runs. Use workflow dispatch with execute=true to close items.");
             core.info(`Issue cutoff: ${issueDays} days`);
             core.info(`PR cutoff: ${prDays} days`);
+            core.info(`Max items per execution: ${maxItems}`);
+            core.info(`Excluded labels: ${excludeLabels.length > 0 ? excludeLabels.join(", ") : "(none)"}`);
 
             const candidatesByKey = new Map();
             for (const category of categories) {
@@ -70,8 +98,14 @@ jobs:
 
             const selected = [...candidatesByKey.values()]
               .sort((a, b) => new Date(a.updated_at) - new Date(b.updated_at));
+            const capped = selected.slice(0, maxItems);
+            const cappedCount = selected.length - capped.length;
 
-            if (selected.length === 0) {
+            if (cappedCount > 0) {
+              core.warning(`Found ${selected.length} matching items but capped this run at ${maxItems}.`);
+            }
+
+            if (capped.length === 0) {
               core.info("No stale issues or PRs found.");
               await core.summary
                 .addHeading("Close stale issues and PRs")
@@ -80,16 +114,19 @@ jobs:
               return;
             }
 
-            for (const item of selected) {
+            for (const item of capped) {
               core.info(`#${item.number} ${item.kind} updated=${item.updated_at} ${item.html_url} ${item.title}`);
             }
 
             if (!execute) {
-              await writeSummary("Close stale issues and PRs dry run", selected);
+              await writeSummary("Close stale issues and PRs dry run", capped, {
+                matchingCount: selected.length,
+                cappedCount,
+              });
               return;
             }
 
-            for (const item of selected) {
+            for (const item of capped) {
               await github.rest.issues.createComment({
                 owner,
                 repo,
@@ -117,7 +154,10 @@ jobs:
               core.info(`Closed ${item.kind} #${item.number}`);
             }
 
-            await writeSummary("Closed stale issues and PRs", selected);
+            await writeSummary("Closed stale issues and PRs", capped, {
+              matchingCount: selected.length,
+              cappedCount,
+            });
 
             function positiveIntegerInput(name, fallback) {
               const raw = core.getInput(name, { required: false }) || fallback;
@@ -128,10 +168,32 @@ jobs:
               return value;
             }
 
+            function commaSeparatedInput(name, fallback) {
+              const raw = core.getInput(name, { required: false }) || fallback;
+              return raw
+                .split(",")
+                .map((value) => value.trim())
+                .filter(Boolean);
+            }
+
             function cutoffDate(days) {
               return new Date(Date.now() - days * 24 * 60 * 60 * 1000)
                 .toISOString()
                 .slice(0, 10);
+            }
+
+            function staleQuery({ owner, repo, type, days, excludeLabels }) {
+              return [
+                `repo:${owner}/${repo}`,
+                `is:${type}`,
+                "is:open",
+                `updated:<${cutoffDate(days)}`,
+                ...excludeLabels.map((label) => `-label:"${escapeSearchValue(label)}"`),
+              ].join(" ");
+            }
+
+            function escapeSearchValue(value) {
+              return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
             }
 
             async function searchCandidates(category) {
@@ -182,10 +244,14 @@ jobs:
               ].join("\n");
             }
 
-            async function writeSummary(title, items) {
+            async function writeSummary(title, items, { matchingCount, cappedCount }) {
               await core.summary
                 .addHeading(title)
-                .addRaw(`${execute ? "Closed" : "Found"} ${items.length} matching issue(s) and PR(s).`)
+                .addRaw(`${execute ? "Closed" : "Found"} ${items.length} issue(s) and PR(s).`)
+                .addBreak()
+                .addRaw(`${matchingCount} total item(s) matched the search filters.`)
+                .addBreak()
+                .addRaw(`${cappedCount} item(s) were left for a later run because of the per-run cap.`)
                 .addBreak()
                 .addTable([
                   [
