@@ -1,12 +1,12 @@
 import type { Option, Redacted } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 interface CliConfigShape {
   readonly apiUrl: string;
   readonly dashboardUrl: string;
   readonly projectHost: string;
   readonly telemetryPosthogHost: string;
-  readonly telemetryPosthogKey: string;
+  readonly telemetryPosthogKey: Option.Option<string>;
   readonly accessToken: Option.Option<Redacted.Redacted<string>>;
   readonly noKeyring: Option.Option<string>;
   readonly supabaseHome: string;
@@ -16,6 +16,6 @@ interface CliConfigShape {
   readonly doNotTrack: Option.Option<string>;
 }
 
-export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()(
+export class CliConfig extends Context.Service<CliConfig, CliConfigShape>()(
   "supabase/config/CliConfig",
 ) {}

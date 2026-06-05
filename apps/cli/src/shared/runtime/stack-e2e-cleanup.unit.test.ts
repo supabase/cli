@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import { createStackE2eCleanupManager } from "../../../tests/helpers/stack-e2e-cleanup.ts";
 
 function permissionError(message = "permission denied") {
@@ -87,7 +87,7 @@ describe("stack e2e cleanup manager", () => {
     expect(calls).toEqual([]);
   });
 
-  it("fails when graceful cleanup leaves leaked resources behind", async () => {
+  it("warns when graceful cleanup leaves leaked resources behind", async () => {
     const calls: Array<string> = [];
     const manager = createStackE2eCleanupManager(
       cleanupEnvironment(calls, {
@@ -120,7 +120,13 @@ describe("stack e2e cleanup manager", () => {
     });
     manager.associateHome("/tmp/project", "/tmp/home");
 
-    await expect(manager.drain()).rejects.toThrow("leaked stack resources");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(manager.drain()).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("leaked stack resources"));
+    } finally {
+      warn.mockRestore();
+    }
     expect(calls).toEqual(["stop", "force", "cleanup-project", "dispose-home"]);
   });
 
@@ -202,7 +208,7 @@ describe("stack e2e cleanup manager", () => {
     expect(calls).toEqual(["cleanup-project:1", "docker-remove", "chmod", "cleanup-project:2"]);
   });
 
-  it("includes permission diagnostics when fallback cleanup still cannot remove the project", async () => {
+  it("warns with permission diagnostics when fallback cleanup still cannot remove the project", async () => {
     const calls: Array<string> = [];
     const manager = createStackE2eCleanupManager(cleanupEnvironment(calls));
 
@@ -214,7 +220,13 @@ describe("stack e2e cleanup manager", () => {
       },
     });
 
-    await expect(manager.drain()).rejects.toThrow("Permission diagnostics:");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(manager.drain()).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Permission diagnostics:"));
+    } finally {
+      warn.mockRestore();
+    }
     expect(calls).toEqual(["cleanup-project", "docker-remove", "chmod", "cleanup-project"]);
   });
 });

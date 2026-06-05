@@ -241,6 +241,10 @@ func TestDatabaseStart(t *testing.T) {
 			Get("/storage/v1/bucket").
 			Reply(http.StatusOK).
 			JSON([]storage.BucketResponse{})
+		gock.New(utils.Config.Api.ExternalUrl).
+			Post("/storage/v1/vector/ListVectorBuckets").
+			Reply(http.StatusOK).
+			JSON(storage.ListVectorBucketsResponse{})
 		// Run test
 		err = run(ctx, fsys, []string{}, pgconn.Config{Host: utils.DbId}, conn.Intercept)
 		// Check error
@@ -353,6 +357,78 @@ func TestBuildGotrueEnv(t *testing.T) {
 		assert.Equal(t, "http://127.0.0.1:54321/auth/v1/verify", env["GOTRUE_MAILER_URLPATHS_INVITE"])
 		assert.Equal(t, "https://example.com/custom/callback", env["GOTRUE_EXTERNAL_AZURE_REDIRECT_URI"])
 	})
+
+	t.Run("wires passkey and webauthn settings", func(t *testing.T) {
+		utils.Config = config.NewConfig()
+		utils.Config.Auth.Passkey = &config.Passkey{Enabled: true}
+		utils.Config.Auth.Webauthn = &config.Webauthn{
+			RpDisplayName: "Supabase",
+			RpId:          "localhost",
+			RpOrigins:     []string{"http://127.0.0.1:5173", "http://localhost:5173"},
+		}
+
+		env := envToMap(appendGotruePasskeyEnv(buildGotrueEnv(pgconn.Config{})))
+
+		assert.Equal(t, "true", env["GOTRUE_PASSKEY_ENABLED"])
+		assert.Equal(t, "localhost", env["GOTRUE_WEBAUTHN_RP_ID"])
+		assert.Equal(t, "Supabase", env["GOTRUE_WEBAUTHN_RP_DISPLAY_NAME"])
+		assert.Equal(t, "http://127.0.0.1:5173,http://localhost:5173", env["GOTRUE_WEBAUTHN_RP_ORIGINS"])
+	})
+
+	t.Run("omits passkey and webauthn env when sections are unset", func(t *testing.T) {
+		utils.Config = config.NewConfig()
+
+		env := envToMap(appendGotruePasskeyEnv(buildGotrueEnv(pgconn.Config{})))
+
+		_, hasPasskey := env["GOTRUE_PASSKEY_ENABLED"]
+		_, hasRpId := env["GOTRUE_WEBAUTHN_RP_ID"]
+		assert.False(t, hasPasskey)
+		assert.False(t, hasRpId)
+	})
+}
+
+func TestBuildStudioEnv(t *testing.T) {
+	originalConfig := utils.Config
+	originalKongId := utils.KongId
+	originalPgmetaId := utils.PgmetaId
+	originalLogflareId := utils.LogflareId
+	originalVersion := utils.Version
+	t.Cleanup(func() {
+		utils.Config = originalConfig
+		utils.KongId = originalKongId
+		utils.PgmetaId = originalPgmetaId
+		utils.LogflareId = originalLogflareId
+		utils.Version = originalVersion
+	})
+
+	utils.Config = config.NewConfig()
+	utils.Config.Studio.ApiUrl = "http://127.0.0.1:54321"
+	utils.Config.Auth.JwtSecret.Value = "jwt-secret"
+	utils.Config.Auth.AnonKey.Value = "anon-key"
+	utils.Config.Auth.ServiceRoleKey.Value = "service-role-key"
+	utils.Config.Auth.PublishableKey.Value = "sb_publishable_test"
+	utils.Config.Auth.SecretKey.Value = "sb_secret_test"
+	utils.Config.Storage.S3Credentials.AccessKeyId = "s3-access-key"
+	utils.Config.Storage.S3Credentials.SecretAccessKey = "s3-secret-key"
+	utils.KongId = "test-kong"
+	utils.PgmetaId = "test-pgmeta"
+	utils.LogflareId = "test-logflare"
+	utils.Version = "test-version"
+
+	env := envToMap(buildStudioEnv(
+		pgconn.Config{Password: "postgres"},
+		"/project",
+		"/project/supabase/.temp/snippets",
+	))
+
+	assert.Equal(t, "anon-key", env["SUPABASE_ANON_KEY"])
+	assert.Equal(t, "service-role-key", env["SUPABASE_SERVICE_KEY"])
+	assert.Equal(t, "sb_publishable_test", env["SUPABASE_PUBLISHABLE_KEY"])
+	assert.Equal(t, "sb_secret_test", env["SUPABASE_SECRET_KEY"])
+	assert.Equal(t, "s3-access-key", env["S3_PROTOCOL_ACCESS_KEY_ID"])
+	assert.Equal(t, "s3-secret-key", env["S3_PROTOCOL_ACCESS_KEY_SECRET"])
+	assert.Equal(t, "http://test-kong:8000", env["SUPABASE_URL"])
+	assert.Equal(t, "http://test-pgmeta:8080", env["STUDIO_PG_META_URL"])
 }
 
 func TestFormatMapForEnvConfig(t *testing.T) {

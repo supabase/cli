@@ -14,6 +14,14 @@ const config = {
   useApi: Flag.boolean("use-api").pipe(
     Flag.withDescription("Unbundle functions server-side without using Docker."),
   ),
+  useDocker: Flag.boolean("use-docker").pipe(
+    Flag.withDescription("Use Docker to unbundle functions locally."),
+    Flag.withHidden,
+  ),
+  legacyBundle: Flag.boolean("legacy-bundle").pipe(
+    Flag.withDescription("Use legacy bundling."),
+    Flag.withHidden,
+  ),
 } as const;
 
 export type LegacyFunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;

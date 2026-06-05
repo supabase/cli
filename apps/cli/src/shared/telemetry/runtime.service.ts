@@ -1,4 +1,4 @@
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 import type { ConsentState } from "./types.ts";
 
 interface TelemetryRuntimeShape {
@@ -17,6 +17,6 @@ interface TelemetryRuntimeShape {
   readonly cliVersion: string;
 }
 
-export class TelemetryRuntime extends ServiceMap.Service<TelemetryRuntime, TelemetryRuntimeShape>()(
+export class TelemetryRuntime extends Context.Service<TelemetryRuntime, TelemetryRuntimeShape>()(
   "supabase/telemetry/TelemetryRuntime",
 ) {}

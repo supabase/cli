@@ -1,5 +1,5 @@
 import type { Effect, Option, Redacted } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 /**
  * Credentials - Boundary for loading and persisting the CLI access token.
@@ -17,6 +17,6 @@ interface CredentialsShape {
 /**
  * Credentials - Service tag for access token persistence.
  */
-export class Credentials extends ServiceMap.Service<Credentials, CredentialsShape>()(
+export class Credentials extends Context.Service<Credentials, CredentialsShape>()(
   "supabase/auth/Credentials",
 ) {}

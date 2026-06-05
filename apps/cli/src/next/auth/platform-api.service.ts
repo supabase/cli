@@ -1,6 +1,6 @@
 import type { ApiClient } from "@supabase/api/effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
-export class PlatformApi extends ServiceMap.Service<PlatformApi, ApiClient>()(
+export class PlatformApi extends Context.Service<PlatformApi, ApiClient>()(
   "supabase/auth/PlatformApi",
 ) {}

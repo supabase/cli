@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import type { LegacyFunctionsNewFlags } from "./new.command.ts";
 
@@ -7,5 +7,6 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
 ) {
   const proxy = yield* LegacyGoProxy;
   const args: string[] = ["functions", "new", flags.functionName];
+  if (Option.isSome(flags.auth)) args.push("--auth", flags.auth.value);
   yield* proxy.exec(args);
 });

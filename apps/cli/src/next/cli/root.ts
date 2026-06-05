@@ -10,6 +10,7 @@ import { loginCommand } from "../commands/login/login.command.ts";
 import { logoutCommand } from "../commands/logout/logout.command.ts";
 import { logsCommand } from "../commands/logs/logs.command.ts";
 import { apiCommand } from "../commands/platform/api.command.ts";
+import { servicesCommand } from "../commands/services/services.command.ts";
 import { startCommand } from "../commands/start/start.command.ts";
 import { statusCommand } from "../commands/status/status.command.ts";
 import { stopCommand } from "../commands/stop/stop.command.ts";
@@ -35,6 +36,7 @@ export const nextRoot = Command.make("supabase").pipe(
     branchesCommand,
     linkCommand,
     unlinkCommand,
+    servicesCommand,
     stackCommand,
     startCommand,
     stopCommand,

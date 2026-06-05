@@ -21,6 +21,7 @@ function mockSpawner() {
           exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
           stdin: Sink.drain as any,
           stdout: Stream.empty,
           stderr: Stream.empty,

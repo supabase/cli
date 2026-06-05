@@ -1,5 +1,5 @@
 import { Effect, Layer, Option, Stdio, Stream, Tracer } from "effect";
-import type { Exit, ServiceMap } from "effect";
+import type { Exit, Context } from "effect";
 
 import { makeDebugConsoleExporter } from "./exporters/debug-console.ts";
 import { exportSpanToNdjson, initNdjsonExporter } from "./exporters/ndjson.ts";
@@ -29,7 +29,7 @@ class ExportableSpan implements Tracer.Span {
   readonly sampled: boolean;
   readonly name: string;
   readonly parent: Option.Option<Tracer.AnySpan>;
-  readonly annotations: ServiceMap.ServiceMap<never>;
+  readonly annotations: Context.Context<never>;
   readonly links: ReadonlyArray<Tracer.SpanLink>;
   readonly kind: Tracer.SpanKind;
 
@@ -42,7 +42,7 @@ class ExportableSpan implements Tracer.Span {
     options: {
       readonly name: string;
       readonly parent: Option.Option<Tracer.AnySpan>;
-      readonly annotations: ServiceMap.ServiceMap<never>;
+      readonly annotations: Context.Context<never>;
       readonly links: Array<Tracer.SpanLink>;
       readonly startTime: bigint;
       readonly kind: Tracer.SpanKind;

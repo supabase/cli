@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { secret } from "../lib/env.ts";
 
 const tags = ["auth"];
@@ -18,7 +18,7 @@ const createHookSchema = (name: string, slug: string) =>
       description: `Enable or disable the ${name.toLowerCase()}.`,
       tags,
       links: [link(name, slug)],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
     uri: Schema.optionalKey(
       Schema.String.annotate({
         description: "The URI of the postgres function or HTTP endpoint to call.",
@@ -33,7 +33,7 @@ const createHookSchema = (name: string, slug: string) =>
         links: [link(name, slug)],
       }),
     ),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultHook })));
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultHook })));
 
 export const hook = Schema.Struct({
   mfa_verification_attempt: createHookSchema("MFA Verification Hook", "mfa-verification-hook"),
@@ -45,4 +45,4 @@ export const hook = Schema.Struct({
   send_sms: createHookSchema("Send SMS Hook", "send-sms-hook"),
   send_email: createHookSchema("Send Email Hook", "send-email-hook"),
   before_user_created: createHookSchema("Before User Created Hook", "before-user-created-hook"),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultHook })));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultHook })));

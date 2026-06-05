@@ -26,9 +26,9 @@ export const legacyDbCommand = Command.make("db").pipe(
     legacyDbStartCommand,
     legacyDbQueryCommand,
     legacyDbAdvisorsCommand,
-    legacyDbTestCommand,
-    legacyDbBranchCommand,
-    legacyDbRemoteCommand,
+    legacyDbTestCommand.pipe(Command.withHidden),
+    legacyDbBranchCommand.pipe(Command.withHidden),
+    legacyDbRemoteCommand.pipe(Command.withHidden),
     legacyDbSchemaCommand,
   ]),
 );

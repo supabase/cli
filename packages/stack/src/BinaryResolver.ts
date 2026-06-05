@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Effect, FileSystem, Layer, Path, ServiceMap } from "effect";
+import { Effect, FileSystem, Layer, Path, Context } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryNotFoundError, ChecksumMismatchError, DownloadError } from "./errors.ts";
@@ -104,7 +104,7 @@ const verifyChecksum = (
     }),
   );
 
-export class BinaryResolver extends ServiceMap.Service<
+export class BinaryResolver extends Context.Service<
   BinaryResolver,
   {
     readonly resolveWithMetadata: (

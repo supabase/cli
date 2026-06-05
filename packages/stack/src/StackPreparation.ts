@@ -1,4 +1,4 @@
-import { Cause, Data, Effect, Exit, Layer, Queue, ServiceMap, Stream } from "effect";
+import { Cause, Data, Effect, Exit, Layer, Queue, Context, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { ChecksumMismatchError } from "./errors.ts";
@@ -152,7 +152,7 @@ export const prepareAssetsWithDependencies = (
     return artifacts;
   });
 
-export class StackPreparation extends ServiceMap.Service<
+export class StackPreparation extends Context.Service<
   StackPreparation,
   {
     readonly prepare: (

@@ -1,6 +1,6 @@
 import { buildGraph } from "@supabase/process-compose";
 import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
-import { Effect, Layer, ServiceMap } from "effect";
+import { Effect, Layer, Context } from "effect";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { StackBuildError } from "./errors.ts";
 import type { FunctionsConfig, ResolvedFunctionsConfig } from "./functions.ts";
@@ -27,7 +27,11 @@ import { makePostgresService, makePostgresServiceDocker } from "./services/postg
 import { makePostgrestService, makePostgrestServiceDocker } from "./services/postgrest.ts";
 import { makeRealtimeServiceDocker } from "./services/realtime.ts";
 import { type ServiceDependency } from "./services/service-utils.ts";
-import { makeStorageServiceDocker } from "./services/storage.ts";
+import {
+  LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
+  LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
+  makeStorageServiceDocker,
+} from "./services/storage.ts";
 import { makeStudioServiceDocker } from "./services/studio.ts";
 import { makeVectorServiceDocker } from "./services/vector.ts";
 import type { PreparedStackArtifacts } from "./StackPreparation.ts";
@@ -39,6 +43,14 @@ export interface PostgresConfig {
   readonly port?: number;
   readonly dataDir?: string;
   readonly version?: string;
+  /**
+   * When true (default), the bundled initial schema GRANTs that expose new tables, views,
+   * sequences, and functions in `public` to the Data API roles (`anon`, `authenticated`,
+   * `service_role`) are kept in place. When false, those default privileges are revoked so the
+   * local stack matches the new cloud default and requires explicit GRANTs to surface entities
+   * through the Data API.
+   */
+  readonly autoExposeNewTables?: boolean;
 }
 
 export interface PostgrestConfig {
@@ -160,6 +172,7 @@ export interface ResolvedPostgresConfig {
   readonly port: number;
   readonly dataDir: string;
   readonly version: string;
+  readonly autoExposeNewTables: boolean;
 }
 
 export interface ResolvedPostgrestConfig {
@@ -485,7 +498,7 @@ export const nativePostgresNeedsDockerAccess = (
   dockerServicesEnabled: boolean,
 ): boolean => postgresResolution.type === "binary" && dockerServicesEnabled;
 
-export class StackBuilder extends ServiceMap.Service<
+export class StackBuilder extends Context.Service<
   StackBuilder,
   {
     readonly build: (
@@ -569,6 +582,7 @@ export class StackBuilder extends ServiceMap.Service<
             ...makePostgresInitService({
               postgresDir: postgresResolution.path,
               dbPort: config.dbPort,
+              autoExposeNewTables: config.postgres.autoExposeNewTables,
             }),
             enabled: true,
           });
@@ -869,6 +883,8 @@ export class StackBuilder extends ServiceMap.Service<
               pgmetaUrl: pgmetaConfig === false ? "" : `http://${serviceHost}:${pgmetaConfig.port}`,
               publishableKey: config.publishableKey,
               secretKey: config.secretKey,
+              s3ProtocolAccessKeyId: LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
+              s3ProtocolAccessKeySecret: LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
               jwtSecret: config.jwtSecret,
               analyticsEnabled: config.analytics !== false,
               analyticsBackend: config.analytics !== false ? config.analytics.backend : "postgres",

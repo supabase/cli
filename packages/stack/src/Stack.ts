@@ -1,6 +1,6 @@
 import { ServiceNotFoundError } from "@supabase/process-compose";
 import type { LogEntry, ServiceReadyError } from "@supabase/process-compose";
-import { Effect, Layer, Schema, ServiceMap, Stream } from "effect";
+import { Effect, Layer, Schema, Context, Stream } from "effect";
 import { StackBuildError } from "./errors.ts";
 import type { FunctionsConfig } from "./functions.ts";
 import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
@@ -49,9 +49,9 @@ export interface EdgeRuntimeReloadConfig {
   readonly functions?: FunctionsConfig;
 }
 
-type StackService = ServiceMap.Service.Shape<typeof Stack>;
+type StackService = typeof Stack.Service;
 
-export class Stack extends ServiceMap.Service<
+export class Stack extends Context.Service<
   Stack,
   {
     readonly getInfo: () => Effect.Effect<StackInfo>;

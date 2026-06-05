@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 const tags = ["auth"];
 
@@ -9,7 +9,7 @@ const enabledField = Schema.Boolean.annotate({
   default: defaultEnabled,
   description: "Enable this third-party auth provider.",
   tags,
-}).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled)));
 
 export const third_party = Schema.Struct({
   firebase: Schema.Struct({
@@ -20,7 +20,7 @@ export const third_party = Schema.Struct({
         tags,
       }),
     ),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({}))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   auth0: Schema.Struct({
     enabled: enabledField,
     tenant: Schema.optionalKey(
@@ -35,7 +35,7 @@ export const third_party = Schema.Struct({
         tags,
       }),
     ),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({}))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   aws_cognito: Schema.Struct({
     enabled: enabledField,
     user_pool_id: Schema.optionalKey(
@@ -50,7 +50,7 @@ export const third_party = Schema.Struct({
         tags,
       }),
     ),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({}))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   clerk: Schema.Struct({
     enabled: enabledField,
     domain: Schema.optionalKey(
@@ -59,7 +59,7 @@ export const third_party = Schema.Struct({
         tags,
       }),
     ),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({}))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   workos: Schema.Struct({
     enabled: enabledField,
     issuer_url: Schema.optionalKey(
@@ -68,5 +68,5 @@ export const third_party = Schema.Struct({
         tags,
       }),
     ),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({}))),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultThirdParty })));
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultThirdParty })));

@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 const tags = ["auth"];
 
@@ -39,64 +39,64 @@ export const mfa = Schema.Struct({
       description: "Allow/disallow TOTP enrollment for users.",
       tags,
       links: [links.totp],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultTotpEnrollEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultTotpEnrollEnabled))),
     verify_enabled: Schema.Boolean.annotate({
       default: defaultTotpVerifyEnabled,
       description: "Allow/disallow TOTP verification for users.",
       tags,
       links: [links.totp],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultTotpVerifyEnabled)),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultTotp }))),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultTotpVerifyEnabled))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultTotp }))),
   phone: Schema.Struct({
     enroll_enabled: Schema.Boolean.annotate({
       default: defaultPhoneEnrollEnabled,
       description: "Allow/disallow phone enrollment for users.",
       tags,
       links: [links.phone],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultPhoneEnrollEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPhoneEnrollEnabled))),
     verify_enabled: Schema.Boolean.annotate({
       default: defaultPhoneVerifyEnabled,
       description: "Allow/disallow phone verification for users.",
       tags,
       links: [links.phone],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultPhoneVerifyEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPhoneVerifyEnabled))),
     otp_length: Schema.Number.annotate({
       default: defaultPhoneOtpLength,
       description: "The length of the OTP code.",
       tags,
       links: [links.phone],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultPhoneOtpLength)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPhoneOtpLength))),
     template: Schema.String.annotate({
       default: defaultPhoneTemplate,
       description: "The template to use for the phone message.",
       tags,
       links: [links.phone],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultPhoneTemplate)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPhoneTemplate))),
     max_frequency: Schema.String.annotate({
       default: defaultPhoneMaxFrequency,
       description: "The maximum frequency of the phone messages.",
       tags,
       links: [links.phone],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultPhoneMaxFrequency)),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultPhone }))),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPhoneMaxFrequency))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultPhone }))),
   web_authn: Schema.Struct({
     enroll_enabled: Schema.Boolean.annotate({
       default: defaultWebAuthnEnrollEnabled,
       description: "Allow/disallow WebAuthn enrollment for users.",
       tags,
       links: [links.mfa],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultWebAuthnEnrollEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultWebAuthnEnrollEnabled))),
     verify_enabled: Schema.Boolean.annotate({
       default: defaultWebAuthnVerifyEnabled,
       description: "Allow/disallow WebAuthn verification for users.",
       tags,
       links: [links.mfa],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultWebAuthnVerifyEnabled)),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultWebAuthn }))),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultWebAuthnVerifyEnabled))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultWebAuthn }))),
   max_enrolled_factors: Schema.Number.annotate({
     default: defaultMaxEnrolledFactors,
     description: "The maximum number of MFA factors a user can enroll in.",
     tags,
     links: [links.mfa],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultMaxEnrolledFactors)),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultMfa })));
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxEnrolledFactors))),
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultMfa })));

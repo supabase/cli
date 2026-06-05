@@ -1,13 +1,12 @@
 import { Effect, Layer, Option, Redacted } from "effect";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { resolvePosthogConfig } from "../../shared/telemetry/posthog-config.ts";
 import { CliConfig } from "./cli-config.service.ts";
 import { ProjectContext } from "./project-context.service.ts";
 
 const SUPABASE_API_URL = "https://api.supabase.com";
 const SUPABASE_DASHBOARD_URL = "https://supabase.com/dashboard";
 const SUPABASE_PROJECT_HOST = "supabase.co";
-const SUPABASE_TELEMETRY_POSTHOG_HOST = "https://eu.i.posthog.com";
-const SUPABASE_TELEMETRY_POSTHOG_KEY = "phc_ihjC3EeB2wXCt87yccX5idgIgeZsub7WG0XR5hGFhJz";
 
 function readEnv(
   env: Readonly<Record<string, string | undefined>>,
@@ -24,6 +23,7 @@ const makeCliConfig = Effect.gen(function* () {
     onNone: () => process.env,
     onSome: (projectEnv) => projectEnv.values,
   });
+  const posthogConfig = resolvePosthogConfig(effectiveEnv);
 
   return CliConfig.of({
     apiUrl: Option.getOrElse(readEnv(effectiveEnv, "SUPABASE_API_URL"), () => SUPABASE_API_URL),
@@ -35,14 +35,8 @@ const makeCliConfig = Effect.gen(function* () {
       readEnv(effectiveEnv, "SUPABASE_PROJECT_HOST"),
       () => SUPABASE_PROJECT_HOST,
     ),
-    telemetryPosthogHost: Option.getOrElse(
-      readEnv(effectiveEnv, "SUPABASE_TELEMETRY_POSTHOG_HOST"),
-      () => SUPABASE_TELEMETRY_POSTHOG_HOST,
-    ),
-    telemetryPosthogKey: Option.getOrElse(
-      readEnv(effectiveEnv, "SUPABASE_TELEMETRY_POSTHOG_KEY"),
-      () => SUPABASE_TELEMETRY_POSTHOG_KEY,
-    ),
+    telemetryPosthogHost: posthogConfig.host,
+    telemetryPosthogKey: posthogConfig.key,
     accessToken: Option.map(readEnv(effectiveEnv, "SUPABASE_ACCESS_TOKEN"), (token) =>
       Redacted.make(token, { label: "SUPABASE_ACCESS_TOKEN" }),
     ),

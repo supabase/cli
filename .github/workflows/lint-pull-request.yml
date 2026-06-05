@@ -1,5 +1,7 @@
 name: Lint Pull Request
 
+# Release-notes PRs (head ref `release-notes/*`) skip CI; only
+# apply-release-notes.yml runs for those.
 on:
   pull_request_target:
     types:
@@ -23,7 +25,11 @@ concurrency:
 
 jobs:
   main:
-    if: github.event_name != 'pull_request_target' || github.event.pull_request.draft == false
+    if: |
+      github.event_name == 'merge_group' ||
+      (github.event_name == 'pull_request_target' &&
+        !startsWith(github.event.pull_request.head.ref, 'release-notes/') &&
+        github.event.pull_request.draft == false)
     name: Lint Pull Request
     runs-on: ubuntu-latest
     steps:

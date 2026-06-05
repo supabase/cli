@@ -114,6 +114,7 @@ describe("HealthProbe", () => {
               isRunning: Effect.succeed(false),
               stdin: Sink.drain,
               kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
               getInputFd: () => Sink.drain,
               getOutputFd: () => Stream.empty,
             });

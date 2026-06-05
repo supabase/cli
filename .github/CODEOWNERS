@@ -1,1 +1,12 @@
+# Default all repository changes to the CLI team.
 * @supabase/cli
+
+# Dependabot-only dependency surfaces. These ownerless rules override the
+# catch-all above so CI-green Dependabot PRs can be auto-approved and merged.
+/.github/workflows/*.yml
+**/package.json
+**/go.mod
+**/go.sum
+/apps/cli-go/pkg/config/templates/Dockerfile
+/pnpm-lock.yaml
+/pnpm-workspace.yaml

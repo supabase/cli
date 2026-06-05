@@ -36,6 +36,10 @@ const config = {
   postgrestV9Compat: Flag.boolean("postgrest-v9-compat").pipe(
     Flag.withDescription("Generate types compatible with PostgREST v9 and below."),
   ),
+  queryTimeout: Flag.string("query-timeout").pipe(
+    Flag.withDescription("Maximum timeout allowed for the database query."),
+    Flag.optional,
+  ),
 } as const;
 
 export type LegacyGenTypesFlags = CliCommand.Command.Config.Infer<typeof config>;

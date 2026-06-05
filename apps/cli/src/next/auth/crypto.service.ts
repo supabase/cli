@@ -1,6 +1,6 @@
 import type { ECDH } from "node:crypto";
 import type { Effect } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 export type EncryptedPayload = { ciphertext: string; publicKey: string; nonce: string };
 
@@ -11,4 +11,4 @@ interface CryptoShape {
   readonly decryptToken: (ecdh: ECDH, payload: EncryptedPayload) => Effect.Effect<string>;
 }
 
-export class Crypto extends ServiceMap.Service<Crypto, CryptoShape>()("supabase/auth/Crypto") {}
+export class Crypto extends Context.Service<Crypto, CryptoShape>()("supabase/auth/Crypto") {}

@@ -1,4 +1,4 @@
-import { Option, ServiceMap } from "effect";
+import { Option, Context } from "effect";
 import type { HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import { formatHelpDocAsMarkdown } from "./markdown-formatter.ts";
@@ -36,7 +36,7 @@ function makeDoc(overrides: RawHelpDoc = {}): HelpDoc.HelpDoc {
           })),
         }
       : {}),
-    annotations: ServiceMap.empty(),
+    annotations: Context.empty(),
   };
 }
 

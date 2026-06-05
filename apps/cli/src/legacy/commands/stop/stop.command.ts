@@ -7,6 +7,13 @@ const config = {
     Flag.withDescription("Local project ID to stop."),
     Flag.optional,
   ),
+  // Hidden boolean kept for Go CLI parity: `--backup=false` is the historical
+  // way to skip the backup and is functionally identical to `--no-backup`.
+  backup: Flag.boolean("backup").pipe(
+    Flag.withDescription("Backs up the current database before stopping."),
+    Flag.withDefault(true),
+    Flag.withHidden,
+  ),
   noBackup: Flag.boolean("no-backup").pipe(
     Flag.withDescription("Deletes all data volumes after stopping."),
   ),

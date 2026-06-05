@@ -327,7 +327,7 @@ export async function makeStackFixture(
       ),
     );
 
-    await daemonRuntime.runPromise(DaemonServer.asEffect());
+    await daemonRuntime.runPromise(DaemonServer);
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -357,7 +357,7 @@ export async function makeStackFixture(
         dashboardUrl: "https://supabase.com/dashboard",
         projectHost: "supabase.co",
         telemetryPosthogHost: "https://us.i.posthog.com",
-        telemetryPosthogKey: "phc_test_key",
+        telemetryPosthogKey: Option.some("phc_test_key"),
         accessToken: Option.none(),
         noKeyring: Option.none(),
         supabaseHome: homeDir,

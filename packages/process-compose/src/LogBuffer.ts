@@ -1,4 +1,4 @@
-import { Effect, Layer, PubSub, Ref, ServiceMap, Stream } from "effect";
+import { Effect, Layer, PubSub, Ref, Context, Stream } from "effect";
 
 export interface LogEntry {
   readonly timestamp: number;
@@ -9,7 +9,7 @@ export interface LogEntry {
 
 const MAX_BUFFER_SIZE = 10_000;
 
-export class LogBuffer extends ServiceMap.Service<
+export class LogBuffer extends Context.Service<
   LogBuffer,
   {
     readonly append: (

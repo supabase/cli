@@ -2,9 +2,10 @@
 
 ## Files Read
 
-| Path                       | Format                    | When                                                       |
-| -------------------------- | ------------------------- | ---------------------------------------------------------- |
-| `~/.supabase/access-token` | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
+| Path                                   | Format                    | When                                                       |
+| -------------------------------------- | ------------------------- | ---------------------------------------------------------- |
+| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
+| `<workdir>/supabase/.temp/project-ref` | plain text (ref string)   | always (soft) — used only to flag the linked project       |
 
 ## Files Written
 
@@ -34,34 +35,48 @@
 | `1`  | API error — non-2xx response from `/v1/projects` |
 | `1`  | network / connection failure                     |
 
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups         |
+| ---------------------- | ------------------------------------------ | ----------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
+
 ## Output
+
+Two-axis: Go's `--output {pretty|json|yaml|toml|env}` wins when set; otherwise the TS
+`--output-format`. `--output env` is **unsupported** (errors). go json/yaml encode the
+`linkedProject[]`; go toml wraps them as `{projects=[...]}`.
 
 ### `--output-format text` (Go CLI compatible)
 
-Prints a Markdown-style table to stdout with a header row and one row per project.
-Column order: `ID`, `NAME`, `REGION`, `ORGANIZATION ID`, `CREATED AT`. Columns are
-separated by two spaces and left-aligned.
+Glamour ASCII table. Column order: `LINKED`, `ORG ID`, `REFERENCE ID`, `NAME`, `REGION`,
+`CREATED AT (UTC)`. The `LINKED` cell shows `  ●` for the linked project (else blank),
+`REGION` is the human-readable region name, and `CREATED AT (UTC)` is `YYYY-MM-DD HH:MM:SS`.
 
 ```
- ID                    NAME          REGION      ORGANIZATION ID            CREATED AT
- abcdefghijklmnopqrst  Test Project  us-west-1   combined-fuchsia-lion      2022-04-25T02:14:55.906498Z
+  LINKED | ORG ID                | REFERENCE ID         | NAME         | REGION                  | CREATED AT (UTC)
+  -------|-----------------------|----------------------|--------------|-------------------------|--------------------
+    ●    | combined-fuchsia-lion | abcdefghijklmnopqrst | Test Project | East US (North Virginia)| 2022-04-25 02:14:55
 ```
 
 ### `--output-format json`
 
-Single JSON array emitted to stdout on success. Each element contains the full
-project object as returned by the Management API.
+`success("", { projects })` — each project is the Management API object plus a
+`linked` boolean.
 
 ```json
-[
-  {
-    "id": "abcdefghijklmnopqrst",
-    "organization_slug": "combined-fuchsia-lion",
-    "name": "Test Project",
-    "region": "us-west-1",
-    "created_at": "2022-04-25T02:14:55.906498Z"
-  }
-]
+{
+  "projects": [
+    {
+      "id": "abcdefghijklmnopqrst",
+      "organization_slug": "combined-fuchsia-lion",
+      "name": "Test Project",
+      "region": "us-west-1",
+      "created_at": "2022-04-25T02:14:55.906498Z",
+      "linked": true
+    }
+  ]
+}
 ```
 
 ### `--output-format stream-json`
