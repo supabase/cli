@@ -28,6 +28,11 @@ import {
 } from "./bootstrap.errors.ts";
 import { deriveDbConfig } from "./bootstrap.pgconfig.ts";
 import { suggestAppStart } from "./bootstrap.suggest.ts";
+import {
+  LEGACY_BOOTSTRAP_MAX_RETRIES,
+  legacyBootstrapBackoff,
+  legacyBootstrapRetryNotify,
+} from "./bootstrap.retry.ts";
 import { type LegacyStarterTemplate, LegacyTemplateService } from "./bootstrap.templates.ts";
 import type { LegacyBootstrapFlags } from "./bootstrap.command.ts";
 
@@ -39,14 +44,9 @@ const SCRATCH_TEMPLATE: LegacyStarterTemplate = {
   start: "supabase start",
 };
 
-// Go's `utils.NewBackoffPolicy`: exponential backoff, 3s initial interval,
-// `maxRetries = 8` (`internal/utils/retry.go`). Injectable so tests run fast.
-const LEGACY_BOOTSTRAP_MAX_RETRIES = 8;
-const legacyBootstrapBackoff = Schedule.exponential("3 seconds");
-
 export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
   flags: LegacyBootstrapFlags,
-  retrySchedule: typeof legacyBootstrapBackoff = legacyBootstrapBackoff,
+  retrySchedule: Schedule.Schedule<unknown> = legacyBootstrapBackoff,
 ) {
   const output = yield* Output;
   const tty = yield* Tty;
@@ -70,6 +70,10 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
   // while leaving the surrounding process untouched.
   const originalCwd = process.cwd();
   let createdRef: string | undefined;
+  // Resolved bootstrap workdir, hoisted so the linked-project-cache finalizer writes
+  // beside the other `supabase/.temp/` files instead of `cliConfig.workdir`. Go achieves
+  // this by re-running `flags.LoadConfig` after `ChangeWorkDir` (`bootstrap.go:98-100`).
+  let resolvedWorkdir: string | undefined;
 
   yield* Effect.gen(function* () {
     // A. Resolve workdir (flag -> env -> prompt -> cwd). `bootstrap.go:30-40`.
@@ -88,6 +92,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     const workdir = path.isAbsolute(workdirInput)
       ? workdirInput
       : path.join(runtimeInfo.cwd, workdirInput);
+    resolvedWorkdir = workdir;
 
     // B. List templates + resolve the starter. `bootstrap.go:38-58` / `cmd:25-58`.
     const samples = yield* templateService.listSamples;
@@ -177,11 +182,13 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     createdRef = projectRef.length > 0 ? projectRef : undefined;
 
     // H. Fetch api keys with backoff; each attempt prints "Linking project...".
-    // `bootstrap.go:88-97`.
+    // `bootstrap.go:88-97`. The notify wrapper reproduces Go's `NewErrorCallback`
+    // (`<err>\nRetry (n/8):` after each failed attempt); a fresh counter per block.
+    const apiKeysNotify = legacyBootstrapRetryNotify();
     const keys = yield* Effect.gen(function* () {
       if (isText) yield* output.raw("Linking project...\n", "stderr");
       return yield* legacyGetProjectApiKeys(projectRef);
-    }).pipe(Effect.retry(retry));
+    }).pipe(apiKeysNotify, Effect.retry(retry));
     const { anon } = legacyExtractServiceKeys(keys);
 
     // I. Link services (best-effort, anon key) + mandatory project-ref write.
@@ -197,6 +204,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     yield* fs.writeFileString(paths.projectRef, projectRef);
 
     // J. Poll health until db is healthy. `bootstrap.go:106-113`.
+    const healthNotify = legacyBootstrapRetryNotify();
     yield* Effect.gen(function* () {
       if (isText) yield* output.raw("Checking project health...\n", "stderr");
       const services = yield* api.v1
@@ -209,7 +217,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
           });
         }
       }
-    }).pipe(Effect.retry(retry));
+    }).pipe(healthNotify, Effect.retry(retry));
 
     // K. Derive db config + write .env (non-fatal). `bootstrap.go:114-121`.
     const dbConfig = deriveDbConfig(projectRef, created.dbPassword, cliConfig.projectHost);
@@ -274,7 +282,9 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     ),
     Effect.ensuring(
       Effect.suspend(() =>
-        createdRef === undefined ? Effect.void : linkedProjectCache.cache(createdRef),
+        createdRef === undefined
+          ? Effect.void
+          : linkedProjectCache.cache(createdRef, resolvedWorkdir),
       ),
     ),
     Effect.ensuring(telemetryState.flush),

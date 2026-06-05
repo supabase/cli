@@ -194,9 +194,18 @@ export const legacyTemplateServiceLayer = Layer.effect(
           for (const entry of listing) {
             const entryPath = entry.path ?? "";
             if (entry.type === "file") {
-              const relative = entryPath.startsWith(root)
-                ? entryPath.slice(root.length)
-                : entryPath;
+              // Strip `<root>` on a path-segment boundary so a sibling directory that
+              // merely shares the prefix (e.g. `examples/app-2` under `root="examples/app"`)
+              // is never mis-sliced. The contents API only returns children of the queried
+              // directory, but matching on `root + "/"` is the obviously-correct form.
+              const relative =
+                root === ""
+                  ? entryPath
+                  : entryPath === root
+                    ? ""
+                    : entryPath.startsWith(`${root}/`)
+                      ? entryPath.slice(root.length + 1)
+                      : entryPath;
               const localPath = path.join(targetDir, ...relative.split("/").filter(Boolean));
               // Defence-in-depth: reject a malicious `path` (e.g. `../../etc/x`)
               // that would escape the target directory.
@@ -210,7 +219,15 @@ export const legacyTemplateServiceLayer = Layer.effect(
                   message: `failed to download template: entry escapes target directory: ${entryPath}`,
                 });
               }
-              downloads.push({ localPath, remoteUrl: entry.download_url ?? "" });
+              // GitHub returns a null `download_url` for files over 1 MB and for
+              // submodules; without an explicit guard the `?? ""` fallback would issue
+              // `GET ""` and surface a confusing transport error instead of a clear one.
+              if (entry.download_url == null || entry.download_url.length === 0) {
+                return yield* new LegacyBootstrapTemplateDownloadError({
+                  message: `failed to download template: unsupported entry (no download URL): ${entryPath}`,
+                });
+              }
+              downloads.push({ localPath, remoteUrl: entry.download_url });
             } else if (entry.type === "dir") {
               queue.push(entryPath);
             } else {

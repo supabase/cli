@@ -15,15 +15,15 @@ health poll → write `.env` → `db push` → start suggestion. Every step is n
 
 ## Files Written
 
-| Path                                                                                                  | Format     | When                                                       |
-| ----------------------------------------------------------------------------------------------------- | ---------- | ---------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                                                                      | TOML       | blank/`scratch` path only (via `initProject`)              |
-| `<workdir>/<template files>`                                                                          | varies     | template path only (GitHub download)                       |
-| `<workdir>/supabase/.temp/project-ref`                                                                | plain text | always (mandatory; fails the command on write error)       |
-| `<workdir>/supabase/.temp/{pooler-url,rest-version,gotrue-version,storage-version,storage-migration}` | plain text | best-effort, from `link.LinkServices`                      |
-| `<workdir>/.env`                                                                                      | dotenv     | best-effort (write failure prints a warning and continues) |
-| `~/.supabase/<workdir-hash>/linked-project.json`                                                      | JSON       | PersistentPostRun linked-project cache (`Effect.ensuring`) |
-| `~/.supabase/telemetry.json`                                                                          | JSON       | PersistentPostRun telemetry flush (`Effect.ensuring`)      |
+| Path                                                                                                  | Format     | When                                                                                                                                                              |
+| ----------------------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                                                      | TOML       | blank/`scratch` path only (via `initProject`)                                                                                                                     |
+| `<workdir>/<template files>`                                                                          | varies     | template path only (GitHub download)                                                                                                                              |
+| `<workdir>/supabase/.temp/project-ref`                                                                | plain text | always (mandatory; fails the command on write error)                                                                                                              |
+| `<workdir>/supabase/.temp/{pooler-url,rest-version,gotrue-version,storage-version,storage-migration}` | plain text | best-effort, from `link.LinkServices`                                                                                                                             |
+| `<workdir>/.env`                                                                                      | dotenv     | best-effort (write failure prints a warning and continues)                                                                                                        |
+| `<workdir>/supabase/.temp/linked-project.json`                                                        | JSON       | PersistentPostRun linked-project cache (`Effect.ensuring`); resolves against the bootstrap workdir (the prompted/`--workdir`/env target), not `cliConfig.workdir` |
+| `~/.supabase/telemetry.json`                                                                          | JSON       | PersistentPostRun telemetry flush (`Effect.ensuring`)                                                                                                             |
 
 **Process side effect:** `process.chdir(<workdir>)` mirrors Go's `ChangeWorkDir` and prints
 `Using workdir <workdir>\n` to stderr (`workdir` bolded on a TTY). The original cwd is restored
@@ -108,8 +108,12 @@ Human banners are suppressed; a single structured result is emitted:
   lifetime of that subprocess (Go runs `push.Run` in-process and never exposes it). The same
   password is already written in plaintext to `<workdir>/.env` in the same directory, so the
   incremental exposure is small; it is eliminated when `db push` is natively ported (no subprocess).
-- The api-keys and health retries use exponential backoff (3s initial, 8 retries), matching Go's
-  `utils.NewBackoffPolicy`. The per-attempt `Linking project…` / `Checking project health…` lines
-  are reproduced; Go's debug-only `Retry (n/8):` notifier is not.
+- The api-keys and health retries use the full Go `utils.NewBackoffPolicy` policy: exponential
+  backoff, 3s initial interval, multiplier 1.5, 60s max interval (capped before jitter), ±50% jitter
+  (randomization factor 0.5), 15m max-elapsed cap, and 8 retries (9 total attempts). The per-attempt
+  `Linking project…` / `Checking project health…` lines are reproduced, **and** Go's
+  `NewErrorCallback` notice — `<err>\nRetry (n/8): ` after each failed attempt — is reproduced:
+  failures 1-2 go to the debug logger (shown only under `--debug`), failures 3+ to stderr; the final
+  exhausted attempt prints no notice (matches `backoff.RetryNotify`).
 - `Downloading:` / progress banners are gated to text mode to keep machine stdout payload-only
   (CLI-1546).

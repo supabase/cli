@@ -27,6 +27,7 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import {
+  LegacyDebugFlag,
   LegacyWorkdirFlag,
   LegacyYesFlag,
   LegacyOutputFlag,
@@ -73,6 +74,7 @@ interface SetupOpts {
   readonly yes?: boolean;
   readonly stdinIsTty?: boolean;
   readonly loggedIn?: boolean;
+  readonly debug?: boolean;
   readonly samples?: ReadonlyArray<LegacyStarterTemplate>;
   readonly apiKeysFailTimes?: number;
   readonly health?: { readonly status: number; readonly body: unknown };
@@ -168,6 +170,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(LegacyOutputFlag, Option.none()),
     Layer.succeed(LegacyWorkdirFlag, opts.workdir ?? Option.some(tempRoot.current)),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
   );
 
   return {

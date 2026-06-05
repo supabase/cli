@@ -5,6 +5,7 @@ import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
 import { legacyPlatformApiLayer } from "../../auth/legacy-platform-api.layer.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyProjectRefLayer } from "../../config/legacy-project-ref.layer.ts";
+import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -24,14 +25,22 @@ import { legacyTemplateServiceLayer } from "./bootstrap.templates.ts";
 //
 // `Output`, `Analytics`, `Stdio`, `Tty`, `RuntimeInfo`, `ProcessControl`,
 // `LegacyGoProxy`, and `BunServices` (`FileSystem` / `Path` / `ChildProcessSpawner`)
-// come from the root layer (`legacy/cli/root.ts` + `runCli`).
-const cliConfig = legacyCliConfigLayer;
-const httpClient = legacyHttpClientLayer;
-const credentials = legacyCredentialsLayer.pipe(Layer.provide(cliConfig));
+// come from the root layer (`legacy/cli/root.ts` + `runCli`). `LegacyDebugLogger` is
+// NOT provided by the root, so every base layer that reads it for `--debug` traces
+// (`legacyCliConfigLayer`, `legacyHttpClientLayer`, `legacyCredentialsLayer`,
+// `legacyPlatformApiLayer`) is fed `legacyDebugLoggerLayer` here — matching `login.layers.ts`.
+const debugLogger = legacyDebugLoggerLayer;
+const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(debugLogger));
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(debugLogger));
+const credentials = legacyCredentialsLayer.pipe(
+  Layer.provide(cliConfig),
+  Layer.provide(debugLogger),
+);
 const platformApi = legacyPlatformApiLayer.pipe(
   Layer.provide(credentials),
   Layer.provide(cliConfig),
   Layer.provide(httpClient),
+  Layer.provide(debugLogger),
 );
 
 export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
