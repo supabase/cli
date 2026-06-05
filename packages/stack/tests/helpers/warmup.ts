@@ -14,7 +14,7 @@ interface WarmStackE2eDependenciesOptions {
 
 export function hasDockerDaemon(): boolean {
   try {
-    execSync("docker info", { stdio: "ignore" });
+    execSync("docker info", { stdio: "ignore", timeout: 2_000 });
     return true;
   } catch {
     return false;
