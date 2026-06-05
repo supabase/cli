@@ -26,7 +26,7 @@ interface ServiceImageSpec {
 // We keep this compiled into the TS CLI because the published package does not
 // ship the Go source tree at runtime, but the user-visible `services` output
 // still needs to match the bundled image manifest.
-export const LOCAL_SERVICE_IMAGES = [
+const LOCAL_SERVICE_IMAGES = [
   { image: "supabase/postgres:17.6.1.132", remoteService: "postgres" },
   { image: "supabase/gotrue:v2.189.0", remoteService: "auth" },
   { image: "postgrest/postgrest:v14.12", remoteService: "postgrest" },
