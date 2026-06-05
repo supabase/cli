@@ -13,7 +13,7 @@ import (
 const (
 	PgDeltaSourceSSLRootCert = "PGDELTA_SOURCE_SSLROOTCERT"
 	PgDeltaTargetSSLRootCert = "PGDELTA_TARGET_SSLROOTCERT"
-	pgDeltaCABundleRelPath   = "supabase/.temp/pgdelta/supabase-ca-bundle.crt"
+	pgDeltaCABundleDir       = "supabase/.temp/pgdelta"
 )
 
 func isPostgresURL(ref string) bool {
@@ -27,7 +27,8 @@ func isSupabaseHostedPostgresURL(dbURL string) bool {
 	}
 	host := strings.ToLower(parsed.Hostname())
 	return strings.HasSuffix(host, ".supabase.co") ||
-		strings.Contains(host, "pooler.supabase.com")
+		host == "pooler.supabase.com" ||
+		strings.HasSuffix(host, ".pooler.supabase.com")
 }
 
 // pgDeltaRootCA returns the CA bundle pg-delta should use for a Postgres URL.
@@ -45,6 +46,20 @@ func pgDeltaRootCA(ctx context.Context, dbURL string, options ...func(*pgx.ConnC
 		return caStaging + caProd + caSnap, nil
 	}
 	return "", nil
+}
+
+// caBundleFilename returns the per-ref filename for the in-container CA
+// bundle. SOURCE and TARGET use distinct files so a diff between two
+// remotes with different CAs cannot accidentally share a single bundle.
+func caBundleFilename(sslRootCertEnv string) string {
+	switch sslRootCertEnv {
+	case PgDeltaSourceSSLRootCert:
+		return "pgdelta-source-ca.crt"
+	case PgDeltaTargetSSLRootCert:
+		return "pgdelta-target-ca.crt"
+	default:
+		return "pgdelta-ca.crt"
+	}
 }
 
 // PreparePgDeltaPostgresRef configures a Postgres URL and env vars for pg-delta.
@@ -68,26 +83,27 @@ func PreparePgDeltaPostgresRef(
 	if len(ca) == 0 {
 		return ref, nil, nil
 	}
-	containerCertPath, err := writePgDeltaCABundleFile(ca)
+	containerCertPath, err := writePgDeltaCABundleFile(ca, caBundleFilename(sslRootCertEnv))
 	if err != nil {
 		return "", nil, err
 	}
 	return ensurePgDeltaSSL(ref, containerCertPath), []string{sslRootCertEnv + "=" + ca}, nil
 }
 
-func writePgDeltaCABundleFile(ca string) (string, error) {
+func writePgDeltaCABundleFile(ca, filename string) (string, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
 	}
-	abs := filepath.Join(cwd, pgDeltaCABundleRelPath)
+	relPath := filepath.Join(pgDeltaCABundleDir, filename)
+	abs := filepath.Join(cwd, relPath)
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", err
 	}
 	if err := os.WriteFile(abs, []byte(ca), 0o600); err != nil {
 		return "", err
 	}
-	return "/workspace/" + filepath.ToSlash(pgDeltaCABundleRelPath), nil
+	return "/workspace/" + filepath.ToSlash(relPath), nil
 }
 
 func ensurePgDeltaSSL(dbURL, sslrootcertPath string) string {
@@ -106,9 +122,4 @@ func ensurePgDeltaSSL(dbURL, sslrootcertPath string) string {
 	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String()
-}
-
-// EnsurePgDeltaVerifyCA is kept for tests that assert URL sslmode behaviour.
-func EnsurePgDeltaVerifyCA(dbURL string) string {
-	return ensurePgDeltaSSL(dbURL, "")
 }

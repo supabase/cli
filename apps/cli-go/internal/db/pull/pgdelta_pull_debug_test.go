@@ -18,11 +18,11 @@ import (
 func TestSaveEmptyPgDeltaPullDebug(t *testing.T) {
 	t.Setenv("PGDELTA_DEBUG", "1")
 	fsys := afero.NewMemMapFs()
-	original := exportCatalogPgDelta
+	original := exportTargetCatalog
 	t.Cleanup(func() {
-		exportCatalogPgDelta = original
+		exportTargetCatalog = original
 	})
-	exportCatalogPgDelta = func(ctx context.Context, targetRef, role string, options ...func(*pgx.ConnConfig)) (string, error) {
+	exportTargetCatalog = func(ctx context.Context, targetRef, role string, options ...func(*pgx.ConnConfig)) (string, error) {
 		return `{"schema":"public","name":"airports"}`, nil
 	}
 	config := pgconn.Config{
@@ -70,11 +70,11 @@ func TestSaveEmptyPgDeltaPullDebug(t *testing.T) {
 
 func TestSaveEmptyPgDeltaPullDebugUsesTempDir(t *testing.T) {
 	fsys := afero.NewMemMapFs()
-	original := exportCatalogPgDelta
+	original := exportTargetCatalog
 	t.Cleanup(func() {
-		exportCatalogPgDelta = original
+		exportTargetCatalog = original
 	})
-	exportCatalogPgDelta = func(ctx context.Context, targetRef, role string, options ...func(*pgx.ConnConfig)) (string, error) {
+	exportTargetCatalog = func(ctx context.Context, targetRef, role string, options ...func(*pgx.ConnConfig)) (string, error) {
 		return `{}`, nil
 	}
 	debugDir, err := saveEmptyPgDeltaPullDebug(context.Background(), pgconn.Config{}, &diff.PgDeltaDebugCapture{}, fsys)

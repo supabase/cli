@@ -16,7 +16,7 @@ import (
 	"github.com/supabase/cli/internal/utils"
 )
 
-var exportCatalogPgDelta = diff.ExportCatalogPgDelta
+var exportTargetCatalog = diff.ExportCatalogPgDelta
 
 func saveEmptyPgDeltaPullDebug(
 	ctx context.Context,
@@ -28,7 +28,7 @@ func saveEmptyPgDeltaPullDebug(
 	if capture == nil {
 		capture = &diff.PgDeltaDebugCapture{}
 	}
-	targetCatalog, err := exportCatalogPgDelta(ctx, utils.ToPostgresURL(config), "postgres", options...)
+	targetCatalog, err := exportTargetCatalog(ctx, utils.ToPostgresURL(config), "postgres", options...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to export remote pg-delta catalog: %v\n", err)
 	}
