@@ -3,8 +3,11 @@ import { createDecipheriv, createECDH, randomUUID, type ECDH } from "node:crypto
 import { hostname, userInfo } from "node:os";
 import { Effect, Layer } from "effect";
 
-import { LegacyLoginCrypto, type LegacyEncryptedPayload } from "./login-crypto.service.ts";
-import { LegacyLoginCryptoError, LegacyLoginDecryptError } from "./login.errors.ts";
+import {
+  LegacyLoginCrypto,
+  type LegacyEncryptedPayload,
+} from "../commands/login/login-crypto.service.ts";
+import { LegacyLoginCryptoError, LegacyLoginDecryptError } from "../commands/login/login.errors.ts";
 
 const DECRYPTION_ERROR_MSG = "cannot decrypt access token";
 

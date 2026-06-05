@@ -18,12 +18,9 @@ import {
 } from "../../../shared/telemetry/event-catalog.ts";
 import { legacyDashboardUrl } from "../../shared/legacy-profile.ts";
 import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
+import { legacyLinkServicesCore } from "../../shared/legacy-link-services-core.ts";
+import { legacyExtractServiceKeys } from "../../shared/legacy-tenant-keys.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
-import {
-  legacyFetchGotrueVersion,
-  legacyFetchPostgrestVersion,
-  legacyFetchStorageVersion,
-} from "../../shared/legacy-tenant-versions.ts";
 import {
   LegacyLinkApiKeysNetworkError,
   LegacyLinkAuthTokenError,
@@ -74,46 +71,7 @@ const classifyProjectError = (
   );
 };
 
-interface ApiKeyEntry {
-  readonly api_key?: string | null;
-  readonly type?: string | null;
-  readonly name: string;
-  readonly secret_jwt_template?: Record<string, unknown> | null;
-}
-
 type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, PlatformError>;
-
-// Mirrors `tenant.NewApiKey` (`apps/cli-go/internal/utils/tenant/client.go:28-57`):
-// publishable -> anon, secret w/ role=service_role -> service_role, else legacy
-// name-based fallback (`anon` / `service_role`).
-function extractServiceKeys(keys: ReadonlyArray<ApiKeyEntry>): {
-  anon: string;
-  serviceRole: string;
-} {
-  let anon = "";
-  let serviceRole = "";
-  for (const key of keys) {
-    const value = key.api_key;
-    if (value === undefined || value === null) continue;
-    if (key.type === "publishable") {
-      anon = value;
-      continue;
-    }
-    if (key.type === "secret") {
-      const role = key.secret_jwt_template?.["role"];
-      if (typeof role === "string" && role.toLowerCase() === "service_role") {
-        serviceRole = value;
-      }
-      continue;
-    }
-    if (key.name === "anon" && anon.length === 0) {
-      anon = value;
-    } else if (key.name === "service_role" && serviceRole.length === 0) {
-      serviceRole = value;
-    }
-  }
-  return { anon, serviceRole };
-}
 
 const mapApiKeysError = mapLegacyHttpError({
   networkError: LegacyLinkApiKeysNetworkError,
@@ -181,46 +139,18 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
     const keys = yield* api.v1
       .getProjectApiKeys({ ref, reveal: true })
       .pipe(Effect.catch(mapApiKeysError));
-    const { anon, serviceRole } = extractServiceKeys(keys);
+    const { anon, serviceRole } = legacyExtractServiceKeys(keys);
     if (anon.length === 0 && serviceRole.length === 0) {
       return yield* Effect.fail(new LegacyLinkMissingKeyError({ message: "Anon key not found." }));
     }
 
-    // 3. Link services — best-effort. Every error is swallowed so a single
-    // unreachable service never fails the link (link.go:91-100).
-    yield* linkStorageMigration(api, ref, paths.storageMigration, writeTempFile);
-    yield* linkPooler({
-      api,
+    // 3. Link services — best-effort, using the service-role key for tenant probes.
+    yield* legacyLinkServicesCore({
       ref,
-      skipPooler: flags.skipPooler,
-      fs,
-      poolerUrlPath: paths.poolerUrl,
-      writeTempFile,
-    });
-    const tenantOpts = {
-      ref,
-      projectHost: cliConfig.projectHost,
       serviceKey: serviceRole,
-      userAgent: cliConfig.userAgent,
-    };
-    yield* legacyFetchPostgrestVersion(tenantOpts).pipe(
-      Effect.flatMap((v) =>
-        Option.isSome(v) ? writeTempFile(paths.restVersion, v.value) : Effect.void,
-      ),
-      Effect.ignore,
-    );
-    yield* legacyFetchGotrueVersion(tenantOpts).pipe(
-      Effect.flatMap((v) =>
-        Option.isSome(v) ? writeTempFile(paths.gotrueVersion, v.value) : Effect.void,
-      ),
-      Effect.ignore,
-    );
-    yield* legacyFetchStorageVersion(tenantOpts).pipe(
-      Effect.flatMap((v) =>
-        Option.isSome(v) ? writeTempFile(paths.storageVersion, v.value) : Effect.void,
-      ),
-      Effect.ignore,
-    );
+      skipPooler: flags.skipPooler,
+      workdir: cliConfig.workdir,
+    });
 
     // 4. Save project ref (mandatory — a write failure fails the command).
     yield* writeTempFile(paths.projectRef, ref);
@@ -264,40 +194,3 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
     }
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });
-
-const linkStorageMigration = (
-  api: ApiClient,
-  ref: string,
-  storageMigrationPath: string,
-  writeTempFile: WriteTempFile,
-) =>
-  api.v1.getStorageConfig({ ref }).pipe(
-    Effect.flatMap((config) => writeTempFile(storageMigrationPath, config.migrationVersion)),
-    Effect.ignore,
-  );
-
-const linkPooler = (opts: {
-  api: ApiClient;
-  ref: string;
-  skipPooler: boolean;
-  fs: FileSystem.FileSystem;
-  poolerUrlPath: string;
-  writeTempFile: WriteTempFile;
-}) =>
-  Effect.gen(function* () {
-    if (opts.skipPooler) {
-      // Use direct connection: drop any cached pooler URL (link.go:81-84).
-      yield* opts.fs.remove(opts.poolerUrlPath, { recursive: true }).pipe(Effect.ignore);
-      return;
-    }
-    const configs = yield* opts.api.v1.getPoolerConfig({ ref: opts.ref });
-    const primary = configs.find((c) => c.database_type === "PRIMARY");
-    if (primary === undefined) return;
-    // Strip the [YOUR-PASSWORD] placeholder; force session mode 5432 unless the
-    // pooler already reports session mode (link.go:221-229).
-    let connectionString = primary.connection_string.replaceAll(":[YOUR-PASSWORD]", "");
-    if (primary.pool_mode !== "session") {
-      connectionString = connectionString.replaceAll(":6543/", ":5432/");
-    }
-    yield* opts.writeTempFile(opts.poolerUrlPath, connectionString);
-  }).pipe(Effect.ignore);

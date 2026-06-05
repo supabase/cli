@@ -1034,7 +1034,7 @@
           }
         },
         "responses": {
-          "201": {
+          "200": {
             "description": "",
             "content": {
               "application/json": {
@@ -4263,6 +4263,9 @@
               }
             }
           },
+          "400": {
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+          },
           "401": {
             "description": "Unauthorized"
           },
@@ -4286,10 +4289,15 @@
         ],
         "summary": "[Beta] Gets current vanity subdomain config",
         "tags": ["Domains"],
+        "x-allowed-plans": ["Pro", "Team", "Enterprise"],
         "x-badges": [
           {
             "name": "OAuth scope: domains:read",
             "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
           }
         ],
         "x-endpoint-owners": ["infra", "management-api"],
@@ -4388,6 +4396,9 @@
               }
             }
           },
+          "400": {
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+          },
           "401": {
             "description": "Unauthorized"
           },
@@ -4411,10 +4422,15 @@
         ],
         "summary": "[Beta] Checks vanity subdomain availability",
         "tags": ["Domains"],
+        "x-allowed-plans": ["Pro", "Team", "Enterprise"],
         "x-badges": [
           {
             "name": "OAuth scope: domains:write",
             "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
           }
         ],
         "x-endpoint-owners": ["infra", "management-api"],
@@ -4460,6 +4476,9 @@
               }
             }
           },
+          "400": {
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+          },
           "401": {
             "description": "Unauthorized"
           },
@@ -4483,10 +4502,15 @@
         ],
         "summary": "[Beta] Activates a vanity subdomain for a project.",
         "tags": ["Domains"],
+        "x-allowed-plans": ["Pro", "Team", "Enterprise"],
         "x-badges": [
           {
             "name": "OAuth scope: domains:write",
             "position": "after"
+          },
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
           }
         ],
         "x-endpoint-owners": ["infra", "management-api"],
@@ -4850,6 +4874,9 @@
           "401": {
             "description": "Unauthorized"
           },
+          "402": {
+            "description": "This feature requires the Pro, Team, or Enterprise organization plan."
+          },
           "403": {
             "description": "Forbidden action"
           },
@@ -4870,6 +4897,13 @@
         ],
         "summary": "[Beta] Set up a read replica",
         "tags": ["Database"],
+        "x-allowed-plans": ["Pro", "Team", "Enterprise"],
+        "x-badges": [
+          {
+            "name": "Only available on Pro, Team, Enterprise",
+            "position": "before"
+          }
+        ],
         "x-endpoint-owners": ["management-api", "infra"]
       }
     },
@@ -10458,7 +10492,7 @@
             "description": "Unauthorized"
           },
           "402": {
-            "description": "Feature requires a higher plan"
+            "description": "This feature requires the Enterprise organization plan."
           },
           "403": {
             "description": "Forbidden action"
@@ -10483,10 +10517,15 @@
         ],
         "summary": "Gets the backup schedule for a project",
         "tags": ["Database"],
+        "x-allowed-plans": ["Enterprise"],
         "x-badges": [
           {
             "name": "OAuth scope: database:read",
             "position": "after"
+          },
+          {
+            "name": "Only available on Enterprise",
+            "position": "before"
           }
         ],
         "x-endpoint-owners": ["infra"],
@@ -10538,7 +10577,7 @@
             "description": "Unauthorized"
           },
           "402": {
-            "description": "Feature requires a higher plan"
+            "description": "This feature requires the Enterprise organization plan."
           },
           "403": {
             "description": "Forbidden action"
@@ -10563,10 +10602,15 @@
         ],
         "summary": "Updates the backup schedule time for a project",
         "tags": ["Database"],
+        "x-allowed-plans": ["Enterprise"],
         "x-badges": [
           {
             "name": "OAuth scope: database:write",
             "position": "after"
+          },
+          {
+            "name": "Only available on Enterprise",
+            "position": "before"
           }
         ],
         "x-endpoint-owners": ["infra"],
@@ -18264,6 +18308,43 @@
           "logical_decoding_work_mem": {
             "type": "string"
           },
+          "cron.log_statement": {
+            "type": "boolean"
+          },
+          "log_autovacuum_min_duration": {
+            "type": "string",
+            "description": "Default unit: ms",
+            "pattern": "^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$"
+          },
+          "log_checkpoints": {
+            "type": "boolean"
+          },
+          "log_connections": {
+            "type": "boolean"
+          },
+          "log_disconnections": {
+            "type": "boolean"
+          },
+          "log_duration": {
+            "type": "boolean"
+          },
+          "log_lock_waits": {
+            "type": "boolean"
+          },
+          "log_recovery_conflict_waits": {
+            "type": "boolean"
+          },
+          "log_replication_commands": {
+            "type": "boolean"
+          },
+          "log_startup_progress_interval": {
+            "type": "string",
+            "description": "Default unit: ms",
+            "pattern": "^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$"
+          },
+          "log_temp_files": {
+            "type": "string"
+          },
           "maintenance_work_mem": {
             "type": "string"
           },
@@ -18361,6 +18442,43 @@
             "type": "string"
           },
           "logical_decoding_work_mem": {
+            "type": "string"
+          },
+          "cron.log_statement": {
+            "type": "boolean"
+          },
+          "log_autovacuum_min_duration": {
+            "type": "string",
+            "description": "Default unit: ms",
+            "pattern": "^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$"
+          },
+          "log_checkpoints": {
+            "type": "boolean"
+          },
+          "log_connections": {
+            "type": "boolean"
+          },
+          "log_disconnections": {
+            "type": "boolean"
+          },
+          "log_duration": {
+            "type": "boolean"
+          },
+          "log_lock_waits": {
+            "type": "boolean"
+          },
+          "log_recovery_conflict_waits": {
+            "type": "boolean"
+          },
+          "log_replication_commands": {
+            "type": "boolean"
+          },
+          "log_startup_progress_interval": {
+            "type": "string",
+            "description": "Default unit: ms",
+            "pattern": "^(-?[0-9]+(?:\\.[0-9]+)?)(us|ms|s|min|h|d)?$"
+          },
+          "log_temp_files": {
             "type": "string"
           },
           "maintenance_work_mem": {
@@ -18900,7 +19018,7 @@
                       ]
                     }
                   },
-                  "required": ["id", "entity_id"]
+                  "required": ["entity_id"]
                 },
                 "domains": {
                   "type": "array",

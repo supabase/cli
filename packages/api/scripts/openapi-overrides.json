@@ -1,0 +1,12 @@
+[
+  {
+    "op": "test",
+    "path": "/components/schemas/ListProvidersResponse/properties/items/items/properties/saml/required",
+    "value": ["id", "entity_id"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/ListProvidersResponse/properties/items/items/properties/saml/required",
+    "value": ["entity_id"]
+  }
+]

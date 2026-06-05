@@ -8,8 +8,8 @@ import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-stat
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { browserLayer } from "../../../shared/runtime/browser.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
-import { legacyLoginApiLayer } from "./login-api.layer.ts";
-import { legacyLoginCryptoLayer } from "./login-crypto.layer.ts";
+import { legacyLoginApiLayer } from "../../shared/legacy-login-api.layer.ts";
+import { legacyLoginCryptoLayer } from "../../shared/legacy-login-crypto.layer.ts";
 
 // `login` is the only command that writes the access token, so it builds its own
 // lean runtime instead of `legacyManagementApiRuntimeLayer` — it must NOT eagerly

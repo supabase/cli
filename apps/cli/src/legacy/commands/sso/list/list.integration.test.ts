@@ -37,6 +37,16 @@ const PROVIDER_ITEM = {
   updated_at: "2023-03-28T13:50:14.464Z",
 };
 
+const PROVIDER_ITEM_WITHOUT_SAML_ID = {
+  ...PROVIDER_ITEM,
+  saml: {
+    entity_id: "https://example.com",
+    metadata_url: "https://example.com",
+    metadata_xml: '<?xml version="2.0"?>',
+    attribute_mapping: { keys: { a: { name: "xyz", default: 3 } } },
+  },
+};
+
 const tempRoot = useLegacyTempWorkdir("supabase-sso-list-int-");
 
 interface SetupOpts {
@@ -148,6 +158,15 @@ describe("legacy sso list integration", () => {
       expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
       expect(out.stdoutText).toContain("example.com");
       expect(out.stdoutText).toContain("2023-03-28 13:50:14");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("lists providers when the API omits items[].saml.id", () => {
+    const { layer, out } = setup({ body: { items: [PROVIDER_ITEM_WITHOUT_SAML_ID] } });
+    return Effect.gen(function* () {
+      yield* legacySsoList({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
+      expect(out.stdoutText).toContain("example.com");
     }).pipe(Effect.provide(layer));
   });
 
