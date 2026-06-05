@@ -22,16 +22,20 @@ async function resolveInput(ref: string | undefined) {
 const source = Deno.env.get("SOURCE");
 const target = Deno.env.get("TARGET");
 
+// Runtime partition children (e.g. pg_partman) are operational state, not declarative schema.
+const partitionFilter = { not: { "table/is_partition": true } };
+
 const includedSchemas = Deno.env.get("INCLUDED_SCHEMAS");
+const filterParts = [supabase.filter!, partitionFilter];
 if (includedSchemas) {
   const schemas = includedSchemas.split(",");
-  const schemaFilter = {
+  filterParts.push({
     or: [{ "*/schema": schemas }, { "schema/name": schemas }],
-  };
-  supabase.filter = {
-    and: [supabase.filter!, schemaFilter],
-  } as unknown as typeof supabase.filter;
+  });
 }
+supabase.filter = {
+  and: filterParts,
+} as unknown as typeof supabase.filter;
 
 const formatOptionsRaw = Deno.env.get("FORMAT_OPTIONS");
 let formatOptions = undefined;

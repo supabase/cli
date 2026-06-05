@@ -2,10 +2,31 @@ package diff
 
 import (
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
+
+const partitionFilterSnippet = `"table/is_partition": true`
+
+func TestPgDeltaTemplatesExcludePartitionChildren(t *testing.T) {
+	t.Run("pgdelta.ts applies default partition filter", func(t *testing.T) {
+		assert.Contains(t, pgDeltaScript, partitionFilterSnippet)
+		assert.Contains(t, pgDeltaScript, "partitionFilter")
+	})
+
+	t.Run("pgdelta_declarative_export.ts applies default partition filter", func(t *testing.T) {
+		assert.Contains(t, pgDeltaDeclarativeExportScript, partitionFilterSnippet)
+		assert.Contains(t, pgDeltaDeclarativeExportScript, "partitionFilter")
+	})
+
+	t.Run("partition filter is always composed into supabase.filter", func(t *testing.T) {
+		for _, script := range []string{pgDeltaScript, pgDeltaDeclarativeExportScript} {
+			assert.True(t, strings.Contains(script, "filterParts = [supabase.filter!, partitionFilter]"))
+		}
+	})
+}
 
 func TestContainerRef(t *testing.T) {
 	t.Run("passes empty string through", func(t *testing.T) {
