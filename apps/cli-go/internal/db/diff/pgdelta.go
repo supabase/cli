@@ -75,13 +75,13 @@ func appendPgDeltaPostgresEnv(
 	ref string,
 	sslRootCertEnv string,
 	options ...func(*pgx.ConnConfig),
-) (string, []string, error) {
+) ([]string, error) {
 	preparedRef, sslEnv, err := types.PreparePgDeltaPostgresRef(ctx, ref, sslRootCertEnv, options...)
 	if err != nil {
-		return "", nil, err
+		return nil, err
 	}
 	env = append(env, name+"="+containerRef(preparedRef))
-	return preparedRef, append(env, sslEnv...), nil
+	return append(env, sslEnv...), nil
 }
 
 // DiffPgDelta diffs source and target Postgres configs via pg-delta.
@@ -108,12 +108,12 @@ func DiffPgDeltaRef(ctx context.Context, sourceRef, targetRef string, schema []s
 func DiffPgDeltaRefDetailed(ctx context.Context, sourceRef, targetRef string, schema []string, formatOptions string, options ...func(*pgx.ConnConfig)) (PgDeltaDiffResult, error) {
 	var env []string
 	var err error
-	targetRef, env, err = appendPgDeltaPostgresEnv(ctx, env, "TARGET", targetRef, types.PgDeltaTargetSSLRootCert, options...)
+	env, err = appendPgDeltaPostgresEnv(ctx, env, "TARGET", targetRef, types.PgDeltaTargetSSLRootCert, options...)
 	if err != nil {
 		return PgDeltaDiffResult{}, err
 	}
 	if len(sourceRef) > 0 {
-		sourceRef, env, err = appendPgDeltaPostgresEnv(ctx, env, "SOURCE", sourceRef, types.PgDeltaSourceSSLRootCert, options...)
+		env, err = appendPgDeltaPostgresEnv(ctx, env, "SOURCE", sourceRef, types.PgDeltaSourceSSLRootCert, options...)
 		if err != nil {
 			return PgDeltaDiffResult{}, err
 		}
@@ -156,12 +156,12 @@ func DeclarativeExportPgDelta(ctx context.Context, source, target pgconn.Config,
 func DeclarativeExportPgDeltaRef(ctx context.Context, sourceRef, targetRef string, schema []string, formatOptions string, options ...func(*pgx.ConnConfig)) (DeclarativeOutput, error) {
 	var env []string
 	var err error
-	targetRef, env, err = appendPgDeltaPostgresEnv(ctx, env, "TARGET", targetRef, types.PgDeltaTargetSSLRootCert, options...)
+	env, err = appendPgDeltaPostgresEnv(ctx, env, "TARGET", targetRef, types.PgDeltaTargetSSLRootCert, options...)
 	if err != nil {
 		return DeclarativeOutput{}, err
 	}
 	if len(sourceRef) > 0 {
-		sourceRef, env, err = appendPgDeltaPostgresEnv(ctx, env, "SOURCE", sourceRef, types.PgDeltaSourceSSLRootCert, options...)
+		env, err = appendPgDeltaPostgresEnv(ctx, env, "SOURCE", sourceRef, types.PgDeltaSourceSSLRootCert, options...)
 		if err != nil {
 			return DeclarativeOutput{}, err
 		}
@@ -199,7 +199,7 @@ func DeclarativeExportPgDeltaRef(ctx context.Context, sourceRef, targetRef strin
 func ExportCatalogPgDelta(ctx context.Context, targetRef, role string, options ...func(*pgx.ConnConfig)) (string, error) {
 	var env []string
 	var err error
-	targetRef, env, err = appendPgDeltaPostgresEnv(ctx, env, "TARGET", targetRef, types.PgDeltaTargetSSLRootCert, options...)
+	env, err = appendPgDeltaPostgresEnv(ctx, env, "TARGET", targetRef, types.PgDeltaTargetSSLRootCert, options...)
 	if err != nil {
 		return "", err
 	}
