@@ -60,8 +60,8 @@ function testParityStack(cmd: string[], opts?: { workspaceSetup?: (dir: string) 
 // ---------------------------------------------------------------------------
 // services
 // ---------------------------------------------------------------------------
-// `services` reads service image names from config (not Docker) so DOCKER_HOST
-// is not needed.
+// `services` prints a baked-in Go-parity service matrix, so DOCKER_HOST is not
+// needed.
 
 describe("services", () => {
   testBehaviour("lists known service images", async ({ run }) => {

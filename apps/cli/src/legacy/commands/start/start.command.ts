@@ -14,6 +14,10 @@ const config = {
   ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
   ),
+  preview: Flag.boolean("preview").pipe(
+    Flag.withDescription("Connect to feature preview branch"),
+    Flag.withHidden,
+  ),
 } as const;
 
 export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;

@@ -23,6 +23,11 @@ const config = {
   apply: Flag.boolean("apply").pipe(
     Flag.withDescription("Apply the generated migration to the local database without prompting."),
   ),
+  noApply: Flag.boolean("no-apply").pipe(
+    Flag.withDescription(
+      "Generate the migration file without prompting or applying it to the local database.",
+    ),
+  ),
 } as const;
 
 export type LegacyDbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer<typeof config>;

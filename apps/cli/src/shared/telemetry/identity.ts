@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { readTelemetryConfig, writeTelemetryConfig } from "./consent.ts";
 import type { TelemetryConfig } from "./types.ts";
 
@@ -8,7 +8,7 @@ export const resolveIdentity = Effect.fnUntraced(function* (configDir: string) {
   const config = yield* readTelemetryConfig(configDir);
   const now = Date.now();
 
-  if (!config) {
+  if (Option.isNone(config)) {
     const newConfig: TelemetryConfig = {
       consent: "granted",
       device_id: crypto.randomUUID(),
@@ -24,17 +24,18 @@ export const resolveIdentity = Effect.fnUntraced(function* (configDir: string) {
     };
   }
 
-  const isSessionExpired = now - config.session_last_active > SESSION_TIMEOUT_MS;
-  const sessionId = isSessionExpired ? crypto.randomUUID() : config.session_id;
+  const currentConfig = config.value;
+  const isSessionExpired = now - currentConfig.session_last_active > SESSION_TIMEOUT_MS;
+  const sessionId = isSessionExpired ? crypto.randomUUID() : currentConfig.session_id;
 
   yield* writeTelemetryConfig(
-    { ...config, session_id: sessionId, session_last_active: now },
+    { ...currentConfig, session_id: sessionId, session_last_active: now },
     configDir,
   );
   return {
-    deviceId: config.device_id,
+    deviceId: currentConfig.device_id,
     sessionId,
-    distinctId: config.distinct_id,
+    distinctId: currentConfig.distinct_id,
     isFirstRun: false,
   };
 });
@@ -43,7 +44,10 @@ export const saveDistinctId = Effect.fnUntraced(function* (configDir: string, di
   const identity = yield* resolveIdentity(configDir);
   const config = yield* readTelemetryConfig(configDir);
   const nextConfig: TelemetryConfig = {
-    consent: config?.consent ?? "granted",
+    consent: Option.match(config, {
+      onNone: () => "granted",
+      onSome: (value) => value.consent,
+    }),
     device_id: identity.deviceId,
     session_id: identity.sessionId,
     session_last_active: Date.now(),
@@ -56,7 +60,10 @@ export const clearDistinctId = Effect.fnUntraced(function* (configDir: string) {
   const identity = yield* resolveIdentity(configDir);
   const config = yield* readTelemetryConfig(configDir);
   const nextConfig: TelemetryConfig = {
-    consent: config?.consent ?? "granted",
+    consent: Option.match(config, {
+      onNone: () => "granted",
+      onSome: (value) => value.consent,
+    }),
     device_id: identity.deviceId,
     session_id: identity.sessionId,
     session_last_active: Date.now(),

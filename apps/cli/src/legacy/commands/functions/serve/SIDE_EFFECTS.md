@@ -55,4 +55,5 @@ Not applicable (proxied to Go binary).
 - `--env-file` path to env file populated to Function environment.
 - `--import-map` path to custom import map.
 - `--inspect` / `--inspect-mode` activates Deno inspector for debugging.
+- `--all` is a hidden flag (default true) retained for backward compatibility; it has no effect because the Go CLI always serves all functions.
 - Phase 0 proxy: all invocations are forwarded to the bundled Go binary.

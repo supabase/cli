@@ -1,5 +1,5 @@
 import type { Effect } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 interface LegacyGoProxyShape {
   /**
@@ -10,6 +10,6 @@ interface LegacyGoProxyShape {
   readonly exec: (args: ReadonlyArray<string>) => Effect.Effect<void>;
 }
 
-export class LegacyGoProxy extends ServiceMap.Service<LegacyGoProxy, LegacyGoProxyShape>()(
+export class LegacyGoProxy extends Context.Service<LegacyGoProxy, LegacyGoProxyShape>()(
   "supabase/legacy/LegacyGoProxy",
 ) {}

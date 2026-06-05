@@ -1,5 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacySsoAdd } from "./add.handler.ts";
 
 const NAME_ID_FORMATS = [
@@ -14,10 +18,11 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
+  // Required per Go's `MarkFlagRequired("type")` in `cmd/sso.go:65` — leave
+  // off `Flag.optional` so the CLI parser enforces presence at parse time.
   type: Flag.choice("type", ["saml"] as const).pipe(
     Flag.withAlias("t"),
     Flag.withDescription("Type of identity provider (according to supported protocol)."),
-    Flag.optional,
   ),
   domains: Flag.string("domains").pipe(
     Flag.atLeast(0),
@@ -40,7 +45,7 @@ const config = {
   ),
   skipUrlValidation: Flag.boolean("skip-url-validation").pipe(
     Flag.withDescription(
-      "Whether local validation of the SAML 2.0 Metadata URL should not be performed.",
+      "Skip local validation of the SAML 2.0 Metadata URL (HTTPS requirement, live GET probe, and UTF-8 body decode). Use in air-gapped CI where the IDP is not reachable from the build agent.",
     ),
   ),
   attributeMappingFile: Flag.string("attribute-mapping-file").pipe(
@@ -70,5 +75,11 @@ export const legacySsoAddCommand = Command.make("add", config).pipe(
       description: "Add a new SAML SSO provider",
     },
   ]),
-  Command.withHandler((flags) => legacySsoAdd(flags)),
+  Command.withHandler((flags) =>
+    legacySsoAdd(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["sso", "add"])),
 );

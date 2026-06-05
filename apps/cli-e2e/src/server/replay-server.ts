@@ -9,7 +9,13 @@ import type {
   FixtureStore,
 } from "./fixture-loader.ts";
 import { loadFixtures, loadScenario } from "./fixture-loader.ts";
-import { applyPlaceholders, fixtureKey, normalizeUrlPath } from "./placeholder.ts";
+import {
+  applyPlaceholders,
+  fixtureKey,
+  normalizeUrlPath,
+  projectRefFromPath,
+  restoreProjectRef,
+} from "./placeholder.ts";
 import { matchFixture, resetCounters, sortBody, type SequenceCounters } from "./request-matcher.ts";
 import type { PgFixture, PgMockHandle } from "./pg-mock.ts";
 
@@ -470,10 +476,15 @@ async function proxyAndRecord(
     scenario,
   });
 
-  return buildApiResponse(responseBody, upstreamStatus, {
-    ...responseHeaders,
-    "content-type": responseContentType,
-  });
+  return buildApiResponse(
+    responseBody,
+    upstreamStatus,
+    {
+      ...responseHeaders,
+      "content-type": responseContentType,
+    },
+    projectRefFromPath(pathname),
+  );
 }
 
 /** Record a Docker interaction once its streamed body has fully drained.  Errors
@@ -750,11 +761,14 @@ function nextFixtureIndex(keyDir: string): number {
   return max + 1;
 }
 
-/** Build an API response, respecting HTTP no-body status codes (204, 304, 205). */
+/** Build an API response, respecting HTTP no-body status codes (204, 304, 205).
+ *  `projectRef` is the ref from the request path, used to restore short
+ *  `__PROJECT_REF__` placeholders to schema-valid 20-char refs in JSON bodies. */
 function buildApiResponse(
   body: unknown,
   status: number,
   headers: Record<string, string>,
+  projectRef: string,
 ): Response {
   if (status === 204 || status === 304 || status === 205) {
     return new Response(null, { status, headers });
@@ -770,7 +784,10 @@ function buildApiResponse(
   if (body === null) {
     return new Response(null, { status, headers });
   }
-  return Response.json(body, { status, headers });
+  return new Response(restoreProjectRef(JSON.stringify(body), projectRef), {
+    status,
+    headers: { "content-type": "application/json", ...headers },
+  });
 }
 
 function serveFromFixtures(
@@ -791,6 +808,7 @@ function serveFromFixtures(
     result.entry.response.body,
     result.entry.response.status,
     result.entry.response.headers,
+    projectRefFromPath(pathname),
   );
 }
 
@@ -882,6 +900,7 @@ function serveFromScenario(
     expected.response.body,
     expected.response.status,
     expected.response.headers,
+    projectRefFromPath(pathname),
   );
 }
 

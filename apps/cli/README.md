@@ -15,13 +15,13 @@ This workspace currently contains the next/V3 CLI shell and the scaffolding for 
 
 For current migration/parity status, see:
 
-- [`docs/go-cli-porting-status.md`](/Users/jgoux/Code/supabase/dx-labs/apps/cli/docs/go-cli-porting-status.md)
+- [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md)
 
 For the generated command/reference docs, see:
 
-- [`docs/go-cli-reference.md`](/Users/jgoux/Code/supabase/dx-labs/apps/cli/docs/go-cli-reference.md)
-- [`docs/supabase-home.md`](/Users/jgoux/Code/supabase/dx-labs/apps/cli/docs/supabase-home.md)
-- [`../../packages/stack/docs/service-versioning.md`](/Users/jgoux/Code/supabase/dx-labs/packages/stack/docs/service-versioning.md)
+- [`docs/go-cli-reference.md`](./docs/go-cli-reference.md)
+- [`docs/supabase-home.md`](./docs/supabase-home.md)
+- [`../../packages/stack/docs/service-versioning.md`](../../packages/stack/docs/service-versioning.md)
 
 The README is intentionally brief. Command details should live in the generated docs and the parity tracker above.
 
@@ -127,9 +127,9 @@ can surface `Downloading` before normal runtime states.
 
 Useful companion docs:
 
-- [`../../packages/stack/docs/architecture.md`](/Users/jgoux/Code/supabase/dx-labs/packages/stack/docs/architecture.md)
-- [`../../packages/stack/docs/detach-mode.md`](/Users/jgoux/Code/supabase/dx-labs/packages/stack/docs/detach-mode.md)
-- [`docs/ui.md`](/Users/jgoux/Code/supabase/dx-labs/apps/cli/docs/ui.md)
+- [`../../packages/stack/docs/architecture.md`](../../packages/stack/docs/architecture.md)
+- [`../../packages/stack/docs/detach-mode.md`](../../packages/stack/docs/detach-mode.md)
+- [`docs/ui.md`](./docs/ui.md)
 
 ## Development
 

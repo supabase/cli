@@ -17,6 +17,11 @@ const config = {
     Flag.withDescription("Custom Content-Type header for HTTP upload."),
     Flag.optional,
   ),
+  jobs: Flag.integer("jobs").pipe(
+    Flag.withAlias("j"),
+    Flag.withDescription("Maximum number of parallel jobs."),
+    Flag.optional,
+  ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Connects to Storage API of the local database."),
   ),

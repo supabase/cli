@@ -37,7 +37,7 @@ export interface PgFixture {
   rows: (string | null)[][];
 }
 
-export interface PgError {
+interface PgError {
   /** 5-char SQLSTATE code, e.g. "42501" (insufficient_privilege). */
   code: string;
   /** Human-readable error message. */
@@ -46,7 +46,7 @@ export interface PgError {
   severity?: string;
 }
 
-export type PgMockState =
+type PgMockState =
   | { type: "empty" }
   | { type: "fixture"; fixture: PgFixture }
   | { type: "error"; error: PgError };

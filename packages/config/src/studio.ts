@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { secret } from "./lib/env.ts";
 
 const links = {
@@ -24,18 +24,18 @@ export const studio = Schema.Struct({
     description: "Enable the local Supabase Studio dashboard.",
     tags,
     links: [links.studio],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
   port: Schema.Number.annotate({
     default: defaultPort,
     description: "Port to use for Supabase Studio.",
     tags,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultPort)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPort))),
   api_url: Schema.String.annotate({
     default: defaultApiUrl,
     description: "External URL of the API server that frontend connects to.",
     tags,
     links: [links.config],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultApiUrl)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultApiUrl))),
   openai_api_key: Schema.optionalKey(
     secret({
       examples: ["env(OPENAI_API_KEY)"],
@@ -44,4 +44,4 @@ export const studio = Schema.Struct({
       links: [links.config],
     }),
   ),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultStudio })));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultStudio })));

@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { secret } from "./lib/env.ts";
 
 const tags = ["experimental"];
@@ -29,7 +29,7 @@ const inspectRule = Schema.Struct({
       tags,
     }),
   ),
-}).pipe(Schema.withDecodingDefaultKey(() => ({})));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({})));
 
 export const experimental = Schema.Struct({
   orioledb_version: Schema.optionalKey(
@@ -72,8 +72,8 @@ export const experimental = Schema.Struct({
         default: false,
         description: "Enable experimental webhooks.",
         tags,
-      }).pipe(Schema.withDecodingDefaultKey(() => false)),
-    }).pipe(Schema.withDecodingDefaultKey(() => ({}))),
+      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   ),
   inspect: Schema.optionalKey(
     Schema.Struct({
@@ -83,7 +83,7 @@ export const experimental = Schema.Struct({
           description: "Inspection rules.",
           tags,
         })
-        .pipe(Schema.withDecodingDefaultKey(() => [])),
-    }).pipe(Schema.withDecodingDefaultKey(() => ({}))),
+        .pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   ),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultExperimental })));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultExperimental })));

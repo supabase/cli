@@ -1,0 +1,95 @@
+name: Publish Scoop Main
+
+# PR-based sync of `bucket/supabase.json` on ScoopInstaller/Main, posted from
+# our supabase/scoop-main fork. Called from release-shared.yml on every stable
+# release and dispatchable manually against an already-published tag for
+# testing — opening the PR on the fork (pr_target=fork) keeps the third-party
+# upstream untouched during dry-runs.
+#
+# Exists as its own workflow (rather than an inline job in release-shared) so
+# the manual dispatch surface is available and so the script can self-fetch
+# checksums.txt from the GitHub release, no inter-job build artifacts needed.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Supabase CLI version/tag to sync (must already be published to GitHub Releases)
+        required: true
+        type: string
+    secrets:
+      GH_APP_PRIVATE_KEY:
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Supabase CLI version/tag to sync (must already be published to GitHub Releases)
+        required: true
+        type: string
+      pr_target:
+        description: Where to open the PR
+        required: false
+        type: choice
+        default: fork
+        options:
+          - fork
+          - upstream
+      dry_run:
+        description: Build & print the manifest only; skip fork sync / push / PR
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish-scoop-main:
+    runs-on: ubuntu-latest
+    # Best-effort only on the workflow_call (release) path — the upstream
+    # excavator bot catches us up within hours, so failing the release on a
+    # transient PR error isn't worth it. Manual dispatch stays strict so test
+    # failures surface.
+    continue-on-error: ${{ github.event_name == 'workflow_call' }}
+    env:
+      VERSION: ${{ inputs.version }}
+      PR_TARGET: ${{ inputs.pr_target || 'upstream' }}
+      DRY_RUN: ${{ inputs.dry_run && 'true' || '' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Generate scoop-main fork token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            scoop-main
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Configure git for fork push
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh auth setup-git
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Open PR
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          args=(--version "${VERSION}" --pr-target "${PR_TARGET}")
+          if [ -n "${DRY_RUN}" ]; then
+            args+=(--dry-run)
+          fi
+          pnpm exec bun apps/cli/scripts/update-scoop-main.ts "${args[@]}"

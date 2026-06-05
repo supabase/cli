@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Redacted } from "effect";
 import { ProjectConfigSchema } from "./base.ts";
-import { MissingProjectEnvVarError, ProjectEnvParseError } from "./errors.ts";
+import { ProjectEnvParseError } from "./errors.ts";
 import { ENV_CAPTURE_REGEX, isEnvReference } from "./lib/env.ts";
 import { findProjectPaths, type ProjectPaths } from "./paths.ts";
 
@@ -216,11 +216,7 @@ function isSecretPath(path: ReadonlyArray<string>): boolean {
   return secretPathPatterns.some((pattern) => matchesPathPattern(pattern, path));
 }
 
-function interpolateLeafValue(
-  value: string,
-  env: Readonly<Record<string, string>>,
-  configPath: ReadonlyArray<string>,
-): string {
+function interpolateLeafValue(value: string, env: Readonly<Record<string, string>>): string {
   const match = envReferencePattern.exec(value);
   const envName = match?.[1];
 
@@ -228,11 +224,10 @@ function interpolateLeafValue(
     return value;
   }
 
+  // Preserve the literal `env(VAR)` verbatim when VAR is unset. Matches Go's
+  // `apps/cli-go/pkg/config/decode_hooks.go:14-21` (LoadEnvHook).
   if (!Object.prototype.hasOwnProperty.call(env, envName)) {
-    throw new MissingProjectEnvVarError({
-      configPath: configPath.join("."),
-      envName,
-    });
+    return value;
   }
 
   return env[envName] ?? value;
@@ -246,27 +241,23 @@ function toPathSegments(path: string): ReadonlyArray<string> {
   return path.split(".").filter((segment) => segment.length > 0);
 }
 
-function interpolateValue(
-  value: unknown,
-  env: Readonly<Record<string, string>>,
-  path: ReadonlyArray<string> = [],
-): unknown {
+function interpolateValue(value: unknown, env: Readonly<Record<string, string>>): unknown {
   if (Array.isArray(value)) {
-    return value.map((item, index) => interpolateValue(item, env, [...path, String(index)]));
+    return value.map((item) => interpolateValue(item, env));
   }
 
   if (typeof value === "object" && value !== null) {
     const result: Record<string, unknown> = {};
 
     for (const [key, child] of Object.entries(value)) {
-      result[key] = interpolateValue(child, env, [...path, key]);
+      result[key] = interpolateValue(child, env);
     }
 
     return result;
   }
 
   if (typeof value === "string") {
-    return interpolateLeafValue(value, env, path);
+    return interpolateLeafValue(value, env);
   }
 
   return value;
@@ -298,34 +289,37 @@ function resolveProjectValueAtPath(
   value: unknown,
   projectEnv: ProjectEnvironment,
   path: ReadonlyArray<string>,
-): Effect.Effect<unknown, MissingProjectEnvVarError> {
-  try {
-    const interpolated = interpolateValue(value, projectEnv.values, path);
-    return Effect.succeed(redactValue(interpolated, path));
-  } catch (error) {
-    if (error instanceof MissingProjectEnvVarError) {
-      return Effect.fail(error);
-    }
-    throw error;
-  }
+): unknown {
+  const interpolated = interpolateValue(value, projectEnv.values);
+  return redactValue(interpolated, path);
 }
 
 export function resolveProjectValue<T>(
   value: T,
   projectEnv: ProjectEnvironment,
   configPath: string,
-): Effect.Effect<ResolvedProjectValue<T>, MissingProjectEnvVarError> {
-  return Effect.suspend(() =>
-    resolveProjectValueAtPath(value, projectEnv, toPathSegments(configPath)),
-  ).pipe(Effect.map((resolved) => resolved as ResolvedProjectValue<T>));
+): Effect.Effect<ResolvedProjectValue<T>> {
+  return Effect.sync(
+    () =>
+      resolveProjectValueAtPath(
+        value,
+        projectEnv,
+        toPathSegments(configPath),
+      ) as ResolvedProjectValue<T>,
+  );
 }
 
 export function resolveProjectSubtree<T>(
   value: T,
   projectEnv: ProjectEnvironment,
   pathPrefix: string,
-): Effect.Effect<ResolvedProjectValue<T>, MissingProjectEnvVarError> {
-  return Effect.suspend(() =>
-    resolveProjectValueAtPath(value, projectEnv, toPathSegments(pathPrefix)),
-  ).pipe(Effect.map((resolved) => resolved as ResolvedProjectValue<T>));
+): Effect.Effect<ResolvedProjectValue<T>> {
+  return Effect.sync(
+    () =>
+      resolveProjectValueAtPath(
+        value,
+        projectEnv,
+        toPathSegments(pathPrefix),
+      ) as ResolvedProjectValue<T>,
+  );
 }

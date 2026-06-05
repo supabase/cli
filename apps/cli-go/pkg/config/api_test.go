@@ -134,3 +134,10 @@ func TestApiDiff(t *testing.T) {
 		assertSnapshotEqual(t, diff)
 	})
 }
+
+func TestApiAutoExposeNewTablesDefault(t *testing.T) {
+	t.Run("is unset on a fresh config so today's implicit-true behaviour applies", func(t *testing.T) {
+		cfg := NewConfig()
+		assert.Nil(t, cfg.Api.AutoExposeNewTables)
+	})
+}

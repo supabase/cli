@@ -1,5 +1,8 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyProjectsCreate } from "./create.handler.ts";
 
 const AWS_REGIONS = [
@@ -66,6 +69,17 @@ const config = {
     Flag.withDescription("Select a desired instance size for your project."),
     Flag.optional,
   ),
+  interactive: Flag.boolean("interactive").pipe(
+    Flag.withDescription("Enables interactive mode."),
+    Flag.withAlias("i"),
+    Flag.optional,
+    Flag.withHidden,
+  ),
+  plan: Flag.string("plan").pipe(
+    Flag.withDescription("Select a plan that suits your needs."),
+    Flag.optional,
+    Flag.withHidden,
+  ),
 };
 export type LegacyProjectsCreateFlags = CliCommand.Command.Config.Infer<typeof config>;
 
@@ -79,5 +93,11 @@ export const legacyProjectsCreateCommand = Command.make("create", config).pipe(
       description: "Create a new project",
     },
   ]),
-  Command.withHandler((flags) => legacyProjectsCreate(flags)),
+  Command.withHandler((flags) =>
+    legacyProjectsCreate(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["org-id"] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["projects", "create"])),
 );

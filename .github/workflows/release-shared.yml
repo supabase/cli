@@ -42,79 +42,115 @@ on:
         required: false
         type: string
         default: supabase
-
+    secrets:
+      SENTRY_DSN:
+        required: false
+      POSTHOG_API_KEY:
+        required: false
+      POSTHOG_ENDPOINT:
+        required: false
+      GH_APP_PRIVATE_KEY:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
 jobs:
   build:
-    runs-on: large-linux-x86
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Setup Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
-        with:
-          go-version-file: apps/cli-go/go.mod
-          cache: true
-          cache-dependency-path: apps/cli-go/go.sum
-
-      - name: Pre-download Go modules
-        working-directory: apps/cli-go
-        run: go mod download -x
-
-      - name: Install nfpm
-        run: |
-          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
-          sudo apt-get update
-          sudo apt-get install -y nfpm
-
-      - name: Sync versions
-        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
-
-      - name: Build selected shell
-        run: pnpm exec bun apps/cli/scripts/build.ts --version ${{ inputs.version }} --shell ${{ inputs.shell }}
-
-      - name: Verify build artifacts
-        run: |
-          for pkg in cli-darwin-arm64 cli-darwin-x64 cli-linux-arm64 cli-linux-arm64-musl cli-linux-x64 cli-linux-x64-musl cli-windows-arm64 cli-windows-x64; do
-            echo "Checking packages/$pkg/bin/..."
-            ls -la "packages/$pkg/bin/"
-          done
-          echo "Checking dist/..."
-          ls -la dist/
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
-          path: |
-            packages/cli-*/bin/
-            dist/
+    name: Build CLI artifacts
+    uses: ./.github/workflows/build-cli-artifacts.yml
+    with:
+      version: ${{ inputs.version }}
+      shell: ${{ inputs.shell }}
+    secrets:
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
 
   smoke-test:
     needs: build
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-latest, macos-latest, macos-15-intel, windows-latest]
+        runner:
+          - blacksmith-8vcpu-ubuntu-2404
+          - blacksmith-6vcpu-macos-latest
+          - macos-15-intel
+          - blacksmith-8vcpu-windows-2025
+          - windows-11-arm
     runs-on: ${{ matrix.runner }}
+    env:
+      NPM_TAG: ${{ inputs.npm_tag }}
+      VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Setup
         uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
+      # Docker's classic image store keeps a single platform manifest per
+      # tag, so pulling `alpine:3.21` for amd64 and again for arm64 leaves
+      # only the most recent one in the local store — and `docker save`
+      # captures only that one. Enabling the containerd snapshotter lets
+      # the store hold multi-platform manifests under a single tag, which
+      # is what makes the cache step below work for both arches.
+      - name: Enable containerd image store
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          echo '{"features":{"containerd-snapshotter":true}}' | sudo tee /etc/docker/daemon.json
+          sudo systemctl restart docker
+          docker info --format '{{.DriverStatus}}'
+
       - name: Setup QEMU for cross-platform Docker
         if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+
+      # Cache the smoke-test base images across runs. Without this, eight
+      # parallel `docker run` calls in smoke-test-linux.ts race on first-time
+      # pulls and surface as docker exit 125 ("daemon could not start the
+      # container") on a subset of jobs. Bump the `-v<N>` suffix to invalidate
+      # the cache when the image list or tags change.
+      - name: Cache smoke-test docker images
+        if: runner.os == 'Linux'
+        id: smoke-docker-cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.cache/smoke-docker-images.tar
+          key: smoke-docker-images-debian-bookworm-slim-amazonlinux-2023-alpine-3.21-v1
+
+      - name: Load cached smoke-test docker images
+        if: runner.os == 'Linux' && steps.smoke-docker-cache.outputs.cache-hit == 'true'
+        run: docker load -i ~/.cache/smoke-docker-images.tar
+
+      - name: Pull and save smoke-test docker images
+        if: runner.os == 'Linux' && steps.smoke-docker-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache"
+          images=("debian:bookworm-slim" "amazonlinux:2023" "alpine:3.21")
+          for image in "${images[@]}"; do
+            for platform in linux/amd64 linux/arm64; do
+              echo "::group::Pulling $platform $image"
+              attempt=0
+              until docker pull --platform "$platform" "$image"; do
+                attempt=$((attempt + 1))
+                if [ "$attempt" -ge 3 ]; then
+                  echo "Failed to pull $platform $image after $attempt attempts" >&2
+                  exit 1
+                fi
+                sleep $((attempt * 5))
+              done
+              echo "::endgroup::"
+            done
+          done
+          docker save "${images[@]}" -o "$HOME/.cache/smoke-docker-images.tar"
 
       - name: Install Scoop
         if: runner.os == 'Windows'
@@ -128,33 +164,63 @@ jobs:
         run: chmod +x packages/cli-*/bin/supabase || true
 
       - name: Run smoke tests
-        run: pnpm run test:smoke -- --version ${{ inputs.version }} --tag ${{ inputs.npm_tag }}
+        # Force bash so ${VERSION}/${NPM_TAG} expand identically across the
+        # ubuntu/macos/windows matrix — windows-latest defaults to pwsh, which
+        # treats those as empty PowerShell variables (env vars are `$env:VAR`).
+        shell: bash
+        run: pnpm run test:smoke -- --version "${VERSION}" --tag "${NPM_TAG}"
         working-directory: apps/cli
 
   publish:
     needs: smoke-test
     if: ${{ !inputs.dry_run }}
+    # npm provenance verification rejects non-GitHub-hosted runners with
+    # E422 ("Unsupported GitHub Actions runner environment: self-hosted").
+    # Blacksmith runners count as self-hosted from sigstore's POV, so the
+    # publish job must stay on a github-hosted runner. The job is short
+    # and not compute-bound, so the wall-clock cost is negligible.
     runs-on: ubuntu-latest
+    env:
+      CHANNEL: ${{ inputs.channel }}
+      NPM_TAG: ${{ inputs.npm_tag }}
+      VERSION: ${{ inputs.version }}
     permissions:
       contents: write
       id-token: write
     steps:
+      - name: Generate release repository token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-workflows: write
+
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup
         uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       - name: Sync versions
-        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${{ inputs.version }}
+        run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
 
       - name: Publish to npm
-        run: pnpm exec bun apps/cli/scripts/publish.ts --tag ${{ inputs.npm_tag }}
+        run: pnpm exec bun apps/cli/scripts/publish.ts --tag "${NPM_TAG}"
+
+      - name: Configure git for release pushes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       # Push the version tag to origin as soon as npm has the bytes, before any
       # downstream step that can fail. Without this, a failure in the GH-release
@@ -166,9 +232,7 @@ jobs:
       - name: Push version tag
         run: |
           set -euo pipefail
-          tag="v${{ inputs.version }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          tag="v${VERSION}"
           if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
             echo "Tag ${tag} already on origin; skipping push."
           else
@@ -193,8 +257,8 @@ jobs:
         if: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
-          tag="v${{ inputs.version }}"
-          channel="${{ inputs.channel }}"
+          tag="v${VERSION}"
+          channel="${CHANNEL}"
           note_ref="refs/notes/semantic-release-${tag}"
           if git ls-remote origin "${note_ref}" | grep -q .; then
             echo "Channel note ${note_ref} already on origin; skipping push."
@@ -203,8 +267,19 @@ jobs:
             git push origin "${note_ref}"
           fi
 
+      # goreleaser used to publish both supabase_<version>_<os>_<arch>.tar.gz and
+      # supabase_<os>_<arch>.tar.gz; setup-cli, install scripts, docs and various
+      # third-party tools point at releases/latest/download/<unversioned>.tar.gz.
+      # Re-publish the alias so those callers keep working. See supabase/cli#5257.
+      - name: Create unversioned tarball aliases
+        run: |
+          set -euo pipefail
+          for triple in darwin_arm64 darwin_amd64 linux_arm64 linux_amd64 windows_arm64 windows_amd64; do
+            cp "dist/supabase_${VERSION}_${triple}.tar.gz" "dist/supabase_${triple}.tar.gz"
+          done
+
       - name: Create draft GitHub Release
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           tag_name: v${{ inputs.version }}
           name: v${{ inputs.version }}
@@ -223,38 +298,80 @@ jobs:
             dist/supabase_${{ inputs.version }}_linux_amd64.apk
             dist/supabase_${{ inputs.version }}_windows_amd64.zip
             dist/supabase_${{ inputs.version }}_windows_arm64.zip
+            dist/supabase_${{ inputs.version }}_windows_amd64.tar.gz
+            dist/supabase_${{ inputs.version }}_windows_arm64.tar.gz
             dist/checksums.txt
+            dist/supabase_darwin_arm64.tar.gz
+            dist/supabase_darwin_amd64.tar.gz
+            dist/supabase_linux_arm64.tar.gz
+            dist/supabase_linux_amd64.tar.gz
+            dist/supabase_windows_arm64.tar.gz
+            dist/supabase_windows_amd64.tar.gz
+            install
 
       - name: Publish GitHub Release (immutable)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit v${{ inputs.version }} --draft=false
+        run: gh release edit "v${VERSION}" --draft=false
+
+  # Changelog backfill only needs tag + published GH release (from publish).
+  # Runs in parallel with brew/scoop/smoke; must not gate distribution.
+  backfill-release-notes:
+    uses: ./.github/workflows/backfill-release-notes.yml
+    needs: publish
+    if: ${{ !inputs.dry_run && needs.publish.result == 'success' }}
+    with:
+      tag: v${{ inputs.version }}
+      apply: true
+      non_blocking: true
+
+  # Once the raw semantic-release block is in the release body, ask Claude to
+  # rewrite it into user-centric notes and open a PR for human approval. Stable
+  # releases only on this path — prereleases keep the raw body. Non-blocking so
+  # an LLM hiccup never gates a published release; reviewers can propose beta/
+  # alpha notes manually from the Actions tab (workflow_dispatch).
+  propose-release-notes:
+    uses: ./.github/workflows/propose-release-notes.yml
+    needs: backfill-release-notes
+    if: ${{ !inputs.dry_run && !inputs.prerelease && needs.backfill-release-notes.result == 'success' }}
+    with:
+      tag: v${{ inputs.version }}
+      non_blocking: true
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
     runs-on: ubuntu-latest
+    env:
+      BREW_NAME: ${{ inputs.brew_name }}
+      VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Setup
         uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       - name: Generate Homebrew tap token
         id: app-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.APP_ID }}
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: |
             homebrew-tap
+          permission-contents: write
 
       - name: Configure git for tap push
         env:
@@ -265,7 +382,7 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Update Homebrew formula
-        run: pnpm exec bun apps/cli/scripts/update-homebrew.ts --version ${{ inputs.version }} --name ${{ inputs.brew_name }}
+        run: pnpm exec bun apps/cli/scripts/update-homebrew.ts --version "${VERSION}" --name "${BREW_NAME}"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
@@ -273,27 +390,33 @@ jobs:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
     runs-on: ubuntu-latest
+    env:
+      SCOOP_NAME: ${{ inputs.scoop_name }}
+      VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Setup
         uses: ./.github/actions/setup
 
       - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       - name: Generate Scoop bucket token
         id: app-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          app-id: ${{ secrets.APP_ID }}
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: |
             scoop-bucket
+          permission-contents: write
 
       - name: Configure git for bucket push
         env:
@@ -304,49 +427,40 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Update Scoop manifest
-        run: pnpm exec bun apps/cli/scripts/update-scoop.ts --version ${{ inputs.version }} --name ${{ inputs.scoop_name }}
+        run: pnpm exec bun apps/cli/scripts/update-scoop.ts --version "${VERSION}" --name "${SCOOP_NAME}"
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
+  # Post-stable PR to ScoopInstaller/Main, opened from our supabase/scoop-main
+  # fork. Lives in its own reusable workflow so it can be re-run manually
+  # (workflow_dispatch on publish-scoop-main.yml) against any already-published
+  # tag without re-doing a release. Stable channel only — beta stays in our
+  # own scoop-bucket. Best-effort: a failure inside the called workflow does
+  # not fail the release, since the upstream excavator bot will catch us up.
   publish-scoop-main:
     needs: publish-scoop
-    # Stable channel only — beta lives in our own bucket, never PR'd upstream.
     if: ${{ !inputs.dry_run && inputs.scoop_name == 'supabase' }}
-    runs-on: ubuntu-latest
-    # Best-effort: the upstream excavator bot will catch us up within a few
-    # hours regardless, so a failure here should not fail the release.
-    continue-on-error: true
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+    uses: ./.github/workflows/publish-scoop-main.yml
+    with:
+      version: ${{ inputs.version }}
+    secrets:
+      GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
-      - name: Setup
-        uses: ./.github/actions/setup
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
-
-      - name: Generate scoop-main fork token
-        id: app-token
-        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
-        with:
-          app-id: ${{ secrets.APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: |
-            scoop-main
-
-      - name: Configure git for fork push
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          gh auth setup-git
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Open PR against ScoopInstaller/Main
-        run: pnpm exec bun apps/cli/scripts/update-scoop-main.ts --version ${{ inputs.version }}
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+  # Post-publish smoke test for the `supabase/setup-cli` GitHub Action against
+  # the just-released CLI. Runs last and intentionally does not gate
+  # publish-homebrew / publish-scoop — by the time the smoke runs, the npm
+  # package and GitHub release are already live and the brew/scoop pushes
+  # have either succeeded or skipped, so a setup-cli regression surfaces as
+  # a red post-release signal without holding back the rest of the channel.
+  #
+  # Depends on the publish jobs only via `needs` for ordering; the `if`
+  # uses `always() && needs.publish.result == 'success'` so the smoke still
+  # runs when publish-homebrew / publish-scoop are skipped (alpha) or fail.
+  # The reusable workflow can also be dispatched manually against any
+  # already-published version when debugging setup-cli regressions.
+  setup-cli-smoke:
+    needs: [publish, publish-homebrew, publish-scoop]
+    if: ${{ always() && !inputs.dry_run && needs.publish.result == 'success' }}
+    uses: ./.github/workflows/setup-cli-smoke-test.yml
+    with:
+      version: ${{ inputs.version }}

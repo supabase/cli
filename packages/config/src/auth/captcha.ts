@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { secret } from "../lib/env.ts";
 import { stringEnum } from "../lib/schema.ts";
 
@@ -20,7 +20,7 @@ export const captcha = Schema.Struct({
     description: "Enable CAPTCHA verification.",
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
   provider: Schema.optionalKey(
     stringEnum(["hcaptcha", "turnstile"], {
       description: "CAPTCHA provider to use.",
@@ -35,4 +35,4 @@ export const captcha = Schema.Struct({
       links,
     }),
   ),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultCaptcha })));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultCaptcha })));

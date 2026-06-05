@@ -384,6 +384,9 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 	if err := initSchema(ctx, conn, host, w); err != nil {
 		return err
 	}
+	if err := ApplyApiPrivileges(ctx, conn); err != nil {
+		return err
+	}
 	// Create vault secrets first so roles.sql can reference them
 	if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
 		return err
@@ -393,4 +396,39 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 		return nil
 	}
 	return err
+}
+
+// RevokeDefaultDataApiPrivilegesSql matches the SQL that Studio runs at cloud project creation
+// when the "Default privileges for new entities" toggle is off. It removes the default GRANTs
+// applied by the initial schema so newly-created entities in `public` owned by `postgres` are
+// not exposed through the Data API roles until explicit GRANTs are issued.
+const RevokeDefaultDataApiPrivilegesSql = `
+alter default privileges for role postgres in schema public
+  revoke select, insert, update, delete on tables from anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke usage, select on sequences from anon, authenticated, service_role;
+alter default privileges for role postgres in schema public
+  revoke execute on functions from anon, authenticated, service_role;
+`
+
+// ApplyApiPrivileges adjusts the default privileges on the `public` schema to match the
+// `[api].auto_expose_new_tables` flag in config.toml. The flag is tri-state to give users a
+// safe migration window:
+//
+//   - unset (default today): keep the bundled initial-schema GRANTs in place, so local matches
+//     long-standing behaviour. This implicit default flips to false on May 30, 2026, and the
+//     flag is removed entirely in October 2026 (always-revoked behaviour).
+//   - true: explicit opt-in to today's behaviour. Treated identically to unset for now; from
+//     May 30 the CLI will warn that the flag is being deprecated.
+//   - false: revoke the default Data API GRANTs so newly-created entities in `public` require
+//     explicit GRANTs to surface through the Data API, matching the new cloud default.
+func ApplyApiPrivileges(ctx context.Context, conn *pgx.Conn) error {
+	if utils.Config.Api.AutoExposeNewTables == nil || *utils.Config.Api.AutoExposeNewTables {
+		return nil
+	}
+	file, err := migration.NewMigrationFromReader(strings.NewReader(RevokeDefaultDataApiPrivilegesSql))
+	if err != nil {
+		return err
+	}
+	return file.ExecBatch(ctx, conn)
 }

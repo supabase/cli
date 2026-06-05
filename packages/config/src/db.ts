@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { secret } from "./lib/env.ts";
 import { stringEnum } from "./lib/schema.ts";
 
@@ -65,7 +65,7 @@ const settings = Schema.Struct({
   wal_keep_size: Schema.optionalKey(Schema.String),
   wal_sender_timeout: Schema.optionalKey(Schema.String),
   work_mem: Schema.optionalKey(Schema.String),
-}).pipe(Schema.withDecodingDefaultKey(() => ({})));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({})));
 
 export const db = Schema.Struct({
   port: Schema.Number.annotate({
@@ -73,63 +73,63 @@ export const db = Schema.Struct({
     description: "Port to use for the local database URL.",
     tags,
     links: [links.postgres],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultPort)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPort))),
   shadow_port: Schema.Number.annotate({
     default: defaultShadowPort,
     description: "Port used by db diff command to initialize the shadow database.",
     tags,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultShadowPort)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultShadowPort))),
   health_timeout: Schema.String.annotate({
     default: defaultHealthTimeout,
     description:
       "Maximum amount of time to wait for health check when starting the local database.",
     tags,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultHealthTimeout)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultHealthTimeout))),
   major_version: Schema.Number.annotate({
     default: defaultMajorVersion,
     description:
       "The database major version to use. This has to be the same as your remote database's.",
     tags,
     links: [links.postgres],
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultMajorVersion)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMajorVersion))),
   pooler: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultPoolerEnabled,
       description: "Enable the local PgBouncer service.",
       tags,
       links: [links.pgbouncer()],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultPoolerEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPoolerEnabled))),
     port: Schema.Number.annotate({
       default: defaultPoolerPort,
       description: "Port to use for the local connection pooler.",
       tags,
       links: [links.pgbouncer("listen_port")],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultPoolerPort)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPoolerPort))),
     pool_mode: stringEnum(["transaction", "session"], {
       default: defaultPoolMode,
       description: "Specifies when a server connection can be reused by other clients.",
       tags,
       links: [links.pgbouncer("pool_mode")],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultPoolMode)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPoolMode))),
     default_pool_size: Schema.Number.annotate({
       default: defaultPoolSize,
       description: "How many server connections to allow per user/database pair.",
       tags,
       links: [links.pgbouncer("default_pool_size")],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultPoolSize)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPoolSize))),
     max_client_conn: Schema.Number.annotate({
       default: defaultMaxClientConn,
       description: "Maximum number of client connections allowed.",
       tags,
       links: [links.pgbouncer("max_client_conn")],
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultMaxClientConn)),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultPooler }))),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxClientConn))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultPooler }))),
   migrations: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultMigrationsEnabled,
       description: "If disabled, migrations will be skipped during a db push or reset.",
       tags,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultMigrationsEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMigrationsEnabled))),
     schema_paths: Schema.Array(
       Schema.String.annotate({
         description: "Schema file path or glob relative to the supabase directory.",
@@ -141,14 +141,14 @@ export const db = Schema.Struct({
         description: "Ordered list of schema files that describe your database.",
         tags,
       })
-      .pipe(Schema.withDecodingDefaultKey(() => [...defaultSchemaPaths])),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultMigrations }))),
+      .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultSchemaPaths]))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultMigrations }))),
   seed: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultSeedEnabled,
       description: "Enable seeding the database with SQL files.",
       tags,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultSeedEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultSeedEnabled))),
     sql_paths: Schema.Array(
       Schema.String.annotate({
         description: "Path to a SQL file used to seed the database.",
@@ -160,38 +160,38 @@ export const db = Schema.Struct({
         description: "Ordered list of seed files to load during db reset.",
         tags,
       })
-      .pipe(Schema.withDecodingDefaultKey(() => [...defaultSqlPaths])),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultSeed }))),
+      .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultSqlPaths]))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultSeed }))),
   settings: Schema.optionalKey(settings),
   network_restrictions: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultNetworkRestrictionsEnabled,
       description: "Enable management of network restrictions.",
       tags,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultNetworkRestrictionsEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultNetworkRestrictionsEnabled))),
     allowed_cidrs: Schema.Array(Schema.String)
       .annotate({
         default: defaultAllowedCidrs,
         description: "Allowed IPv4 CIDR blocks.",
         tags,
       })
-      .pipe(Schema.withDecodingDefaultKey(() => [...defaultAllowedCidrs])),
+      .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultAllowedCidrs]))),
     allowed_cidrs_v6: Schema.Array(Schema.String)
       .annotate({
         default: defaultAllowedCidrsV6,
         description: "Allowed IPv6 CIDR blocks.",
         tags,
       })
-      .pipe(Schema.withDecodingDefaultKey(() => [...defaultAllowedCidrsV6])),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultNetworkRestrictions }))),
+      .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultAllowedCidrsV6]))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultNetworkRestrictions }))),
   ssl_enforcement: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.Boolean.annotate({
         default: false,
         description: "Reject non-secure connections to the database.",
         tags,
-      }).pipe(Schema.withDecodingDefaultKey(() => false)),
-    }).pipe(Schema.withDecodingDefaultKey(() => ({}))),
+      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   ),
   vault: Schema.optionalKey(
     Schema.Record(
@@ -205,4 +205,4 @@ export const db = Schema.Struct({
       tags,
     }),
   ),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultDb })));
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultDb })));

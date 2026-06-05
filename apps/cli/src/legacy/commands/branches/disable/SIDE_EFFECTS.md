@@ -1,56 +1,48 @@
 # `supabase branches disable`
 
+Hidden subcommand (`Hidden: true` in Go). Operates on the entire linked project rather than a single branch.
+
 ## Files Read
 
-| Path                              | Format                    | When                                                       |
-| --------------------------------- | ------------------------- | ---------------------------------------------------------- |
-| `~/.supabase/access-token`        | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
-| `<workdir>/.supabase/config.json` | JSON                      | always, to resolve linked project ref                      |
+Same auth and project-ref resolution chain as every Management-API legacy command.
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                             | Format | When                                                                     |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
 
 ## API Routes
 
-| Method   | Path                          | Auth         | Request body | Response (used fields) |
-| -------- | ----------------------------- | ------------ | ------------ | ---------------------- |
-| `DELETE` | `/v1/projects/{ref}/branches` | Bearer token | none         | none                   |
+| Method   | Path                          | Auth         | Request body | Response          |
+| -------- | ----------------------------- | ------------ | ------------ | ----------------- |
+| `DELETE` | `/v1/projects/{ref}/branches` | Bearer token | none         | none (expect 200) |
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
+`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`, `SUPABASE_WORKDIR` — same semantics as `branches list`.
 
 ## Exit Codes
 
-| Code | Condition                                                       |
-| ---- | --------------------------------------------------------------- |
-| `0`  | success — branching disabled for the project                    |
-| `1`  | authentication error — no valid token found                     |
-| `1`  | API error — non-2xx response from `/v1/projects/{ref}/branches` |
-| `1`  | network / connection failure                                    |
+| Code | Condition                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------- |
+| `0`  | success — preview branching disabled for the project                                      |
+| `1`  | `LegacyBranchesDisableUnexpectedStatusError` — non-200 response from the disable endpoint |
+| `1`  | `LegacyBranchesDisableNetworkError` — transport-level network failure                     |
+
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties                  |
+| ---------------------- | ------------------------------------------ | ----------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
 ## Output
 
 ### `--output-format text` (Go CLI compatible)
 
-No output on success (exit 0).
+`Disabled preview branching for project: <ref>` written to **stdout** (Go `fmt.Println`).
 
-### `--output-format json`
+### `--output-format json` / `stream-json`
 
-No structured output on success.
-
-### `--output-format stream-json`
-
-No structured output on success.
-
-## Notes
-
-- This command is hidden in the Go CLI (`Hidden: true`).
-- No positional arguments. Uses `--project-ref` or reads from `.supabase/config.json`.
-- Disables preview branching for the entire linked project (not a single branch).
+Single `success` event carrying `{project_ref}`.

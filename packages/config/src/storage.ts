@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Effect, Schema } from "effect";
 
 const links = [
   {
@@ -33,14 +33,14 @@ const bucketSchema = Schema.Struct({
   public: Schema.Boolean.annotate({
     default: defaultBucketPublic,
     description: "Enable public access to the bucket.",
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultBucketPublic)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultBucketPublic))),
   file_size_limit: Schema.String.annotate({
     default: defaultBucketFileSizeLimit,
     description: "The maximum file size allowed for the bucket.",
     examples: ["5MB", "500KB"],
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultBucketFileSizeLimit)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultBucketFileSizeLimit))),
   allowed_mime_types: Schema.Array(
     Schema.String.annotate({
       description: "A MIME type allowed for the bucket.",
@@ -52,13 +52,13 @@ const bucketSchema = Schema.Struct({
       description: "The list of allowed MIME types for the bucket.",
       tags,
     })
-    .pipe(Schema.withDecodingDefaultKey(() => [...defaultBucketAllowedMimeTypes])),
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultBucketAllowedMimeTypes]))),
   objects_path: Schema.String.annotate({
     default: defaultBucketObjectsPath,
     description: "The path to the objects in the bucket.",
     tags,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultBucketObjectsPath)),
-}).pipe(Schema.withDecodingDefault(() => ({})));
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultBucketObjectsPath))),
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 
 export const storage = Schema.Struct({
   enabled: Schema.Boolean.annotate({
@@ -66,14 +66,14 @@ export const storage = Schema.Struct({
     description: "Enable the local Storage service.",
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultEnabled)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
   file_size_limit: Schema.String.annotate({
     default: defaultFileSizeLimit,
     description: "The maximum file size allowed.",
     examples: ["5MB", "500KB"],
     tags,
     links,
-  }).pipe(Schema.withDecodingDefaultKey(() => defaultFileSizeLimit)),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultFileSizeLimit))),
   image_transformation: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.Boolean.annotate({
@@ -81,8 +81,8 @@ export const storage = Schema.Struct({
         description: "Enable image transformation.",
         tags,
         links,
-      }).pipe(Schema.withDecodingDefaultKey(() => false)),
-    }).pipe(Schema.withDecodingDefaultKey(() => ({}))),
+      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   ),
   buckets: Schema.optionalKey(
     Schema.Record(Schema.String, bucketSchema).annotate({
@@ -96,72 +96,76 @@ export const storage = Schema.Struct({
       description: "Allow connections via S3 compatible clients.",
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultS3ProtocolEnabled)),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultS3Protocol }))),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultS3ProtocolEnabled))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultS3Protocol }))),
   analytics: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultAnalyticsEnabled,
       description: "Enable analytics buckets.",
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultAnalyticsEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultAnalyticsEnabled))),
     max_namespaces: Schema.Number.annotate({
       default: defaultMaxNamespaces,
       description: "Maximum number of analytics namespaces.",
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultMaxNamespaces)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxNamespaces))),
     max_tables: Schema.Number.annotate({
       default: defaultMaxTables,
       description: "Maximum number of analytics tables.",
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultMaxTables)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxTables))),
     max_catalogs: Schema.Number.annotate({
       default: defaultMaxCatalogs,
       description: "Maximum number of analytics catalogs.",
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultMaxCatalogs)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxCatalogs))),
     buckets: Schema.Record(
       Schema.String,
-      Schema.Struct({}).pipe(Schema.withDecodingDefault(() => ({ ...defaultAnalyticsBuckets }))),
+      Schema.Struct({}).pipe(
+        Schema.withDecodingDefault(Effect.succeed({ ...defaultAnalyticsBuckets })),
+      ),
     )
       .annotate({
         default: defaultAnalyticsBuckets,
         description: "Analytics bucket configuration.",
         tags,
       })
-      .pipe(Schema.withDecodingDefault(() => ({ ...defaultAnalyticsBuckets }))),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultAnalytics }))),
+      .pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultAnalyticsBuckets }))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultAnalytics }))),
   vector: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultVectorEnabled,
       description: "Enable vector buckets.",
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultVectorEnabled)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultVectorEnabled))),
     max_buckets: Schema.Number.annotate({
       default: defaultMaxBuckets,
       description: "Maximum number of vector buckets.",
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultMaxBuckets)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxBuckets))),
     max_indexes: Schema.Number.annotate({
       default: defaultMaxIndexes,
       description: "Maximum number of vector indexes.",
       tags,
       links,
-    }).pipe(Schema.withDecodingDefaultKey(() => defaultMaxIndexes)),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxIndexes))),
     buckets: Schema.Record(
       Schema.String,
-      Schema.Struct({}).pipe(Schema.withDecodingDefault(() => ({ ...defaultVectorBuckets }))),
+      Schema.Struct({}).pipe(
+        Schema.withDecodingDefault(Effect.succeed({ ...defaultVectorBuckets })),
+      ),
     )
       .annotate({
         default: defaultVectorBuckets,
         description: "Vector bucket configuration.",
         tags,
       })
-      .pipe(Schema.withDecodingDefault(() => ({ ...defaultVectorBuckets }))),
-  }).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultVector }))),
-}).pipe(Schema.withDecodingDefaultKey(() => ({ ...defaultStorage })));
+      .pipe(Schema.withDecodingDefault(Effect.succeed({ ...defaultVectorBuckets }))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultVector }))),
+}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultStorage })));

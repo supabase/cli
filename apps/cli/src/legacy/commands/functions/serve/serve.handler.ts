@@ -13,5 +13,6 @@ export const legacyFunctionsServe = Effect.fn("legacy.functions.serve")(function
   if (flags.inspect) args.push("--inspect");
   if (Option.isSome(flags.inspectMode)) args.push("--inspect-mode", flags.inspectMode.value);
   if (flags.inspectMain) args.push("--inspect-main");
+  if (Option.isSome(flags.all)) args.push(`--all=${flags.all.value ? "true" : "false"}`);
   yield* proxy.exec(args);
 });

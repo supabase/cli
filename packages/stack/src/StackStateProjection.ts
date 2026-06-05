@@ -5,7 +5,7 @@ import {
   fromRawServiceState,
 } from "./StackServiceState.ts";
 
-export interface StackServiceProjectionSpec {
+interface StackServiceProjectionSpec {
   readonly visibility: "public" | "internal";
   readonly owner?: string;
   readonly ownerStatusWhileActive?: StackServiceStatus;

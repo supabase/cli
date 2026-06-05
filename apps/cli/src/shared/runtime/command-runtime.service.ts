@@ -1,4 +1,4 @@
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 interface CommandRuntimeShape {
   readonly commandPath: ReadonlyArray<string>;
@@ -25,6 +25,6 @@ export function getCommandRuntimeSpanName(runtime: {
   return commandSpanName(runtime.commandPath);
 }
 
-export class CommandRuntime extends ServiceMap.Service<CommandRuntime, CommandRuntimeShape>()(
+export class CommandRuntime extends Context.Service<CommandRuntime, CommandRuntimeShape>()(
   "supabase/runtime/CommandRuntime",
 ) {}

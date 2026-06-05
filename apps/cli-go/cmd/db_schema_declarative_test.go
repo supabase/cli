@@ -31,6 +31,105 @@ func mockFsysWithMigrations() afero.Fs {
 	return fsys
 }
 
+func TestResolveDeclarativeSyncShouldApply(t *testing.T) {
+	t.Run("no-apply alone returns false without prompting", func(t *testing.T) {
+		got, err := resolveDeclarativeSyncShouldApply(
+			false, true, false, true,
+			func() (bool, error) {
+				t.Fatal("prompt should not be called")
+				return false, nil
+			},
+		)
+		require.NoError(t, err)
+		assert.False(t, got)
+	})
+
+	t.Run("no-apply wins over yes", func(t *testing.T) {
+		got, err := resolveDeclarativeSyncShouldApply(
+			false, true, true, false,
+			func() (bool, error) {
+				t.Fatal("prompt should not be called")
+				return false, nil
+			},
+		)
+		require.NoError(t, err)
+		assert.False(t, got)
+	})
+
+	t.Run("apply alone returns true without prompting", func(t *testing.T) {
+		got, err := resolveDeclarativeSyncShouldApply(
+			true, false, false, true,
+			func() (bool, error) {
+				t.Fatal("prompt should not be called")
+				return false, nil
+			},
+		)
+		require.NoError(t, err)
+		assert.True(t, got)
+	})
+
+	t.Run("TTY without flags prompts", func(t *testing.T) {
+		prompted := false
+		got, err := resolveDeclarativeSyncShouldApply(
+			false, false, false, true,
+			func() (bool, error) {
+				prompted = true
+				return true, nil
+			},
+		)
+		require.NoError(t, err)
+		assert.True(t, prompted)
+		assert.True(t, got)
+	})
+
+	t.Run("non-TTY without flags skips apply", func(t *testing.T) {
+		got, err := resolveDeclarativeSyncShouldApply(
+			false, false, false, false,
+			func() (bool, error) {
+				t.Fatal("prompt should not be called")
+				return false, nil
+			},
+		)
+		require.NoError(t, err)
+		assert.False(t, got)
+	})
+
+	t.Run("yes alone on non-TTY applies without prompting", func(t *testing.T) {
+		got, err := resolveDeclarativeSyncShouldApply(
+			false, false, true, false,
+			func() (bool, error) {
+				t.Fatal("prompt should not be called")
+				return false, nil
+			},
+		)
+		require.NoError(t, err)
+		assert.True(t, got)
+	})
+
+	t.Run("yes wins over TTY prompt", func(t *testing.T) {
+		got, err := resolveDeclarativeSyncShouldApply(
+			false, false, true, true,
+			func() (bool, error) {
+				t.Fatal("prompt should not be called")
+				return false, nil
+			},
+		)
+		require.NoError(t, err)
+		assert.True(t, got)
+	})
+
+	t.Run("prompt error propagates", func(t *testing.T) {
+		expected := errors.New("interrupt")
+		_, err := resolveDeclarativeSyncShouldApply(
+			false, false, false, true,
+			func() (bool, error) {
+				return false, expected
+			},
+		)
+		assert.ErrorIs(t, err, expected)
+	})
+}
+
 func TestResolveDeclarativeMigrationName(t *testing.T) {
 	t.Run("prefers explicit name", func(t *testing.T) {
 		name := resolveDeclarativeMigrationName("custom_name", "fallback_file")

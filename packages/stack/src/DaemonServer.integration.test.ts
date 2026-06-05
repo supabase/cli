@@ -162,7 +162,7 @@ describe("DaemonServer", () => {
   beforeAll(async () => {
     mock = mockStack();
     runtime = ManagedRuntime.make(buildDaemonLayer(mock));
-    const daemon = await runtime.runPromise(DaemonServer.asEffect());
+    const daemon = await runtime.runPromise(DaemonServer);
     url = getUrl(daemon.address);
   });
 
@@ -358,7 +358,7 @@ describe("DaemonServer", () => {
     const freshMock = mockStack();
     const freshRuntime = ManagedRuntime.make(buildDaemonLayer(freshMock));
     try {
-      const daemon = await freshRuntime.runPromise(DaemonServer.asEffect());
+      const daemon = await freshRuntime.runPromise(DaemonServer);
       const freshUrl = getUrl(daemon.address);
 
       // Start waiting for shutdown

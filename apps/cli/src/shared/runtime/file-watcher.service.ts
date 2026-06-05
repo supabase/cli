@@ -1,7 +1,7 @@
 import type { Stream } from "effect";
-import { Data, ServiceMap } from "effect";
+import { Data, Context } from "effect";
 
-export type FileWatchEventType = "create" | "update" | "delete";
+type FileWatchEventType = "create" | "update" | "delete";
 
 export interface FileWatchEvent {
   readonly path: string;
@@ -24,6 +24,6 @@ interface FileWatcherShape {
   ) => Stream.Stream<ReadonlyArray<FileWatchEvent>, FileWatcherError>;
 }
 
-export class FileWatcher extends ServiceMap.Service<FileWatcher, FileWatcherShape>()(
+export class FileWatcher extends Context.Service<FileWatcher, FileWatcherShape>()(
   "supabase/runtime/FileWatcher",
 ) {}

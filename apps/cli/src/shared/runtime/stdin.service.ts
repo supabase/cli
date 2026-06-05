@@ -1,5 +1,5 @@
 import type { Effect, Option } from "effect";
-import { ServiceMap } from "effect";
+import { Context } from "effect";
 
 interface StdinShape {
   readonly isTTY: boolean;
@@ -7,4 +7,4 @@ interface StdinShape {
   readonly readPipedText: Effect.Effect<Option.Option<string>>;
 }
 
-export class Stdin extends ServiceMap.Service<Stdin, StdinShape>()("supabase/runtime/Stdin") {}
+export class Stdin extends Context.Service<Stdin, StdinShape>()("supabase/runtime/Stdin") {}

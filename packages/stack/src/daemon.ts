@@ -58,9 +58,9 @@ export async function runDaemon(
     appRuntime = ManagedRuntime.make(appLayer);
 
     // Build the stack (services are started later via POST /start)
-    const localStack = await appRuntime.runPromise(Stack.asEffect());
+    const localStack = await appRuntime.runPromise(Stack);
     const info = await appRuntime.runPromise(localStack.getInfo());
-    stateManager = await appRuntime.runPromise(StateManager.asEffect());
+    stateManager = await appRuntime.runPromise(StateManager);
 
     // Build daemon management server on Unix socket
     const daemonLayer = DaemonServer.layer.pipe(
@@ -69,7 +69,7 @@ export async function runDaemon(
     ) as unknown as Layer.Layer<DaemonServer, never, never>;
 
     daemonRuntime = ManagedRuntime.make(daemonLayer);
-    await daemonRuntime.runPromise(DaemonServer.asEffect());
+    await daemonRuntime.runPromise(DaemonServer);
 
     // Build state and signal success to parent.
     // The parent (CLI) is responsible for writing the state file via StateManager.
@@ -98,7 +98,7 @@ export async function runDaemon(
     process.send!(response);
     process.disconnect?.();
 
-    const daemon = await daemonRuntime.runPromise(DaemonServer.asEffect());
+    const daemon = await daemonRuntime.runPromise(DaemonServer);
     await Promise.race([daemonRuntime.runPromise(daemon.awaitShutdown), waitForSignal()]);
     await shutdownDaemon({ appRuntime, daemonRuntime, stateManager, daemonState });
     process.exit(0);

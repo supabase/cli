@@ -11,6 +11,7 @@ describe("normalize", () => {
   it("normalizes semantic version strings", () => {
     expect(normalize("supabase 1.187.0")).toBe("supabase <VERSION>");
     expect(normalize("v2.0.0")).toBe("<VERSION>");
+    expect(normalize("postgrest/postgrest:v14.13")).toBe("postgrest/postgrest:<VERSION>");
     expect(normalize("Version: 0.1.0-rc.1")).toBe("Version: <VERSION>");
   });
 

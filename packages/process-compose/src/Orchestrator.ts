@@ -6,7 +6,7 @@ import {
   Exit,
   FiberMap,
   Layer,
-  ServiceMap,
+  Context,
   Stream,
   SubscriptionRef,
 } from "effect";
@@ -39,7 +39,7 @@ const waitForProcessToStop = (handle: {
     }
   });
 
-export class Orchestrator extends ServiceMap.Service<
+export class Orchestrator extends Context.Service<
   Orchestrator,
   {
     readonly start: () => Effect.Effect<void>;

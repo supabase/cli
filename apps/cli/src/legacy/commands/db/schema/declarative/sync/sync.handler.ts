@@ -13,6 +13,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     if (Option.isSome(flags.file)) args.push("--file", flags.file.value);
     if (Option.isSome(flags.name)) args.push("--name", flags.name.value);
     if (flags.apply) args.push("--apply");
+    if (flags.noApply) args.push("--no-apply");
     yield* proxy.exec(args);
   },
 );

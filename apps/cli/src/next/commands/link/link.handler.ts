@@ -115,7 +115,7 @@ export const link = Effect.fnUntraced(function* (flags: LinkFlags) {
   const output = yield* Output;
   const analytics = yield* Analytics;
   const projectHome = yield* ProjectHome;
-  const stateManager = yield* StateManager.asEffect().pipe(
+  const stateManager = yield* StateManager.pipe(
     Effect.provide(StateManager.make(projectStateManagerPathsFromRoot(projectHome.projectHomeDir))),
   );
 

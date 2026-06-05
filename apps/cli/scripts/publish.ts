@@ -1,4 +1,5 @@
 import { $ } from "bun";
+import { copyFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
@@ -135,6 +136,13 @@ const platformResults = await Promise.all(
 // Build the umbrella package bin shim, then publish
 console.log("\nBuilding umbrella package shim...");
 await $`pnpm build:shim`.cwd(cliDir);
+
+// npm renders the README from the package directory on the package page.
+// The workspace-internal apps/cli/README.md documents the source layout for
+// contributors, which is not what we want users to see on npmjs.com. Copy
+// the repo root README — the user-facing one — over it just before publish.
+console.log("\nStaging root README for umbrella package...");
+await copyFile(path.join(root, "README.md"), path.join(cliDir, "README.md"));
 
 console.log(`Publishing umbrella package ${umbrellaName}...`);
 const umbrellaResult = await publishPackage({

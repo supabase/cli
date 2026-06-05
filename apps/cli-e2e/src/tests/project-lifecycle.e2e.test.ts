@@ -158,10 +158,10 @@ describe("unlink", () => {
   });
 
   // The success path (pre-populate project-ref → unlink succeeds) is omitted: the
-  // ts-legacy unlink handler is a Phase 0 proxy to the Go binary, which attempts
-  // a system keyring delete on exit. On Linux CI (no D-Bus session bus) the
-  // keyring call returns an unhandled error and the binary exits 1. The error path
-  // above already gives meaningful coverage for a proxy command.
+  // unlink handler deletes the database-password keyring entry on success. On
+  // Linux CI (no D-Bus session bus) the keyring call returns an unhandled error
+  // and the command exits 1. The not-linked error path above gives meaningful
+  // coverage; deeper success-path behaviour is covered by unlink.integration.test.ts.
 
   testParity(["unlink"]);
 });

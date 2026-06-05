@@ -24,6 +24,11 @@ const config = {
   inspectMain: Flag.boolean("inspect-main").pipe(
     Flag.withDescription("Allow inspecting the main worker."),
   ),
+  all: Flag.boolean("all").pipe(
+    Flag.withDescription("Serve all Functions."),
+    Flag.optional,
+    Flag.withHidden,
+  ),
 } as const;
 
 export type LegacyFunctionsServeFlags = CliCommand.Command.Config.Infer<typeof config>;
