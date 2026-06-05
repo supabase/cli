@@ -1,4 +1,4 @@
-import { Data, Effect, FileSystem, Option, Path } from "effect";
+import { Data, Effect, FileSystem, Path } from "effect";
 
 /**
  * Helpers for the persisted profile-name file `~/.supabase/profile`, mirroring
@@ -17,23 +17,9 @@ export class LegacyProfileSaveError extends Data.TaggedError("LegacyProfileSaveE
   readonly message: string;
 }> {}
 
-function legacyProfileFilePath(path: Path.Path, homeDir: string): string {
+export function legacyProfileFilePath(path: Path.Path, homeDir: string): string {
   return path.join(homeDir, ".supabase", "profile");
 }
-
-/** Reads `~/.supabase/profile`, returning `None` when missing or empty. */
-export const readLegacyProfileFile = (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  homeDir: string,
-): Effect.Effect<Option.Option<string>> =>
-  Effect.gen(function* () {
-    const filePath = legacyProfileFilePath(path, homeDir);
-    const content = yield* fs.readFileString(filePath).pipe(Effect.option);
-    if (Option.isNone(content)) return Option.none<string>();
-    const trimmed = content.value.trim();
-    return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
-  });
 
 /** Writes the profile name to `~/.supabase/profile`. Fatal on failure (Go parity). */
 export const saveLegacyProfileName = (

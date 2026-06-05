@@ -2,6 +2,7 @@ import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { normalizeKeyringToken } from "../../shared/auth/keyring-token.ts";
+import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import {
@@ -318,6 +319,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
   const cliConfig = yield* LegacyCliConfig;
+  const debugLogger = yield* LegacyDebugLogger;
   const profileAccount = cliConfig.profile;
 
   // ~/.supabase/access-token — fallback file path
@@ -347,8 +349,19 @@ const makeLegacyCredentials = Effect.gen(function* () {
       profileAccount,
       runtimeInfo.platform,
     );
-    if (Option.isSome(profileResult)) return profileResult;
-    return yield* tryKeyringRead(keyringModule.value, LEGACY_KEYRING_ACCOUNT, runtimeInfo.platform);
+    if (Option.isSome(profileResult)) {
+      yield* debugLogger.debug(`Using access token for profile: ${profileAccount}`);
+      return profileResult;
+    }
+    const legacyResult = yield* tryKeyringRead(
+      keyringModule.value,
+      LEGACY_KEYRING_ACCOUNT,
+      runtimeInfo.platform,
+    );
+    if (Option.isSome(legacyResult)) {
+      yield* debugLogger.debug("Using access token from credentials store...");
+    }
+    return legacyResult;
   });
 
   const readFile = Effect.gen(function* () {
@@ -363,6 +376,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
     getAccessToken: Effect.gen(function* () {
       // Env takes precedence (matches access_token.go:38).
       if (Option.isSome(cliConfig.accessToken)) {
+        yield* debugLogger.debug("Using access token from env var...");
         yield* validate(Redacted.value(cliConfig.accessToken.value));
         return Option.some(cliConfig.accessToken.value);
       }
@@ -377,6 +391,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
       // Filesystem fallback at ~/.supabase/access-token.
       const fileValue = yield* readFile;
       if (Option.isSome(fileValue)) {
+        yield* debugLogger.debug(`Using access token from file: ${fallbackPath}`);
         yield* validate(fileValue.value);
         return Option.some(Redacted.make(fileValue.value));
       }
