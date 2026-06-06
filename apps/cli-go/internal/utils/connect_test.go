@@ -236,6 +236,11 @@ func TestSetConnectSuggestion(t *testing.T) {
 			suggestion: "Your network does not support IPv6",
 		},
 		{
+			name:       "libpq no address associated with hostname",
+			err:        errors.New(`pg_dump: error: could not translate host name "db.ngpopfcjxrfmzmhmmpct.supabase.co" to address: No address associated with hostname`),
+			suggestion: "Your network does not support IPv6",
+		},
+		{
 			name:       "libpq network is unreachable without literal",
 			err:        errors.New(`connection to server at "db.test.supabase.co", port 5432 failed: Network is unreachable`),
 			suggestion: "Your network does not support IPv6",

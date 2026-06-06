@@ -71,7 +71,7 @@ func TestDumpCommand(t *testing.T) {
 		defer gock.OffAll()
 		apitest.MockDockerStart(utils.Docker, imageUrl, containerId)
 		require.NoError(t, apitest.MockDockerErrorLogs(utils.Docker, containerId, 1,
-			`pg_dump: error: connection to server failed: could not translate host name "db.test.supabase.co" to address: Address family for hostname not supported`))
+			`pg_dump: error: could not translate host name "db.test.supabase.co" to address: No address associated with hostname`))
 		// Run test
 		err := Run(context.Background(), "", dbConfig, false, false, false, fsys)
 		// Check error

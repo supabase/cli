@@ -188,10 +188,12 @@ var ipv6LiteralPattern = regexp.MustCompile(`\[[0-9a-fA-F:]*:[0-9a-fA-F:]*\]`)
 func isIPv6ConnectivityError(msg string) bool {
 	lower := strings.ToLower(msg)
 	switch {
-	case strings.Contains(lower, "address family for hostname not supported"):
-		// libpq inside the pg_dump container when the host is IPv6-only and the
-		// container has no IPv6 stack: "could not translate host name ... to
-		// address: Address family for hostname not supported".
+	case strings.Contains(lower, "address family for hostname not supported"),
+		strings.Contains(lower, "no address associated with hostname"):
+		// getaddrinfo inside the pg_dump container when the host is IPv6-only and
+		// the container has no IPv6 stack, so AI_ADDRCONFIG filters out the AAAA
+		// record: "could not translate host name ... to address: Address family
+		// for hostname not supported" / "... No address associated with hostname".
 		return true
 	case strings.Contains(lower, "network is unreachable"):
 		return true
