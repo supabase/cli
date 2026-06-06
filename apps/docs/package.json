@@ -8,9 +8,9 @@
     "build": "bun run generate && next build"
   },
   "dependencies": {
-    "fumadocs-core": "^16.9.1",
-    "fumadocs-mdx": "^15.0.9",
-    "fumadocs-ui": "^16.9.1",
+    "fumadocs-core": "^16.9.3",
+    "fumadocs-mdx": "^15.0.10",
+    "fumadocs-ui": "^16.9.3",
     "next": "^16.2.6",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
