@@ -62,6 +62,31 @@ type UploadOptions struct {
 	KeyPrefix      string
 }
 
+func isUploadableEntry(fsys fs.FS, path string, info fs.DirEntry) (bool, error) {
+	if info.Type().IsRegular() {
+		return true, nil
+	}
+	if info.Type().IsDir() {
+		return false, nil
+	}
+	if info.Type()&fs.ModeSymlink != 0 {
+		f, err := fsys.Open(path)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Skipping non-regular file:", path)
+			return false, nil
+		}
+		stat, err := f.Stat()
+		_ = f.Close()
+		if err != nil || !stat.Mode().IsRegular() {
+			fmt.Fprintln(os.Stderr, "Skipping non-regular file:", path)
+			return false, nil
+		}
+		return true, nil
+	}
+	fmt.Fprintln(os.Stderr, "Skipping non-regular file:", path)
+	return false, nil
+}
+
 func (s *StorageAPI) UpsertObjects(ctx context.Context, bucketConfig config.BucketConfig, fsys fs.FS, opts ...func(*UploadOptions)) error {
 	uo := UploadOptions{MaxConcurrency: 5}
 	for _, apply := range opts {
@@ -77,7 +102,11 @@ func (s *StorageAPI) UpsertObjects(ctx context.Context, bucketConfig config.Buck
 			if err != nil {
 				return errors.New(err)
 			}
-			if !info.Type().IsRegular() {
+			uploadable, err := isUploadableEntry(fsys, filePath, info)
+			if err != nil {
+				return err
+			}
+			if !uploadable {
 				return nil
 			}
 			dstPath := uo.KeyPrefix
