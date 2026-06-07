@@ -257,6 +257,9 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	if err != nil {
 		return DatabaseDiff{}, err
 	}
+	if !usePgDelta {
+		output = appendViewReloptionDiff(ctx, output, shadowConfig, config, schema, options...)
+	}
 	return DatabaseDiff{SQL: output}, nil
 }
 
