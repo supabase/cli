@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils/cloudflare"
+	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/pgtest"
 )
 
@@ -268,6 +269,46 @@ func TestSetConnectSuggestion(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSuggestIPv6Pooler(t *testing.T) {
+	ref := apitest.RandomProjectRef()
+	poolerURL := "postgres://postgres." + ref + ":[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+
+	t.Run("enriches suggestion with transaction pooler url", func(t *testing.T) {
+		CmdSuggestion = ""
+		t.Cleanup(func() { CmdSuggestion = "" })
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		gock.New(DefaultApiHost).
+			Get("/v1/projects/" + ref + "/config/database/pooler").
+			Reply(http.StatusOK).
+			JSON([]api.SupavisorConfigResponse{{
+				DatabaseType:     api.SupavisorConfigResponseDatabaseTypePRIMARY,
+				ConnectionString: poolerURL,
+			}})
+		ok := SuggestIPv6Pooler(context.Background(), "db."+ref+".supabase.co")
+		assert.True(t, ok)
+		assert.Contains(t, CmdSuggestion, "--db-url")
+		assert.Contains(t, CmdSuggestion, poolerURL)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("skips non-supabase host without api call", func(t *testing.T) {
+		CmdSuggestion = ""
+		assert.False(t, SuggestIPv6Pooler(context.Background(), "localhost"))
+		assert.Empty(t, CmdSuggestion)
+	})
+
+	t.Run("returns false when pooler config is unavailable", func(t *testing.T) {
+		CmdSuggestion = ""
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		gock.New(DefaultApiHost).
+			Get("/v1/projects/" + ref + "/config/database/pooler").
+			Reply(http.StatusOK).
+			JSON([]api.SupavisorConfigResponse{})
+		assert.False(t, SuggestIPv6Pooler(context.Background(), "db."+ref+".supabase.co"))
+		assert.Empty(t, CmdSuggestion)
+	})
 }
 
 func TestPostgresURL(t *testing.T) {

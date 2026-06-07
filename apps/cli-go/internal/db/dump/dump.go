@@ -54,7 +54,13 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 	if err != nil {
 		// The container exit code hides why pg_dump failed; its stderr carries
 		// the connection detail, so classify that for an actionable suggestion.
-		utils.SetConnectSuggestion(errors.New(errBuf.String()))
+		connErr := errors.New(errBuf.String())
+		utils.SetConnectSuggestion(connErr)
+		// For an IPv6 failure, enrich the hint with the project's actual
+		// transaction pooler URL so the user gets a copy-pasteable --db-url.
+		if utils.IsIPv6ConnectivityError(connErr) {
+			utils.SuggestIPv6Pooler(ctx, config.Host)
+		}
 	}
 	return err
 }

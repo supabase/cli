@@ -205,6 +205,55 @@ func isIPv6ConnectivityError(msg string) bool {
 	return false
 }
 
+// IsIPv6ConnectivityError reports whether err is a database connection failure
+// caused by an IPv6 address the current network (or container) cannot reach.
+func IsIPv6ConnectivityError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return isIPv6ConnectivityError(err.Error())
+}
+
+// ipv6Suggestion is the generic, command-agnostic hint shown when a direct
+// connection fails because the host is IPv6-only. It points users at the IPv4
+// transaction pooler via --db-url; SuggestIPv6Pooler upgrades it with the
+// project's actual connection string when one can be fetched.
+func ipv6Suggestion() string {
+	return fmt.Sprintf(
+		"Your network does not support IPv6, which is required for direct connections to the database.\n"+
+			"Retry with your project's IPv4 transaction pooler connection string via %s.\n"+
+			"You can copy it from the dashboard under Connect > Transaction pooler.",
+		Aqua("--db-url"),
+	)
+}
+
+// ipv6PoolerSuggestion is the IPv6 hint enriched with the project's actual
+// transaction pooler connection string, ready to paste into --db-url.
+func ipv6PoolerSuggestion(connString string) string {
+	return fmt.Sprintf(
+		"Your network does not support IPv6, which is required for direct connections to the database.\n"+
+			"Retry through the IPv4 transaction pooler by passing it to %s\n"+
+			"(replace [YOUR-PASSWORD] with your database password).",
+		Aqua(fmt.Sprintf(`--db-url "%s"`, connString)),
+	)
+}
+
+// SuggestIPv6Pooler upgrades CmdSuggestion with the project's transaction pooler
+// connection string when host is a Supabase direct database host and the pooler
+// config can be fetched. Returns true when the suggestion was set.
+func SuggestIPv6Pooler(ctx context.Context, host string) bool {
+	matches := ProjectHostPattern.FindStringSubmatch(host)
+	if len(matches) < 3 {
+		return false
+	}
+	primary, err := GetPoolerConfigPrimary(ctx, matches[2])
+	if err != nil || len(primary.ConnectionString) == 0 {
+		return false
+	}
+	CmdSuggestion = ipv6PoolerSuggestion(primary.ConnectionString)
+	return true
+}
+
 // Sets CmdSuggestion to an actionable hint based on the given pg connection error.
 func SetConnectSuggestion(err error) {
 	if err == nil {
@@ -223,10 +272,7 @@ func SetConnectSuggestion(err error) {
 		// password authentication failed for user / invalid SCRAM server-final-message received from server
 		CmdSuggestion = SuggestEnvVar
 	} else if isIPv6ConnectivityError(msg) {
-		CmdSuggestion = fmt.Sprintf(
-			"Your network does not support IPv6, which is required for direct connections to the database.\nRun %s to connect through the IPv4 connection pooler instead.",
-			Aqua("supabase link"),
-		)
+		CmdSuggestion = ipv6Suggestion()
 	} else if strings.Contains(msg, "connect: no route to host") || strings.Contains(msg, "Tenant or user not found") {
 		// Assumes IPv6 check has been performed before this
 		CmdSuggestion = "Make sure your project exists on profile: " + CurrentProfile.Name
