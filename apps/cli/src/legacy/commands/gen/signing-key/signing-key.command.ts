@@ -25,6 +25,7 @@ export type LegacyGenSigningKeyFlags = CliCommand.Command.Config.Infer<typeof co
 
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const legacyGenSigningKeyRuntimeLayer = Layer.mergeAll(
+  legacyDebugLoggerLayer,
   cliConfig,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["gen", "signing-key"]),

@@ -5,14 +5,17 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { textOutputLayer } from "../../../../shared/output/output.layer.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import type { LegacyGenSigningKeyFlags } from "./signing-key.command.ts";
 import {
   LegacyGenSigningKeyCancelledError,
   LegacyGenSigningKeyConfigParseError,
+  LegacyGenSigningKeyGenerateError,
   LegacyGenSigningKeyDecodeError,
   LegacyGenSigningKeyReadError,
   LegacyGenSigningKeyWriteError,
@@ -42,6 +45,15 @@ interface SigningKeyJwk {
 
 type StoredSigningKeyJwk = Readonly<Record<string, unknown>>;
 
+interface ResolvedSigningKeysConfig {
+  readonly configDisplayPath: string;
+  readonly configured: Option.Option<{
+    actualPath: string;
+    displayPath: string;
+    existingKeys: ReadonlyArray<StoredSigningKeyJwk>;
+  }>;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -49,11 +61,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function readStringField(
   value: Record<string, unknown>,
   field: string,
-): Effect.Effect<string, never, never> {
+): Effect.Effect<string, LegacyGenSigningKeyGenerateError> {
   const candidate = value[field];
   return typeof candidate === "string"
     ? Effect.succeed(candidate)
-    : Effect.die(`missing jwk field: ${field}`);
+    : Effect.fail(
+        new LegacyGenSigningKeyGenerateError({
+          message: `failed to generate signing key: missing jwk field ${field}`,
+        }),
+      );
 }
 
 function isStoredSigningKeyJwk(value: unknown): value is StoredSigningKeyJwk {
@@ -87,8 +103,12 @@ interface ConfirmTty {
 }
 
 interface ConfirmOutput {
+  readonly format: "text" | "json" | "stream-json";
   readonly raw: (text: string, stream?: "stdout" | "stderr") => Effect.Effect<void>;
-  readonly promptConfirm: (message: string) => Effect.Effect<boolean, unknown>;
+  readonly promptConfirm: (
+    message: string,
+    opts?: { defaultValue?: boolean },
+  ) => Effect.Effect<boolean, unknown>;
 }
 
 function styleIfTty(
@@ -111,7 +131,11 @@ const generatePrivateKey = Effect.fn("legacy.gen.signing-key.generate")(function
     });
     const exported = privateKey.export({ format: "jwk" });
     if (!isRecord(exported)) {
-      return yield* Effect.die("rsa jwk export failed");
+      return yield* Effect.fail(
+        new LegacyGenSigningKeyGenerateError({
+          message: "failed to generate signing key: rsa jwk export failed",
+        }),
+      );
     }
     return {
       kty: "RSA",
@@ -134,7 +158,11 @@ const generatePrivateKey = Effect.fn("legacy.gen.signing-key.generate")(function
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const exported = privateKey.export({ format: "jwk" });
   if (!isRecord(exported)) {
-    return yield* Effect.die("ec jwk export failed");
+    return yield* Effect.fail(
+      new LegacyGenSigningKeyGenerateError({
+        message: "failed to generate signing key: ec jwk export failed",
+      }),
+    );
   }
   return {
     kty: "EC",
@@ -156,29 +184,31 @@ const loadSigningKeysConfig = Effect.fn("legacy.gen.signing-key.config")(functio
     Effect.catchTag("ProjectConfigParseError", (cause) =>
       Effect.fail(
         new LegacyGenSigningKeyConfigParseError({
-          message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
+          message: `failed to parse ${cause.path}: ${String(cause.cause)}`,
         }),
       ),
     ),
   );
   if (loaded === null) {
-    return Option.none<{
-      actualPath: string;
-      displayPath: string;
-      existingKeys: ReadonlyArray<StoredSigningKeyJwk>;
-    }>();
-  }
-
-  const configuredPath = loaded.config.auth.signing_keys_path;
-  if (configuredPath === undefined || configuredPath.length === 0) {
-    return Option.none<{
-      actualPath: string;
-      displayPath: string;
-      existingKeys: ReadonlyArray<StoredSigningKeyJwk>;
-    }>();
+    return {
+      configDisplayPath: path.join("supabase", "config.toml"),
+      configured: Option.none(),
+    } satisfies ResolvedSigningKeysConfig;
   }
 
   const projectRoot = path.dirname(path.dirname(loaded.path));
+  const configDisplayPath = path.isAbsolute(loaded.path)
+    ? loaded.path
+    : path.relative(projectRoot, loaded.path);
+
+  const configuredPath = loaded.config.auth.signing_keys_path;
+  if (configuredPath === undefined || configuredPath.length === 0) {
+    return {
+      configDisplayPath,
+      configured: Option.none(),
+    } satisfies ResolvedSigningKeysConfig;
+  }
+
   const resolvedPath = path.isAbsolute(configuredPath)
     ? configuredPath
     : path.join(path.dirname(loaded.path), configuredPath);
@@ -202,7 +232,10 @@ const loadSigningKeysConfig = Effect.fn("legacy.gen.signing-key.config")(functio
       }),
   });
   const existingKeys = yield* readJwkArray(decoded);
-  return Option.some({ actualPath: resolvedPath, displayPath, existingKeys });
+  return {
+    configDisplayPath,
+    configured: Option.some({ actualPath: resolvedPath, displayPath, existingKeys }),
+  } satisfies ResolvedSigningKeysConfig;
 });
 
 const findGitRoot = Effect.fn("legacy.gen.signing-key.find-git-root")(function* (start: string) {
@@ -246,10 +279,9 @@ const isGitIgnored = Effect.fn("legacy.gen.signing-key.gitignored")(function* (
     },
   );
 
-  return yield* spawner.exitCode(command).pipe(
-    Effect.map((exitCode) => Option.some(Number(exitCode) === 0)),
-    Effect.orElseSucceed(() => Option.none<boolean>()),
-  );
+  return yield* spawner
+    .exitCode(command)
+    .pipe(Effect.map((exitCode) => Option.some(Number(exitCode) === 0)));
 });
 
 const confirmOverwrite = Effect.fn("legacy.gen.signing-key.confirm")(function* (
@@ -266,13 +298,21 @@ const confirmOverwrite = Effect.fn("legacy.gen.signing-key.confirm")(function* (
     yield* output.raw(`${title} [Y/n] \n`, "stderr");
     return true;
   }
-  return yield* output.promptConfirm(title).pipe(Effect.orElseSucceed(() => false));
+  const prompt =
+    output.format === "text"
+      ? output.promptConfirm(title, { defaultValue: true })
+      : Effect.gen(function* () {
+          const textOutput = yield* Output;
+          return yield* textOutput.promptConfirm(title, { defaultValue: true });
+        }).pipe(Effect.provide(textOutputLayer));
+  return yield* prompt.pipe(Effect.orElseSucceed(() => false));
 });
 
 export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function* (
   flags: LegacyGenSigningKeyFlags,
 ) {
   const cliConfig = yield* LegacyCliConfig;
+  const debugLogger = yield* LegacyDebugLogger;
   const telemetryState = yield* LegacyTelemetryState;
   const output = yield* Output;
   const yes = yield* LegacyYesFlag;
@@ -284,13 +324,14 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
 
   return yield* Effect.gen(function* () {
     const key = yield* generatePrivateKey(flags.algorithm);
-    const configured = yield* loadSigningKeysConfig(cliConfig.workdir);
+    const signingKeysConfig = yield* loadSigningKeysConfig(cliConfig.workdir);
+    const configured = signingKeysConfig.configured;
 
     if (Option.isNone(configured)) {
       yield* output.raw(`${JSON.stringify(key)}\n`, "stdout");
       const defaultPath = path.join("supabase", "signing_keys.json");
       yield* output.raw(
-        `\nTo enable JWT signing keys in your local project:\n1. Save the generated key to ${emphasize(defaultPath)}\n2. Update your ${emphasize(path.join("supabase", "config.toml"))} with the new keys path\n\n[auth]\nsigning_keys_path = "./signing_keys.json"\n\n`,
+        `\nTo enable JWT signing keys in your local project:\n1. Save the generated key to ${emphasize(defaultPath)}\n2. Update your ${emphasize(signingKeysConfig.configDisplayPath)} with the new keys path\n\n[auth]\nsigning_keys_path = "./signing_keys.json"\n\n`,
         "stderr",
       );
       return;
@@ -332,7 +373,10 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
     );
 
     if (nextKeys.length === 1) {
-      const ignored = yield* isGitIgnored(configured.value.actualPath, cliConfig.workdir);
+      const ignored = yield* isGitIgnored(configured.value.actualPath, cliConfig.workdir).pipe(
+        Effect.tapError((cause) => debugLogger.debug(String(cause))),
+        Effect.orElseSucceed(() => Option.none<boolean>()),
+      );
       if (Option.isSome(ignored) && !ignored.value) {
         yield* output.raw(
           `${warnText("IMPORTANT:")} Add your signing key path to .gitignore to prevent committing to version control.\n`,

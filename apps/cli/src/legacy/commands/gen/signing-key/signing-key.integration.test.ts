@@ -1,9 +1,17 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, Layer, Option } from "effect";
+import { CliOutput, Command } from "effect/unstable/cli";
 
-import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import {
+  mockAnalytics,
+  mockOutput,
+  mockRuntimeInfo,
+  mockTty,
+  processEnvLayer,
+} from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   mockLegacyCliConfig,
@@ -11,7 +19,11 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
+import { LEGACY_GLOBAL_FLAGS, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
+import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
+import { legacyGenCommand } from "../gen.command.ts";
 import { legacyGenSigningKey } from "./signing-key.handler.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-gen-signing-key-int-");
@@ -37,6 +49,10 @@ function setup(options: SetupOptions = {}) {
   const layer = Layer.mergeAll(
     buildLegacyTestRuntime({ out, api, cliConfig, tty }),
     Layer.succeed(LegacyYesFlag, options.yes ?? false),
+    Layer.succeed(LegacyDebugLogger, {
+      debug: () => Effect.void,
+      http: () => Effect.void,
+    }),
   );
   return { layer, out };
 }
@@ -57,6 +73,10 @@ function setupTracked(options: SetupOptions = {}) {
   const layer = Layer.mergeAll(
     buildLegacyTestRuntime({ out, api, cliConfig, tty, telemetry: telemetry.layer }),
     Layer.succeed(LegacyYesFlag, options.yes ?? false),
+    Layer.succeed(LegacyDebugLogger, {
+      debug: () => Effect.void,
+      http: () => Effect.void,
+    }),
   );
   return { layer, out, telemetry };
 }
@@ -64,6 +84,11 @@ function setupTracked(options: SetupOptions = {}) {
 async function writeConfig(contents: string) {
   await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
   await writeFile(join(tempRoot.current, "supabase", "config.toml"), contents);
+}
+
+async function writeJsonConfig(contents: string) {
+  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
+  await writeFile(join(tempRoot.current, "supabase", "config.json"), contents);
 }
 
 async function initGitRepo(gitignore = "") {
@@ -81,6 +106,11 @@ async function initGitRepo(gitignore = "") {
   }
 }
 
+const legacyTestRoot = Command.make("supabase").pipe(
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+  Command.withSubcommands([legacyGenCommand]),
+);
+
 describe("legacy gen signing-key integration", () => {
   it.live("prints a generated key to stdout when no signing_keys_path is configured", () => {
     const { layer, out } = setup();
@@ -94,6 +124,61 @@ describe("legacy gen signing-key integration", () => {
       expect(out.stderrText).toContain("To enable JWT signing keys in your local project:");
       expect(out.stderrText).toContain(join("supabase", "signing_keys.json"));
       expect(out.stderrText.endsWith("\n\n")).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("runs through the command wiring without missing runtime services", () => {
+    const out = mockOutput({ format: "text", interactive: false });
+    const analytics = mockAnalytics();
+    const layer = Layer.mergeAll(
+      BunServices.layer,
+      CliOutput.layer(textCliOutputFormatter()),
+      out.layer,
+      analytics.layer,
+      processEnvLayer({ SUPABASE_HOME: tempRoot.current }),
+      mockRuntimeInfo({ cwd: tempRoot.current, homeDir: tempRoot.current }),
+      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+      Layer.succeed(
+        TelemetryRuntime,
+        TelemetryRuntime.of({
+          configDir: join(tempRoot.current, ".supabase"),
+          tracesDir: join(tempRoot.current, ".supabase", "traces"),
+          consent: "granted",
+          showDebug: false,
+          deviceId: "test-device-id",
+          sessionId: "test-session-id",
+          distinctId: undefined,
+          isFirstRun: false,
+          isTty: false,
+          isCi: false,
+          os: "linux",
+          arch: "x64",
+          cliVersion: "0.1.0",
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+        "gen",
+        "signing-key",
+        "--workdir",
+        tempRoot.current,
+      ]);
+
+      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
+      expect(parsed.alg).toBe("ES256");
+      expect(out.stderrText).toContain("To enable JWT signing keys in your local project:");
+    }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+  });
+
+  it.live("uses the loaded config file path in the local setup hint", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => writeJsonConfig("{}\n"));
+      yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
+
+      expect(out.stderrText).toContain(join("supabase", "config.json"));
     }).pipe(Effect.provide(layer));
   });
 
@@ -118,6 +203,23 @@ describe("legacy gen signing-key integration", () => {
       expect(out.stderrText).toContain("Do you want to overwrite the existing");
       expect(out.stderrText).toContain("JWT signing key appended to: ");
       expect(out.stderrText).toContain(join("supabase", "signing_keys.json"));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("passes an explicit default-yes prompt for interactive overwrite", () => {
+    const { layer, out } = setup({ stdinIsTty: true });
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
+      );
+
+      yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
+
+      expect(out.promptConfirmCalls).toHaveLength(1);
+      expect(out.promptConfirmCalls[0]?.opts?.defaultValue).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 

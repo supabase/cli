@@ -6,6 +6,12 @@ export class LegacyGenSigningKeyConfigParseError extends Data.TaggedError(
   readonly message: string;
 }> {}
 
+export class LegacyGenSigningKeyGenerateError extends Data.TaggedError(
+  "LegacyGenSigningKeyGenerateError",
+)<{
+  readonly message: string;
+}> {}
+
 export class LegacyGenSigningKeyReadError extends Data.TaggedError("LegacyGenSigningKeyReadError")<{
   readonly message: string;
 }> {}
