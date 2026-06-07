@@ -1,0 +1,15 @@
+{
+  "status": 200,
+  "headers": {
+    "access-control-allow-origin": "*",
+    "content-type": "application/json; charset=utf-8",
+    "sb-gateway-mode": "direct",
+    "sb-gateway-version": "1",
+    "sb-project-ref": "__PROJECT_REF__",
+    "sb-request-id": "__UUID__"
+  },
+  "body": {
+    "Key": "cli-e2e-bucket/rm-b.txt",
+    "Id": "__UUID__"
+  }
+}

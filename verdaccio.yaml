@@ -1,0 +1,34 @@
+# Verdaccio local registry configuration.
+# Used by `pnpm local-registry` for local CLI release testing.
+# {root} is substituted at runtime with the absolute repository path.
+
+storage: "{root}/tmp/verdaccio/storage"
+
+# CLI binaries are large — raise the body limit well above the tarball size.
+# This must be at the root level; verdaccio's body-parser reads it from here.
+max_body_size: 300mb
+
+auth:
+  htpasswd:
+    file: "{root}/tmp/verdaccio/htpasswd"
+    max_users: 1000
+
+server:
+  keepAliveTimeout: 60
+
+uplinks:
+  npmjs:
+    url: https://registry.npmjs.org/
+
+packages:
+  # @supabase/* packages published locally are served from storage.
+  # All others (effect, ink, etc.) are proxied from npm.
+  "@supabase/*":
+    access: $all
+    publish: $all
+    proxy: npmjs
+
+  "**":
+    access: $all
+    publish: $all
+    proxy: npmjs

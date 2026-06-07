@@ -1,0 +1,12 @@
+{
+  "method": "DELETE",
+  "path": "/v1/branches/__PROJECT_REF__",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "host": "localhost:__PORT__",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": null
+}

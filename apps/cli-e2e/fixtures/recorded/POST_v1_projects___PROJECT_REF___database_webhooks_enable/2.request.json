@@ -1,0 +1,13 @@
+{
+  "method": "POST",
+  "path": "/v1/projects/__PROJECT_REF__/database/webhooks/enable",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "content-length": "0",
+    "host": "localhost:__PORT__",
+    "user-agent": "SupabaseCLI/2.90.0"
+  },
+  "body": null
+}

@@ -1,0 +1,12 @@
+{
+  "method": "GET",
+  "path": "/v1/projects/__PROJECT_REF__/config/auth/sso/providers",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "host": "localhost:__PORT__",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": null
+}

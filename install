@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP="supabase"
+REPO="supabase/cli"
+INSTALL_DIR="${SUPABASE_INSTALL_DIR:-"$HOME/.supabase/bin"}"
+REQUESTED_VERSION="${VERSION:-}"
+NO_MODIFY_PATH=false
+BINARY_PATH=""
+
+RED="\033[0;31m"
+MUTED="\033[0;2m"
+GREEN="\033[0;32m"
+NC="\033[0m"
+
+usage() {
+  cat <<EOF
+Install the Supabase CLI.
+
+Usage:
+  curl -fsSL https://raw.githubusercontent.com/supabase/cli/main/install | bash
+  curl -fsSL https://raw.githubusercontent.com/supabase/cli/main/install | bash -s -- --version 2.0.0
+
+Options:
+  -v, --version <version>       Install a specific version, for example 2.0.0.
+  -d, --install-dir <path>      Install into a custom directory.
+  -b, --binary <path>           Install from a local binary instead of downloading.
+      --no-modify-path          Do not update shell config files.
+  -h, --help                    Show this help.
+
+Environment:
+  VERSION                       Install a specific version.
+  SUPABASE_INSTALL_DIR          Install into a custom directory.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    -v | --version)
+      if [[ -z "${2:-}" ]]; then
+        echo -e "${RED}Error: --version requires a version.${NC}" >&2
+        exit 1
+      fi
+      REQUESTED_VERSION="$2"
+      shift 2
+      ;;
+    -d | --install-dir)
+      if [[ -z "${2:-}" ]]; then
+        echo -e "${RED}Error: --install-dir requires a path.${NC}" >&2
+        exit 1
+      fi
+      INSTALL_DIR="$2"
+      shift 2
+      ;;
+    -b | --binary)
+      if [[ -z "${2:-}" ]]; then
+        echo -e "${RED}Error: --binary requires a path.${NC}" >&2
+        exit 1
+      fi
+      BINARY_PATH="$2"
+      shift 2
+      ;;
+    --no-modify-path)
+      NO_MODIFY_PATH=true
+      shift
+      ;;
+    *)
+      echo -e "${RED}Error: unknown option '$1'.${NC}" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+say() {
+  echo -e "$1"
+}
+
+need() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo -e "${RED}Error: '$1' is required but was not found.${NC}" >&2
+    exit 1
+  fi
+}
+
+detect_target() {
+  local raw_os raw_arch os arch
+  raw_os="$(uname -s)"
+  raw_arch="$(uname -m)"
+
+  case "$raw_os" in
+    Darwin*) os="darwin" ;;
+    Linux*) os="linux" ;;
+    MINGW* | MSYS* | CYGWIN*) os="windows" ;;
+    *)
+      echo -e "${RED}Error: unsupported OS '$raw_os'.${NC}" >&2
+      exit 1
+      ;;
+  esac
+
+  case "$raw_arch" in
+    x86_64 | amd64) arch="amd64" ;;
+    arm64 | aarch64) arch="arm64" ;;
+    *)
+      echo -e "${RED}Error: unsupported architecture '$raw_arch'.${NC}" >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ "$os" == "darwin" && "$arch" == "amd64" ]]; then
+    local translated
+    translated="$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)"
+    if [[ "$translated" == "1" ]]; then
+      arch="arm64"
+    fi
+  fi
+
+  echo "${os}_${arch}"
+}
+
+is_musl_linux() {
+  [[ -f /etc/alpine-release ]] && return 0
+  command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl
+}
+
+latest_version() {
+  curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" |
+    sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' |
+    head -n 1
+}
+
+check_installed_version() {
+  local version="$1"
+  local bin="${INSTALL_DIR}/${APP}"
+  local installed_version
+
+  if [[ ! -x "$bin" ]]; then
+    return 0
+  fi
+
+  installed_version="$("$bin" --version 2>/dev/null || true)"
+  if [[ "$installed_version" == "$version" ]]; then
+    say "${MUTED}Version ${NC}${version}${MUTED} is already installed at ${NC}${bin}${MUTED}.${NC}"
+    exit 0
+  fi
+}
+
+checksum_for() {
+  local file="$1"
+  local checksums="$2"
+  awk -v file="$file" '$2 == file { print $1 }' "$checksums"
+}
+
+verify_checksum() {
+  local file="$1"
+  local checksums="$2"
+  local expected actual
+
+  expected="$(checksum_for "$(basename "$file")" "$checksums")"
+  if [[ -z "$expected" ]]; then
+    say "${MUTED}No checksum found for $(basename "$file"); skipping verification.${NC}"
+    return 0
+  fi
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$file" | awk '{ print $1 }')"
+  elif command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$file" | awk '{ print $1 }')"
+  else
+    say "${MUTED}No sha256 tool found; skipping checksum verification.${NC}"
+    return 0
+  fi
+
+  if [[ "$actual" != "$expected" ]]; then
+    echo -e "${RED}Error: checksum verification failed for $(basename "$file").${NC}" >&2
+    exit 1
+  fi
+}
+
+install_from_binary() {
+  local ext="$1"
+
+  if [[ ! -f "$BINARY_PATH" ]]; then
+    echo -e "${RED}Error: binary not found at '$BINARY_PATH'.${NC}" >&2
+    exit 1
+  fi
+
+  mkdir -p "$INSTALL_DIR"
+  cp "$BINARY_PATH" "${INSTALL_DIR}/${APP}${ext}"
+  chmod 755 "${INSTALL_DIR}/${APP}${ext}"
+}
+
+download_and_install() {
+  local target="$1"
+  local ext="$2"
+  local version filename base_url tmp_dir archive checksums source_dir companion_ext
+
+  need curl
+  need tar
+  need awk
+  need sed
+  need head
+
+  version="${REQUESTED_VERSION#v}"
+  if [[ -z "$version" ]]; then
+    version="$(latest_version)"
+  fi
+  if [[ -z "$version" ]]; then
+    echo -e "${RED}Error: failed to resolve the latest Supabase CLI version.${NC}" >&2
+    exit 1
+  fi
+  check_installed_version "$version"
+
+  filename="supabase_${version}_${target}.tar.gz"
+  if [[ "$target" == linux_* ]] && is_musl_linux; then
+    filename="supabase_${version}_${target}.apk"
+  fi
+
+  base_url="https://github.com/${REPO}/releases/download/v${version}"
+  tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/supabase-install.XXXXXX")"
+  archive="${tmp_dir}/${filename}"
+  checksums="${tmp_dir}/checksums.txt"
+  source_dir="$tmp_dir"
+
+  trap 'rm -rf "$tmp_dir"; trap - RETURN' RETURN
+
+  say "${MUTED}Installing ${NC}${APP}${MUTED} ${version} for ${target}.${NC}"
+  curl -fL --progress-bar "${base_url}/${filename}" -o "$archive"
+  if curl -fsSL "${base_url}/checksums.txt" -o "$checksums"; then
+    verify_checksum "$archive" "$checksums"
+  else
+    say "${MUTED}Could not download checksums.txt; skipping verification.${NC}"
+  fi
+
+  tar -xzf "$archive" -C "$tmp_dir"
+  if [[ "$filename" == *.apk ]]; then
+    source_dir="${tmp_dir}/usr/bin"
+  fi
+
+  if [[ ! -f "${source_dir}/${APP}${ext}" ]]; then
+    echo -e "${RED}Error: archive did not contain ${APP}${ext}.${NC}" >&2
+    exit 1
+  fi
+
+  mkdir -p "$INSTALL_DIR"
+  mv "${source_dir}/${APP}${ext}" "${INSTALL_DIR}/${APP}${ext}"
+  chmod 755 "${INSTALL_DIR}/${APP}${ext}"
+
+  companion_ext="$ext"
+  if [[ -f "${source_dir}/${APP}-go${companion_ext}" ]]; then
+    mv "${source_dir}/${APP}-go${companion_ext}" "${INSTALL_DIR}/${APP}-go${companion_ext}"
+    chmod 755 "${INSTALL_DIR}/${APP}-go${companion_ext}"
+  fi
+}
+
+path_command_for_shell() {
+  local shell_name="$1"
+  case "$shell_name" in
+    fish) echo "fish_add_path $INSTALL_DIR" ;;
+    *) echo "export PATH=\"$INSTALL_DIR:\$PATH\"" ;;
+  esac
+}
+
+config_file_for_shell() {
+  local shell_name="$1"
+  case "$shell_name" in
+    fish) echo "${XDG_CONFIG_HOME:-"$HOME/.config"}/fish/config.fish" ;;
+    zsh) echo "${ZDOTDIR:-"$HOME"}/.zshrc" ;;
+    bash) echo "$HOME/.bashrc" ;;
+    *) echo "$HOME/.profile" ;;
+  esac
+}
+
+add_to_path() {
+  local shell_name config_file command
+
+  if [[ "$NO_MODIFY_PATH" == "true" ]]; then
+    return 0
+  fi
+
+  if [[ ":$PATH:" == *":$INSTALL_DIR:"* ]]; then
+    return 0
+  fi
+
+  shell_name="$(basename "${SHELL:-sh}")"
+  config_file="$(config_file_for_shell "$shell_name")"
+  command="$(path_command_for_shell "$shell_name")"
+
+  mkdir -p "$(dirname "$config_file")"
+  touch "$config_file"
+
+  if grep -Fxq "$command" "$config_file"; then
+    return 0
+  fi
+
+  {
+    echo ""
+    echo "# Supabase CLI"
+    echo "$command"
+  } >>"$config_file"
+
+  say "${MUTED}Added ${NC}${APP}${MUTED} to PATH in ${NC}${config_file}${MUTED}.${NC}"
+}
+
+target="$(detect_target)"
+binary_ext=""
+if [[ "$target" == windows_* ]]; then
+  binary_ext=".exe"
+fi
+
+if [[ -n "$BINARY_PATH" ]]; then
+  install_from_binary "$binary_ext"
+else
+  download_and_install "$target" "$binary_ext"
+fi
+
+add_to_path
+
+if [[ "${GITHUB_ACTIONS:-}" == "true" && -n "${GITHUB_PATH:-}" ]]; then
+  echo "$INSTALL_DIR" >>"$GITHUB_PATH"
+fi
+
+say ""
+say "${GREEN}Supabase CLI installed to ${INSTALL_DIR}/${APP}${binary_ext}.${NC}"
+say "Run '${APP} --version' to verify the installation."
+if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+  say "${MUTED}Open a new terminal or run: export PATH=\"${INSTALL_DIR}:\$PATH\"${NC}"
+fi

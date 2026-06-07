@@ -1,0 +1,5 @@
+{
+  "columns": ["pid", "duration", "query"],
+  "typeOids": [23, 25, 25],
+  "rows": [["9876", "00:06:30.123456", "SELECT * FROM large_table ORDER BY created_at"]]
+}

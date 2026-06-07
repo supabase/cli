@@ -1,0 +1,13 @@
+{
+  "columns": [
+    "database_size",
+    "total_index_size",
+    "total_table_size",
+    "total_toast_size",
+    "time_since_stats_reset",
+    "index_hit_rate",
+    "table_hit_rate",
+    "wal_size"
+  ],
+  "rows": [["42 MB", "8 MB", "30 MB", "4 MB", "00:15:23.123456", "0.99", "0.98", "128 kB"]]
+}

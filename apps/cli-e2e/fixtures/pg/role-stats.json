@@ -1,0 +1,5 @@
+{
+  "columns": ["role_name", "active_connections", "connection_limit", "custom_config"],
+  "typeOids": [25, 23, 23, 25],
+  "rows": [["postgres", "5", "100", ""]]
+}

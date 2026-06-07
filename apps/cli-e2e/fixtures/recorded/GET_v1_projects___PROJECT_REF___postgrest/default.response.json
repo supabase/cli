@@ -1,0 +1,17 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "__UUID__",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "119",
+    "x-ratelimit-reset": "60"
+  },
+  "body": {
+    "db_schema": "public,graphql_public",
+    "max_rows": 1000,
+    "db_extra_search_path": "public, extensions",
+    "db_pool": null,
+    "jwt_secret": "wYu1Y5zcq5XMI/BHlkIl6p9LkFCuWMLyiAVVoKKcIKJkp2un+UF9KkNth/4YXd2nLagAXtJ0wq/DaixwsuUfww=="
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "columns": ["slot_name", "active", "state", "replication_client_address", "replication_lag_gb"],
+  "typeOids": [25, 16, 25, 25, 25],
+  "rows": [["test-slot", "t", "streaming", "10.0.0.1", "0.00"]]
+}

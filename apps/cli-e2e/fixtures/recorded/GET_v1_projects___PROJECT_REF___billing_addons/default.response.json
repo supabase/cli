@@ -1,0 +1,651 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "__UUID__",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "119",
+    "x-ratelimit-reset": "60"
+  },
+  "body": {
+    "selected_addons": [
+      {
+        "type": "compute_instance",
+        "variant": {
+          "id": "ci_micro",
+          "name": "Micro",
+          "meta": {
+            "cpu_cores": 2,
+            "cpu_dedicated": false,
+            "memory_gb": 1,
+            "baseline_disk_io_mbs": 87,
+            "max_disk_io_mbs": 2085,
+            "connections_direct": 60,
+            "connections_pooler": 200,
+            "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+          },
+          "price": {
+            "description": "$0.01344/hour (~$10/month)",
+            "amount": 0.01344,
+            "interval": "hourly",
+            "type": "usage"
+          }
+        }
+      }
+    ],
+    "available_addons": [
+      {
+        "name": "Custom Domain",
+        "type": "custom_domain",
+        "variants": [
+          {
+            "id": "cd_default",
+            "name": "Custom Domain",
+            "price": {
+              "description": "$10/month",
+              "amount": 10,
+              "interval": "monthly",
+              "type": "fixed"
+            }
+          }
+        ]
+      },
+      {
+        "name": "Compute Instance",
+        "type": "compute_instance",
+        "variants": [
+          {
+            "id": "ci_micro",
+            "name": "Micro",
+            "meta": {
+              "cpu_cores": 2,
+              "cpu_dedicated": false,
+              "memory_gb": 1,
+              "baseline_disk_io_mbs": 87,
+              "max_disk_io_mbs": 2085,
+              "connections_direct": 60,
+              "connections_pooler": 200,
+              "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+            },
+            "price": {
+              "description": "$0.01344/hour (~$10/month)",
+              "amount": 0.01344,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_small",
+            "name": "Small",
+            "meta": {
+              "cpu_cores": 2,
+              "cpu_dedicated": false,
+              "memory_gb": 2,
+              "baseline_disk_io_mbs": 174,
+              "max_disk_io_mbs": 2085,
+              "connections_direct": 90,
+              "connections_pooler": 400,
+              "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+            },
+            "price": {
+              "description": "$0.0206/hour (~$15/month)",
+              "amount": 0.0206,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_medium",
+            "name": "Medium",
+            "meta": {
+              "cpu_cores": 2,
+              "cpu_dedicated": false,
+              "memory_gb": 4,
+              "baseline_disk_io_mbs": 347,
+              "max_disk_io_mbs": 2085,
+              "connections_direct": 120,
+              "connections_pooler": 600,
+              "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+            },
+            "price": {
+              "description": "$0.0822/hour (~$60/month)",
+              "amount": 0.0822,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_large",
+            "name": "Large",
+            "meta": {
+              "cpu_cores": 2,
+              "cpu_dedicated": true,
+              "memory_gb": 8,
+              "baseline_disk_io_mbs": 630,
+              "max_disk_io_mbs": 4750,
+              "connections_direct": 160,
+              "connections_pooler": 800,
+              "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+            },
+            "price": {
+              "description": "$0.1517/hour (~$111/month)",
+              "amount": 0.1517,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_xlarge",
+            "name": "XL",
+            "meta": {
+              "cpu_cores": 4,
+              "cpu_dedicated": true,
+              "memory_gb": 16,
+              "baseline_disk_io_mbs": 1048,
+              "max_disk_io_mbs": 4750,
+              "connections_direct": 240,
+              "connections_pooler": 1000,
+              "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+            },
+            "price": {
+              "description": "$0.2877/hour (~$210/month)",
+              "amount": 0.2877,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_2xlarge",
+            "name": "2XL",
+            "meta": {
+              "cpu_cores": 8,
+              "cpu_dedicated": true,
+              "memory_gb": 32,
+              "baseline_disk_io_mbs": 1048,
+              "max_disk_io_mbs": 4750,
+              "connections_direct": 380,
+              "connections_pooler": 1500,
+              "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+            },
+            "price": {
+              "description": "$0.562/hour (~$410/month)",
+              "amount": 0.562,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_4xlarge",
+            "name": "4XL",
+            "meta": {
+              "cpu_cores": 16,
+              "cpu_dedicated": true,
+              "memory_gb": 64,
+              "baseline_disk_io_mbs": 1048,
+              "max_disk_io_mbs": 4750,
+              "connections_direct": 480,
+              "connections_pooler": 3000,
+              "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS", "FLY"]
+            },
+            "price": {
+              "description": "$1.32/hour (~$964/month)",
+              "amount": 1.32,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_8xlarge",
+            "name": "8XL",
+            "meta": {
+              "cpu_cores": 32,
+              "cpu_dedicated": true,
+              "memory_gb": 128,
+              "baseline_disk_io_mbs": 1048,
+              "max_disk_io_mbs": 9500,
+              "connections_direct": 490,
+              "connections_pooler": 6000,
+              "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS"]
+            },
+            "price": {
+              "description": "$2.562/hour (~$1870/month)",
+              "amount": 2.562,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_12xlarge",
+            "name": "12XL",
+            "meta": {
+              "cpu_cores": 48,
+              "cpu_dedicated": true,
+              "memory_gb": 192,
+              "baseline_disk_io_mbs": 1048,
+              "max_disk_io_mbs": 14250,
+              "connections_direct": 500,
+              "connections_pooler": 9000,
+              "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS"]
+            },
+            "price": {
+              "description": "$3.836/hour (~$2800/month)",
+              "amount": 3.836,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_16xlarge",
+            "name": "16XL",
+            "meta": {
+              "cpu_cores": 64,
+              "cpu_dedicated": true,
+              "memory_gb": 256,
+              "baseline_disk_io_mbs": 1048,
+              "max_disk_io_mbs": 19000,
+              "connections_direct": 500,
+              "connections_pooler": 12000,
+              "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS"]
+            },
+            "price": {
+              "description": "$5.12/hour (~$3738/month)",
+              "amount": 5.12,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_24xlarge",
+            "name": "24XL",
+            "meta": {
+              "cpu_cores": 96,
+              "cpu_dedicated": true,
+              "memory_gb": 384,
+              "baseline_disk_io_mbs": 30000,
+              "max_disk_io_mbs": 30000,
+              "connections_direct": 750,
+              "connections_pooler": 18000,
+              "supported_cloud_providers": ["AWS"],
+              "supported_regions": {
+                "AWS": [
+                  "us-east-1",
+                  "us-east-2",
+                  "us-west-1",
+                  "us-west-2",
+                  "ap-northeast-1",
+                  "ap-northeast-2",
+                  "eu-west-1",
+                  "eu-west-2",
+                  "eu-north-1",
+                  "eu-central-1",
+                  "ap-south-1"
+                ],
+                "FLY": [],
+                "AWS_K8S": [],
+                "AWS_NIMBUS": []
+              }
+            },
+            "price": {
+              "description": "$9.73/hour (~$7103/month)",
+              "amount": 9.73,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_24xlarge_optimized_cpu",
+            "name": "24XL_OPTIMIZED_CPU",
+            "meta": {
+              "cpu_cores": 96,
+              "cpu_dedicated": true,
+              "memory_gb": 192,
+              "baseline_disk_io_mbs": 30000,
+              "max_disk_io_mbs": 30000,
+              "connections_direct": 750,
+              "connections_pooler": 18000,
+              "supported_cloud_providers": ["AWS"],
+              "supported_regions": {
+                "AWS": [
+                  "us-east-1",
+                  "us-east-2",
+                  "us-west-1",
+                  "us-west-2",
+                  "ap-northeast-1",
+                  "ap-northeast-2",
+                  "eu-west-1",
+                  "eu-west-2",
+                  "eu-north-1",
+                  "eu-central-1",
+                  "ap-south-1",
+                  "sa-east-1"
+                ],
+                "FLY": [],
+                "AWS_K8S": [],
+                "AWS_NIMBUS": []
+              }
+            },
+            "price": {
+              "description": "$8.9/hour (~$6497/month)",
+              "amount": 8.9,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_24xlarge_optimized_memory",
+            "name": "24XL_OPTIMIZED_MEMORY",
+            "meta": {
+              "cpu_cores": 96,
+              "cpu_dedicated": true,
+              "memory_gb": 768,
+              "baseline_disk_io_mbs": 30000,
+              "max_disk_io_mbs": 30000,
+              "connections_direct": 750,
+              "connections_pooler": 18000,
+              "supported_cloud_providers": ["AWS"],
+              "supported_regions": {
+                "AWS": [
+                  "us-east-1",
+                  "us-east-2",
+                  "us-west-1",
+                  "us-west-2",
+                  "ap-northeast-1",
+                  "ap-southeast-1",
+                  "ap-southeast-2",
+                  "eu-west-1",
+                  "eu-north-1",
+                  "eu-central-1",
+                  "ap-south-1"
+                ],
+                "FLY": [],
+                "AWS_K8S": [],
+                "AWS_NIMBUS": []
+              }
+            },
+            "price": {
+              "description": "$13.84/hour (~$10103/month)",
+              "amount": 13.84,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_24xlarge_high_memory",
+            "name": "24XL_HIGH_MEMORY",
+            "meta": {
+              "cpu_cores": 96,
+              "cpu_dedicated": true,
+              "memory_gb": 1536,
+              "baseline_disk_io_mbs": 30000,
+              "max_disk_io_mbs": 30000,
+              "connections_direct": 750,
+              "connections_pooler": 18000,
+              "supported_cloud_providers": ["AWS", "AWS_K8S", "AWS_NIMBUS"],
+              "supported_regions": {
+                "AWS": ["us-east-1", "us-west-2", "eu-central-1"],
+                "FLY": [],
+                "AWS_K8S": [],
+                "AWS_NIMBUS": []
+              }
+            },
+            "price": {
+              "description": "$21.92/hour (~$16002/month)",
+              "amount": 21.92,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_48xlarge",
+            "name": "48XL",
+            "meta": {
+              "cpu_cores": 192,
+              "cpu_dedicated": true,
+              "memory_gb": 768,
+              "baseline_disk_io_mbs": 40000,
+              "max_disk_io_mbs": 40000,
+              "connections_direct": 1500,
+              "connections_pooler": 36000,
+              "supported_cloud_providers": ["AWS"],
+              "supported_regions": {
+                "AWS": [
+                  "us-east-1",
+                  "us-east-2",
+                  "us-west-1",
+                  "us-west-2",
+                  "ap-northeast-1",
+                  "ap-southeast-2",
+                  "eu-west-1",
+                  "eu-west-2",
+                  "eu-north-1",
+                  "eu-central-1",
+                  "ap-south-1"
+                ],
+                "FLY": [],
+                "AWS_K8S": [],
+                "AWS_NIMBUS": []
+              }
+            },
+            "price": {
+              "description": "$19.47/hour (~$14213/month)",
+              "amount": 19.47,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_48xlarge_optimized_cpu",
+            "name": "48XL_OPTIMIZED_CPU",
+            "meta": {
+              "cpu_cores": 192,
+              "cpu_dedicated": true,
+              "memory_gb": 384,
+              "baseline_disk_io_mbs": 40000,
+              "max_disk_io_mbs": 40000,
+              "connections_direct": 1500,
+              "connections_pooler": 36000,
+              "supported_cloud_providers": ["AWS"],
+              "supported_regions": {
+                "AWS": [
+                  "us-east-1",
+                  "us-east-2",
+                  "us-west-1",
+                  "us-west-2",
+                  "ap-northeast-1",
+                  "ap-southeast-2",
+                  "eu-west-1",
+                  "eu-west-2",
+                  "eu-north-1",
+                  "eu-central-1",
+                  "ap-south-1",
+                  "sa-east-1"
+                ],
+                "FLY": [],
+                "AWS_K8S": [],
+                "AWS_NIMBUS": []
+              }
+            },
+            "price": {
+              "description": "$17.8/hour (~$12994/month)",
+              "amount": 17.8,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_48xlarge_optimized_memory",
+            "name": "48XL_OPTIMIZED_MEMORY",
+            "meta": {
+              "cpu_cores": 192,
+              "cpu_dedicated": true,
+              "memory_gb": 1536,
+              "baseline_disk_io_mbs": 40000,
+              "max_disk_io_mbs": 40000,
+              "connections_direct": 1500,
+              "connections_pooler": 36000,
+              "supported_cloud_providers": ["AWS"],
+              "supported_regions": {
+                "AWS": [
+                  "us-east-1",
+                  "us-east-2",
+                  "us-west-1",
+                  "us-west-2",
+                  "ap-northeast-1",
+                  "ap-southeast-2",
+                  "eu-west-1",
+                  "eu-north-1",
+                  "eu-central-1",
+                  "ap-south-1"
+                ],
+                "FLY": [],
+                "AWS_K8S": [],
+                "AWS_NIMBUS": []
+              }
+            },
+            "price": {
+              "description": "$27.68/hour (~$20206/month)",
+              "amount": 27.68,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          },
+          {
+            "id": "ci_48xlarge_high_memory",
+            "name": "48XL_HIGH_MEMORY",
+            "meta": {
+              "cpu_cores": 96,
+              "cpu_dedicated": true,
+              "memory_gb": 3072,
+              "baseline_disk_io_mbs": 40000,
+              "max_disk_io_mbs": 40000,
+              "connections_direct": 1500,
+              "connections_pooler": 36000,
+              "supported_cloud_providers": ["AWS"],
+              "supported_regions": {
+                "AWS": ["us-east-1", "us-west-2", "eu-central-1"],
+                "FLY": [],
+                "AWS_K8S": [],
+                "AWS_NIMBUS": []
+              }
+            },
+            "price": {
+              "description": "$43.84/hour (~$32003/month)",
+              "amount": 43.84,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          }
+        ]
+      },
+      {
+        "name": "Point-In-Time-Recovery",
+        "type": "pitr",
+        "variants": [
+          {
+            "id": "pitr_7",
+            "name": "7 days",
+            "meta": {
+              "backup_duration_days": 7
+            },
+            "price": {
+              "description": "$100/month",
+              "amount": 100,
+              "interval": "monthly",
+              "type": "fixed"
+            }
+          },
+          {
+            "id": "pitr_14",
+            "name": "14 days",
+            "meta": {
+              "backup_duration_days": 14
+            },
+            "price": {
+              "description": "$200/month",
+              "amount": 200,
+              "interval": "monthly",
+              "type": "fixed"
+            }
+          },
+          {
+            "id": "pitr_28",
+            "name": "28 days",
+            "meta": {
+              "backup_duration_days": 28
+            },
+            "price": {
+              "description": "$400/month",
+              "amount": 400,
+              "interval": "monthly",
+              "type": "fixed"
+            }
+          }
+        ]
+      },
+      {
+        "name": "IPv4",
+        "type": "ipv4",
+        "variants": [
+          {
+            "id": "ipv4_default",
+            "name": "IPv4",
+            "price": {
+              "description": "$4/month",
+              "amount": 4,
+              "interval": "monthly",
+              "type": "fixed"
+            }
+          }
+        ]
+      },
+      {
+        "name": "Advanced MFA - Phone",
+        "type": "auth_mfa_phone",
+        "variants": [
+          {
+            "id": "auth_mfa_phone_default",
+            "name": "Advanced MFA - Phone",
+            "price": {
+              "description": "$75/month, then $10/month",
+              "amount": 0.1027,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          }
+        ]
+      },
+      {
+        "name": "Advanced MFA - WebAuthn",
+        "type": "auth_mfa_web_authn",
+        "variants": [
+          {
+            "id": "auth_mfa_web_authn_default",
+            "name": "Advanced MFA - WebAuthn",
+            "price": {
+              "description": "$75/month, then $10/month",
+              "amount": 0.1027,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          }
+        ]
+      },
+      {
+        "name": "Log Drain",
+        "type": "log_drain",
+        "variants": [
+          {
+            "id": "log_drain_default",
+            "name": "Log Drain",
+            "price": {
+              "description": "$60/month",
+              "amount": 0.0822,
+              "interval": "hourly",
+              "type": "usage"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

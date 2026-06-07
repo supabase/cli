@@ -1,0 +1,141 @@
+import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { Effect, Layer } from "effect";
+import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
+import { TelemetryRuntime } from "./runtime.service.ts";
+import { telemetryRuntimeLayer } from "./runtime.layer.ts";
+import {
+  mockProjectContext,
+  mockRuntimeInfo,
+  mockTty,
+  processEnvLayer,
+} from "../../../tests/helpers/mocks.ts";
+
+function makeTempDir(): string {
+  return mkdtempSync(path.join(tmpdir(), "supabase-runtime-test-"));
+}
+
+function buildLayer(opts: {
+  homeDir: string;
+  env?: Record<string, string>;
+  stdoutIsTty?: boolean;
+}): Layer.Layer<TelemetryRuntime> {
+  const runtimeInfoLayer = mockRuntimeInfo({ homeDir: opts.homeDir });
+  const projectContextLayer = mockProjectContext();
+  const envLayer = processEnvLayer({
+    SUPABASE_HOME: opts.homeDir,
+    ...opts.env,
+  });
+  const ttyLayer = mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false });
+  const configLayer = cliConfigLayer.pipe(
+    Layer.provide(runtimeInfoLayer),
+    Layer.provide(projectContextLayer),
+  );
+  const telemetryLayer = telemetryRuntimeLayer.pipe(
+    Layer.provide(configLayer),
+    Layer.provide(runtimeInfoLayer),
+    Layer.provide(ttyLayer),
+    Layer.provide(BunServices.layer),
+  );
+
+  return Layer.mergeAll(envLayer, telemetryLayer);
+}
+
+describe("telemetryRuntimeLayer", () => {
+  it.live("does not create telemetry.json when telemetry is disabled by env on first run", () => {
+    const homeDir = makeTempDir();
+    const configPath = path.join(homeDir, "telemetry.json");
+
+    return Effect.gen(function* () {
+      const runtime = yield* TelemetryRuntime;
+      expect(runtime.consent).toBe("denied");
+      expect(runtime.isFirstRun).toBe(false);
+      expect(existsSync(configPath)).toBe(false);
+    }).pipe(
+      Effect.provide(
+        buildLayer({
+          homeDir,
+          env: { SUPABASE_TELEMETRY_DISABLED: "1" },
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("marks the actual first granted invocation as first run", () => {
+    const homeDir = makeTempDir();
+    const configPath = path.join(homeDir, "telemetry.json");
+
+    return Effect.gen(function* () {
+      const runtime = yield* TelemetryRuntime;
+      expect(runtime.consent).toBe("granted");
+      expect(runtime.isFirstRun).toBe(true);
+      expect(existsSync(configPath)).toBe(true);
+    }).pipe(
+      Effect.provide(buildLayer({ homeDir })),
+      Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("treats a malformed telemetry.json as a fresh first run instead of crashing", () => {
+    const homeDir = makeTempDir();
+    const configPath = path.join(homeDir, "telemetry.json");
+    writeFileSync(configPath, "");
+
+    return Effect.gen(function* () {
+      const runtime = yield* TelemetryRuntime;
+      expect(runtime.consent).toBe("granted");
+      expect(runtime.isFirstRun).toBe(true);
+      expect(existsSync(configPath)).toBe(true);
+    }).pipe(
+      Effect.provide(buildLayer({ homeDir })),
+      Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("silently ignores structurally invalid telemetry.json instead of crashing", () => {
+    const homeDir = makeTempDir();
+    const configPath = path.join(homeDir, "telemetry.json");
+    writeFileSync(configPath, JSON.stringify({ consent: "granted" }));
+
+    return Effect.gen(function* () {
+      const runtime = yield* TelemetryRuntime;
+      expect(runtime.consent).toBe("granted");
+      expect(runtime.isFirstRun).toBe(true);
+      expect(existsSync(configPath)).toBe(true);
+    }).pipe(
+      Effect.provide(buildLayer({ homeDir })),
+      Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("honors a legacy disabled telemetry state", () => {
+    const homeDir = makeTempDir();
+    const configPath = path.join(homeDir, "telemetry.json");
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        enabled: false,
+        device_id: "legacy-device",
+        session_id: "legacy-session",
+        session_last_active: "2026-04-01T12:00:00Z",
+        schema_version: 1,
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const runtime = yield* TelemetryRuntime;
+      expect(runtime.consent).toBe("denied");
+      expect(runtime.deviceId).toBe("legacy-device");
+      expect(runtime.sessionId).toBe("legacy-session");
+      expect(runtime.isFirstRun).toBe(false);
+      expect(existsSync(configPath)).toBe(true);
+    }).pipe(
+      Effect.provide(buildLayer({ homeDir, stdoutIsTty: true })),
+      Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+    );
+  });
+});

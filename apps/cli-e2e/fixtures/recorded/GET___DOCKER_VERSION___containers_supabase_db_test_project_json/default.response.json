@@ -1,0 +1,12 @@
+{
+  "status": 404,
+  "headers": {
+    "content-type": "application/json",
+    "api-version": "1.53",
+    "docker-experimental": "false",
+    "ostype": "linux"
+  },
+  "body": {
+    "message": "No such container: supabase_db_test-project"
+  }
+}

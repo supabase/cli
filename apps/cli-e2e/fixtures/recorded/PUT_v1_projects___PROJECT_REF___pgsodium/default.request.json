@@ -1,0 +1,16 @@
+{
+  "method": "PUT",
+  "path": "/v1/projects/__PROJECT_REF__/pgsodium",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "content-length": "15",
+    "content-type": "application/json",
+    "host": "localhost:__PORT__",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "root_key": ""
+  }
+}

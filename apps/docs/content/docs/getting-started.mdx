@@ -1,0 +1,63 @@
+---
+title: Getting started
+description: Install the Supabase CLI, authenticate, and run your first command.
+---
+
+## Install
+
+```sh tab="macOS"
+brew install supabase/tap/supabase
+```
+
+```sh tab="npm"
+npx supabase
+```
+
+```sh tab="Windows"
+scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+scoop install supabase
+```
+
+Verify the installation:
+
+```sh
+supabase --version
+```
+
+## Authenticate
+
+Log in so the CLI can access your Supabase projects:
+
+```sh
+supabase login
+```
+
+This opens your browser for OAuth. To use a token instead (useful in CI):
+
+```sh
+supabase login --token sbp_your_token_here
+```
+
+See [`supabase login`](/docs/commands/login) for all options.
+
+## Initialize a project
+
+Create a new Supabase project in the current directory:
+
+```sh
+supabase init
+```
+
+## Start local development
+
+Spin up a local Supabase stack (Postgres, Auth, Storage, etc.):
+
+```sh
+supabase start
+```
+
+Your local API URL and keys are printed once the stack is ready.
+
+## Next steps
+
+- [Command reference](/docs/commands) — Complete reference for every command and flag

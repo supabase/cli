@@ -1,0 +1,16 @@
+{
+  "method": "POST",
+  "path": "/v1/projects/__PROJECT_REF__/database/backups/restore-pitr",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "content-length": "40",
+    "content-type": "application/json",
+    "host": "localhost:__PORT__",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "recovery_time_target_unix": 1707407047
+  }
+}

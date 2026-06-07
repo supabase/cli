@@ -1,0 +1,4 @@
+{
+  "extends": "@tsconfig/bun/tsconfig.json",
+  "exclude": ["supabase"]
+}

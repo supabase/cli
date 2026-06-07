@@ -1,0 +1,41 @@
+{
+  "status": 200,
+  "headers": {
+    "content-type": "application/json; charset=utf-8",
+    "x-gotrue-id": "__UUID__",
+    "x-ratelimit-limit": "120",
+    "x-ratelimit-remaining": "118",
+    "x-ratelimit-reset": "46"
+  },
+  "body": {
+    "fileSizeLimit": 52428800,
+    "features": {
+      "imageTransformation": {
+        "enabled": true
+      },
+      "s3Protocol": {
+        "enabled": true
+      },
+      "icebergCatalog": {
+        "enabled": true,
+        "maxNamespaces": 10,
+        "maxTables": 10,
+        "maxCatalogs": 2
+      },
+      "vectorBuckets": {
+        "enabled": true,
+        "maxBuckets": 10,
+        "maxIndexes": 5
+      }
+    },
+    "capabilities": {
+      "list_v2": true,
+      "iceberg_catalog": true
+    },
+    "external": {
+      "upstreamTarget": "canary"
+    },
+    "migrationVersion": "operation-ergonomics",
+    "databasePoolMode": "recycled"
+  }
+}

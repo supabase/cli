@@ -1,0 +1,18 @@
+{
+  "method": "POST",
+  "path": "/storage/v1/object/list/cli-e2e-bucket",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "apikey": "__JWT__",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "content-length": "26",
+    "content-type": "application/json",
+    "host": "localhost:__PORT__",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "prefix": "",
+    "limit": 100
+  }
+}

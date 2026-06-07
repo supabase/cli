@@ -1,0 +1,26 @@
+[
+  {
+    "request": {
+      "method": "DELETE",
+      "path": "/v1/projects/__PROJECT_REF__/custom-hostname",
+      "query": {},
+      "headers": {
+        "accept-encoding": "gzip",
+        "authorization": "Bearer __ACCESS_TOKEN__",
+        "host": "localhost:__PORT__",
+        "user-agent": "SupabaseCLI/2.84.2"
+      },
+      "body": null
+    },
+    "response": {
+      "status": 200,
+      "headers": {
+        "x-gotrue-id": "__UUID__",
+        "x-ratelimit-limit": "10",
+        "x-ratelimit-remaining": "9",
+        "x-ratelimit-reset": "60"
+      },
+      "body": null
+    }
+  }
+]

@@ -1,0 +1,15 @@
+{
+  "method": "POST",
+  "path": "/v1/organizations",
+  "query": {},
+  "headers": {
+    "accept-encoding": "gzip",
+    "authorization": "Bearer __ACCESS_TOKEN__",
+    "content-type": "application/json",
+    "host": "localhost:__PORT__",
+    "user-agent": "SupabaseCLI/"
+  },
+  "body": {
+    "name": "Test Org"
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "columns": ["pid", "relname", "transactionid", "granted", "stmt", "age"],
+  "typeOids": [23, 25, 25, 16, 25, 25],
+  "rows": [["12345", "test-table", "null", "t", "UPDATE test-table SET val = 1", "00:00:05.123456"]]
+}

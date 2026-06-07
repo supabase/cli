@@ -1,0 +1,14 @@
+{
+  "method": "GET",
+  "path": "/__DOCKER_VERSION__/containers/json",
+  "query": {
+    "all": "1",
+    "filters": "{\"label\":{\"com.supabase.cli.project=test-project\":true}}"
+  },
+  "headers": {
+    "accept-encoding": "gzip",
+    "host": "localhost:__PORT__",
+    "user-agent": "Docker-Client/unknown-version (darwin)"
+  },
+  "body": null
+}
