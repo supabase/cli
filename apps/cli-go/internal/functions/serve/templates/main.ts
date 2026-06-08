@@ -111,7 +111,10 @@ function getAuthToken(req: Request) {
   const authHeader = req.headers.get("authorization");
   const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key")
 
-  if (!authHeader && !sbApiKeyCompatibilityToken) {
+  // NOTE:(kallebysantos) Kong on legacy CLI stack pass it down as 'Bearer Token' format
+  const cleanSbApiKeyCompatibilityToken = sbApiKeyCompatibilityToken.replace('Bearer', '').trim()
+
+  if (!authHeader && !cleanSbApiKeyCompatibilityToken) {
     throw new Error("Missing authorization header");
   }
 
@@ -120,7 +123,7 @@ function getAuthToken(req: Request) {
   // - Original bearer is not present or is ApiKey
   const bearerToken = extractBearerToken(authHeader ?? '')
   const token = (!bearerToken || bearerToken.startsWith('sb_'))
-    ? sbApiKeyCompatibilityToken
+    ? cleanSbApiKeyCompatibilityToken
     : bearerToken
 
   if (!token) {
