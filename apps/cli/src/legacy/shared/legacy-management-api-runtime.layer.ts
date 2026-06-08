@@ -113,7 +113,7 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
  * provided by `runCli` / the shared `cliProgramFor`, not by this command-level
  * runtime layer.
  */
-export type LegacyManagementApiServices =
+type LegacyManagementApiServices =
   | LegacyPlatformApi
   | HttpClient.HttpClient
   | LegacyCredentials
