@@ -15148,7 +15148,6 @@
           "mfa_phone_template",
           "mfa_phone_max_frequency",
           "nimbus_oauth_client_id",
-          "nimbus_oauth_email_optional",
           "nimbus_oauth_client_secret",
           "password_hibp_enabled",
           "password_min_length",

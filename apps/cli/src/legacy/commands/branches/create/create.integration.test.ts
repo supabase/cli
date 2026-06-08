@@ -139,6 +139,7 @@ const baseFlags: LegacyBranchesCreateFlags = {
   persistent: Option.none(),
   withData: Option.none(),
   notifyUrl: Option.none(),
+  gitBranch: Option.none(),
 };
 
 describe("legacy branches create integration", () => {
@@ -175,6 +176,21 @@ describe("legacy branches create integration", () => {
         persistent: true,
         with_data: true,
         notify_url: "https://hook.example.com",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("forwards an explicit --git-branch in the request body", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacyBranchesCreate({
+        ...baseFlags,
+        name: Option.some("feat-x"),
+        gitBranch: Option.some("feature/login-page"),
+      });
+      expect(api.requests[0]?.body).toMatchObject({
+        branch_name: "feat-x",
+        git_branch: "feature/login-page",
       });
     }).pipe(Effect.provide(layer));
   });
