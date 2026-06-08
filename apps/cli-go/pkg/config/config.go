@@ -150,6 +150,7 @@ type (
 		EdgeRuntime  edgeRuntime    `toml:"edge_runtime" json:"edge_runtime"`
 		Functions    FunctionConfig `toml:"functions" json:"functions"`
 		Analytics    analytics      `toml:"analytics" json:"analytics"`
+		StripeSync   stripeSync     `toml:"stripe_sync_engine" json:"stripe_sync_engine"`
 		Experimental experimental   `toml:"experimental" json:"experimental"`
 	}
 
@@ -185,6 +186,22 @@ type (
 		Pop3Port   uint16 `toml:"pop3_port" json:"pop3_port"`
 		AdminEmail string `toml:"admin_email" json:"admin_email"`
 		SenderName string `toml:"sender_name" json:"sender_name"`
+	}
+
+	// stripeSync configures the local Stripe Sync Engine container, which keeps a
+	// `stripe` schema in sync with a Stripe account. The container runs its own
+	// migrations on startup to (re)create the schema, so the CLI brings it up and
+	// waits for it to become healthy before applying user migrations during
+	// `db reset` and the initial `start`.
+	stripeSync struct {
+		Enabled             bool   `toml:"enabled" json:"enabled"`
+		Image               string `toml:"-" json:"-"`
+		Port                uint16 `toml:"port" json:"port"`
+		Schema              string `toml:"schema" json:"schema"`
+		ApiKey              Secret `toml:"api_key" json:"api_key"`
+		StripeSecretKey     Secret `toml:"stripe_secret_key" json:"stripe_secret_key"`
+		StripeWebhookSecret Secret `toml:"stripe_webhook_secret" json:"stripe_webhook_secret"`
+		AutoExpandLists     bool   `toml:"auto_expand_lists" json:"auto_expand_lists"`
 	}
 
 	edgeRuntime struct {
@@ -439,6 +456,11 @@ func NewConfig(editors ...ConfigEditor) config {
 		},
 		EdgeRuntime: edgeRuntime{
 			Image: Images.EdgeRuntime,
+		},
+		StripeSync: stripeSync{
+			Image:  Images.StripeSync,
+			Port:   54328,
+			Schema: "stripe",
 		},
 	}}
 	for _, apply := range editors {

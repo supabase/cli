@@ -102,6 +102,10 @@ func resetDatabase14(ctx context.Context, version string, fsys afero.Fs, options
 	if err := RestartDatabase(ctx, os.Stderr); err != nil {
 		return err
 	}
+	// Recreate the Stripe schema before applying migrations that may reference it.
+	if err := start.StartStripeSyncEngine(ctx, os.Stderr); err != nil {
+		return err
+	}
 	conn, err := utils.ConnectLocalPostgres(ctx, pgconn.Config{}, options...)
 	if err != nil {
 		return err

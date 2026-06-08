@@ -244,6 +244,14 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 		if err := start.StartDatabase(ctx, "", fsys, os.Stderr, options...); err != nil {
 			return err
 		}
+		// On a fresh database, SetupLocalDatabase already starts the Stripe Sync
+		// Engine before applying migrations. When the volume already exists, setup
+		// is skipped, so start it here to bring the service back up.
+		if !utils.NoBackupVolume && utils.Config.StripeSync.Enabled && !isContainerExcluded(utils.Config.StripeSync.Image, excluded) {
+			if err := start.StartStripeSyncEngine(ctx, os.Stderr); err != nil {
+				return err
+			}
+		}
 	}
 
 	var started []string

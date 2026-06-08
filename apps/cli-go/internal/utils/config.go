@@ -16,37 +16,39 @@ import (
 )
 
 var (
-	NetId         string
-	DbId          string
-	KongId        string
-	GotrueId      string
-	InbucketId    string
-	RealtimeId    string
-	RestId        string
-	StorageId     string
-	ImgProxyId    string
-	DifferId      string
-	PgmetaId      string
-	StudioId      string
-	EdgeRuntimeId string
-	LogflareId    string
-	VectorId      string
-	PoolerId      string
+	NetId              string
+	DbId               string
+	KongId             string
+	GotrueId           string
+	InbucketId         string
+	RealtimeId         string
+	RestId             string
+	StorageId          string
+	ImgProxyId         string
+	DifferId           string
+	PgmetaId           string
+	StudioId           string
+	EdgeRuntimeId      string
+	LogflareId         string
+	VectorId           string
+	PoolerId           string
+	StripeSyncEngineId string
 
-	DbAliases          = []string{"db", "db.supabase.internal"}
-	KongAliases        = []string{"kong", "api.supabase.internal"}
-	GotrueAliases      = []string{"auth"}
-	InbucketAliases    = []string{"inbucket"}
-	RealtimeAliases    = []string{"realtime", Config.Realtime.TenantId}
-	RestAliases        = []string{"rest"}
-	StorageAliases     = []string{"storage"}
-	ImgProxyAliases    = []string{"imgproxy"}
-	PgmetaAliases      = []string{"pg_meta"}
-	StudioAliases      = []string{"studio"}
-	EdgeRuntimeAliases = []string{"edge_runtime"}
-	LogflareAliases    = []string{"analytics"}
-	VectorAliases      = []string{"vector"}
-	PoolerAliases      = []string{"pooler"}
+	DbAliases               = []string{"db", "db.supabase.internal"}
+	KongAliases             = []string{"kong", "api.supabase.internal"}
+	GotrueAliases           = []string{"auth"}
+	InbucketAliases         = []string{"inbucket"}
+	RealtimeAliases         = []string{"realtime", Config.Realtime.TenantId}
+	RestAliases             = []string{"rest"}
+	StorageAliases          = []string{"storage"}
+	ImgProxyAliases         = []string{"imgproxy"}
+	PgmetaAliases           = []string{"pg_meta"}
+	StudioAliases           = []string{"studio"}
+	EdgeRuntimeAliases      = []string{"edge_runtime"}
+	LogflareAliases         = []string{"analytics"}
+	VectorAliases           = []string{"vector"}
+	PoolerAliases           = []string{"pooler"}
+	StripeSyncEngineAliases = []string{"stripe_sync_engine"}
 
 	//go:embed templates/initial_schemas/13.sql
 	InitialSchemaPg13Sql string
@@ -77,6 +79,7 @@ func UpdateDockerIds() {
 	LogflareId = GetId(LogflareAliases[0])
 	VectorId = GetId(VectorAliases[0])
 	PoolerId = GetId(PoolerAliases[0])
+	StripeSyncEngineId = GetId(StripeSyncEngineAliases[0])
 }
 
 func GetDockerIds() []string {
@@ -94,6 +97,7 @@ func GetDockerIds() []string {
 		LogflareId,
 		VectorId,
 		PoolerId,
+		StripeSyncEngineId,
 	}
 }
 
@@ -187,6 +191,13 @@ func GetServices() types.Services {
 		services["pooler"] = types.ServiceConfig{
 			Name:       ShortContainerImageName(Config.Db.Pooler.Image),
 			Image:      GetRegistryImageUrl(Config.Db.Pooler.Image),
+			PullPolicy: types.PullPolicyMissing,
+		}
+	}
+	if Config.StripeSync.Enabled {
+		services["stripeSyncEngine"] = types.ServiceConfig{
+			Name:       ShortContainerImageName(Config.StripeSync.Image),
+			Image:      GetRegistryImageUrl(Config.StripeSync.Image),
 			PullPolicy: types.PullPolicyMissing,
 		}
 	}

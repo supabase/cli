@@ -45,6 +45,7 @@ type CustomName struct {
 	StorageS3AccessKeyId     string `env:"storage.s3_access_key_id,default=S3_PROTOCOL_ACCESS_KEY_ID"`
 	StorageS3SecretAccessKey string `env:"storage.s3_secret_access_key,default=S3_PROTOCOL_ACCESS_KEY_SECRET"`
 	StorageS3Region          string `env:"storage.s3_region,default=S3_PROTOCOL_REGION"`
+	StripeSyncEngineURL      string `env:"stripe_sync_engine.url,default=STRIPE_SYNC_ENGINE_URL"`
 }
 
 func (c *CustomName) toValues(exclude ...string) map[string]string {
@@ -92,6 +93,10 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 		values[c.StorageS3AccessKeyId] = utils.Config.Storage.S3Credentials.AccessKeyId
 		values[c.StorageS3SecretAccessKey] = utils.Config.Storage.S3Credentials.SecretAccessKey
 		values[c.StorageS3Region] = utils.Config.Storage.S3Credentials.Region
+	}
+	stripeSyncEngineEnabled := utils.Config.StripeSync.Enabled && !slices.Contains(exclude, utils.StripeSyncEngineId) && !slices.Contains(exclude, utils.ShortContainerImageName(utils.Config.StripeSync.Image))
+	if stripeSyncEngineEnabled {
+		values[c.StripeSyncEngineURL] = fmt.Sprintf("http://%s:%d", utils.Config.Hostname, utils.Config.StripeSync.Port)
 	}
 	return values
 }
@@ -245,6 +250,7 @@ func PrettyPrint(w io.Writer, exclude ...string) {
 			Items: []OutputItem{
 				{Label: "Studio", Value: values[names.StudioURL], Type: Link},
 				{Label: "Mailpit", Value: values[names.MailpitURL], Type: Link},
+				{Label: "Stripe Sync", Value: values[names.StripeSyncEngineURL], Type: Link},
 				{Label: "MCP", Value: values[names.McpURL], Type: Link},
 			},
 		},

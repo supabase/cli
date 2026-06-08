@@ -365,6 +365,12 @@ func SetupLocalDatabase(ctx context.Context, version string, fsys afero.Fs, w io
 	if err := SetupDatabase(ctx, conn, utils.DbId, w, fsys); err != nil {
 		return err
 	}
+	// The Stripe Sync Engine owns the `stripe` schema and recreates it via its own
+	// migrations on startup. Bring it up before applying user migrations so that
+	// migrations referencing Stripe tables (e.g. foreign keys) can resolve them.
+	if err := StartStripeSyncEngine(ctx, w); err != nil {
+		return err
+	}
 	if err := apply.MigrateAndSeed(ctx, version, conn, fsys); err != nil {
 		return err
 	}
@@ -378,6 +384,83 @@ func SetupLocalDatabase(ctx context.Context, version string, fsys afero.Fs, w io
 		fmt.Fprintln(os.Stderr, "Warning: failed to cache migrations catalog:", err)
 	}
 	return nil
+}
+
+// stripeSyncEnginePort is the port the Stripe Sync Engine webhook server listens
+// on inside the container. The host port is configurable via config.toml.
+const stripeSyncEnginePort = 8080
+
+// StartStripeSyncEngine (re)creates the Stripe Sync Engine container and waits for
+// it to become healthy. The engine runs its own migrations on startup to
+// (re)create the configured schema, so it must be started before applying user
+// migrations that reference Stripe tables. Any existing container is removed
+// first so that `db reset` re-runs those migrations against the freshly
+// recreated database. It is a no-op when the service is disabled.
+func StartStripeSyncEngine(ctx context.Context, w io.Writer) error {
+	if !utils.Config.StripeSync.Enabled {
+		return nil
+	}
+	if err := utils.Docker.ContainerRemove(ctx, utils.StripeSyncEngineId, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
+		return errors.Errorf("failed to remove stripe sync engine container: %w", err)
+	}
+	fmt.Fprintln(w, "Starting Stripe Sync Engine...")
+	cfg := utils.Config.StripeSync
+	env := []string{
+		fmt.Sprintf("DATABASE_URL=postgresql://postgres:%s@%s:%d/postgres", utils.Config.Db.Password, utils.DbId, 5432),
+		"SCHEMA=" + cfg.Schema,
+		fmt.Sprintf("PORT=%d", stripeSyncEnginePort),
+		fmt.Sprintf("AUTO_EXPAND_LISTS=%t", cfg.AutoExpandLists),
+	}
+	// Only forward credentials that have been resolved to a concrete value;
+	// unset env() references are left out so the engine falls back to its own
+	// defaults instead of receiving the literal "env(...)" string.
+	for _, s := range []struct {
+		name  string
+		value string
+	}{
+		{"API_KEY", cfg.ApiKey.Value},
+		{"STRIPE_SECRET_KEY", cfg.StripeSecretKey.Value},
+		{"STRIPE_WEBHOOK_SECRET", cfg.StripeWebhookSecret.Value},
+	} {
+		if len(s.value) > 0 && !strings.HasPrefix(s.value, "env(") {
+			env = append(env, s.name+"="+s.value)
+		}
+	}
+	hostPort := nat.Port(strconv.Itoa(stripeSyncEnginePort) + "/tcp")
+	if _, err := utils.DockerStart(
+		ctx,
+		container.Config{
+			Image: cfg.Image,
+			Env:   env,
+			Healthcheck: &container.HealthConfig{
+				Test: []string{"CMD", "node", "-e",
+					fmt.Sprintf(`fetch("http://127.0.0.1:%d/health").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))`, stripeSyncEnginePort),
+				},
+				Interval:    10 * time.Second,
+				Timeout:     2 * time.Second,
+				Retries:     3,
+				StartPeriod: 10 * time.Second,
+			},
+			ExposedPorts: nat.PortSet{hostPort: {}},
+		},
+		container.HostConfig{
+			PortBindings: nat.PortMap{hostPort: []nat.PortBinding{{
+				HostPort: strconv.FormatUint(uint64(cfg.Port), 10),
+			}}},
+			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyUnlessStopped},
+		},
+		network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				utils.NetId: {
+					Aliases: utils.StripeSyncEngineAliases,
+				},
+			},
+		},
+		utils.StripeSyncEngineId,
+	); err != nil {
+		return err
+	}
+	return WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, utils.StripeSyncEngineId)
 }
 
 func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer, fsys afero.Fs) error {

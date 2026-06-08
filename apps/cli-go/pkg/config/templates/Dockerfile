@@ -14,6 +14,7 @@ FROM supabase/gotrue:v2.189.0 AS gotrue
 FROM supabase/realtime:v2.103.4 AS realtime
 FROM supabase/storage-api:v1.60.8 AS storage
 FROM supabase/logflare:1.43.4 AS logflare
+FROM supabase/stripe-sync-engine:v0.50.1 AS stripesyncengine
 # Append to JobImages when adding new dependencies below
 FROM supabase/pgadmin-schema-diff:cli-0.0.5 AS differ
 FROM supabase/migra:3.0.1663481299 AS migra

@@ -31,6 +31,7 @@ type images struct {
 	Realtime    string `mapstructure:"realtime"`
 	Storage     string `mapstructure:"storage"`
 	Logflare    string `mapstructure:"logflare"`
+	StripeSync  string `mapstructure:"stripesyncengine"`
 	// Append to Jobs when adding new dependencies below
 	Differ  string `mapstructure:"differ"`
 	Migra   string `mapstructure:"migra"`
@@ -72,5 +73,6 @@ func (s images) Services() []string {
 		s.Logflare,
 		s.Vector,
 		s.Supavisor,
+		s.StripeSync,
 	}
 }
