@@ -729,8 +729,9 @@ const (
 
 // Defines values for OAuthTokenBodyGrantType.
 const (
-	AuthorizationCode OAuthTokenBodyGrantType = "authorization_code"
-	RefreshToken      OAuthTokenBodyGrantType = "refresh_token"
+	AuthorizationCode                    OAuthTokenBodyGrantType = "authorization_code"
+	RefreshToken                         OAuthTokenBodyGrantType = "refresh_token"
+	UrnIetfParamsOauthGrantTypeJwtBearer OAuthTokenBodyGrantType = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 )
 
 // Defines values for OAuthTokenResponseTokenType.
@@ -3193,6 +3194,8 @@ type OAuthRevokeTokenBody struct {
 
 // OAuthTokenBody defines model for OAuthTokenBody.
 type OAuthTokenBody struct {
+	// Assertion IDJAG assertion JWT for grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer. Beta - available on Team and Enterprise plans only.
+	Assertion    *string                  `json:"assertion,omitempty"`
 	ClientId     *openapi_types.UUID      `json:"client_id,omitempty"`
 	ClientSecret *string                  `json:"client_secret,omitempty"`
 	Code         *string                  `json:"code,omitempty"`
@@ -3211,9 +3214,11 @@ type OAuthTokenBodyGrantType string
 
 // OAuthTokenResponse defines model for OAuthTokenResponse.
 type OAuthTokenResponse struct {
-	AccessToken  string                      `json:"access_token"`
-	ExpiresIn    int                         `json:"expires_in"`
-	RefreshToken string                      `json:"refresh_token"`
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+
+	// RefreshToken The `urn:ietf:params:oauth:grant-type:jwt-bearer` grant type issues access tokens only, no refresh token is returned and the token cannot be revoked via `/v1/oauth/revoke`.
+	RefreshToken *string                     `json:"refresh_token,omitempty"`
 	TokenType    OAuthTokenResponseTokenType `json:"token_type"`
 }
 
