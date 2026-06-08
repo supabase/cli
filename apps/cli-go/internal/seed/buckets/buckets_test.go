@@ -2,8 +2,11 @@ package buckets
 
 import (
 	"context"
+	"io"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/BurntSushi/toml"
@@ -75,6 +78,35 @@ public = false`
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("does not call vector API when no vector buckets are configured", func(t *testing.T) {
+		t.Cleanup(func() {
+			clear(utils.Config.Storage.Buckets)
+			utils.Config.Storage.VectorBuckets.Enabled = false
+			clear(utils.Config.Storage.VectorBuckets.Buckets)
+			gock.OffAll()
+		})
+		config := `
+[images]
+public = true`
+		require.NoError(t, toml.Unmarshal([]byte(config), &utils.Config.Storage.Buckets))
+		utils.Config.Storage.VectorBuckets.Enabled = true
+		utils.Config.Storage.VectorBuckets.Buckets = map[string]struct{}{}
+
+		gock.New(utils.Config.Api.ExternalUrl).
+			Get("/storage/v1/bucket").
+			Reply(http.StatusOK).
+			JSON([]storage.BucketResponse{})
+		gock.New(utils.Config.Api.ExternalUrl).
+			Post("/storage/v1/bucket").
+			Reply(http.StatusOK).
+			JSON(storage.CreateBucketResponse{Name: "images"})
+
+		err := Run(context.Background(), "", false, afero.NewMemMapFs())
+
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("seeds vector buckets locally", func(t *testing.T) {
 		t.Cleanup(func() {
 			utils.Config.Storage.VectorBuckets.Enabled = false
@@ -121,4 +153,57 @@ public = false`
 		require.Len(t, pending, 1)
 		assert.Contains(t, pending[0].Request().URLStruct.Path, "DeleteVectorBucket")
 	})
+
+	t.Run("warns and continues when vector buckets are unavailable in the region", func(t *testing.T) {
+		t.Cleanup(func() {
+			utils.Config.Storage.VectorBuckets.Enabled = false
+			clear(utils.Config.Storage.VectorBuckets.Buckets)
+			gock.OffAll()
+		})
+		utils.Config.Storage.VectorBuckets.Enabled = true
+		utils.Config.Storage.VectorBuckets.Buckets = map[string]struct{}{
+			"documents-openai": {},
+		}
+
+		gock.New(utils.Config.Api.ExternalUrl).
+			Get("/storage/v1/bucket").
+			Reply(http.StatusOK).
+			JSON([]storage.BucketResponse{})
+		gock.New(utils.Config.Api.ExternalUrl).
+			Post("/storage/v1/vector/ListVectorBuckets").
+			Reply(http.StatusBadRequest).
+			JSON(map[string]string{
+				"code":    "FeatureNotEnabled",
+				"message": "Feature is not enabled",
+			})
+
+		stderr := captureStderr(t, func() {
+			err := Run(context.Background(), "", false, afero.NewMemMapFs())
+			assert.NoError(t, err)
+		})
+
+		assert.Contains(t, stderr, "WARNING:")
+		assert.Contains(t, stderr, "Vector buckets are not available in this project's region yet")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func captureStderr(t *testing.T, run func()) string {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+	original := os.Stderr
+	os.Stderr = writer
+	t.Cleanup(func() {
+		os.Stderr = original
+		reader.Close()
+	})
+
+	run()
+
+	require.NoError(t, writer.Close())
+	os.Stderr = original
+	out, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	return strings.TrimSpace(string(out))
 }
