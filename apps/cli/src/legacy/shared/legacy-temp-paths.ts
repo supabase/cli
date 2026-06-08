@@ -8,7 +8,7 @@ import type { Path } from "effect";
  * of this directory, but several layers (`legacy-project-ref.layer.ts`,
  * `legacy-linked-project-cache.layer.ts`) also read from it. Centralising the
  * joins here keeps the path layout in one place instead of re-inlining
- * `path.join(workdir, "supabase", ".temp", …)` at every call site.
+ * `path.join(workdir, "supabase", ".temp", "...")` at every call site.
  */
 export interface LegacyTempPaths {
   readonly tempDir: string;
@@ -19,6 +19,7 @@ export interface LegacyTempPaths {
   readonly gotrueVersion: string;
   readonly storageVersion: string;
   readonly storageMigration: string;
+  readonly pgmetaVersion: string;
   readonly linkedProjectCache: string;
 }
 
@@ -33,6 +34,7 @@ export function legacyTempPaths(path: Path.Path, workdir: string): LegacyTempPat
     gotrueVersion: path.join(tempDir, "gotrue-version"),
     storageVersion: path.join(tempDir, "storage-version"),
     storageMigration: path.join(tempDir, "storage-migration"),
+    pgmetaVersion: path.join(tempDir, "pgmeta-version"),
     linkedProjectCache: path.join(tempDir, "linked-project.json"),
   };
 }
