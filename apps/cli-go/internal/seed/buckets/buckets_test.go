@@ -9,6 +9,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/h2non/gock"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
@@ -120,5 +121,39 @@ public = false`
 		pending := gock.Pending()
 		require.Len(t, pending, 1)
 		assert.Contains(t, pending[0].Request().URLStruct.Path, "DeleteVectorBucket")
+	})
+
+	t.Run("skips unconfigured vector buckets remotely", func(t *testing.T) {
+		t.Cleanup(func() {
+			clear(utils.Config.Storage.Buckets)
+			utils.Config.Storage.VectorBuckets.Enabled = false
+			clear(utils.Config.Storage.VectorBuckets.Buckets)
+			gock.OffAll()
+			viper.Reset()
+		})
+		viper.Set("AUTH_SERVICE_ROLE_KEY", "service-key")
+		utils.Config.Storage.VectorBuckets.Enabled = true
+		utils.Config.Storage.VectorBuckets.Buckets = map[string]struct{}{}
+		config := `
+[test]
+public = true`
+		require.NoError(t, toml.Unmarshal([]byte(config), &utils.Config.Storage.Buckets))
+		projectRef := apitest.RandomProjectRef()
+		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			Get("/storage/v1/bucket").
+			Reply(http.StatusOK).
+			JSON([]storage.BucketResponse{{
+				Name: "test",
+				Id:   "test",
+			}})
+		gock.New("https://" + utils.GetSupabaseHost(projectRef)).
+			Put("/storage/v1/bucket/test").
+			Reply(http.StatusOK).
+			JSON(storage.UpdateBucketResponse{})
+		// Run test
+		err := Run(context.Background(), projectRef, false, afero.NewMemMapFs())
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

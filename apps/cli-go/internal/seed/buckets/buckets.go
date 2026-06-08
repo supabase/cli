@@ -11,9 +11,11 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs) error {
+	shouldSeedVectorBuckets := utils.Config.Storage.VectorBuckets.Enabled &&
+		(len(projectRef) == 0 || len(utils.Config.Storage.VectorBuckets.Buckets) > 0)
 	if len(projectRef) == 0 &&
 		len(utils.Config.Storage.Buckets) == 0 &&
-		!utils.Config.Storage.VectorBuckets.Enabled {
+		!shouldSeedVectorBuckets {
 		return nil
 	}
 	api, err := client.NewStorageAPI(ctx, projectRef)
@@ -49,7 +51,7 @@ func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs
 			return err
 		}
 	}
-	if utils.Config.Storage.VectorBuckets.Enabled {
+	if shouldSeedVectorBuckets {
 		fmt.Fprintln(os.Stderr, "Updating vector buckets...")
 		if err := api.UpsertVectorBuckets(ctx, utils.Config.Storage.VectorBuckets.Buckets, prune); err != nil {
 			return err
