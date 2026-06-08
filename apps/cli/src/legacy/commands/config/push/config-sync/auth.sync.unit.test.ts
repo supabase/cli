@@ -13,6 +13,9 @@
  *   Sms.TestOTP = map[string]string{}
  */
 
+import { V1UpdateAuthServiceConfigInput } from "@supabase/api/effect";
+import { Exit } from "effect";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -166,7 +169,7 @@ describe("TestAuthDiff", () => {
       external_anonymous_users_enabled: true,
       password_min_length: 6,
       password_required_characters:
-        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
     });
     expect(diffAuth(remote, local)).toBe("");
   });
@@ -195,7 +198,7 @@ describe("TestAuthDiff", () => {
       external_anonymous_users_enabled: true,
       password_min_length: 8,
       password_required_characters:
-        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
     });
     expect(diffAuth(remote, local)).toBe(
       lines(
@@ -1450,5 +1453,84 @@ describe("authToUpdateBody secrets", () => {
     // Flat 3650-day arithmetic would be ~2-3 days short of the calendar value.
     const flat3650 = Date.now() + 10 * 365 * 24 * 60 * 60 * 1000;
     expect(validUntil.getTime() - flat3650).toBeGreaterThan(24 * 60 * 60 * 1000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// password_required_characters mapping
+//
+// Regression for the Go const-name-vs-API-value bug: the port must map the
+// local `password_requirements` enum to the real API values (with `:`
+// separators between character-class groups), NOT the oapi-codegen constant
+// *names*. The API values below are copied from the generated
+// `V1UpdateAuthServiceConfigInput` `password_required_characters` literals.
+// ---------------------------------------------------------------------------
+
+describe("password_required_characters mapping", () => {
+  /** A valid disabled `RemoteAuthConfig`; only `password_required_characters` varies. */
+  const baseRemote: RemoteAuthConfig = {
+    site_url: "",
+    uri_allow_list: "",
+    jwt_exp: 0,
+    refresh_token_rotation_enabled: false,
+    security_refresh_token_reuse_interval: 0,
+    security_manual_linking_enabled: false,
+    disable_signup: true,
+    external_anonymous_users_enabled: false,
+    password_min_length: 0,
+    password_required_characters: "",
+  };
+
+  // [local enum, API value] pairs — API values must match the generated schema literals.
+  const cases: ReadonlyArray<readonly [string, string]> = [
+    ["", ""],
+    ["letters_digits", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"],
+    [
+      "lower_upper_letters_digits",
+      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+    ],
+    [
+      "lower_upper_letters_digits_symbols",
+      "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
+    ],
+  ];
+
+  it.each(cases)(
+    "%s round-trips through the update body and remote projection",
+    (req, apiValue) => {
+      // local enum → update body (Go ToChar)
+      expect(
+        authToUpdateBody(bareAuth({ password_requirements: req })).password_required_characters,
+      ).toBe(apiValue);
+      // remote API value → local enum (Go NewPasswordRequirement)
+      expect(
+        applyRemoteAuthConfig(bareAuth(), { ...baseRemote, password_required_characters: apiValue })
+          .password_requirements,
+      ).toBe(req);
+    },
+  );
+
+  it("emits update-body values the generated client accepts", () => {
+    for (const [req] of cases) {
+      const value = authToUpdateBody(
+        bareAuth({ password_requirements: req }),
+      ).password_required_characters;
+      const decoded = Schema.decodeUnknownExit(V1UpdateAuthServiceConfigInput)(
+        { ref: "a".repeat(20), password_required_characters: value },
+        { errors: "all" },
+      );
+      expect(Exit.isSuccess(decoded)).toBe(true);
+    }
+  });
+
+  it("maps an unrecognised remote value to no requirement", () => {
+    // The pre-fix bug used this oapi-codegen constant *name* (no separators) as a value.
+    expect(
+      applyRemoteAuthConfig(bareAuth(), {
+        ...baseRemote,
+        password_required_characters:
+          "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+      }).password_requirements,
+    ).toBe("");
   });
 });

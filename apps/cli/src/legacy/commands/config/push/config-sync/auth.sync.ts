@@ -1230,23 +1230,35 @@ export function authEnabled(config: ProjectConfig): boolean {
 // ---------------------------------------------------------------------------
 
 /**
+ * Maps the local config `password_requirements` enum to the API
+ * `password_required_characters` value (Go `PasswordRequirements.ToChar`).
+ *
+ * The values MUST match the `@supabase/api` `V1{Get,Update}AuthServiceConfig`
+ * `password_required_characters` literals (`packages/api/src/generated/contracts.ts`).
+ * They are the real API values (Go API enum), NOT the oapi-codegen constant *names* —
+ * the `:` separators between character-class groups are significant, and the generated
+ * client rejects any value that is not one of these literals.
+ */
+const PASSWORD_REQUIREMENTS_TO_CHAR: Record<string, string> = {
+  letters_digits: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+  lower_upper_letters_digits: "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789",
+  lower_upper_letters_digits_symbols:
+    "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789:!@#$%^&*()_+-=[]{};'\\\\:\"|<>?,./`~",
+};
+
+/** Inverse of {@link PASSWORD_REQUIREMENTS_TO_CHAR} (Go `NewPasswordRequirement`). */
+const CHAR_TO_PASSWORD_REQUIREMENTS: Record<string, string> = Object.fromEntries(
+  Object.entries(PASSWORD_REQUIREMENTS_TO_CHAR).map(([requirement, char]) => [char, requirement]),
+);
+
+/**
  * Returns a copy of `local` with remote-derived fields applied.
  * Mirrors Go `(*auth).FromRemoteAuthConfig`.
  */
 export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfig): AuthSubset {
-  // password_required_characters → password_requirements mapping
+  // password_required_characters → password_requirements (inverse of Go ToChar)
   function remoteToPasswordRequirements(prc: string): string {
-    // Go maps the UpdateAuthConfigBody enum values back to PasswordRequirements strings
-    switch (prc) {
-      case "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789":
-        return "letters_digits";
-      case "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891":
-        return "lower_upper_letters_digits";
-      case "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892":
-        return "lower_upper_letters_digits_symbols";
-      default:
-        return "";
-    }
+    return CHAR_TO_PASSWORD_REQUIREMENTS[prc] ?? "";
   }
 
   // Base scalar fields
@@ -2652,16 +2664,7 @@ function durationToHours(s: string): number {
   }
 }
 
-/** Maps password_requirements string to the Go UpdateAuthConfigBody enum value. */
+/** Maps the local `password_requirements` enum to the API `password_required_characters` value. */
 function passwordRequirementsToChar(pr: string): string {
-  switch (pr) {
-    case "letters_digits":
-      return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    case "lower_upper_letters_digits":
-      return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567891";
-    case "lower_upper_letters_digits_symbols":
-      return "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ01234567892";
-    default:
-      return "";
-  }
+  return PASSWORD_REQUIREMENTS_TO_CHAR[pr] ?? "";
 }
