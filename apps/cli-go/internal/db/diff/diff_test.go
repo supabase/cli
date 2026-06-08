@@ -66,9 +66,16 @@ func TestRun(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), "test-migra")
 		diff := "create table test();"
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-migra", diff))
-		// Setup mock postgres
+		// Setup mock postgres: with auto_expose_new_tables unset, the shadow database setup
+		// revokes the default Data API GRANTs before creating the regression template.
 		conn := pgtest.NewConn()
-		conn.Query(CREATE_TEMPLATE).
+		conn.Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		defer conn.Close(t)
 		// Run test
@@ -132,6 +139,12 @@ func TestMigrateShadow(t *testing.T) {
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA").
+			Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		helper.MockMigrationHistory(conn).
@@ -311,6 +324,12 @@ create schema public`)
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA").
+			Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		helper.MockMigrationHistory(conn).

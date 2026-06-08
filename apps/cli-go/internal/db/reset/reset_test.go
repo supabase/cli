@@ -62,9 +62,16 @@ func TestResetCommand(t *testing.T) {
 					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
-		// Setup mock postgres
+		// Setup mock postgres: with auto_expose_new_tables unset, the default Data API GRANTs
+		// are revoked by default during database setup.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		conn.Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES")
 		// Restarts services
 		utils.StorageId = "test-storage"
 		utils.GotrueId = "test-auth"
@@ -162,7 +169,13 @@ func TestInitDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA")
+			Reply("CREATE SCHEMA").
+			Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES")
 		// Run test
 		assert.NoError(t, initDatabase(context.Background(), conn.Intercept))
 	})

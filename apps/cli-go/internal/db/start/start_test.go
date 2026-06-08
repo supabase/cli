@@ -83,10 +83,17 @@ func TestStartDatabase(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Auth.Image), "test-auth")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
-		// Setup mock postgres
+		// Setup mock postgres: with auto_expose_new_tables unset, the implicit default revokes
+		// the default Data API GRANTs before seeding roles.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query(roles).
+		conn.Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query(roles).
 			Reply("CREATE ROLE")
 		// Run test
 		err := StartDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
@@ -231,8 +238,9 @@ func TestStartCommand(t *testing.T) {
 func TestSetupDatabase(t *testing.T) {
 	utils.Config.Db.MajorVersion = 15
 
-	t.Run("initializes database 14", func(t *testing.T) {
+	t.Run("revokes default data api privileges when auto_expose_new_tables is unset", func(t *testing.T) {
 		utils.Config.Db.MajorVersion = 14
+		utils.Config.Api.AutoExposeNewTables = nil
 		defer func() {
 			utils.Config.Db.MajorVersion = 15
 		}()
@@ -243,7 +251,45 @@ func TestSetupDatabase(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		roles := "create role postgres"
 		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
-		// Setup mock postgres
+		// Setup mock postgres: with the flag unset, the implicit default now revokes the
+		// default Data API GRANTs (the May 30 2026 flip) between initial schema and roles.sql
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaPg14Sql).
+			Reply("CREATE SCHEMA").
+			Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query(roles).
+			Reply("CREATE ROLE")
+		// Run test
+		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("keeps default data api privileges when auto_expose_new_tables is true", func(t *testing.T) {
+		utils.Config.Db.MajorVersion = 14
+		flag := true
+		utils.Config.Api.AutoExposeNewTables = &flag
+		defer func() {
+			utils.Config.Db.MajorVersion = 15
+			utils.Config.Api.AutoExposeNewTables = nil
+		}()
+		utils.Config.Db.Port = 5432
+		utils.GlobalsSql = "create schema public"
+		utils.InitialSchemaPg14Sql = "create schema private"
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		roles := "create role postgres"
+		require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte(roles), 0644))
+		// Setup mock postgres: explicit true opts into the legacy behaviour, so no revoke SQL
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(utils.GlobalsSql).
@@ -336,9 +382,15 @@ func TestSetupDatabase(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Auth.Image), "test-auth")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
-		// Setup mock postgres
+		// Setup mock postgres: the default-privilege revoke runs before roles.sql is read
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		conn.Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES")
 		// Run test
 		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -381,9 +433,16 @@ func TestStartDatabaseWithCustomSettings(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-storage", ""))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Auth.Image), "test-auth")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-auth", ""))
-		// Setup mock postgres
+		// Setup mock postgres: with auto_expose_new_tables unset, the default Data API GRANTs
+		// are revoked by default.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		conn.Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES").
+			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
+			Reply("ALTER DEFAULT PRIVILEGES")
 
 		// Run test
 		err := StartDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
