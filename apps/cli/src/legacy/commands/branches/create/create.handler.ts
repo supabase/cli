@@ -51,7 +51,10 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
   // resolving the project ref so the linked-project cache write does not fire.
   // -----------------------------------------------------------------------
   let branchName = Option.getOrElse(flags.name, () => "");
-  let gitBranchForBody: string | undefined;
+  // An explicit `--git-branch` flag takes precedence over the auto-detected
+  // branch, mirroring Go's `cmd/branches.go` (the flag sets `body.GitBranch`)
+  // and `create.go`'s `if body.GitBranch == nil` guard during auto-detect.
+  let gitBranchForBody = Option.getOrUndefined(flags.gitBranch);
 
   if (branchName.length === 0) {
     const gitBranch = yield* detectGitBranch;
@@ -68,7 +71,9 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
         return yield* new LegacyBranchesCreateCancelledError({ message: "context canceled" });
       }
       branchName = gitBranch.value;
-      gitBranchForBody = gitBranch.value;
+      if (gitBranchForBody === undefined) {
+        gitBranchForBody = gitBranch.value;
+      }
     }
   }
 

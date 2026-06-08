@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/storage/client"
@@ -11,9 +12,10 @@ import (
 )
 
 func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs) error {
+	hasVectorBuckets := len(utils.Config.Storage.VectorBuckets.Buckets) > 0
 	if len(projectRef) == 0 &&
 		len(utils.Config.Storage.Buckets) == 0 &&
-		!utils.Config.Storage.VectorBuckets.Enabled {
+		!hasVectorBuckets {
 		return nil
 	}
 	api, err := client.NewStorageAPI(ctx, projectRef)
@@ -49,11 +51,19 @@ func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs
 			return err
 		}
 	}
-	if utils.Config.Storage.VectorBuckets.Enabled {
+	if utils.Config.Storage.VectorBuckets.Enabled && hasVectorBuckets {
 		fmt.Fprintln(os.Stderr, "Updating vector buckets...")
 		if err := api.UpsertVectorBuckets(ctx, utils.Config.Storage.VectorBuckets.Buckets, prune); err != nil {
+			if isVectorBucketsFeatureNotEnabled(err) {
+				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Vector buckets are not available in this project's region yet. Skipping vector bucket seeding.")
+				return api.UpsertObjects(ctx, utils.Config.Storage.Buckets, utils.NewRootFS(fsys))
+			}
 			return err
 		}
 	}
 	return api.UpsertObjects(ctx, utils.Config.Storage.Buckets, utils.NewRootFS(fsys))
+}
+
+func isVectorBucketsFeatureNotEnabled(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "FeatureNotEnabled")
 }
