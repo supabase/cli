@@ -4,12 +4,14 @@ import {
   getCommandRuntimeCommand,
   getCommandRuntimeSpanName,
 } from "../../shared/runtime/command-runtime.service.ts";
+import { Output } from "../../shared/output/output.service.ts";
 import { withAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import {
   EventCommandExecuted,
   PropDurationMs,
   PropExitCode,
+  PropOutputFormat,
 } from "../../shared/telemetry/event-catalog.ts";
 
 interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unknown> = never> {
@@ -114,6 +116,7 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
         });
 
         const analytics = yield* Analytics;
+        const output = yield* Output;
         const stdio = yield* Stdio.Stdio;
         const args = yield* stdio.args;
         const startedAt = yield* Clock.currentTimeMillis;
@@ -132,6 +135,7 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
           .capture(EventCommandExecuted, {
             [PropExitCode]: Exit.isSuccess(exit) ? 0 : 1,
             [PropDurationMs]: finishedAt - startedAt,
+            [PropOutputFormat]: output.format,
           })
           .pipe(withAnalyticsContext(analyticsContext));
 
@@ -145,12 +149,12 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
 
 export function withLegacyCommandInstrumentation(): <A, E, R>(
   self: Effect.Effect<A, E, R>,
-) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio>;
+) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio | Output>;
 export function withLegacyCommandInstrumentation<Flags extends Record<string, unknown>>(
   options: LegacyCommandInstrumentationOptions<Flags>,
 ): <A, E, R>(
   self: Effect.Effect<A, E, R>,
-) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio>;
+) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio | Output>;
 export function withLegacyCommandInstrumentation<Flags extends Record<string, unknown>>(
   options?: LegacyCommandInstrumentationOptions<Flags>,
 ) {
