@@ -230,7 +230,7 @@ describe("ApiProxy", () => {
       });
       const body = (await res.json()) as { path: string; headers: Record<string, string> };
       expect(body.path).toBe("/test");
-      expect(body.headers["sb-api-key"]).toBe(`Bearer ${SERVICE_ROLE_JWT}`);
+      expect(body.headers["sb-api-key"]).toBe(SERVICE_ROLE_JWT);
     });
 
     test("transforms to custom header without replacing original auth", async () => {
@@ -243,7 +243,7 @@ describe("ApiProxy", () => {
       const body = (await res.json()) as { path: string; headers: Record<string, string> };
       expect(body.path).toBe("/test");
       expect(body.headers["authorization"]).toBe(`Bearer ${SECRET_KEY}`);
-      expect(body.headers["sb-api-key"]).toBe(`Bearer ${SERVICE_ROLE_JWT}`);
+      expect(body.headers["sb-api-key"]).toBe(SERVICE_ROLE_JWT);
     });
   });
 

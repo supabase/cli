@@ -37,16 +37,17 @@ function transformAuthorization(
   const apikey = headers["apikey"];
 
   const transformHeaderName = useCustomHeader ? "sb-api-key" : "authorization";
+  const transformPrefix = useCustomHeader ? "" : "Bearer ";
 
   if (auth !== undefined && !auth.startsWith("Bearer sb_")) {
     return headers;
   }
 
   if (apikey === config.publishableKey) {
-    return Headers.set(headers, transformHeaderName, `Bearer ${config.anonJwt}`);
+    return Headers.set(headers, transformHeaderName, transformPrefix + config.anonJwt);
   }
   if (apikey === config.secretKey) {
-    return Headers.set(headers, transformHeaderName, `Bearer ${config.serviceRoleJwt}`);
+    return Headers.set(headers, transformHeaderName, transformPrefix + config.serviceRoleJwt);
   }
   if (apikey !== undefined && apikey !== "") {
     return Headers.set(headers, transformHeaderName, apikey);
