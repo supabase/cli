@@ -96,15 +96,37 @@ const functionsConfig: Record<string, FunctionConfig> = (() => {
   }
 })();
 
+/* --- JWT verification --- */
+export function extractBearerToken(rawToken: string) {
+  const tokenParts = rawToken.split(' ')
+  const [bearer, token] = tokenParts
+  if (bearer !== 'Bearer' || tokenParts.length !== 2) {
+    return null
+  }
+
+  return token
+}
+
 function getAuthToken(req: Request) {
   const authHeader = req.headers.get("authorization");
-  if (!authHeader) {
+  const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key")
+
+  if (!authHeader && !sbApiKeyCompatibilityToken) {
     throw new Error("Missing authorization header");
   }
-  const [bearer, token] = authHeader.split(" ");
-  if (bearer !== "Bearer") {
+
+  // NOTE:(kallebysantos) Compatibility mode is triggered when all conditions match:
+  // - API proxy mints a temp token
+  // - Original bearer is not present or is ApiKey
+  const bearerToken = extractBearerToken(authHeader ?? '')
+  const token = (!bearerToken || bearerToken.startsWith('sb_'))
+    ? sbApiKeyCompatibilityToken
+    : bearerToken
+
+  if (!token) {
     throw new Error(`Auth header is not 'Bearer {token}'`);
   }
+
   return token;
 }
 
@@ -178,6 +200,18 @@ async function shouldUsePackageJsonDiscovery({ entrypointPath, importMapPath }: 
     }
   }
   return true
+}
+
+export function prepareUserRequest(req: Request): Request {
+  const clonedURL = new URL(req.url)
+  const forwardedHost = req.headers.get('x-forwarded-host')
+  clonedURL.hostname = forwardedHost ?? clonedURL.hostname
+  const clonedReq = new Request(clonedURL, req.clone())
+
+  // remove custom api headers
+  // clonedReq.headers.delete('sb-api-key')
+
+  return clonedReq
 }
 
 Deno.serve({
