@@ -436,6 +436,7 @@ func TestGenerateReusesBaselineShadowForDeclarativeWarmup(t *testing.T) {
 	originalResolver := declarativeCatalogRefResolver
 	originalApplyDeclarative := applyDeclarative
 	originalExportCatalog := exportCatalog
+	originalSetupShadow := setupShadowDatabase
 	t.Cleanup(func() {
 		utils.Config.Experimental.PgDelta = originalPgDelta
 		declarativeExportRef = originalExportRef
@@ -443,9 +444,11 @@ func TestGenerateReusesBaselineShadowForDeclarativeWarmup(t *testing.T) {
 		declarativeCatalogRefResolver = originalResolver
 		applyDeclarative = originalApplyDeclarative
 		exportCatalog = originalExportCatalog
+		setupShadowDatabase = originalSetupShadow
 	})
 
 	const baselinePath = ".temp/pgdelta/catalog-baseline-test.json"
+	const shadowContainer = "test-shadow-container"
 	shadowConfig := pgconn.Config{
 		Host:     "127.0.0.1",
 		Port:     5432,
@@ -457,9 +460,16 @@ func TestGenerateReusesBaselineShadowForDeclarativeWarmup(t *testing.T) {
 		return generateBaselineCatalogRef{
 			ref: baselinePath,
 			shadow: &shadowSession{
-				config: shadowConfig,
+				container: shadowContainer,
+				config:    shadowConfig,
 			},
 		}, nil
+	}
+	setupCalled := false
+	setupShadowDatabase = func(_ context.Context, container string, _ afero.Fs, _ ...func(*pgx.ConnConfig)) error {
+		setupCalled = true
+		assert.Equal(t, shadowContainer, container)
+		return nil
 	}
 	declarativeExportRef = func(_ context.Context, sourceRef, _ string, _ []string, _ string, _ ...func(*pgx.ConnConfig)) (diff.DeclarativeOutput, error) {
 		assert.Equal(t, baselinePath, sourceRef)
@@ -488,6 +498,7 @@ func TestGenerateReusesBaselineShadowForDeclarativeWarmup(t *testing.T) {
 
 	err := Generate(t.Context(), nil, pgconn.Config{Host: "127.0.0.1", Port: 5432, User: "postgres", Password: "postgres", Database: "postgres"}, true, false, fsys)
 	require.NoError(t, err)
+	assert.True(t, setupCalled, "generate should set up the platform baseline on the reused shadow before applying declarative schema")
 	assert.True(t, applyCalled, "generate should apply declarative schema using reused baseline shadow")
 	assert.False(t, fallbackCalled, "fallback declarative resolver should not run when baseline shadow is reusable")
 
