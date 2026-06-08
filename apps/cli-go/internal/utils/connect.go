@@ -14,6 +14,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
+	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/debug"
 	"github.com/supabase/cli/pkg/api"
@@ -244,6 +245,11 @@ func ipv6PoolerSuggestion(connString string) string {
 func SuggestIPv6Pooler(ctx context.Context, host string) bool {
 	matches := ProjectHostPattern.FindStringSubmatch(host)
 	if len(matches) < 3 {
+		return false
+	}
+	// GetSupabase() fatally exits when no access token is configured, so only
+	// reach for the API when a token is available (e.g. --db-url without login).
+	if _, err := LoadAccessTokenFS(afero.NewOsFs()); err != nil {
 		return false
 	}
 	primary, err := GetPoolerConfigPrimary(ctx, matches[2])
