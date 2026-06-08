@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -48,10 +49,12 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	}
 	if viper.GetBool("EXPERIMENTAL") {
 		var buf bytes.Buffer
-		if err := migration.DumpRole(ctx, config, &buf, dump.DockerExec); err != nil {
-			return err
-		}
-		if err := migration.DumpSchema(ctx, config, &buf, dump.DockerExec); err != nil {
+		if err := dump.RunWithPoolerFallback(ctx, config, &buf, false, func(ctx context.Context, config pgconn.Config, out io.Writer, exec migration.ExecFunc) error {
+			if err := migration.DumpRole(ctx, config, out, exec); err != nil {
+				return err
+			}
+			return migration.DumpSchema(ctx, config, out, exec)
+		}); err != nil {
 			return err
 		}
 		// TODO: handle managed schemas
@@ -141,7 +144,9 @@ func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fs
 		return errors.Errorf("failed to open dump file: %w", err)
 	}
 	defer f.Close()
-	return migration.DumpSchema(ctx, config, f, dump.DockerExec)
+	return dump.RunWithPoolerFallback(ctx, config, f, false, func(ctx context.Context, config pgconn.Config, out io.Writer, exec migration.ExecFunc) error {
+		return migration.DumpSchema(ctx, config, out, exec)
+	})
 }
 
 func diffRemoteSchema(ctx context.Context, schema []string, path string, config pgconn.Config, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs) error {

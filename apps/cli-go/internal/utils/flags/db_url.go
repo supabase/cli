@@ -164,6 +164,33 @@ func NewDbConfigWithPassword(ctx context.Context, projectRef string) (pgconn.Con
 	return config, nil
 }
 
+// ResolvePoolerConfigForFallback returns an authenticated IPv4 transaction
+// pooler connection config for the given linked project. It prefers the pooler
+// URL persisted at link time and falls back to fetching it from the Management
+// API. This is used to transparently retry remote pg operations that failed
+// because the direct database host was unreachable over IPv6.
+func ResolvePoolerConfigForFallback(ctx context.Context, projectRef string) (pgconn.Config, error) {
+	poolerConfig := utils.GetPoolerConfig(projectRef)
+	if poolerConfig == nil {
+		primary, err := utils.GetPoolerConfigPrimary(ctx, projectRef)
+		if err != nil {
+			return pgconn.Config{}, err
+		}
+		poolerConfig, err = utils.ParsePoolerURL(primary.ConnectionString)
+		if err != nil {
+			return pgconn.Config{}, err
+		}
+		// Supavisor transaction mode does not support prepared statements.
+		poolerConfig.Port = 5432
+	}
+	if password := viper.GetString("DB_PASSWORD"); len(password) > 0 {
+		poolerConfig.Password = password
+	} else if err := initPoolerLogin(ctx, projectRef, poolerConfig); err != nil {
+		return *poolerConfig, err
+	}
+	return *poolerConfig, nil
+}
+
 func initLoginRole(ctx context.Context, projectRef string, config *pgconn.Config) error {
 	fmt.Fprintln(os.Stderr, "Initialising login role...")
 	body := api.CreateRoleBody{ReadOnly: false}

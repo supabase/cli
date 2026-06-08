@@ -20,14 +20,8 @@ import (
 func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleOnly, dryRun bool, fsys afero.Fs, opts ...migration.DumpOptionFunc) error {
 	// Initialize output stream
 	outStream := (io.Writer)(os.Stdout)
-	// Tee pg_dump's stderr so a failed connection (e.g. an IPv6-only host that is
-	// unreachable from inside the container) can be classified into actionable
-	// guidance instead of the bare "error running container: exit 1".
-	var errBuf strings.Builder
-	exec := captureExec(&errBuf)
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: *only* printing the pg_dump script to console.")
-		exec = noExec
 	} else if len(path) > 0 {
 		f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
@@ -40,29 +34,17 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 	if utils.IsLocalDatabase(config) {
 		db = "local"
 	}
-	var err error
-	if dataOnly {
-		fmt.Fprintf(os.Stderr, "Dumping data from %s database...\n", db)
-		err = migration.DumpData(ctx, config, outStream, exec, opts...)
-	} else if roleOnly {
-		fmt.Fprintf(os.Stderr, "Dumping roles from %s database...\n", db)
-		err = migration.DumpRole(ctx, config, outStream, exec, opts...)
-	} else {
-		fmt.Fprintf(os.Stderr, "Dumping schemas from %s database...\n", db)
-		err = migration.DumpSchema(ctx, config, outStream, exec, opts...)
-	}
-	if err != nil {
-		// The container exit code hides why pg_dump failed; its stderr carries
-		// the connection detail, so classify that for an actionable suggestion.
-		connErr := errors.New(errBuf.String())
-		utils.SetConnectSuggestion(connErr)
-		// For an IPv6 failure, enrich the hint with the project's actual
-		// transaction pooler URL so the user gets a copy-pasteable --db-url.
-		if utils.IsIPv6ConnectivityError(connErr) {
-			utils.SuggestIPv6Pooler(ctx, config.Host)
+	return RunWithPoolerFallback(ctx, config, outStream, dryRun, func(ctx context.Context, config pgconn.Config, out io.Writer, exec migration.ExecFunc) error {
+		if dataOnly {
+			fmt.Fprintf(os.Stderr, "Dumping data from %s database...\n", db)
+			return migration.DumpData(ctx, config, out, exec, opts...)
+		} else if roleOnly {
+			fmt.Fprintf(os.Stderr, "Dumping roles from %s database...\n", db)
+			return migration.DumpRole(ctx, config, out, exec, opts...)
 		}
-	}
-	return err
+		fmt.Fprintf(os.Stderr, "Dumping schemas from %s database...\n", db)
+		return migration.DumpSchema(ctx, config, out, exec, opts...)
+	})
 }
 
 // captureExec wraps DockerExec so the container's stderr is teed into errBuf

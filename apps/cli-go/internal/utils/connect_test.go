@@ -2,8 +2,10 @@ package utils
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/go-errors/errors"
@@ -247,6 +249,17 @@ func TestSetConnectSuggestion(t *testing.T) {
 			suggestion: "Your network does not support IPv6",
 		},
 		{
+			name: "libpq cannot assign requested address",
+			err: errors.New(`pg_dump: error: connection to server at "db.test.supabase.co" (2600:1f1c:c19:4901:963f:d22e:683a:381c), port 5432 failed: Cannot assign requested address
+	Is the server running on that host and accepting TCP/IP connections?`),
+			suggestion: "Your network does not support IPv6",
+		},
+		{
+			name:       "cannot assign requested address without ipv6 literal",
+			err:        errors.New("connect: cannot assign requested address"),
+			suggestion: "",
+		},
+		{
 			name:       "no route to host without ipv6 address",
 			err:        errors.New("connect: no route to host"),
 			suggestion: "Make sure your project exists on profile: " + CurrentProfile.Name,
@@ -309,6 +322,45 @@ func TestSuggestIPv6Pooler(t *testing.T) {
 		assert.False(t, SuggestIPv6Pooler(context.Background(), "db."+ref+".supabase.co"))
 		assert.Empty(t, CmdSuggestion)
 	})
+}
+
+func TestProjectRefFromDirectDbHost(t *testing.T) {
+	ref := apitest.RandomProjectRef()
+
+	t.Run("extracts ref from direct host", func(t *testing.T) {
+		got, ok := ProjectRefFromDirectDbHost("db." + ref + ".supabase.co")
+		assert.True(t, ok)
+		assert.Equal(t, ref, got)
+	})
+
+	t.Run("rejects pooler and local hosts", func(t *testing.T) {
+		for _, host := range []string{
+			"aws-0-us-east-1.pooler.supabase.com",
+			"localhost",
+			"127.0.0.1",
+			"db." + ref + ".supabase.net",
+		} {
+			_, ok := ProjectRefFromDirectDbHost(host)
+			assert.False(t, ok, host)
+		}
+	})
+}
+
+func TestWarnIPv6PoolerFallback(t *testing.T) {
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = oldStderr })
+
+	WarnIPv6PoolerFallback("db.test.supabase.co")
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "db.test.supabase.co")
+	assert.Contains(t, string(out), "does not support IPv6")
+	assert.Contains(t, string(out), "connection pooler")
 }
 
 func TestPostgresURL(t *testing.T) {

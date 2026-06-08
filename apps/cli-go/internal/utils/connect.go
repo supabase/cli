@@ -175,10 +175,10 @@ func ConnectByUrl(ctx context.Context, url string, options ...func(*pgx.ConnConf
 
 const SuggestEnvVar = "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD"
 
-// ipv6LiteralPattern matches a bracketed IPv6 address (e.g. [2406:da18:...]) as
-// it appears in a Go dial error such as
-// "dial tcp [2406:da18:...]:5432: connect: network is unreachable".
-var ipv6LiteralPattern = regexp.MustCompile(`\[[0-9a-fA-F:]*:[0-9a-fA-F:]*\]`)
+// ipv6LiteralPattern matches IPv6 addresses in connection errors, e.g. Go dial
+// "dial tcp [2406:da18:...]:5432" or libpq
+// `connection to server at "host" (2406:da18:...), port 5432 failed`.
+var ipv6LiteralPattern = regexp.MustCompile(`(?:\[[0-9a-fA-F:]+\]|\([0-9a-fA-F:]+\))`)
 
 // isIPv6ConnectivityError reports whether the connection failure stems from the
 // host resolving to an IPv6 address that the current network cannot route to.
@@ -198,7 +198,8 @@ func isIPv6ConnectivityError(msg string) bool {
 		return true
 	case strings.Contains(lower, "network is unreachable"):
 		return true
-	case strings.Contains(lower, "no route to host"):
+	case strings.Contains(lower, "no route to host"),
+		strings.Contains(lower, "cannot assign requested address"):
 		// Require an IPv6 literal so genuine project-not-found errors (which the
 		// branch below maps) keep their existing suggestion.
 		return ipv6LiteralPattern.MatchString(msg)
@@ -233,18 +234,39 @@ func ipv6Suggestion() string {
 func ipv6PoolerSuggestion(connString string) string {
 	return fmt.Sprintf(
 		"Your network does not support IPv6, which is required for direct connections to the database.\n"+
-			"Retry through the IPv4 transaction pooler by passing it to %s\n"+
-			"(replace [YOUR-PASSWORD] with your database password).",
+			"Retry through the IPv4 transaction pooler by passing it to %s",
 		Aqua(fmt.Sprintf(`--db-url "%s"`, connString)),
 	)
+}
+
+// ProjectRefFromDirectDbHost extracts the project ref from a Supabase direct
+// database host (db.<ref>.supabase.co|red). It returns false for any other host,
+// including pooler hosts and local databases.
+func ProjectRefFromDirectDbHost(host string) (string, bool) {
+	matches := ProjectHostPattern.FindStringSubmatch(host)
+	if len(matches) < 3 {
+		return "", false
+	}
+	return matches[2], true
+}
+
+// WarnIPv6PoolerFallback prints a user-visible warning explaining that the direct
+// database connection could not be used because the current environment does not
+// support IPv6, and that the CLI is retrying through the IPv4 connection pooler.
+func WarnIPv6PoolerFallback(directHost string) {
+	fmt.Fprintln(os.Stderr, Yellow(fmt.Sprintf(
+		"Warning: Direct connection to %s is unavailable because this environment does not support IPv6.\n"+
+			"Retrying via the IPv4 connection pooler.",
+		directHost,
+	)))
 }
 
 // SuggestIPv6Pooler upgrades CmdSuggestion with the project's transaction pooler
 // connection string when host is a Supabase direct database host and the pooler
 // config can be fetched. Returns true when the suggestion was set.
 func SuggestIPv6Pooler(ctx context.Context, host string) bool {
-	matches := ProjectHostPattern.FindStringSubmatch(host)
-	if len(matches) < 3 {
+	ref, ok := ProjectRefFromDirectDbHost(host)
+	if !ok {
 		return false
 	}
 	// GetSupabase() fatally exits when no access token is configured, so only
@@ -252,7 +274,7 @@ func SuggestIPv6Pooler(ctx context.Context, host string) bool {
 	if _, err := LoadAccessTokenFS(afero.NewOsFs()); err != nil {
 		return false
 	}
-	primary, err := GetPoolerConfigPrimary(ctx, matches[2])
+	primary, err := GetPoolerConfigPrimary(ctx, ref)
 	if err != nil || len(primary.ConnectionString) == 0 {
 		return false
 	}
