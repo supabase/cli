@@ -31,6 +31,14 @@ function writeConfig(workdir: string, contents: string) {
   writeFileSync(join(supabaseDir, "config.toml"), contents);
 }
 
+function ensureDefaultConfig(workdir: string) {
+  const configPath = join(workdir, "supabase", "config.toml");
+  if (existsSync(configPath)) {
+    return;
+  }
+  writeConfig(workdir, ['project_id = "demo"', "", "[api]", "schemas = []"].join("\n"));
+}
+
 function readEnvFileArg(args: ReadonlyArray<string>) {
   const index = args.indexOf("--env-file");
   expect(index).toBeGreaterThanOrEqual(0);
@@ -81,6 +89,7 @@ function setup(
   } = {},
 ) {
   const workdir = opts.workdir ?? mkdtempSync(join(tmpdir(), "supabase-gen-types-"));
+  ensureDefaultConfig(workdir);
   const out = mockOutput({
     format: opts.format ?? "text",
     interactive: (opts.format ?? "text") === "text",
@@ -100,7 +109,7 @@ function setup(
         opts.generateTypescriptTypes ??
         (({ included_schemas }) =>
           Effect.succeed({
-            types: opts.projectTypes ?? `// ${included_schemas ?? "public,graphql_public"}`,
+            types: opts.projectTypes ?? `// ${included_schemas ?? "public"}`,
           })),
     },
   });
@@ -249,7 +258,7 @@ describe("legacy gen types", () => {
       expect(api.requests).toEqual([
         {
           method: "generateTypescriptTypes",
-          input: { ref: LEGACY_VALID_REF, included_schemas: "public,graphql_public" },
+          input: { ref: LEGACY_VALID_REF, included_schemas: "public" },
         },
       ]);
       expect(linkedProjectCache.cached).toBe(true);
@@ -729,21 +738,24 @@ describe("legacy gen types", () => {
     });
   });
 
-  it.live("rejects legacy positional non-typescript after consuming short flags with values", () => {
-    const { layer } = setup({
-      args: ["gen", "types", "-o", "json", "go"],
-      goOutput: Option.some("json"),
-    });
+  it.live(
+    "rejects legacy positional non-typescript after consuming short flags with values",
+    () => {
+      const { layer } = setup({
+        args: ["gen", "types", "-o", "json", "go"],
+        goOutput: Option.some("json"),
+      });
 
-    return Effect.gen(function* () {
-      const exit = yield* legacyGenTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.exit);
+      return Effect.gen(function* () {
+        const exit = yield* legacyGenTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.exit);
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
-      }
-    });
-  });
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
+        }
+      });
+    },
+  );
 
   it.live("allows legacy positional non-typescript when --lang is explicitly set", () =>
     Effect.tryPromise({

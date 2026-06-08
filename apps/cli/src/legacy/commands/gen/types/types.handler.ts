@@ -409,9 +409,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       const loaded = yield* loadConfig();
       const direct = yield* parseDatabaseUrl(flags.dbUrl.value);
       const includedSchemas = (
-        schemas.length > 0
-          ? schemas
-          : defaultSchemas(loaded?.config.api.schemas ?? defaultSchemas())
+        schemas.length > 0 ? schemas : defaultSchemas(loaded?.config.api.schemas ?? [])
       ).join(",");
 
       yield* runPgMeta({

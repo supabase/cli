@@ -5,7 +5,6 @@ import caProd2021 from "./templates/prod-ca-2021.ts";
 import caProd2025 from "./templates/prod-ca-2025.ts";
 import caStaging2021 from "./templates/staging-ca-2021.ts";
 
-const LEGACY_DEFAULT_SCHEMAS = ["public", "graphql_public"] as const;
 const LEGACY_DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
 const MAX_PROJECT_ID_LENGTH = 40;
@@ -69,7 +68,7 @@ export function normalizeSchemaFlags(raw: ReadonlyArray<string>): ReadonlyArray<
   return schemas;
 }
 
-export function defaultSchemas(extraSchemas: ReadonlyArray<string> = LEGACY_DEFAULT_SCHEMAS) {
+export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
   return [...new Set(["public", ...extraSchemas])];
 }
 
