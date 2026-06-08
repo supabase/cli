@@ -8,7 +8,6 @@ import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
-import { textOutputLayer } from "../../../../shared/output/output.layer.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import type { LegacyGenSigningKeyFlags } from "./signing-key.command.ts";
@@ -72,10 +71,6 @@ function readStringField(
       );
 }
 
-function isStoredSigningKeyJwk(value: unknown): value is StoredSigningKeyJwk {
-  return isRecord(value);
-}
-
 function readJwkArray(
   value: unknown,
 ): Effect.Effect<ReadonlyArray<StoredSigningKeyJwk>, LegacyGenSigningKeyDecodeError> {
@@ -87,7 +82,7 @@ function readJwkArray(
     );
   }
   for (const item of value) {
-    if (!isStoredSigningKeyJwk(item)) {
+    if (!isRecord(item)) {
       return Effect.fail(
         new LegacyGenSigningKeyDecodeError({
           message: "failed to decode signing keys: expected a JSON array of objects",
@@ -98,19 +93,6 @@ function readJwkArray(
   return Effect.succeed(value);
 }
 
-interface ConfirmTty {
-  readonly stdinIsTty: boolean;
-}
-
-interface ConfirmOutput {
-  readonly format: "text" | "json" | "stream-json";
-  readonly raw: (text: string, stream?: "stdout" | "stderr") => Effect.Effect<void>;
-  readonly promptConfirm: (
-    message: string,
-    opts?: { defaultValue?: boolean },
-  ) => Effect.Effect<boolean, unknown>;
-}
-
 function styleIfTty(
   enabled: boolean,
   format: Parameters<typeof styleText>[0],
@@ -119,9 +101,7 @@ function styleIfTty(
   return enabled ? styleText(format, text) : text;
 }
 
-const generatePrivateKey = Effect.fn("legacy.gen.signing-key.generate")(function* (
-  algorithm: SigningAlgorithm,
-) {
+const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgorithm) {
   const keyId = randomUUID();
 
   if (algorithm === "RS256") {
@@ -178,7 +158,7 @@ const generatePrivateKey = Effect.fn("legacy.gen.signing-key.generate")(function
   } satisfies SigningKeyJwk;
 });
 
-const loadSigningKeysConfig = Effect.fn("legacy.gen.signing-key.config")(function* (cwd: string) {
+const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
   const path = yield* Path.Path;
   const loaded = yield* loadProjectConfig(cwd).pipe(
     Effect.catchTag("ProjectConfigParseError", (cause) =>
@@ -196,10 +176,11 @@ const loadSigningKeysConfig = Effect.fn("legacy.gen.signing-key.config")(functio
     } satisfies ResolvedSigningKeysConfig;
   }
 
+  // Go displays the CWD-relative `supabase/config.toml` (utils.ConfigPath), never an absolute
+  // path. `@supabase/config` always resolves `loaded.path` to an absolute path, so relativize it
+  // back against the project root to match Go's output.
   const projectRoot = path.dirname(path.dirname(loaded.path));
-  const configDisplayPath = path.isAbsolute(loaded.path)
-    ? loaded.path
-    : path.relative(projectRoot, loaded.path);
+  const configDisplayPath = path.relative(projectRoot, loaded.path);
 
   const configuredPath = loaded.config.auth.signing_keys_path;
   if (configuredPath === undefined || configuredPath.length === 0) {
@@ -238,7 +219,7 @@ const loadSigningKeysConfig = Effect.fn("legacy.gen.signing-key.config")(functio
   } satisfies ResolvedSigningKeysConfig;
 });
 
-const findGitRoot = Effect.fn("legacy.gen.signing-key.find-git-root")(function* (start: string) {
+const findGitRoot = Effect.fnUntraced(function* (start: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -256,10 +237,7 @@ const findGitRoot = Effect.fn("legacy.gen.signing-key.find-git-root")(function* 
   }
 });
 
-const isGitIgnored = Effect.fn("legacy.gen.signing-key.gitignored")(function* (
-  filePath: string,
-  searchFrom: string,
-) {
+const isGitIgnored = Effect.fnUntraced(function* (filePath: string, searchFrom: string) {
   const path = yield* Path.Path;
   const gitRoot = yield* findGitRoot(searchFrom);
   if (Option.isNone(gitRoot)) {
@@ -270,7 +248,8 @@ const isGitIgnored = Effect.fn("legacy.gen.signing-key.gitignored")(function* (
   const relative = path.relative(gitRoot.value, filePath).replaceAll("\\", "/");
   const command = ChildProcess.make(
     "git",
-    ["-C", gitRoot.value, "check-ignore", "--quiet", relative],
+    // `--` terminates flag parsing so a path beginning with `-` is never read as a git option.
+    ["-C", gitRoot.value, "check-ignore", "--quiet", "--", relative],
     {
       detached: true,
       stdin: "ignore",
@@ -284,12 +263,10 @@ const isGitIgnored = Effect.fn("legacy.gen.signing-key.gitignored")(function* (
     .pipe(Effect.map((exitCode) => Option.some(Number(exitCode) === 0)));
 });
 
-const confirmOverwrite = Effect.fn("legacy.gen.signing-key.confirm")(function* (
-  title: string,
-  yes: boolean,
-  tty: ConfirmTty,
-  output: ConfirmOutput,
-) {
+const confirmOverwrite = Effect.fnUntraced(function* (title: string) {
+  const output = yield* Output;
+  const tty = yield* Tty;
+  const yes = yield* LegacyYesFlag;
   if (yes) {
     yield* output.raw(`${title} [Y/n] y\n`, "stderr");
     return true;
@@ -298,14 +275,11 @@ const confirmOverwrite = Effect.fn("legacy.gen.signing-key.confirm")(function* (
     yield* output.raw(`${title} [Y/n] \n`, "stderr");
     return true;
   }
-  const prompt =
-    output.format === "text"
-      ? output.promptConfirm(title, { defaultValue: true })
-      : Effect.gen(function* () {
-          const textOutput = yield* Output;
-          return yield* textOutput.promptConfirm(title, { defaultValue: true });
-        }).pipe(Effect.provide(textOutputLayer));
-  return yield* prompt.pipe(Effect.orElseSucceed(() => false));
+  // In json / stream-json mode `promptConfirm` fails with NonInteractiveError; treat that as a
+  // declined overwrite so the command cancels cleanly instead of corrupting the machine payload.
+  return yield* output
+    .promptConfirm(title, { defaultValue: true })
+    .pipe(Effect.orElseSucceed(() => false));
 });
 
 export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function* (
@@ -315,7 +289,6 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
   const debugLogger = yield* LegacyDebugLogger;
   const telemetryState = yield* LegacyTelemetryState;
   const output = yield* Output;
-  const yes = yield* LegacyYesFlag;
   const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -323,8 +296,10 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
   const warnText = (text: string) => styleIfTty(tty.stdoutIsTty, "yellow", text);
 
   return yield* Effect.gen(function* () {
-    const key = yield* generatePrivateKey(flags.algorithm);
+    // Match Go's order: LoadConfig validates the configured signing-keys file before any key is
+    // generated, so a broken config fails fast without doing throwaway crypto work.
     const signingKeysConfig = yield* loadSigningKeysConfig(cliConfig.workdir);
+    const key = yield* generatePrivateKey(flags.algorithm);
     const configured = signingKeysConfig.configured;
 
     if (Option.isNone(configured)) {
@@ -342,9 +317,6 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
       : yield* Effect.gen(function* () {
           const confirmed = yield* confirmOverwrite(
             `Do you want to overwrite the existing ${emphasize(configured.value.displayPath)} file?`,
-            yes,
-            tty,
-            output,
           );
           if (!confirmed) {
             return yield* Effect.fail(
