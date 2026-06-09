@@ -1,0 +1,168 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Exit, Layer, Option } from "effect";
+
+import {
+  mockAnalytics,
+  mockOutput,
+  mockRuntimeInfo,
+  mockTelemetryRuntime,
+  mockTty,
+} from "../../../tests/helpers/mocks.ts";
+import { mockLegacyCliConfig } from "../../../tests/helpers/legacy-mocks.ts";
+import {
+  LegacyDebugFlag,
+  LegacyOutputFlag,
+  LegacyProfileFlag,
+  LegacyWorkdirFlag,
+} from "../../shared/legacy/global-flags.ts";
+import { LegacyDebugLogger } from "./legacy-debug-logger.service.ts";
+import { legacyDbConfigLayer } from "./legacy-db-config.layer.ts";
+import { LegacyDbConfigResolver } from "./legacy-db-config.service.ts";
+import type { LegacyDbConfigFlags } from "./legacy-db-config.types.ts";
+import { LegacyDbConnection } from "./legacy-db-connection.service.ts";
+
+// `--local` / `--db-url` never touch the Management API stack, so the resolver
+// builds with simple ambient stubs. The `--linked` sub-flow (login-role,
+// pooler, unban, backoff) requires the real management runtime with a mocked
+// HTTP transport and is covered separately by the cli-e2e parity harness.
+const mockDebugLogger = Layer.succeed(LegacyDebugLogger, {
+  debug: () => Effect.void,
+  http: () => Effect.void,
+});
+
+const mockDbConnection = Layer.succeed(LegacyDbConnection, {
+  connect: () => Effect.die("unexpected connect() in --local/--db-url resolver test"),
+});
+
+function buildResolver(workdir: string) {
+  const deps = Layer.mergeAll(
+    mockLegacyCliConfig({ workdir, projectHost: "supabase.co", projectId: Option.none() }),
+    mockDbConnection,
+    mockDebugLogger,
+    mockOutput().layer,
+    mockAnalytics().layer,
+    mockTelemetryRuntime(),
+    mockTty(),
+    mockRuntimeInfo(),
+    Layer.succeed(LegacyProfileFlag, "supabase"),
+    Layer.succeed(LegacyWorkdirFlag, Option.some(workdir)),
+    Layer.succeed(LegacyOutputFlag, Option.none()),
+    Layer.succeed(LegacyDebugFlag, false),
+    BunServices.layer,
+  );
+  return legacyDbConfigLayer.pipe(Layer.provide(deps));
+}
+
+function withWorkdir(toml?: string) {
+  const dir = mkdtempSync(join(tmpdir(), "legacy-db-config-"));
+  if (toml !== undefined) {
+    mkdirSync(join(dir, "supabase"), { recursive: true });
+    writeFileSync(join(dir, "supabase", "config.toml"), toml);
+  }
+  return dir;
+}
+
+const resolve = (workdir: string, flags: LegacyDbConfigFlags) =>
+  Effect.gen(function* () {
+    const resolver = yield* LegacyDbConfigResolver;
+    return yield* resolver.resolve(flags);
+  }).pipe(Effect.provide(buildResolver(workdir)));
+
+const localFlags: LegacyDbConfigFlags = { dbUrl: Option.none(), linked: false, local: true };
+const dbUrlFlags = (url: string): LegacyDbConfigFlags => ({
+  dbUrl: Option.some(url),
+  linked: false,
+  local: false,
+});
+
+describe("legacyDbConfigResolver (local + db-url)", () => {
+  it.effect("local mode: uses 127.0.0.1 with config.toml db.port/password and is local", () => {
+    const dir = withWorkdir(["[db]", "port = 55555", 'password = "hunter2"', ""].join("\n"));
+    return resolve(dir, localFlags).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          expect(r.conn).toEqual({
+            host: "127.0.0.1",
+            port: 55555,
+            user: "postgres",
+            password: "hunter2",
+            database: "postgres",
+          });
+          expect(r.isLocal).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("local mode: falls back to default port/password without a config.toml", () => {
+    const dir = withWorkdir();
+    return resolve(dir, localFlags).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          expect(r.conn.port).toBe(54322);
+          expect(r.conn.password).toBe("postgres");
+          expect(r.isLocal).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("db-url mode: parses the connection string and percent-decodes the password", () => {
+    const dir = withWorkdir();
+    return resolve(dir, dbUrlFlags("postgres://alice:p%40ss@example.com:6543/appdb")).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          expect(r.conn).toEqual({
+            host: "example.com",
+            port: 6543,
+            user: "alice",
+            password: "p@ss",
+            database: "appdb",
+          });
+          expect(r.isLocal).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("db-url mode: a 127.0.0.1 url on the configured db.port is detected as local", () => {
+    const dir = withWorkdir();
+    return resolve(dir, dbUrlFlags("postgres://postgres:postgres@127.0.0.1:54322/postgres")).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          expect(r.isLocal).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "db-url mode: an invalid url fails with a parse error that redacts the password",
+    () => {
+      const dir = withWorkdir();
+      return resolve(dir, dbUrlFlags("postgres://user:s3cret@ bad host/db")).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const json = JSON.stringify(exit.cause);
+              expect(json).toContain("LegacyDbConfigParseUrlError");
+              expect(json).toContain("[REDACTED]");
+              expect(json).not.toContain("s3cret");
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+});

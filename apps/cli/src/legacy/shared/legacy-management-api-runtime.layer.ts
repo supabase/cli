@@ -122,3 +122,17 @@ type LegacyManagementApiServices =
   | LegacyLinkedProjectCache
   | LegacyTelemetryState
   | CommandRuntime;
+
+/**
+ * The ambient services this runtime layer itself requires (global flags, root
+ * services, etc.) and the error it can fail with at build (access-token
+ * resolution). Exported as named types so consumers that provide this layer
+ * lazily (e.g. `legacy-db-config.layer.ts`'s `--linked` branch) can express
+ * their own requirement/error channels without re-deriving the structural
+ * inference at each call site.
+ */
+type LegacyManagementApiRuntime = ReturnType<typeof legacyManagementApiRuntimeLayer>;
+export type LegacyManagementApiRuntimeRequirements =
+  LegacyManagementApiRuntime extends Layer.Layer<infer _A, infer _E, infer R> ? R : never;
+export type LegacyManagementApiRuntimeError =
+  LegacyManagementApiRuntime extends Layer.Layer<infer _A, infer E, infer _R> ? E : never;

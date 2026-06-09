@@ -15,6 +15,7 @@ catalog:
   "@effect/atom-react": "4.0.0-beta.78"
   "@effect/platform-bun": "4.0.0-beta.78"
   "@effect/platform-node": "4.0.0-beta.78"
+  "@effect/sql-pg": "4.0.0-beta.78"
   "@effect/vitest": "^4.0.0-beta.75"
   "@nx/devkit": "^22.7.5"
   "@swc-node/register": "^1.10.9"
@@ -29,6 +30,7 @@ catalog:
   "oxfmt": "^0.53.0"
   "oxlint": "^1.68.0"
   "oxlint-tsgolint": "^0.23.0"
+  "tldts": "^6.1.86"
   "vitest": "^4.1.8"
 
 blockExoticSubdeps: true
