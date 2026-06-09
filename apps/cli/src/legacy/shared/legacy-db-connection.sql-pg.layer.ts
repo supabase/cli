@@ -3,6 +3,7 @@ import { Effect, Layer, Redacted, type Scope } from "effect";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import {
+  type LegacyDbConnectOptions,
   LegacyDbConnection,
   type LegacyDbSession,
   type LegacyPgConnInput,
@@ -53,6 +54,7 @@ function buildConnectionUrl(cfg: LegacyPgConnInput): string {
  */
 const connect = (
   cfg: LegacyPgConnInput,
+  { isLocal }: LegacyDbConnectOptions,
 ): Effect.Effect<LegacyDbSession, LegacyDbConnectError, Scope.Scope> =>
   Effect.gen(function* () {
     const hasOptions = cfg.options !== undefined && cfg.options.length > 0;
@@ -69,6 +71,13 @@ const connect = (
             password: Redacted.make(cfg.password),
             database: cfg.database,
           }),
+      // TLS parity with Go (`internal/utils/connect.go`): remote connections use
+      // TLS (pgx `sslmode=prefer` with non-TLS fallbacks stripped) but do not
+      // verify the certificate, while local connections disable TLS entirely
+      // (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`). Omitting `ssl` here
+      // leaves the `pg` driver in plaintext mode — fine for local, but it would
+      // break against SSL-enforcing remote Supabase databases.
+      ...(isLocal ? {} : { ssl: { rejectUnauthorized: false } }),
       maxConnections: 1,
     }).pipe(
       Effect.provide(Reactivity.layer),

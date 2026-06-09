@@ -31,7 +31,7 @@ One-shot `docker run --rm supabase/pg_prove:3.36`:
 
 - `-v <hostpath>:<dockerpath>:ro` for each test path
 - `--security-opt label:disable`
-- `--network supabase_network_<project_id>` (local) with env `PGHOST=db PGPORT=5432`, or `--network host` (db-url / linked) with the resolved host/port
+- `--network supabase_network_<project_id>` (local) with env `PGHOST=db PGPORT=5432`, or `--network host` (db-url / linked) with the resolved host/port. `<project_id>` is sanitized exactly as Go's `config.Load` does (`sanitizeProjectId`), so an invalid configured value (e.g. `"my project"`) joins the same network the local stack created
 - `-e PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE`
 - cmd `pg_prove --ext .pg --ext .sql -r <paths> [--verbose]` (`--verbose` when `--debug`)
 
@@ -70,16 +70,24 @@ stream with no structured equivalent.
 
 ### `--output-format text` (Go CLI compatible)
 
-TAP streams to stdout; connection/enable progress shows as spinners (text mode only).
+TAP streams to stdout. The connection diagnostic `Connecting to {local|remote} database...`
+is written to **stderr** (matching Go's `ConnectByConfigStream`), never to stdout — no
+spinner is used, so stdout carries only the raw TAP bytes.
 
 ### `--output-format json` / `stream-json`
 
-No machine envelope is emitted (Go has none). stdout carries the raw TAP stream and
-spinners are suppressed; a non-zero `pg_prove` exit still fails the command (exit 1).
+No machine envelope is emitted (Go has none). stdout carries the raw TAP stream only; the
+connection diagnostic still goes to stderr (no task JSON-log events are written to stdout,
+which would otherwise corrupt the TAP stream). A non-zero `pg_prove` exit still fails the
+command (exit 1).
 
 ## Notes
 
 - Native TypeScript port (Phase 1+); no Go proxy. Hidden command (matches Go).
+- Postgres TLS matches Go (`internal/utils/connect.go`): remote (`--db-url` / `--linked`)
+  connections use TLS without certificate verification (pgx `sslmode=prefer` with non-TLS
+  fallbacks stripped); local connections disable TLS (`ConnectLocalPostgres` sets
+  `cc.TLSConfig = nil`).
 - Postgres access uses `@effect/sql-pg`. Go detects "pgTAP already installed" via a
   `pgx` `OnNotice` (code 42710 `duplicate_object`) callback, which `@effect/sql-pg`
   does not expose; the port instead checks `pg_extension` by extension name (any

@@ -45,9 +45,23 @@ export interface LegacyDbSession {
   readonly extensionExists: (name: string) => Effect.Effect<boolean, LegacyDbExecError>;
 }
 
+/** Per-connection options the driver layer cannot infer from `cfg` alone. */
+export interface LegacyDbConnectOptions {
+  /**
+   * Whether the target is the local stack (Go's `utils.IsLocalDatabase`). Drives
+   * TLS, mirroring Go (`apps/cli-go/internal/utils/connect.go`): local connections
+   * set `cc.TLSConfig = nil` (`ConnectLocalPostgres`) → no TLS, while remote
+   * connections go through `ConnectByUrl`, where pgx defaults to `sslmode=prefer`
+   * and every non-TLS fallback is stripped → TLS is required (without certificate
+   * verification, matching pgx's default for `prefer`/`require`).
+   */
+  readonly isLocal: boolean;
+}
+
 interface LegacyDbConnectionShape {
   readonly connect: (
     cfg: LegacyPgConnInput,
+    options: LegacyDbConnectOptions,
   ) => Effect.Effect<LegacyDbSession, LegacyDbConnectError, Scope.Scope>;
 }
 

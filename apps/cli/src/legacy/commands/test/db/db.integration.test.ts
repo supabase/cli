@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
@@ -6,6 +8,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
+  useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
@@ -67,18 +70,24 @@ function mockDbConnection(opts: {
       }),
     extensionExists: () => Effect.succeed(opts.existed ?? false),
   };
+  const connectCalls: Array<{ cfg: LegacyPgConnInput; isLocal: boolean }> = [];
   const layer = Layer.succeed(LegacyDbConnection, {
-    connect: () =>
-      opts.connectFails === true
+    connect: (cfg, options) => {
+      connectCalls.push({ cfg, isLocal: options.isLocal });
+      return opts.connectFails === true
         ? Effect.fail(
             new LegacyDbConnectError({ message: "failed to connect to postgres: refused" }),
           )
-        : Effect.succeed(session),
+        : Effect.succeed(session);
+    },
   });
   return {
     layer,
     get execCalls() {
       return execCalls;
+    },
+    get connectCalls() {
+      return connectCalls;
     },
   };
 }
@@ -122,6 +131,7 @@ interface SetupOpts {
   runFails?: boolean;
   debug?: boolean;
   networkId?: string;
+  workdir?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -135,7 +145,7 @@ function setup(opts: SetupOpts = {}) {
     resolver,
     connection.layer,
     docker.layer,
-    mockLegacyCliConfig({ workdir: "/work/project", projectId: Option.none() }),
+    mockLegacyCliConfig({ workdir: opts.workdir ?? "/work/project", projectId: Option.none() }),
     telemetry.layer,
     runtimeInfoLayer,
     Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
@@ -170,6 +180,9 @@ describe("legacy test db integration", () => {
       expect(run?.env["PGPORT"]).toBe("5432");
       expect(run?.securityOpt).toEqual(["label:disable"]);
       expect(run?.cmd.slice(0, 5)).toEqual(["pg_prove", "--ext", ".pg", "--ext", ".sql"]);
+      // The setup connection must be told it is local so the driver disables TLS
+      // (Go's `ConnectLocalPostgres` sets `cc.TLSConfig = nil`).
+      expect(connection.connectCalls[0]?.isLocal).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
@@ -222,13 +235,16 @@ describe("legacy test db integration", () => {
   });
 
   it.live("db-url mode: uses host networking and the resolved host/port", () => {
-    const { layer, docker } = setup({ conn: REMOTE_CONN, isLocal: false });
+    const { layer, docker, connection } = setup({ conn: REMOTE_CONN, isLocal: false });
     return Effect.gen(function* () {
       yield* legacyTestDb(flags({ dbUrl: Option.some("postgres://x"), local: false }));
       const run = docker.lastOpts;
       expect(run?.network).toEqual({ _tag: "host" });
       expect(run?.env["PGHOST"]).toBe(REMOTE_CONN.host);
       expect(run?.env["PGPORT"]).toBe("5432");
+      // Remote connection → driver must enable TLS (Go strips non-TLS fallbacks
+      // in `ConnectByUrl`); the handler signals this via `isLocal: false`.
+      expect(connection.connectCalls[0]?.isLocal).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -320,6 +336,47 @@ describe("legacy test db integration", () => {
     return Effect.gen(function* () {
       yield* legacyTestDb(flags());
       expect(telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("writes the connection diagnostic to stderr, keeping stdout for TAP (Go parity)", () => {
+    const { layer, out } = setup();
+    return Effect.gen(function* () {
+      yield* legacyTestDb(flags());
+      // Go writes "Connecting to local database..." to os.Stderr and reserves
+      // stdout for the pg_prove TAP stream. A spinner/task on stdout would corrupt
+      // that stream (and stream-json task events would too), so the port must emit
+      // this on stderr and produce no stdout bytes of its own.
+      expect(out.stderrText).toContain("Connecting to local database...");
+      expect(out.stdoutText).toBe("");
+      // Go has no "Running pgTAP tests..." line and no spinner task messages.
+      expect(out.messages).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("labels the connection diagnostic 'remote' for non-local connections", () => {
+    const { layer, out } = setup({ conn: REMOTE_CONN, isLocal: false });
+    return Effect.gen(function* () {
+      yield* legacyTestDb(flags({ dbUrl: Option.some("postgres://x"), local: false }));
+      expect(out.stderrText).toContain("Connecting to remote database...");
+    }).pipe(Effect.provide(layer));
+  });
+
+  const tempWorkdir = useLegacyTempWorkdir();
+  it.live("sanitizes a configured project_id when naming the local network (Go parity)", () => {
+    const workdir = tempWorkdir.current;
+    mkdirSync(join(workdir, "supabase"), { recursive: true });
+    // Go auto-fixes an invalid project_id via sanitizeProjectId (config.go:471,
+    // 803-805); the local stack network is created from the sanitized id, so
+    // `test db --local` must join `supabase_network_My_Project`, not the raw value.
+    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "My Project"\n');
+    const { layer, docker } = setup({ workdir });
+    return Effect.gen(function* () {
+      yield* legacyTestDb(flags());
+      expect(docker.lastOpts?.network).toEqual({
+        _tag: "named",
+        name: "supabase_network_My_Project",
+      });
     }).pipe(Effect.provide(layer));
   });
 });

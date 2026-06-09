@@ -202,7 +202,9 @@ export const legacyDbConfigLayer = Layer.effect(
       conn: LegacyPgConnInput,
     ): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApi> => {
       const attempt = (n: number): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApi> =>
-        Effect.scoped(dbConn.connect(conn).pipe(Effect.asVoid)).pipe(
+        // The temp-role probe always targets the remote Supavisor pooler, so it
+        // connects with TLS (Go's pooler path goes through `ConnectByUrl`).
+        Effect.scoped(dbConn.connect(conn, { isLocal: false }).pipe(Effect.asVoid)).pipe(
           Effect.catch((cause) => {
             // Go's `backoff.WithMaxRetries(b, 8)` allows 8 retries after the
             // initial attempt → 9 total attempts. `n` is 1-based, so give up only

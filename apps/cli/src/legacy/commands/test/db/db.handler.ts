@@ -99,8 +99,14 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
         : isLocal
           ? yield* Effect.gen(function* () {
               const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-              const projectId = Option.getOrElse(toml.projectId, () =>
-                sanitizeProjectId(nodePath.basename(cliConfig.workdir)),
+              // Go sanitizes `c.ProjectId` unconditionally (`config.go:471`) —
+              // whether it came from `config.toml` or the cwd-basename fallback —
+              // before deriving the network name `supabase_network_<id>`
+              // (`config.go:57-58`, `GetId`). A configured `project_id` like
+              // "my project" must join the same sanitized network the local stack
+              // created, not the literal raw value.
+              const projectId = sanitizeProjectId(
+                Option.getOrElse(toml.projectId, () => nodePath.basename(cliConfig.workdir)),
               );
               return { _tag: "named" as const, name: `supabase_network_${projectId}` };
             })
@@ -108,8 +114,15 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
 
     const exitCode = yield* Effect.scoped(
       Effect.gen(function* () {
-        const connecting = yield* output.task("Connecting to database...");
-        const session = yield* dbConn.connect(conn).pipe(Effect.tapError(() => connecting.fail()));
+        // stdout is reserved for the pg_prove TAP stream (the docker subprocess
+        // writes it there directly), so connection diagnostics must go to stderr —
+        // exactly as Go does (`ConnectByConfigStream` writes "Connecting to …
+        // database…" to `os.Stderr`, `connect.go:205-228`). A `Output.task`
+        // spinner would corrupt the TAP stream: clack writes spinner ANSI to
+        // stdout in text mode, and the stream-json layer emits task JSON log
+        // events to stdout. Go has no "Running pgTAP tests…" line at all.
+        yield* output.raw(`Connecting to ${isLocal ? "local" : "remote"} database...\n`, "stderr");
+        const session = yield* dbConn.connect(conn, { isLocal });
 
         // Detect pre-existence before enabling so the drop is skipped when pgTAP
         // was already installed (Go keys this off an OnNotice 42710 callback,
@@ -125,7 +138,6 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
                 message: `failed to enable pgTAP: ${cause.message}`,
               }),
           ),
-          Effect.tapError(() => connecting.fail()),
         );
         if (!alreadyExists) {
           yield* Effect.addFinalizer(() =>
@@ -138,22 +150,16 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
               ),
           );
         }
-        yield* connecting.clear();
 
-        const running = yield* output.task("Running pgTAP tests...");
-        const code = yield* docker
-          .run({
-            image: LEGACY_PG_PROVE_IMAGE,
-            cmd: args.cmd,
-            env: runEnv,
-            binds: args.binds,
-            workingDir: args.workingDir,
-            securityOpt: ["label:disable"],
-            network,
-          })
-          .pipe(Effect.tapError(() => running.fail()));
-        yield* running.clear();
-        return code;
+        return yield* docker.run({
+          image: LEGACY_PG_PROVE_IMAGE,
+          cmd: args.cmd,
+          env: runEnv,
+          binds: args.binds,
+          workingDir: args.workingDir,
+          securityOpt: ["label:disable"],
+          network,
+        });
       }),
     );
 
