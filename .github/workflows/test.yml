@@ -14,20 +14,27 @@ on:
       - ready_for_review
     branches:
       - develop
+  merge_group:
+    types:
+      - checks_requested
+    branches:
+      - develop
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
   check:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event.pull_request.draft == false || github.event_name == 'push')
+      (github.event_name == 'push' ||
+        github.event_name == 'merge_group' ||
+        github.event.pull_request.draft == false)
     name: Check code quality
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
@@ -55,7 +62,9 @@ jobs:
   test-core:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event.pull_request.draft == false || github.event_name == 'push')
+      (github.event_name == 'push' ||
+        github.event_name == 'merge_group' ||
+        github.event.pull_request.draft == false)
     name: Run unit and integration tests
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
@@ -83,7 +92,9 @@ jobs:
   test-e2e:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event.pull_request.draft == false || github.event_name == 'push')
+      (github.event_name == 'push' ||
+        github.event_name == 'merge_group' ||
+        github.event.pull_request.draft == false)
     name: Run end-to-end tests (shard ${{ matrix.shard }}/3)
     runs-on: blacksmith-8vcpu-ubuntu-2404
     strategy:
@@ -100,16 +111,21 @@ jobs:
         if: github.event_name == 'pull_request'
         uses: nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1 # v5.0.1
 
+      - name: Set base and head SHAs for merge queue affected
+        if: github.event_name == 'merge_group'
+        run: |
+          echo "NX_BASE=${{ github.event.merge_group.base_sha }}" >> "$GITHUB_ENV"
+          echo "NX_HEAD=${{ github.event.merge_group.head_sha }}" >> "$GITHUB_ENV"
+
       - name: Setup
         uses: ./.github/actions/setup
 
-      # Detect which e2e suites should run.  On PR we honour `nx affected`
-      # (using `NX_BASE`/`NX_HEAD` set by `nx-set-shas` above); on push we run
-      # everything that has a `test:e2e` target.
+      # Detect which e2e suites should run. On PR and merge queue runs we
+      # honour `nx affected`; on push we run every `test:e2e` target.
       - name: Detect affected e2e projects
         id: detect
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ github.event_name }}" = "merge_group" ]; then
             affected=$(pnpm exec nx show projects --affected --withTarget test:e2e --json | jq -r '.[]')
           else
             affected=$(pnpm exec nx show projects --withTarget test:e2e --json | jq -r '.[]')
@@ -184,7 +200,9 @@ jobs:
     if: |
       always() &&
       !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event.pull_request.draft == false || github.event_name == 'push')
+      (github.event_name == 'push' ||
+        github.event_name == 'merge_group' ||
+        github.event.pull_request.draft == false)
     name: Run end-to-end tests
     needs: test-e2e
     runs-on: ubuntu-latest
