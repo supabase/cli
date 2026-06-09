@@ -62,6 +62,56 @@ describe("withLegacyCommandInstrumentation", () => {
           expect(event?.properties.command).toBe("backups list");
           expect(event?.properties.exit_code).toBe(0);
           expect(typeof event?.properties.duration_ms).toBe("number");
+          expect(event?.properties.output_format).toBe("text");
+        }),
+      ),
+    );
+  });
+
+  it.live("reports legacy Go machine output formats emitted through the text layer", () => {
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["backups", "list", "--output", "yaml"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties.output_format).toBe("yaml");
+        }),
+      ),
+    );
+  });
+
+  it.live("keeps the TS output format when legacy --output pretty defers to it", () => {
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "json" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "backups",
+            "list",
+            "--output",
+            "pretty",
+            "--output-format",
+            "json",
+          ]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties.output_format).toBe("json");
         }),
       ),
     );

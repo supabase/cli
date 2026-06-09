@@ -24,9 +24,46 @@ interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unkno
 }
 
 const REDACTED_VALUE = "<redacted>";
+const LEGACY_GO_MACHINE_OUTPUT_FORMATS = new Set(["env", "json", "toml", "yaml"]);
+const LEGACY_GO_OUTPUT_FORMATS = new Set([...LEGACY_GO_MACHINE_OUTPUT_FORMATS, "pretty"]);
 
 function toCliFlagName(key: string): string {
   return key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
+}
+
+function extractLegacyGoOutputFormat(args: ReadonlyArray<string>): string | undefined {
+  let format: string | undefined;
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+
+    if (arg === "--output" || arg === "-o") {
+      const value = args[index + 1];
+      if (value !== undefined && LEGACY_GO_OUTPUT_FORMATS.has(value)) {
+        format = value;
+      }
+      index++;
+      continue;
+    }
+
+    if (arg.startsWith("--output=") || arg.startsWith("-o=")) {
+      const value = arg.slice(arg.indexOf("=") + 1);
+      if (LEGACY_GO_OUTPUT_FORMATS.has(value)) {
+        format = value;
+      }
+    }
+  }
+
+  return format;
+}
+
+function resolveOutputFormatForTelemetry(args: ReadonlyArray<string>, outputFormat: string) {
+  const goOutputFormat = extractLegacyGoOutputFormat(args);
+  if (goOutputFormat !== undefined && LEGACY_GO_MACHINE_OUTPUT_FORMATS.has(goOutputFormat)) {
+    return goOutputFormat;
+  }
+  return outputFormat;
 }
 
 function extractChangedFlagNames(args: ReadonlyArray<string>): ReadonlyArray<string> {
@@ -135,7 +172,7 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
           .capture(EventCommandExecuted, {
             [PropExitCode]: Exit.isSuccess(exit) ? 0 : 1,
             [PropDurationMs]: finishedAt - startedAt,
-            [PropOutputFormat]: output.format,
+            [PropOutputFormat]: resolveOutputFormatForTelemetry(args, output.format),
           })
           .pipe(withAnalyticsContext(analyticsContext));
 
