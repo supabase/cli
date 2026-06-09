@@ -208,7 +208,8 @@ func TestSetupShadowDatabase(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA").
+			Reply("CREATE SCHEMA")
+		helper.MockApiPrivilegesRevoke(conn).
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		// Run test
