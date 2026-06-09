@@ -186,6 +186,49 @@ func TestMigrateShadow(t *testing.T) {
 	})
 }
 
+func TestSetupShadowDatabase(t *testing.T) {
+	utils.Config.Db.MajorVersion = 14
+
+	t.Run("sets up platform baseline without applying migrations", func(t *testing.T) {
+		utils.Config.Db.ShadowPort = 54320
+		utils.GlobalsSql = "create schema public"
+		utils.InitialSchemaPg14Sql = "create schema private"
+		// A migration exists on disk, but SetupShadowDatabase must not apply it:
+		// the mock below only scripts the platform setup + template, so any
+		// migration-history query would surface as an unmatched request.
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte("create schema test"), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaPg14Sql).
+			Reply("CREATE SCHEMA").
+			Query(CREATE_TEMPLATE).
+			Reply("CREATE DATABASE")
+		// Run test
+		err := SetupShadowDatabase(context.Background(), "test-shadow-db", fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+	})
+
+	t.Run("throws error on globals schema", func(t *testing.T) {
+		utils.Config.Db.ShadowPort = 54320
+		utils.GlobalsSql = "create schema public"
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
+		// Run test
+		err := SetupShadowDatabase(context.Background(), "test-shadow-db", afero.NewMemMapFs(), conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
+	})
+}
+
 func TestDiffDatabase(t *testing.T) {
 	utils.Config.Db.MajorVersion = 14
 	utils.Config.Db.ShadowPort = 54320

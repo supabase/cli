@@ -58,6 +58,11 @@ var (
 	exportCatalog        = diff.ExportCatalogPgDelta
 	applyDeclarative     = pgdelta.ApplyDeclarative
 	declarativeExportRef = diff.DeclarativeExportPgDeltaRef
+	// setupShadowDatabase provisions the Supabase platform baseline (auth/storage/
+	// realtime) on a shadow database before declarative schemas are applied, so
+	// Supabase-managed dependencies (auth.sessions, auth.jwt(), ...) resolve. It is
+	// a package var so tests can inject a no-op without a real shadow database.
+	setupShadowDatabase = diff.SetupShadowDatabase
 	// generateBaselineCatalogRefResolver allows Generate to reuse a freshly
 	// provisioned baseline shadow for declarative cache warmup.
 	generateBaselineCatalogRefResolver = getGenerateBaselineCatalogRef
@@ -118,6 +123,13 @@ func Generate(ctx context.Context, schema []string, config pgconn.Config, overwr
 	// can reuse it without provisioning another shadow database.
 	if !noCache {
 		if baseline.shadow != nil {
+			// The baseline catalog was already exported from the empty image
+			// baseline above. Set up the platform baseline on the reused shadow
+			// before applying declarative schemas so Supabase-managed dependencies
+			// (auth.sessions, auth.jwt(), ...) resolve during cache warmup.
+			if err := setupShadowDatabase(ctx, baseline.shadow.container, fsys, options...); err != nil {
+				return err
+			}
 			hash, err := hashDeclarativeSchemas(fsys)
 			if err != nil {
 				return err
@@ -392,6 +404,14 @@ func getDeclarativeCatalogRef(ctx context.Context, noCache bool, fsys afero.Fs, 
 		return "", err
 	}
 	defer utils.DockerRemove(shadow)
+	// Apply the Supabase platform baseline (auth/storage/realtime) before applying
+	// declarative schemas so dependencies on Supabase-managed objects (auth.sessions,
+	// auth.jwt(), ...) resolve. This keeps the declarative shadow in parity with the
+	// migrations shadow (diff.MigrateShadowDatabase), so platform objects cancel out
+	// of the diff instead of surfacing as spurious changes or "stuck" applies.
+	if err := setupShadowDatabase(ctx, shadow, fsys, options...); err != nil {
+		return "", err
+	}
 	return writeDeclarativeCatalogFromConfig(ctx, config, hash, prefix, noCache, fsys, options...)
 }
 

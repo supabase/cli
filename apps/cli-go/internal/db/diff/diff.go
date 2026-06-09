@@ -141,6 +141,35 @@ func ConnectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 // Required to bypass pg_cron check: https://github.com/citusdata/pg_cron/blob/main/pg_cron.sql#L3
 const CREATE_TEMPLATE = "CREATE DATABASE contrib_regression TEMPLATE postgres"
 
+// setupShadowConn applies the Supabase platform schema (auth, storage, realtime,
+// etc.) to an already-connected shadow database and creates the pg_cron template
+// database. It deliberately stops short of applying user migrations so that
+// callers which only need the platform baseline (declarative apply) share the
+// exact same starting point as callers that also replay migrations.
+func setupShadowConn(ctx context.Context, conn *pgx.Conn, container string, fsys afero.Fs) error {
+	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
+		return err
+	}
+	if _, err := conn.Exec(ctx, CREATE_TEMPLATE); err != nil {
+		return errors.Errorf("failed to create template database: %w", err)
+	}
+	return nil
+}
+
+// SetupShadowDatabase provisions the Supabase platform baseline (service schemas
+// such as auth/storage/realtime) on a freshly created shadow database, without
+// applying user migrations. Declarative apply uses this so the shadow matches the
+// real database closely enough for Supabase-managed dependencies (auth.sessions,
+// auth.jwt(), ...) to resolve.
+func SetupShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	conn, err := ConnectShadowDatabase(ctx, 10*time.Second, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	return setupShadowConn(ctx, conn, container, fsys)
+}
+
 func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	migrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
@@ -151,11 +180,8 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
+	if err := setupShadowConn(ctx, conn, container, fsys); err != nil {
 		return err
-	}
-	if _, err := conn.Exec(ctx, CREATE_TEMPLATE); err != nil {
-		return errors.Errorf("failed to create template database: %w", err)
 	}
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
