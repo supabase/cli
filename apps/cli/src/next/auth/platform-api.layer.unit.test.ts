@@ -13,6 +13,7 @@ import { withCommandInstrumentation } from "../../shared/telemetry/command-instr
 import { Credentials } from "./credentials.service.ts";
 import { PlatformApi } from "./platform-api.service.ts";
 import { makePlatformApiServices } from "./platform-api.layer.ts";
+import { mockOutput } from "../../../tests/helpers/mocks.ts";
 
 function httpClientLayer(
   handler: (
@@ -243,6 +244,7 @@ describe("platformApiLayer", () => {
       Effect.provide(layer),
       Effect.provide(runtimeLayer),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed(["branches", "list"]),

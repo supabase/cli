@@ -4,6 +4,7 @@ import { commandRuntimeLayer } from "../runtime/command-runtime.layer.ts";
 import { CurrentAnalyticsContext } from "./analytics-context.ts";
 import { Analytics } from "./analytics.service.ts";
 import { withCommandInstrumentation } from "./command-instrumentation.ts";
+import { mockOutput } from "../../../tests/helpers/mocks.ts";
 
 function mockContextualAnalytics() {
   const captured: Array<{
@@ -46,6 +47,7 @@ describe("withCommandInstrumentation", () => {
     }).pipe(
       withCommandInstrumentation({ analytics: false }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed(["branches", "list"]),
@@ -68,6 +70,7 @@ describe("withCommandInstrumentation", () => {
     }).pipe(
       withCommandInstrumentation(),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed(["start", "--detach", "--exclude=auth"]),
@@ -99,6 +102,7 @@ describe("withCommandInstrumentation", () => {
 
     const program = withCommandInstrumentation()(Effect.fail(new Error("boom"))).pipe(
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed(["login"]),
@@ -133,6 +137,7 @@ describe("withCommandInstrumentation", () => {
         allowedFlagValues: ["exclude", "mode", "stack"],
       }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed([
@@ -177,6 +182,7 @@ describe("withCommandInstrumentation", () => {
         allowedFlagValues: ["token", "name", "noBrowser"],
       }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed(["login", "--name", "my-machine", "--no-browser"]),
@@ -202,6 +208,7 @@ describe("withCommandInstrumentation", () => {
     return Effect.sync(() => "ok").pipe(
       withCommandInstrumentation({ analytics: false }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed(["telemetry", "enable"]),
