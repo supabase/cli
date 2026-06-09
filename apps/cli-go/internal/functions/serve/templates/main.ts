@@ -212,7 +212,8 @@ export function prepareUserRequest(req: Request): Request {
   const clonedReq = new Request(clonedURL, req.clone())
 
   // remove custom api headers
-  // clonedReq.headers.delete('sb-api-key')
+  clonedReq.headers.delete('sb-api-key')
+  EdgeRuntime.applySupabaseTag(req, clonedReq)
 
   return clonedReq
 }
@@ -316,7 +317,8 @@ Deno.serve({
         staticPatterns,
       });
 
-      return await worker.fetch(req);
+      const userReq = prepareUserRequest(req)
+      return await worker.fetch(userReq);
     } catch (e) {
       console.error(e);
 
