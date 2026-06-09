@@ -61,6 +61,10 @@ var (
 	exportCatalog        = diff.ExportCatalogPgDelta
 	applyDeclarative     = pgdelta.ApplyDeclarative
 	declarativeExportRef = diff.DeclarativeExportPgDeltaRef
+	// diffPgDeltaRef diffs a source catalog against a target catalog. It is a
+	// package var so tests can exercise the full generate -> sync flow without the
+	// real pg-delta runtime.
+	diffPgDeltaRef = diff.DiffPgDeltaRef
 	// setupShadowDatabase provisions the Supabase platform baseline (auth/storage/
 	// realtime) on a shadow database before declarative schemas are applied, so
 	// Supabase-managed dependencies (auth.sessions, auth.jwt(), ...) resolve. It is
@@ -175,7 +179,7 @@ func DiffDeclarativeToMigrations(ctx context.Context, schema []string, noCache b
 	if err != nil {
 		return nil, err
 	}
-	out, err := diff.DiffPgDeltaRef(ctx, sourceRef, targetRef, schema, pgDeltaFormatOptions(), options...)
+	out, err := diffPgDeltaRef(ctx, sourceRef, targetRef, schema, pgDeltaFormatOptions(), options...)
 	if err != nil {
 		return nil, err
 	}
