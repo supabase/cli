@@ -186,6 +186,49 @@ func TestMigrateShadow(t *testing.T) {
 	})
 }
 
+func TestSetupShadowDatabase(t *testing.T) {
+	utils.Config.Db.MajorVersion = 14
+
+	t.Run("sets up platform baseline without applying migrations", func(t *testing.T) {
+		utils.Config.Db.ShadowPort = 54320
+		utils.GlobalsSql = "create schema public"
+		utils.InitialSchemaPg14Sql = "create schema private"
+		// A migration exists on disk, but SetupShadowDatabase must not apply it:
+		// the mock below only scripts the platform setup + template, so any
+		// migration-history query would surface as an unmatched request.
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte("create schema test"), 0644))
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaPg14Sql).
+			Reply("CREATE SCHEMA").
+			Query(CREATE_TEMPLATE).
+			Reply("CREATE DATABASE")
+		// Run test
+		err := SetupShadowDatabase(context.Background(), "test-shadow-db", fsys, conn.Intercept)
+		// Check error
+		assert.NoError(t, err)
+	})
+
+	t.Run("throws error on globals schema", func(t *testing.T) {
+		utils.Config.Db.ShadowPort = 54320
+		utils.GlobalsSql = "create schema public"
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(utils.GlobalsSql).
+			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
+		// Run test
+		err := SetupShadowDatabase(context.Background(), "test-shadow-db", afero.NewMemMapFs(), conn.Intercept)
+		// Check error
+		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
+	})
+}
+
 func TestDiffDatabase(t *testing.T) {
 	utils.Config.Db.MajorVersion = 14
 	utils.Config.Db.ShadowPort = 54320
@@ -203,9 +246,9 @@ func TestDiffDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
 			ReplyError(errNetwork)
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false)
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false)
 		// Check error
-		assert.Empty(t, diff)
+		assert.Empty(t, result)
 		assert.ErrorIs(t, err, errNetwork)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -234,9 +277,9 @@ func TestDiffDatabase(t *testing.T) {
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false)
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false)
 		// Check error
-		assert.Empty(t, diff)
+		assert.Empty(t, result)
 		assert.ErrorContains(t, err, "test-shadow-db container is not running: exited")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -266,9 +309,9 @@ func TestDiffDatabase(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false, conn.Intercept)
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false, conn.Intercept)
 		// Check error
-		assert.Empty(t, diff)
+		assert.Empty(t, result)
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)
 At statement: 0
 create schema public`)
@@ -321,7 +364,7 @@ create schema public`)
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
 			Reply("INSERT 0 1")
 		// Run test
-		diff, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false, func(cc *pgx.ConnConfig) {
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false, func(cc *pgx.ConnConfig) {
 			if cc.Host == dbConfig.Host {
 				// Fake a SSL error when connecting to target database
 				cc.LookupFunc = func(ctx context.Context, host string) (addrs []string, err error) {
@@ -333,7 +376,7 @@ create schema public`)
 			}
 		})
 		// Check error
-		assert.Empty(t, diff)
+		assert.Empty(t, result)
 		assert.ErrorContains(t, err, "error diffing schema")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})

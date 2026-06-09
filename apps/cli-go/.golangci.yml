@@ -16,7 +16,7 @@ linters:
   exclusions:
     generated: lax
     rules:
-      - text: 'ST1003:'
+      - text: "ST1003:"
         linters:
           - staticcheck
       - path: _test\.go
@@ -27,10 +27,7 @@ linters:
         linters:
           - gosec
         text: G117
-      - path: internal/db/diff/diff\.go
-        linters:
-          - unused
-        text: diffWithStream is unused
+
     presets:
       - comments
       - common-false-positives

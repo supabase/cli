@@ -161,7 +161,7 @@ export const legacyAnalyticsLayer = Layer.effect(
 
     const loadLinkedProject = makeLoadLinkedProject(fs, path);
 
-    const isAgent = Option.isSome(aiTool.name) || runtime.isCi;
+    const isAgent = Option.isSome(aiTool.name);
     const envSignals = collectEnvSignals();
 
     const baseProperties = stripUndefined({

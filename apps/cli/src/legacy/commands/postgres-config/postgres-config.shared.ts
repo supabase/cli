@@ -1,4 +1,4 @@
-import { Effect, Option, type Redacted } from "effect";
+import { Effect, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -14,6 +14,7 @@ import {
   encodeYaml,
 } from "../../shared/legacy-go-output.encoders.ts";
 import { sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
+import { requestWithAuth } from "../../shared/legacy-raw-http.ts";
 import { resolveLegacyAccessToken } from "../../shared/legacy-resolve-token.ts";
 import {
   LegacyPostgresConfigGetNetworkError,
@@ -91,17 +92,6 @@ function mapTransportMessage<E>(
     return wrap({ message: message(description) });
   }
   return wrap({ message: message(String(cause)) });
-}
-
-function requestWithAuth(
-  request: HttpClientRequest.HttpClientRequest,
-  tokenOpt: Option.Option<Redacted.Redacted<string>>,
-  userAgent: string,
-) {
-  return request.pipe(
-    Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
-    HttpClientRequest.setHeader("User-Agent", userAgent),
-  );
 }
 
 function parseJsonObject<E>(

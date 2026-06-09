@@ -151,6 +151,7 @@ export function mockProcessControl(
 ) {
   let exitCode: number | undefined;
   const exitCalls: number[] = [];
+  const exitDeferred = Deferred.makeUnsafe<number>();
 
   return {
     layer: Layer.succeed(ProcessControl, {
@@ -166,9 +167,11 @@ export function mockProcessControl(
       awaitShutdown: opts.awaitShutdown ?? Effect.never,
       holdSignals: (_signals) => Effect.void,
       exit: (code: number) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           exitCalls.push(code);
-        }).pipe(Effect.flatMap(() => Effect.never)),
+          yield* Deferred.succeed(exitDeferred, code);
+          return yield* Effect.never;
+        }),
       setExitCode: (code: number) =>
         Effect.sync(() => {
           exitCode = code;
@@ -178,6 +181,7 @@ export function mockProcessControl(
     get exitCalls() {
       return exitCalls;
     },
+    awaitExit: Deferred.await(exitDeferred),
     get exitCode() {
       return exitCode;
     },
@@ -233,6 +237,10 @@ export function mockOutput(
   const progressEvents: ProgressEvent[] = [];
   const events: OutputEvent[] = [];
   const rawChunks: Array<{ text: string; stream: "stdout" | "stderr" }> = [];
+  const promptConfirmCalls: Array<{
+    message: string;
+    opts?: { defaultValue?: boolean };
+  }> = [];
   const promptSelectCalls: Array<{
     message: string;
     options: ReadonlyArray<{
@@ -375,17 +383,26 @@ export function mockOutput(
         };
       })(),
       promptPassword: () => Effect.succeed(promptPasswordResponses.shift() ?? ""),
-      promptConfirm: (_message, _opts) =>
-        opts.promptConfirmFail
-          ? Effect.fail(
-              new NonInteractiveError({
-                detail: "Prompt cancelled",
-                suggestion: "Run in interactive mode",
-              }),
-            )
-          : Effect.succeed(
-              promptConfirmResponses.shift() ?? opts.confirmLogout ?? opts.confirmRelogin ?? true,
-            ),
+      promptConfirm: (message, promptOptions) =>
+        Effect.sync(() => {
+          promptConfirmCalls.push({ message, opts: promptOptions });
+        }).pipe(
+          Effect.flatMap(() =>
+            opts.promptConfirmFail
+              ? Effect.fail(
+                  new NonInteractiveError({
+                    detail: "Prompt cancelled",
+                    suggestion: "Run in interactive mode",
+                  }),
+                )
+              : Effect.succeed(
+                  promptConfirmResponses.shift() ??
+                    opts.confirmLogout ??
+                    opts.confirmRelogin ??
+                    true,
+                ),
+          ),
+        ),
       promptSelect: (message, options, behavior) =>
         Effect.sync(() => {
           promptSelectCalls.push({ message, options, behavior });
@@ -402,6 +419,7 @@ export function mockOutput(
     messages,
     progressEvents,
     events,
+    promptConfirmCalls,
     promptSelectCalls,
     rawChunks,
     get stdoutText() {
