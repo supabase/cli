@@ -417,6 +417,79 @@ func TestBaselineCatalogKeyVariesWithSetupInputs(t *testing.T) {
 	assert.NotEqual(t, withApi, withVault, "vault secrets must change the key")
 }
 
+func TestBaselineCatalogKeyVariesWithServiceToggles(t *testing.T) {
+	// initSchema conditionally provisions auth/storage/realtime schemas, so toggling
+	// a service must invalidate the baseline cache even on the same image.
+	originalImage := utils.Config.Db.Image
+	originalStorage := utils.Config.Storage.Enabled
+	t.Cleanup(func() {
+		utils.Config.Db.Image = originalImage
+		utils.Config.Storage.Enabled = originalStorage
+	})
+	utils.Config.Db.Image = "public.ecr.aws/supabase/postgres:15.8.1.049"
+
+	fsys := afero.NewMemMapFs()
+	utils.Config.Storage.Enabled = true
+	on, err := baselineCatalogKey(fsys)
+	require.NoError(t, err)
+	utils.Config.Storage.Enabled = false
+	off, err := baselineCatalogKey(fsys)
+	require.NoError(t, err)
+	assert.NotEqual(t, on, off, "toggling a service must change the baseline cache key")
+}
+
+func TestDeclarativeCatalogCacheKeyVariesWithSetupInputs(t *testing.T) {
+	// The declarative target is built on the platform baseline, so its cache key
+	// must change when setup inputs change even if the declarative SQL does not.
+	originalImage := utils.Config.Db.Image
+	originalStorage := utils.Config.Storage.Enabled
+	t.Cleanup(func() {
+		utils.Config.Db.Image = originalImage
+		utils.Config.Storage.Enabled = originalStorage
+	})
+	utils.Config.Db.Image = "public.ecr.aws/supabase/postgres:15.8.1.049"
+
+	fsys := afero.NewMemMapFs()
+	p := filepath.Join(utils.GetDeclarativeDir(), "schemas", "public", "tables", "a.sql")
+	require.NoError(t, afero.WriteFile(fsys, p, []byte("create table a();"), 0644))
+
+	utils.Config.Storage.Enabled = true
+	on, err := declarativeCatalogCacheKey(fsys)
+	require.NoError(t, err)
+	utils.Config.Storage.Enabled = false
+	off, err := declarativeCatalogCacheKey(fsys)
+	require.NoError(t, err)
+	assert.NotEqual(t, on, off, "setup input changes must invalidate the warmed declarative catalog")
+}
+
+func TestGetMigrationsCatalogRefZeroMigrationsIgnoresMigrationsHashCache(t *testing.T) {
+	// With no local migrations, the source must come from the setup-keyed baseline,
+	// not the migrations-hash cache (which is not setup-aware and could otherwise
+	// surface an empty-migrations snapshot from a different platform setup).
+	originalImage := utils.Config.Db.Image
+	t.Cleanup(func() { utils.Config.Db.Image = originalImage })
+	utils.Config.Db.Image = "public.ecr.aws/supabase/postgres:15.8.1.049"
+
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, fsys.MkdirAll(pgDeltaTempPath(), 0755))
+
+	// A stale empty-migrations catalog in the migrations-hash cache.
+	emptyHash, err := pgcache.HashMigrations(fsys)
+	require.NoError(t, err)
+	stale := filepath.Join(pgDeltaTempPath(), "catalog-local-migrations-"+emptyHash+"-1000.json")
+	require.NoError(t, afero.WriteFile(fsys, stale, []byte(`{"objects":["stale"]}`), 0644))
+
+	// A baseline catalog for the current setup key.
+	baselinePath, err := baselineCatalogPath(fsys)
+	require.NoError(t, err)
+	require.NoError(t, afero.WriteFile(fsys, baselinePath, []byte(`{"objects":[]}`), 0644))
+
+	ref, err := getMigrationsCatalogRef(t.Context(), false, fsys, "local")
+	require.NoError(t, err)
+	assert.Equal(t, baselinePath, ref, "zero-migration source must be the setup-keyed baseline")
+	assert.NotEqual(t, stale, ref, "the non-setup-aware migrations-hash cache must not be reused")
+}
+
 func TestBaselineCatalogPathIgnoresLegacyBareBaseline(t *testing.T) {
 	// A baseline written by a pre-fix CLI is keyed by the image token alone and
 	// holds a bare-image catalog. The input-hashed key must not collide with it, so
@@ -609,7 +682,7 @@ func TestGenerateReusesBaselineShadowForDeclarativeWarmup(t *testing.T) {
 	assert.True(t, applyCalled, "generate should apply declarative schema using reused baseline shadow")
 	assert.False(t, fallbackCalled, "fallback declarative resolver should not run when baseline shadow is reusable")
 
-	hash, err := hashDeclarativeSchemas(fsys)
+	hash, err := declarativeCatalogCacheKey(fsys)
 	require.NoError(t, err)
 	cachePath, ok, err := resolveDeclarativeCatalogPath(fsys, hash, "local")
 	require.NoError(t, err)
