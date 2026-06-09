@@ -37,7 +37,10 @@ const (
 	//
 	// It is used as the "source" baseline both when generating declarative files
 	// from a real database target and when syncing with no local migrations, so it
-	// must stay in parity with the declarative target's platform baseline.
+	// must stay in parity with the declarative target's platform baseline. The "%s"
+	// is a key (see baselineCatalogKey) derived from the image plus every setup
+	// input that shapes the baseline, so config/roles changes self-invalidate the
+	// cache rather than reusing a stale snapshot.
 	baselineCatalogName = "catalog-baseline-%s.json"
 	// declarativeCatalogName stores catalogs keyed by declarative-content hash.
 	declarativeCatalogName = "catalog-%s-declarative-%s-%d.json"
@@ -301,7 +304,10 @@ func updateDeclarativeSchemaPathsConfig(fsys afero.Fs) error {
 }
 
 func getGenerateBaselineCatalogRef(ctx context.Context, noCache bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (generateBaselineCatalogRef, error) {
-	cachePath := filepath.Join(pgDeltaTempPath(), fmt.Sprintf(baselineCatalogName, baselineVersionToken()))
+	cachePath, err := baselineCatalogPath(fsys)
+	if err != nil {
+		return generateBaselineCatalogRef{}, err
+	}
 	if !noCache {
 		if ok, err := afero.Exists(fsys, cachePath); err == nil && ok {
 			return generateBaselineCatalogRef{ref: cachePath}, nil
@@ -368,7 +374,10 @@ func getMigrationsCatalogRef(ctx context.Context, noCache bool, fsys afero.Fs, p
 	// platform baseline. Reuse an existing baseline snapshot (which now also
 	// represents the platform baseline) instead of provisioning a fresh shadow.
 	if !noCache && len(migrations) == 0 {
-		baselinePath := filepath.Join(pgDeltaTempPath(), fmt.Sprintf(baselineCatalogName, baselineVersionToken()))
+		baselinePath, err := baselineCatalogPath(fsys)
+		if err != nil {
+			return "", err
+		}
 		if ok, err := afero.Exists(fsys, baselinePath); err != nil {
 			return "", err
 		} else if ok {
@@ -646,6 +655,59 @@ func baselineVersionToken() string {
 		image = fmt.Sprintf("pg%d", utils.Config.Db.MajorVersion)
 	}
 	return catalogPrefixRegexp.ReplaceAllString(image, "-")
+}
+
+// baselineCatalogKey derives the cache key for the platform baseline catalog.
+//
+// The baseline is the result of diff.SetupShadowDatabase, i.e. start.SetupDatabase:
+// initSchema + ApplyApiPrivileges + vault secrets + supabase/roles.sql. Its catalog
+// is therefore a function of the Postgres image AND the project inputs that setup
+// consumes, not the image alone. Keying only by image would let a stale baseline —
+// produced by a pre-platform-baseline CLI, a different image, or a different
+// api/vault/roles config — be reused as the no-migration diff source, leaking
+// spurious objects into generated migrations until .temp/pgdelta is cleared. Fold
+// those inputs into the key so the cache self-invalidates. The image token stays as
+// a human-readable prefix; old bare-baseline files keyed by the token alone no
+// longer match, so they are never reused.
+func baselineCatalogKey(fsys afero.Fs) (string, error) {
+	token := baselineVersionToken()
+	h := sha256.New()
+	fmt.Fprintln(h, token)
+	// api.auto_expose_new_tables drives ApplyApiPrivileges (default ACLs).
+	if v := utils.Config.Api.AutoExposeNewTables; v != nil {
+		fmt.Fprintf(h, "auto_expose_new_tables=%t\n", *v)
+	} else {
+		fmt.Fprintln(h, "auto_expose_new_tables=unset")
+	}
+	// Vault secrets are created during setup; key on their names.
+	names := make([]string, 0, len(utils.Config.Db.Vault))
+	for name := range utils.Config.Db.Vault {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fmt.Fprintf(h, "vault=%s\n", name)
+	}
+	// supabase/roles.sql is seeded into the baseline.
+	roles, err := afero.ReadFile(fsys, utils.CustomRolesPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if _, err := h.Write(roles); err != nil {
+		return "", err
+	}
+	return token + "-" + hex.EncodeToString(h.Sum(nil))[:12], nil
+}
+
+// baselineCatalogPath returns the on-disk path of the platform baseline catalog
+// for the current project inputs. Both the generate writer and the no-migration
+// sync reader resolve the path through this helper so they always agree.
+func baselineCatalogPath(fsys afero.Fs) (string, error) {
+	key, err := baselineCatalogKey(fsys)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(pgDeltaTempPath(), fmt.Sprintf(baselineCatalogName, key)), nil
 }
 
 func sanitizedCatalogPrefix(prefix string) string {

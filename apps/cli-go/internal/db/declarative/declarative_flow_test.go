@@ -3,8 +3,6 @@ package declarative
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -148,7 +146,8 @@ func TestGenerateThenSyncWithNoMigrationsCancelsPlatformObjects(t *testing.T) {
 
 	// The baseline catalog reused by sync must represent the platform baseline,
 	// not a bare image.
-	baselinePath := filepath.Join(pgDeltaTempPath(), fmt.Sprintf(baselineCatalogName, baselineVersionToken()))
+	baselinePath, err := baselineCatalogPath(fsys)
+	require.NoError(t, err)
 	assert.ElementsMatch(t, platformObjects, readCatalogObjects(t, fsys, baselinePath),
 		"baseline catalog must capture the platform baseline (auth/storage/realtime)")
 

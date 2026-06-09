@@ -4,8 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgconn"
@@ -270,7 +270,8 @@ func TestGetMigrationsCatalogRefUsesProjectPrefix(t *testing.T) {
 func TestGetMigrationsCatalogRefUsesBaselineWhenNoMigrations(t *testing.T) {
 	fsys := afero.NewMemMapFs()
 	require.NoError(t, fsys.MkdirAll(filepath.Join(utils.TempDir, "pgdelta"), 0755))
-	baselinePath := filepath.Join(pgDeltaTempPath(), fmt.Sprintf(baselineCatalogName, baselineVersionToken()))
+	baselinePath, err := baselineCatalogPath(fsys)
+	require.NoError(t, err)
 	require.NoError(t, afero.WriteFile(fsys, baselinePath, []byte(`{"version":1}`), 0644))
 
 	ref, err := getMigrationsCatalogRef(t.Context(), false, fsys, "local")
@@ -317,7 +318,8 @@ func TestGetGenerateBaselineCatalogRefSetsUpPlatformBaseline(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"setup", "export"}, order, "platform baseline must be provisioned before the baseline catalog is exported")
 
-	cachePath := filepath.Join(pgDeltaTempPath(), fmt.Sprintf(baselineCatalogName, baselineVersionToken()))
+	cachePath, err := baselineCatalogPath(fsys)
+	require.NoError(t, err)
 	assert.Equal(t, cachePath, ref.ref)
 	cached, err := afero.ReadFile(fsys, cachePath)
 	require.NoError(t, err)
@@ -377,6 +379,65 @@ func TestCleanupOldDeclarativeCatalogsKeepsLatestTwo(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestBaselineCatalogKeyVariesWithSetupInputs(t *testing.T) {
+	// The baseline is produced by SetupDatabase, so its cache key must change when
+	// any setup input changes; otherwise a stale baseline is reused as the diff
+	// source and platform/config changes leak into generated migrations.
+	originalImage := utils.Config.Db.Image
+	originalExpose := utils.Config.Api.AutoExposeNewTables
+	originalVault := utils.Config.Db.Vault
+	t.Cleanup(func() {
+		utils.Config.Db.Image = originalImage
+		utils.Config.Api.AutoExposeNewTables = originalExpose
+		utils.Config.Db.Vault = originalVault
+	})
+	utils.Config.Db.Image = "public.ecr.aws/supabase/postgres:15.8.1.049"
+	utils.Config.Api.AutoExposeNewTables = nil
+	utils.Config.Db.Vault = nil
+
+	fsys := afero.NewMemMapFs()
+	base, err := baselineCatalogKey(fsys)
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(base, baselineVersionToken()+"-"), "image token should remain a readable prefix")
+
+	require.NoError(t, afero.WriteFile(fsys, utils.CustomRolesPath, []byte("create role app;"), 0644))
+	withRoles, err := baselineCatalogKey(fsys)
+	require.NoError(t, err)
+	assert.NotEqual(t, base, withRoles, "roles.sql content must change the key")
+
+	expose := false
+	utils.Config.Api.AutoExposeNewTables = &expose
+	withApi, err := baselineCatalogKey(fsys)
+	require.NoError(t, err)
+	assert.NotEqual(t, withRoles, withApi, "auto_expose_new_tables must change the key")
+
+	utils.Config.Db.Vault = map[string]config.Secret{"KEY": {}}
+	withVault, err := baselineCatalogKey(fsys)
+	require.NoError(t, err)
+	assert.NotEqual(t, withApi, withVault, "vault secrets must change the key")
+}
+
+func TestBaselineCatalogPathIgnoresLegacyBareBaseline(t *testing.T) {
+	// A baseline written by a pre-fix CLI is keyed by the image token alone and
+	// holds a bare-image catalog. The input-hashed key must not collide with it, so
+	// no-migration sync never reuses the stale snapshot.
+	originalImage := utils.Config.Db.Image
+	t.Cleanup(func() { utils.Config.Db.Image = originalImage })
+	utils.Config.Db.Image = "public.ecr.aws/supabase/postgres:15.8.1.049"
+
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, fsys.MkdirAll(pgDeltaTempPath(), 0755))
+	legacy := filepath.Join(pgDeltaTempPath(), "catalog-baseline-"+baselineVersionToken()+".json")
+	require.NoError(t, afero.WriteFile(fsys, legacy, []byte(`{"objects":[]}`), 0644))
+
+	current, err := baselineCatalogPath(fsys)
+	require.NoError(t, err)
+	assert.NotEqual(t, legacy, current, "input-hashed key must not collide with the legacy bare-baseline filename")
+	exists, err := afero.Exists(fsys, current)
+	require.NoError(t, err)
+	assert.False(t, exists, "stale bare baseline must not satisfy the current cache key")
+}
+
 func TestBaselineVersionToken(t *testing.T) {
 	originalImage := utils.Config.Db.Image
 	originalMajor := utils.Config.Db.MajorVersion
@@ -397,7 +458,8 @@ func TestGenerateWarmsDeclarativeCatalogCache(t *testing.T) {
 	fsys := afero.NewMemMapFs()
 	require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("[db]\n"), 0644))
 	require.NoError(t, fsys.MkdirAll(filepath.Join(utils.TempDir, "pgdelta"), 0755))
-	baselinePath := filepath.Join(pgDeltaTempPath(), fmt.Sprintf(baselineCatalogName, baselineVersionToken()))
+	baselinePath, err := baselineCatalogPath(fsys)
+	require.NoError(t, err)
 	require.NoError(t, afero.WriteFile(fsys, baselinePath, []byte(`{"version":1}`), 0644))
 
 	originalPgDelta := utils.Config.Experimental.PgDelta
@@ -430,7 +492,7 @@ func TestGenerateWarmsDeclarativeCatalogCache(t *testing.T) {
 		return filepath.Join(utils.TempDir, "pgdelta", "catalog-local-declarative-hash-1000.json"), nil
 	}
 
-	err := Generate(t.Context(), nil, pgconn.Config{Host: "127.0.0.1", Port: 5432, User: "postgres", Password: "postgres", Database: "postgres"}, true, false, fsys)
+	err = Generate(t.Context(), nil, pgconn.Config{Host: "127.0.0.1", Port: 5432, User: "postgres", Password: "postgres", Database: "postgres"}, true, false, fsys)
 	require.NoError(t, err)
 	assert.True(t, called)
 }
