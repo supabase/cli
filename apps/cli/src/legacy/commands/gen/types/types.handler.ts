@@ -1,7 +1,6 @@
 import { loadProjectConfig } from "@supabase/config";
-import type { SupabaseApiError } from "@supabase/api/effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { Data, Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
+import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
@@ -14,6 +13,7 @@ import { legacyTempPaths } from "../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import type { LegacyGenTypesFlags } from "./types.command.ts";
+import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
 import {
   buildPostgresUrl,
   defaultSchemas,
@@ -28,18 +28,6 @@ import {
   legacyRootCaBundle,
   resolvePgmetaImage,
 } from "./types.shared.ts";
-
-class LegacyGenTypesNetworkError extends Data.TaggedError("LegacyGenTypesNetworkError")<{
-  readonly message: string;
-}> {}
-
-class LegacyGenTypesUnexpectedStatusError extends Data.TaggedError(
-  "LegacyGenTypesUnexpectedStatusError",
-)<{
-  readonly status: number;
-  readonly body: string;
-  readonly message: string;
-}> {}
 
 const mapProjectTypesError = mapLegacyHttpError({
   networkError: LegacyGenTypesNetworkError,
@@ -81,10 +69,10 @@ function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
   ).pipe(Effect.map((text) => text + decoder.decode()));
 }
 
-function renderEnvFile(entries: ReadonlyArray<string>) {
-  return `${entries.join("\n")}\n`;
-}
-
+// Keep these two sets in sync with the value-bearing flags on the root command
+// (shared/legacy/global-flags.ts) and the `gen types` command (types.command.ts).
+// They let `findLegacyPositionalLanguage` skip a flag's value so it is not
+// mistaken for the legacy positional language argument (e.g. `gen types typescript`).
 const LONG_FLAGS_WITH_VALUES = new Set([
   "db-url",
   "project-id",
@@ -252,7 +240,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           ref: projectRef,
           included_schemas: includedSchemas.join(","),
         })
-        .pipe(Effect.catch((cause: SupabaseApiError) => mapProjectTypesError(cause)));
+        .pipe(Effect.catch(mapProjectTypesError));
 
       yield* output.raw(response.types);
     }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
@@ -272,6 +260,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       Effect.gen(function* () {
         yield* output.raw(`Connecting to ${input.host} ${input.port}\n`, "stderr");
 
+        // Mirrors Go's container.Config.Env ([]string of "KEY=VALUE"). We pass each
+        // entry as a `--env KEY=VALUE` argument rather than a `--env-file`: env-files
+        // split on newlines, so they cannot carry the multi-line PEM CA bundle, and a
+        // value containing a newline could inject an extra variable. Passing argv
+        // elements keeps each entry as exactly one variable regardless of its contents.
         const env = [
           `PG_META_DB_URL=${input.url}`,
           `PG_CONN_TIMEOUT_SECS=${queryTimeoutSeconds}`,
@@ -282,24 +275,30 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           `PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=${String(!input.postgrestV9Compat)}`,
         ];
 
+        // Go's isRequireSSL emits this warning to stderr when the probe runs with
+        // certificate verification disabled. Our wire-level SSLRequest probe never
+        // verifies certificates, so honour the same env var for stderr parity.
+        if (process.env["SUPABASE_CA_SKIP_VERIFY"] === "true") {
+          yield* output.raw(
+            "WARNING: TLS certificate verification disabled for SSL probe (SUPABASE_CA_SKIP_VERIFY=true)\n",
+            "stderr",
+          );
+        }
+
         const useTls = yield* probeTlsSupport(input.probeHost, input.probePort);
         if (useTls && !debug) {
           env.push(`PG_META_DB_SSL_ROOT_CERT=${legacyRootCaBundle()}`);
         }
 
-        const envFilePath = yield* fs.makeTempFileScoped({
-          prefix: "supabase-gen-types-",
-          suffix: ".env",
-        });
-        yield* fs.writeFileString(envFilePath, renderEnvFile(env), { mode: 0o600 });
-
+        // Go's DockerStart applies `--network-id` over any base network mode (even the
+        // "host" mode used for --db-url), so honour the override here too.
+        const networkMode = Option.isSome(networkId) ? networkId.value : input.networkMode;
         const args = [
           "run",
           "--rm",
           "--network",
-          input.networkMode,
-          "--env-file",
-          envFilePath,
+          networkMode,
+          ...env.flatMap((entry) => ["--env", entry]),
           resolvePgmetaImage(input.pgmetaVersionOverride),
           "node",
           "dist/server/server.js",
@@ -330,10 +329,13 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const assertLocalDbRunning = (projectId: string) =>
     Effect.scoped(
       Effect.gen(function* () {
+        // We only need the exit code and stderr (Go uses Docker's ContainerInspect API,
+        // which reads no stdout). Discard stdout so the inspect JSON can never fill the
+        // pipe buffer and deadlock the unconsumed stream.
         const child = yield* spawner.spawn(
           ChildProcess.make("docker", ["container", "inspect", localDbContainerId(projectId)], {
             stdin: "ignore",
-            stdout: "pipe",
+            stdout: "ignore",
             stderr: "pipe",
           }),
         );
@@ -367,14 +369,17 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       }
 
       const paths = legacyTempPaths(path, cliConfig.workdir);
-      const restVersionExists = yield* fs
-        .exists(paths.restVersion)
-        .pipe(Effect.orElseSucceed(() => false));
-      const forcedV9 =
-        restVersionExists &&
-        (yield* fs.readFileString(paths.restVersion).pipe(Effect.orElseSucceed(() => ""))).includes(
-          "v9",
-        );
+      // Go resolves Config.Api.Image from the rest-version file only when
+      // Db.MajorVersion > 14, then forces v9 compat when that image tag contains "v9"
+      // (pkg/config/config.go:657-666, internal/gen/types/types.go:69). Gate and trim
+      // identically so we don't force v9 on older databases.
+      const restVersion =
+        loaded.config.db.major_version > 14
+          ? (yield* fs
+              .readFileString(paths.restVersion)
+              .pipe(Effect.orElseSucceed(() => ""))).trim()
+          : "";
+      const forcedV9 = restVersion.length > 0 && restVersion.includes("v9");
       const pgmetaVersionOverride = yield* fs
         .readFileString(paths.pgmetaVersion)
         .pipe(Effect.orElseSucceed(() => ""));
@@ -397,7 +402,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         port: 5432,
         probeHost: getServicesHostname(),
         probePort: loaded.config.db.port,
-        networkMode: localNetworkId(projectId, networkId),
+        networkMode: localNetworkId(projectId),
         includedSchemas,
         postgrestV9Compat: flags.postgrestV9Compat || forcedV9,
         pgmetaVersionOverride,

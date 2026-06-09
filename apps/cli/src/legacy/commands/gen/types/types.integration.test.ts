@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +31,12 @@ function writeConfig(workdir: string, contents: string) {
   writeFileSync(join(supabaseDir, "config.toml"), contents);
 }
 
+function writeTempFile(workdir: string, name: string, contents: string) {
+  const tempDir = join(workdir, "supabase", ".temp");
+  mkdirSync(tempDir, { recursive: true });
+  writeFileSync(join(tempDir, name), contents);
+}
+
 function ensureDefaultConfig(workdir: string) {
   const configPath = join(workdir, "supabase", "config.toml");
   if (existsSync(configPath)) {
@@ -39,15 +45,39 @@ function ensureDefaultConfig(workdir: string) {
   writeConfig(workdir, ['project_id = "demo"', "", "[api]", "schemas = []"].join("\n"));
 }
 
-function readEnvFileArg(args: ReadonlyArray<string>) {
-  const index = args.indexOf("--env-file");
-  expect(index).toBeGreaterThanOrEqual(0);
-  const envFilePath = args[index + 1];
-  expect(envFilePath).toBeDefined();
-  expect(existsSync(envFilePath!)).toBe(true);
+/** Extracts the `KEY=VALUE` entries passed via `docker run --env <entry>` arguments. */
+function dockerEnv(args: ReadonlyArray<string>) {
+  const entries: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === "--env") {
+      const entry = args[index + 1];
+      if (entry !== undefined) {
+        entries.push(entry);
+      }
+    }
+  }
   return {
-    envFilePath: envFilePath!,
-    contents: readFileSync(envFilePath!, "utf8"),
+    entries,
+    has: (entry: string) => entries.includes(entry),
+    startsWith: (prefix: string) => entries.some((entry) => entry.startsWith(prefix)),
+  };
+}
+
+/** The argv of the `docker run` invocation captured during a spawn. */
+function captureDockerRun() {
+  let args: ReadonlyArray<string> | undefined;
+  return {
+    onSpawn: (record: { readonly command: string; readonly args: ReadonlyArray<string> }) => {
+      if (record.command === "docker" && record.args.includes("run")) {
+        args = record.args;
+      }
+    },
+    get args() {
+      return args;
+    },
+    get env() {
+      return dockerEnv(args ?? []);
+    },
   };
 }
 
@@ -69,6 +99,7 @@ function defaultFlags(overrides: Partial<LegacyGenTypesFlags> = {}): LegacyGenTy
 function setup(
   opts: {
     readonly workdir?: string;
+    readonly skipConfig?: boolean;
     readonly projectId?: Option.Option<string>;
     readonly format?: "text" | "json" | "stream-json";
     readonly goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
@@ -77,6 +108,8 @@ function setup(
     readonly childStderr?: ReadonlyArray<string>;
     readonly childExitCode?: number;
     readonly childLayer?: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
+    readonly debug?: boolean;
+    readonly networkId?: Option.Option<string>;
     readonly onSpawn?: (record: {
       readonly command: string;
       readonly args: ReadonlyArray<string>;
@@ -89,7 +122,9 @@ function setup(
   } = {},
 ) {
   const workdir = opts.workdir ?? mkdtempSync(join(tmpdir(), "supabase-gen-types-"));
-  ensureDefaultConfig(workdir);
+  if (!opts.skipConfig) {
+    ensureDefaultConfig(workdir);
+  }
   const out = mockOutput({
     format: opts.format ?? "text",
     interactive: (opts.format ?? "text") === "text",
@@ -132,8 +167,8 @@ function setup(
     processControl.layer,
     Stdio.layerTest({ args: Effect.succeed(opts.args ?? ["gen", "types"]) }),
     Layer.succeed(LegacyOutputFlag, opts.goOutput ?? Option.none()),
-    Layer.succeed(LegacyDebugFlag, false),
-    Layer.succeed(LegacyNetworkIdFlag, Option.none()),
+    Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
+    Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
   );
 
   return {
@@ -209,10 +244,13 @@ function mockSequentialChildProcessSpawner(
   };
 }
 
-async function withSslProbeServer<T>(run: (port: number) => Promise<T>): Promise<T> {
+async function withSslProbeServer<T>(
+  run: (port: number) => Promise<T>,
+  response: "N" | "S" = "N",
+): Promise<T> {
   const server = createServer((socket) => {
     socket.once("data", () => {
-      socket.write(Buffer.from("N"));
+      socket.write(Buffer.from(response));
       socket.end();
     });
   });
@@ -240,8 +278,8 @@ async function withSslProbeServer<T>(run: (port: number) => Promise<T>): Promise
 describe("legacy gen types", () => {
   it.effect("accepts Go-style microsecond duration aliases", () =>
     Effect.gen(function* () {
-      expect(yield* parseQueryTimeoutSeconds(`15${"\u00b5"}s`)).toBe(0);
-      expect(yield* parseQueryTimeoutSeconds(`15${"\u03bc"}s`)).toBe(0);
+      expect(yield* parseQueryTimeoutSeconds(`15${"µ"}s`)).toBe(0);
+      expect(yield* parseQueryTimeoutSeconds(`15${"μ"}s`)).toBe(0);
     }),
   );
 
@@ -253,6 +291,27 @@ describe("legacy gen types", () => {
 
     return Effect.gen(function* () {
       yield* legacyGenTypes(defaultFlags()).pipe(Effect.provide(layer));
+
+      expect(out.stdoutText).toBe("export type Database = {};");
+      expect(api.requests).toEqual([
+        {
+          method: "generateTypescriptTypes",
+          input: { ref: LEGACY_VALID_REF, included_schemas: "public" },
+        },
+      ]);
+      expect(linkedProjectCache.cached).toBe(true);
+      expect(telemetry.flushed).toBe(true);
+    });
+  });
+
+  it.live("generates types from the explicit --linked flag", () => {
+    const { layer, out, api, linkedProjectCache, telemetry } = setup({
+      projectId: Option.some(LEGACY_VALID_REF),
+      projectTypes: "export type Database = {};",
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ linked: true })).pipe(Effect.provide(layer));
 
       expect(out.stdoutText).toBe("export type Database = {};");
       expect(api.requests).toEqual([
@@ -354,6 +413,95 @@ describe("legacy gen types", () => {
     });
   });
 
+  it.live("rejects combining --local and --linked", () => {
+    const { layer } = setup({ args: ["gen", "types", "--local", "--linked"] });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(defaultFlags({ local: true, linked: true })).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "if any flags in the group [local linked project-id db-url] are set none of the others can be; [local linked] were all set",
+        );
+      }
+    });
+  });
+
+  it.live("rejects combining --linked with --swift-access-control", () => {
+    const { layer } = setup({
+      args: ["gen", "types", "--linked", "--swift-access-control", "public"],
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({ linked: true, swiftAccessControl: "public" }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "if any flags in the group [linked project-id swift-access-control] are set none of the others can be; [linked swift-access-control] were all set",
+        );
+      }
+    });
+  });
+
+  it.live("rejects combining --linked with --postgrest-v9-compat", () => {
+    const { layer } = setup({ args: ["gen", "types", "--linked", "--postgrest-v9-compat"] });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({ linked: true, postgrestV9Compat: true }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "if any flags in the group [linked project-id postgrest-v9-compat] are set none of the others can be; [linked postgrest-v9-compat] were all set",
+        );
+      }
+    });
+  });
+
+  it.live("rejects combining --linked with --query-timeout", () => {
+    const { layer } = setup({ args: ["gen", "types", "--linked", "--query-timeout", "20s"] });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(defaultFlags({ linked: true, queryTimeout: "20s" })).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "if any flags in the group [linked project-id query-timeout] are set none of the others can be; [linked query-timeout] were all set",
+        );
+      }
+    });
+  });
+
+  it.live("requires --db-url when --postgrest-v9-compat is set", () => {
+    const { layer } = setup({ args: ["gen", "types", "--local", "--postgrest-v9-compat"] });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(
+        defaultFlags({ local: true, postgrestV9Compat: true }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "--postgrest-v9-compat must used together with --db-url",
+        );
+      }
+    });
+  });
+
   it.live("rejects non-typescript project generation", () => {
     const { layer } = setup({ args: ["gen", "types", "--lang", "go"] });
 
@@ -397,12 +545,7 @@ describe("legacy gen types", () => {
     Effect.tryPromise({
       try: () =>
         withSslProbeServer(async (port) => {
-          let capturedEnvFile:
-            | {
-                readonly envFilePath: string;
-                readonly contents: string;
-              }
-            | undefined;
+          const docker = captureDockerRun();
           const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-"));
           writeConfig(
             workdir,
@@ -418,15 +561,11 @@ describe("legacy gen types", () => {
             ].join("\n"),
           );
 
-          const { layer, out, child } = setup({
+          const { layer, out, child, linkedProjectCache } = setup({
             workdir,
             childStdout: ["export type Database = {};"],
             childStderr: ["pg-meta warning"],
-            onSpawn: (record) => {
-              if (record.command === "docker" && record.args.includes("run")) {
-                capturedEnvFile = readEnvFileArg(record.args);
-              }
-            },
+            onSpawn: docker.onSpawn,
           });
 
           await Effect.runPromise(
@@ -444,12 +583,13 @@ describe("legacy gen types", () => {
           expect(child.spawned[1]?.command).toBe("docker");
           expect(child.spawned[1]?.args).toContain("--network");
           expect(child.spawned[1]?.args).toContain("supabase_network_demo");
-          expect(child.spawned[1]?.args).toContain("--env-file");
-          expect(capturedEnvFile?.contents).toContain(
-            "PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,custom",
+          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,custom")).toBe(
+            true,
           );
           expect(child.spawned[1]?.args).toContain(resolvePgmetaImage());
-          expect(capturedEnvFile && existsSync(capturedEnvFile.envFilePath)).toBe(false);
+          // The local/db-url paths have no project ref, so they must not populate the
+          // linked-project cache (matches Go's ensureProjectGroupsCached early return).
+          expect(linkedProjectCache.cached).toBe(false);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
@@ -459,12 +599,7 @@ describe("legacy gen types", () => {
     Effect.tryPromise({
       try: () =>
         withSslProbeServer(async (port) => {
-          let capturedEnvFile:
-            | {
-                readonly envFilePath: string;
-                readonly contents: string;
-              }
-            | undefined;
+          const docker = captureDockerRun();
           const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-sanitized-"));
           writeConfig(
             workdir,
@@ -485,11 +620,7 @@ describe("legacy gen types", () => {
             const { layer, child } = setup({
               workdir,
               childStdout: ["generated"],
-              onSpawn: (record) => {
-                if (record.command === "docker" && record.args.includes("run")) {
-                  capturedEnvFile = readEnvFileArg(record.args);
-                }
-              },
+              onSpawn: docker.onSpawn,
             });
 
             await Effect.runPromise(
@@ -501,13 +632,11 @@ describe("legacy gen types", () => {
               args: ["container", "inspect", "supabase_db_demo_project_with_spaces"],
             });
             expect(child.spawned[1]?.args).toContain("supabase_network_demo_project_with_spaces");
-            expect(child.spawned[1]?.args.some((arg) => arg.startsWith("PG_META_DB_URL="))).toBe(
-              false,
-            );
-            expect(capturedEnvFile?.contents).toContain(
-              "PG_META_DB_URL=postgresql://postgres:secret-password@db:5432/postgres?connect_timeout=10",
-            );
-            expect(capturedEnvFile && existsSync(capturedEnvFile.envFilePath)).toBe(false);
+            expect(
+              docker.env.has(
+                "PG_META_DB_URL=postgresql://postgres:secret-password@db:5432/postgres?connect_timeout=10",
+              ),
+            ).toBe(true);
           } finally {
             if (previousPassword === undefined) {
               delete process.env["SUPABASE_DB_PASSWORD"];
@@ -519,6 +648,308 @@ describe("legacy gen types", () => {
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
   );
+
+  it.live("forces v9 compat when rest-version reports v9 on a modern database", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-v9-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "demo"',
+              "",
+              "[api]",
+              'schemas = ["public"]',
+              "",
+              "[db]",
+              "major_version = 15",
+              `port = ${port}`,
+            ].join("\n"),
+          );
+          writeTempFile(workdir, "rest-version", "v9.0.1\n");
+
+          const { layer } = setup({
+            workdir,
+            childStdout: ["generated"],
+            onSpawn: docker.onSpawn,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
+          );
+
+          expect(
+            docker.env.has("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=false"),
+          ).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("ignores rest-version v9 marker on databases older than 15", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-pg14-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "demo"',
+              "",
+              "[api]",
+              'schemas = ["public"]',
+              "",
+              "[db]",
+              "major_version = 14",
+              `port = ${port}`,
+            ].join("\n"),
+          );
+          writeTempFile(workdir, "rest-version", "v9.0.1\n");
+
+          const { layer } = setup({
+            workdir,
+            childStdout: ["generated"],
+            onSpawn: docker.onSpawn,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
+          );
+
+          expect(
+            docker.env.has("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=true"),
+          ).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("overrides the pg-meta image version from the pgmeta-version temp file", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-pgmeta-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "demo"',
+              "",
+              "[api]",
+              'schemas = ["public"]',
+              "",
+              "[db]",
+              `port = ${port}`,
+            ].join("\n"),
+          );
+          writeTempFile(workdir, "pgmeta-version", "v0.99.0\n");
+
+          const { layer, child } = setup({
+            workdir,
+            childStdout: ["generated"],
+            onSpawn: docker.onSpawn,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
+          );
+
+          expect(child.spawned[1]?.args).toContain(resolvePgmetaImage("0.99.0"));
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("prefers explicit --schema over config schemas for local generation", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-schema-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "demo"',
+              "",
+              "[api]",
+              'schemas = ["public", "custom"]',
+              "",
+              "[db]",
+              `port = ${port}`,
+            ].join("\n"),
+          );
+          const { layer } = setup({ workdir, childStdout: ["generated"], onSpawn: docker.onSpawn });
+
+          await Effect.runPromise(
+            legacyGenTypes(defaultFlags({ local: true, schema: ["auth", "storage"] })).pipe(
+              Effect.provide(layer),
+            ),
+          );
+
+          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=auth,storage")).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("falls back to the workdir basename when config has no project_id", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-noid-"));
+          writeConfig(
+            workdir,
+            ["[api]", 'schemas = ["public"]', "", "[db]", `port = ${port}`].join("\n"),
+          );
+          const { layer, child } = setup({ workdir, childStdout: ["generated"] });
+
+          await Effect.runPromise(
+            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
+          );
+
+          const inspectId = child.spawned[0]?.args[2] ?? "";
+          expect(inspectId.startsWith("supabase_db_")).toBe(true);
+          expect(inspectId).not.toBe("supabase_db_demo");
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("generates from --project-id without a local project config", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-pid-no-config-"));
+    const { layer, api } = setup({ workdir, skipConfig: true, projectTypes: "ok" });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ projectId: Option.some(LEGACY_VALID_REF) })).pipe(
+        Effect.provide(layer),
+      );
+
+      expect(api.requests[0]).toEqual({
+        method: "generateTypescriptTypes",
+        input: { ref: LEGACY_VALID_REF, included_schemas: "public" },
+      });
+    });
+  });
+
+  it.live("resolves the linked fallback without a local project config", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-fallback-no-config-"));
+    const { layer, api } = setup({
+      workdir,
+      skipConfig: true,
+      projectId: Option.some(LEGACY_VALID_REF),
+      projectTypes: "ok",
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags()).pipe(Effect.provide(layer));
+
+      expect(api.requests[0]).toEqual({
+        method: "generateTypescriptTypes",
+        input: { ref: LEGACY_VALID_REF, included_schemas: "public" },
+      });
+    });
+  });
+
+  it.live("ignores positional language scanning when argv lacks the gen types context", () => {
+    const { layer, api } = setup({
+      args: ["unrelated", "argv"],
+      projectId: Option.some(LEGACY_VALID_REF),
+      projectTypes: "ok",
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ projectId: Option.some(LEGACY_VALID_REF) })).pipe(
+        Effect.provide(layer),
+      );
+
+      expect(api.requests).toHaveLength(1);
+    });
+  });
+
+  it.live("rejects a non-typescript language passed after a -- separator", () => {
+    const { layer } = setup({ args: ["gen", "types", "--", "go"] });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
+      }
+    });
+  });
+
+  it.live("treats a trailing -- with no operand as no positional language", () => {
+    const { layer, api } = setup({
+      args: ["gen", "types", "--"],
+      projectId: Option.some(LEGACY_VALID_REF),
+      projectTypes: "ok",
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags()).pipe(Effect.provide(layer));
+      expect(api.requests).toHaveLength(1);
+    });
+  });
+
+  it.live("treats a positional after a valueless long flag as the language", () => {
+    const { layer } = setup({ args: ["gen", "types", "--local", "go"] });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
+      }
+    });
+  });
+
+  it.live("treats a positional after a valueless short flag as the language", () => {
+    const { layer } = setup({ args: ["gen", "types", "-x", "go"] });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(defaultFlags()).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("use --lang flag to specify the typegen language");
+      }
+    });
+  });
+
+  it.live("prefers explicit --schema on the linked path", () => {
+    const { layer, api } = setup({
+      projectId: Option.some(LEGACY_VALID_REF),
+      projectTypes: "ok",
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ linked: true, schema: ["auth"] })).pipe(
+        Effect.provide(layer),
+      );
+      expect(api.requests[0]).toEqual({
+        method: "generateTypescriptTypes",
+        input: { ref: LEGACY_VALID_REF, included_schemas: "auth" },
+      });
+    });
+  });
+
+  it.live("prefers explicit --schema on the linked fallback path", () => {
+    const { layer, api } = setup({
+      projectId: Option.some(LEGACY_VALID_REF),
+      projectTypes: "ok",
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ schema: ["auth"] })).pipe(Effect.provide(layer));
+      expect(api.requests[0]).toEqual({
+        method: "generateTypescriptTypes",
+        input: { ref: LEGACY_VALID_REF, included_schemas: "auth" },
+      });
+    });
+  });
 
   it.live("fails with not-running parity when the local db container is missing", () => {
     const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-missing-"));
@@ -585,6 +1016,76 @@ describe("legacy gen types", () => {
     },
   );
 
+  it.live("fails local generation when supabase/config.toml is missing", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-no-config-"));
+    const { layer } = setup({ workdir, skipConfig: true });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(defaultFlags({ local: true })).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "failed to load config: supabase/config.toml not found",
+        );
+      }
+    });
+  });
+
+  it.live("reports a generic inspect failure when docker emits no stderr", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-empty-stderr-"));
+    writeConfig(
+      workdir,
+      ['project_id = "demo"', "", "[api]", 'schemas = ["public"]', "", "[db]", "port = 54321"].join(
+        "\n",
+      ),
+    );
+    const { layer } = setup({ workdir, childExitCode: 1 });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(defaultFlags({ local: true })).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("failed to inspect service");
+        expect(String(exit.cause)).not.toContain("failed to inspect service:");
+      }
+    });
+  });
+
+  it.live("defaults schemas to public for a db-url run without a project config", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-dburl-no-config-"));
+          const { layer } = setup({
+            workdir,
+            skipConfig: true,
+            childStdout: ["generated"],
+            onSpawn: docker.onSpawn,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
   it.live("surfaces pg-meta container failures after local db inspection succeeds", () => {
     return Effect.tryPromise({
       try: () =>
@@ -629,19 +1130,10 @@ describe("legacy gen types", () => {
     Effect.tryPromise({
       try: () =>
         withSslProbeServer(async (port) => {
-          let capturedEnvFile:
-            | {
-                readonly envFilePath: string;
-                readonly contents: string;
-              }
-            | undefined;
+          const docker = captureDockerRun();
           const { layer, out, child } = setup({
             childStdout: ["generated"],
-            onSpawn: (record) => {
-              if (record.command === "docker" && record.args.includes("run")) {
-                capturedEnvFile = readEnvFileArg(record.args);
-              }
-            },
+            onSpawn: docker.onSpawn,
           });
 
           await Effect.runPromise(
@@ -658,13 +1150,124 @@ describe("legacy gen types", () => {
           );
 
           expect(out.stderrText).toContain(`Connecting to 127.0.0.1 ${port}`);
-          expect(child.spawned[0]?.args).toContain("--env-file");
-          expect(capturedEnvFile?.contents).toContain("PG_META_GENERATE_TYPES=swift");
-          expect(capturedEnvFile?.contents).toContain("PG_QUERY_TIMEOUT_SECS=20");
-          expect(capturedEnvFile?.contents).toContain(
-            "PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=false",
+          expect(child.spawned[0]?.args).toContain("--network");
+          expect(child.spawned[0]?.args).toContain("host");
+          expect(docker.env.has("PG_META_GENERATE_TYPES=swift")).toBe(true);
+          expect(docker.env.has("PG_QUERY_TIMEOUT_SECS=20")).toBe(true);
+          expect(
+            docker.env.has("PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=false"),
+          ).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("injects the CA bundle env var when the database speaks TLS", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const { layer } = setup({
+            childStdout: ["generated"],
+            onSpawn: docker.onSpawn,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                schema: ["public"],
+              }),
+            ).pipe(Effect.provide(layer)),
           );
-          expect(capturedEnvFile && existsSync(capturedEnvFile.envFilePath)).toBe(false);
+
+          expect(docker.env.startsWith("PG_META_DB_SSL_ROOT_CERT=")).toBe(true);
+        }, "S"),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("omits the CA bundle env var in --debug mode even when TLS is supported", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const { layer } = setup({
+            childStdout: ["generated"],
+            debug: true,
+            onSpawn: docker.onSpawn,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                schema: ["public"],
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(docker.env.startsWith("PG_META_DB_SSL_ROOT_CERT=")).toBe(false);
+        }, "S"),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("warns on stderr when SUPABASE_CA_SKIP_VERIFY is enabled", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const previous = process.env["SUPABASE_CA_SKIP_VERIFY"];
+          process.env["SUPABASE_CA_SKIP_VERIFY"] = "true";
+          try {
+            const { layer, out } = setup({ childStdout: ["generated"] });
+
+            await Effect.runPromise(
+              legacyGenTypes(
+                defaultFlags({
+                  dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                  schema: ["public"],
+                }),
+              ).pipe(Effect.provide(layer)),
+            );
+
+            expect(out.stderrText).toContain(
+              "WARNING: TLS certificate verification disabled for SSL probe (SUPABASE_CA_SKIP_VERIFY=true)",
+            );
+          } finally {
+            if (previous === undefined) {
+              delete process.env["SUPABASE_CA_SKIP_VERIFY"];
+            } else {
+              process.env["SUPABASE_CA_SKIP_VERIFY"] = previous;
+            }
+          }
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("honors the --network-id override for the db-url connection", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const { layer, child } = setup({
+            childStdout: ["generated"],
+            networkId: Option.some("custom-network"),
+            onSpawn: docker.onSpawn,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                dbUrl: Option.some(`postgresql://postgres:postgres@127.0.0.1:${port}/postgres`),
+                schema: ["public"],
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(child.spawned[0]?.args).toContain("custom-network");
+          expect(child.spawned[0]?.args).not.toContain("host");
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
@@ -674,19 +1277,10 @@ describe("legacy gen types", () => {
     Effect.tryPromise({
       try: () =>
         withSslProbeServer(async (port) => {
-          let capturedEnvFile:
-            | {
-                readonly envFilePath: string;
-                readonly contents: string;
-              }
-            | undefined;
+          const docker = captureDockerRun();
           const { layer } = setup({
             childStdout: ["generated"],
-            onSpawn: (record) => {
-              if (record.command === "docker" && record.args.includes("run")) {
-                capturedEnvFile = readEnvFileArg(record.args);
-              }
-            },
+            onSpawn: docker.onSpawn,
           });
 
           await Effect.runPromise(
@@ -702,10 +1296,11 @@ describe("legacy gen types", () => {
             ).pipe(Effect.provide(layer)),
           );
 
-          expect(capturedEnvFile?.contents).toContain(
-            `PG_META_DB_URL=postgresql://postgres:postgres@127.0.0.1:${port}/postgres`,
-          );
-          expect(capturedEnvFile && existsSync(capturedEnvFile.envFilePath)).toBe(false);
+          expect(
+            docker.env.has(
+              `PG_META_DB_URL=postgresql://postgres:postgres@127.0.0.1:${port}/postgres`,
+            ),
+          ).toBe(true);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
@@ -761,20 +1356,11 @@ describe("legacy gen types", () => {
     Effect.tryPromise({
       try: () =>
         withSslProbeServer(async (port) => {
-          let capturedEnvFile:
-            | {
-                readonly envFilePath: string;
-                readonly contents: string;
-              }
-            | undefined;
+          const docker = captureDockerRun();
           const { layer } = setup({
             args: ["gen", "types", "go", "--lang", "go"],
             childStdout: ["generated"],
-            onSpawn: (record) => {
-              if (record.command === "docker" && record.args.includes("run")) {
-                capturedEnvFile = readEnvFileArg(record.args);
-              }
-            },
+            onSpawn: docker.onSpawn,
           });
 
           await Effect.runPromise(
@@ -787,8 +1373,7 @@ describe("legacy gen types", () => {
             ).pipe(Effect.provide(layer)),
           );
 
-          expect(capturedEnvFile?.contents).toContain("PG_META_GENERATE_TYPES=go");
-          expect(capturedEnvFile && existsSync(capturedEnvFile.envFilePath)).toBe(false);
+          expect(docker.env.has("PG_META_GENERATE_TYPES=go")).toBe(true);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),

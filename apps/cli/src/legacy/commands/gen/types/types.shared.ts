@@ -1,6 +1,10 @@
 import { connect as connectSocket } from "node:net";
 import { DEFAULT_VERSIONS, dockerImageForService } from "@supabase/stack/effect";
-import { Data, Effect, Option } from "effect";
+import { Effect } from "effect";
+import {
+  LegacyInvalidGenTypesDatabaseUrlError,
+  LegacyInvalidGenTypesDurationError,
+} from "./types.errors.ts";
 import caProd2021 from "./templates/prod-ca-2021.ts";
 import caProd2025 from "./templates/prod-ca-2025.ts";
 import caStaging2021 from "./templates/staging-ca-2021.ts";
@@ -24,16 +28,6 @@ const DURATION_PART_PATTERN = new RegExp(
   String.raw`([+-]?(?:\d+\.?\d*|\.\d+))(ns|us|\u00b5s|\u03bcs|ms|s|m|h)`,
   "g",
 );
-
-export class InvalidGenTypesDurationError extends Data.TaggedError("InvalidGenTypesDurationError")<{
-  readonly message: string;
-}> {}
-
-export class InvalidGenTypesDatabaseUrlError extends Data.TaggedError(
-  "InvalidGenTypesDatabaseUrlError",
-)<{
-  readonly message: string;
-}> {}
 
 export interface LegacyGenTypesDbTarget {
   readonly url: string;
@@ -74,12 +68,12 @@ export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
 
 export function parseQueryTimeoutSeconds(
   raw: string,
-): Effect.Effect<number, InvalidGenTypesDurationError> {
+): Effect.Effect<number, LegacyInvalidGenTypesDurationError> {
   return Effect.gen(function* () {
     const input = raw.trim();
     if (input.length === 0) {
       return yield* Effect.fail(
-        new InvalidGenTypesDurationError({
+        new LegacyInvalidGenTypesDurationError({
           message: `invalid duration ${JSON.stringify(raw)}`,
         }),
       );
@@ -100,7 +94,7 @@ export function parseQueryTimeoutSeconds(
       }
       if (match.index !== consumed) {
         return yield* Effect.fail(
-          new InvalidGenTypesDurationError({
+          new LegacyInvalidGenTypesDurationError({
             message: `invalid duration ${JSON.stringify(raw)}`,
           }),
         );
@@ -113,7 +107,7 @@ export function parseQueryTimeoutSeconds(
 
     if (!Number.isFinite(totalMillis) || consumed !== input.length || totalMillis < 0) {
       return yield* Effect.fail(
-        new InvalidGenTypesDurationError({
+        new LegacyInvalidGenTypesDurationError({
           message: `invalid duration ${JSON.stringify(raw)}`,
         }),
       );
@@ -127,8 +121,13 @@ export function getServicesHostname() {
   return process.env["SUPABASE_SERVICES_HOSTNAME"] || "127.0.0.1";
 }
 
-export function localNetworkId(projectId: string, networkId: Option.Option<string>) {
-  return Option.isSome(networkId) ? networkId.value : localDockerId("network", projectId);
+/**
+ * The default generated docker network name for a local project (Go's `utils.NetId`
+ * fallback, `GetId("network")`). The `--network-id` override is applied at the docker
+ * invocation site, mirroring Go's `DockerStart`.
+ */
+export function localNetworkId(projectId: string) {
+  return localDockerId("network", projectId);
 }
 
 export function localDbContainerId(projectId: string) {
@@ -141,7 +140,7 @@ export function localDbPassword() {
 
 export function parseDatabaseUrl(
   url: string,
-): Effect.Effect<LegacyGenTypesDbTarget, InvalidGenTypesDatabaseUrlError> {
+): Effect.Effect<LegacyGenTypesDbTarget, LegacyInvalidGenTypesDatabaseUrlError> {
   return Effect.try({
     try: () => {
       const parsed = new URL(url);
@@ -159,7 +158,7 @@ export function parseDatabaseUrl(
       } satisfies LegacyGenTypesDbTarget;
     },
     catch: (cause) =>
-      new InvalidGenTypesDatabaseUrlError({
+      new LegacyInvalidGenTypesDatabaseUrlError({
         message: `failed to parse connection string: ${cause instanceof Error ? cause.message : String(cause)}`,
       }),
   });
