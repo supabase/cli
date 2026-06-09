@@ -278,6 +278,52 @@ func TestGetMigrationsCatalogRefUsesBaselineWhenNoMigrations(t *testing.T) {
 	assert.Equal(t, baselinePath, ref)
 }
 
+func TestGetGenerateBaselineCatalogRefSetsUpPlatformBaseline(t *testing.T) {
+	// The baseline catalog is reused as the diff source for sync-with-no-migrations
+	// (getMigrationsCatalogRef). Since the declarative target now provisions the
+	// Supabase platform baseline, the baseline catalog must represent the same
+	// platform baseline (not the empty image) so platform objects cancel out of the
+	// diff instead of surfacing as spurious additions. Assert setup runs before the
+	// catalog is exported.
+	fsys := afero.NewMemMapFs()
+	require.NoError(t, fsys.MkdirAll(filepath.Join(utils.TempDir, "pgdelta"), 0755))
+
+	originalCreateShadow := createShadow
+	originalSetupShadow := setupShadowDatabase
+	originalExportCatalog := exportCatalog
+	t.Cleanup(func() {
+		createShadow = originalCreateShadow
+		setupShadowDatabase = originalSetupShadow
+		exportCatalog = originalExportCatalog
+	})
+
+	shadowConfig := pgconn.Config{Host: "127.0.0.1", Port: 5432, User: "postgres", Password: "postgres", Database: "postgres"}
+	createShadow = func(_ context.Context) (string, pgconn.Config, error) {
+		return "test-shadow-container", shadowConfig, nil
+	}
+	var order []string
+	setupShadowDatabase = func(_ context.Context, container string, _ afero.Fs, _ ...func(*pgx.ConnConfig)) error {
+		assert.Equal(t, "test-shadow-container", container)
+		order = append(order, "setup")
+		return nil
+	}
+	exportCatalog = func(_ context.Context, _ string, role string, _ ...func(*pgx.ConnConfig)) (string, error) {
+		assert.Equal(t, "postgres", role)
+		order = append(order, "export")
+		return `{"version":1}`, nil
+	}
+
+	ref, err := getGenerateBaselineCatalogRef(t.Context(), false, fsys)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"setup", "export"}, order, "platform baseline must be provisioned before the baseline catalog is exported")
+
+	cachePath := filepath.Join(pgDeltaTempPath(), fmt.Sprintf(baselineCatalogName, baselineVersionToken()))
+	assert.Equal(t, cachePath, ref.ref)
+	cached, err := afero.ReadFile(fsys, cachePath)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"version":1}`, string(cached))
+}
+
 func TestHashDeclarativeSchemasChangesWithContent(t *testing.T) {
 	fsys := afero.NewMemMapFs()
 	p1 := filepath.Join(utils.GetDeclarativeDir(), "schemas", "public", "tables", "a.sql")
@@ -466,9 +512,8 @@ func TestGenerateReusesBaselineShadowForDeclarativeWarmup(t *testing.T) {
 		}, nil
 	}
 	setupCalled := false
-	setupShadowDatabase = func(_ context.Context, container string, _ afero.Fs, _ ...func(*pgx.ConnConfig)) error {
+	setupShadowDatabase = func(_ context.Context, _ string, _ afero.Fs, _ ...func(*pgx.ConnConfig)) error {
 		setupCalled = true
-		assert.Equal(t, shadowContainer, container)
 		return nil
 	}
 	declarativeExportRef = func(_ context.Context, sourceRef, _ string, _ []string, _ string, _ ...func(*pgx.ConnConfig)) (diff.DeclarativeOutput, error) {
@@ -498,7 +543,7 @@ func TestGenerateReusesBaselineShadowForDeclarativeWarmup(t *testing.T) {
 
 	err := Generate(t.Context(), nil, pgconn.Config{Host: "127.0.0.1", Port: 5432, User: "postgres", Password: "postgres", Database: "postgres"}, true, false, fsys)
 	require.NoError(t, err)
-	assert.True(t, setupCalled, "generate should set up the platform baseline on the reused shadow before applying declarative schema")
+	assert.False(t, setupCalled, "generate must not re-run platform setup on the reused shadow; the baseline resolver already provisioned it")
 	assert.True(t, applyCalled, "generate should apply declarative schema using reused baseline shadow")
 	assert.False(t, fallbackCalled, "fallback declarative resolver should not run when baseline shadow is reusable")
 
