@@ -1,0 +1,115 @@
+name: API Package Sync
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    name: Detect OpenAPI changes
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    outputs:
+      has_changes: ${{ steps.compare.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Compare upstream OpenAPI spec
+        id: compare
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          remote_spec="$RUNNER_TEMP/openapi.remote.json"
+          remote_normalized="$RUNNER_TEMP/openapi.remote.normalized.json"
+          tracked_normalized="$RUNNER_TEMP/openapi.tracked.normalized.json"
+          normalize_filter="$RUNNER_TEMP/normalize-openapi.jq"
+
+          curl -fsS https://api.supabase.com/api/v1-json -o "$remote_spec"
+
+          cat > "$normalize_filter" <<'JQ'
+          def pointer_path($p): $p | split("/")[1:] | map(gsub("~1"; "/") | gsub("~0"; "~"));
+          reduce ($overrides[0] // [])[] as $op (.;
+            if $op.op == "test" then
+              if getpath(pointer_path($op.path)) == $op.value then
+                .
+              else
+                error("OpenAPI override test failed at \($op.path)")
+              end
+            elif $op.op == "replace" then
+              setpath(pointer_path($op.path); $op.value)
+            else
+              error("Unsupported OpenAPI override op \($op.op)")
+            end
+          )
+          JQ
+
+          jq -S --slurpfile overrides packages/api/scripts/openapi-overrides.json \
+            -f "$normalize_filter" "$remote_spec" > "$remote_normalized"
+          jq -S . packages/api/src/generated/openapi.json > "$tracked_normalized"
+
+          if cmp -s "$remote_normalized" "$tracked_normalized"; then
+            echo "No upstream OpenAPI changes detected."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Upstream OpenAPI changes detected."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            diff -u "$tracked_normalized" "$remote_normalized" | sed -n '1,160p' || true
+          fi
+
+  sync:
+    name: Sync API package
+    needs: detect
+    if: needs.detect.outputs.has_changes == 'true'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Regenerate API package
+        run: pnpm generate
+        working-directory: packages/api
+
+      - name: Check for generated changes
+        id: check
+        run: |
+          if git diff --ignore-space-at-eol --exit-code --quiet packages/api/src/generated; then
+            echo "No generated changes detected."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Generated changes detected."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate token
+        if: steps.check.outputs.has_changes == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-contents: write
+
+      - name: Create Pull Request
+        if: steps.check.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          commit-message: "chore(api): sync Management API OpenAPI spec"
+          title: "chore(api): sync Management API OpenAPI spec"
+          body: |
+            This PR was automatically created to sync the generated `@supabase/api` package with the latest Management API OpenAPI document.
+
+            Changes were detected in the upstream OpenAPI document exposed by `https://api.supabase.com/api/v1-json`.
+          branch: sync/api-package
+          base: develop
