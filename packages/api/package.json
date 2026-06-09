@@ -44,7 +44,8 @@
       "src/**/*.test.ts",
       "scripts/download-openapi.ts",
       "scripts/download-openapi.unit.test.ts",
-      "scripts/generate.ts"
+      "scripts/generate.ts",
+      "scripts/generate.unit.test.ts"
     ],
     "ignoreDependencies": [
       "undici",
