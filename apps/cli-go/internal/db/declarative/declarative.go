@@ -31,10 +31,13 @@ const (
 	// pgDeltaTempDir namespaces pg-delta artifacts under .temp to make ownership
 	// and cleanup intent explicit.
 	pgDeltaTempDir = "pgdelta"
-	// baselineCatalogName caches the catalog of an empty shadow database.
+	// baselineCatalogName caches the catalog of a shadow database with the Supabase
+	// platform baseline (auth/storage/realtime) provisioned but no user migrations
+	// applied — equivalent to diff.MigrateShadowDatabase with zero migrations.
 	//
-	// It is used as the "source" baseline when generating declarative files from
-	// a real database target.
+	// It is used as the "source" baseline both when generating declarative files
+	// from a real database target and when syncing with no local migrations, so it
+	// must stay in parity with the declarative target's platform baseline.
 	baselineCatalogName = "catalog-baseline-%s.json"
 	// declarativeCatalogName stores catalogs keyed by declarative-content hash.
 	declarativeCatalogName = "catalog-%s-declarative-%s-%d.json"
@@ -63,6 +66,10 @@ var (
 	// Supabase-managed dependencies (auth.sessions, auth.jwt(), ...) resolve. It is
 	// a package var so tests can inject a no-op without a real shadow database.
 	setupShadowDatabase = diff.SetupShadowDatabase
+	// createShadow provisions a healthy shadow database container. It is a package
+	// var so tests can exercise the baseline/migrations/declarative paths without a
+	// real Docker daemon.
+	createShadow = createShadowContainer
 	// generateBaselineCatalogRefResolver allows Generate to reuse a freshly
 	// provisioned baseline shadow for declarative cache warmup.
 	generateBaselineCatalogRefResolver = getGenerateBaselineCatalogRef
@@ -123,13 +130,9 @@ func Generate(ctx context.Context, schema []string, config pgconn.Config, overwr
 	// can reuse it without provisioning another shadow database.
 	if !noCache {
 		if baseline.shadow != nil {
-			// The baseline catalog was already exported from the empty image
-			// baseline above. Set up the platform baseline on the reused shadow
-			// before applying declarative schemas so Supabase-managed dependencies
-			// (auth.sessions, auth.jwt(), ...) resolve during cache warmup.
-			if err := setupShadowDatabase(ctx, baseline.shadow.container, fsys, options...); err != nil {
-				return err
-			}
+			// The reused baseline shadow already has the platform baseline
+			// provisioned (getGenerateBaselineCatalogRef), so apply declarative
+			// schemas directly on top of it without setting it up again.
 			hash, err := hashDeclarativeSchemas(fsys)
 			if err != nil {
 				return err
@@ -308,6 +311,18 @@ func getGenerateBaselineCatalogRef(ctx context.Context, noCache bool, fsys afero
 		container: shadowID,
 		config:    config,
 	}
+	// Provision the Supabase platform baseline before exporting so the baseline
+	// catalog represents "platform baseline, no user migrations" — the same
+	// semantics as diff.MigrateShadowDatabase with zero migrations. This baseline is
+	// reused as the diff source by both Generate (against the live database) and
+	// sync-with-no-migrations (getMigrationsCatalogRef). Its starting point must
+	// match the declarative target, which also sets up the platform baseline;
+	// otherwise platform objects (auth/storage/realtime) surface as spurious
+	// additions in generated migrations.
+	if err := setupShadowDatabase(ctx, shadow.container, fsys, options...); err != nil {
+		shadow.cleanup()
+		return generateBaselineCatalogRef{}, err
+	}
 	snapshot, err := exportCatalog(ctx, utils.ToPostgresURL(config), "postgres", options...)
 	if err != nil {
 		shadow.cleanup()
@@ -345,8 +360,9 @@ func getMigrationsCatalogRef(ctx context.Context, noCache bool, fsys afero.Fs, p
 	if err != nil {
 		return "", err
 	}
-	// For sync with no local migrations, reuse an existing baseline
-	// snapshot instead of provisioning a fresh shadow database.
+	// For sync with no local migrations, the migrations catalog is just the
+	// platform baseline. Reuse an existing baseline snapshot (which now also
+	// represents the platform baseline) instead of provisioning a fresh shadow.
 	if !noCache && len(migrations) == 0 {
 		baselinePath := filepath.Join(pgDeltaTempPath(), fmt.Sprintf(baselineCatalogName, baselineVersionToken()))
 		if ok, err := afero.Exists(fsys, baselinePath); err != nil {
@@ -439,9 +455,9 @@ func writeDeclarativeCatalogFromConfig(ctx context.Context, config pgconn.Config
 	return path, nil
 }
 
-// createShadow provisions and health-checks the temporary Postgres container
-// used by declarative conversion and diff operations.
-func createShadow(ctx context.Context) (string, pgconn.Config, error) {
+// createShadowContainer provisions and health-checks the temporary Postgres
+// container used by declarative conversion and diff operations.
+func createShadowContainer(ctx context.Context) (string, pgconn.Config, error) {
 	fmt.Fprintln(os.Stderr, "Creating shadow database...")
 	shadow, err := diff.CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
 	if err != nil {
