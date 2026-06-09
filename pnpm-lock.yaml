@@ -186,6 +186,30 @@ importers:
         specifier: ^2.9.0
         version: 2.9.0
     optionalDependencies:
+      '@parcel/watcher-darwin-arm64':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-darwin-x64':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-linux-arm64-glibc':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-linux-arm64-musl':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-linux-x64-glibc':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-linux-x64-musl':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-win32-arm64':
+        specifier: 2.5.6
+        version: 2.5.6
+      '@parcel/watcher-win32-x64':
+        specifier: 2.5.6
+        version: 2.5.6
       '@supabase/cli-darwin-arm64':
         specifier: workspace:*
         version: link:../../packages/cli-darwin-arm64
