@@ -69,12 +69,7 @@ func TestRun(t *testing.T) {
 		// Setup mock postgres: with auto_expose_new_tables unset, the shadow database setup
 		// revokes the default Data API GRANTs before creating the regression template.
 		conn := pgtest.NewConn()
-		conn.Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
+		helper.MockApiPrivilegesRevoke(conn).
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		defer conn.Close(t)
@@ -138,13 +133,8 @@ func TestMigrateShadow(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA").
-			Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
+			Reply("CREATE SCHEMA")
+		helper.MockApiPrivilegesRevoke(conn).
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		helper.MockMigrationHistory(conn).
@@ -323,13 +313,8 @@ create schema public`)
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA").
-			Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
+			Reply("CREATE SCHEMA")
+		helper.MockApiPrivilegesRevoke(conn).
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		helper.MockMigrationHistory(conn).

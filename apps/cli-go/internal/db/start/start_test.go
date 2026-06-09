@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/cast"
 	"github.com/supabase/cli/pkg/pgtest"
@@ -87,12 +88,7 @@ func TestStartDatabase(t *testing.T) {
 		// the default Data API GRANTs before seeding roles.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
+		helper.MockApiPrivilegesRevoke(conn).
 			Query(roles).
 			Reply("CREATE ROLE")
 		// Run test
@@ -258,13 +254,8 @@ func TestSetupDatabase(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA").
-			Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
+			Reply("CREATE SCHEMA")
+		helper.MockApiPrivilegesRevoke(conn).
 			Query(roles).
 			Reply("CREATE ROLE")
 		// Run test
@@ -326,13 +317,8 @@ func TestSetupDatabase(t *testing.T) {
 		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
 			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA").
-			Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
+			Reply("CREATE SCHEMA")
+		helper.MockApiPrivilegesRevoke(conn).
 			Query(roles).
 			Reply("CREATE ROLE")
 		// Run test
@@ -385,12 +371,7 @@ func TestSetupDatabase(t *testing.T) {
 		// Setup mock postgres: the default-privilege revoke runs before roles.sql is read
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES")
+		helper.MockApiPrivilegesRevoke(conn)
 		// Run test
 		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -437,12 +418,7 @@ func TestStartDatabaseWithCustomSettings(t *testing.T) {
 		// are revoked by default.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES")
+		helper.MockApiPrivilegesRevoke(conn)
 
 		// Run test
 		err := StartDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)

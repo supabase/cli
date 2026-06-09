@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgtest"
 	"github.com/supabase/cli/pkg/storage"
@@ -66,12 +67,7 @@ func TestResetCommand(t *testing.T) {
 		// are revoked by default during database setup.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES")
+		helper.MockApiPrivilegesRevoke(conn)
 		// Restarts services
 		utils.StorageId = "test-storage"
 		utils.GotrueId = "test-auth"
@@ -169,13 +165,8 @@ func TestInitDatabase(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		conn.Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA").
-			Query("alter default privileges for role postgres in schema public\n  revoke select, insert, update, delete on tables from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke usage, select on sequences from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES").
-			Query("alter default privileges for role postgres in schema public\n  revoke execute on functions from anon, authenticated, service_role").
-			Reply("ALTER DEFAULT PRIVILEGES")
+			Reply("CREATE SCHEMA")
+		helper.MockApiPrivilegesRevoke(conn)
 		// Run test
 		assert.NoError(t, initDatabase(context.Background(), conn.Intercept))
 	})
