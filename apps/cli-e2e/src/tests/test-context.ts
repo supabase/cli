@@ -145,6 +145,7 @@ export function testParity(
     failureType?: FailureType;
     workspaceSetup?: (dir: string) => void;
     sortStdoutRows?: boolean;
+    normalizeVersions?: boolean;
   },
 ): void {
   const label = opts?.failureType
@@ -169,6 +170,7 @@ export function testParity(
           accessToken: ACCESS_TOKEN,
           workspaceSetup: opts?.workspaceSetup,
           sortStdoutRows: opts?.sortStdoutRows,
+          normalize: { versions: opts?.normalizeVersions },
         },
         cmd,
       );

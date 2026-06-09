@@ -1,5 +1,8 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyGenTypes } from "./types.handler.ts";
 
 const LANG_VALUES = ["typescript", "go", "swift", "python"] as const;
@@ -21,8 +24,8 @@ const config = {
     Flag.optional,
   ),
   lang: Flag.choice("lang", LANG_VALUES).pipe(
-    Flag.withDescription("Output language of the generated types."),
-    Flag.optional,
+    Flag.withDescription("Output language of the generated types. (default typescript)"),
+    Flag.withDefault("typescript"),
   ),
   schema: Flag.string("schema").pipe(
     Flag.withAlias("s"),
@@ -30,15 +33,15 @@ const config = {
     Flag.atLeast(0),
   ),
   swiftAccessControl: Flag.choice("swift-access-control", SWIFT_ACCESS_CONTROL_VALUES).pipe(
-    Flag.withDescription("Access control for Swift generated types."),
-    Flag.optional,
+    Flag.withDescription("Access control for Swift generated types. (default internal)"),
+    Flag.withDefault("internal"),
   ),
   postgrestV9Compat: Flag.boolean("postgrest-v9-compat").pipe(
     Flag.withDescription("Generate types compatible with PostgREST v9 and below."),
   ),
   queryTimeout: Flag.string("query-timeout").pipe(
-    Flag.withDescription("Maximum timeout allowed for the database query."),
-    Flag.optional,
+    Flag.withDescription("Maximum timeout allowed for the database query. (default 15s)"),
+    Flag.withDefault("15s"),
   ),
 } as const;
 
@@ -65,5 +68,11 @@ export const legacyGenTypesCommand = Command.make("types", config).pipe(
       description: "Generate types from a database URL",
     },
   ]),
-  Command.withHandler((flags) => legacyGenTypes(flags)),
+  Command.withHandler((flags) =>
+    legacyGenTypes(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-id"] }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["gen", "types"])),
 );

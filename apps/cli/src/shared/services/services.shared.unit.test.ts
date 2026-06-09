@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { Effect, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
+import serviceImagesDockerfile from "../../../../cli-go/pkg/config/templates/Dockerfile" with { type: "text" };
 import {
   fetchLinkedServiceVersions,
   listLocalServiceVersions,
+  localServiceImagesFromDockerfile,
+  parseDockerfileServiceImages,
   renderServicesTable,
   renderServicesWarning,
 } from "./services.shared.ts";
@@ -17,6 +20,54 @@ const runLinkedFetch = (input: Parameters<typeof fetchLinkedServiceVersions>[0])
   Effect.runPromise(fetchLinkedServiceVersions(input).pipe(Effect.provide(FetchHttpClient.layer)));
 
 describe("services shared", () => {
+  test("parses service images from Dockerfile FROM aliases", () => {
+    expect(
+      parseDockerfileServiceImages(`
+        # comment
+        FROM supabase/postgres:17.6.1.132 AS pg
+
+        RUN echo ignored
+        FROM localhost:5000/custom/image:1.2.3 AS custom
+      `),
+    ).toEqual([
+      { alias: "pg", image: "supabase/postgres:17.6.1.132" },
+      { alias: "custom", image: "localhost:5000/custom/image:1.2.3" },
+    ]);
+  });
+
+  test("fails clearly when the Dockerfile manifest misses a required service alias", () => {
+    expect(() =>
+      localServiceImagesFromDockerfile("FROM supabase/postgres:17.6.1.132 AS pg\n"),
+    ).toThrow("Missing service image alias 'gotrue' in Dockerfile manifest.");
+  });
+
+  test("derives local service versions from the Go Dockerfile manifest", () => {
+    const rows = listLocalServiceVersions();
+    const dockerfileImages = localServiceImagesFromDockerfile(serviceImagesDockerfile);
+    const expectedRows = dockerfileImages.map((service) => {
+      const tagSeparator = service.image.lastIndexOf(":");
+      return {
+        name: service.image.slice(0, tagSeparator),
+        local: service.image.slice(tagSeparator + 1),
+        remote: "",
+      };
+    });
+
+    expect(rows).toEqual(expectedRows);
+    expect(rows.map((row) => row.name)).toEqual([
+      "supabase/postgres",
+      "supabase/gotrue",
+      "postgrest/postgrest",
+      "supabase/realtime",
+      "supabase/storage-api",
+      "supabase/edge-runtime",
+      "supabase/studio",
+      "supabase/postgres-meta",
+      "supabase/logflare",
+      "supabase/supavisor",
+    ]);
+  });
+
   test("returns postgres only when no service-role key is available", async () => {
     const server = Bun.serve({
       port: 0,
