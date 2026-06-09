@@ -114,7 +114,10 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
         // Detect pre-existence before enabling so the drop is skipped when pgTAP
         // was already installed (Go keys this off an OnNotice 42710 callback,
         // which @effect/sql-pg does not expose — equivalent observable result).
-        const alreadyExists = yield* session.extensionExists("extensions", "pgtap");
+        // Checked by extension name only, regardless of schema: Go's duplicate-object
+        // notice fires for any pre-existing pgTAP, so a pgTAP the user installed in
+        // e.g. `public` must also be detected and left untouched.
+        const alreadyExists = yield* session.extensionExists("pgtap");
         yield* session.exec(ENABLE_PGTAP).pipe(
           Effect.mapError(
             (cause) =>

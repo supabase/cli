@@ -1,11 +1,16 @@
 import { Effect, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
+import { LegacyDbConfigLoadError } from "./legacy-db-config.errors.ts";
 
 /**
- * Subset of `supabase/config.toml` the db-config resolver needs. Read
- * tolerantly (mirrors `config push`'s raw-presence reader): a missing or
- * malformed file yields defaults rather than failing, matching how Go falls
- * back to `config.NewConfig()` defaults.
+ * Subset of `supabase/config.toml` (plus the linked pooler URL) the db-config
+ * resolver needs.
+ *
+ * Mirrors Go's `flags.LoadConfig` → `config.Load`
+ * (`apps/cli-go/internal/utils/flags/config_path.go:10`,
+ * `pkg/config/config.go`): a **missing** config file yields `config.NewConfig()`
+ * defaults, but a **malformed** file is a hard error (Go returns the decode error
+ * and aborts the command rather than running against the default local database).
  */
 interface LegacyDbTomlValues {
   /** `[db] port`, default 54322 (`packages/config/src/db.ts`). */
@@ -14,7 +19,12 @@ interface LegacyDbTomlValues {
   readonly shadowPort: number;
   /** `[db] password`, runtime default `"postgres"` (not in the config schema). */
   readonly password: string;
-  /** `[db.pooler] connection_string`, used by the linked pooler fallback. */
+  /**
+   * Linked connection pooler URL, used by the `--linked` pooler fallback. Written
+   * by `supabase link` to `supabase/.temp/pooler-url` — Go reads it from there, not
+   * from config.toml (the config field is tagged `toml:"-"`, `pkg/config/db.go:116`;
+   * it is populated programmatically in `config.Load`, `config.go:626`).
+   */
   readonly poolerConnectionString: Option.Option<string>;
   /** top-level `project_id`, used to name the local docker network. */
   readonly projectId: Option.Option<string>;
@@ -41,34 +51,54 @@ function nonEmptyString(value: unknown): Option.Option<string> {
 }
 
 /**
- * Reads `<workdir>/supabase/config.toml` and extracts the db connection subtree.
- * Never fails — any read/parse error returns the default values. `fs`/`path` are
- * passed in so the resolver can capture them once and keep its own `R` at `never`.
+ * Reads `<workdir>/supabase/config.toml` (db subtree + project id) and the linked
+ * `<workdir>/supabase/.temp/pooler-url`. `fs`/`path` are passed in so the resolver
+ * can capture them once and keep its own `R` at `never`.
+ *
+ * Fails with `LegacyDbConfigLoadError` only when the config file is present but
+ * unparseable; an absent file (and an absent/empty pooler-url file) is not an error.
  */
 export const legacyReadDbToml = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
 ) {
-  const configPath = path.join(workdir, "supabase", "config.toml");
-  const content = yield* fs.readFileString(configPath).pipe(Effect.orElseSucceed(() => ""));
+  const supabaseDir = path.join(workdir, "supabase");
+  const configPath = path.join(supabaseDir, "config.toml");
 
-  let doc: RawDoc | undefined;
-  try {
-    doc = asRecord(SmolToml.parse(content));
-  } catch {
-    doc = undefined;
+  // Distinguish "absent" (→ defaults) from "present but malformed" (→ fail).
+  const maybeContent = yield* fs.readFileString(configPath).pipe(Effect.option);
+
+  let db: RawDoc | undefined;
+  let projectId = Option.none<string>();
+  if (Option.isSome(maybeContent)) {
+    let doc: RawDoc | undefined;
+    try {
+      doc = asRecord(SmolToml.parse(maybeContent.value));
+    } catch (cause) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: `failed to load config: ${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
+      );
+    }
+    db = asRecord(doc?.["db"]);
+    projectId = nonEmptyString(doc?.["project_id"]);
   }
 
-  const db = asRecord(doc?.["db"]);
-  const pooler = asRecord(db?.["pooler"]);
+  // Go: `config.go:626` — read the linked pooler URL from `.temp/pooler-url` and
+  // treat it as configured only when the file exists and is non-empty.
+  const poolerUrlPath = path.join(supabaseDir, ".temp", "pooler-url");
+  const poolerConnectionString = yield* fs
+    .readFileString(poolerUrlPath)
+    .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
 
   const values: LegacyDbTomlValues = {
     port: numberOr(db?.["port"], DEFAULT_PORT),
     shadowPort: numberOr(db?.["shadow_port"], DEFAULT_SHADOW_PORT),
     password: typeof db?.["password"] === "string" ? db["password"] : DEFAULT_PASSWORD,
-    poolerConnectionString: nonEmptyString(pooler?.["connection_string"]),
-    projectId: nonEmptyString(doc?.["project_id"]),
+    poolerConnectionString,
+    projectId,
   };
   return values;
 });

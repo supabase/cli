@@ -14,10 +14,10 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
+import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import {
   buildPostgresUrl,
   defaultSchemas,
-  getServicesHostname,
   localDbContainerId,
   localDbPassword,
   localNetworkId,
@@ -400,7 +400,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         }),
         host: "db",
         port: 5432,
-        probeHost: getServicesHostname(),
+        probeHost: legacyGetHostname(),
         probePort: loaded.config.db.port,
         networkMode: localNetworkId(projectId),
         includedSchemas,

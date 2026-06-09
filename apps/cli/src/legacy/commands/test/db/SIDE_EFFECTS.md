@@ -2,12 +2,13 @@
 
 ## Files Read
 
-| Path                                 | Format | When                                                                                                       |
-| ------------------------------------ | ------ | ---------------------------------------------------------------------------------------------------------- |
-| `<cwd>/supabase/tests/**/*.{sql,pg}` | SQL    | default test discovery when no `[path]` given                                                              |
-| `<path...>`                          | SQL    | when explicit test files/dirs are passed                                                                   |
-| `<workdir>/supabase/config.toml`     | TOML   | always (tolerant): `db.port`, `db.shadow_port`, `db.password`, `db.pooler.connection_string`, `project_id` |
-| `~/.supabase/access-token`           | text   | `--linked` only, when `SUPABASE_ACCESS_TOKEN` unset                                                        |
+| Path                                  | Format | When                                                                                                                                                       |
+| ------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<cwd>/supabase/tests/**/*.{sql,pg}`  | SQL    | default test discovery when no `[path]` given                                                                                                              |
+| `<path...>`                           | SQL    | when explicit test files/dirs are passed                                                                                                                   |
+| `<workdir>/supabase/config.toml`      | TOML   | always: `db.port`, `db.shadow_port`, `db.password`, `project_id`. Absent → defaults; **present but malformed → command fails** (Go's `config.Load` parity) |
+| `<workdir>/supabase/.temp/pooler-url` | text   | `--linked` pooler fallback only — the connection-pooler URL written by `supabase link` (Go reads it here, not from config.toml)                            |
+| `~/.supabase/access-token`            | text   | `--linked` only, when `SUPABASE_ACCESS_TOKEN` unset                                                                                                        |
 
 ## Files Written
 
@@ -17,10 +18,12 @@
 
 ## Database
 
-| Statement                                                     | When                                                                        |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `create extension if not exists pgtap with schema extensions` | always, before running tests                                                |
-| `drop extension if exists pgtap`                              | only if pgTAP did not already exist; failure is logged to stderr, non-fatal |
+| Statement                                                     | When                                                                                      |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `select 1 from pg_extension where extname = 'pgtap'`          | always, before enabling — pre-existence check (by extension name, any schema)             |
+| `set session role postgres`                                   | after connect when the user is `supabase_admin` / `cli_login_*` (remote linked temp role) |
+| `create extension if not exists pgtap with schema extensions` | always, before running tests                                                              |
+| `drop extension if exists pgtap`                              | only if pgTAP did not already exist; failure is logged to stderr, non-fatal               |
 
 ## Docker
 
@@ -42,11 +45,13 @@ One-shot `docker run --rm supabase/pg_prove:3.36`:
 
 ## Environment Variables
 
-| Variable                | Purpose                                        | Required?                       |
-| ----------------------- | ---------------------------------------------- | ------------------------------- |
-| `SUPABASE_DB_PASSWORD`  | `--linked`: skip temporary login-role creation | no                              |
-| `SUPABASE_ACCESS_TOKEN` | `--linked`: Management API auth                | no (falls back to keyring/file) |
-| `DEBUG` / `--debug`     | append `--verbose` to `pg_prove`               | no                              |
+| Variable                     | Purpose                                                              | Required?                                     |
+| ---------------------------- | -------------------------------------------------------------------- | --------------------------------------------- |
+| `SUPABASE_DB_PASSWORD`       | `--linked`: skip temporary login-role creation                       | no                                            |
+| `SUPABASE_ACCESS_TOKEN`      | `--linked`: Management API auth                                      | no (falls back to keyring/file)               |
+| `SUPABASE_SERVICES_HOSTNAME` | `--local`: overrides the local DB host (dev-container/remote Docker) | no (defaults via `DOCKER_HOST` → `127.0.0.1`) |
+| `DOCKER_HOST`                | `--local`: tcp daemon host used when no services-hostname override   | no                                            |
+| `DEBUG` / `--debug`          | append `--verbose` to `pg_prove`                                     | no                                            |
 
 ## Exit Codes
 
@@ -76,8 +81,14 @@ spinners are suppressed; a non-zero `pg_prove` exit still fails the command (exi
 
 - Native TypeScript port (Phase 1+); no Go proxy. Hidden command (matches Go).
 - Postgres access uses `@effect/sql-pg`. Go detects "pgTAP already installed" via a
-  `pgx` `OnNotice` (code 42710) callback, which `@effect/sql-pg` does not expose; the
-  port instead checks `pg_extension` before enabling — same observable drop-skip behavior.
+  `pgx` `OnNotice` (code 42710 `duplicate_object`) callback, which `@effect/sql-pg`
+  does not expose; the port instead checks `pg_extension` by extension name (any
+  schema) before enabling — same observable drop-skip behavior, including when the
+  user pre-installed pgTAP in a non-`extensions` schema such as `public`.
+- The linked connection pooler URL is read from `supabase/.temp/pooler-url` (written by
+  `supabase link`), matching Go — the `[db.pooler]` config.toml field is `toml:"-"` in Go
+  and is intentionally ignored. The pooler's `?options=reference=<ref>` startup param is
+  carried through to the connection for the legacy pooler-URL format.
 - pg_prove image is fixed at `supabase/pg_prove:3.36`; Go's `[images] pgprove` config
   override is not modeled by the TS config schema (documented divergence).
 - Go's hidden `--network-id` override is not declared on the TS command (documented divergence).

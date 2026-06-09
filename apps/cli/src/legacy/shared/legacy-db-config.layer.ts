@@ -27,10 +27,9 @@ import { LegacyDbConfigResolver, type LegacyDbConfigError } from "./legacy-db-co
 import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
 import type { LegacyDbConfigFlags } from "./legacy-db-config.types.ts";
 import { LegacyDebugLogger } from "./legacy-debug-logger.service.ts";
+import { legacyGetHostname } from "./legacy-hostname.ts";
 import { mapLegacyHttpError } from "./legacy-http-errors.ts";
-import { legacyPoolerHost } from "./legacy-profile.ts";
 
-const LOCAL_HOST = "127.0.0.1";
 const DIRECT_PORT = 5432;
 const TCP_PROBE_TIMEOUT = Duration.seconds(5);
 const MAX_RETRIES = 8;
@@ -61,9 +60,16 @@ const unbanErrorMapper = mapLegacyHttpError({
   statusMessage: (status, body) => `unexpected remove bans status ${status}: ${body}`,
 });
 
-/** `utils.IsLocalDatabase` (`connect.go:230`). */
-function isLocalDatabase(host: string, port: number, dbPort: number, shadowPort: number): boolean {
-  return host === LOCAL_HOST && (port === dbPort || port === shadowPort);
+/** `utils.IsLocalDatabase` (`connect.go:230`). Compares against the resolved local
+ * services hostname (`utils.Config.Hostname`), not a hard-coded loopback. */
+function isLocalDatabase(
+  host: string,
+  localHost: string,
+  port: number,
+  dbPort: number,
+  shadowPort: number,
+): boolean {
+  return host === localHost && (port === dbPort || port === shadowPort);
 }
 
 /**
@@ -245,12 +251,15 @@ export const legacyDbConfigLayer = Layer.effect(
           yield* debug.debug("failed to parse pooler URL");
           return Option.none();
         }
+        // Preserve the libpq `options` startup param (Go keeps it in
+        // `pgconn.Config.RuntimeParams`): legacy pooler URLs route by tenant via
+        // `?options=reference=<ref>`, so the actual connection must carry it.
+        const optionsParam = new URL(sanitized).searchParams.get("options") ?? "";
         // Username must encode the project ref: either `<user>.<ref>` or the
         // `?options=reference=<ref>` query param.
         const dotIndex = parsed.user.indexOf(".");
         if (dotIndex === -1) {
-          const options = new URL(sanitized).searchParams.get("options") ?? "";
-          for (const option of options.split(",")) {
+          for (const option of optionsParam.split(",")) {
             const [key, value] = option.split("=");
             if (key === "reference" && value !== ref) {
               yield* debug.debug(`Pooler options does not match project ref: ${ref}`);
@@ -261,8 +270,10 @@ export const legacyDbConfigLayer = Layer.effect(
           yield* debug.debug(`Pooler username does not match project ref: ${ref}`);
           return Option.none();
         }
-        // MITM guard: the pooler domain must belong to the active profile.
-        const expectedPoolerHost = legacyPoolerHost(cliConfig.profile);
+        // MITM guard: the pooler domain must belong to the active profile. The
+        // expected host comes from the resolved profile (built-in table or a YAML
+        // profile's `pooler_host:`), so custom/staging pooler domains are honored.
+        const expectedPoolerHost = cliConfig.poolerHost;
         const domain = getDomain(parsed.host);
         if (domain === null) {
           yield* debug.debug("failed to parse pooler TLD");
@@ -276,7 +287,11 @@ export const legacyDbConfigLayer = Layer.effect(
           return Option.none();
         }
         // Supavisor transaction mode does not support prepared statements; use port 5432.
-        return Option.some({ ...parsed, port: DIRECT_PORT });
+        return Option.some({
+          ...parsed,
+          port: DIRECT_PORT,
+          ...(optionsParam.length > 0 ? { options: optionsParam } : {}),
+        });
       });
 
     const resolveLinked = (
@@ -343,6 +358,10 @@ export const legacyDbConfigLayer = Layer.effect(
     const resolve = (flags: LegacyDbConfigFlags) =>
       Effect.gen(function* () {
         const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+        // Go's `utils.Config.Hostname` (`GetHostname()`): honors
+        // `SUPABASE_SERVICES_HOSTNAME` / a tcp `DOCKER_HOST` in dev-container or
+        // remote-Docker setups, defaulting to 127.0.0.1.
+        const localHost = legacyGetHostname();
 
         // --db-url (direct) takes precedence.
         if (Option.isSome(flags.dbUrl)) {
@@ -358,7 +377,13 @@ export const legacyDbConfigLayer = Layer.effect(
           }
           return {
             conn,
-            isLocal: isLocalDatabase(conn.host, conn.port, tomlValues.port, tomlValues.shadowPort),
+            isLocal: isLocalDatabase(
+              conn.host,
+              localHost,
+              conn.port,
+              tomlValues.port,
+              tomlValues.shadowPort,
+            ),
           };
         }
 
@@ -381,7 +406,7 @@ export const legacyDbConfigLayer = Layer.effect(
         // --local (default).
         return {
           conn: {
-            host: LOCAL_HOST,
+            host: localHost,
             port: tomlValues.port,
             user: "postgres",
             password: tomlValues.password,

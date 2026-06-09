@@ -12,6 +12,13 @@ export interface LegacyPgConnInput {
   readonly user: string;
   readonly password: string;
   readonly database: string;
+  /**
+   * libpq `options` startup parameter (Go's `pgconn.Config.RuntimeParams["options"]`).
+   * Legacy Supavisor pooler URLs identify the tenant via `?options=reference=<ref>`
+   * instead of a `<user>.<ref>` username; the driver layer must forward this so the
+   * connection reaches the right tenant. Empty/absent for direct and local connections.
+   */
+  readonly options?: string;
 }
 
 /**
@@ -22,18 +29,20 @@ export interface LegacyDbSession {
   /** Run a single SQL statement, ignoring any returned rows. */
   readonly exec: (sql: string) => Effect.Effect<void, LegacyDbExecError>;
   /**
-   * Whether `<schema>.<name>` already exists in `pg_extension`.
+   * Whether an extension named `name` already exists in `pg_extension`,
+   * **regardless of which schema it lives in**.
    *
    * Go keys "did pgTAP already exist?" off a `pgx` `OnNotice` callback (notice
-   * code `42710`). `@effect/sql-pg`'s `PgClient` exposes no notice hook, so the
-   * legacy port detects pre-existence with this query before enabling — same
-   * observable behavior (skip the drop iff it already existed), driver-agnostic.
+   * code `42710`, `duplicate_object`). That notice fires whenever
+   * `CREATE EXTENSION IF NOT EXISTS pgtap ...` finds the extension already
+   * installed — extensions are global per-database, so the schema is irrelevant.
+   * `@effect/sql-pg`'s `PgClient` exposes no notice hook, so the legacy port
+   * detects pre-existence with this query before enabling. Querying by `extname`
+   * only (not `extname` + `nspname`) matches Go: it must not drop a pgTAP the user
+   * pre-installed in another schema such as `public`.
    * See `apps/cli-go/internal/db/test/test.go:57-78`.
    */
-  readonly extensionExists: (
-    schema: string,
-    name: string,
-  ) => Effect.Effect<boolean, LegacyDbExecError>;
+  readonly extensionExists: (name: string) => Effect.Effect<boolean, LegacyDbExecError>;
 }
 
 interface LegacyDbConnectionShape {

@@ -50,6 +50,7 @@ function setup(
           profile: "supabase",
           apiUrl: "https://api.supabase.com",
           projectHost: "supabase.co",
+          poolerHost: "supabase.com",
           accessToken: Option.none(),
           projectId: Option.none(),
           workdir: process.cwd(),

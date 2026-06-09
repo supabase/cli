@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
-import { describe, expect, it } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 
 import {
@@ -80,6 +80,24 @@ const dbUrlFlags = (url: string): LegacyDbConfigFlags => ({
 });
 
 describe("legacyDbConfigResolver (local + db-url)", () => {
+  // The resolver derives the local host from `legacyGetHostname()`, which reads
+  // SUPABASE_SERVICES_HOSTNAME and DOCKER_HOST. Clear both so the local-host
+  // assertions are deterministic regardless of the runner's Docker config.
+  let savedServicesHostname: string | undefined;
+  let savedDockerHost: string | undefined;
+  beforeEach(() => {
+    savedServicesHostname = process.env["SUPABASE_SERVICES_HOSTNAME"];
+    savedDockerHost = process.env["DOCKER_HOST"];
+    delete process.env["SUPABASE_SERVICES_HOSTNAME"];
+    delete process.env["DOCKER_HOST"];
+  });
+  afterEach(() => {
+    if (savedServicesHostname === undefined) delete process.env["SUPABASE_SERVICES_HOSTNAME"];
+    else process.env["SUPABASE_SERVICES_HOSTNAME"] = savedServicesHostname;
+    if (savedDockerHost === undefined) delete process.env["DOCKER_HOST"];
+    else process.env["DOCKER_HOST"] = savedDockerHost;
+  });
+
   it.effect("local mode: uses 127.0.0.1 with config.toml db.port/password and is local", () => {
     const dir = withWorkdir(["[db]", "port = 55555", 'password = "hunter2"', ""].join("\n"));
     return resolve(dir, localFlags).pipe(
@@ -92,6 +110,21 @@ describe("legacyDbConfigResolver (local + db-url)", () => {
             password: "hunter2",
             database: "postgres",
           });
+          expect(r.isLocal).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("local mode: honors SUPABASE_SERVICES_HOSTNAME for the connection host", () => {
+    // Dev-container / remote-Docker parity (Go's utils.Config.Hostname).
+    process.env["SUPABASE_SERVICES_HOSTNAME"] = "host.docker.internal";
+    const dir = withWorkdir();
+    return resolve(dir, localFlags).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          expect(r.conn.host).toBe("host.docker.internal");
           expect(r.isLocal).toBe(true);
           rmSync(dir, { recursive: true, force: true });
         }),

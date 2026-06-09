@@ -9,6 +9,17 @@ export class LegacyDbConfigParseUrlError extends Data.TaggedError("LegacyDbConfi
   readonly message: string;
 }> {}
 
+/**
+ * `supabase/config.toml` exists but could not be parsed. Mirrors Go's
+ * `flags.LoadConfig` → `config.Load` returning the decode error and aborting,
+ * rather than silently running against the default local database
+ * (`apps/cli-go/internal/utils/flags/config_path.go:10`, `pkg/config/config.go`).
+ * A missing file is not an error — defaults apply, matching Go.
+ */
+export class LegacyDbConfigLoadError extends Data.TaggedError("LegacyDbConfigLoadError")<{
+  readonly message: string;
+}> {}
+
 /** Transport failure creating a temporary login role (`V1CreateLoginRole`). */
 export class LegacyDbConfigLoginRoleNetworkError extends Data.TaggedError(
   "LegacyDbConfigLoginRoleNetworkError",

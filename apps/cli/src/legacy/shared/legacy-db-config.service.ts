@@ -10,6 +10,7 @@ import type {
   LegacyDbConfigIpv6Error,
   LegacyDbConfigListBansNetworkError,
   LegacyDbConfigListBansStatusError,
+  LegacyDbConfigLoadError,
   LegacyDbConfigLoginRoleNetworkError,
   LegacyDbConfigLoginRoleStatusError,
   LegacyDbConfigParseUrlError,
@@ -22,6 +23,7 @@ import type { LegacyDbConfigFlags, LegacyResolvedDbConfig } from "./legacy-db-co
 /** Every error the resolver can raise across the direct / local / linked paths. */
 export type LegacyDbConfigError =
   | LegacyDbConfigParseUrlError
+  | LegacyDbConfigLoadError
   | LegacyProjectNotLinkedError
   | LegacyInvalidProjectRefError
   | LegacyDbConfigLoginRoleNetworkError

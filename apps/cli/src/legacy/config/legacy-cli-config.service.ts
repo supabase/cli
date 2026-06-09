@@ -20,6 +20,15 @@ interface LegacyCliConfigShape {
    * for the built-in `supabase` profile.
    */
   readonly projectHost: string;
+  /**
+   * eTLD+1 the connection pooler hostname must belong to (Go's `Profile.PoolerHost`,
+   * `apps/cli-go/internal/utils/profile.go:23`). Sourced from the resolved profile —
+   * the built-in table for named profiles, or the `pooler_host:` key of a YAML
+   * profile file — so custom/staging pooler domains are honored. An empty string
+   * means "no pooler-domain assertion" (Go's `supabase-local`). Used by the linked
+   * db-config resolver's MITM domain check.
+   */
+  readonly poolerHost: string;
   readonly accessToken: Option.Option<Redacted.Redacted<string>>;
   readonly projectId: Option.Option<string>;
   readonly workdir: string;
