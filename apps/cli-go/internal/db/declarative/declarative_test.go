@@ -405,7 +405,10 @@ func TestBaselineCatalogKeyVariesWithSetupInputs(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, base, withRoles, "roles.sql content must change the key")
 
-	expose := false
+	// withRoles was computed with the flag unset, which resolves to the revoke-by-default
+	// baseline (same as explicit false). Explicit true is the auto-expose baseline, so it
+	// must produce a different key.
+	expose := true
 	utils.Config.Api.AutoExposeNewTables = &expose
 	withApi, err := baselineCatalogKey(fsys)
 	require.NoError(t, err)
@@ -415,6 +418,28 @@ func TestBaselineCatalogKeyVariesWithSetupInputs(t *testing.T) {
 	withVault, err := baselineCatalogKey(fsys)
 	require.NoError(t, err)
 	assert.NotEqual(t, withApi, withVault, "vault secrets must change the key")
+}
+
+func TestBaselineCatalogKeyTreatsUnsetExposeAsFalse(t *testing.T) {
+	// As of the 2026-05-30 flip, an unset auto_expose_new_tables resolves to the same
+	// revoke-by-default baseline as explicit false, so the cache key must match. This also
+	// busts caches built before the flip, which keyed the unset case as a distinct token.
+	originalExpose := utils.Config.Api.AutoExposeNewTables
+	t.Cleanup(func() {
+		utils.Config.Api.AutoExposeNewTables = originalExpose
+	})
+	fsys := afero.NewMemMapFs()
+
+	utils.Config.Api.AutoExposeNewTables = nil
+	unset, err := baselineCatalogKey(fsys)
+	require.NoError(t, err)
+
+	expose := false
+	utils.Config.Api.AutoExposeNewTables = &expose
+	explicitFalse, err := baselineCatalogKey(fsys)
+	require.NoError(t, err)
+
+	assert.Equal(t, unset, explicitFalse, "unset must key identically to explicit false")
 }
 
 func TestBaselineCatalogKeyVariesWithServiceToggles(t *testing.T) {
