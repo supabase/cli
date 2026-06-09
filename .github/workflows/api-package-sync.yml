@@ -79,6 +79,9 @@ jobs:
         run: pnpm generate
         working-directory: packages/api
 
+      - name: Format API package
+        run: pnpm exec nx run @supabase/api:fmt:fix
+
       - name: Check for generated changes
         id: check
         run: |
