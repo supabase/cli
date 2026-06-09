@@ -4,12 +4,14 @@ import {
   getCommandRuntimeCommand,
   getCommandRuntimeSpanName,
 } from "../../shared/runtime/command-runtime.service.ts";
+import { Output } from "../../shared/output/output.service.ts";
 import { withAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import {
   EventCommandExecuted,
   PropDurationMs,
   PropExitCode,
+  PropOutputFormat,
 } from "../../shared/telemetry/event-catalog.ts";
 
 interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unknown> = never> {
@@ -22,9 +24,46 @@ interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unkno
 }
 
 const REDACTED_VALUE = "<redacted>";
+const LEGACY_GO_MACHINE_OUTPUT_FORMATS = new Set(["env", "json", "toml", "yaml"]);
+const LEGACY_GO_OUTPUT_FORMATS = new Set([...LEGACY_GO_MACHINE_OUTPUT_FORMATS, "pretty"]);
 
 function toCliFlagName(key: string): string {
   return key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`);
+}
+
+function extractLegacyGoOutputFormat(args: ReadonlyArray<string>): string | undefined {
+  let format: string | undefined;
+
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+
+    if (arg === "--output" || arg === "-o") {
+      const value = args[index + 1];
+      if (value !== undefined && LEGACY_GO_OUTPUT_FORMATS.has(value)) {
+        format = value;
+      }
+      index++;
+      continue;
+    }
+
+    if (arg.startsWith("--output=") || arg.startsWith("-o=")) {
+      const value = arg.slice(arg.indexOf("=") + 1);
+      if (LEGACY_GO_OUTPUT_FORMATS.has(value)) {
+        format = value;
+      }
+    }
+  }
+
+  return format;
+}
+
+function resolveOutputFormatForTelemetry(args: ReadonlyArray<string>, outputFormat: string) {
+  const goOutputFormat = extractLegacyGoOutputFormat(args);
+  if (goOutputFormat !== undefined && LEGACY_GO_MACHINE_OUTPUT_FORMATS.has(goOutputFormat)) {
+    return goOutputFormat;
+  }
+  return outputFormat;
 }
 
 function extractChangedFlagNames(args: ReadonlyArray<string>): ReadonlyArray<string> {
@@ -114,6 +153,7 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
         });
 
         const analytics = yield* Analytics;
+        const output = yield* Output;
         const stdio = yield* Stdio.Stdio;
         const args = yield* stdio.args;
         const startedAt = yield* Clock.currentTimeMillis;
@@ -132,6 +172,7 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
           .capture(EventCommandExecuted, {
             [PropExitCode]: Exit.isSuccess(exit) ? 0 : 1,
             [PropDurationMs]: finishedAt - startedAt,
+            [PropOutputFormat]: resolveOutputFormatForTelemetry(args, output.format),
           })
           .pipe(withAnalyticsContext(analyticsContext));
 
@@ -145,12 +186,12 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
 
 export function withLegacyCommandInstrumentation(): <A, E, R>(
   self: Effect.Effect<A, E, R>,
-) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio>;
+) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio | Output>;
 export function withLegacyCommandInstrumentation<Flags extends Record<string, unknown>>(
   options: LegacyCommandInstrumentationOptions<Flags>,
 ): <A, E, R>(
   self: Effect.Effect<A, E, R>,
-) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio>;
+) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio | Output>;
 export function withLegacyCommandInstrumentation<Flags extends Record<string, unknown>>(
   options?: LegacyCommandInstrumentationOptions<Flags>,
 ) {

@@ -308,6 +308,9 @@ without the envelope.`,
 					outputFormat = "table"
 				}
 			}
+			// db query resolves --output into a command-local flag, so mirror the
+			// resolved value onto the global that telemetry's output_format reads.
+			utils.OutputFormat.Value = outputFormat
 			if flag := cmd.Flags().Lookup("linked"); flag != nil && flag.Changed {
 				return query.RunLinked(cmd.Context(), sql, flags.ProjectRef, outputFormat, agentMode, os.Stdout)
 			}
