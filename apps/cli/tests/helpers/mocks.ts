@@ -151,6 +151,7 @@ export function mockProcessControl(
 ) {
   let exitCode: number | undefined;
   const exitCalls: number[] = [];
+  const exitDeferred = Deferred.makeUnsafe<number>();
 
   return {
     layer: Layer.succeed(ProcessControl, {
@@ -166,9 +167,11 @@ export function mockProcessControl(
       awaitShutdown: opts.awaitShutdown ?? Effect.never,
       holdSignals: (_signals) => Effect.void,
       exit: (code: number) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           exitCalls.push(code);
-        }).pipe(Effect.flatMap(() => Effect.never)),
+          yield* Deferred.succeed(exitDeferred, code);
+          return yield* Effect.never;
+        }),
       setExitCode: (code: number) =>
         Effect.sync(() => {
           exitCode = code;
@@ -178,6 +181,7 @@ export function mockProcessControl(
     get exitCalls() {
       return exitCalls;
     },
+    awaitExit: Deferred.await(exitDeferred),
     get exitCode() {
       return exitCode;
     },
