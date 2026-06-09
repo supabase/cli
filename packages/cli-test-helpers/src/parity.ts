@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHarness, exec, makeTempDir } from "./harness.ts";
-import { normalize, sortTableRows } from "./normalize.ts";
+import { normalize, type NormalizeOptions, sortTableRows } from "./normalize.ts";
 
 // ---------------------------------------------------------------------------
 // Table parsing (Level 2)
@@ -215,13 +215,14 @@ async function collectRunResult(
   dir: string,
   apiUrl: string,
   extraEnv?: Record<string, string>,
+  normalizeOptions?: NormalizeOptions,
 ): Promise<RunResult> {
   const result = await exec(harness, cmd, extraEnv ? { env: extraEnv } : undefined);
   const requests = await fetchRequestLog(apiUrl);
   const files = snapshotChangedFiles(dir);
   return {
-    stdout: normalize(result.stdout),
-    stderr: normalize(result.stderr),
+    stdout: normalize(result.stdout, normalizeOptions),
+    stderr: normalize(result.stderr, normalizeOptions),
     exitCode: result.exitCode,
     requests,
     files,
@@ -311,6 +312,8 @@ export interface ParityOptions {
   sortStdoutRows?: boolean;
   /** Additional environment variables injected into both CLI subprocesses. */
   extraEnv?: Record<string, string>;
+  /** Fine-grained normalization controls for stdout/stderr parity comparison. */
+  normalize?: NormalizeOptions;
 }
 
 /**
@@ -341,6 +344,7 @@ export async function runParity(opts: ParityOptions, cmd: string[]): Promise<voi
       goDir.path,
       opts.apiUrl,
       opts.extraEnv,
+      opts.normalize,
     );
 
     await fetch(`${opts.apiUrl}/_ctrl/requests`, { method: "DELETE" });
@@ -357,6 +361,7 @@ export async function runParity(opts: ParityOptions, cmd: string[]): Promise<voi
       tsDir.path,
       opts.apiUrl,
       opts.extraEnv,
+      opts.normalize,
     );
 
     // Self-cleaning: reset after ts-legacy so callers start with a clean log.

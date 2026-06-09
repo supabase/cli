@@ -1,6 +1,22 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vitest/config";
 
+function dockerfileTextPlugin() {
+  return {
+    name: "dockerfile-text-loader",
+    load(id: string) {
+      const [filePath] = id.split("?", 2);
+      if (filePath?.endsWith("/Dockerfile") !== true) {
+        return undefined;
+      }
+
+      return `export default ${JSON.stringify(readFileSync(filePath, "utf8"))};`;
+    },
+  };
+}
+
 export default defineConfig({
+  plugins: [dockerfileTextPlugin()],
   test: {
     passWithNoTests: true,
     coverage: {
@@ -24,18 +40,21 @@ export default defineConfig({
     },
     projects: [
       {
+        plugins: [dockerfileTextPlugin()],
         test: {
           name: "unit",
           include: ["**/*.unit.test.ts"],
         },
       },
       {
+        plugins: [dockerfileTextPlugin()],
         test: {
           name: "integration",
           include: ["**/*.integration.test.ts"],
         },
       },
       {
+        plugins: [dockerfileTextPlugin()],
         test: {
           name: "e2e",
           include: ["**/*.e2e.test.ts"],
