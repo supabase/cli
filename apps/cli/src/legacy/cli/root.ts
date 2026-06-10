@@ -113,7 +113,13 @@ export const legacyRoot = Command.make("supabase").pipe(
 
         const aiTool = yield* AiTool.pipe(Effect.provide(aiToolLayer));
         const isCodingAgent = agent === "yes" || (agent !== "no" && Option.isSome(aiTool.name));
-        const outputFormat = resolveAgentOutputFormat(explicitOutputFormat, isCodingAgent);
+        // An explicit Go --output is a complete format choice (even `-o pretty`
+        // must keep its human table), so the agent JSON default only applies
+        // when that flag is absent.
+        const outputFormat = resolveAgentOutputFormat(
+          explicitOutputFormat,
+          isCodingAgent && Option.isNone(goOutput),
+        );
 
         // Build args to prepend to every proxy exec call.
         // --output: use explicit --output if set, otherwise map from --output-format.
