@@ -31,21 +31,58 @@ export function parseDotEnv(contents: string): Record<string, string> {
     if (!/^[A-Za-z_][A-Za-z0-9_.]*$/.test(key)) {
       throw new Error(`unexpected character "${key[0] ?? ""}" in variable name near "${line}"`);
     }
-    let value = line.slice(eq + 1).trim();
-    if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
-      // godotenv expands escapes inside double-quoted values: `\n` / `\r` become
-      // real newlines, and a backslash before any other char (except `$`) is
-      // dropped (`\"` -> `"`, `\\` -> `\`).
-      value = value
-        .slice(1, -1)
+    result[key] = parseDotEnvValue(line.slice(eq + 1));
+  }
+  return result;
+}
+
+/**
+ * Extract a single dotenv value, matching godotenv's `extractVarValue`
+ * (`joho/godotenv/parser.go`). A quoted value runs to its (unescaped) closing
+ * quote and anything after it (e.g. a trailing comment) is discarded; an
+ * unquoted value runs to the first ` #`/`\t#` inline comment, then is trimmed.
+ */
+function parseDotEnvValue(raw: string): string {
+  // godotenv left-trims whitespace after `=` before inspecting the value.
+  const value = raw.replace(/^[ \t]+/, "");
+  const quote = value[0];
+  if (quote === '"' || quote === "'") {
+    let end = -1;
+    for (let i = 1; i < value.length; i++) {
+      // The terminator is a matching quote not preceded by a backslash escape.
+      if (value[i] === quote && value[i - 1] !== "\\") {
+        end = i;
+        break;
+      }
+    }
+    if (end === -1) {
+      throw new Error("unterminated quoted value");
+    }
+    const inner = value.slice(1, end);
+    if (quote === '"') {
+      // Double-quoted values expand escapes: `\n` / `\r` become real newlines,
+      // and a backslash before any other char (except `$`) is dropped.
+      return inner
         .replaceAll("\\n", "\n")
         .replaceAll("\\r", "\r")
         .replace(/\\([^$])/g, "$1");
-    } else if (value.startsWith("'") && value.endsWith("'") && value.length >= 2) {
-      // Single-quoted values are taken literally (no escape expansion).
-      value = value.slice(1, -1);
     }
-    result[key] = value;
+    // Single-quoted values are taken literally (no escape expansion).
+    return inner;
   }
-  return result;
+  return stripInlineComment(value).trim();
+}
+
+/**
+ * Strip an unquoted inline comment, matching godotenv: scanning from the right,
+ * a `#` preceded by whitespace begins a comment (`54323 # local` → `54323`),
+ * while a `#` with no leading whitespace is part of the value (`foo#bar`).
+ */
+function stripInlineComment(value: string): string {
+  for (let i = value.length - 1; i > 0; i--) {
+    if (value[i] === "#" && (value[i - 1] === " " || value[i - 1] === "\t")) {
+      return value.slice(0, i);
+    }
+  }
+  return value;
 }

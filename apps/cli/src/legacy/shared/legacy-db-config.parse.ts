@@ -1,7 +1,34 @@
+import { existsSync } from "node:fs";
 import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 
 /** Go's `pgconn` default direct Postgres port. */
 const DIRECT_PORT = 5432;
+
+/** Read a libpq `PG*` env var, treating empty as unset (pgconn's `parseEnvSettings`). */
+function libpqEnv(name: string): string | undefined {
+  const value = process.env[name];
+  return value !== undefined && value.length > 0 ? value : undefined;
+}
+
+/**
+ * libpq's default host when the connection string omits one. Mirrors pgconn's
+ * `defaultHost` (`defaults.go`): on non-Windows it returns the first existing
+ * common unix-socket directory, else `localhost`; Windows always uses
+ * `localhost`. `PGHOST` (applied by the callers) takes priority over this.
+ */
+function defaultLibpqHost(): string {
+  if (process.platform === "win32") return "localhost";
+  for (const candidate of ["/var/run/postgresql", "/private/tmp", "/tmp"]) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return "localhost";
+}
+
+/** Resolve a libpq port string to a number, falling back to 5432 when unusable. */
+function libpqPort(raw: string | undefined): number {
+  if (raw !== undefined && /^\d+$/.test(raw)) return Number(raw);
+  return DIRECT_PORT;
+}
 
 /**
  * Parse a Postgres connection string into a `LegacyPgConnInput`. Mirrors Go's
@@ -43,16 +70,21 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     // path below — not the empty string `url.username` yields.
     const rawUser = decodeURIComponent(url.username);
     const user = rawUser.length > 0 ? rawUser : defaultOsUser();
+    const rawPassword = decodeURIComponent(url.password);
     const database = url.pathname.replace(/^\//, "");
     const sslmode = url.searchParams.get("sslmode");
     const options = url.searchParams.get("options");
+    // Omitted fields fall back to libpq `PG*` env vars and then the libpq
+    // defaults, matching pgconn's
+    // `mergeSettings(defaultSettings, envSettings, connStringSettings)`.
     return {
-      host: url.hostname,
-      port: url.port.length > 0 ? Number(url.port) : DIRECT_PORT,
+      host: url.hostname.length > 0 ? url.hostname : (libpqEnv("PGHOST") ?? defaultLibpqHost()),
+      port: url.port.length > 0 ? Number(url.port) : libpqPort(libpqEnv("PGPORT")),
       user,
-      password: decodeURIComponent(url.password),
-      // libpq/pgconn defaults an absent database to the resolved user.
-      database: database.length > 0 ? decodeURIComponent(database) : user,
+      password: rawPassword.length > 0 ? rawPassword : (libpqEnv("PGPASSWORD") ?? ""),
+      // Absent database → PGDATABASE, then the resolved user (libpq default).
+      database:
+        database.length > 0 ? decodeURIComponent(database) : (libpqEnv("PGDATABASE") ?? user),
       ...(options !== null && options.length > 0 ? { options } : {}),
       ...(sslmode !== null && sslmode.length > 0 ? { sslmode } : {}),
     };
@@ -103,19 +135,24 @@ function parseKeywordValueDsn(value: string): LegacyPgConnInput | undefined {
     }
     if (key.length > 0) params.set(key, val);
   }
-  const host = params.get("host") ?? params.get("hostaddr") ?? "";
+  // Omitted fields fall back to libpq `PG*` env vars and then the libpq defaults,
+  // matching pgconn's `mergeSettings(defaultSettings, envSettings, connStringSettings)`.
+  const host =
+    params.get("host") ?? params.get("hostaddr") ?? libpqEnv("PGHOST") ?? defaultLibpqHost();
   const portRaw = params.get("port");
-  const port = portRaw !== undefined && portRaw.length > 0 ? Number(portRaw) : DIRECT_PORT;
+  const port =
+    portRaw !== undefined && portRaw.length > 0 ? Number(portRaw) : libpqPort(libpqEnv("PGPORT"));
   if (Number.isNaN(port)) return undefined;
   const user = params.get("user") ?? defaultOsUser();
-  const database = params.get("dbname") ?? (user.length > 0 ? user : "postgres");
+  const database =
+    params.get("dbname") ?? libpqEnv("PGDATABASE") ?? (user.length > 0 ? user : "postgres");
   const sslmode = params.get("sslmode");
   const options = params.get("options");
   return {
     host,
     port,
     user,
-    password: params.get("password") ?? "",
+    password: params.get("password") ?? libpqEnv("PGPASSWORD") ?? "",
     database,
     ...(options !== undefined && options.length > 0 ? { options } : {}),
     ...(sslmode !== undefined && sslmode.length > 0 ? { sslmode } : {}),

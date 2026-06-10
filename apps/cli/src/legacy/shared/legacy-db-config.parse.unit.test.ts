@@ -49,6 +49,42 @@ describe("parseLegacyConnectionString (URL form)", () => {
     });
   });
 
+  it("fills omitted URL fields from PG* env vars, with explicit fields winning", () => {
+    const prev = {
+      PGPASSWORD: process.env["PGPASSWORD"],
+      PGPORT: process.env["PGPORT"],
+      PGDATABASE: process.env["PGDATABASE"],
+    };
+    process.env["PGPASSWORD"] = "env-secret";
+    process.env["PGPORT"] = "6543";
+    process.env["PGDATABASE"] = "envdb";
+    try {
+      // Password/port/database omitted from the URL → taken from PG* env.
+      expect(parseLegacyConnectionString("postgresql://alice@db.example.com")).toEqual({
+        host: "db.example.com",
+        port: 6543,
+        user: "alice",
+        password: "env-secret",
+        database: "envdb",
+      });
+      // Explicit URL fields override the env defaults (connStringSettings win).
+      expect(
+        parseLegacyConnectionString("postgresql://alice:pw@db.example.com:5555/appdb"),
+      ).toEqual({
+        host: "db.example.com",
+        port: 5555,
+        user: "alice",
+        password: "pw",
+        database: "appdb",
+      });
+    } finally {
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
   it("preserves sslmode and the libpq options runtime param from the query string", () => {
     const parsed = parseLegacyConnectionString(
       "postgres://u:pw@h:5432/db?sslmode=verify-full&options=reference%3Dabc",
@@ -132,6 +168,55 @@ describe("parseLegacyConnectionString (libpq keyword/value DSN)", () => {
     } finally {
       if (prev === undefined) delete process.env["PGUSER"];
       else process.env["PGUSER"] = prev;
+    }
+  });
+
+  it("fills omitted DSN fields from PG* env vars (pgconn env defaults)", () => {
+    const prev = {
+      PGHOST: process.env["PGHOST"],
+      PGPORT: process.env["PGPORT"],
+      PGPASSWORD: process.env["PGPASSWORD"],
+      PGDATABASE: process.env["PGDATABASE"],
+    };
+    process.env["PGHOST"] = "pg.env.com";
+    process.env["PGPORT"] = "6543";
+    process.env["PGPASSWORD"] = "env-secret";
+    process.env["PGDATABASE"] = "envdb";
+    try {
+      expect(parseLegacyConnectionString("user=admin")).toEqual({
+        host: "pg.env.com",
+        port: 6543,
+        user: "admin",
+        password: "env-secret",
+        database: "envdb",
+      });
+      // Explicit keywords override the env defaults.
+      expect(
+        parseLegacyConnectionString("host=h port=1234 user=admin dbname=db password=pw"),
+      ).toEqual({
+        host: "h",
+        port: 1234,
+        user: "admin",
+        password: "pw",
+        database: "db",
+      });
+    } finally {
+      for (const [k, v] of Object.entries(prev)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
+  it("falls back to a libpq default host when host and PGHOST are absent", () => {
+    const prev = process.env["PGHOST"];
+    delete process.env["PGHOST"];
+    try {
+      // No host= and no PGHOST → libpq default (a unix-socket dir or "localhost").
+      expect(parseLegacyConnectionString("user=admin")?.host).toMatch(/^(\/|localhost)/);
+    } finally {
+      if (prev === undefined) delete process.env["PGHOST"];
+      else process.env["PGHOST"] = prev;
     }
   });
 
