@@ -112,7 +112,7 @@ function getAuthToken(req: Request) {
   const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key")
 
   // NOTE:(kallebysantos) Kong on legacy CLI stack pass it down as 'Bearer Token' format
-  const cleanSbApiKeyCompatibilityToken = sbApiKeyCompatibilityToken.replace('Bearer', '').trim()
+  const cleanSbApiKeyCompatibilityToken = sbApiKeyCompatibilityToken?.replace('Bearer', '')?.trim()
 
   if (!authHeader && !cleanSbApiKeyCompatibilityToken) {
     throw new Error("Missing authorization header");
