@@ -118,7 +118,7 @@ func downloadFunction(ctx context.Context, projectRef, slug, extractScriptPath s
 	return nil
 }
 
-func Run(ctx context.Context, slug, projectRef string, useLegacyBundle, useDocker bool, fsys afero.Fs) error {
+func Run(ctx context.Context, slug, projectRef string, useLegacyBundle, useDocker, isDockerExplicit bool, fsys afero.Fs) error {
 	// Sanity check
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
@@ -131,7 +131,9 @@ func Run(ctx context.Context, slug, projectRef string, useLegacyBundle, useDocke
 	} else if useDocker {
 		if utils.IsDockerRunning(ctx) {
 			// Download eszip file for client-side unbundling with edge-runtime
-			downloader = downloadWithDockerUnbundle
+			downloader = func(ctx context.Context, slug, projectRef string, fsys afero.Fs) error {
+				return downloadWithDockerUnbundle(ctx, slug, projectRef, !isDockerExplicit, fsys)
+			}
 		} else {
 			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Docker is not running")
 		}
@@ -169,7 +171,7 @@ func downloadAll(ctx context.Context, projectRef string, fsys afero.Fs, download
 	return nil
 }
 
-func downloadWithDockerUnbundle(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
+func downloadWithDockerUnbundle(ctx context.Context, slug, projectRef string, allowFallback bool, fsys afero.Fs) error {
 	eszipPath, err := downloadOne(ctx, slug, projectRef, fsys)
 	if err != nil {
 		return err
@@ -182,11 +184,20 @@ func downloadWithDockerUnbundle(ctx context.Context, slug string, projectRef str
 		}()
 	}
 	// Extract eszip to functions directory
-	err = extractOne(ctx, slug, eszipPath)
-	if err != nil {
-		utils.CmdSuggestion += suggestLegacyBundle(slug)
+	if err := extractOne(ctx, slug, eszipPath); err != nil {
+		// The local edge-runtime image may not parse bundles written by a newer
+		// eszip version, eg. ESZIP2.3, so retry with server-side unbundling.
+		if allowFallback {
+			fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Failed to extract eszip using Docker. Retrying with server-side unbundling...")
+			fmt.Fprintln(utils.GetDebugLogger(), err)
+			err = downloadWithServerSideUnbundle(ctx, slug, projectRef, fsys)
+		}
+		if err != nil {
+			utils.CmdSuggestion += suggestLegacyBundle(slug)
+		}
+		return err
 	}
-	return err
+	return nil
 }
 
 func downloadOne(ctx context.Context, slug, projectRef string, fsys afero.Fs) (string, error) {

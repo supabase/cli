@@ -114,7 +114,7 @@ func TestRunLegacyUnbundle(t *testing.T) {
 			Get("/v1/projects/" + project + "/functions/" + slug + "/body").
 			Reply(http.StatusOK)
 		// Run test
-		err = Run(context.Background(), slug, project, true, false, fsys)
+		err = Run(context.Background(), slug, project, true, false, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -126,7 +126,7 @@ func TestRunLegacyUnbundle(t *testing.T) {
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		err := Run(context.Background(), "@", project, true, false, fsys)
+		err := Run(context.Background(), "@", project, true, false, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Invalid Function name.")
 	})
@@ -137,7 +137,7 @@ func TestRunLegacyUnbundle(t *testing.T) {
 		// Setup valid project ref
 		project := apitest.RandomProjectRef()
 		// Run test
-		err := Run(context.Background(), slug, project, true, false, fsys)
+		err := Run(context.Background(), slug, project, true, false, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -151,7 +151,7 @@ func TestRunLegacyUnbundle(t *testing.T) {
 		_, err := fsys.Create(utils.DenoPathOverride)
 		require.NoError(t, err)
 		// Run test
-		err = Run(context.Background(), slug, project, true, false, afero.NewReadOnlyFs(fsys))
+		err = Run(context.Background(), slug, project, true, false, false, afero.NewReadOnlyFs(fsys))
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 	})
@@ -174,7 +174,7 @@ func TestRunLegacyUnbundle(t *testing.T) {
 			Reply(http.StatusNotFound).
 			JSON(map[string]string{"message": "Function not found"})
 		// Run test
-		err = Run(context.Background(), slug, project, true, false, fsys)
+		err = Run(context.Background(), slug, project, true, false, false, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "Function test-func does not exist on the Supabase project.")
 	})
@@ -243,7 +243,7 @@ func TestRunDockerUnbundle(t *testing.T) {
 			Reply(http.StatusOK).
 			BodyString("fake eszip payload")
 
-		err := Run(context.Background(), slugDocker, project, false, true, fsys)
+		err := Run(context.Background(), slugDocker, project, false, true, false, fsys)
 		require.NoError(t, err)
 
 		eszipPath := filepath.Join(utils.TempDir, fmt.Sprintf("output_%s.eszip", slugDocker))
@@ -273,6 +273,89 @@ func TestRunDockerUnbundle(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("falls back to server-side unbundle when extraction fails", func(t *testing.T) {
+		const slugDocker = "demo-extract-fallback"
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		project := apitest.RandomProjectRef()
+		require.NoError(t, flags.LoadConfig(fsys))
+
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		dockerHost := utils.Docker.DaemonHost()
+
+		// Setup mock api
+		defer gock.OffAll()
+
+		gock.New(dockerHost).
+			Head("/_ping").
+			Reply(http.StatusOK)
+
+		imageURL := utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image)
+		containerID := "docker-unbundle-fallback"
+		apitest.MockDockerStart(utils.Docker, imageURL, containerID)
+		// Simulate the local edge-runtime failing to parse the eszip bundle
+		require.NoError(t, apitest.MockDockerLogsExitCode(utils.Docker, containerID, 1))
+
+		gock.New(utils.DefaultApiHost).
+			Get(fmt.Sprintf("/v1/projects/%s/functions/%s/body", project, slugDocker)).
+			Reply(http.StatusOK).
+			BodyString("eszip payload with unsupported version")
+
+		mockMultipartBody(t, project, slugDocker, bundleMetadata{EntrypointPath: "source/index.ts"}, []multipartPart{
+			{filename: "source/index.ts", contents: "console.log('fallback')"},
+		})
+
+		err := Run(context.Background(), slugDocker, project, false, true, false, fsys)
+		require.NoError(t, err)
+
+		data, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, slugDocker, "index.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, "console.log('fallback')", string(data))
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("does not fall back when docker is explicitly requested", func(t *testing.T) {
+		const slugDocker = "demo-explicit-docker"
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		project := apitest.RandomProjectRef()
+		require.NoError(t, flags.LoadConfig(fsys))
+
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		dockerHost := utils.Docker.DaemonHost()
+
+		// Setup mock api
+		defer gock.OffAll()
+
+		gock.New(dockerHost).
+			Head("/_ping").
+			Reply(http.StatusOK)
+
+		imageURL := utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image)
+		containerID := "docker-unbundle-explicit"
+		apitest.MockDockerStart(utils.Docker, imageURL, containerID)
+		require.NoError(t, apitest.MockDockerLogsExitCode(utils.Docker, containerID, 1))
+
+		gock.New(utils.DefaultApiHost).
+			Get(fmt.Sprintf("/v1/projects/%s/functions/%s/body", project, slugDocker)).
+			Reply(http.StatusOK).
+			BodyString("eszip payload with unsupported version")
+
+		utils.CmdSuggestion = ""
+		err := Run(context.Background(), slugDocker, project, false, true, true, fsys)
+		assert.ErrorContains(t, err, "error running container: exit 1")
+		assert.Contains(t, utils.CmdSuggestion, "--legacy-bundle")
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("falls back to server-side unbundle when docker unavailable", func(t *testing.T) {
 		const slugDocker = "demo-fallback"
 		fsys := afero.NewMemMapFs()
@@ -297,7 +380,7 @@ func TestRunDockerUnbundle(t *testing.T) {
 			{filename: "/source/index.ts", contents: "console.log('hello')"},
 		})
 
-		err := Run(context.Background(), slugDocker, project, false, true, fsys)
+		err := Run(context.Background(), slugDocker, project, false, true, false, fsys)
 		require.NoError(t, err)
 
 		data, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, slugDocker, "index.ts"))
@@ -324,7 +407,7 @@ func TestRunServerSideUnbundle(t *testing.T) {
 			{filename: "source/utils.ts", contents: "export const value = 1;"},
 		})
 
-		err := Run(context.Background(), slug, project, false, false, fsys)
+		err := Run(context.Background(), slug, project, false, false, false, fsys)
 		require.NoError(t, err)
 
 		data, err := afero.ReadFile(fsys, filepath.Join(utils.FunctionsDir, slug, "index.ts"))
@@ -371,7 +454,7 @@ func TestRunServerSideUnbundle(t *testing.T) {
 				EntrypointPath: cast.Ptr("file://" + indexPath),
 			})
 
-		err := Run(context.Background(), slug, project, false, false, fsys)
+		err := Run(context.Background(), slug, project, false, false, false, fsys)
 		require.NoError(t, err)
 
 		root := filepath.Join(utils.FunctionsDir, slug)
@@ -411,7 +494,7 @@ func TestRunServerSideUnbundle(t *testing.T) {
 			SetHeader("Content-Type", "application/json").
 			BodyString(`{"error":"no multipart"}`)
 
-		err := Run(context.Background(), slug, project, false, false, fsys)
+		err := Run(context.Background(), slug, project, false, false, false, fsys)
 		assert.ErrorContains(t, err, "expected multipart response")
 	})
 
@@ -439,7 +522,7 @@ func TestRunServerSideUnbundle(t *testing.T) {
 				EntrypointPath: cast.Ptr("file:///source/index.ts"),
 			})
 
-		err := Run(context.Background(), slug, project, false, false, fsys)
+		err := Run(context.Background(), slug, project, false, false, false, fsys)
 		assert.NoError(t, err)
 
 		root := filepath.Join(utils.FunctionsDir, slug)

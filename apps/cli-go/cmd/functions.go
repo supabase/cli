@@ -56,7 +56,7 @@ var (
 			if len(args) > 0 {
 				slug = args[0]
 			}
-			return download.Run(cmd.Context(), slug, flags.ProjectRef, useLegacyBundle, useDocker, afero.NewOsFs())
+			return download.Run(cmd.Context(), slug, flags.ProjectRef, useLegacyBundle, useDocker, cmd.Flags().Changed("use-docker"), afero.NewOsFs())
 		},
 	}
 
