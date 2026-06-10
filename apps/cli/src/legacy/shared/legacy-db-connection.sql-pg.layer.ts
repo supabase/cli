@@ -59,7 +59,6 @@ function buildConnectionUrl(cfg: LegacyPgConnInput, host: string): string {
  * - **Local** (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`) → no TLS;
  *   return `undefined` so `pg` stays in plaintext mode. `sslmode` is ignored,
  *   matching Go, which overwrites the local config unconditionally.
- * - **Local** (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`) → no TLS.
  * - **Remote** maps the URL's `sslmode` to the *primary* config pgconn would try
  *   (`config.go:772-780`'s fallback list), since the `pg` driver carries a single
  *   `ssl` option and cannot replay pgconn's TLS↔plaintext fallback:
@@ -112,28 +111,43 @@ const connect = (
     const servername = connectHost === cfg.host ? undefined : cfg.host;
     const ssl = legacySslOptionFor(cfg.sslmode, isLocal, servername);
     const hasOptions = cfg.options !== undefined && cfg.options.length > 0;
-    const client = yield* PgClient.make({
-      // When a libpq `options` param is present, route everything through the
-      // connection string so it reaches the server (see `buildConnectionUrl`);
-      // otherwise pass discrete fields to avoid round-tripping the password.
-      ...(hasOptions
-        ? { url: Redacted.make(buildConnectionUrl(cfg, connectHost)) }
-        : {
-            host: connectHost,
-            port: cfg.port,
-            username: cfg.user,
-            password: Redacted.make(cfg.password),
-            database: cfg.database,
-          }),
-      // TLS parity with Go (`internal/utils/connect.go`): see `legacySslOptionFor`.
-      ...(ssl === undefined ? {} : { ssl }),
-      maxConnections: 1,
-    }).pipe(
-      Effect.provide(Reactivity.layer),
-      Effect.mapError(
-        (error) => new LegacyDbConnectError({ message: `failed to connect to postgres: ${error}` }),
-      ),
-    );
+    // Connection fields are identical across TLS modes; only the `ssl` option
+    // differs, so build the base once and vary `ssl` per attempt.
+    const connBase = hasOptions
+      ? // When a libpq `options` param is present, route everything through the
+        // connection string so it reaches the server (see `buildConnectionUrl`);
+        // otherwise pass discrete fields to avoid round-tripping the password.
+        { url: Redacted.make(buildConnectionUrl(cfg, connectHost)) }
+      : {
+          host: connectHost,
+          port: cfg.port,
+          username: cfg.user,
+          password: Redacted.make(cfg.password),
+          database: cfg.database,
+        };
+    const makeClient = (sslOption: boolean | ConnectionOptions | undefined) =>
+      PgClient.make({
+        ...connBase,
+        // TLS parity with Go (`internal/utils/connect.go`): see `legacySslOptionFor`.
+        ...(sslOption === undefined ? {} : { ssl: sslOption }),
+        maxConnections: 1,
+      }).pipe(Effect.provide(Reactivity.layer));
+
+    const toConnectError = (error: unknown) =>
+      new LegacyDbConnectError({ message: `failed to connect to postgres: ${error}` });
+
+    // pgconn's `allow` fallback list is `{nil(plaintext), tlsConfig}`: try
+    // plaintext first, then TLS. The `pg` driver connects lazily and cannot
+    // replay pgconn's internal fallback, so for `allow` we eagerly probe the
+    // plaintext connection and retry over TLS on failure (`connect.go` →
+    // `pgconn.connect`). Every other mode keeps its single-config behavior.
+    const client = yield* cfg.sslmode === "allow" && !isLocal
+      ? makeClient(false).pipe(
+          Effect.tap((plaintext) => plaintext`select 1`),
+          Effect.catch(() => makeClient(legacySslOptionFor("require", false, servername))),
+          Effect.mapError(toConnectError),
+        )
+      : makeClient(ssl).pipe(Effect.mapError(toConnectError));
 
     // Step down from the temp/privileged login role before any further SQL.
     // `maxConnections: 1` guarantees the single physical connection is reused, so

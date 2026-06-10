@@ -116,6 +116,13 @@ describe("parseLegacyConnectionString (URL form)", () => {
   it("returns undefined for a malformed percent escape (no thrown defect)", () => {
     expect(parseLegacyConnectionString("postgres://user:p%zz@example.com/db")).toBeUndefined();
   });
+
+  it("rejects a non-Postgres URL scheme instead of connecting to a bogus host", () => {
+    // pgconn only treats `postgres://`/`postgresql://` as a URL (config.go:236);
+    // any other scheme is parsed as a keyword/value DSN, which fails.
+    expect(parseLegacyConnectionString("https://db.example.com/app")).toBeUndefined();
+    expect(parseLegacyConnectionString("mysql://user:pw@host:3306/app")).toBeUndefined();
+  });
 });
 
 describe("parseLegacyConnectionString (libpq keyword/value DSN)", () => {

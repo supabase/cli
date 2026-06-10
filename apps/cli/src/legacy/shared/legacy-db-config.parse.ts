@@ -49,13 +49,15 @@ function unbracketIpv6(host: string): string {
  */
 export function parseLegacyConnectionString(value: string): LegacyPgConnInput | undefined {
   const trimmed = value.trim();
-  // libpq keyword/value DSNs have no `://` scheme but contain `key=value` pairs.
-  // `new URL()` would silently mis-parse them (everything after the first space
-  // lands in the path), so route them through the dedicated parser.
-  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed) && /[a-zA-Z_]+\s*=/.test(trimmed)) {
-    return parseKeywordValueDsn(trimmed);
+  // Match pgconn's dispatch (`config.go:236`): only a literal `postgres://` /
+  // `postgresql://` prefix is parsed as a URL; everything else is a libpq
+  // keyword/value DSN. So a mistyped scheme like `https://host/db` falls through
+  // to the DSN parser, which rejects it (no `key=value`) → the caller surfaces a
+  // redacted parse error rather than connecting to a bogus host.
+  if (trimmed.startsWith("postgres://") || trimmed.startsWith("postgresql://")) {
+    return parseUrlConnectionString(value);
   }
-  return parseUrlConnectionString(value);
+  return parseKeywordValueDsn(trimmed);
 }
 
 /** Parse the WHATWG `postgres(ql)://` URL form. */
