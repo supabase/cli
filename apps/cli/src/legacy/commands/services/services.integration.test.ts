@@ -8,7 +8,18 @@ import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { mockLegacyTelemetryStateTracked } from "../../../../tests/helpers/legacy-mocks.ts";
+import { listLocalServiceVersions } from "../../../shared/services/services.shared.ts";
 import { legacyServices } from "./services.handler.ts";
+
+const LOCAL_POSTGRES_SERVICE = listLocalServiceVersions().find(
+  (service) => service.name === "supabase/postgres",
+);
+
+if (LOCAL_POSTGRES_SERVICE === undefined) {
+  throw new Error("Missing supabase/postgres in local service versions.");
+}
+
+const LOCAL_POSTGRES_VERSION = LOCAL_POSTGRES_SERVICE.local;
 
 function setup(
   opts: {
@@ -106,7 +117,10 @@ describe("legacy services", () => {
         remote: string;
       }>;
       expect(rows).toHaveLength(10);
-      expect(rows[0]).toMatchObject({ name: "supabase/postgres", local: "17.6.1.132" });
+      expect(rows[0]).toMatchObject({
+        name: "supabase/postgres",
+        local: LOCAL_POSTGRES_VERSION,
+      });
     });
   });
 
@@ -121,7 +135,10 @@ describe("legacy services", () => {
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toMatchObject({
         services: expect.arrayContaining([
-          expect.objectContaining({ name: "supabase/postgres", local: "17.6.1.132" }),
+          expect.objectContaining({
+            name: "supabase/postgres",
+            local: LOCAL_POSTGRES_VERSION,
+          }),
         ]),
       });
     });
@@ -136,7 +153,10 @@ describe("legacy services", () => {
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toMatchObject({
         services: expect.arrayContaining([
-          expect.objectContaining({ name: "supabase/postgres", local: "17.6.1.132" }),
+          expect.objectContaining({
+            name: "supabase/postgres",
+            local: LOCAL_POSTGRES_VERSION,
+          }),
         ]),
       });
     });
@@ -160,7 +180,7 @@ describe("legacy services", () => {
       yield* legacyServices({}).pipe(Effect.provide(layer));
 
       expect(out.stdoutText).toContain("- name: supabase/postgres");
-      expect(out.stdoutText).toContain("local: 17.6.1.132");
+      expect(out.stdoutText).toContain(`local: ${LOCAL_POSTGRES_VERSION}`);
     });
   });
 
