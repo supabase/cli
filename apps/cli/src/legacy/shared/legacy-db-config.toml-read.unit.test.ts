@@ -286,6 +286,54 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("lets SUPABASE_DB_* env vars override the [db] config (viper AutomaticEnv)", () => {
+    const prev = {
+      PORT: process.env["SUPABASE_DB_PORT"],
+      SHADOW: process.env["SUPABASE_DB_SHADOW_PORT"],
+      PW: process.env["SUPABASE_DB_PASSWORD"],
+    };
+    process.env["SUPABASE_DB_PORT"] = "6000";
+    process.env["SUPABASE_DB_SHADOW_PORT"] = "6001";
+    process.env["SUPABASE_DB_PASSWORD"] = "env-override";
+    const dir = withConfig(
+      ["[db]", "port = 55555", "shadow_port = 55556", 'password = "hunter2"', ""].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.port).toBe(6000);
+          expect(v.shadowPort).toBe(6001);
+          expect(v.password).toBe("env-override");
+          for (const [k, val] of Object.entries({
+            SUPABASE_DB_PORT: prev.PORT,
+            SUPABASE_DB_SHADOW_PORT: prev.SHADOW,
+            SUPABASE_DB_PASSWORD: prev.PW,
+          })) {
+            if (val === undefined) delete process.env[k];
+            else process.env[k] = val;
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("ignores an empty SUPABASE_DB_PORT override (viper AllowEmptyEnv=false)", () => {
+    const prev = process.env["SUPABASE_DB_PORT"];
+    process.env["SUPABASE_DB_PORT"] = "";
+    const dir = withConfig(["[db]", "port = 55555", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.port).toBe(55555);
+          if (prev === undefined) delete process.env["SUPABASE_DB_PORT"];
+          else process.env["SUPABASE_DB_PORT"] = prev;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("ignores a [db.pooler] connection_string in config.toml (Go reads .temp only)", () => {
     // The Go config field is tagged `toml:"-"`, so a connection_string in config.toml
     // is never honored; only supabase/.temp/pooler-url counts.

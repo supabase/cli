@@ -228,11 +228,27 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   const projectEnv = yield* loadProjectEnv(fs, path, workdir);
   const lookup: EnvLookup = (name) => process.env[name] ?? projectEnv[name];
 
+  // Go's loader enables viper `SetEnvPrefix("SUPABASE")` + `EnvKeyReplacer(".",
+  // "_")` + `AutomaticEnv()` (`config.go:487-492`), so `SUPABASE_DB_*` env vars
+  // override the matching `[db]` field before the TOML value/default. viper
+  // ignores empty env values (`AllowEmptyEnv` defaults false), and the project
+  // `.env` files are loaded into the environment first, so consult both.
+  const envOverride = (name: string): string | undefined => {
+    const fromShell = process.env[name];
+    if (fromShell !== undefined && fromShell.length > 0) return fromShell;
+    const fromFile = projectEnv[name];
+    return fromFile !== undefined && fromFile.length > 0 ? fromFile : undefined;
+  };
+
   // A present-but-unmarshalable port aborts in Go rather than defaulting; mirror
   // that so `test db --local` never silently targets the default local database
   // while hiding a broken `[db]` config.
-  const port = resolvePort(db?.["port"], DEFAULT_PORT, lookup);
-  const shadowPort = resolvePort(db?.["shadow_port"], DEFAULT_SHADOW_PORT, lookup);
+  const port = resolvePort(envOverride("SUPABASE_DB_PORT") ?? db?.["port"], DEFAULT_PORT, lookup);
+  const shadowPort = resolvePort(
+    envOverride("SUPABASE_DB_SHADOW_PORT") ?? db?.["shadow_port"],
+    DEFAULT_SHADOW_PORT,
+    lookup,
+  );
   if (port === undefined || shadowPort === undefined) {
     return yield* Effect.fail(
       new LegacyDbConfigLoadError({
@@ -241,11 +257,14 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     );
   }
 
+  const passwordRaw =
+    envOverride("SUPABASE_DB_PASSWORD") ??
+    (typeof db?.["password"] === "string" ? db["password"] : undefined);
+
   const values: LegacyDbTomlValues = {
     port,
     shadowPort,
-    password:
-      typeof db?.["password"] === "string" ? expandEnv(db["password"], lookup) : DEFAULT_PASSWORD,
+    password: passwordRaw !== undefined ? expandEnv(passwordRaw, lookup) : DEFAULT_PASSWORD,
     poolerConnectionString,
     projectId,
   };
