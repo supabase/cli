@@ -5,7 +5,8 @@ import {
   redactLegacyConnectionString,
 } from "./legacy-db-config.parse.ts";
 
-const osUser = process.env["USER"] ?? process.env["USERNAME"] ?? "postgres";
+const osUser =
+  process.env["PGUSER"] ?? process.env["USER"] ?? process.env["USERNAME"] ?? "postgres";
 
 describe("parseLegacyConnectionString (URL form)", () => {
   it("parses host/port/user/password/database and percent-decodes userinfo", () => {
@@ -108,6 +109,30 @@ describe("parseLegacyConnectionString (libpq keyword/value DSN)", () => {
       database: osUser,
       password: "",
     });
+  });
+
+  it("prefers PGUSER over the OS account for the default user (pgconn env precedence)", () => {
+    const prev = process.env["PGUSER"];
+    process.env["PGUSER"] = "pg_role";
+    try {
+      // No user= keyword: PGUSER wins over USER/USERNAME, and the database
+      // defaults to that resolved user — matching pgconn's
+      // mergeSettings(defaultSettings, envSettings, connStringSettings) order.
+      expect(parseLegacyConnectionString("host=pg.example.com")).toEqual({
+        host: "pg.example.com",
+        port: 5432,
+        user: "pg_role",
+        database: "pg_role",
+        password: "",
+      });
+      // An explicit user= still wins over PGUSER (connStringSettings override env).
+      expect(parseLegacyConnectionString("host=h user=explicit")?.user).toBe("explicit");
+      // The URL form without userinfo also honors PGUSER.
+      expect(parseLegacyConnectionString("postgresql://localhost/mydb")?.user).toBe("pg_role");
+    } finally {
+      if (prev === undefined) delete process.env["PGUSER"];
+      else process.env["PGUSER"] = prev;
+    }
   });
 
   it("returns undefined when a keyword has no '=' value", () => {

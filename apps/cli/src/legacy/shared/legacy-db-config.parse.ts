@@ -122,9 +122,16 @@ function parseKeywordValueDsn(value: string): LegacyPgConnInput | undefined {
   };
 }
 
-/** libpq's default user is the OS account (pgconn calls `user.Current()`). */
+/**
+ * libpq's default user when the connection string omits one. Mirrors `pgconn`'s
+ * `mergeSettings(defaultSettings, envSettings, connStringSettings)`
+ * (`config.go:249`): `PGUSER` (an env setting) takes priority over the OS account
+ * (`defaultSettings` → `user.Current()`), while an explicit `user=`/userinfo in
+ * the connection string still wins over both (handled by the callers). The final
+ * `"postgres"` guard covers minimal environments where neither is available.
+ */
 function defaultOsUser(): string {
-  return process.env["USER"] ?? process.env["USERNAME"] ?? "postgres";
+  return process.env["PGUSER"] ?? process.env["USER"] ?? process.env["USERNAME"] ?? "postgres";
 }
 
 /**
