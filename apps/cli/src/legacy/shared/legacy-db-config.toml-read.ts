@@ -60,20 +60,36 @@ function expandEnv(value: string): string {
   return value;
 }
 
+/** `[db]` ports decode into Go's `uint16` (`pkg/config/db.go:84-85`). */
+const MAX_PORT = 65535;
+
 /**
- * Resolve a `[db]` port field. Go decodes the TOML string/number into a `uint`
- * with `mapstructure`'s weakly-typed input *after* `LoadEnvHook` runs, so an
- * `env(VAR)` reference (written as a quoted string) is expanded and then parsed
- * as the port. A plain number is used directly; anything that does not resolve
- * to a non-negative integer falls back to the default.
+ * Resolve a `[db]` port field. Go decodes the TOML value into a `uint16`
+ * (`config.Load` via `mapstructure`'s weakly-typed input, *after* `LoadEnvHook`
+ * runs), so an `env(VAR)` reference written as a quoted string is expanded and
+ * then parsed as the port. Parity rules:
+ *
+ * - **Omitted** (`undefined`) → the schema default.
+ * - **Present and resolves to a `uint16`** (a plain integer in range, or an
+ *   `env(VAR)` string that expands to one) → that value.
+ * - **Present but cannot unmarshal** (non-numeric, negative, out of range, or an
+ *   unresolved `env(VAR)`) → `undefined`, signalling the caller to abort with
+ *   `LegacyDbConfigLoadError`. Go errors here rather than silently defaulting and
+ *   running against the default local database while hiding a broken config.
  */
-function numberOr(value: unknown, fallback: number): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
+function resolvePort(value: unknown, fallback: number): number | undefined {
+  if (value === undefined) return fallback;
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value >= 0 && value <= MAX_PORT ? value : undefined;
+  }
   if (typeof value === "string") {
     const expanded = expandEnv(value);
-    if (/^\d+$/.test(expanded)) return Number(expanded);
+    if (/^\d+$/.test(expanded)) {
+      const parsed = Number(expanded);
+      if (parsed <= MAX_PORT) return parsed;
+    }
   }
-  return fallback;
+  return undefined;
 }
 
 function nonEmptyString(value: unknown): Option.Option<string> {
@@ -138,9 +154,22 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     .readFileString(poolerUrlPath)
     .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
 
+  // A present-but-unmarshalable port aborts in Go rather than defaulting; mirror
+  // that so `test db --local` never silently targets the default local database
+  // while hiding a broken `[db]` config.
+  const port = resolvePort(db?.["port"], DEFAULT_PORT);
+  const shadowPort = resolvePort(db?.["shadow_port"], DEFAULT_SHADOW_PORT);
+  if (port === undefined || shadowPort === undefined) {
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({
+        message: `failed to load config: invalid ${port === undefined ? "db.port" : "db.shadow_port"} value`,
+      }),
+    );
+  }
+
   const values: LegacyDbTomlValues = {
-    port: numberOr(db?.["port"], DEFAULT_PORT),
-    shadowPort: numberOr(db?.["shadow_port"], DEFAULT_SHADOW_PORT),
+    port,
+    shadowPort,
     password: typeof db?.["password"] === "string" ? expandEnv(db["password"]) : DEFAULT_PASSWORD,
     poolerConnectionString,
     projectId,

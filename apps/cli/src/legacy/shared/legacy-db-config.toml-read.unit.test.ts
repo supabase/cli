@@ -142,19 +142,58 @@ describe("legacyReadDbToml", () => {
     );
   });
 
-  it.effect("keeps the literal value and default port when the env var is unset/empty", () => {
+  it.effect("keeps the literal password when its env var is unset/empty", () => {
     // Go's LoadEnvHook only substitutes when len(os.Getenv(name)) > 0; otherwise it
-    // preserves the literal string, so a quoted env() port that cannot resolve falls
-    // back to the schema default rather than parsing the literal.
+    // preserves the literal string. Password is a plain string field, so an
+    // unresolved env() ref stays literal (it is not validated like the ports).
     delete process.env["LEGACY_DB_UNSET"];
-    const dir = withConfig(
-      ["[db]", 'port = "env(LEGACY_DB_UNSET)"', 'password = "env(LEGACY_DB_UNSET)"', ""].join("\n"),
-    );
+    const dir = withConfig(["[db]", 'password = "env(LEGACY_DB_UNSET)"', ""].join("\n"));
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.port).toBe(54322);
           expect(v.password).toBe("env(LEGACY_DB_UNSET)");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "fails when a present port is non-numeric, out of range, or an unresolved env()",
+    () => {
+      // Go decodes [db].port into uint16 after LoadEnvHook; a present value that cannot
+      // unmarshal aborts config loading rather than silently defaulting to 54322.
+      delete process.env["LEGACY_DB_UNSET"];
+      const cases = ['port = "abc"', "port = 70000", "port = -1", 'port = "env(LEGACY_DB_UNSET)"'];
+      return Effect.forEach(cases, (line) => {
+        const dir = withConfig(["[db]", line, ""].join("\n"));
+        return read(dir).pipe(
+          Effect.exit,
+          Effect.tap((exit) =>
+            Effect.sync(() => {
+              expect(Exit.isFailure(exit)).toBe(true);
+              if (Exit.isFailure(exit)) {
+                expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+                expect(JSON.stringify(exit.cause)).toContain("invalid db.port");
+              }
+              rmSync(dir, { recursive: true, force: true });
+            }),
+          ),
+        );
+      });
+    },
+  );
+
+  it.effect("fails when a present shadow_port cannot unmarshal into a uint16", () => {
+    const dir = withConfig(["[db]", "port = 5000", 'shadow_port = "nope"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("invalid db.shadow_port");
+          }
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
