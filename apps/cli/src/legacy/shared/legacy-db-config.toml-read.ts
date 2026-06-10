@@ -66,8 +66,23 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   const supabaseDir = path.join(workdir, "supabase");
   const configPath = path.join(supabaseDir, "config.toml");
 
-  // Distinguish "absent" (→ defaults) from "present but malformed" (→ fail).
-  const maybeContent = yield* fs.readFileString(configPath).pipe(Effect.option);
+  // Distinguish "absent" (→ defaults) from "present but unreadable/malformed" (→ fail),
+  // matching Go's `mergeFileConfig` (`pkg/config/config.go:528`): only `os.ErrNotExist`
+  // is swallowed, every other read error aborts rather than silently running against the
+  // default local database. Effect surfaces "not found" as `PlatformError` with a
+  // `SystemError` reason tagged `"NotFound"`.
+  const maybeContent = yield* fs.readFileString(configPath).pipe(
+    Effect.map(Option.some<string>),
+    Effect.catchTag("PlatformError", (error) =>
+      error.reason._tag === "NotFound"
+        ? Effect.succeed(Option.none<string>())
+        : Effect.fail(
+            new LegacyDbConfigLoadError({
+              message: `failed to read file config: ${error.message}`,
+            }),
+          ),
+    ),
+  );
 
   let db: RawDoc | undefined;
   let projectId = Option.none<string>();

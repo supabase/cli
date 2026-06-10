@@ -62,6 +62,27 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("fails with LegacyDbConfigLoadError when config.toml is present but unreadable", () => {
+    // Go's mergeFileConfig swallows only os.ErrNotExist; every other read error aborts
+    // rather than silently running against the default local database (Codex P2 parity).
+    // A directory at the config.toml path yields a non-NotFound PlatformError on read.
+    const dir = mkdtempSync(join(tmpdir(), "legacy-db-toml-"));
+    mkdirSync(join(dir, "supabase", "config.toml"), { recursive: true });
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+            expect(JSON.stringify(exit.cause)).toContain("failed to read file config");
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("falls back to the default password when [db] omits it", () => {
     const dir = withConfig(["[db]", "port = 5000", ""].join("\n"));
     return read(dir).pipe(
