@@ -228,6 +228,31 @@ function parseMultipartHeaders(rawHeaders: string): Readonly<Record<string, stri
   return headers;
 }
 
+function findNextMultipartBoundary(
+  payload: Uint8Array,
+  boundaryPrefix: Uint8Array,
+  from = 0,
+): number {
+  let offset = from;
+  while (offset < payload.length) {
+    const index = findBytes(payload, boundaryPrefix, offset);
+    if (index < 0) {
+      return -1;
+    }
+
+    const suffixIndex = index + boundaryPrefix.length;
+    const isClosingBoundary = payload[suffixIndex] === 45 && payload[suffixIndex + 1] === 45;
+    const isPartBoundary = payload[suffixIndex] === 13 && payload[suffixIndex + 1] === 10;
+    if (isClosingBoundary || isPartBoundary) {
+      return index;
+    }
+
+    offset = index + 1;
+  }
+
+  return -1;
+}
+
 function decodeMultipartParts(
   payload: Uint8Array,
   boundary: string,
@@ -259,7 +284,7 @@ function decodeMultipartParts(
           throw new Error("multipart part is missing its header separator");
         }
         const bodyStart = separatorIndex + headerSeparator.length;
-        const nextPartIndex = findBytes(payload, nextPartPrefix, bodyStart);
+        const nextPartIndex = findNextMultipartBoundary(payload, nextPartPrefix, bodyStart);
         if (nextPartIndex < 0) {
           throw new Error("multipart response is missing its closing boundary");
         }
@@ -282,16 +307,19 @@ function decodeMultipartParts(
 
 function readContentDispositionParam(
   contentDisposition: string,
-  param: "name" | "filename",
+  param: "name" | "filename" | "filename*",
 ): Effect.Effect<string | undefined, InvalidFunctionDownloadResponseError> {
+  const paramPattern = param.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const quotedMatch = contentDisposition.match(
-    new RegExp(`(?:^|;)\\s*${param}="((?:[^"\\\\]|\\\\.)*)"`, "i"),
+    new RegExp(`(?:^|;)\\s*${paramPattern}="((?:[^"\\\\]|\\\\.)*)"`, "i"),
   );
   if (quotedMatch !== null) {
     return Effect.succeed(quotedMatch[1]?.replaceAll('\\"', '"'));
   }
 
-  const assignmentMatch = contentDisposition.match(new RegExp(`(?:^|;)\\s*${param}=([^;]*)`, "i"));
+  const assignmentMatch = contentDisposition.match(
+    new RegExp(`(?:^|;)\\s*${paramPattern}=([^;]*)`, "i"),
+  );
   if (assignmentMatch === null) {
     return Effect.succeed(undefined);
   }
@@ -307,6 +335,37 @@ function readContentDispositionParam(
   );
 }
 
+function decodeRfc5987Param(
+  value: string,
+): Effect.Effect<string, InvalidFunctionDownloadResponseError> {
+  const firstQuote = value.indexOf("'");
+  const secondQuote = firstQuote < 0 ? -1 : value.indexOf("'", firstQuote + 1);
+  if (firstQuote < 0 || secondQuote < 0) {
+    return Effect.fail(
+      new InvalidFunctionDownloadResponseError({
+        message: "failed to parse content disposition: malformed filename*",
+      }),
+    );
+  }
+
+  const charset = value.slice(0, firstQuote).toLowerCase();
+  if (charset !== "utf-8" && charset !== "us-ascii") {
+    return Effect.fail(
+      new InvalidFunctionDownloadResponseError({
+        message: `failed to parse content disposition: unsupported filename* charset ${charset}`,
+      }),
+    );
+  }
+
+  return Effect.try({
+    try: () => decodeURIComponent(value.slice(secondQuote + 1)),
+    catch: (cause) =>
+      new InvalidFunctionDownloadResponseError({
+        message: `failed to parse content disposition: malformed filename*: ${cause instanceof Error ? cause.message : String(cause)}`,
+      }),
+  });
+}
+
 function readFormFieldName(
   headers: Readonly<Record<string, string>>,
 ): Effect.Effect<string | undefined, InvalidFunctionDownloadResponseError> {
@@ -315,6 +374,19 @@ function readFormFieldName(
     return Effect.succeed(undefined);
   }
   return readContentDispositionParam(contentDisposition, "name");
+}
+
+function readContentDispositionFilename(
+  contentDisposition: string,
+): Effect.Effect<string | undefined, InvalidFunctionDownloadResponseError> {
+  return Effect.gen(function* () {
+    const encodedFilename = yield* readContentDispositionParam(contentDisposition, "filename*");
+    if (encodedFilename !== undefined) {
+      return yield* decodeRfc5987Param(encodedFilename);
+    }
+
+    return yield* readContentDispositionParam(contentDisposition, "filename");
+  });
 }
 
 function getPartPath(
@@ -330,7 +402,7 @@ function getPartPath(
     return Effect.succeed("");
   }
 
-  return readContentDispositionParam(contentDisposition, "filename").pipe(
+  return readContentDispositionFilename(contentDisposition).pipe(
     Effect.map((filename) => filename ?? ""),
   );
 }
@@ -357,6 +429,12 @@ function decodeMultipartForm(
     const files: DownloadFilePart[] = [];
 
     for (const part of parts) {
+      const filePath = yield* getPartPath(part.headers);
+      if (filePath.length > 0) {
+        files.push({ path: filePath, body: part.body });
+        continue;
+      }
+
       const fieldName = yield* readFormFieldName(part.headers);
       if (fieldName === "metadata") {
         const rawMetadata = new TextDecoder().decode(part.body);
@@ -367,12 +445,6 @@ function decodeMultipartForm(
               message: `failed to unmarshal metadata: ${cause instanceof Error ? cause.message : String(cause)}`,
             }),
         });
-        continue;
-      }
-
-      const filePath = yield* getPartPath(part.headers);
-      if (filePath.length > 0) {
-        files.push({ path: filePath, body: part.body });
       }
     }
 
@@ -459,7 +531,7 @@ const listRemoteFunctionSlugs = Effect.fnUntraced(function* (api: ApiClient, pro
     try: () => {
       const parsed = JSON.parse(body);
       if (!Array.isArray(parsed)) {
-        return [];
+        throw new Error("expected functions list response to be an array");
       }
       return parsed.flatMap((value) => {
         const slug = getObjectProperty(value, "slug");
@@ -468,7 +540,7 @@ const listRemoteFunctionSlugs = Effect.fnUntraced(function* (api: ApiClient, pro
     },
     catch: (cause) =>
       new InvalidFunctionDownloadResponseError({
-        message: `failed to read form: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `failed to read functions list: ${cause instanceof Error ? cause.message : String(cause)}`,
       }),
   });
 });
@@ -554,10 +626,9 @@ const downloadSingle = Effect.fnUntraced(function* (
 
   const response = yield* downloadBody(dependencies.api, projectRef, slug);
   const { metadata, files } = yield* decodeMultipartForm(response);
-  const remoteFunction =
-    metadata?.entrypoint_path !== undefined
-      ? undefined
-      : yield* getRemoteFunction(dependencies.api, projectRef, slug);
+  const remoteFunction = hasEntrypointPath(metadata)
+    ? undefined
+    : yield* getRemoteFunction(dependencies.api, projectRef, slug);
   const entrypointPath = resolveEntrypointPath(metadata, remoteFunction);
   const projectRoot = dependencies.projectRoot;
   const functionsRoot = join(projectRoot, "supabase", "functions");

@@ -7,7 +7,10 @@ interface LegacyGoProxyShape {
    * and propagating the exit code. On a non-zero exit the process exits with
    * the same code — callers do not need to handle the failure case.
    */
-  readonly exec: (args: ReadonlyArray<string>) => Effect.Effect<void>;
+  readonly exec: (
+    args: ReadonlyArray<string>,
+    opts?: { readonly cwd?: string },
+  ) => Effect.Effect<void>;
 }
 
 export class LegacyGoProxy extends Context.Service<LegacyGoProxy, LegacyGoProxyShape>()(

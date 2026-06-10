@@ -19,6 +19,6 @@ export const functionsDownload = Effect.fnUntraced(function* (flags: FunctionsDo
     projectRoot: projectHome.projectRoot,
     resolveProjectRef,
     proxyDownload: (proxyFlags, projectRef) =>
-      proxy.exec(makeGoProxyDownloadArgs(proxyFlags, projectRef)),
+      proxy.exec(makeGoProxyDownloadArgs(proxyFlags, projectRef), { cwd: projectHome.projectRoot }),
   });
 });
