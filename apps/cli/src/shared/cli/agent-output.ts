@@ -2,12 +2,10 @@ import { Option } from "effect";
 import type { OutputFormat } from "../output/types.ts";
 
 type LegacyOutputFormat = "env" | "pretty" | "json" | "toml" | "yaml";
-type AgentOverride = "auto" | "yes" | "no";
 
 interface AgentOutputOptions {
   readonly explicitOutputFormat: Option.Option<OutputFormat>;
   readonly legacyOutputFormat?: Option.Option<LegacyOutputFormat>;
-  readonly agentOverride?: AgentOverride;
   readonly detectedAgentName?: Option.Option<string>;
 }
 
@@ -72,22 +70,10 @@ function legacyOutputFormatFromArg(value: string | undefined): Option.Option<Leg
   }
 }
 
-function agentOverrideFromArg(value: string | undefined): AgentOverride {
-  switch (value) {
-    case "yes":
-    case "no":
-      return value;
-    default:
-      return "auto";
-  }
-}
-
 export function resolveAgentOutputFormat(options: AgentOutputOptions): OutputFormat {
   const legacyOutputFormat = options.legacyOutputFormat ?? Option.none<LegacyOutputFormat>();
-  const agentOverride = options.agentOverride ?? "auto";
   const detectedAgentName = options.detectedAgentName ?? Option.none<string>();
-  const isCodingAgent =
-    agentOverride === "yes" || (agentOverride !== "no" && Option.isSome(detectedAgentName));
+  const isCodingAgent = Option.isSome(detectedAgentName);
 
   return Option.getOrElse(options.explicitOutputFormat, () =>
     isCodingAgent && Option.isNone(legacyOutputFormat) ? "json" : "text",
@@ -100,12 +86,10 @@ export function resolveAgentOutputFormatFromArgs(
 ): OutputFormat {
   const explicitOutputFormat = outputFormatFromArg(readLongFlag(args, "--output-format"));
   const legacyOutputFormat = legacyOutputFormatFromArg(readOutputFlag(args));
-  const agentOverride = agentOverrideFromArg(readLongFlag(args, "--agent"));
 
   return resolveAgentOutputFormat({
     explicitOutputFormat,
     legacyOutputFormat,
-    agentOverride,
     detectedAgentName,
   });
 }

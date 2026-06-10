@@ -42,23 +42,6 @@ describe("resolveAgentOutputFormat", () => {
     ).toBe("json");
   });
 
-  it("honors the --agent override", () => {
-    expect(
-      resolveAgentOutputFormat({
-        explicitOutputFormat: Option.none(),
-        agentOverride: "yes",
-        detectedAgentName: Option.none(),
-      }),
-    ).toBe("json");
-    expect(
-      resolveAgentOutputFormat({
-        explicitOutputFormat: Option.none(),
-        agentOverride: "no",
-        detectedAgentName: Option.some("codex"),
-      }),
-    ).toBe("text");
-  });
-
   it("keeps legacy --output authoritative over the agent JSON default", () => {
     expect(
       resolveAgentOutputFormat({
@@ -72,7 +55,10 @@ describe("resolveAgentOutputFormat", () => {
   it("resolves the effective format from raw argv for runtime error formatting", () => {
     expect(resolveAgentOutputFormatFromArgs(["bad-command"], Option.some("codex"))).toBe("json");
     expect(
-      resolveAgentOutputFormatFromArgs(["--agent", "no", "bad-command"], Option.some("codex")),
+      resolveAgentOutputFormatFromArgs(
+        ["--output-format", "text", "bad-command"],
+        Option.some("codex"),
+      ),
     ).toBe("text");
     expect(
       resolveAgentOutputFormatFromArgs(["-o", "pretty", "bad-command"], Option.some("codex")),

@@ -53,9 +53,9 @@ describe("legacy CLI agent output", () => {
     ]);
   });
 
-  test("keeps parse errors in text mode when --agent=no is explicit", async () => {
+  test("keeps parse errors in text mode when --output-format=text is explicit", async () => {
     const { exitCode, stdout, stderr } = await runSupabase(
-      ["--agent", "no", "definitely-not-a-command"],
+      ["--output-format", "text", "definitely-not-a-command"],
       {
         entrypoint: "legacy",
         env: { CODEX_SANDBOX: "1" },
