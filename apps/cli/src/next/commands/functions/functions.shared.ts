@@ -20,5 +20,5 @@ export const resolveProjectRef = Effect.fnUntraced(function* (projectRef: Option
     );
   }
 
-  return maybeLinkState.value.active_branch.ref;
+  return maybeLinkState.value.project.ref;
 });

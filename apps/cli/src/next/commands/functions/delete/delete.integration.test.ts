@@ -22,16 +22,17 @@ import {
 import { functionsDelete } from "./delete.handler.ts";
 
 const PROJECT_REF = "abcdefghijklmnopqrst";
+const BRANCH_REF = "branchrefabcdefghij";
 
 const LINK_STATE: ProjectLinkStateValue = {
   project: {
-    ref: "parentrefabcdefghijk",
+    ref: PROJECT_REF,
     name: "Linked Project",
     organization_id: "org-id",
     organization_slug: "org-slug",
   },
   active_branch: {
-    ref: PROJECT_REF,
+    ref: BRANCH_REF,
     name: "main",
     is_default: true,
   },

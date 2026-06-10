@@ -33,17 +33,18 @@ import {
 import { functionsDownload } from "./download.handler.ts";
 
 const PROJECT_REF = "abcdefghijklmnopqrst";
+const BRANCH_REF = "branchrefabcdefghij";
 type ResponseBody = string | Blob;
 
 const LINK_STATE: ProjectLinkStateValue = {
   project: {
-    ref: "parentrefabcdefghijk",
+    ref: PROJECT_REF,
     name: "Linked Project",
     organization_id: "org-id",
     organization_slug: "org-slug",
   },
   active_branch: {
-    ref: PROJECT_REF,
+    ref: BRANCH_REF,
     name: "main",
     is_default: true,
   },
@@ -388,6 +389,95 @@ describe("functions download", () => {
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
   });
+
+  it.live("downloads multipart file parts under any field name", () => {
+    const tempDir = makeTempDir();
+    const multipart = multipartBody([
+      {
+        headers: {
+          "Content-Disposition": 'form-data; name="metadata"',
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ deno2_entrypoint_path: "source/index.ts" }),
+      },
+      {
+        headers: {
+          "Content-Disposition": 'form-data; name="source"; filename="source/index.ts"',
+        },
+        body: "console.log('source')",
+      },
+    ]);
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      const { layer } = setup(tempDir, {
+        bodyBySlug: {
+          "hello-world": multipart,
+        },
+      });
+
+      yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer));
+
+      expect(
+        yield* Effect.tryPromise(() =>
+          readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
+        ),
+      ).toBe("console.log('source')");
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live(
+    "falls back to function metadata when multipart metadata has an empty entrypoint path",
+    () => {
+      const tempDir = makeTempDir();
+      const absoluteEntrypoint = "/tmp/functions-download-empty/source/index.ts";
+      const multipart = multipartBody([
+        {
+          headers: {
+            "Content-Disposition": 'form-data; name="metadata"',
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ deno2_entrypoint_path: "" }),
+        },
+        {
+          headers: {
+            "Content-Disposition": `form-data; name="file"; filename="${absoluteEntrypoint}"`,
+          },
+          body: "console.log('empty metadata')",
+        },
+      ]);
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        const { layer } = setup(tempDir, {
+          functionBySlug: {
+            "hello-world": makeFunction({
+              slug: "hello-world",
+              entrypoint_path: `file://${absoluteEntrypoint}`,
+            }),
+          },
+          bodyBySlug: {
+            "hello-world": multipart,
+          },
+        });
+
+        yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer));
+
+        expect(
+          yield* Effect.tryPromise(() =>
+            readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
+          ),
+        ).toBe("console.log('empty metadata')");
+        expect(
+          existsSync(join(tempDir, "supabase", "functions", "hello-world", "source", "index.ts")),
+        ).toBe(false);
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      );
+    },
+  );
 
   it.live("downloads into the linked project root when run from a subdirectory", () => {
     const tempDir = makeTempDir();

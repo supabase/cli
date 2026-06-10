@@ -143,12 +143,14 @@ function parseDownloadMetadata(raw: string): DownloadMetadata {
 
   const parsed = JSON.parse(text);
   const deno2EntrypointPath = getObjectProperty(parsed, "deno2_entrypoint_path");
-  if (typeof deno2EntrypointPath === "string") {
+  if (typeof deno2EntrypointPath === "string" && deno2EntrypointPath.length > 0) {
     return { entrypoint_path: deno2EntrypointPath };
   }
 
   const entrypointPath = getObjectProperty(parsed, "entrypoint_path");
-  return typeof entrypointPath === "string" ? { entrypoint_path: entrypointPath } : {};
+  return typeof entrypointPath === "string" && entrypointPath.length > 0
+    ? { entrypoint_path: entrypointPath }
+    : {};
 }
 
 function readMultipartBoundary(
@@ -349,12 +351,10 @@ function decodeMultipartForm(
         continue;
       }
 
-      if (fieldName !== "file") {
-        continue;
-      }
-
       const filePath = yield* getPartPath(part.headers);
-      files.push({ path: filePath, body: part.body });
+      if (filePath.length > 0) {
+        files.push({ path: filePath, body: part.body });
+      }
     }
 
     return { metadata, files };
