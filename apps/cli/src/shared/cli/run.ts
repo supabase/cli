@@ -26,6 +26,7 @@ import { aiToolLayer } from "../telemetry/ai-tool.layer.ts";
 import { AiTool } from "../telemetry/ai-tool.service.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
+import { CliArgs } from "./cli-args.service.ts";
 import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
 
 function formatterLayerFor(format: OutputFormat) {
@@ -102,6 +103,7 @@ function cliProgramFor(
     Effect.provide(runtimeLayer),
     Effect.provide(unixHttpClientLayer),
     Effect.provide(fallbackCommandLayer),
+    Effect.provide(Layer.succeed(CliArgs, { args })),
     Effect.provide(BunServices.layer),
   );
 }

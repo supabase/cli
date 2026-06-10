@@ -41,9 +41,11 @@ import { legacyQuietProgressTextOutputLayer } from "../output/legacy-quiet-progr
 import { makeGoProxyLayer } from "../../shared/legacy/go-proxy.layer.ts";
 import { AiTool } from "../../shared/telemetry/ai-tool.service.ts";
 import { aiToolLayer } from "../../shared/telemetry/ai-tool.layer.ts";
-import { resolveAgentOutputFormat } from "../../shared/cli/agent-output.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../../shared/cli/agent-output.ts";
 import {
   LEGACY_GLOBAL_FLAGS,
+  LegacyAgentFlag,
   LegacyCreateTicketFlag,
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
@@ -108,6 +110,8 @@ export const legacyRoot = Command.make("supabase").pipe(
         const yes = yield* LegacyYesFlag;
         const dnsResolver = yield* LegacyDnsResolverFlag;
         const createTicket = yield* LegacyCreateTicketFlag;
+        const agent = yield* LegacyAgentFlag;
+        const cliArgs = yield* CliArgs;
 
         const aiTool = yield* AiTool.pipe(Effect.provide(aiToolLayer));
         // An explicit Go --output is a complete format choice (even `-o pretty`
@@ -116,7 +120,9 @@ export const legacyRoot = Command.make("supabase").pipe(
         const outputFormat = resolveAgentOutputFormat({
           explicitOutputFormat,
           legacyOutputFormat: goOutput,
+          agentOverride: agent,
           detectedAgentName: aiTool.name,
+          isBuiltInTextRequest: isBuiltInTextRequest(cliArgs.args),
         });
 
         // Build args to prepend to every proxy exec call.
@@ -135,6 +141,7 @@ export const legacyRoot = Command.make("supabase").pipe(
         if (yes) globalArgs.push("--yes");
         if (dnsResolver !== "native") globalArgs.push("--dns-resolver", dnsResolver);
         if (createTicket) globalArgs.push("--create-ticket");
+        if (agent !== "auto") globalArgs.push("--agent", agent);
 
         // Go's `-o {json,yaml,toml,env}` selects a machine encoder the handler
         // writes via `output.raw`. Keep the text layer (so errors still render

@@ -66,4 +66,61 @@ describe("legacy CLI agent output", () => {
     expect(stdout).toContain("DESCRIPTION");
     expect(stderr).toContain('Unknown subcommand "definitely-not-a-command"');
   });
+
+  test("keeps parse errors in text mode when --agent=no is explicit", async () => {
+    const { exitCode, stdout, stderr } = await runSupabase(
+      ["--agent", "no", "definitely-not-a-command"],
+      {
+        entrypoint: "legacy",
+        env: { CODEX_SANDBOX: "1" },
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stdout).toContain("DESCRIPTION");
+    expect(stderr).toContain('Unknown subcommand "definitely-not-a-command"');
+  });
+
+  test("formats parse errors as JSON when --agent=yes is explicit", async () => {
+    const { exitCode, stdout, stderr } = await runSupabase(
+      ["--agent", "yes", "definitely-not-a-command"],
+      {
+        entrypoint: "legacy",
+        env: {},
+      },
+    );
+
+    expect(exitCode).toBe(1);
+    expect(parseJsonLines(stdout)).toEqual([
+      expect.objectContaining({ _tag: "Help" }),
+      expect.objectContaining({
+        _tag: "Error",
+        error: expect.objectContaining({ code: "ShowHelp" }),
+      }),
+    ]);
+    expect(parseJsonLines(stderr)).toEqual([
+      expect.objectContaining({
+        _tag: "Errors",
+        errors: [expect.objectContaining({ code: "UnknownSubcommand" })],
+      }),
+    ]);
+  });
+
+  test("keeps built-in version and help in text mode for detected coding agents", async () => {
+    const version = await runSupabase(["--version"], {
+      entrypoint: "legacy",
+      env: { CODEX_SANDBOX: "1" },
+    });
+    const help = await runSupabase(["--help"], {
+      entrypoint: "legacy",
+      env: { CODEX_SANDBOX: "1" },
+    });
+
+    expect(version.exitCode).toBe(0);
+    expect(version.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(() => JSON.parse(version.stdout)).toThrow();
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("DESCRIPTION");
+    expect(() => JSON.parse(help.stdout)).toThrow();
+  });
 });

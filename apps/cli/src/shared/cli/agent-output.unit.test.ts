@@ -52,6 +52,40 @@ describe("resolveAgentOutputFormat", () => {
     ).toBe("text");
   });
 
+  it("honors the legacy --agent override", () => {
+    expect(
+      resolveAgentOutputFormat({
+        explicitOutputFormat: Option.none(),
+        agentOverride: "no",
+        detectedAgentName: Option.some("codex"),
+      }),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormat({
+        explicitOutputFormat: Option.none(),
+        agentOverride: "yes",
+        detectedAgentName: Option.none(),
+      }),
+    ).toBe("json");
+  });
+
+  it("keeps built-in help and version text unless output-format is explicit", () => {
+    expect(
+      resolveAgentOutputFormat({
+        explicitOutputFormat: Option.none(),
+        detectedAgentName: Option.some("codex"),
+        isBuiltInTextRequest: true,
+      }),
+    ).toBe("text");
+    expect(
+      resolveAgentOutputFormat({
+        explicitOutputFormat: Option.some("json"),
+        detectedAgentName: Option.some("codex"),
+        isBuiltInTextRequest: true,
+      }),
+    ).toBe("json");
+  });
+
   it("resolves the effective format from raw argv for runtime error formatting", () => {
     expect(resolveAgentOutputFormatFromArgs(["bad-command"], Option.some("codex"))).toBe("json");
     expect(
@@ -69,5 +103,16 @@ describe("resolveAgentOutputFormat", () => {
         Option.some("codex"),
       ),
     ).toBe("stream-json");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--agent", "no", "bad-command"], Option.some("codex")),
+    ).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--agent=yes", "bad-command"], Option.none())).toBe(
+      "json",
+    );
+    expect(resolveAgentOutputFormatFromArgs(["--version"], Option.some("codex"))).toBe("text");
+    expect(resolveAgentOutputFormatFromArgs(["--help"], Option.some("codex"))).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["--output-format=json", "--help"], Option.some("codex")),
+    ).toBe("json");
   });
 });

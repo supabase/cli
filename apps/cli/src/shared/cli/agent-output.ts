@@ -2,11 +2,14 @@ import { Option } from "effect";
 import type { OutputFormat } from "../output/types.ts";
 
 type LegacyOutputFormat = "env" | "pretty" | "json" | "toml" | "yaml";
+type AgentOverride = "auto" | "yes" | "no";
 
 interface AgentOutputOptions {
   readonly explicitOutputFormat: Option.Option<OutputFormat>;
   readonly legacyOutputFormat?: Option.Option<LegacyOutputFormat>;
+  readonly agentOverride?: AgentOverride;
   readonly detectedAgentName?: Option.Option<string>;
+  readonly isBuiltInTextRequest?: boolean;
 }
 
 function readLongFlag(args: ReadonlyArray<string>, name: string): string | undefined {
@@ -70,13 +73,33 @@ function legacyOutputFormatFromArg(value: string | undefined): Option.Option<Leg
   }
 }
 
+function agentOverrideFromArg(value: string | undefined): AgentOverride {
+  switch (value) {
+    case "yes":
+    case "no":
+      return value;
+    default:
+      return "auto";
+  }
+}
+
+export function isBuiltInTextRequest(args: ReadonlyArray<string>): boolean {
+  return args.some(
+    (arg) => arg === "--help" || arg === "-h" || arg === "--version" || arg === "-v",
+  );
+}
+
 export function resolveAgentOutputFormat(options: AgentOutputOptions): OutputFormat {
   const legacyOutputFormat = options.legacyOutputFormat ?? Option.none<LegacyOutputFormat>();
   const detectedAgentName = options.detectedAgentName ?? Option.none<string>();
-  const isCodingAgent = Option.isSome(detectedAgentName);
+  const agentOverride = options.agentOverride ?? "auto";
+  const isCodingAgent =
+    agentOverride === "yes" || (agentOverride === "auto" && Option.isSome(detectedAgentName));
 
   return Option.getOrElse(options.explicitOutputFormat, () =>
-    isCodingAgent && Option.isNone(legacyOutputFormat) ? "json" : "text",
+    isCodingAgent && Option.isNone(legacyOutputFormat) && !options.isBuiltInTextRequest
+      ? "json"
+      : "text",
   );
 }
 
@@ -86,10 +109,13 @@ export function resolveAgentOutputFormatFromArgs(
 ): OutputFormat {
   const explicitOutputFormat = outputFormatFromArg(readLongFlag(args, "--output-format"));
   const legacyOutputFormat = legacyOutputFormatFromArg(readOutputFlag(args));
+  const agentOverride = agentOverrideFromArg(readLongFlag(args, "--agent"));
 
   return resolveAgentOutputFormat({
     explicitOutputFormat,
     legacyOutputFormat,
+    agentOverride,
     detectedAgentName,
+    isBuiltInTextRequest: isBuiltInTextRequest(args),
   });
 }
