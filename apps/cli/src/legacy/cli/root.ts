@@ -39,6 +39,9 @@ import { OutputFormatFlag } from "../../shared/cli/global-flags.ts";
 import { outputLayerFor } from "../../shared/output/output.layer.ts";
 import { legacyQuietProgressTextOutputLayer } from "../output/legacy-quiet-progress-text-output.layer.ts";
 import { makeGoProxyLayer } from "../../shared/legacy/go-proxy.layer.ts";
+import { AiTool } from "../../shared/telemetry/ai-tool.service.ts";
+import { aiToolLayer } from "../../shared/telemetry/ai-tool.layer.ts";
+import { resolveAgentOutputFormat } from "../../shared/cli/agent-output.ts";
 import {
   LEGACY_GLOBAL_FLAGS,
   LegacyAgentFlag,
@@ -96,7 +99,7 @@ export const legacyRoot = Command.make("supabase").pipe(
   Command.provide(
     Layer.unwrap(
       Effect.gen(function* () {
-        const outputFormat = yield* OutputFormatFlag;
+        const explicitOutputFormat = yield* OutputFormatFlag;
         const goOutput = yield* LegacyOutputFlag;
         const profile = yield* LegacyProfileFlag;
         const debug = yield* LegacyDebugFlag;
@@ -107,6 +110,10 @@ export const legacyRoot = Command.make("supabase").pipe(
         const dnsResolver = yield* LegacyDnsResolverFlag;
         const createTicket = yield* LegacyCreateTicketFlag;
         const agent = yield* LegacyAgentFlag;
+
+        const aiTool = yield* AiTool.pipe(Effect.provide(aiToolLayer));
+        const isCodingAgent = agent === "yes" || (agent !== "no" && Option.isSome(aiTool.name));
+        const outputFormat = resolveAgentOutputFormat(explicitOutputFormat, isCodingAgent);
 
         // Build args to prepend to every proxy exec call.
         // --output: use explicit --output if set, otherwise map from --output-format.

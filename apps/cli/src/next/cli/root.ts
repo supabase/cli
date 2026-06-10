@@ -1,6 +1,9 @@
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { OutputFormatFlag } from "../../shared/cli/global-flags.ts";
+import { AiTool } from "../../shared/telemetry/ai-tool.service.ts";
+import { aiToolLayer } from "../../shared/telemetry/ai-tool.layer.ts";
+import { resolveAgentOutputFormat } from "../../shared/cli/agent-output.ts";
 import { branchesCommand } from "../commands/branches/branches.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
 import { linkCommand } from "../commands/link/link.command.ts";
@@ -47,7 +50,10 @@ export const nextRoot = Command.make("supabase").pipe(
   Command.provide(
     Layer.unwrap(
       Effect.gen(function* () {
-        const outputFormat = yield* OutputFormatFlag;
+        const explicitOutputFormat = yield* OutputFormatFlag;
+        const aiTool = yield* AiTool.pipe(Effect.provide(aiToolLayer));
+        const isCodingAgent = Option.isSome(aiTool.name);
+        const outputFormat = resolveAgentOutputFormat(explicitOutputFormat, isCodingAgent);
         const base = outputLayerFor(outputFormat);
         if (outputFormat === "text") return base;
         return Layer.merge(base, CliOutput.layer(jsonCliOutputFormatter()));
