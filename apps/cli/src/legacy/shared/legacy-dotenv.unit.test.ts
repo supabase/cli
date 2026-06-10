@@ -35,6 +35,15 @@ describe("parseDotEnv", () => {
     expect(parseDotEnv("B='has # hash inside' # comment")).toEqual({ B: "has # hash inside" });
   });
 
+  it("accepts godotenv YAML-style colon assignments", () => {
+    expect(parseDotEnv("SUPABASE_DB_PASSWORD: secret\nDB_PORT:54323")).toEqual({
+      SUPABASE_DB_PASSWORD: "secret",
+      DB_PORT: "54323",
+    });
+    // The first `=`/`:` ends the key; a separator inside the value is preserved.
+    expect(parseDotEnv("DB_URL=postgres://h:5432/db")).toEqual({ DB_URL: "postgres://h:5432/db" });
+  });
+
   it("throws on an unterminated quoted value", () => {
     expect(() => parseDotEnv('A="unterminated')).toThrow(/unterminated quoted value/);
   });

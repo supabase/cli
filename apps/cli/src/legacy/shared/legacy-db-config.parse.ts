@@ -98,9 +98,15 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     const rawDatabase = queryOrElse("dbname", decodeURIComponent(url.pathname.replace(/^\//, "")));
     const sslmode = url.searchParams.get("sslmode");
     const options = url.searchParams.get("options");
+    // A present-but-non-numeric port (only possible via a `?port=` query typo;
+    // `url.port` is always digits) is a parse error in pgconn's `parsePort`, so
+    // reject the whole DSN rather than silently falling back to PGPORT/5432.
+    if (rawPort.length > 0 && !/^\d+$/.test(rawPort)) {
+      return undefined;
+    }
     return {
       host: rawHost.length > 0 ? rawHost : (libpqEnv("PGHOST") ?? defaultLibpqHost()),
-      port: /^\d+$/.test(rawPort) ? Number(rawPort) : libpqPort(libpqEnv("PGPORT")),
+      port: rawPort.length > 0 ? Number(rawPort) : libpqPort(libpqEnv("PGPORT")),
       user,
       password: rawPassword.length > 0 ? rawPassword : (libpqEnv("PGPASSWORD") ?? ""),
       // Absent database → PGDATABASE, then the resolved user (libpq default).

@@ -20,18 +20,26 @@ export function parseDotEnv(contents: string): Record<string, string> {
     if (line.length === 0 || line.startsWith("#")) {
       continue;
     }
-    const eq = line.indexOf("=");
-    if (eq <= 0) {
-      const offending = line.slice(0, eq < 0 ? line.length : eq + 1);
-      throw new Error(
-        `unexpected character "${line[0] ?? ""}" in variable name near "${offending}"`,
-      );
+    // godotenv's `locateKeyName` ends the key at the first `=` **or** `:`
+    // (YAML-style), so `KEY: value` is accepted; the key chars must be
+    // `[A-Za-z0-9_.]`, and any `=`/`:` later in the value is preserved.
+    let sep = -1;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i]!;
+      if (char === "=" || char === ":") {
+        sep = i;
+        break;
+      }
+      if (char === " " || char === "\t") continue;
+      if (!/[A-Za-z0-9_.]/.test(char)) {
+        throw new Error(`unexpected character "${char}" in variable name near "${line}"`);
+      }
     }
-    const key = line.slice(0, eq).trim();
-    if (!/^[A-Za-z_][A-Za-z0-9_.]*$/.test(key)) {
-      throw new Error(`unexpected character "${key[0] ?? ""}" in variable name near "${line}"`);
+    const key = sep > 0 ? line.slice(0, sep).trim() : "";
+    if (key.length === 0) {
+      throw new Error(`unexpected character "${line[0] ?? ""}" in variable name near "${line}"`);
     }
-    result[key] = parseDotEnvValue(line.slice(eq + 1));
+    result[key] = parseDotEnvValue(line.slice(sep + 1));
   }
   return result;
 }

@@ -141,6 +141,10 @@ describe("parseLegacyConnectionString (URL form)", () => {
     expect(parseLegacyConnectionString("postgres://user:p%zz@example.com/db")).toBeUndefined();
   });
 
+  it("rejects a non-numeric ?port= query override (pgconn parsePort error)", () => {
+    expect(parseLegacyConnectionString("postgresql://host/db?port=abc")).toBeUndefined();
+  });
+
   it("rejects a non-Postgres URL scheme instead of connecting to a bogus host", () => {
     // pgconn only treats `postgres://`/`postgresql://` as a URL (config.go:236);
     // any other scheme is parsed as a keyword/value DSN, which fails.
