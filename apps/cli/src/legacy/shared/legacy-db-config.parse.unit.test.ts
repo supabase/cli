@@ -141,8 +141,10 @@ describe("parseLegacyConnectionString (URL form)", () => {
     expect(parseLegacyConnectionString("postgres://user:p%zz@example.com/db")).toBeUndefined();
   });
 
-  it("rejects a non-numeric ?port= query override (pgconn parsePort error)", () => {
+  it("rejects a non-numeric or empty ?port= query override (pgconn parsePort error)", () => {
     expect(parseLegacyConnectionString("postgresql://host/db?port=abc")).toBeUndefined();
+    // An explicit empty port override overrides the structural port and is invalid.
+    expect(parseLegacyConnectionString("postgresql://db.example.com/app?port=")).toBeUndefined();
   });
 
   it("rejects an invalid PGPORT fallback instead of defaulting to 5432", () => {

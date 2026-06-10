@@ -99,18 +99,20 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     // `url.Hostname()` returns the unbracketed host and only re-adds brackets when
     // formatting a URL (`ToPostgresURL`), so strip them here.
     const rawHost = queryOrElse("host", unbracketIpv6(url.hostname));
-    const rawPort = queryOrElse("port", url.port);
     const rawDatabase = queryOrElse("dbname", decodeURIComponent(url.pathname.replace(/^\//, "")));
     // libpq fills `sslmode` from `PGSSLMODE` when the connection string omits it
     // (pgconn's `parseEnvSettings`), before the TLS-mode default.
     const sslmode = url.searchParams.get("sslmode") ?? libpqEnv("PGSSLMODE") ?? null;
     const options = url.searchParams.get("options");
-    // A present-but-non-numeric port (a `?port=` query typo — `url.port` is
-    // always digits — or a bad `PGPORT`) is a parse error in pgconn's
-    // `parsePort`, so reject the whole DSN rather than silently using 5432.
-    if (rawPort.length > 0 && !/^\d+$/.test(rawPort)) {
+    // pgconn merges a `?port=` query setting over the structural port and then
+    // parses it, so an explicit query port — even empty (`?port=`) or non-numeric
+    // — that is not a valid number is a parse error. A bad `PGPORT` fallback is
+    // likewise rejected (`libpqPort` → undefined). `url.port` is always digits.
+    const portQuery = query.get("port");
+    if (portQuery !== null && !/^\d+$/.test(portQuery)) {
       return undefined;
     }
+    const rawPort = portQuery ?? url.port;
     const port = rawPort.length > 0 ? Number(rawPort) : libpqPort(libpqEnv("PGPORT"));
     if (port === undefined) {
       return undefined;
