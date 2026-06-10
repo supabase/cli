@@ -85,6 +85,16 @@ describe("parseLegacyConnectionString (URL form)", () => {
     }
   });
 
+  it("strips the brackets from an IPv6 literal host (Go url.Hostname parity)", () => {
+    expect(parseLegacyConnectionString("postgresql://postgres:pw@[::1]:5432/postgres")).toEqual({
+      host: "::1",
+      port: 5432,
+      user: "postgres",
+      password: "pw",
+      database: "postgres",
+    });
+  });
+
   it("preserves sslmode and the libpq options runtime param from the query string", () => {
     const parsed = parseLegacyConnectionString(
       "postgres://u:pw@h:5432/db?sslmode=verify-full&options=reference%3Dabc",

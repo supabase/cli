@@ -59,12 +59,16 @@ function buildConnectionUrl(cfg: LegacyPgConnInput, host: string): string {
  * - **Local** (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`) → no TLS;
  *   return `undefined` so `pg` stays in plaintext mode. `sslmode` is ignored,
  *   matching Go, which overwrites the local config unconditionally.
- * - **Remote** honors the URL's `sslmode` (`pgconn.ParseConfig` →
- *   `ConnectByUrl`, which strips non-TLS fallbacks only when TLS is configured):
- *   - `disable` → plaintext (`ssl: false`);
+ * - **Local** (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`) → no TLS.
+ * - **Remote** maps the URL's `sslmode` to the *primary* config pgconn would try
+ *   (`config.go:772-780`'s fallback list), since the `pg` driver carries a single
+ *   `ssl` option and cannot replay pgconn's TLS↔plaintext fallback:
+ *   - `disable` and `allow` → plaintext (`ssl: false`). pgconn's `allow` list is
+ *     `{nil, tlsConfig}`, i.e. a **non-TLS primary** with a TLS fallback, so an
+ *     `allow` DSN to a plaintext endpoint must connect without TLS.
  *   - `verify-ca` / `verify-full` → TLS **with** certificate verification;
- *   - everything else (`prefer` / `require` / `allow` / unset) → TLS **without**
- *     verification, matching pgx's default for `prefer`/`require`.
+ *   - `prefer` (and pgconn's default) / `require` / unset → TLS **without**
+ *     verification (their primary is the TLS config).
  *
  * `servername` (the original hostname) is carried for **every** TLS mode, not
  * just the verifying ones. Go enables `sslsni` by default (`pgconn`'s
@@ -80,7 +84,7 @@ export function legacySslOptionFor(
   servername: string | undefined,
 ): boolean | ConnectionOptions | undefined {
   if (isLocal) return undefined;
-  if (sslmode === "disable") return false;
+  if (sslmode === "disable" || sslmode === "allow") return false;
   const rejectUnauthorized = sslmode === "verify-ca" || sslmode === "verify-full";
   return {
     rejectUnauthorized,

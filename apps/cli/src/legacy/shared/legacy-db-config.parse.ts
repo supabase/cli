@@ -30,6 +30,11 @@ function libpqPort(raw: string | undefined): number {
   return DIRECT_PORT;
 }
 
+/** Strip the brackets WHATWG `URL.hostname` keeps around an IPv6 literal (`[::1]`). */
+function unbracketIpv6(host: string): string {
+  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
 /**
  * Parse a Postgres connection string into a `LegacyPgConnInput`. Mirrors Go's
  * `pgconn.ParseConfig` (`apps/cli-go/internal/utils/flags/db_url.go:64`), which
@@ -74,11 +79,16 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     const database = url.pathname.replace(/^\//, "");
     const sslmode = url.searchParams.get("sslmode");
     const options = url.searchParams.get("options");
+    // WHATWG `URL.hostname` keeps the brackets around an IPv6 literal (`[::1]`),
+    // but `net`/node-postgres and `PGHOST` expect the bare address. Go's
+    // `url.Hostname()` returns the unbracketed host and only re-adds brackets when
+    // formatting a URL (`ToPostgresURL`), so strip them here.
+    const urlHost = unbracketIpv6(url.hostname);
     // Omitted fields fall back to libpq `PG*` env vars and then the libpq
     // defaults, matching pgconn's
     // `mergeSettings(defaultSettings, envSettings, connStringSettings)`.
     return {
-      host: url.hostname.length > 0 ? url.hostname : (libpqEnv("PGHOST") ?? defaultLibpqHost()),
+      host: urlHost.length > 0 ? urlHost : (libpqEnv("PGHOST") ?? defaultLibpqHost()),
       port: url.port.length > 0 ? Number(url.port) : libpqPort(libpqEnv("PGPORT")),
       user,
       password: rawPassword.length > 0 ? rawPassword : (libpqEnv("PGPASSWORD") ?? ""),

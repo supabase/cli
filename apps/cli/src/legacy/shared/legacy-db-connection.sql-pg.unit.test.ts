@@ -13,14 +13,16 @@ describe("legacySslOptionFor", () => {
     expect(legacySslOptionFor(undefined, false, undefined)).toEqual({ rejectUnauthorized: false });
   });
 
-  it("treats prefer/require/allow as TLS without verification (pgx default)", () => {
+  it("treats prefer/require as TLS without verification (their pgconn primary)", () => {
     expect(legacySslOptionFor("prefer", false, undefined)).toEqual({ rejectUnauthorized: false });
     expect(legacySslOptionFor("require", false, undefined)).toEqual({ rejectUnauthorized: false });
-    expect(legacySslOptionFor("allow", false, undefined)).toEqual({ rejectUnauthorized: false });
   });
 
-  it("disables TLS entirely for sslmode=disable on a remote connection", () => {
+  it("uses plaintext for sslmode=disable and sslmode=allow on a remote connection", () => {
+    // pgconn's `allow` fallback list is `{nil, tlsConfig}` — a non-TLS primary —
+    // so an `allow` DSN to a plaintext-only endpoint must connect without TLS.
     expect(legacySslOptionFor("disable", false, undefined)).toBe(false);
+    expect(legacySslOptionFor("allow", false, undefined)).toBe(false);
   });
 
   it("verifies the certificate for verify-ca and verify-full", () => {
