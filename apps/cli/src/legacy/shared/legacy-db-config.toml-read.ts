@@ -1,6 +1,10 @@
 import { Effect, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
 import { LegacyDbConfigLoadError } from "./legacy-db-config.errors.ts";
+import { parseDotEnv } from "./legacy-dotenv.ts";
+
+/** Resolves a config `env(VAR)` reference: shell env first, then project `.env`. */
+type EnvLookup = (name: string) => string | undefined;
 
 /**
  * Subset of `supabase/config.toml` (plus the linked pooler URL) the db-config
@@ -49,12 +53,14 @@ const ENV_PATTERN = /^env\((.*)\)$/;
  * (`apps/cli-go/pkg/config/decode_hooks.go`): a string matching `^env\((.*)\)$`
  * resolves to the named environment variable, but only when that variable is set
  * and non-empty; otherwise the literal value is preserved unchanged (Go's hook
- * keeps `value` when `len(os.Getenv(name)) == 0`).
+ * keeps `value` when `len(os.Getenv(name)) == 0`). `lookup` resolves the name
+ * against the shell environment first and then the project `.env` files, matching
+ * Go's `loadNestedEnv` (which populates the process env before `LoadEnvHook`).
  */
-function expandEnv(value: string): string {
+function expandEnv(value: string, lookup: EnvLookup): string {
   const matches = ENV_PATTERN.exec(value);
   if (matches !== null) {
-    const env = process.env[matches[1] ?? ""];
+    const env = lookup(matches[1] ?? "");
     if (env !== undefined && env.length > 0) return env;
   }
   return value;
@@ -77,13 +83,13 @@ const MAX_PORT = 65535;
  *   `LegacyDbConfigLoadError`. Go errors here rather than silently defaulting and
  *   running against the default local database while hiding a broken config.
  */
-function resolvePort(value: unknown, fallback: number): number | undefined {
+function resolvePort(value: unknown, fallback: number, lookup: EnvLookup): number | undefined {
   if (value === undefined) return fallback;
   if (typeof value === "number") {
     return Number.isInteger(value) && value >= 0 && value <= MAX_PORT ? value : undefined;
   }
   if (typeof value === "string") {
-    const expanded = expandEnv(value);
+    const expanded = expandEnv(value, lookup);
     if (/^\d+$/.test(expanded)) {
       const parsed = Number(expanded);
       if (parsed <= MAX_PORT) return parsed;
@@ -91,6 +97,55 @@ function resolvePort(value: unknown, fallback: number): number | undefined {
   }
   return undefined;
 }
+
+/** `[db]` ports default through the development env unless `SUPABASE_ENV` overrides. */
+const DEFAULT_SUPABASE_ENV = "development";
+
+/**
+ * Load the project's nested `.env` files into a lookup map, mirroring Go's
+ * `loadNestedEnv` + `loadDefaultEnv` (`pkg/config/config.go:1047-1085`). Go walks
+ * from the `supabase/` directory up to the repo root and, in each directory,
+ * loads `.env.<env>.local`, `.env.local` (skipped when `SUPABASE_ENV=test`),
+ * `.env.<env>`, then `.env` via `godotenv.Load`, which never overrides a value
+ * already set. So the shell environment wins over the files, the `supabase/`
+ * directory wins over the repo root, and earlier filenames win within a
+ * directory. A malformed `.env` aborts (Go returns the parse error); the path is
+ * named without leaking file contents (CWE-209-safe).
+ */
+const loadProjectEnv = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+) {
+  const env = process.env["SUPABASE_ENV"] || DEFAULT_SUPABASE_ENV;
+  const filenames = [`.env.${env}.local`];
+  if (env !== "test") filenames.push(".env.local");
+  filenames.push(`.env.${env}`, ".env");
+  // Go walks `supabase/` first, then the repo root; first writer wins.
+  const dirs = [path.join(workdir, "supabase"), workdir];
+  const loaded: Record<string, string> = {};
+  for (const dir of dirs) {
+    for (const name of filenames) {
+      const content = yield* fs
+        .readFileString(path.join(dir, name))
+        .pipe(Effect.map(Option.some<string>), Effect.orElseSucceed(Option.none<string>));
+      if (Option.isNone(content)) continue;
+      let parsed: Record<string, string>;
+      try {
+        parsed = parseDotEnv(content.value);
+      } catch {
+        return yield* Effect.fail(
+          new LegacyDbConfigLoadError({ message: `failed to parse environment file: ${name}` }),
+        );
+      }
+      for (const [key, value] of Object.entries(parsed)) {
+        // godotenv.Load never overrides: the shell env and earlier files win.
+        if (process.env[key] === undefined && loaded[key] === undefined) loaded[key] = value;
+      }
+    }
+  }
+  return loaded;
+});
 
 function nonEmptyString(value: unknown): Option.Option<string> {
   return typeof value === "string" && value.length > 0 ? Option.some(value) : Option.none();
@@ -154,11 +209,16 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     .readFileString(poolerUrlPath)
     .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
 
+  // Resolve `env(VAR)` against the shell env first, then the project `.env` files
+  // (Go's `loadNestedEnv` populates the process env before `LoadEnvHook`).
+  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const lookup: EnvLookup = (name) => process.env[name] ?? projectEnv[name];
+
   // A present-but-unmarshalable port aborts in Go rather than defaulting; mirror
   // that so `test db --local` never silently targets the default local database
   // while hiding a broken `[db]` config.
-  const port = resolvePort(db?.["port"], DEFAULT_PORT);
-  const shadowPort = resolvePort(db?.["shadow_port"], DEFAULT_SHADOW_PORT);
+  const port = resolvePort(db?.["port"], DEFAULT_PORT, lookup);
+  const shadowPort = resolvePort(db?.["shadow_port"], DEFAULT_SHADOW_PORT, lookup);
   if (port === undefined || shadowPort === undefined) {
     return yield* Effect.fail(
       new LegacyDbConfigLoadError({
@@ -170,7 +230,8 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   const values: LegacyDbTomlValues = {
     port,
     shadowPort,
-    password: typeof db?.["password"] === "string" ? expandEnv(db["password"]) : DEFAULT_PASSWORD,
+    password:
+      typeof db?.["password"] === "string" ? expandEnv(db["password"], lookup) : DEFAULT_PASSWORD,
     poolerConnectionString,
     projectId,
   };

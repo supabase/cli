@@ -1,7 +1,8 @@
 import type { ApiKeyResponse } from "@supabase/api/effect";
 import { describe, expect, it } from "vitest";
 
-import { buildDotEnv, marshalDotEnv, parseDotEnv } from "./bootstrap.dotenv.ts";
+import { parseDotEnv } from "../../shared/legacy-dotenv.ts";
+import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
 import type { LegacyDbConfig } from "./bootstrap.pgconfig.ts";
 
 type ApiKey = typeof ApiKeyResponse.Type;

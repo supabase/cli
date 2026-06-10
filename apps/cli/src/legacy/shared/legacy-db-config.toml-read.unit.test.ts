@@ -200,6 +200,72 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("resolves env(VAR) from the project supabase/.env file (Go loadNestedEnv)", () => {
+    delete process.env["LEGACY_DB_FILEVAR"];
+    const dir = withConfig(
+      ["[db]", 'port = "env(LEGACY_DB_FILEVAR)"', 'password = "env(LEGACY_DB_FILEVAR)"', ""].join(
+        "\n",
+      ),
+    );
+    writeFileSync(join(dir, "supabase", ".env"), "LEGACY_DB_FILEVAR=7000\n");
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.port).toBe(7000);
+          expect(v.password).toBe("7000");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("lets the shell env win over a project .env value (godotenv no-override)", () => {
+    process.env["LEGACY_DB_FILEVAR"] = "shell-wins";
+    const dir = withConfig(["[db]", 'password = "env(LEGACY_DB_FILEVAR)"', ""].join("\n"));
+    writeFileSync(join(dir, "supabase", ".env"), "LEGACY_DB_FILEVAR=from-file\n");
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.password).toBe("shell-wins");
+          delete process.env["LEGACY_DB_FILEVAR"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("lets supabase/.env win over a repo-root .env (Go walks supabase/ first)", () => {
+    delete process.env["LEGACY_DB_FILEVAR"];
+    const dir = withConfig(["[db]", 'password = "env(LEGACY_DB_FILEVAR)"', ""].join("\n"));
+    writeFileSync(join(dir, ".env"), "LEGACY_DB_FILEVAR=root\n");
+    writeFileSync(join(dir, "supabase", ".env"), "LEGACY_DB_FILEVAR=supabase\n");
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.password).toBe("supabase");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("fails when a project .env file is malformed", () => {
+    const dir = withConfig(["[db]", "port = 5000", ""].join("\n"));
+    writeFileSync(join(dir, "supabase", ".env"), "=novalue\n");
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("failed to parse environment file");
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("ignores a [db.pooler] connection_string in config.toml (Go reads .temp only)", () => {
     // The Go config field is tagged `toml:"-"`, so a connection_string in config.toml
     // is never honored; only supabase/.temp/pooler-url counts.
