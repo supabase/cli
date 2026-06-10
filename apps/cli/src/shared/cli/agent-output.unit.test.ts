@@ -110,7 +110,16 @@ describe("resolveAgentOutputFormat", () => {
       "json",
     );
     expect(resolveAgentOutputFormatFromArgs(["--version"], Option.some("codex"))).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(
+        ["--profile", "supabase", "--version"],
+        Option.some("codex"),
+      ),
+    ).toBe("text");
     expect(resolveAgentOutputFormatFromArgs(["--help"], Option.some("codex"))).toBe("text");
+    expect(
+      resolveAgentOutputFormatFromArgs(["db", "reset", "--version", "1"], Option.some("codex")),
+    ).toBe("json");
     expect(
       resolveAgentOutputFormatFromArgs(["--output-format=json", "--help"], Option.some("codex")),
     ).toBe("json");

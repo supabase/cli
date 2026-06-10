@@ -83,10 +83,70 @@ function agentOverrideFromArg(value: string | undefined): AgentOverride {
   }
 }
 
-export function isBuiltInTextRequest(args: ReadonlyArray<string>): boolean {
-  return args.some(
-    (arg) => arg === "--help" || arg === "-h" || arg === "--version" || arg === "-v",
+function isRootValueFlag(arg: string): boolean {
+  return (
+    arg === "--output-format" ||
+    arg === "--output" ||
+    arg === "-o" ||
+    arg === "--profile" ||
+    arg === "--workdir" ||
+    arg === "--network-id" ||
+    arg === "--dns-resolver" ||
+    arg === "--agent"
   );
+}
+
+function isRootValueFlagWithInlineValue(arg: string): boolean {
+  return (
+    arg.startsWith("--output-format=") ||
+    arg.startsWith("--output=") ||
+    arg.startsWith("-o=") ||
+    (arg.length > 2 && arg.startsWith("-o")) ||
+    arg.startsWith("--profile=") ||
+    arg.startsWith("--workdir=") ||
+    arg.startsWith("--network-id=") ||
+    arg.startsWith("--dns-resolver=") ||
+    arg.startsWith("--agent=")
+  );
+}
+
+function isRootBooleanFlag(arg: string): boolean {
+  return (
+    arg === "--debug" || arg === "--experimental" || arg === "--yes" || arg === "--create-ticket"
+  );
+}
+
+function hasRootVersionRequest(args: ReadonlyArray<string>): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === undefined || arg === "--") {
+      return false;
+    }
+    if (arg === "--version" || arg === "-v") {
+      return true;
+    }
+    if (isRootValueFlag(arg)) {
+      i++;
+      continue;
+    }
+    if (isRootValueFlagWithInlineValue(arg) || isRootBooleanFlag(arg)) {
+      continue;
+    }
+    return false;
+  }
+  return false;
+}
+
+function hasHelpRequest(args: ReadonlyArray<string>): boolean {
+  for (const arg of args) {
+    if (arg === "--") return false;
+    if (arg === "--help" || arg === "-h") return true;
+  }
+  return false;
+}
+
+export function isBuiltInTextRequest(args: ReadonlyArray<string>): boolean {
+  return hasHelpRequest(args) || hasRootVersionRequest(args);
 }
 
 export function resolveAgentOutputFormat(options: AgentOutputOptions): OutputFormat {
