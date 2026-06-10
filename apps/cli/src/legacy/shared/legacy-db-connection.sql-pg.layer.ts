@@ -9,7 +9,7 @@ import {
   type LegacyDbSession,
   type LegacyPgConnInput,
 } from "./legacy-db-connection.service.ts";
-import { legacyResolveHostOverHttps } from "./legacy-db-dns.ts";
+import { legacyResolveHostsOverHttps } from "./legacy-db-dns.ts";
 
 // Go's role step-down (`apps/cli-go/internal/utils/connect.go:200-220`,
 // `ConnectByConfigStream`): after connecting to a remote database as a
@@ -102,32 +102,31 @@ const connect = (
 ): Effect.Effect<LegacyDbSession, LegacyDbConnectError, Scope.Scope> =>
   Effect.gen(function* () {
     // Go installs the Cloudflare DoH resolver for remote connections when
-    // `--dns-resolver https` is set (`connect.go:211-213`). We resolve the host
-    // to an IP up front and dial that, but keep the original hostname for the
-    // TLS `servername` (carried in the `ssl` option) so verification still
-    // targets the hostname. Local connections always use the native resolver.
-    const connectHost =
-      dnsResolver === "https" && !isLocal ? yield* legacyResolveHostOverHttps(cfg.host) : cfg.host;
-    const servername = connectHost === cfg.host ? undefined : cfg.host;
-    const ssl = legacySslOptionFor(cfg.sslmode, isLocal, servername);
+    // `--dns-resolver https` is set (`connect.go:211-213`). It resolves the host
+    // to **all** its IPs (`FallbackLookupIP`) and pgconn dials them in order, so
+    // we resolve the full list and retry each. We dial a resolved IP but keep the
+    // original hostname for the TLS `servername` (carried in the `ssl` option) so
+    // verification still targets the hostname. Local connections use the host
+    // verbatim (native resolver).
+    const dialHosts =
+      dnsResolver === "https" && !isLocal
+        ? yield* legacyResolveHostsOverHttps(cfg.host)
+        : [cfg.host];
     const hasOptions = cfg.options !== undefined && cfg.options.length > 0;
-    // Connection fields are identical across TLS modes; only the `ssl` option
-    // differs, so build the base once and vary `ssl` per attempt.
-    const connBase = hasOptions
-      ? // When a libpq `options` param is present, route everything through the
+    const makeClient = (dialHost: string, sslOption: boolean | ConnectionOptions | undefined) =>
+      PgClient.make({
+        // When a libpq `options` param is present, route everything through the
         // connection string so it reaches the server (see `buildConnectionUrl`);
         // otherwise pass discrete fields to avoid round-tripping the password.
-        { url: Redacted.make(buildConnectionUrl(cfg, connectHost)) }
-      : {
-          host: connectHost,
-          port: cfg.port,
-          username: cfg.user,
-          password: Redacted.make(cfg.password),
-          database: cfg.database,
-        };
-    const makeClient = (sslOption: boolean | ConnectionOptions | undefined) =>
-      PgClient.make({
-        ...connBase,
+        ...(hasOptions
+          ? { url: Redacted.make(buildConnectionUrl(cfg, dialHost)) }
+          : {
+              host: dialHost,
+              port: cfg.port,
+              username: cfg.user,
+              password: Redacted.make(cfg.password),
+              database: cfg.database,
+            }),
         // TLS parity with Go (`internal/utils/connect.go`): see `legacySslOptionFor`.
         ...(sslOption === undefined ? {} : { ssl: sslOption }),
         maxConnections: 1,
@@ -136,18 +135,34 @@ const connect = (
     const toConnectError = (error: unknown) =>
       new LegacyDbConnectError({ message: `failed to connect to postgres: ${error}` });
 
-    // pgconn's `allow` fallback list is `{nil(plaintext), tlsConfig}`: try
-    // plaintext first, then TLS. The `pg` driver connects lazily and cannot
-    // replay pgconn's internal fallback, so for `allow` we eagerly probe the
-    // plaintext connection and retry over TLS on failure (`connect.go` →
-    // `pgconn.connect`). Every other mode keeps its single-config behavior.
-    const client = yield* cfg.sslmode === "allow" && !isLocal
-      ? makeClient(false).pipe(
-          Effect.tap((plaintext) => plaintext`select 1`),
-          Effect.catch(() => makeClient(legacySslOptionFor("require", false, servername))),
-          Effect.mapError(toConnectError),
-        )
-      : makeClient(ssl).pipe(Effect.mapError(toConnectError));
+    // Build the ordered attempt list, mirroring pgconn's fallback loop
+    // (`config.go:772-780` fallback configs, expanded across each resolved
+    // address by `expandWithIPs`): each TLS config is tried against each dial
+    // host. `allow` is `{nil(plaintext), tlsConfig}` — plaintext primary, TLS
+    // fallback — so we try plaintext then TLS; every other mode is single-config.
+    // `servername` is per host (the original hostname when we dial a resolved IP).
+    const attempts = dialHosts.flatMap((dialHost) => {
+      const servername = dialHost === cfg.host ? undefined : cfg.host;
+      const sslConfigs =
+        cfg.sslmode === "allow" && !isLocal
+          ? [false, legacySslOptionFor("require", false, servername)]
+          : [legacySslOptionFor(cfg.sslmode, isLocal, servername)];
+      return sslConfigs.map((ssl) => makeClient(dialHost, ssl));
+    });
+
+    // The `pg` driver connects lazily and cannot replay pgconn's fallback, so
+    // probe each non-final attempt with `select 1` to force the connection and
+    // fall through to the next on failure. `reduceRight` with no seed makes the
+    // final attempt the base case — it is left lazy (no extra round-trip), so the
+    // common single-attempt path is byte-identical to a plain connect.
+    const client = yield* attempts
+      .reduceRight((next, attempt) =>
+        attempt.pipe(
+          Effect.tap((candidate) => candidate`select 1`),
+          Effect.catch(() => next),
+        ),
+      )
+      .pipe(Effect.mapError(toConnectError));
 
     // Step down from the temp/privileged login role before any further SQL.
     // `maxConnections: 1` guarantees the single physical connection is reused, so

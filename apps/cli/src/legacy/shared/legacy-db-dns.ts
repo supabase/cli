@@ -16,12 +16,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Extract the first A/AAAA address from a Cloudflare DNS-over-HTTPS JSON
- * response. Mirrors Go's `FallbackLookupIP`: scan `Answer` for the first entry
- * whose `type` is A (1) or AAAA (28) and return its `data`. Throws (Go returns
- * an error) when no valid IP is present.
+ * response. Mirrors Go's `FallbackLookupIP`, which returns the full `[]string`
+ * of `Answer` entries whose `type` is A (1) or AAAA (28) so pgconn's
+ * `expandWithIPs` can try each in turn. Throws (Go returns an error) when no
+ * valid IP is present.
  */
-export function parseFirstResolvedIp(payload: unknown, host: string): string {
+export function parseResolvedIps(payload: unknown, host: string): string[] {
   const answers = isRecord(payload) && Array.isArray(payload["Answer"]) ? payload["Answer"] : [];
+  const resolved: string[] = [];
   for (const answer of answers) {
     if (
       isRecord(answer) &&
@@ -29,25 +31,30 @@ export function parseFirstResolvedIp(payload: unknown, host: string): string {
       typeof answer["data"] === "string" &&
       answer["data"].length > 0
     ) {
-      return answer["data"];
+      resolved.push(answer["data"]);
     }
   }
-  throw new Error(`failed to locate valid IP for ${host}`);
+  if (resolved.length === 0) {
+    throw new Error(`failed to locate valid IP for ${host}`);
+  }
+  return resolved;
 }
 
 /**
- * Resolve `host` to an IP via Cloudflare DNS-over-HTTPS, the fallback resolver
+ * Resolve `host` to its IPs via Cloudflare DNS-over-HTTPS, the fallback resolver
  * Go installs when `--dns-resolver https` is set and the native netgo resolver
  * is blocked (`utils.FallbackLookupIP`). A host that is already an IP literal is
  * returned unchanged (matching Go's `net.ParseIP` short-circuit).
  *
- * The caller dials the returned IP but keeps the original hostname for the TLS
- * `servername`, so certificate verification still targets the hostname.
+ * Returns **all** resolved addresses so the caller can retry each (Go hands the
+ * full list to pgconn, which dials them in order). The caller dials a returned
+ * IP but keeps the original hostname for the TLS `servername`, so certificate
+ * verification still targets the hostname.
  */
-export function legacyResolveHostOverHttps(
+export function legacyResolveHostsOverHttps(
   host: string,
-): Effect.Effect<string, LegacyDbConnectError> {
-  if (net.isIP(host) !== 0) return Effect.succeed(host);
+): Effect.Effect<string[], LegacyDbConnectError> {
+  if (net.isIP(host) !== 0) return Effect.succeed([host]);
   return Effect.tryPromise({
     try: (signal) =>
       fetch(`${CF_DOH_URL}?name=${encodeURIComponent(host)}`, {
@@ -57,7 +64,7 @@ export function legacyResolveHostOverHttps(
         if (response.status !== 200) {
           throw new Error(`unexpected DNS query status ${response.status}`);
         }
-        return parseFirstResolvedIp(await response.json(), host);
+        return parseResolvedIps(await response.json(), host);
       }),
     catch: (cause) =>
       new LegacyDbConnectError({
