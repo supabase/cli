@@ -66,8 +66,13 @@ function buildConnectionUrl(cfg: LegacyPgConnInput, host: string): string {
  *   - everything else (`prefer` / `require` / `allow` / unset) → TLS **without**
  *     verification, matching pgx's default for `prefer`/`require`.
  *
- * `servername` is set for verifying modes so a DoH-resolved IP host still
- * validates against the original hostname.
+ * `servername` (the original hostname) is carried for **every** TLS mode, not
+ * just the verifying ones. Go enables `sslsni` by default (`pgconn`'s
+ * `config.go:768` sets `tlsConfig.ServerName = host` for all TLS sslmodes when
+ * the host is not a literal IP) and keeps the original hostname in the
+ * connection config even when `--dns-resolver https` swaps the dial target for a
+ * DoH-resolved IP (via `FallbackLookupIP`). Dropping the SNI on `require`/
+ * `prefer` would break endpoints/proxies that route TLS on the server name.
  */
 export function legacySslOptionFor(
   sslmode: string | undefined,
@@ -79,7 +84,7 @@ export function legacySslOptionFor(
   const rejectUnauthorized = sslmode === "verify-ca" || sslmode === "verify-full";
   return {
     rejectUnauthorized,
-    ...(rejectUnauthorized && servername !== undefined ? { servername } : {}),
+    ...(servername !== undefined ? { servername } : {}),
   };
 }
 

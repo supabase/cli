@@ -37,8 +37,25 @@ describe("legacySslOptionFor", () => {
     });
   });
 
-  it("does not add a servername when not verifying", () => {
+  it("carries the servername for non-verifying TLS modes too (Go enables sslsni by default)", () => {
+    // Go keeps the original hostname as the TLS ServerName for every TLS mode
+    // when DoH swaps in a resolved IP, so require/prefer must send SNI as well.
     expect(legacySslOptionFor("require", false, "db.example.com")).toEqual({
+      rejectUnauthorized: false,
+      servername: "db.example.com",
+    });
+    expect(legacySslOptionFor("prefer", false, "db.example.com")).toEqual({
+      rejectUnauthorized: false,
+      servername: "db.example.com",
+    });
+    expect(legacySslOptionFor(undefined, false, "db.example.com")).toEqual({
+      rejectUnauthorized: false,
+      servername: "db.example.com",
+    });
+  });
+
+  it("does not add a servername when no DoH IP substitution occurred", () => {
+    expect(legacySslOptionFor("require", false, undefined)).toEqual({
       rejectUnauthorized: false,
     });
   });
