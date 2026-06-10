@@ -24,10 +24,15 @@ function defaultLibpqHost(): string {
   return "localhost";
 }
 
-/** Resolve a libpq port string to a number, falling back to 5432 when unusable. */
-function libpqPort(raw: string | undefined): number {
-  if (raw !== undefined && /^\d+$/.test(raw)) return Number(raw);
-  return DIRECT_PORT;
+/**
+ * Resolve the libpq `PGPORT` fallback. An unset/empty value (`undefined` from
+ * `libpqEnv`) uses the default 5432, a numeric value is used, and a present
+ * non-numeric value returns `undefined` so the caller rejects the DSN — pgconn's
+ * `parsePort` reports an `invalid port` parse error rather than defaulting.
+ */
+function libpqPort(raw: string | undefined): number | undefined {
+  if (raw === undefined) return DIRECT_PORT;
+  return /^\d+$/.test(raw) ? Number(raw) : undefined;
 }
 
 /** Strip the brackets WHATWG `URL.hostname` keeps around an IPv6 literal (`[::1]`). */
@@ -100,15 +105,19 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     // (pgconn's `parseEnvSettings`), before the TLS-mode default.
     const sslmode = url.searchParams.get("sslmode") ?? libpqEnv("PGSSLMODE") ?? null;
     const options = url.searchParams.get("options");
-    // A present-but-non-numeric port (only possible via a `?port=` query typo;
-    // `url.port` is always digits) is a parse error in pgconn's `parsePort`, so
-    // reject the whole DSN rather than silently falling back to PGPORT/5432.
+    // A present-but-non-numeric port (a `?port=` query typo — `url.port` is
+    // always digits — or a bad `PGPORT`) is a parse error in pgconn's
+    // `parsePort`, so reject the whole DSN rather than silently using 5432.
     if (rawPort.length > 0 && !/^\d+$/.test(rawPort)) {
+      return undefined;
+    }
+    const port = rawPort.length > 0 ? Number(rawPort) : libpqPort(libpqEnv("PGPORT"));
+    if (port === undefined) {
       return undefined;
     }
     return {
       host: rawHost.length > 0 ? rawHost : (libpqEnv("PGHOST") ?? defaultLibpqHost()),
-      port: rawPort.length > 0 ? Number(rawPort) : libpqPort(libpqEnv("PGPORT")),
+      port,
       user,
       password: rawPassword.length > 0 ? rawPassword : (libpqEnv("PGPASSWORD") ?? ""),
       // Absent database → PGDATABASE, then the resolved user (libpq default).
@@ -170,7 +179,8 @@ function parseKeywordValueDsn(value: string): LegacyPgConnInput | undefined {
   const portRaw = params.get("port");
   const port =
     portRaw !== undefined && portRaw.length > 0 ? Number(portRaw) : libpqPort(libpqEnv("PGPORT"));
-  if (Number.isNaN(port)) return undefined;
+  // Explicit non-numeric `port=` → NaN; a bad `PGPORT` fallback → undefined.
+  if (port === undefined || Number.isNaN(port)) return undefined;
   const user = params.get("user") ?? defaultOsUser();
   const database =
     params.get("dbname") ?? libpqEnv("PGDATABASE") ?? (user.length > 0 ? user : "postgres");

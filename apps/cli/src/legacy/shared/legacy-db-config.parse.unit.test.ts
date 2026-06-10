@@ -145,6 +145,19 @@ describe("parseLegacyConnectionString (URL form)", () => {
     expect(parseLegacyConnectionString("postgresql://host/db?port=abc")).toBeUndefined();
   });
 
+  it("rejects an invalid PGPORT fallback instead of defaulting to 5432", () => {
+    const prev = process.env["PGPORT"];
+    process.env["PGPORT"] = "abc";
+    try {
+      // No port in the URL or DSN → falls back to PGPORT, which is invalid → reject.
+      expect(parseLegacyConnectionString("postgresql://host/db")).toBeUndefined();
+      expect(parseLegacyConnectionString("host=pg.example.com user=admin")).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env["PGPORT"];
+      else process.env["PGPORT"] = prev;
+    }
+  });
+
   it("fills sslmode from PGSSLMODE when the URL omits it (pgconn env default)", () => {
     const prev = process.env["PGSSLMODE"];
     process.env["PGSSLMODE"] = "verify-full";
