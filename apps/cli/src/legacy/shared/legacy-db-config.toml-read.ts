@@ -42,8 +42,38 @@ function asRecord(value: unknown): RawDoc | undefined {
     : undefined;
 }
 
+const ENV_PATTERN = /^env\((.*)\)$/;
+
+/**
+ * Expand Go's `env(VAR)` config form. Mirrors `LoadEnvHook`
+ * (`apps/cli-go/pkg/config/decode_hooks.go`): a string matching `^env\((.*)\)$`
+ * resolves to the named environment variable, but only when that variable is set
+ * and non-empty; otherwise the literal value is preserved unchanged (Go's hook
+ * keeps `value` when `len(os.Getenv(name)) == 0`).
+ */
+function expandEnv(value: string): string {
+  const matches = ENV_PATTERN.exec(value);
+  if (matches !== null) {
+    const env = process.env[matches[1] ?? ""];
+    if (env !== undefined && env.length > 0) return env;
+  }
+  return value;
+}
+
+/**
+ * Resolve a `[db]` port field. Go decodes the TOML string/number into a `uint`
+ * with `mapstructure`'s weakly-typed input *after* `LoadEnvHook` runs, so an
+ * `env(VAR)` reference (written as a quoted string) is expanded and then parsed
+ * as the port. A plain number is used directly; anything that does not resolve
+ * to a non-negative integer falls back to the default.
+ */
 function numberOr(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const expanded = expandEnv(value);
+    if (/^\d+$/.test(expanded)) return Number(expanded);
+  }
+  return fallback;
 }
 
 function nonEmptyString(value: unknown): Option.Option<string> {
@@ -111,7 +141,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   const values: LegacyDbTomlValues = {
     port: numberOr(db?.["port"], DEFAULT_PORT),
     shadowPort: numberOr(db?.["shadow_port"], DEFAULT_SHADOW_PORT),
-    password: typeof db?.["password"] === "string" ? db["password"] : DEFAULT_PASSWORD,
+    password: typeof db?.["password"] === "string" ? expandEnv(db["password"]) : DEFAULT_PASSWORD,
     poolerConnectionString,
     projectId,
   };

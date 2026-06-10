@@ -123,6 +123,44 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("expands env(VAR) for password and port like Go's LoadEnvHook", () => {
+    process.env["LEGACY_DB_PW"] = "from-env";
+    process.env["LEGACY_DB_PORT"] = "6000";
+    const dir = withConfig(
+      ["[db]", 'port = "env(LEGACY_DB_PORT)"', 'password = "env(LEGACY_DB_PW)"', ""].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.port).toBe(6000);
+          expect(v.password).toBe("from-env");
+          delete process.env["LEGACY_DB_PW"];
+          delete process.env["LEGACY_DB_PORT"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps the literal value and default port when the env var is unset/empty", () => {
+    // Go's LoadEnvHook only substitutes when len(os.Getenv(name)) > 0; otherwise it
+    // preserves the literal string, so a quoted env() port that cannot resolve falls
+    // back to the schema default rather than parsing the literal.
+    delete process.env["LEGACY_DB_UNSET"];
+    const dir = withConfig(
+      ["[db]", 'port = "env(LEGACY_DB_UNSET)"', 'password = "env(LEGACY_DB_UNSET)"', ""].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.port).toBe(54322);
+          expect(v.password).toBe("env(LEGACY_DB_UNSET)");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("ignores a [db.pooler] connection_string in config.toml (Go reads .temp only)", () => {
     // The Go config field is tagged `toml:"-"`, so a connection_string in config.toml
     // is never honored; only supabase/.temp/pooler-url counts.
