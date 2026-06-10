@@ -96,7 +96,9 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     const rawHost = queryOrElse("host", unbracketIpv6(url.hostname));
     const rawPort = queryOrElse("port", url.port);
     const rawDatabase = queryOrElse("dbname", decodeURIComponent(url.pathname.replace(/^\//, "")));
-    const sslmode = url.searchParams.get("sslmode");
+    // libpq fills `sslmode` from `PGSSLMODE` when the connection string omits it
+    // (pgconn's `parseEnvSettings`), before the TLS-mode default.
+    const sslmode = url.searchParams.get("sslmode") ?? libpqEnv("PGSSLMODE") ?? null;
     const options = url.searchParams.get("options");
     // A present-but-non-numeric port (only possible via a `?port=` query typo;
     // `url.port` is always digits) is a parse error in pgconn's `parsePort`, so
@@ -172,7 +174,9 @@ function parseKeywordValueDsn(value: string): LegacyPgConnInput | undefined {
   const user = params.get("user") ?? defaultOsUser();
   const database =
     params.get("dbname") ?? libpqEnv("PGDATABASE") ?? (user.length > 0 ? user : "postgres");
-  const sslmode = params.get("sslmode");
+  // libpq fills `sslmode` from `PGSSLMODE` when the DSN omits it (pgconn's
+  // `parseEnvSettings`), before the TLS-mode default.
+  const sslmode = params.get("sslmode") ?? libpqEnv("PGSSLMODE");
   const options = params.get("options");
   return {
     host,

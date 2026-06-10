@@ -145,6 +145,21 @@ describe("parseLegacyConnectionString (URL form)", () => {
     expect(parseLegacyConnectionString("postgresql://host/db?port=abc")).toBeUndefined();
   });
 
+  it("fills sslmode from PGSSLMODE when the URL omits it (pgconn env default)", () => {
+    const prev = process.env["PGSSLMODE"];
+    process.env["PGSSLMODE"] = "verify-full";
+    try {
+      expect(parseLegacyConnectionString("postgres://u:pw@h:5432/db")?.sslmode).toBe("verify-full");
+      // An explicit query sslmode still wins over PGSSLMODE.
+      expect(
+        parseLegacyConnectionString("postgres://u:pw@h:5432/db?sslmode=disable")?.sslmode,
+      ).toBe("disable");
+    } finally {
+      if (prev === undefined) delete process.env["PGSSLMODE"];
+      else process.env["PGSSLMODE"] = prev;
+    }
+  });
+
   it("rejects a non-Postgres URL scheme instead of connecting to a bogus host", () => {
     // pgconn only treats `postgres://`/`postgresql://` as a URL (config.go:236);
     // any other scheme is parsed as a keyword/value DSN, which fails.
