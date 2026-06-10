@@ -28,7 +28,7 @@ import {
   redactLegacyConnectionString,
 } from "./legacy-db-config.parse.ts";
 import { LegacyDbConfigResolver, type LegacyDbConfigError } from "./legacy-db-config.service.ts";
-import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
+import { legacyLoadProjectEnv, legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
 import type { LegacyDbConfigFlags } from "./legacy-db-config.types.ts";
 import { LegacyDebugLogger } from "./legacy-debug-logger.service.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
@@ -276,8 +276,13 @@ export const legacyDbConfigLayer = Layer.effect(
     ): Effect.Effect<LegacyPgConnInput, LegacyDbConfigError, LegacyPlatformApi> =>
       Effect.gen(function* () {
         // Read lazily (per invocation) rather than at layer build, so tests and
-        // env-substitution see the current value. Go: viper `DB_PASSWORD`.
-        const dbPassword = process.env["SUPABASE_DB_PASSWORD"] ?? "";
+        // env-substitution see the current value. Go reads viper `DB_PASSWORD`
+        // after `loadNestedEnv` has populated the environment from the project
+        // `.env*` files, so honor those too — `legacyLoadProjectEnv`'s map already
+        // excludes keys present in the shell env, so the shell value still wins.
+        const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+        const dbPassword =
+          process.env["SUPABASE_DB_PASSWORD"] ?? projectEnv["SUPABASE_DB_PASSWORD"] ?? "";
         const host = `db.${ref}.${cliConfig.projectHost}`;
         const base: LegacyPgConnInput = {
           host,

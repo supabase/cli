@@ -114,7 +114,7 @@ const DEFAULT_SUPABASE_ENV = "development";
  * every other error. The path is named without leaking file contents
  * (CWE-209-safe).
  */
-const loadProjectEnv = Effect.fnUntraced(function* (
+export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
@@ -225,7 +225,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
 
   // Resolve `env(VAR)` against the shell env first, then the project `.env` files
   // (Go's `loadNestedEnv` populates the process env before `LoadEnvHook`).
-  const projectEnv = yield* loadProjectEnv(fs, path, workdir);
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
   const lookup: EnvLookup = (name) => process.env[name] ?? projectEnv[name];
 
   // Go's loader enables viper `SetEnvPrefix("SUPABASE")` + `EnvKeyReplacer(".",

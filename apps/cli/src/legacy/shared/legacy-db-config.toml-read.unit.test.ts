@@ -5,7 +5,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
 
-import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
+import { legacyLoadProjectEnv, legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
 
 function withConfig(content: string | undefined, poolerUrl?: string) {
   const dir = mkdtempSync(join(tmpdir(), "legacy-db-toml-"));
@@ -25,6 +25,13 @@ const read = (workdir: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* legacyReadDbToml(fs, path, workdir);
+  }).pipe(Effect.provide(BunServices.layer));
+
+const loadEnv = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* legacyLoadProjectEnv(fs, path, workdir);
   }).pipe(Effect.provide(BunServices.layer));
 
 describe("legacyReadDbToml", () => {
@@ -333,6 +340,26 @@ describe("legacyReadDbToml", () => {
       ),
     );
   });
+
+  it.effect(
+    "legacyLoadProjectEnv surfaces SUPABASE_DB_PASSWORD from .env (linked-path source)",
+    () => {
+      // The --linked resolver reads SUPABASE_DB_PASSWORD via this map, so a value
+      // defined only in supabase/.env must be visible (Go's loadNestedEnv parity).
+      delete process.env["SUPABASE_DB_PASSWORD"];
+      const dir = mkdtempSync(join(tmpdir(), "legacy-db-toml-"));
+      mkdirSync(join(dir, "supabase"), { recursive: true });
+      writeFileSync(join(dir, "supabase", ".env"), "SUPABASE_DB_PASSWORD=from-dotenv\n");
+      return loadEnv(dir).pipe(
+        Effect.tap((env) =>
+          Effect.sync(() => {
+            expect(env["SUPABASE_DB_PASSWORD"]).toBe("from-dotenv");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("ignores a [db.pooler] connection_string in config.toml (Go reads .temp only)", () => {
     // The Go config field is tagged `toml:"-"`, so a connection_string in config.toml
