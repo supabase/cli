@@ -10,9 +10,19 @@ import { InvalidProjectLinkStateError } from "../../config/project-link-state.se
 import { Credentials } from "../../auth/credentials.service.ts";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { CommandRuntime } from "../../../shared/runtime/command-runtime.service.ts";
+import { listLocalServiceVersions } from "../../../shared/services/services.shared.ts";
 import { services } from "./services.handler.ts";
 
 const LINKED_REF = "abcdefghijklmnopqrst";
+const LOCAL_POSTGRES_SERVICE = listLocalServiceVersions().find(
+  (service) => service.name === "supabase/postgres",
+);
+
+if (LOCAL_POSTGRES_SERVICE === undefined) {
+  throw new Error("Missing supabase/postgres in local service versions.");
+}
+
+const LOCAL_POSTGRES_VERSION = LOCAL_POSTGRES_SERVICE.local;
 
 function linkedStateFixture(): ProjectLinkStateValue {
   return {
@@ -128,7 +138,10 @@ describe("next services", () => {
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toMatchObject({
         services: expect.arrayContaining([
-          expect.objectContaining({ name: "supabase/postgres", local: "17.6.1.132" }),
+          expect.objectContaining({
+            name: "supabase/postgres",
+            local: LOCAL_POSTGRES_VERSION,
+          }),
         ]),
       });
     });
@@ -200,7 +213,7 @@ describe("next services", () => {
         services: expect.arrayContaining([
           expect.objectContaining({
             name: "supabase/postgres",
-            local: "17.6.1.132",
+            local: LOCAL_POSTGRES_VERSION,
             remote: "17.6.1.200",
           }),
         ]),
