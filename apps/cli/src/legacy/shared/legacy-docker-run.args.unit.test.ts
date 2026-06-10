@@ -24,9 +24,9 @@ describe("buildLegacyDockerArgs", () => {
       "-v",
       "/host/a:/host/a:ro",
       "-e",
-      "PGHOST=db",
+      "PGHOST",
       "-e",
-      "PGPORT=5432",
+      "PGPORT",
       "--security-opt",
       "label:disable",
       "-w",
@@ -51,5 +51,17 @@ describe("buildLegacyDockerArgs", () => {
     });
     expect(args).not.toContain("--network");
     expect(args).not.toContain("-w");
+  });
+
+  test("never serializes env values into argv (CWE-214: PGPASSWORD must not leak to ps)", () => {
+    const args = buildLegacyDockerArgs({
+      ...base,
+      env: { PGPASSWORD: "super-secret", PGHOST: "db" },
+    });
+    // Key-only `-e KEY` form: docker reads the value from the spawned process's
+    // environment, so no value ever appears in the host process argv.
+    expect(args).toContain("PGPASSWORD");
+    expect(args.some((a) => a.includes("super-secret"))).toBe(false);
+    expect(args.some((a) => a.includes("="))).toBe(false);
   });
 });

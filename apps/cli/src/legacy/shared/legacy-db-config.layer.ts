@@ -233,7 +233,11 @@ export const legacyDbConfigLayer = Layer.effect(
         if (dotIndex === -1) {
           for (const option of optionsParam.split(",")) {
             const [key, value] = option.split("=");
-            if (key === "reference" && value !== ref) {
+            // Mirror Go's `strings.Cut` `found` guard (connect.go:83): only reject
+            // when the `reference` option is present *with* a value that mismatches.
+            // A bare `reference` token (no `=`) or a missing `reference` key is
+            // accepted, exactly as Go does — do not reject on absence.
+            if (key === "reference" && value !== undefined && value !== ref) {
               yield* debug.debug(`Pooler options does not match project ref: ${ref}`);
               return Option.none();
             }

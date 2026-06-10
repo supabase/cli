@@ -19,7 +19,13 @@ export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<
     "--rm",
     ...networkArgs,
     ...binds.flatMap((b) => ["-v", b]),
-    ...Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
+    // Emit the key-only `-e KEY` form so values (e.g. PGPASSWORD) never appear
+    // in the host process argv (`ps aux` / `/proc/<pid>/cmdline`). Docker reads
+    // each value from the spawning process's environment instead — the layer
+    // merges `env` into the docker child's environment before spawning. Go avoids
+    // this exposure entirely by passing `container.Config.Env` over the Docker
+    // socket API; this is the CLI-shell equivalent (CWE-214).
+    ...Object.keys(env).flatMap((k) => ["-e", k]),
     ...securityOpt.flatMap((s) => ["--security-opt", s]),
     ...(Option.isSome(workingDir) ? ["-w", workingDir.value] : []),
     image,
