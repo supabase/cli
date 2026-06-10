@@ -1,9 +1,15 @@
+import { BunServices } from "@effect/platform-bun";
+import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { credentialsLayer } from "../../../auth/credentials.layer.ts";
+import { platformApiLayer } from "../../../auth/platform-api.layer.ts";
+import { projectLinkStateLayer } from "../../../config/project-link-state.layer.ts";
+import { makeGoProxyLayer } from "../../../../shared/legacy/go-proxy.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyFunctionsDownload } from "./download.handler.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { withCommandInstrumentation } from "../../../../shared/telemetry/command-instrumentation.ts";
+import { functionsDownload } from "./download.handler.ts";
 
 const config = {
   functionName: Argument.string("Function name").pipe(
@@ -18,18 +24,26 @@ const config = {
     Flag.withDescription("Unbundle functions server-side without using Docker."),
   ),
   useDocker: Flag.boolean("use-docker").pipe(
-    Flag.withDescription("Use Docker to unbundle functions locally."),
+    Flag.withDescription("Use Docker to unbundle functions client-side."),
     Flag.withHidden,
   ),
   legacyBundle: Flag.boolean("legacy-bundle").pipe(
-    Flag.withDescription("Use legacy bundling."),
+    Flag.withDescription("Use legacy bundling mechanism."),
     Flag.withHidden,
   ),
 } as const;
 
-export type LegacyFunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type FunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyFunctionsDownloadCommand = Command.make("download", config).pipe(
+const functionsDownloadRuntimeLayer = Layer.mergeAll(
+  BunServices.layer,
+  platformApiLayer.pipe(Layer.provide(credentialsLayer)),
+  projectLinkStateLayer,
+  commandRuntimeLayer(["functions", "download"]),
+  makeGoProxyLayer(),
+);
+
+export const functionsDownloadCommand = Command.make("download", config).pipe(
   Command.withDescription(
     "Download the source code for a Function from the linked Supabase project. If no function name is provided, downloads all functions.",
   ),
@@ -45,10 +59,7 @@ export const legacyFunctionsDownloadCommand = Command.make("download", config).p
     },
   ]),
   Command.withHandler((flags) =>
-    legacyFunctionsDownload(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
-      withJsonErrorHandling,
-    ),
+    functionsDownload(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["functions", "download"])),
+  Command.provide(functionsDownloadRuntimeLayer),
 );

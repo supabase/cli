@@ -42,15 +42,16 @@ Prints a success message after the function is deleted.
 
 ### `--output-format json`
 
-Not applicable (proxied to Go binary).
+Prints a structured success result with the function slug and project ref.
 
 ### `--output-format stream-json`
 
-Not applicable (proxied to Go binary).
+Prints a structured success result with the function slug and project ref.
 
 ## Notes
 
 - Requires exactly one argument: the function slug/name.
 - Does NOT remove the function from the local filesystem.
 - Requires a linked project (`--project-ref` or linked project config).
-- Phase 0 proxy: all invocations are forwarded to the bundled Go binary.
+- Runs natively in TypeScript through the Management API.
+- Refreshes the linked-project telemetry cache and flushes telemetry state after resolving a project ref.
