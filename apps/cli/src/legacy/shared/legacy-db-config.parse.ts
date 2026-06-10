@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
+import { legacyPgpassPassword } from "./legacy-pgpass.ts";
 
 /** Go's `pgconn` default direct Postgres port. */
 const DIRECT_PORT = 5432;
@@ -143,13 +144,20 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     if (port === undefined) {
       return undefined;
     }
+    const host = rawHost.length > 0 ? rawHost : (libpqEnv("PGHOST") ?? defaultLibpqHost());
+    // Absent database → PGDATABASE, then the resolved user (libpq default).
+    const database = rawDatabase.length > 0 ? rawDatabase : (libpqEnv("PGDATABASE") ?? user);
+    // Password precedence (pgconn): connection string → PGPASSWORD → `.pgpass`.
+    const password =
+      rawPassword.length > 0
+        ? rawPassword
+        : (libpqEnv("PGPASSWORD") ?? legacyPgpassPassword(host, port, database, user));
     return {
-      host: rawHost.length > 0 ? rawHost : (libpqEnv("PGHOST") ?? defaultLibpqHost()),
+      host,
       port,
       user,
-      password: rawPassword.length > 0 ? rawPassword : (libpqEnv("PGPASSWORD") ?? ""),
-      // Absent database → PGDATABASE, then the resolved user (libpq default).
-      database: rawDatabase.length > 0 ? rawDatabase : (libpqEnv("PGDATABASE") ?? user),
+      password,
+      database,
       ...(options !== null && options.length > 0 ? { options } : {}),
       ...(sslmode !== null && sslmode.length > 0 ? { sslmode } : {}),
       ...(sslrootcert !== null && sslrootcert.length > 0 ? { sslrootcert } : {}),
@@ -219,11 +227,16 @@ function parseKeywordValueDsn(value: string): LegacyPgConnInput | undefined {
   if (isInvalidSslmode(sslmode)) return undefined;
   const sslrootcert = params.get("sslrootcert") ?? libpqEnv("PGSSLROOTCERT");
   const options = params.get("options");
+  // Password precedence (pgconn): connection string → PGPASSWORD → `.pgpass`.
+  const password =
+    params.get("password") ??
+    libpqEnv("PGPASSWORD") ??
+    legacyPgpassPassword(host, port, database, user);
   return {
     host,
     port,
     user,
-    password: params.get("password") ?? libpqEnv("PGPASSWORD") ?? "",
+    password,
     database,
     ...(options !== undefined && options.length > 0 ? { options } : {}),
     ...(sslmode !== undefined && sslmode.length > 0 ? { sslmode } : {}),
