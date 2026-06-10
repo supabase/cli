@@ -91,11 +91,50 @@ export function legacySslOptionFor(
 ): boolean | ConnectionOptions | undefined {
   if (isLocal) return undefined;
   if (sslmode === "disable" || sslmode === "allow") return false;
-  const rejectUnauthorized = sslmode === "verify-ca" || sslmode === "verify-full";
-  return {
-    rejectUnauthorized,
-    ...(servername !== undefined ? { servername } : {}),
-  };
+  const sni = servername !== undefined ? { servername } : {};
+  if (sslmode === "verify-ca") {
+    // pgconn's `verify-ca` verifies the CA chain but **skips hostname**
+    // verification (`configTLS` sets a custom `VerifyPeerCertificate` with an
+    // empty DNSName and does not set `ServerName` for the check); SNI still
+    // carries the host. Node's equivalent is full chain verification with the
+    // identity check disabled.
+    return { rejectUnauthorized: true, checkServerIdentity: () => undefined, ...sni };
+  }
+  if (sslmode === "verify-full") {
+    // Full verification, including hostname against the servername.
+    return { rejectUnauthorized: true, ...sni };
+  }
+  // prefer / require / unset → TLS without verification (pgx default).
+  return { rejectUnauthorized: false, ...sni };
+}
+
+/**
+ * The ordered list of `ssl` configs to try for a connection, mirroring pgconn's
+ * fallback list (`configTLS`, `config.go:772-780`). The `pg` driver carries a
+ * single `ssl` option and cannot replay pgconn's internal TLS↔plaintext
+ * fallback, so `connect` retries across this list:
+ *
+ * - `disable` → `[plaintext]`
+ * - `allow` → `[plaintext, TLS]` (`{nil, tlsConfig}` — non-TLS primary)
+ * - `prefer` / unset (pgconn's default) → `[TLS, plaintext]` (`{tlsConfig, nil}`)
+ * - `require` / `verify-ca` / `verify-full` → `[TLS]` (TLS only)
+ *
+ * `servername` (the original hostname) is per dial host — set when a DoH-resolved
+ * IP was substituted so TLS/SNI still targets the hostname.
+ */
+export function legacySslConfigsFor(
+  sslmode: string | undefined,
+  isLocal: boolean,
+  servername: string | undefined,
+): Array<boolean | ConnectionOptions | undefined> {
+  if (isLocal) return [undefined];
+  if (sslmode === "disable") return [false];
+  if (sslmode === "allow") return [false, legacySslOptionFor("require", false, servername)];
+  if (sslmode === "require" || sslmode === "verify-ca" || sslmode === "verify-full") {
+    return [legacySslOptionFor(sslmode, false, servername)];
+  }
+  // prefer (and the unset default) try TLS first, then fall back to plaintext.
+  return [legacySslOptionFor(sslmode, false, servername), false];
 }
 
 /**
@@ -143,18 +182,15 @@ const connect = (
       new LegacyDbConnectError({ message: `failed to connect to postgres: ${error}` });
 
     // Build the ordered attempt list, mirroring pgconn's fallback loop
-    // (`config.go:772-780` fallback configs, expanded across each resolved
-    // address by `expandWithIPs`): each TLS config is tried against each dial
-    // host. `allow` is `{nil(plaintext), tlsConfig}` — plaintext primary, TLS
-    // fallback — so we try plaintext then TLS; every other mode is single-config.
-    // `servername` is per host (the original hostname when we dial a resolved IP).
+    // (`configTLS` fallback configs, expanded across each resolved address by
+    // `expandWithIPs`): each TLS config (`legacySslConfigsFor`) is tried against
+    // each dial host. `servername` is per host (the original hostname when we
+    // dial a DoH-resolved IP).
     const attempts = dialHosts.flatMap((dialHost) => {
       const servername = dialHost === cfg.host ? undefined : cfg.host;
-      const sslConfigs =
-        cfg.sslmode === "allow" && !isLocal
-          ? [false, legacySslOptionFor("require", false, servername)]
-          : [legacySslOptionFor(cfg.sslmode, isLocal, servername)];
-      return sslConfigs.map((ssl) => makeClient(dialHost, ssl));
+      return legacySslConfigsFor(cfg.sslmode, isLocal, servername).map((ssl) =>
+        makeClient(dialHost, ssl),
+      );
     });
 
     // The `pg` driver connects lazily and cannot replay pgconn's fallback, so

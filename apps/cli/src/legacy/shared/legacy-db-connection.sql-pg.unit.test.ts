@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   legacyBuildConnectionUrl,
+  legacySslConfigsFor,
   legacySslOptionFor,
 } from "./legacy-db-connection.sql-pg.layer.ts";
 
@@ -53,11 +54,21 @@ describe("legacySslOptionFor", () => {
     expect(legacySslOptionFor("allow", false, undefined)).toBe(false);
   });
 
-  it("verifies the certificate for verify-ca and verify-full", () => {
-    expect(legacySslOptionFor("verify-ca", false, undefined)).toEqual({ rejectUnauthorized: true });
+  it("verifies the full certificate (incl. hostname) for verify-full", () => {
     expect(legacySslOptionFor("verify-full", false, undefined)).toEqual({
       rejectUnauthorized: true,
     });
+  });
+
+  it("verifies the CA chain but skips hostname for verify-ca (pgconn parity)", () => {
+    // pgconn's verify-ca verifies the chain but not the hostname, so Node must
+    // keep rejectUnauthorized but disable the identity check.
+    const ssl = legacySslOptionFor("verify-ca", false, undefined);
+    expect(ssl).toMatchObject({ rejectUnauthorized: true });
+    if (typeof ssl === "object" && ssl !== null) {
+      expect(typeof ssl.checkServerIdentity).toBe("function");
+      expect(ssl.checkServerIdentity?.("wrong.host", {} as never)).toBeUndefined();
+    }
   });
 
   it("carries the servername into verifying modes (so a DoH IP verifies the hostname)", () => {
@@ -88,5 +99,45 @@ describe("legacySslOptionFor", () => {
     expect(legacySslOptionFor("require", false, undefined)).toEqual({
       rejectUnauthorized: false,
     });
+  });
+});
+
+describe("legacySslConfigsFor (pgconn fallback list)", () => {
+  it("local connections try a single plaintext (no-TLS) config", () => {
+    expect(legacySslConfigsFor(undefined, true, undefined)).toEqual([undefined]);
+  });
+
+  it("disable is plaintext only", () => {
+    expect(legacySslConfigsFor("disable", false, undefined)).toEqual([false]);
+  });
+
+  it("allow is plaintext primary with a TLS fallback ({nil, tlsConfig})", () => {
+    expect(legacySslConfigsFor("allow", false, undefined)).toEqual([
+      false,
+      { rejectUnauthorized: false },
+    ]);
+  });
+
+  it("prefer and unset are TLS primary with a plaintext fallback ({tlsConfig, nil})", () => {
+    expect(legacySslConfigsFor("prefer", false, undefined)).toEqual([
+      { rejectUnauthorized: false },
+      false,
+    ]);
+    expect(legacySslConfigsFor(undefined, false, undefined)).toEqual([
+      { rejectUnauthorized: false },
+      false,
+    ]);
+  });
+
+  it("require / verify-* are TLS only (no fallback)", () => {
+    expect(legacySslConfigsFor("require", false, undefined)).toEqual([
+      { rejectUnauthorized: false },
+    ]);
+    expect(legacySslConfigsFor("verify-full", false, undefined)).toEqual([
+      { rejectUnauthorized: true },
+    ]);
+    const verifyCa = legacySslConfigsFor("verify-ca", false, undefined);
+    expect(verifyCa).toHaveLength(1);
+    expect(verifyCa[0]).toMatchObject({ rejectUnauthorized: true });
   });
 });
