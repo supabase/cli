@@ -1,6 +1,34 @@
 import { describe, expect, it } from "vitest";
 
-import { legacySslOptionFor } from "./legacy-db-connection.sql-pg.layer.ts";
+import {
+  legacyBuildConnectionUrl,
+  legacySslOptionFor,
+} from "./legacy-db-connection.sql-pg.layer.ts";
+
+describe("legacyBuildConnectionUrl", () => {
+  const base = {
+    user: "postgres",
+    password: "pw",
+    port: 6543,
+    database: "postgres",
+    options: "reference=abc",
+  };
+
+  it("brackets an IPv6 literal host so new URL accepts it", () => {
+    const url = legacyBuildConnectionUrl({ ...base, host: "::1" }, "::1");
+    expect(url).toContain("@[::1]:6543/");
+    expect(url).toContain("options=reference%3Dabc");
+  });
+
+  it("leaves a hostname or IPv4 host unbracketed", () => {
+    expect(
+      legacyBuildConnectionUrl({ ...base, host: "db.example.com" }, "db.example.com"),
+    ).toContain("@db.example.com:6543/");
+    expect(legacyBuildConnectionUrl({ ...base, host: "127.0.0.1" }, "203.0.113.10")).toContain(
+      "@203.0.113.10:6543/",
+    );
+  });
+});
 
 describe("legacySslOptionFor", () => {
   it("returns undefined for local connections regardless of sslmode", () => {

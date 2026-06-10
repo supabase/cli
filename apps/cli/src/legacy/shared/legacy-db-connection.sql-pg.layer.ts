@@ -1,3 +1,4 @@
+import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
 import { PgClient } from "@effect/sql-pg";
 import { Effect, Layer, Redacted, type Scope } from "effect";
@@ -41,10 +42,16 @@ function needsRoleStepDown(user: string): boolean {
  * passed explicitly so a DoH-resolved IP can be substituted while TLS still
  * verifies the original hostname (via the `ssl.servername` carried separately).
  * The URL carries no `sslmode`, so the explicit `ssl` config wins.
+ *
+ * An IPv6 literal host is wrapped in brackets so `new URL()` accepts it, matching
+ * Go's `ToPostgresURL` (which formats the host via `net.JoinHostPort`). This
+ * covers a direct IPv6 `--db-url` carrying `?options=…` and the DoH path when a
+ * Supavisor URL resolves to an AAAA address.
  */
-function buildConnectionUrl(cfg: LegacyPgConnInput, host: string): string {
+export function legacyBuildConnectionUrl(cfg: LegacyPgConnInput, host: string): string {
+  const hostPart = net.isIP(host) === 6 ? `[${host}]` : host;
   const url = new URL(
-    `postgresql://${encodeURIComponent(cfg.user)}:${encodeURIComponent(cfg.password)}@${host}:${cfg.port}/${encodeURIComponent(cfg.database)}`,
+    `postgresql://${encodeURIComponent(cfg.user)}:${encodeURIComponent(cfg.password)}@${hostPart}:${cfg.port}/${encodeURIComponent(cfg.database)}`,
   );
   if (cfg.options !== undefined && cfg.options.length > 0) {
     url.searchParams.set("options", cfg.options);
@@ -119,7 +126,7 @@ const connect = (
         // connection string so it reaches the server (see `buildConnectionUrl`);
         // otherwise pass discrete fields to avoid round-tripping the password.
         ...(hasOptions
-          ? { url: Redacted.make(buildConnectionUrl(cfg, dialHost)) }
+          ? { url: Redacted.make(legacyBuildConnectionUrl(cfg, dialHost)) }
           : {
               host: dialHost,
               port: cfg.port,
