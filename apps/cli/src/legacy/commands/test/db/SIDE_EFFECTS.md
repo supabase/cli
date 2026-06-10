@@ -27,7 +27,7 @@
 
 ## Docker
 
-One-shot `docker run --rm supabase/pg_prove:3.36`:
+One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_prove:3.36` resolved through the registry (`legacyGetRegistryImageUrl`, mirroring Go's `GetRegistryImageUrl`): `SUPABASE_INTERNAL_IMAGE_REGISTRY` overrides the registry, `docker.io` pulls from Docker Hub unchanged, and the default is `public.ecr.aws/supabase/pg_prove:3.36`.
 
 - `-v <hostpath>:<dockerpath>:ro` for each test path
 - `--security-opt label:disable`

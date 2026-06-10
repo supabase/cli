@@ -7,6 +7,7 @@ import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
+import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
@@ -27,6 +28,9 @@ const ENABLE_PGTAP = "create extension if not exists pgtap with schema extension
 const DISABLE_PGTAP = "drop extension if exists pgtap";
 // Go bakes this default into the Dockerfile (`pkg/config/templates/Dockerfile:20`).
 // The TS config schema does not model an `[images]` override, so it is fixed here.
+// Go resolves it through `GetRegistryImageUrl` (`DockerStart`), honoring
+// `SUPABASE_INTERNAL_IMAGE_REGISTRY` / the default ECR mirror, so do the same
+// before passing it to `docker run`.
 const LEGACY_PG_PROVE_IMAGE = "supabase/pg_prove:3.36";
 const MAX_PROJECT_ID_LENGTH = 40;
 
@@ -158,7 +162,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
         }
 
         return yield* docker.run({
-          image: LEGACY_PG_PROVE_IMAGE,
+          image: legacyGetRegistryImageUrl(LEGACY_PG_PROVE_IMAGE),
           cmd: args.cmd,
           env: runEnv,
           binds: args.binds,
