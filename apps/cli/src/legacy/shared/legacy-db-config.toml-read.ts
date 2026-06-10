@@ -109,8 +109,10 @@ const DEFAULT_SUPABASE_ENV = "development";
  * `.env.<env>`, then `.env` via `godotenv.Load`, which never overrides a value
  * already set. So the shell environment wins over the files, the `supabase/`
  * directory wins over the repo root, and earlier filenames win within a
- * directory. A malformed `.env` aborts (Go returns the parse error); the path is
- * named without leaking file contents (CWE-209-safe).
+ * directory. A malformed `.env` — or one that exists but cannot be read —
+ * aborts: Go's `loadEnvIfExists` swallows only `os.ErrNotExist` and returns
+ * every other error. The path is named without leaking file contents
+ * (CWE-209-safe).
  */
 const loadProjectEnv = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -126,9 +128,21 @@ const loadProjectEnv = Effect.fnUntraced(function* (
   const loaded: Record<string, string> = {};
   for (const dir of dirs) {
     for (const name of filenames) {
-      const content = yield* fs
-        .readFileString(path.join(dir, name))
-        .pipe(Effect.map(Option.some<string>), Effect.orElseSucceed(Option.none<string>));
+      // Go's loadEnvIfExists ignores only os.ErrNotExist; any other read error
+      // aborts rather than silently skipping the file (which would hide a broken
+      // env-backed config). Effect surfaces "not found" as a NotFound PlatformError.
+      const content = yield* fs.readFileString(path.join(dir, name)).pipe(
+        Effect.map(Option.some<string>),
+        Effect.catchTag("PlatformError", (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(Option.none<string>())
+            : Effect.fail(
+                new LegacyDbConfigLoadError({
+                  message: `failed to read environment file: ${name}`,
+                }),
+              ),
+        ),
+      );
       if (Option.isNone(content)) continue;
       let parsed: Record<string, string>;
       try {

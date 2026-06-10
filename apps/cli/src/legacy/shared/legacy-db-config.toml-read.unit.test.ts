@@ -266,6 +266,26 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("fails when a project .env file exists but cannot be read", () => {
+    // Go's loadEnvIfExists swallows only os.ErrNotExist; any other read error
+    // aborts rather than hiding a broken env-backed config. A directory at the
+    // .env path yields a non-NotFound read error.
+    const dir = withConfig(["[db]", "port = 5000", ""].join("\n"));
+    mkdirSync(join(dir, "supabase", ".env"), { recursive: true });
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("failed to read environment file");
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("ignores a [db.pooler] connection_string in config.toml (Go reads .temp only)", () => {
     // The Go config field is tagged `toml:"-"`, so a connection_string in config.toml
     // is never honored; only supabase/.temp/pooler-url counts.
