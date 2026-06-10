@@ -85,6 +85,30 @@ describe("parseLegacyConnectionString (URL form)", () => {
     }
   });
 
+  it("honors libpq query params (host/dbname) over the structural URL (pgconn parity)", () => {
+    // pgconn's parseURLSettings merges query params last, so ?host=/socket wins
+    // over the (empty) URL host, and a unix-socket host is used verbatim.
+    expect(parseLegacyConnectionString("postgresql:///postgres?host=/var/run/postgresql")).toEqual({
+      host: "/var/run/postgresql",
+      port: 5432,
+      user: osUser,
+      password: "",
+      database: "postgres",
+    });
+    // A query dbname overrides the URL path.
+    expect(
+      parseLegacyConnectionString(
+        "postgresql://postgres:pw@db.example.com:6543/ignored?dbname=real",
+      ),
+    ).toEqual({
+      host: "db.example.com",
+      port: 6543,
+      user: "postgres",
+      password: "pw",
+      database: "real",
+    });
+  });
+
   it("strips the brackets from an IPv6 literal host (Go url.Hostname parity)", () => {
     expect(parseLegacyConnectionString("postgresql://postgres:pw@[::1]:5432/postgres")).toEqual({
       host: "::1",

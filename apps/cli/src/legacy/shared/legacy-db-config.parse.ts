@@ -72,31 +72,39 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     // `decodeURIComponent` throws on a malformed percent escape (e.g. `p%zz`).
     // Keep it inside the try so a bad escape yields a normal parse failure
     // rather than an untyped defect (CWE-209-safe: the caller redacts the URL).
-    // A URL that omits userinfo falls back to the OS account, matching Go's
-    // `pgconn.ParseConfig` (`defaultSettings`/`PGUSER`) and the keyword/value
-    // path below — not the empty string `url.username` yields.
-    const rawUser = decodeURIComponent(url.username);
+    const query = url.searchParams;
+    // pgconn's `parseURLSettings` runs the query-param loop **last**, so libpq
+    // URL query settings (`?host=/socket`, `?port=`, `?dbname=`, `?user=`,
+    // `?password=`) override the structural userinfo/host/path. A non-empty query
+    // value wins; otherwise we fall back to the structural part. `searchParams`
+    // already percent-decodes, so query values are used verbatim.
+    const queryOrElse = (key: string, structural: string): string => {
+      const q = query.get(key);
+      return q !== null && q.length > 0 ? q : structural;
+    };
+
+    // A URL that omits a field falls back to the libpq `PG*` env vars and then the
+    // libpq defaults, matching pgconn's
+    // `mergeSettings(defaultSettings, envSettings, connStringSettings)`.
+    const rawUser = queryOrElse("user", decodeURIComponent(url.username));
     const user = rawUser.length > 0 ? rawUser : defaultOsUser();
-    const rawPassword = decodeURIComponent(url.password);
-    const database = url.pathname.replace(/^\//, "");
-    const sslmode = url.searchParams.get("sslmode");
-    const options = url.searchParams.get("options");
+    const rawPassword = queryOrElse("password", decodeURIComponent(url.password));
     // WHATWG `URL.hostname` keeps the brackets around an IPv6 literal (`[::1]`),
     // but `net`/node-postgres and `PGHOST` expect the bare address. Go's
     // `url.Hostname()` returns the unbracketed host and only re-adds brackets when
     // formatting a URL (`ToPostgresURL`), so strip them here.
-    const urlHost = unbracketIpv6(url.hostname);
-    // Omitted fields fall back to libpq `PG*` env vars and then the libpq
-    // defaults, matching pgconn's
-    // `mergeSettings(defaultSettings, envSettings, connStringSettings)`.
+    const rawHost = queryOrElse("host", unbracketIpv6(url.hostname));
+    const rawPort = queryOrElse("port", url.port);
+    const rawDatabase = queryOrElse("dbname", decodeURIComponent(url.pathname.replace(/^\//, "")));
+    const sslmode = url.searchParams.get("sslmode");
+    const options = url.searchParams.get("options");
     return {
-      host: urlHost.length > 0 ? urlHost : (libpqEnv("PGHOST") ?? defaultLibpqHost()),
-      port: url.port.length > 0 ? Number(url.port) : libpqPort(libpqEnv("PGPORT")),
+      host: rawHost.length > 0 ? rawHost : (libpqEnv("PGHOST") ?? defaultLibpqHost()),
+      port: /^\d+$/.test(rawPort) ? Number(rawPort) : libpqPort(libpqEnv("PGPORT")),
       user,
       password: rawPassword.length > 0 ? rawPassword : (libpqEnv("PGPASSWORD") ?? ""),
       // Absent database → PGDATABASE, then the resolved user (libpq default).
-      database:
-        database.length > 0 ? decodeURIComponent(database) : (libpqEnv("PGDATABASE") ?? user),
+      database: rawDatabase.length > 0 ? rawDatabase : (libpqEnv("PGDATABASE") ?? user),
       ...(options !== null && options.length > 0 ? { options } : {}),
       ...(sslmode !== null && sslmode.length > 0 ? { sslmode } : {}),
     };
