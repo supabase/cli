@@ -183,6 +183,21 @@ describe("legacyDbConfigResolver (local + db-url)", () => {
     );
   });
 
+  it.effect("db-url mode: a passwordless local url fills the password from config", () => {
+    // Go's ConnectLocalPostgres fills an empty password from `[db].password`
+    // for local connections, so a passwordless local DSN still authenticates.
+    const dir = withWorkdir(["[db]", "port = 54322", 'password = "hunter2"', ""].join("\n"));
+    return resolve(dir, dbUrlFlags("postgres://postgres@127.0.0.1:54322/postgres")).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          expect(r.isLocal).toBe(true);
+          expect(r.conn.password).toBe("hunter2");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect(
     "db-url mode: an invalid url fails with a parse error that redacts the password",
     () => {

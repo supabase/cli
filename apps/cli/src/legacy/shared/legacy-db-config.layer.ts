@@ -352,15 +352,23 @@ export const legacyDbConfigLayer = Layer.effect(
               }),
             );
           }
+          const isLocal = isLocalDatabase(
+            conn.host,
+            localHost,
+            conn.port,
+            tomlValues.port,
+            tomlValues.shadowPort,
+          );
+          // Go routes a local direct URL through `ConnectLocalPostgres`
+          // (`connect.go:137`), which fills an empty password from the local
+          // `[db].password` config so a passwordless local DSL like
+          // `postgresql://postgres@127.0.0.1:54322/postgres` still authenticates.
           return {
-            conn,
-            isLocal: isLocalDatabase(
-              conn.host,
-              localHost,
-              conn.port,
-              tomlValues.port,
-              tomlValues.shadowPort,
-            ),
+            conn:
+              isLocal && conn.password.length === 0
+                ? { ...conn, password: tomlValues.password }
+                : conn,
+            isLocal,
           };
         }
 
