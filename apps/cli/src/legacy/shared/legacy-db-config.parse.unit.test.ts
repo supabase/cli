@@ -28,8 +28,24 @@ describe("parseLegacyConnectionString (URL form)", () => {
     });
   });
 
-  it("falls back to the 'postgres' database when there is no user and no path", () => {
-    expect(parseLegacyConnectionString("postgres://example.com")?.database).toBe("postgres");
+  it("defaults the user to the OS account when userinfo is omitted (libpq/pgconn parity)", () => {
+    expect(parseLegacyConnectionString("postgresql://localhost/mydb")).toEqual({
+      host: "localhost",
+      port: 5432,
+      user: osUser,
+      password: "",
+      database: "mydb",
+    });
+  });
+
+  it("defaults user to the OS account and database to that user when both are omitted", () => {
+    expect(parseLegacyConnectionString("postgresql://localhost")).toEqual({
+      host: "localhost",
+      port: 5432,
+      user: osUser,
+      password: "",
+      database: osUser,
+    });
   });
 
   it("preserves sslmode and the libpq options runtime param from the query string", () => {

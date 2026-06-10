@@ -38,7 +38,11 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     // `decodeURIComponent` throws on a malformed percent escape (e.g. `p%zz`).
     // Keep it inside the try so a bad escape yields a normal parse failure
     // rather than an untyped defect (CWE-209-safe: the caller redacts the URL).
-    const user = decodeURIComponent(url.username);
+    // A URL that omits userinfo falls back to the OS account, matching Go's
+    // `pgconn.ParseConfig` (`defaultSettings`/`PGUSER`) and the keyword/value
+    // path below — not the empty string `url.username` yields.
+    const rawUser = decodeURIComponent(url.username);
+    const user = rawUser.length > 0 ? rawUser : defaultOsUser();
     const database = url.pathname.replace(/^\//, "");
     const sslmode = url.searchParams.get("sslmode");
     const options = url.searchParams.get("options");
@@ -47,8 +51,8 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
       port: url.port.length > 0 ? Number(url.port) : DIRECT_PORT,
       user,
       password: decodeURIComponent(url.password),
-      database:
-        database.length > 0 ? decodeURIComponent(database) : user.length > 0 ? user : "postgres",
+      // libpq/pgconn defaults an absent database to the resolved user.
+      database: database.length > 0 ? decodeURIComponent(database) : user,
       ...(options !== null && options.length > 0 ? { options } : {}),
       ...(sslmode !== null && sslmode.length > 0 ? { sslmode } : {}),
     };
