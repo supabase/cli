@@ -140,4 +140,28 @@ describe("legacySslConfigsFor (pgconn fallback list)", () => {
     expect(verifyCa).toHaveLength(1);
     expect(verifyCa[0]).toMatchObject({ rejectUnauthorized: true });
   });
+
+  it("loads sslrootcert into the verifying modes and promotes require → verify-ca", () => {
+    const ca = "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----";
+    // require + a root cert behaves like verify-ca (chain verified, hostname skipped).
+    const required = legacySslConfigsFor("require", false, undefined, ca);
+    expect(required).toHaveLength(1);
+    expect(required[0]).toMatchObject({ rejectUnauthorized: true, ca });
+    expect((required[0] as { checkServerIdentity?: unknown }).checkServerIdentity).toBeTypeOf(
+      "function",
+    );
+    // verify-full keeps full verification but pins the CA.
+    expect(legacySslConfigsFor("verify-full", false, undefined, ca)).toEqual([
+      { rejectUnauthorized: true, ca },
+    ]);
+  });
+
+  it("does not attach a CA to non-verifying modes", () => {
+    const ca = "ca-bundle";
+    // prefer stays unverified even with a root cert (pgconn: InsecureSkipVerify).
+    expect(legacySslConfigsFor("prefer", false, undefined, ca)).toEqual([
+      { rejectUnauthorized: false },
+      false,
+    ]);
+  });
 });

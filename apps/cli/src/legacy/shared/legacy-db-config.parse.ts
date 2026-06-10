@@ -4,6 +4,27 @@ import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 /** Go's `pgconn` default direct Postgres port. */
 const DIRECT_PORT = 5432;
 
+/**
+ * The `sslmode` values pgconn's `configTLS` accepts; any other value is a parse
+ * error (`"sslmode is invalid"`), so the DSN is rejected rather than treated as
+ * `prefer`.
+ */
+const VALID_SSLMODES = new Set([
+  "disable",
+  "allow",
+  "prefer",
+  "require",
+  "verify-ca",
+  "verify-full",
+]);
+
+/** Whether a resolved sslmode is present and not one pgconn accepts. */
+function isInvalidSslmode(sslmode: string | null | undefined): boolean {
+  return (
+    sslmode !== null && sslmode !== undefined && sslmode.length > 0 && !VALID_SSLMODES.has(sslmode)
+  );
+}
+
 /** Read a libpq `PG*` env var, treating empty as unset (pgconn's `parseEnvSettings`). */
 function libpqEnv(name: string): string | undefined {
   const value = process.env[name];
@@ -103,6 +124,11 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     // libpq fills `sslmode` from `PGSSLMODE` when the connection string omits it
     // (pgconn's `parseEnvSettings`), before the TLS-mode default.
     const sslmode = url.searchParams.get("sslmode") ?? libpqEnv("PGSSLMODE") ?? null;
+    if (isInvalidSslmode(sslmode)) {
+      return undefined;
+    }
+    // libpq `sslrootcert` (query or `PGSSLROOTCERT`) pins the server CA.
+    const sslrootcert = url.searchParams.get("sslrootcert") ?? libpqEnv("PGSSLROOTCERT") ?? null;
     const options = url.searchParams.get("options");
     // pgconn merges a `?port=` query setting over the structural port and then
     // parses it, so an explicit query port — even empty (`?port=`) or non-numeric
@@ -126,6 +152,7 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
       database: rawDatabase.length > 0 ? rawDatabase : (libpqEnv("PGDATABASE") ?? user),
       ...(options !== null && options.length > 0 ? { options } : {}),
       ...(sslmode !== null && sslmode.length > 0 ? { sslmode } : {}),
+      ...(sslrootcert !== null && sslrootcert.length > 0 ? { sslrootcert } : {}),
     };
   } catch {
     return undefined;
@@ -189,6 +216,8 @@ function parseKeywordValueDsn(value: string): LegacyPgConnInput | undefined {
   // libpq fills `sslmode` from `PGSSLMODE` when the DSN omits it (pgconn's
   // `parseEnvSettings`), before the TLS-mode default.
   const sslmode = params.get("sslmode") ?? libpqEnv("PGSSLMODE");
+  if (isInvalidSslmode(sslmode)) return undefined;
+  const sslrootcert = params.get("sslrootcert") ?? libpqEnv("PGSSLROOTCERT");
   const options = params.get("options");
   return {
     host,
@@ -198,6 +227,7 @@ function parseKeywordValueDsn(value: string): LegacyPgConnInput | undefined {
     database,
     ...(options !== undefined && options.length > 0 ? { options } : {}),
     ...(sslmode !== undefined && sslmode.length > 0 ? { sslmode } : {}),
+    ...(sslrootcert !== undefined && sslrootcert.length > 0 ? { sslrootcert } : {}),
   };
 }
 

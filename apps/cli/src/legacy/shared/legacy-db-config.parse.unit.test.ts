@@ -160,6 +160,20 @@ describe("parseLegacyConnectionString (URL form)", () => {
     }
   });
 
+  it("rejects an invalid sslmode value (pgconn 'sslmode is invalid')", () => {
+    expect(parseLegacyConnectionString("postgres://h/db?sslmode=verifyfull")).toBeUndefined();
+    expect(parseLegacyConnectionString("host=h sslmode=bogus")).toBeUndefined();
+  });
+
+  it("carries sslrootcert from the query or DSN (PGSSLROOTCERT-style CA pinning)", () => {
+    expect(
+      parseLegacyConnectionString("postgres://h/db?sslmode=require&sslrootcert=/ca.pem"),
+    ).toMatchObject({ sslmode: "require", sslrootcert: "/ca.pem" });
+    expect(
+      parseLegacyConnectionString("host=h sslmode=verify-ca sslrootcert=/ca.pem"),
+    ).toMatchObject({ sslrootcert: "/ca.pem" });
+  });
+
   it("fills sslmode from PGSSLMODE when the URL omits it (pgconn env default)", () => {
     const prev = process.env["PGSSLMODE"];
     process.env["PGSSLMODE"] = "verify-full";

@@ -26,6 +26,13 @@ export interface LegacyPgConnInput {
    * (TLS without certificate verification, matching pgx's `prefer`/`require`).
    */
   readonly sslmode?: string;
+  /**
+   * libpq `sslrootcert` (Go's `pgconn.Config` `TLSConfig.RootCAs`, from the DSN
+   * or `PGSSLROOTCERT`): path to a CA bundle the driver layer loads to verify the
+   * server certificate. pgconn treats `sslmode=require` + a root cert as
+   * `verify-ca`. Absent → system roots / no CA pinning.
+   */
+  readonly sslrootcert?: string;
 }
 
 /**

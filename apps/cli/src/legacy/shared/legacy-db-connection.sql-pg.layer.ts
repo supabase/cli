@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
 import { PgClient } from "@effect/sql-pg";
@@ -88,21 +89,25 @@ export function legacySslOptionFor(
   sslmode: string | undefined,
   isLocal: boolean,
   servername: string | undefined,
+  caCert?: string,
 ): boolean | ConnectionOptions | undefined {
   if (isLocal) return undefined;
   if (sslmode === "disable" || sslmode === "allow") return false;
   const sni = servername !== undefined ? { servername } : {};
+  // A configured `sslrootcert` pins the server CA (pgconn loads it into RootCAs);
+  // it only affects the verifying modes.
+  const ca = caCert !== undefined ? { ca: caCert } : {};
   if (sslmode === "verify-ca") {
     // pgconn's `verify-ca` verifies the CA chain but **skips hostname**
     // verification (`configTLS` sets a custom `VerifyPeerCertificate` with an
     // empty DNSName and does not set `ServerName` for the check); SNI still
     // carries the host. Node's equivalent is full chain verification with the
     // identity check disabled.
-    return { rejectUnauthorized: true, checkServerIdentity: () => undefined, ...sni };
+    return { rejectUnauthorized: true, checkServerIdentity: () => undefined, ...ca, ...sni };
   }
   if (sslmode === "verify-full") {
     // Full verification, including hostname against the servername.
-    return { rejectUnauthorized: true, ...sni };
+    return { rejectUnauthorized: true, ...ca, ...sni };
   }
   // prefer / require / unset → TLS without verification (pgx default).
   return { rejectUnauthorized: false, ...sni };
@@ -120,21 +125,30 @@ export function legacySslOptionFor(
  * - `require` / `verify-ca` / `verify-full` → `[TLS]` (TLS only)
  *
  * `servername` (the original hostname) is per dial host — set when a DoH-resolved
- * IP was substituted so TLS/SNI still targets the hostname.
+ * IP was substituted so TLS/SNI still targets the hostname. `caCert` is the
+ * loaded `sslrootcert` bundle; pgconn treats `require` + a root cert as
+ * `verify-ca`, so it is promoted here.
  */
 export function legacySslConfigsFor(
   sslmode: string | undefined,
   isLocal: boolean,
   servername: string | undefined,
+  caCert?: string,
 ): Array<boolean | ConnectionOptions | undefined> {
   if (isLocal) return [undefined];
   if (sslmode === "disable") return [false];
-  if (sslmode === "allow") return [false, legacySslOptionFor("require", false, servername)];
-  if (sslmode === "require" || sslmode === "verify-ca" || sslmode === "verify-full") {
-    return [legacySslOptionFor(sslmode, false, servername)];
+  if (sslmode === "allow") return [false, legacySslOptionFor("require", false, servername, caCert)];
+  // pgconn: `require` + a root cert behaves like `verify-ca` (`configTLS`).
+  const effectiveMode = sslmode === "require" && caCert !== undefined ? "verify-ca" : sslmode;
+  if (
+    effectiveMode === "require" ||
+    effectiveMode === "verify-ca" ||
+    effectiveMode === "verify-full"
+  ) {
+    return [legacySslOptionFor(effectiveMode, false, servername, caCert)];
   }
   // prefer (and the unset default) try TLS first, then fall back to plaintext.
-  return [legacySslOptionFor(sslmode, false, servername), false];
+  return [legacySslOptionFor(sslmode, false, servername, caCert), false];
 }
 
 /**
@@ -181,6 +195,21 @@ const connect = (
     const toConnectError = (error: unknown) =>
       new LegacyDbConnectError({ message: `failed to connect to postgres: ${error}` });
 
+    // Load the `sslrootcert` CA bundle (pgconn reads it into `RootCAs` at parse
+    // time; a missing/unreadable file aborts). Skipped for local connections,
+    // which never use TLS.
+    const rootcertPath = cfg.sslrootcert;
+    const caCert =
+      rootcertPath !== undefined && rootcertPath.length > 0 && !isLocal
+        ? yield* Effect.try({
+            try: () => readFileSync(rootcertPath, "utf8"),
+            catch: (error) =>
+              new LegacyDbConnectError({
+                message: `failed to read sslrootcert ${rootcertPath}: ${error}`,
+              }),
+          })
+        : undefined;
+
     // Build the ordered attempt list, mirroring pgconn's fallback loop
     // (`configTLS` fallback configs, expanded across each resolved address by
     // `expandWithIPs`): each TLS config (`legacySslConfigsFor`) is tried against
@@ -188,7 +217,7 @@ const connect = (
     // dial a DoH-resolved IP).
     const attempts = dialHosts.flatMap((dialHost) => {
       const servername = dialHost === cfg.host ? undefined : cfg.host;
-      return legacySslConfigsFor(cfg.sslmode, isLocal, servername).map((ssl) =>
+      return legacySslConfigsFor(cfg.sslmode, isLocal, servername, caCert).map((ssl) =>
         makeClient(dialHost, ssl),
       );
     });
