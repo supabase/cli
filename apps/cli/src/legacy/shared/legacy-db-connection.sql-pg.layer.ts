@@ -1,3 +1,4 @@
+import type { ConnectionOptions } from "node:tls";
 import { PgClient } from "@effect/sql-pg";
 import { Effect, Layer, Redacted, type Scope } from "effect";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
@@ -8,6 +9,7 @@ import {
   type LegacyDbSession,
   type LegacyPgConnInput,
 } from "./legacy-db-connection.service.ts";
+import { legacyResolveHostOverHttps } from "./legacy-db-dns.ts";
 
 // Go's role step-down (`apps/cli-go/internal/utils/connect.go:200-220`,
 // `ConnectByConfigStream`): after connecting to a remote database as a
@@ -35,16 +37,50 @@ function needsRoleStepDown(user: string): boolean {
  * parameter. `PgClient.make` only forwards a fixed set of discrete fields to the
  * underlying `pg` pool and has no `options` field, so the legacy Supavisor pooler
  * format (`?options=reference=<ref>`) must travel via the connection string, which
- * `pg-connection-string` parses back into the startup `options` param.
+ * `pg-connection-string` parses back into the startup `options` param. `host` is
+ * passed explicitly so a DoH-resolved IP can be substituted while TLS still
+ * verifies the original hostname (via the `ssl.servername` carried separately).
+ * The URL carries no `sslmode`, so the explicit `ssl` config wins.
  */
-function buildConnectionUrl(cfg: LegacyPgConnInput): string {
+function buildConnectionUrl(cfg: LegacyPgConnInput, host: string): string {
   const url = new URL(
-    `postgresql://${encodeURIComponent(cfg.user)}:${encodeURIComponent(cfg.password)}@${cfg.host}:${cfg.port}/${encodeURIComponent(cfg.database)}`,
+    `postgresql://${encodeURIComponent(cfg.user)}:${encodeURIComponent(cfg.password)}@${host}:${cfg.port}/${encodeURIComponent(cfg.database)}`,
   );
   if (cfg.options !== undefined && cfg.options.length > 0) {
     url.searchParams.set("options", cfg.options);
   }
   return url.toString();
+}
+
+/**
+ * Map Go's TLS behavior to the `pg` driver's `ssl` option. Parity with
+ * `apps/cli-go/internal/utils/connect.go`:
+ *
+ * - **Local** (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`) → no TLS;
+ *   return `undefined` so `pg` stays in plaintext mode. `sslmode` is ignored,
+ *   matching Go, which overwrites the local config unconditionally.
+ * - **Remote** honors the URL's `sslmode` (`pgconn.ParseConfig` →
+ *   `ConnectByUrl`, which strips non-TLS fallbacks only when TLS is configured):
+ *   - `disable` → plaintext (`ssl: false`);
+ *   - `verify-ca` / `verify-full` → TLS **with** certificate verification;
+ *   - everything else (`prefer` / `require` / `allow` / unset) → TLS **without**
+ *     verification, matching pgx's default for `prefer`/`require`.
+ *
+ * `servername` is set for verifying modes so a DoH-resolved IP host still
+ * validates against the original hostname.
+ */
+export function legacySslOptionFor(
+  sslmode: string | undefined,
+  isLocal: boolean,
+  servername: string | undefined,
+): boolean | ConnectionOptions | undefined {
+  if (isLocal) return undefined;
+  if (sslmode === "disable") return false;
+  const rejectUnauthorized = sslmode === "verify-ca" || sslmode === "verify-full";
+  return {
+    rejectUnauthorized,
+    ...(rejectUnauthorized && servername !== undefined ? { servername } : {}),
+  };
 }
 
 /**
@@ -54,30 +90,34 @@ function buildConnectionUrl(cfg: LegacyPgConnInput): string {
  */
 const connect = (
   cfg: LegacyPgConnInput,
-  { isLocal }: LegacyDbConnectOptions,
+  { isLocal, dnsResolver }: LegacyDbConnectOptions,
 ): Effect.Effect<LegacyDbSession, LegacyDbConnectError, Scope.Scope> =>
   Effect.gen(function* () {
+    // Go installs the Cloudflare DoH resolver for remote connections when
+    // `--dns-resolver https` is set (`connect.go:211-213`). We resolve the host
+    // to an IP up front and dial that, but keep the original hostname for the
+    // TLS `servername` (carried in the `ssl` option) so verification still
+    // targets the hostname. Local connections always use the native resolver.
+    const connectHost =
+      dnsResolver === "https" && !isLocal ? yield* legacyResolveHostOverHttps(cfg.host) : cfg.host;
+    const servername = connectHost === cfg.host ? undefined : cfg.host;
+    const ssl = legacySslOptionFor(cfg.sslmode, isLocal, servername);
     const hasOptions = cfg.options !== undefined && cfg.options.length > 0;
     const client = yield* PgClient.make({
       // When a libpq `options` param is present, route everything through the
       // connection string so it reaches the server (see `buildConnectionUrl`);
       // otherwise pass discrete fields to avoid round-tripping the password.
       ...(hasOptions
-        ? { url: Redacted.make(buildConnectionUrl(cfg)) }
+        ? { url: Redacted.make(buildConnectionUrl(cfg, connectHost)) }
         : {
-            host: cfg.host,
+            host: connectHost,
             port: cfg.port,
             username: cfg.user,
             password: Redacted.make(cfg.password),
             database: cfg.database,
           }),
-      // TLS parity with Go (`internal/utils/connect.go`): remote connections use
-      // TLS (pgx `sslmode=prefer` with non-TLS fallbacks stripped) but do not
-      // verify the certificate, while local connections disable TLS entirely
-      // (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`). Omitting `ssl` here
-      // leaves the `pg` driver in plaintext mode — fine for local, but it would
-      // break against SSL-enforcing remote Supabase databases.
-      ...(isLocal ? {} : { ssl: { rejectUnauthorized: false } }),
+      // TLS parity with Go (`internal/utils/connect.go`): see `legacySslOptionFor`.
+      ...(ssl === undefined ? {} : { ssl }),
       maxConnections: 1,
     }).pipe(
       Effect.provide(Reactivity.layer),

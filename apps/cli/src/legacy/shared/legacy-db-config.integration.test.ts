@@ -72,11 +72,17 @@ const resolve = (workdir: string, flags: LegacyDbConfigFlags) =>
     return yield* resolver.resolve(flags);
   }).pipe(Effect.provide(buildResolver(workdir)));
 
-const localFlags: LegacyDbConfigFlags = { dbUrl: Option.none(), linked: false, local: true };
+const localFlags: LegacyDbConfigFlags = {
+  dbUrl: Option.none(),
+  linked: false,
+  local: true,
+  dnsResolver: "native",
+};
 const dbUrlFlags = (url: string): LegacyDbConfigFlags => ({
   dbUrl: Option.some(url),
   linked: false,
   local: false,
+  dnsResolver: "native",
 });
 
 describe("legacyDbConfigResolver (local + db-url)", () => {
@@ -191,6 +197,64 @@ describe("legacyDbConfigResolver (local + db-url)", () => {
               expect(json).toContain("LegacyDbConfigParseUrlError");
               expect(json).toContain("[REDACTED]");
               expect(json).not.toContain("s3cret");
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("db-url mode: preserves sslmode and the libpq options runtime param", () => {
+    const dir = withWorkdir();
+    const url =
+      "postgres://postgres:pw@example.com:5432/postgres?sslmode=verify-full&options=reference%3Dabcdefghijklmnop";
+    return resolve(dir, dbUrlFlags(url)).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          // Go's `pgconn.ParseConfig` keeps both in `pgconn.Config`; the URL
+          // parser must not discard the query string.
+          expect(r.conn.sslmode).toBe("verify-full");
+          expect(r.conn.options).toBe("reference=abcdefghijklmnop");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("db-url mode: accepts a libpq keyword/value DSN", () => {
+    const dir = withWorkdir();
+    return resolve(dir, dbUrlFlags("host=pg.example.com port=6543 user=admin dbname=app")).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          // Go's `pgconn.ParseConfig` accepts keyword/value DSNs, not just URLs.
+          expect(r.conn.host).toBe("pg.example.com");
+          expect(r.conn.port).toBe(6543);
+          expect(r.conn.user).toBe("admin");
+          expect(r.conn.database).toBe("app");
+          expect(r.isLocal).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "db-url mode: a malformed percent escape is a redacted parse error, not a defect",
+    () => {
+      const dir = withWorkdir();
+      // `p%zz` is an invalid escape: `new URL` accepts it but `decodeURIComponent`
+      // throws. It must surface as a normal parse failure, not an untyped defect.
+      return resolve(dir, dbUrlFlags("postgres://user:p%zz@example.com/db")).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const json = JSON.stringify(exit.cause);
+              expect(json).toContain("LegacyDbConfigParseUrlError");
+              expect(json).toContain("[REDACTED]");
+              expect(json).not.toContain("p%zz");
             }
             rmSync(dir, { recursive: true, force: true });
           }),

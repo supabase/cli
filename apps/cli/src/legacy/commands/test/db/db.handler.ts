@@ -7,7 +7,11 @@ import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
-import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDebugFlag,
+  LegacyDnsResolverFlag,
+  LegacyNetworkIdFlag,
+} from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import type { LegacyTestDbFlags } from "./db.command.ts";
@@ -46,6 +50,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
   const path = yield* Path.Path;
   const debug = yield* LegacyDebugFlag;
   const networkIdFlag = yield* LegacyNetworkIdFlag;
+  const dnsResolver = yield* LegacyDnsResolverFlag;
 
   yield* Effect.gen(function* () {
     // Reproduce cobra's MarkFlagsMutuallyExclusive("db-url","linked","local")
@@ -68,6 +73,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
       dbUrl: flags.dbUrl,
       linked: flags.linked,
       local: flags.local,
+      dnsResolver,
     });
 
     const args = buildLegacyPgProveArgs({
@@ -122,7 +128,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
         // stdout in text mode, and the stream-json layer emits task JSON log
         // events to stdout. Go has no "Running pgTAP tests…" line at all.
         yield* output.raw(`Connecting to ${isLocal ? "local" : "remote"} database...\n`, "stderr");
-        const session = yield* dbConn.connect(conn, { isLocal });
+        const session = yield* dbConn.connect(conn, { isLocal, dnsResolver });
 
         // Detect pre-existence before enabling so the drop is skipped when pgTAP
         // was already installed (Go keys this off an OnNotice 42710 callback,

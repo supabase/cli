@@ -23,6 +23,10 @@ import {
   type LegacyManagementApiRuntimeRequirements,
 } from "./legacy-management-api-runtime.layer.ts";
 import * as Errors from "./legacy-db-config.errors.ts";
+import {
+  parseLegacyConnectionString,
+  redactLegacyConnectionString,
+} from "./legacy-db-config.parse.ts";
 import { LegacyDbConfigResolver, type LegacyDbConfigError } from "./legacy-db-config.service.ts";
 import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
 import type { LegacyDbConfigFlags } from "./legacy-db-config.types.ts";
@@ -70,45 +74,6 @@ function isLocalDatabase(
   shadowPort: number,
 ): boolean {
   return host === localHost && (port === dbPort || port === shadowPort);
-}
-
-/**
- * Parse a `postgres(ql)://` connection string. Go uses `pgconn.ParseConfig`;
- * `URL` covers the same fields and percent-decodes userinfo/path. An empty path
- * falls back to the username, matching libpq's default dbname.
- */
-function parseConnectionString(value: string): LegacyPgConnInput | undefined {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return undefined;
-  }
-  const user = decodeURIComponent(url.username);
-  const database = url.pathname.replace(/^\//, "");
-  return {
-    host: url.hostname,
-    port: url.port.length > 0 ? Number(url.port) : DIRECT_PORT,
-    user,
-    password: decodeURIComponent(url.password),
-    database:
-      database.length > 0 ? decodeURIComponent(database) : user.length > 0 ? user : "postgres",
-  };
-}
-
-/**
- * Mask the password in a connection string for safe inclusion in error output.
- * Handles both parseable URLs and the malformed-but-credential-bearing case via
- * a userinfo regex fallback.
- */
-function redactConnectionString(value: string): string {
-  try {
-    const url = new URL(value);
-    if (url.password.length > 0) url.password = "[REDACTED]";
-    return url.toString();
-  } catch {
-    return value.replace(/(:\/\/[^:@/]*:)[^@/]*(@)/, "$1[REDACTED]$2");
-  }
 }
 
 /** Best-effort TCP reachability probe (Go dials direct host:5432 with a 5s timeout). */
@@ -200,11 +165,16 @@ export const legacyDbConfigLayer = Layer.effect(
     const waitForTempRole = (
       ref: string,
       conn: LegacyPgConnInput,
+      dnsResolver: "native" | "https",
     ): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApi> => {
       const attempt = (n: number): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApi> =>
         // The temp-role probe always targets the remote Supavisor pooler, so it
-        // connects with TLS (Go's pooler path goes through `ConnectByUrl`).
-        Effect.scoped(dbConn.connect(conn, { isLocal: false }).pipe(Effect.asVoid)).pipe(
+        // connects with TLS (Go's pooler path goes through `ConnectByUrl`) and
+        // honors `--dns-resolver` (Go's `ConnectByConfigStream` installs the DoH
+        // resolver for this remote connect too).
+        Effect.scoped(
+          dbConn.connect(conn, { isLocal: false, dnsResolver }).pipe(Effect.asVoid),
+        ).pipe(
           Effect.catch((cause) => {
             // Go's `backoff.WithMaxRetries(b, 8)` allows 8 retries after the
             // initial attempt → 9 total attempts. `n` is 1-based, so give up only
@@ -248,7 +218,7 @@ export const legacyDbConfigLayer = Layer.effect(
     ): Effect.Effect<Option.Option<LegacyPgConnInput>> =>
       Effect.gen(function* () {
         const sanitized = connectionString.replaceAll("[YOUR-PASSWORD]", "");
-        const parsed = parseConnectionString(sanitized);
+        const parsed = parseLegacyConnectionString(sanitized);
         if (parsed === undefined) {
           yield* debug.debug("failed to parse pooler URL");
           return Option.none();
@@ -256,7 +226,7 @@ export const legacyDbConfigLayer = Layer.effect(
         // Preserve the libpq `options` startup param (Go keeps it in
         // `pgconn.Config.RuntimeParams`): legacy pooler URLs route by tenant via
         // `?options=reference=<ref>`, so the actual connection must carry it.
-        const optionsParam = new URL(sanitized).searchParams.get("options") ?? "";
+        const optionsParam = parsed.options ?? "";
         // Username must encode the project ref: either `<user>.<ref>` or the
         // `?options=reference=<ref>` query param.
         const dotIndex = parsed.user.indexOf(".");
@@ -298,6 +268,7 @@ export const legacyDbConfigLayer = Layer.effect(
 
     const resolveLinked = (
       ref: string,
+      dnsResolver: "native" | "https",
     ): Effect.Effect<LegacyPgConnInput, LegacyDbConfigError, LegacyPlatformApi> =>
       Effect.gen(function* () {
         // Read lazily (per invocation) rather than at layer build, so tests and
@@ -353,7 +324,7 @@ export const legacyDbConfigLayer = Layer.effect(
           ? `${withRole.user}.${ref}`
           : withRole.user;
         const tempConn = { ...withRole, user: finalUser };
-        yield* waitForTempRole(ref, tempConn);
+        yield* waitForTempRole(ref, tempConn, dnsResolver);
         return tempConn;
       });
 
@@ -367,13 +338,13 @@ export const legacyDbConfigLayer = Layer.effect(
 
         // --db-url (direct) takes precedence.
         if (Option.isSome(flags.dbUrl)) {
-          const conn = parseConnectionString(flags.dbUrl.value);
+          const conn = parseLegacyConnectionString(flags.dbUrl.value);
           if (conn === undefined) {
             return yield* Effect.fail(
               new Errors.LegacyDbConfigParseUrlError({
                 // Redact the password component before echoing the URL back
                 // (CWE-209): a malformed `--db-url` often still carries a secret.
-                message: `failed to parse connection string: ${redactConnectionString(flags.dbUrl.value)}`,
+                message: `failed to parse connection string: ${redactLegacyConnectionString(flags.dbUrl.value)}`,
               }),
             );
           }
@@ -396,7 +367,7 @@ export const legacyDbConfigLayer = Layer.effect(
           const conn = yield* Effect.gen(function* () {
             const projectRef = yield* LegacyProjectRefResolver;
             const ref = yield* projectRef.resolve(Option.none());
-            return yield* resolveLinked(ref);
+            return yield* resolveLinked(ref, flags.dnsResolver);
           }).pipe(
             Effect.provide(
               legacyManagementApiRuntimeLayer(["test", "db"]).pipe(Layer.provide(ambientLayer)),

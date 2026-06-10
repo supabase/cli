@@ -19,6 +19,13 @@ export interface LegacyPgConnInput {
    * connection reaches the right tenant. Empty/absent for direct and local connections.
    */
   readonly options?: string;
+  /**
+   * libpq `sslmode` (Go's `pgconn.Config` TLS mode, parsed by `pgconn.ParseConfig`
+   * from a `--db-url` query string). Controls whether the driver layer negotiates
+   * TLS and whether it verifies the server certificate. Absent → the remote default
+   * (TLS without certificate verification, matching pgx's `prefer`/`require`).
+   */
+  readonly sslmode?: string;
 }
 
 /**
@@ -56,6 +63,14 @@ export interface LegacyDbConnectOptions {
    * verification, matching pgx's default for `prefer`/`require`).
    */
   readonly isLocal: boolean;
+  /**
+   * The active `--dns-resolver` value (Go's `utils.DNSResolver.Value`). When
+   * `"https"` and the connection is remote, the driver resolves the host via
+   * Cloudflare DNS-over-HTTPS before dialing, mirroring Go's
+   * `cc.LookupFunc = FallbackLookupIP` (`connect.go:211-213`). `"native"` (the
+   * default) uses the OS resolver. Ignored for local connections, matching Go.
+   */
+  readonly dnsResolver: "native" | "https";
 }
 
 interface LegacyDbConnectionShape {

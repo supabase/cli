@@ -10,7 +10,11 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDebugFlag,
+  LegacyDnsResolverFlag,
+  LegacyNetworkIdFlag,
+} from "../../../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
@@ -70,10 +74,14 @@ function mockDbConnection(opts: {
       }),
     extensionExists: () => Effect.succeed(opts.existed ?? false),
   };
-  const connectCalls: Array<{ cfg: LegacyPgConnInput; isLocal: boolean }> = [];
+  const connectCalls: Array<{
+    cfg: LegacyPgConnInput;
+    isLocal: boolean;
+    dnsResolver: "native" | "https";
+  }> = [];
   const layer = Layer.succeed(LegacyDbConnection, {
     connect: (cfg, options) => {
-      connectCalls.push({ cfg, isLocal: options.isLocal });
+      connectCalls.push({ cfg, isLocal: options.isLocal, dnsResolver: options.dnsResolver });
       return opts.connectFails === true
         ? Effect.fail(
             new LegacyDbConnectError({ message: "failed to connect to postgres: refused" }),
@@ -132,6 +140,7 @@ interface SetupOpts {
   debug?: boolean;
   networkId?: string;
   workdir?: string;
+  dnsResolver?: "native" | "https";
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -153,6 +162,7 @@ function setup(opts: SetupOpts = {}) {
       LegacyNetworkIdFlag,
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
     ),
+    Layer.succeed(LegacyDnsResolverFlag, opts.dnsResolver ?? "native"),
     BunServices.layer,
   );
   return { layer, out, telemetry, connection, docker };
@@ -245,6 +255,23 @@ describe("legacy test db integration", () => {
       // Remote connection → driver must enable TLS (Go strips non-TLS fallbacks
       // in `ConnectByUrl`); the handler signals this via `isLocal: false`.
       expect(connection.connectCalls[0]?.isLocal).toBe(false);
+      // Default DNS resolver flows through to the driver unchanged.
+      expect(connection.connectCalls[0]?.dnsResolver).toBe("native");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("forwards --dns-resolver https to the driver for the connection", () => {
+    const { layer, connection } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      dnsResolver: "https",
+    });
+    return Effect.gen(function* () {
+      yield* legacyTestDb(flags({ dbUrl: Option.some("postgres://x"), local: false }));
+      // Go installs the DoH fallback resolver for remote connects when
+      // `--dns-resolver https` is set (`connect.go:211-213`); the handler must
+      // hand the same value to the driver rather than silently using OS DNS.
+      expect(connection.connectCalls[0]?.dnsResolver).toBe("https");
     }).pipe(Effect.provide(layer));
   });
 

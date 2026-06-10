@@ -84,10 +84,23 @@ command (exit 1).
 ## Notes
 
 - Native TypeScript port (Phase 1+); no Go proxy. Hidden command (matches Go).
-- Postgres TLS matches Go (`internal/utils/connect.go`): remote (`--db-url` / `--linked`)
-  connections use TLS without certificate verification (pgx `sslmode=prefer` with non-TLS
-  fallbacks stripped); local connections disable TLS (`ConnectLocalPostgres` sets
-  `cc.TLSConfig = nil`).
+- Postgres TLS matches Go (`internal/utils/connect.go`): local connections disable TLS
+  (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`); remote (`--db-url` / `--linked`)
+  connections honor the URL's `sslmode` (`pgconn.ParseConfig` → `ConnectByUrl`) —
+  `disable` → plaintext, `verify-ca` / `verify-full` → TLS **with** certificate
+  verification, and everything else (`prefer` / `require` / unset) → TLS **without**
+  verification (pgx's default for `prefer`/`require`, non-TLS fallbacks stripped).
+- `--db-url` accepts both the WHATWG `postgres(ql)://…` URL form and the libpq
+  keyword/value DSN form (`host=… dbname=… user=…`, incl. unix-socket paths), matching
+  Go's `pgconn.ParseConfig`. The `sslmode` and libpq `options` (Supavisor
+  `?options=reference=<ref>`) parameters are preserved on both forms. A malformed URL or
+  percent escape surfaces as a redacted `failed to parse connection string` error, never
+  an unhandled defect.
+- `--dns-resolver https` (global flag, Go's `utils.DNSResolver`): for remote connections
+  the DB host is resolved via Cloudflare DNS-over-HTTPS (`https://1.1.1.1/dns-query`)
+  before dialing, mirroring Go's `cc.LookupFunc = FallbackLookupIP` (`connect.go:211`).
+  TLS verification still targets the original hostname (via `ssl.servername`). The native
+  resolver is used for local connections and when the flag is `native` (the default).
 - Postgres access uses `@effect/sql-pg`. Go detects "pgTAP already installed" via a
   `pgx` `OnNotice` (code 42710 `duplicate_object`) callback, which `@effect/sql-pg`
   does not expose; the port instead checks `pg_extension` by extension name (any
