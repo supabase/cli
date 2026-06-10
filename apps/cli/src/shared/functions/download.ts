@@ -1,4 +1,6 @@
 import { operationDefinitions, type ApiClient } from "@supabase/api/effect";
+import { randomUUID } from "node:crypto";
+import { open, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect, FileSystem, Option } from "effect";
@@ -513,6 +515,46 @@ function ensureContainedPath(root: string, candidate: string, sourcePath: string
   );
 }
 
+function writeFileWithoutFollowingSymlinks(
+  destination: string,
+  body: Uint8Array,
+  sourcePath: string,
+) {
+  return Effect.gen(function* () {
+    const tempDestination = join(dirname(destination), `.supabase-download-${randomUUID()}.tmp`);
+    const file = yield* Effect.tryPromise({
+      try: () => open(tempDestination, "wx"),
+      catch: (cause) =>
+        new UnsafeFunctionDownloadPathError({
+          message: `failed to create temporary Function file while extracting ${sourcePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
+    });
+
+    yield* Effect.tryPromise({
+      try: () => file.writeFile(body),
+      catch: (cause) =>
+        new UnsafeFunctionDownloadPathError({
+          message: `failed to write Function file: ${sourcePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
+    }).pipe(Effect.ensuring(Effect.promise(() => file.close()).pipe(Effect.ignore)));
+
+    yield* Effect.tryPromise({
+      try: () => rename(tempDestination, destination),
+      catch: (cause) =>
+        new UnsafeFunctionDownloadPathError({
+          message: `failed to move Function file into place: ${sourcePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
+    }).pipe(
+      Effect.catch((error) =>
+        Effect.promise(() => rm(tempDestination, { force: true })).pipe(
+          Effect.ignore,
+          Effect.andThen(() => Effect.fail(error)),
+        ),
+      ),
+    );
+  });
+}
+
 const listRemoteFunctionSlugs = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
   const response = yield* api
     .executeRaw(operationDefinitions.v1ListAllFunctions, {
@@ -666,15 +708,8 @@ const downloadSingle = Effect.fnUntraced(function* (
     );
     const parent = dirname(destination);
     yield* makeContainedDirectory(realFunctionsRoot, parent, file.path);
-    const existingLink = yield* fs.readLink(destination).pipe(Effect.option);
-    if (Option.isSome(existingLink)) {
-      return yield* Effect.fail(
-        new UnsafeFunctionDownloadPathError({
-          message: `refusing to overwrite symlink while extracting Function file: ${file.path}`,
-        }),
-      );
-    }
-    yield* fs.writeFile(destination, file.body);
+    yield* writeFileWithoutFollowingSymlinks(destination, file.body, file.path);
+    yield* ensureContainedPath(realFunctionsRoot, yield* fs.realPath(destination), file.path);
     if (output.format === "text") {
       yield* output.raw(`Extracting file: ${destination}\n`, "stderr");
     }
