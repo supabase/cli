@@ -1021,6 +1021,7 @@
     },
     "/v1/oauth/token": {
       "post": {
+        "description": "Supports `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:jwt-bearer` grant types. The `jwt-bearer` grant type (IDJAG — identity-directed JWT assertion) is in beta and available on Team and Enterprise plans only.",
         "operationId": "v1-exchange-oauth-token",
         "parameters": [],
         "requestBody": {
@@ -4868,7 +4869,7 @@
           }
         },
         "responses": {
-          "201": {
+          "204": {
             "description": ""
           },
           "401": {
@@ -4936,7 +4937,7 @@
           }
         },
         "responses": {
-          "201": {
+          "204": {
             "description": ""
           },
           "401": {
@@ -11845,7 +11846,11 @@
         "properties": {
           "grant_type": {
             "type": "string",
-            "enum": ["authorization_code", "refresh_token"]
+            "enum": [
+              "authorization_code",
+              "refresh_token",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ]
           },
           "client_id": {
             "type": "string",
@@ -11865,6 +11870,10 @@
           },
           "refresh_token": {
             "type": "string"
+          },
+          "assertion": {
+            "type": "string",
+            "description": "IDJAG assertion JWT for grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer. Beta - available on Team and Enterprise plans only."
           },
           "resource": {
             "type": "string",
@@ -11893,7 +11902,8 @@
             "type": "string"
           },
           "refresh_token": {
-            "type": "string"
+            "type": "string",
+            "description": "The `urn:ietf:params:oauth:grant-type:jwt-bearer` grant type issues access tokens only, no refresh token is returned and the token cannot be revoked via `/v1/oauth/revoke`."
           },
           "expires_in": {
             "type": "integer"
@@ -11903,7 +11913,7 @@
             "enum": ["Bearer"]
           }
         },
-        "required": ["access_token", "refresh_token", "expires_in", "token_type"],
+        "required": ["access_token", "expires_in", "token_type"],
         "additionalProperties": false
       },
       "OAuthRevokeTokenBody": {

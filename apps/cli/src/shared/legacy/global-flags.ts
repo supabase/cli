@@ -56,7 +56,7 @@ export const LegacyCreateTicketFlag = GlobalFlag.setting("create-ticket")({
 
 export const LegacyAgentFlag = GlobalFlag.setting("agent")({
   flag: Flag.choice("agent", ["auto", "yes", "no"] as const).pipe(
-    Flag.withDescription("Override agent detection: yes, no, or auto."),
+    Flag.withDescription("Override agent detection: yes, no, or auto (default auto)."),
     Flag.withDefault("auto" as const),
   ),
 });
