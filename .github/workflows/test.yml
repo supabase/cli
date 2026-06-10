@@ -3,9 +3,6 @@ name: Test
 # Release-notes PRs (head ref `release-notes/*`) only add markdown under
 # `release-notes/` and are published via approval — skip the full CI suite.
 on:
-  push:
-    branches:
-      - develop
   pull_request:
     types:
       - opened
@@ -32,8 +29,7 @@ jobs:
   check:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event_name == 'push' ||
-        github.event_name == 'merge_group' ||
+      (github.event_name == 'merge_group' ||
         github.event.pull_request.draft == false)
     name: Check code quality
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -62,8 +58,7 @@ jobs:
   test-core:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event_name == 'push' ||
-        github.event_name == 'merge_group' ||
+      (github.event_name == 'merge_group' ||
         github.event.pull_request.draft == false)
     name: Run unit and integration tests
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -92,8 +87,7 @@ jobs:
   test-e2e:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event_name == 'push' ||
-        github.event_name == 'merge_group' ||
+      (github.event_name == 'merge_group' ||
         github.event.pull_request.draft == false)
     name: Run end-to-end tests (shard ${{ matrix.shard }}/3)
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -121,15 +115,11 @@ jobs:
         uses: ./.github/actions/setup
 
       # Detect which e2e suites should run. On PR and merge queue runs we
-      # honour `nx affected`; on push we run every `test:e2e` target.
+      # honour `nx affected` using the event-specific base and head SHAs.
       - name: Detect affected e2e projects
         id: detect
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ] || [ "${{ github.event_name }}" = "merge_group" ]; then
-            affected=$(pnpm exec nx show projects --affected --withTarget test:e2e --json | jq -r '.[]')
-          else
-            affected=$(pnpm exec nx show projects --withTarget test:e2e --json | jq -r '.[]')
-          fi
+          affected=$(pnpm exec nx show projects --affected --withTarget test:e2e --json | jq -r '.[]')
           echo "Affected e2e projects:"
           echo "$affected"
           cli=false
@@ -200,8 +190,7 @@ jobs:
     if: |
       always() &&
       !startsWith(github.head_ref, 'release-notes/') &&
-      (github.event_name == 'push' ||
-        github.event_name == 'merge_group' ||
+      (github.event_name == 'merge_group' ||
         github.event.pull_request.draft == false)
     name: Run end-to-end tests
     needs: test-e2e
