@@ -104,6 +104,34 @@ func TestDeployAll(t *testing.T) {
 		assert.Empty(t, gock.GetUnmatchedRequests())
 	})
 
+	t.Run("retries single slug after rate limit", func(t *testing.T) {
+		c := config.FunctionConfig{"demo": {
+			Enabled:    true,
+			Entrypoint: "testdata/shared/whatever.ts",
+		}}
+		// Setup in-memory fs
+		fsys := testImports
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(mockApiHost).
+			Post("/v1/projects/"+mockProject+"/functions/deploy").
+			MatchParam("slug", "demo").
+			Reply(http.StatusTooManyRequests).
+			SetHeader("Retry-After", "0").
+			JSON(map[string]string{"message": "Too Many Requests"})
+		gock.New(mockApiHost).
+			Post("/v1/projects/"+mockProject+"/functions/deploy").
+			MatchParam("slug", "demo").
+			Reply(http.StatusCreated).
+			JSON(api.DeployFunctionResponse{})
+		// Run test
+		err := client.Deploy(context.Background(), c, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
+	})
+
 	t.Run("deploys multiple slugs", func(t *testing.T) {
 		c := config.FunctionConfig{
 			"test-ts": {
@@ -126,6 +154,45 @@ func TestDeployAll(t *testing.T) {
 				Reply(http.StatusCreated).
 				JSON(api.DeployFunctionResponse{Id: slug})
 		}
+		gock.New(mockApiHost).
+			Put("/v1/projects/" + mockProject + "/functions").
+			Reply(http.StatusOK).
+			JSON(api.BulkUpdateFunctionResponse{})
+		// Run test
+		err := client.Deploy(context.Background(), c, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
+	})
+
+	t.Run("retries bulk update after rate limit reset", func(t *testing.T) {
+		c := config.FunctionConfig{
+			"test-ts": {
+				Enabled:    true,
+				Entrypoint: "testdata/shared/whatever.ts",
+			},
+			"test-js": {
+				Enabled:    true,
+				Entrypoint: "testdata/geometries/Geometries.js",
+			},
+		}
+		// Setup in-memory fs
+		fsys := testImports
+		// Setup mock api
+		defer gock.OffAll()
+		for slug := range c {
+			gock.New(mockApiHost).
+				Post("/v1/projects/"+mockProject+"/functions/deploy").
+				MatchParam("slug", slug).
+				Reply(http.StatusCreated).
+				JSON(api.DeployFunctionResponse{Id: slug})
+		}
+		gock.New(mockApiHost).
+			Put("/v1/projects/"+mockProject+"/functions").
+			Reply(http.StatusTooManyRequests).
+			SetHeader("X-RateLimit-Reset", "0").
+			JSON(map[string]string{"message": "Too Many Requests"})
 		gock.New(mockApiHost).
 			Put("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusOK).

@@ -7,8 +7,11 @@ import (
 	"io"
 	"io/fs"
 	"mime/multipart"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/supabase/cli/pkg/api"
@@ -18,6 +21,8 @@ import (
 )
 
 var ErrNoDeploy = errors.New("All Functions are up to date.")
+
+const deployRateLimitMaxRetries = 8
 
 func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.FunctionConfig, fsys fs.FS) error {
 	if s.eszip != nil {
@@ -97,15 +102,36 @@ func (s *EdgeRuntimeAPI) bulkUpload(ctx context.Context, toDeploy []FunctionDepl
 	if err := jq.Collect(); err != nil {
 		return err
 	}
-	if resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, toUpdate); err != nil {
-		return errors.Errorf("failed to bulk update: %w", err)
-	} else if resp.JSON200 == nil {
-		return errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body))
+	for attempt := 0; ; attempt++ {
+		resp, err := s.client.V1BulkUpdateFunctionsWithResponse(ctx, s.project, toUpdate)
+		if err != nil {
+			return errors.Errorf("failed to bulk update: %w", err)
+		} else if resp.JSON200 != nil {
+			return nil
+		} else if resp.StatusCode() != http.StatusTooManyRequests || attempt >= deployRateLimitMaxRetries {
+			return errors.Errorf("unexpected bulk update status %d: %s", resp.StatusCode(), string(resp.Body))
+		} else if err := waitForRateLimit(ctx, responseHeaders(resp.HTTPResponse), attempt, "bulk updating functions"); err != nil {
+			return err
+		}
 	}
-	return nil
 }
 
 func (s *EdgeRuntimeAPI) upload(ctx context.Context, param api.V1DeployAFunctionParams, meta FunctionDeployMetadata, fsys fs.FS) (*api.DeployFunctionResponse, error) {
+	for attempt := 0; ; attempt++ {
+		resp, err := s.uploadOnce(ctx, param, meta, fsys)
+		if resp != nil && resp.JSON201 != nil {
+			return resp.JSON201, nil
+		} else if err != nil {
+			return nil, err
+		} else if resp.StatusCode() != http.StatusTooManyRequests || attempt >= deployRateLimitMaxRetries {
+			return nil, errors.Errorf("unexpected deploy status %d: %s", resp.StatusCode(), string(resp.Body))
+		} else if err := waitForRateLimit(ctx, responseHeaders(resp.HTTPResponse), attempt, "deploying function "+cast.Val(meta.Name, "")); err != nil {
+			return nil, err
+		}
+	}
+}
+
+func (s *EdgeRuntimeAPI) uploadOnce(ctx context.Context, param api.V1DeployAFunctionParams, meta FunctionDeployMetadata, fsys fs.FS) (*api.V1DeployAFunctionResponse, error) {
 	body, w := io.Pipe()
 	form := multipart.NewWriter(w)
 	ctx, cancel := context.WithCancelCause(ctx)
@@ -123,10 +149,52 @@ func (s *EdgeRuntimeAPI) upload(ctx context.Context, param api.V1DeployAFunction
 		return nil, cause
 	} else if err != nil {
 		return nil, errors.Errorf("failed to deploy function: %w", err)
-	} else if resp.JSON201 == nil {
-		return nil, errors.Errorf("unexpected deploy status %d: %s", resp.StatusCode(), string(resp.Body))
 	}
-	return resp.JSON201, nil
+	return resp, nil
+}
+
+func waitForRateLimit(ctx context.Context, headers http.Header, attempt int, action string) error {
+	delay := rateLimitDelay(headers, attempt)
+	fmt.Fprintf(os.Stderr, "Rate limit exceeded while %s. Retrying in %s.\n", action, delay.Round(time.Second))
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func responseHeaders(resp *http.Response) http.Header {
+	if resp == nil {
+		return nil
+	}
+	return resp.Header
+}
+
+func rateLimitDelay(headers http.Header, attempt int) time.Duration {
+	if delay, ok := parseRateLimitDelay(headers.Get("Retry-After")); ok {
+		return delay
+	}
+	if delay, ok := parseRateLimitDelay(headers.Get("X-RateLimit-Reset")); ok {
+		return delay
+	}
+	delay := time.Second << min(attempt, 5)
+	return delay
+}
+
+func parseRateLimitDelay(value string) (time.Duration, bool) {
+	if len(value) == 0 {
+		return 0, false
+	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		return max(time.Duration(seconds)*time.Second, 0), true
+	}
+	if retryAt, err := http.ParseTime(value); err == nil {
+		return max(time.Until(retryAt), 0), true
+	}
+	return 0, false
 }
 
 func writeForm(form *multipart.Writer, meta FunctionDeployMetadata, fsys fs.FS) error {
