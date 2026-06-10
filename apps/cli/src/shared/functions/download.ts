@@ -1,5 +1,6 @@
 import { operationDefinitions, type ApiClient } from "@supabase/api/effect";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Effect, FileSystem, Option } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -135,6 +136,21 @@ function mapTransportError(prefix: string, error: unknown): Error {
   return new Error(`${prefix}: ${String(error)}`);
 }
 
+function hasEntrypointPath(metadata: DownloadMetadata | undefined): metadata is {
+  readonly entrypoint_path: string;
+} {
+  return metadata?.entrypoint_path !== undefined && metadata.entrypoint_path.length > 0;
+}
+
+function fileUrlToEntrypointPath(rawEntrypoint: string): string {
+  const fileUrl = new URL(rawEntrypoint);
+  try {
+    return fileURLToPath(fileUrl);
+  } catch {
+    return decodeURIComponent(fileUrl.pathname);
+  }
+}
+
 function parseDownloadMetadata(raw: string): DownloadMetadata {
   const text = raw.trim();
   if (text.length === 0) {
@@ -225,6 +241,9 @@ function decodeMultipartParts(
       const nextPartPrefix = encoder.encode(`\r\n--${boundary}`);
       const parts: MultipartPart[] = [];
       let delimiterIndex = findBytes(payload, delimiter);
+      if (delimiterIndex < 0) {
+        throw new Error("multipart response is missing its opening boundary");
+      }
 
       while (delimiterIndex >= 0) {
         let partStart = delimiterIndex + delimiter.length;
@@ -365,12 +384,15 @@ function resolveEntrypointPath(
   metadata: DownloadMetadata | undefined,
   remoteFunction: DownloadMetadata | undefined,
 ) {
-  const rawEntrypoint =
-    metadata?.entrypoint_path ?? remoteFunction?.entrypoint_path ?? legacyEntrypointPath;
+  const rawEntrypoint = hasEntrypointPath(metadata)
+    ? metadata.entrypoint_path
+    : hasEntrypointPath(remoteFunction)
+      ? remoteFunction.entrypoint_path
+      : legacyEntrypointPath;
 
   try {
     if (rawEntrypoint.startsWith("file://")) {
-      return new URL(rawEntrypoint).pathname;
+      return fileUrlToEntrypointPath(rawEntrypoint);
     }
   } catch {
     return rawEntrypoint;
@@ -391,7 +413,7 @@ function resolveDownloadDestination(
     posix.isAbsolute(normalizedEntrypoint) === posix.isAbsolute(normalizedPartPath)
       ? posix.relative(normalizedEntrypoint, normalizedPartPath)
       : posix.join("..", normalizedPartPath);
-  const entrypointName = posix.basename(entrypointPath);
+  const entrypointName = posix.basename(normalizedEntrypoint);
   const destination =
     relativePath.length === 0
       ? resolve(functionDir, entrypointName)
@@ -483,7 +505,7 @@ const getRemoteFunction = Effect.fnUntraced(function* (
     try: () => {
       const parsed = JSON.parse(body);
       const entrypointPath = getObjectProperty(parsed, "entrypoint_path");
-      return typeof entrypointPath === "string"
+      return typeof entrypointPath === "string" && entrypointPath.length > 0
         ? { entrypoint_path: entrypointPath }
         : { entrypoint_path: legacyEntrypointPath };
     },
@@ -621,9 +643,6 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
     const slugs = Option.isSome(flags.functionName)
       ? [flags.functionName.value]
       : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
-    for (const slug of slugs) {
-      yield* validateSlug(slug);
-    }
 
     if (slugs.length === 0) {
       if (output.format === "text") {

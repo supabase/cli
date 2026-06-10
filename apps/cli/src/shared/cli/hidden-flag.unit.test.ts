@@ -1,4 +1,4 @@
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer } from "effect";
 import { CliOutput, Command, type HelpDoc } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
@@ -12,19 +12,9 @@ import { legacyProjectsCommand } from "../../legacy/commands/projects/projects.c
 import { legacyProjectsCreateCommand } from "../../legacy/commands/projects/create/create.command.ts";
 import { legacyStartCommand } from "../../legacy/commands/start/start.command.ts";
 import { legacyStopCommand } from "../../legacy/commands/stop/stop.command.ts";
+import { LEGACY_VALID_TOKEN } from "../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, withEnv } from "../../../tests/helpers/mocks.ts";
-import {
-  LegacyAgentFlag,
-  LegacyCreateTicketFlag,
-  LegacyDebugFlag,
-  LegacyDnsResolverFlag,
-  LegacyExperimentalFlag,
-  LegacyNetworkIdFlag,
-  LegacyOutputFlag,
-  LegacyProfileFlag,
-  LegacyWorkdirFlag,
-  LegacyYesFlag,
-} from "../legacy/global-flags.ts";
+import { LEGACY_GLOBAL_FLAGS } from "../legacy/global-flags.ts";
 import { LegacyGoProxy } from "../legacy/go-proxy.service.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 
@@ -49,6 +39,7 @@ function mockLegacyGoProxy() {
 }
 
 const legacyTestRoot = Command.make("supabase").pipe(
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([
     legacyStartCommand,
     legacyStopCommand,
@@ -68,21 +59,8 @@ const silentCliOutputFormatter: CliOutput.Formatter = {
   formatVersion: () => "",
 };
 
-const legacyGlobalFlagsLayer = Layer.mergeAll(
-  Layer.succeed(LegacyOutputFlag, Option.none<"env" | "pretty" | "json" | "toml" | "yaml">()),
-  Layer.succeed(LegacyProfileFlag, "supabase"),
-  Layer.succeed(LegacyDebugFlag, false),
-  Layer.succeed(LegacyWorkdirFlag, Option.none<string>()),
-  Layer.succeed(LegacyExperimentalFlag, false),
-  Layer.succeed(LegacyNetworkIdFlag, Option.none<string>()),
-  Layer.succeed(LegacyYesFlag, false),
-  Layer.succeed(LegacyDnsResolverFlag, "native"),
-  Layer.succeed(LegacyCreateTicketFlag, false),
-  Layer.succeed(LegacyAgentFlag, "auto"),
-);
-
 const authenticatedEnv = {
-  SUPABASE_ACCESS_TOKEN: `sbp_${"a".repeat(40)}`,
+  SUPABASE_ACCESS_TOKEN: LEGACY_VALID_TOKEN,
   ...(process.env["SystemRoot"] === undefined ? {} : { SystemRoot: process.env["SystemRoot"] }),
 };
 
@@ -172,7 +150,6 @@ describe("native hidden flags", () => {
             withEnv(authenticatedEnv),
             proxy.layer,
             mockOutput({ format: "text" }).layer,
-            legacyGlobalFlagsLayer,
             CliOutput.layer(textCliOutputFormatter()),
           ),
         ),

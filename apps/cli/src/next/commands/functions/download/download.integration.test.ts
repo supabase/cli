@@ -567,8 +567,8 @@ describe("functions download", () => {
     "falls back to function metadata when multipart metadata omits the entrypoint path",
     () => {
       const tempDir = makeTempDir();
-      const absoluteEntrypoint = "/tmp/functions-download-abs/source/index.ts";
-      const absoluteUtil = "/tmp/functions-download-abs/source/lib/utils.ts";
+      const absoluteEntrypoint = "/tmp/functions-download-abs/My Project/source/index.ts";
+      const absoluteUtil = "/tmp/functions-download-abs/My Project/source/lib/utils.ts";
       const multipart = multipartBody([
         {
           headers: {
@@ -597,7 +597,7 @@ describe("functions download", () => {
           functionBySlug: {
             "hello-world": makeFunction({
               slug: "hello-world",
-              entrypoint_path: `file://${absoluteEntrypoint}`,
+              entrypoint_path: `file://${absoluteEntrypoint.replaceAll(" ", "%20")}`,
             }),
           },
           bodyBySlug: {
@@ -691,6 +691,48 @@ describe("functions download", () => {
       expect(out.stderrText).toContain(
         "Successfully downloaded all functions from project abcdefghijklmnopqrst\n",
       );
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("downloads remote slugs from download-all without local slug validation", () => {
+    const tempDir = makeTempDir();
+    const multipart = multipartBody([
+      {
+        headers: {
+          "Content-Disposition": 'form-data; name="metadata"',
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ deno2_entrypoint_path: "source/index.ts" }),
+      },
+      {
+        headers: {
+          "Content-Disposition": 'form-data; name="file"; filename="source/index.ts"',
+        },
+        body: "console.log('remote')",
+      },
+    ]);
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      const { layer } = setup(tempDir, {
+        list: [makeFunction({ slug: "1remote" })],
+        bodyBySlug: {
+          "1remote": multipart,
+        },
+      });
+
+      yield* functionsDownload({
+        ...BASE_FLAGS,
+        functionName: Option.none(),
+      }).pipe(Effect.provide(layer));
+
+      expect(
+        yield* Effect.tryPromise(() =>
+          readFile(join(tempDir, "supabase", "functions", "1remote", "index.ts"), "utf8"),
+        ),
+      ).toBe("console.log('remote')");
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
@@ -904,6 +946,31 @@ describe("functions download", () => {
       const error = yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(InvalidFunctionDownloadResponseError);
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("fails when the multipart boundary is absent from the response body", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      const { layer } = setup(tempDir, {
+        bodyBySlug: {
+          "hello-world": {
+            body: "not a multipart body",
+            contentType: "multipart/form-data; boundary=missing",
+          },
+        },
+      });
+
+      const error = yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toBeInstanceOf(InvalidFunctionDownloadResponseError);
+      expect(error.message).toBe(
+        "failed to read form: multipart response is missing its opening boundary",
+      );
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
