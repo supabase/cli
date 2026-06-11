@@ -65,6 +65,7 @@ export interface SupabaseApiClientShape {
   readonly executeRaw: <Id extends OperationId>(
     definition: OperationDefinition<Id>,
     input: OperationInput<Id>,
+    headers?: Readonly<Record<string, string>>,
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse, SupabaseApiError>;
 }
 
@@ -528,10 +529,14 @@ export function makeSupabaseApiClient(
           }
           return yield* Effect.die(`Unsupported response kind: ${definition.response.kind}`);
         }),
-      executeRaw: (definition, input) =>
+      executeRaw: (definition, input, headers) =>
         Effect.gen(function* () {
           const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input);
-          const request = yield* buildRequest(definition, validated);
+          const request = yield* buildRequest(definition, validated).pipe(
+            Effect.map((request) =>
+              headers === undefined ? request : HttpClientRequest.setHeaders(request, headers),
+            ),
+          );
           return yield* prepared.execute(request);
         }),
     };
