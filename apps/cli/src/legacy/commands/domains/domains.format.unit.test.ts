@@ -119,6 +119,18 @@ describe("formatHostnameStatus", () => {
     );
   });
 
+  it("treats missing validation records as an empty list", () => {
+    const out = formatHostnameStatus(
+      makeResponse({
+        status: "2_initiated",
+        ssl: { status: "pending_validation" },
+      }),
+    );
+    expect(out).toBe(
+      "expected a single SSL verification record, received: {Status:pending_validation ValidationErrors:<nil> ValidationRecords:[]}",
+    );
+  });
+
   it("dumps the ssl struct when there are multiple validation records", () => {
     const out = formatHostnameStatus(
       makeResponse({

@@ -247,8 +247,8 @@ export const V1ActivateCustomHostnameOutput = Schema.Struct({
       hostname: Schema.String,
       ssl: Schema.Struct({
         status: Schema.String,
-        validation_records: Schema.Array(
-          Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String }),
+        validation_records: Schema.optionalKey(
+          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
         ),
         validation_errors: Schema.optionalKey(
           Schema.Array(Schema.Struct({ message: Schema.String })),
@@ -2277,8 +2277,8 @@ export const V1GetHostnameConfigOutput = Schema.Struct({
       hostname: Schema.String,
       ssl: Schema.Struct({
         status: Schema.String,
-        validation_records: Schema.Array(
-          Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String }),
+        validation_records: Schema.optionalKey(
+          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
         ),
         validation_errors: Schema.optionalKey(
           Schema.Array(Schema.Struct({ message: Schema.String })),
@@ -5224,8 +5224,8 @@ export const V1UpdateHostnameConfigOutput = Schema.Struct({
       hostname: Schema.String,
       ssl: Schema.Struct({
         status: Schema.String,
-        validation_records: Schema.Array(
-          Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String }),
+        validation_records: Schema.optionalKey(
+          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
         ),
         validation_errors: Schema.optionalKey(
           Schema.Array(Schema.Struct({ message: Schema.String })),
@@ -5794,8 +5794,8 @@ export const V1VerifyDnsConfigOutput = Schema.Struct({
       hostname: Schema.String,
       ssl: Schema.Struct({
         status: Schema.String,
-        validation_records: Schema.Array(
-          Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String }),
+        validation_records: Schema.optionalKey(
+          Schema.Array(Schema.Struct({ txt_name: Schema.String, txt_value: Schema.String })),
         ),
         validation_errors: Schema.optionalKey(
           Schema.Array(Schema.Struct({ message: Schema.String })),

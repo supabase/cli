@@ -12590,7 +12590,7 @@
                         }
                       }
                     },
-                    "required": ["status", "validation_records"]
+                    "required": ["status"]
                   },
                   "ownership_verification": {
                     "type": "object",
