@@ -306,6 +306,25 @@ func TestSuggestIPv6Pooler(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("masks a real password returned by the api", func(t *testing.T) {
+		CmdSuggestion = ""
+		t.Cleanup(func() { CmdSuggestion = "" })
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		secretURL := "postgres://postgres." + ref + ":sup3r-s3cret@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+		gock.New(DefaultApiHost).
+			Get("/v1/projects/" + ref + "/config/database/pooler").
+			Reply(http.StatusOK).
+			JSON([]api.SupavisorConfigResponse{{
+				DatabaseType:     api.SupavisorConfigResponseDatabaseTypePRIMARY,
+				ConnectionString: secretURL,
+			}})
+		ok := SuggestIPv6Pooler(context.Background(), "db."+ref+".supabase.co")
+		assert.True(t, ok)
+		assert.NotContains(t, CmdSuggestion, "sup3r-s3cret")
+		assert.Contains(t, CmdSuggestion, "[YOUR-PASSWORD]")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("skips non-supabase host without api call", func(t *testing.T) {
 		CmdSuggestion = ""
 		assert.False(t, SuggestIPv6Pooler(context.Background(), "localhost"))

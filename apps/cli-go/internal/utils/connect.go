@@ -229,13 +229,25 @@ func ipv6Suggestion() string {
 	)
 }
 
-// ipv6PoolerSuggestion is the IPv6 hint enriched with the project's actual
-// transaction pooler connection string, ready to paste into --db-url.
+// poolerURLPasswordPattern captures the userinfo password of a postgres
+// connection string (the bytes between "user:" and the "@" host separator).
+var poolerURLPasswordPattern = regexp.MustCompile(`^(postgres(?:ql)?://[^:@/]+:)[^@]*@`)
+
+// maskPoolerPassword replaces the password in a pooler connection string with
+// the [YOUR-PASSWORD] placeholder. The Management API may return a real password
+// in connection_string, and the suggestion is printed to the terminal, so the
+// password must never be echoed. The placeholder keeps the hint copy-pasteable.
+func maskPoolerPassword(connString string) string {
+	return poolerURLPasswordPattern.ReplaceAllString(connString, "${1}[YOUR-PASSWORD]@")
+}
+
+// ipv6PoolerSuggestion is the IPv6 hint enriched with the project's transaction
+// pooler connection string (password masked), ready to paste into --db-url.
 func ipv6PoolerSuggestion(connString string) string {
 	return fmt.Sprintf(
 		"Your network does not support IPv6, which is required for direct connections to the database.\n"+
 			"Retry through the IPv4 transaction pooler by passing it to %s",
-		Aqua(fmt.Sprintf(`--db-url "%s"`, connString)),
+		Aqua(fmt.Sprintf(`--db-url "%s"`, maskPoolerPassword(connString))),
 	)
 }
 
