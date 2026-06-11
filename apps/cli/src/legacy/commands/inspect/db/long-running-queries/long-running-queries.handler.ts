@@ -1,14 +1,7 @@
-import { Effect, Option } from "effect";
-import { LegacyGoProxy } from "../../../../../shared/legacy/go-proxy.service.ts";
-import type { LegacyInspectDbLongRunningQueriesFlags } from "./long-running-queries.command.ts";
+import { legacyMakeInspectDbHandler } from "../legacy-inspect-query.ts";
+import { legacyLongRunningQueriesSpec } from "./long-running-queries.query.ts";
 
-export const legacyInspectDbLongRunningQueries = Effect.fn(
+export const legacyInspectDbLongRunningQueries = legacyMakeInspectDbHandler(
+  legacyLongRunningQueriesSpec,
   "legacy.inspect.db.long-running-queries",
-)(function* (flags: LegacyInspectDbLongRunningQueriesFlags) {
-  const proxy = yield* LegacyGoProxy;
-  const args: string[] = ["inspect", "db", "long-running-queries"];
-  if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
-  if (flags.linked) args.push("--linked");
-  if (flags.local) args.push("--local");
-  yield* proxy.exec(args);
-});
+);

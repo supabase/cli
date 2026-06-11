@@ -59,6 +59,19 @@ export interface LegacyDbSession {
   /** Run a single SQL statement, ignoring any returned rows. */
   readonly exec: (sql: string) => Effect.Effect<void, LegacyDbExecError>;
   /**
+   * Run a parameterized SQL query and return the result rows as plain objects
+   * keyed by the query's column names (snake_case is preserved — the driver
+   * layer applies no row-name transform, mirroring Go's `pgxv5.CollectRows`).
+   *
+   * Used by the `inspect db` subcommands, which each embed a SQL file and render
+   * the rows as a Glamour table. `params` are bound positionally (`$1`, `$2`, …),
+   * matching Go's `conn.Query(ctx, sql, args...)`.
+   */
+  readonly query: (
+    sql: string,
+    params?: ReadonlyArray<unknown>,
+  ) => Effect.Effect<ReadonlyArray<Record<string, unknown>>, LegacyDbExecError>;
+  /**
    * Whether an extension named `name` already exists in `pg_extension`,
    * **regardless of which schema it lives in**.
    *
