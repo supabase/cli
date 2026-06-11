@@ -347,7 +347,15 @@ export const legacyDbConfigLayer = Layer.effect(
 
         // --db-url (direct) takes precedence.
         if (Option.isSome(flags.dbUrl)) {
-          const conn = parseLegacyConnectionString(flags.dbUrl.value);
+          // Go's direct path runs `LoadConfig` before `pgconn.ParseConfig`
+          // (`internal/utils/flags/db_url.go:59-68`), so the project `.env*` files
+          // populate the environment that the libpq `PG*` fallbacks read. Layer the
+          // project env under the shell env (`legacyLoadProjectEnv` already excludes
+          // shell-set keys, so the shell still wins) and feed it to the parser.
+          const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+          const parseEnv = (name: string): string | undefined =>
+            process.env[name] ?? projectEnv[name];
+          const conn = parseLegacyConnectionString(flags.dbUrl.value, parseEnv);
           if (conn === undefined) {
             return yield* Effect.fail(
               new Errors.LegacyDbConfigParseUrlError({

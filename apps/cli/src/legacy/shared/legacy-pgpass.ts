@@ -76,14 +76,25 @@ export function legacyFindPgpassPassword(
   return "";
 }
 
-/** Resolve the passfile path: `PGPASSFILE`, else the libpq per-OS default. */
-function pgpassFilePath(): string | undefined {
-  const explicit = process.env["PGPASSFILE"];
+/** Environment lookup for `PGPASSFILE`/`APPDATA`; defaults to `process.env`. */
+type LegacyPassfileEnv = (name: string) => string | undefined;
+const processEnv: LegacyPassfileEnv = (name) => process.env[name];
+
+/**
+ * Resolve the passfile path with pgconn's precedence (`config.go:293,369-377`): an
+ * explicit `passfile=` connection-string setting wins, then `PGPASSFILE`, then the
+ * libpq per-OS default (`~/.pgpass`, or `%APPDATA%/postgresql/pgpass.conf`).
+ */
+function pgpassFilePath(env: LegacyPassfileEnv, passfile: string | undefined): string | undefined {
+  if (passfile !== undefined && passfile.length > 0) {
+    return passfile;
+  }
+  const explicit = env("PGPASSFILE");
   if (explicit !== undefined && explicit.length > 0) {
     return explicit;
   }
   if (process.platform === "win32") {
-    const appData = process.env["APPDATA"];
+    const appData = env("APPDATA");
     return appData !== undefined && appData.length > 0
       ? join(appData, "postgresql", "pgpass.conf")
       : undefined;
@@ -96,14 +107,19 @@ function pgpassFilePath(): string | undefined {
  * Resolve a password from the `.pgpass` file for the given connection, or `""`
  * when the file is absent/unreadable or has no matching entry. A unix-socket
  * host (a path) matches `localhost`, mirroring pgconn's `NetworkAddress`.
+ *
+ * `env` supplies `PGPASSFILE`/`APPDATA` (defaults to `process.env`); `passfile` is
+ * an explicit connection-string `passfile=` setting that takes precedence.
  */
 export function legacyPgpassPassword(
   host: string,
   port: number,
   database: string,
   username: string,
+  env: LegacyPassfileEnv = processEnv,
+  passfile?: string,
 ): string {
-  const path = pgpassFilePath();
+  const path = pgpassFilePath(env, passfile);
   if (path === undefined) {
     return "";
   }

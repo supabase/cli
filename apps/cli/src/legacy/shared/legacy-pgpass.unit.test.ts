@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { legacyFindPgpassPassword } from "./legacy-pgpass.ts";
+import { legacyFindPgpassPassword, legacyPgpassPassword } from "./legacy-pgpass.ts";
 
 describe("legacyFindPgpassPassword", () => {
   const file = [
@@ -32,5 +35,38 @@ describe("legacyFindPgpassPassword", () => {
 
   it("skips lines that do not have exactly five fields", () => {
     expect(legacyFindPgpassPassword("h:5432:d:u", "h", "5432", "d", "u")).toBe("");
+  });
+});
+
+describe("legacyPgpassPassword (passfile + injected env precedence)", () => {
+  let tmp: string;
+  let explicitPath: string;
+  let envPath: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "pgpass-fn-"));
+    explicitPath = join(tmp, "explicit");
+    envPath = join(tmp, "env");
+    writeFileSync(explicitPath, "h:5432:d:u:explicit-secret\n");
+    writeFileSync(envPath, "h:5432:d:u:env-secret\n");
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("prefers an explicit passfile over PGPASSFILE from the injected env", () => {
+    const env = (name: string): string | undefined => (name === "PGPASSFILE" ? envPath : undefined);
+    expect(legacyPgpassPassword("h", 5432, "d", "u", env, explicitPath)).toBe("explicit-secret");
+  });
+
+  it("falls back to PGPASSFILE from the injected env when no explicit passfile", () => {
+    const env = (name: string): string | undefined => (name === "PGPASSFILE" ? envPath : undefined);
+    expect(legacyPgpassPassword("h", 5432, "d", "u", env)).toBe("env-secret");
+  });
+
+  it("returns empty string when the resolved passfile is unreadable", () => {
+    const env = (): string | undefined => undefined;
+    expect(legacyPgpassPassword("h", 5432, "d", "u", env, join(tmp, "missing"))).toBe("");
   });
 });

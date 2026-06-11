@@ -459,6 +459,96 @@ describe("multi-host failover (pgconn parity)", () => {
   });
 });
 
+describe("passfile= DSN setting (pgconn parity)", () => {
+  // pgconn honors a connection-string `passfile=` ahead of PGPASSFILE/the default
+  // (`config.go:293,369-377`). Point PGPASSFILE at one file and `passfile=` at a
+  // different one to prove the connection-string setting wins.
+  let tmp: string;
+  let customPath: string;
+  const prev: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "passfile-"));
+    customPath = join(tmp, "custom-pgpass");
+    const envPath = join(tmp, "env-pgpass");
+    for (const k of ["PGPASSWORD", "PGPASSFILE", "PGPORT", "PGDATABASE", "PGHOST"]) {
+      prev[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env["PGPASSFILE"] = envPath;
+    writeFileSync(envPath, "db.example.com:6543:appdb:alice:env-file-secret\n");
+    writeFileSync(customPath, "db.example.com:6543:appdb:alice:custom-file-secret\n");
+  });
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("resolves the password from a ?passfile= URL setting over PGPASSFILE", () => {
+    expect(
+      parseLegacyConnectionString(
+        `postgres://alice@db.example.com:6543/appdb?passfile=${customPath}`,
+      )?.password,
+    ).toBe("custom-file-secret");
+  });
+
+  it("resolves the password from a passfile= DSN keyword over PGPASSFILE", () => {
+    expect(
+      parseLegacyConnectionString(
+        `host=db.example.com port=6543 dbname=appdb user=alice passfile=${customPath}`,
+      )?.password,
+    ).toBe("custom-file-secret");
+  });
+
+  it("falls back to PGPASSFILE when no passfile= setting is present", () => {
+    expect(
+      parseLegacyConnectionString("postgres://alice@db.example.com:6543/appdb")?.password,
+    ).toBe("env-file-secret");
+  });
+});
+
+describe("injected env lookup (project dotenv parity)", () => {
+  // The resolver layers the project `.env*` files under the shell env and passes a
+  // lookup into the parser, mirroring Go's LoadConfig-before-ParseConfig order
+  // (`internal/utils/flags/db_url.go:59-68`). A field omitted from the DSN is then
+  // filled from the injected env, not just `process.env`.
+  it("fills omitted URL fields from the injected env (PGPASSWORD/PGSSLMODE/PGHOST)", () => {
+    const env = (name: string): string | undefined =>
+      ({ PGPASSWORD: "dotenv-pw", PGSSLMODE: "require", PGHOST: "dotenv-host" })[name];
+    expect(parseLegacyConnectionString("postgresql://alice@db.example.com/appdb", env)).toEqual({
+      host: "db.example.com",
+      port: 5432,
+      user: "alice",
+      password: "dotenv-pw",
+      database: "appdb",
+      sslmode: "require",
+    });
+  });
+
+  it("lets explicit connection-string fields win over the injected env", () => {
+    const env = (name: string): string | undefined =>
+      ({ PGPASSWORD: "dotenv-pw", PGSSLMODE: "require" })[name];
+    const parsed = parseLegacyConnectionString(
+      "postgresql://alice:explicit-pw@db.example.com/appdb?sslmode=disable",
+      env,
+    );
+    expect(parsed?.password).toBe("explicit-pw");
+    expect(parsed?.sslmode).toBe("disable");
+  });
+
+  it("uses the injected env for the keyword/value DSN form too", () => {
+    const env = (name: string): string | undefined =>
+      ({ PGDATABASE: "dotenv-db", PGPORT: "6543" })[name];
+    const parsed = parseLegacyConnectionString("host=db.example.com user=alice", env);
+    expect(parsed?.database).toBe("dotenv-db");
+    expect(parsed?.port).toBe(6543);
+  });
+});
+
 describe("redactLegacyConnectionString", () => {
   it("masks the password in a parseable URL", () => {
     const redacted = redactLegacyConnectionString("postgres://user:s3cret@example.com/db");
