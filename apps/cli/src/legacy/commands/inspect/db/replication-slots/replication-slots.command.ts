@@ -13,5 +13,5 @@ export const legacyInspectDbReplicationSlotsCommand = Command.make(
   Command.withDescription("Show information about replication slots on the database."),
   Command.withShortDescription("Show replication slots"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbReplicationSlots)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("replication-slots")),
 );

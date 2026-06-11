@@ -15,5 +15,5 @@ export const legacyInspectDbCacheHitCommand = Command.make(
   ),
   Command.withShortDescription("Show cache hit rates (deprecated)"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbCacheHit)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("cache-hit")),
 );

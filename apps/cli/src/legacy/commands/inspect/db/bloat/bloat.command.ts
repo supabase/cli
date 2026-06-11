@@ -10,5 +10,5 @@ export const legacyInspectDbBloatCommand = Command.make("bloat", LEGACY_INSPECT_
   Command.withDescription("Estimates space allocated to a relation that is full of dead tuples."),
   Command.withShortDescription("Show relation bloat"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbBloat)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("bloat")),
 );

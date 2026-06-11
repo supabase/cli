@@ -13,5 +13,5 @@ export const legacyInspectDbUnusedIndexesCommand = Command.make(
   Command.withDescription('Show indexes with low usage. Deprecated: use "index-stats" instead.'),
   Command.withShortDescription("Show unused indexes (deprecated)"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbUnusedIndexes)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("unused-indexes")),
 );

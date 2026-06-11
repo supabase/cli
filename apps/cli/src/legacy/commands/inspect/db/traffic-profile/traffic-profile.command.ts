@@ -15,5 +15,5 @@ export const legacyInspectDbTrafficProfileCommand = Command.make(
   ),
   Command.withShortDescription("Show traffic profile"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbTrafficProfile)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("traffic-profile")),
 );

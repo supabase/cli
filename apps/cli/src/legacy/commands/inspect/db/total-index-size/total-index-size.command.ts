@@ -13,5 +13,5 @@ export const legacyInspectDbTotalIndexSizeCommand = Command.make(
   Command.withDescription('Show total size of all indexes. Deprecated: use "index-stats" instead.'),
   Command.withShortDescription("Show total index size (deprecated)"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbTotalIndexSize)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("total-index-size")),
 );

@@ -13,5 +13,5 @@ export const legacyInspectDbOutliersCommand = Command.make(
   Command.withDescription("Show queries from pg_stat_statements ordered by total execution time."),
   Command.withShortDescription("Show query outliers by time"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbOutliers)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("outliers")),
 );

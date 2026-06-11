@@ -15,5 +15,5 @@ export const legacyInspectDbRoleConfigsCommand = Command.make(
   ),
   Command.withShortDescription("Show role configs (deprecated)"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbRoleConfigs)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("role-configs")),
 );

@@ -13,5 +13,5 @@ export const legacyInspectDbTableStatsCommand = Command.make(
   Command.withDescription("Show combined table size, index size, and estimated row count."),
   Command.withShortDescription("Show table stats"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbTableStats)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("table-stats")),
 );

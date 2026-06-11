@@ -15,5 +15,5 @@ export const legacyInspectDbIndexSizesCommand = Command.make(
   ),
   Command.withShortDescription("Show individual index sizes (deprecated)"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbIndexSizes)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("index-sizes")),
 );

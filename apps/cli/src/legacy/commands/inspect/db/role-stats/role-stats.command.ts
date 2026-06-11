@@ -13,5 +13,5 @@ export const legacyInspectDbRoleStatsCommand = Command.make(
   Command.withDescription("Show information about roles on the database."),
   Command.withShortDescription("Show role stats"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbRoleStats)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("role-stats")),
 );

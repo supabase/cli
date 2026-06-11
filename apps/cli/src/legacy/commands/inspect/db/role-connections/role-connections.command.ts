@@ -15,5 +15,5 @@ export const legacyInspectDbRoleConnectionsCommand = Command.make(
   ),
   Command.withShortDescription("Show role connections (deprecated)"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbRoleConnections)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("role-connections")),
 );

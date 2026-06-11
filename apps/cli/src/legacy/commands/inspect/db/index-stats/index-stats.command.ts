@@ -15,5 +15,5 @@ export const legacyInspectDbIndexStatsCommand = Command.make(
   ),
   Command.withShortDescription("Show index stats"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbIndexStats)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("index-stats")),
 );

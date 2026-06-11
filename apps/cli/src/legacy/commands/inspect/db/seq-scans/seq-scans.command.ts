@@ -15,5 +15,5 @@ export const legacyInspectDbSeqScansCommand = Command.make(
   ),
   Command.withShortDescription("Show sequential scans (deprecated)"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbSeqScans)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("seq-scans")),
 );

@@ -15,5 +15,5 @@ export const legacyInspectDbTableSizesCommand = Command.make(
   ),
   Command.withShortDescription("Show table sizes (deprecated)"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbTableSizes)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("table-sizes")),
 );

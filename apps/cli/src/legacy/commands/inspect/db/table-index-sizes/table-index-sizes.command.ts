@@ -15,5 +15,5 @@ export const legacyInspectDbTableIndexSizesCommand = Command.make(
   ),
   Command.withShortDescription("Show table index sizes (deprecated)"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbTableIndexSizes)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("table-index-sizes")),
 );

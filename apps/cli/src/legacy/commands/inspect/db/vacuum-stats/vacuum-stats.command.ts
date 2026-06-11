@@ -13,5 +13,5 @@ export const legacyInspectDbVacuumStatsCommand = Command.make(
   Command.withDescription("Show statistics related to vacuum operations per table."),
   Command.withShortDescription("Show vacuum stats"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbVacuumStats)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("vacuum-stats")),
 );

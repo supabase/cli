@@ -15,5 +15,5 @@ export const legacyInspectDbIndexUsageCommand = Command.make(
   ),
   Command.withShortDescription("Show index efficiency (deprecated)"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbIndexUsage)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("index-usage")),
 );

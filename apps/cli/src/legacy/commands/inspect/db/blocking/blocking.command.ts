@@ -15,5 +15,5 @@ export const legacyInspectDbBlockingCommand = Command.make(
   ),
   Command.withShortDescription("Show blocking queries"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbBlocking)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("blocking")),
 );

@@ -10,5 +10,5 @@ export const legacyInspectDbCallsCommand = Command.make("calls", LEGACY_INSPECT_
   Command.withDescription("Show queries from pg_stat_statements ordered by total times called."),
   Command.withShortDescription("Show queries by call count"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbCalls)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("calls")),
 );

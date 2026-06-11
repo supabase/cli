@@ -15,5 +15,5 @@ export const legacyInspectDbTableRecordCountsCommand = Command.make(
   ),
   Command.withShortDescription("Show table record counts (deprecated)"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbTableRecordCounts)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("table-record-counts")),
 );

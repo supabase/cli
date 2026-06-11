@@ -13,5 +13,5 @@ export const legacyInspectDbLongRunningQueriesCommand = Command.make(
   Command.withDescription("Show currently running queries running for longer than 5 minutes."),
   Command.withShortDescription("Show long-running queries"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbLongRunningQueries)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("long-running-queries")),
 );

@@ -10,5 +10,5 @@ export const legacyInspectDbLocksCommand = Command.make("locks", LEGACY_INSPECT_
   Command.withDescription("Show queries which have taken out an exclusive lock on a relation."),
   Command.withShortDescription("Show exclusive locks"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbLocks)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("locks")),
 );

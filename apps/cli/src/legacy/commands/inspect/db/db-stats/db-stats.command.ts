@@ -10,5 +10,5 @@ export const legacyInspectDbDbStatsCommand = Command.make("db-stats", LEGACY_INS
   Command.withDescription("Show stats such as cache hit rates, total sizes, and WAL size."),
   Command.withShortDescription("Show database stats"),
   Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbDbStats)),
-  Command.provide(legacyInspectDbRuntimeLayer),
+  Command.provide(legacyInspectDbRuntimeLayer("db-stats")),
 );
