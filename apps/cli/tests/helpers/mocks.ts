@@ -539,7 +539,7 @@ export function mockAnalytics() {
   };
 }
 
-function mockTelemetryRuntime(
+export function mockTelemetryRuntime(
   opts: Partial<{
     configDir: string;
     tracesDir: string;

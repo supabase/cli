@@ -117,10 +117,6 @@ export function parseQueryTimeoutSeconds(
   });
 }
 
-export function getServicesHostname() {
-  return process.env["SUPABASE_SERVICES_HOSTNAME"] || "127.0.0.1";
-}
-
 /**
  * The default generated docker network name for a local project (Go's `utils.NetId`
  * fallback, `GetId("network")`). The `--network-id` override is applied at the docker
