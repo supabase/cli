@@ -63,7 +63,7 @@ async function isValidLocalJwt(secret: string, jwt: string) {
 async function verifyRequest(req: Request, config: any, functionConfig: any) {
   if (!functionConfig.verifyJWT || req.method === "OPTIONS") return null;
   const bearerToken = req.headers.get("authorization")?.slice("Bearer ".length);
-  const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key")?.replace('Bearer', '')?.trim()
+  const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key")?.replace("Bearer", "")?.trim();
 
   if (!bearerToken && !sbApiKeyCompatibilityToken) {
     return Response.json({ msg: "Missing authorization header" }, { status: 401 });
@@ -72,9 +72,8 @@ async function verifyRequest(req: Request, config: any, functionConfig: any) {
   // NOTE:(kallebysantos) Compatibility mode is triggered when all conditions match:
   // - API proxy mints a temp token
   // - Original bearer is not present or is ApiKey
-  const token = (!bearerToken || bearerToken.startsWith('sb_'))
-    ? sbApiKeyCompatibilityToken
-    : bearerToken
+  const token =
+    !bearerToken || bearerToken.startsWith("sb_") ? sbApiKeyCompatibilityToken : bearerToken;
 
   if (!token) {
     return Response.json({ msg: "Auth header is not 'Bearer {token}'" }, { status: 401 });
@@ -171,7 +170,8 @@ if (typeof Deno !== "undefined") {
         .map((name) => ` - ${config.functionsUrl}/${name}`)
         .join("\n");
       console.log(
-        `Serving functions on ${config.functionsUrl}/<function-name>${examples.length > 0 ? `\n${examples}` : ""
+        `Serving functions on ${config.functionsUrl}/<function-name>${
+          examples.length > 0 ? `\n${examples}` : ""
         }`,
       );
     },
