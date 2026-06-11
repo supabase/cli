@@ -16,7 +16,7 @@ var (
 	initInteractive        bool
 	createVscodeSettings   bool
 	createIntellijSettings bool
-	initParams             = utils.InitParams{UsePgDelta: true}
+	initParams             = utils.InitParams{}
 
 	initCmd = &cobra.Command{
 		GroupID: groupLocalDev,

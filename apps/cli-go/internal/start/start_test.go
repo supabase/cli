@@ -121,6 +121,11 @@ func TestStartCommand(t *testing.T) {
 }
 
 func TestDatabaseStart(t *testing.T) {
+	// pg-delta catalog caching shells out to a subprocess that cannot use the in-process
+	// pgmock dialer; this suite exercises container/schema startup, not catalog caching.
+	prevPgDelta := utils.Config.Experimental.PgDelta
+	utils.Config.Experimental.PgDelta = nil
+	t.Cleanup(func() { utils.Config.Experimental.PgDelta = prevPgDelta })
 	t.Run("starts database locally", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
