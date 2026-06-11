@@ -32,6 +32,22 @@ describe("legacyBuildConnectionUrl", () => {
     );
   });
 
+  it("percent-encodes a unix-socket host (with options) instead of throwing", () => {
+    // A raw socket path as the authority (`@/var/run/postgresql:5432`) makes
+    // `new URL()` throw; pg-connection-string accepts the percent-encoded form and
+    // a socket dial carries no port. The libpq `options` must still travel.
+    const url = legacyBuildConnectionUrl(
+      { ...base, host: "/var/run/postgresql", options: "-c search_path=public" },
+      "/var/run/postgresql",
+    );
+    expect(url).toContain("@%2Fvar%2Frun%2Fpostgresql/");
+    // No `:port` appended after the socket authority (a socket dial has none).
+    expect(url).not.toContain("postgresql:5432");
+    expect(url).toContain("options=-c+search_path%3Dpublic");
+    // The decoded host (what pg-connection-string's /^%2f/i branch yields) is the path.
+    expect(decodeURIComponent(new URL(url).hostname)).toBe("/var/run/postgresql");
+  });
+
   it("uses the per-host port override (for an HA fallback host) over cfg.port", () => {
     // A multi-host config dials each fallback on its own port; the URL builder is
     // told that port explicitly rather than reusing the primary cfg.port.

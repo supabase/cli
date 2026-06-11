@@ -88,15 +88,23 @@ export function legacyIsUnixSocketHost(host: string): boolean {
  * Go's `ToPostgresURL` (which formats the host via `net.JoinHostPort`). This
  * covers a direct IPv6 `--db-url` carrying `?options=…` and the DoH path when a
  * Supavisor URL resolves to an AAAA address.
+ *
+ * A unix-socket host (an absolute path) is percent-encoded as the authority and
+ * its port is dropped: `pg-connection-string` only accepts a socket host in a URL
+ * via its `/^%2f/i` branch (`postgresql://%2Fvar%2Frun%2Fpostgresql/db`), and a
+ * socket dial has no TCP port. Interpolating the raw path makes `new URL()` throw,
+ * which would otherwise break a socket DSN carrying startup `options`.
  */
 export function legacyBuildConnectionUrl(
   cfg: LegacyPgConnInput,
   host: string,
   port: number = cfg.port,
 ): string {
-  const hostPart = net.isIP(host) === 6 ? `[${host}]` : host;
+  const isSocket = legacyIsUnixSocketHost(host);
+  const hostPart = isSocket ? encodeURIComponent(host) : net.isIP(host) === 6 ? `[${host}]` : host;
+  const portPart = isSocket ? "" : `:${port}`;
   const url = new URL(
-    `postgresql://${encodeURIComponent(cfg.user)}:${encodeURIComponent(cfg.password)}@${hostPart}:${port}/${encodeURIComponent(cfg.database)}`,
+    `postgresql://${encodeURIComponent(cfg.user)}:${encodeURIComponent(cfg.password)}@${hostPart}${portPart}/${encodeURIComponent(cfg.database)}`,
   );
   if (cfg.options !== undefined && cfg.options.length > 0) {
     url.searchParams.set("options", cfg.options);
