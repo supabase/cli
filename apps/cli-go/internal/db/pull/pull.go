@@ -107,7 +107,15 @@ func pullDeclarativePgDelta(ctx context.Context, schema []string, config pgconn.
 	}
 	exported, err := diff.DeclarativeExportPgDelta(ctx, shadowConfig, config, schema, formatOptions, options...)
 	if err != nil {
-		return err
+		// The pg-delta container connects to the remote (target) host; if that
+		// fails over IPv6, retry through the IPv4 pooler like the dump path does.
+		poolerConfig, ok := dump.PoolerFallbackConfig(ctx, config, err)
+		if !ok {
+			return err
+		}
+		if exported, err = diff.DeclarativeExportPgDelta(ctx, shadowConfig, poolerConfig, schema, formatOptions, options...); err != nil {
+			return err
+		}
 	}
 	if err := declarative.WriteDeclarativeSchemas(exported, fsys); err != nil {
 		return err
@@ -163,7 +171,16 @@ func diffRemoteSchema(ctx context.Context, schema []string, path string, config 
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
 	result, err := diff.DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDeltaDiff, options...)
 	if err != nil {
-		return err
+		// The diff runs the remote (source) host inside a container; if that
+		// fails over IPv6, retry through the IPv4 pooler like the dump path does
+		// so the whole db pull workflow is self-healing, not just the dump pass.
+		poolerConfig, ok := dump.PoolerFallbackConfig(ctx, config, err)
+		if !ok {
+			return err
+		}
+		if result, err = diff.DiffDatabase(ctx, schema, poolerConfig, os.Stderr, fsys, differ, usePgDeltaDiff, options...); err != nil {
+			return err
+		}
 	}
 	output := result.SQL
 	if trimmed := strings.TrimSpace(output); len(trimmed) == 0 {

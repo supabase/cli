@@ -3,6 +3,7 @@ package dump
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -101,6 +103,9 @@ func TestDumpCommand(t *testing.T) {
 	t.Run("retries via ipv4 pooler on ipv6 dump failure", func(t *testing.T) {
 		utils.CmdSuggestion = ""
 		t.Cleanup(func() { utils.CmdSuggestion = "" })
+		// Auto-retry only applies to the linked path, not explicit --db-url.
+		flags.PoolerFallbackEligible = true
+		t.Cleanup(func() { flags.PoolerFallbackEligible = false })
 		// Stub pooler resolution so the retry path does not touch the network.
 		orig := resolvePoolerFallback
 		resolvePoolerFallback = func(ctx context.Context, projectRef string) (pgconn.Config, error) {
@@ -188,5 +193,58 @@ func TestDumpCommand(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, "operation not permitted")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestPoolerFallbackConfig(t *testing.T) {
+	ipv6Err := errors.New(`could not translate host name "db.bvkmtbubamprwkclmslb.supabase.co" to address: No address associated with hostname`)
+	directConfig := pgconn.Config{Host: "db.bvkmtbubamprwkclmslb.supabase.co", Port: 5432}
+
+	stubResolver := func(cfg pgconn.Config, err error) func() {
+		orig := resolvePoolerFallback
+		resolvePoolerFallback = func(context.Context, string) (pgconn.Config, error) { return cfg, err }
+		return func() { resolvePoolerFallback = orig }
+	}
+	withEligible := func(v bool) func() {
+		orig := flags.PoolerFallbackEligible
+		flags.PoolerFallbackEligible = v
+		return func() { flags.PoolerFallbackEligible = orig }
+	}
+
+	t.Run("resolves pooler for eligible linked ipv6 failure", func(t *testing.T) {
+		t.Cleanup(withEligible(true))
+		pooler := pgconn.Config{Host: "aws-0-us-east-1.pooler.supabase.com", Port: 5432}
+		t.Cleanup(stubResolver(pooler, nil))
+		got, ok := PoolerFallbackConfig(context.Background(), directConfig, ipv6Err)
+		assert.True(t, ok)
+		assert.Equal(t, pooler.Host, got.Host)
+	})
+
+	t.Run("never reroutes explicit --db-url targets", func(t *testing.T) {
+		t.Cleanup(withEligible(false))
+		t.Cleanup(stubResolver(pgconn.Config{}, errors.New("resolver must not be called")))
+		_, ok := PoolerFallbackConfig(context.Background(), directConfig, ipv6Err)
+		assert.False(t, ok)
+	})
+
+	t.Run("ignores non-ipv6 failures", func(t *testing.T) {
+		t.Cleanup(withEligible(true))
+		t.Cleanup(stubResolver(pgconn.Config{}, errors.New("resolver must not be called")))
+		_, ok := PoolerFallbackConfig(context.Background(), directConfig, errors.New("permission denied for table"))
+		assert.False(t, ok)
+	})
+
+	t.Run("ignores non-direct hosts", func(t *testing.T) {
+		t.Cleanup(withEligible(true))
+		t.Cleanup(stubResolver(pgconn.Config{}, errors.New("resolver must not be called")))
+		_, ok := PoolerFallbackConfig(context.Background(), pgconn.Config{Host: "aws-0-us-east-1.pooler.supabase.com"}, ipv6Err)
+		assert.False(t, ok)
+	})
+
+	t.Run("returns false when pooler resolution fails", func(t *testing.T) {
+		t.Cleanup(withEligible(true))
+		t.Cleanup(stubResolver(pgconn.Config{}, errors.New("no pooler")))
+		_, ok := PoolerFallbackConfig(context.Background(), directConfig, ipv6Err)
+		assert.False(t, ok)
 	})
 }

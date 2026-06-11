@@ -36,6 +36,13 @@ const (
 
 var DbConfig pgconn.Config
 
+// PoolerFallbackEligible reports whether DbConfig was resolved via the linked
+// path, where transparently retrying a failed remote operation through the
+// project's IPv4 transaction pooler is safe. Explicit --db-url and --local
+// targets must never be silently rerouted, so the fallback stays disabled for
+// them.
+var PoolerFallbackEligible bool
+
 func ParseDatabaseConfig(ctx context.Context, flagSet *pflag.FlagSet, fsys afero.Fs) error {
 	// Changed flags take precedence over default values
 	var connType connection
@@ -102,6 +109,8 @@ func ParseDatabaseConfig(ctx context.Context, flagSet *pflag.FlagSet, fsys afero
 		DbConfig.Password = token
 		DbConfig.Database = ProjectRef
 	}
+	// Only the linked path may be transparently rerouted to the IPv4 pooler.
+	PoolerFallbackEligible = connType == linked
 	return nil
 }
 
