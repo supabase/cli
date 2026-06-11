@@ -39,9 +39,36 @@ export function parseDotEnv(contents: string): Record<string, string> {
     if (key.length === 0) {
       throw new Error(`unexpected character "${line[0] ?? ""}" in variable name near "${line}"`);
     }
-    result[key] = parseDotEnvValue(line.slice(sep + 1));
+    // godotenv expands `$VAR`/`${VAR}` references against variables defined
+    // **earlier in the same file** (the in-progress map), so assign in file order.
+    result[key] = parseDotEnvValue(line.slice(sep + 1), result);
   }
   return result;
+}
+
+// godotenv's `expandVarRegex` (`joho/godotenv/parser.go:253`): an optional
+// leading backslash, `$`, an optional `(`, an optional `{`, an optional
+// `[A-Z0-9_]+` name, and an optional `}`.
+const EXPAND_VAR_REGEX = /(\\)?(\$)(\()?\{?([A-Z0-9_]+)?\}?/g;
+
+/**
+ * Expand `$VAR`/`${VAR}` references, a 1:1 port of godotenv's `expandVariables`
+ * (`parser.go:257`): a leading backslash (`\$VAR`) or a `$(`-form is returned
+ * with its first character dropped (no expansion / no command substitution); a
+ * matched `[A-Z0-9_]+` name expands to `vars[name]` (an undefined reference
+ * becomes the empty string); a bare `$` with no name is left unchanged. Only
+ * uppercase/digit/underscore names are recognized, matching the Go regex.
+ */
+function expandVariables(value: string, vars: Record<string, string>): string {
+  return value.replace(EXPAND_VAR_REGEX, (match, backslash, _dollar, paren, name) => {
+    if (backslash === "\\" || paren === "(") {
+      return match.slice(1);
+    }
+    if (name !== undefined && name !== "") {
+      return vars[name] ?? "";
+    }
+    return match;
+  });
 }
 
 /**
@@ -50,7 +77,7 @@ export function parseDotEnv(contents: string): Record<string, string> {
  * quote and anything after it (e.g. a trailing comment) is discarded; an
  * unquoted value runs to the first ` #`/`\t#` inline comment, then is trimmed.
  */
-function parseDotEnvValue(raw: string): string {
+function parseDotEnvValue(raw: string, vars: Record<string, string>): string {
   // godotenv left-trims whitespace after `=` before inspecting the value.
   const value = raw.replace(/^[ \t]+/, "");
   const quote = value[0];
@@ -68,17 +95,21 @@ function parseDotEnvValue(raw: string): string {
     }
     const inner = value.slice(1, end);
     if (quote === '"') {
-      // Double-quoted values expand escapes: `\n` / `\r` become real newlines,
-      // and a backslash before any other char (except `$`) is dropped.
-      return inner
+      // Double-quoted values expand escapes first, then variable references
+      // (godotenv: `expandVariables(expandEscapes(value), vars)`): `\n` / `\r`
+      // become real newlines, a backslash before any other char (except `$`) is
+      // dropped — so `\$` survives to suppress expansion in `expandVariables`.
+      const escaped = inner
         .replaceAll("\\n", "\n")
         .replaceAll("\\r", "\r")
         .replace(/\\([^$])/g, "$1");
+      return expandVariables(escaped, vars);
     }
-    // Single-quoted values are taken literally (no escape expansion).
+    // Single-quoted values are taken literally (no escape or variable expansion).
     return inner;
   }
-  return stripInlineComment(value).trim();
+  // Unquoted values: strip the inline comment, trim, then expand variables.
+  return expandVariables(stripInlineComment(value).trim(), vars);
 }
 
 /**

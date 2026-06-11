@@ -51,4 +51,41 @@ describe("parseDotEnv", () => {
   it("throws Go's 'unexpected character' error on a malformed variable name", () => {
     expect(() => parseDotEnv("!=")).toThrow(/unexpected character "!" in variable name/);
   });
+
+  describe("variable expansion (godotenv parity)", () => {
+    it("expands $VAR and ${VAR} from earlier same-file definitions", () => {
+      expect(parseDotEnv("DB_PORT=54323\nSUPABASE_DB_PORT=$DB_PORT\nURL=${DB_PORT}/db")).toEqual({
+        DB_PORT: "54323",
+        SUPABASE_DB_PORT: "54323",
+        URL: "54323/db",
+      });
+    });
+
+    it("expands references inside double-quoted values", () => {
+      expect(parseDotEnv('USER=alice\nDSN="postgres://$USER@h/db"')).toEqual({
+        USER: "alice",
+        DSN: "postgres://alice@h/db",
+      });
+    });
+
+    it("does not expand inside single-quoted values", () => {
+      expect(parseDotEnv("USER=alice\nA='$USER'")).toEqual({ USER: "alice", A: "$USER" });
+    });
+
+    it("keeps an escaped \\$VAR literal (backslash dropped)", () => {
+      expect(parseDotEnv('A="\\$USER"')).toEqual({ A: "$USER" });
+    });
+
+    it("expands an undefined reference to the empty string", () => {
+      expect(parseDotEnv("A=$MISSING")).toEqual({ A: "" });
+    });
+
+    it("returns the inner text for a $(...) form (no command substitution)", () => {
+      expect(parseDotEnv("A=$(echo hi)")).toEqual({ A: "(echo hi)" });
+    });
+
+    it("leaves lowercase names unexpanded (regex matches [A-Z0-9_] only)", () => {
+      expect(parseDotEnv("foo=bar\nA=$foo")).toEqual({ foo: "bar", A: "$foo" });
+    });
+  });
 });
