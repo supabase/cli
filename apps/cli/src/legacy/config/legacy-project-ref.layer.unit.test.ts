@@ -8,7 +8,10 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, Layer, Option } from "effect";
 import { afterEach, beforeEach } from "vitest";
 
-import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
+import {
+  LegacyPlatformApi,
+  LegacyPlatformApiFactory,
+} from "../auth/legacy-platform-api.service.ts";
 import { mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "./legacy-project-ref.service.ts";
@@ -67,7 +70,11 @@ function makeLayer(opts: {
     Layer.provide(mockCliConfig(opts)),
     Layer.provide(mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false })),
     Layer.provide(out.layer),
-    Layer.provide(mockPlatformApi(opts.projects ?? [])),
+    Layer.provide(
+      Layer.succeed(LegacyPlatformApiFactory, {
+        make: LegacyPlatformApi.pipe(Effect.provide(mockPlatformApi(opts.projects ?? []))),
+      }),
+    ),
     Layer.provide(BunServices.layer),
   );
   return { layer, out };
