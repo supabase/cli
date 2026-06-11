@@ -66,13 +66,18 @@ export function legacyIsTerminalConnectError(error: unknown, usedTls: boolean): 
 }
 
 /**
- * Whether a dial host is a libpq unix-socket path (an absolute path). pgconn skips
- * TLS entirely for a unix `NetworkAddress` regardless of `sslmode` (jackc/pgconn
- * `configTLS`), so a socket DSN connects in plaintext — mirrored here by forcing
- * the plaintext attempt for socket hosts.
+ * Whether a dial host is a libpq unix-socket path. pgconn skips TLS/DNS entirely for
+ * a unix `NetworkAddress` regardless of `sslmode` (jackc/pgconn `configTLS`), so a
+ * socket DSN connects in plaintext — mirrored here. Matches pgconn v1.14.3
+ * `isAbsolutePath` (`config.go:112-129`): a forward-slash prefix (POSIX) OR a Windows
+ * absolute path — an **uppercase** drive letter `A`-`Z`, then `:`, then `\`
+ * (lowercase `c:\…` is NOT a socket in pgconn, so it stays TCP here too).
  */
 export function legacyIsUnixSocketHost(host: string): boolean {
-  return host.startsWith("/");
+  if (host.startsWith("/")) return true;
+  return (
+    host.length >= 3 && host[0]! >= "A" && host[0]! <= "Z" && host[1] === ":" && host[2] === "\\"
+  );
 }
 
 /**

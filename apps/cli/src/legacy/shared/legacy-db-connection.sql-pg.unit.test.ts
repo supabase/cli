@@ -214,6 +214,13 @@ describe("legacyIsUnixSocketHost", () => {
     expect(legacyIsUnixSocketHost("127.0.0.1")).toBe(false);
     expect(legacyIsUnixSocketHost("::1")).toBe(false);
   });
+
+  it("treats an uppercase Windows drive path as a socket, lowercase as TCP (pgconn parity)", () => {
+    // pgconn's isAbsolutePath accepts `A-Z:\…` (uppercase drive only); `c:\…` is TCP.
+    expect(legacyIsUnixSocketHost("C:\\pgsql")).toBe(true);
+    expect(legacyIsUnixSocketHost("c:\\pgsql")).toBe(false);
+    expect(legacyIsUnixSocketHost("C:")).toBe(false);
+  });
 });
 
 describe("legacyIsTerminalConnectError (pgconn fallback termination)", () => {
