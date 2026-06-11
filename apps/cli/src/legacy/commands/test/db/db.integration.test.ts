@@ -196,6 +196,26 @@ describe("legacy test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("omits --security-opt inside Bitbucket Pipelines (BITBUCKET_CLONE_DIR set)", () => {
+    // Go clears hostConfig.SecurityOpt when BITBUCKET_CLONE_DIR is set, because
+    // Bitbucket rejects --security-opt (apps/cli-go/internal/utils/docker.go:288-293).
+    const { layer, docker } = setup();
+    const prev = process.env["BITBUCKET_CLONE_DIR"];
+    process.env["BITBUCKET_CLONE_DIR"] = "/opt/atlassian/pipelines/agent/build";
+    return Effect.gen(function* () {
+      yield* legacyTestDb(flags());
+      expect(docker.lastOpts?.securityOpt).toEqual([]);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["BITBUCKET_CLONE_DIR"];
+          else process.env["BITBUCKET_CLONE_DIR"] = prev;
+        }),
+      ),
+    );
+  });
+
   it.live("skips dropping pgtap when it already existed", () => {
     const { layer, connection } = setup({ existed: true });
     return Effect.gen(function* () {

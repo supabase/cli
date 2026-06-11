@@ -161,13 +161,18 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
           );
         }
 
+        // Bitbucket Pipelines rejects `--security-opt`, so Go clears
+        // `hostConfig.SecurityOpt` when `BITBUCKET_CLONE_DIR` is set
+        // (`apps/cli-go/internal/utils/docker.go:288-293`). Match that exactly:
+        // omit the option in Bitbucket CI, where it would abort container creation.
+        const inBitbucket = (process.env["BITBUCKET_CLONE_DIR"] ?? "") !== "";
         return yield* docker.run({
           image: legacyGetRegistryImageUrl(LEGACY_PG_PROVE_IMAGE),
           cmd: args.cmd,
           env: runEnv,
           binds: args.binds,
           workingDir: args.workingDir,
-          securityOpt: ["label:disable"],
+          securityOpt: inBitbucket ? [] : ["label:disable"],
           network,
         });
       }),

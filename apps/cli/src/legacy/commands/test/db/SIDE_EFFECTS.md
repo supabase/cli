@@ -51,6 +51,7 @@ One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_pro
 | `SUPABASE_ACCESS_TOKEN`      | `--linked`: Management API auth                                      | no (falls back to keyring/file)               |
 | `SUPABASE_SERVICES_HOSTNAME` | `--local`: overrides the local DB host (dev-container/remote Docker) | no (defaults via `DOCKER_HOST` → `127.0.0.1`) |
 | `DOCKER_HOST`                | `--local`: tcp daemon host used when no services-hostname override   | no                                            |
+| `BITBUCKET_CLONE_DIR`        | when set, omit `--security-opt label:disable` (Bitbucket rejects it) | no                                            |
 | `DEBUG` / `--debug`          | append `--verbose` to `pg_prove`                                     | no                                            |
 
 ## Exit Codes
