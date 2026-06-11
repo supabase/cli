@@ -710,6 +710,51 @@ describe("empty URL query overrides (pgconn parity)", () => {
   });
 });
 
+describe("pgconn parse refinements", () => {
+  it("accepts a comma-separated ?port= list for a multi-host URL", () => {
+    expect(parseLegacyConnectionString("postgres://h1,h2/db?port=5432,5433")).toMatchObject({
+      host: "h1",
+      port: 5432,
+      database: "db",
+      fallbacks: [{ host: "h2", port: 5433 }],
+    });
+  });
+
+  it("rejects out-of-range ports (0, 65536, 70000) across query/structural/DSN/PGPORT", () => {
+    expect(parseLegacyConnectionString("postgres://h/db?port=0")).toBeUndefined();
+    expect(parseLegacyConnectionString("postgres://h:70000/db")).toBeUndefined();
+    expect(parseLegacyConnectionString("host=h user=u port=65536")).toBeUndefined();
+    const env = (name: string): string | undefined => (name === "PGPORT" ? "70000" : undefined);
+    expect(parseLegacyConnectionString("host=pg.example.com user=u", env)).toBeUndefined();
+  });
+
+  it("treats an empty connection-string service= as explicit (parse error), not PGSERVICE", () => {
+    const env = (name: string): string | undefined => (name === "PGSERVICE" ? "prod" : undefined);
+    // Empty ?service= overrides PGSERVICE and fails resolution (pgconn GetService("")).
+    expect(parseLegacyConnectionString("postgres://host/db?service=", env)).toBeUndefined();
+    expect(parseLegacyConnectionString("host=h user=u service=", env)).toBeUndefined();
+  });
+
+  it("ignores an empty PGUSER, falling through to the OS account", () => {
+    const withUser = (name: string): string | undefined => ({ PGUSER: "", USER: "alice" })[name];
+    expect(parseLegacyConnectionString("postgres://host/db", withUser)?.user).toBe("alice");
+    const noUser = (name: string): string | undefined => (name === "PGUSER" ? "" : undefined);
+    expect(parseLegacyConnectionString("postgres://host/db", noUser)?.user).toBe("postgres");
+  });
+
+  it("rejects an empty connection-string connect_timeout but ignores an empty env var", () => {
+    // Present-but-empty ?connect_timeout= / connect_timeout= is a parse error.
+    expect(parseLegacyConnectionString("postgres://u:p@h/db?connect_timeout=")).toBeUndefined();
+    expect(parseLegacyConnectionString("host=h user=u connect_timeout=")).toBeUndefined();
+    // An empty PGCONNECT_TIMEOUT env var is unset → no error, default applies.
+    const env = (name: string): string | undefined =>
+      name === "PGCONNECT_TIMEOUT" ? "" : undefined;
+    expect(parseLegacyConnectionString("postgres://u:p@h/db", env)).not.toHaveProperty(
+      "connectTimeoutSeconds",
+    );
+  });
+});
+
 describe("redactLegacyConnectionString", () => {
   it("masks the password in a parseable URL", () => {
     const redacted = redactLegacyConnectionString("postgres://user:s3cret@example.com/db");

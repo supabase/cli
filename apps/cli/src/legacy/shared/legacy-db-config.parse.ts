@@ -81,15 +81,20 @@ function unbracketIpv6(host: string): string {
 const CONNECT_TIMEOUT_INVALID = Symbol("connect-timeout-invalid");
 
 /**
- * Resolve the libpq `connect_timeout` (seconds). Returns the positive integer when
- * set, `undefined` when unset/empty/zero (the driver layer then applies Go's
- * 10s/2s default), or the failure sentinel for a present non-numeric value —
- * pgconn's `parseConnectTimeoutSetting` reports a parse error rather than ignoring.
+ * Resolve the libpq `connect_timeout` (seconds). `raw` must already have the
+ * absent-vs-present distinction made by the caller: `null`/`undefined` means the
+ * setting was absent (unset → driver applies Go's 10s/2s default), while any string
+ * — including `""` — is a *present* connection-string value. pgconn keeps a present
+ * `connect_timeout` and runs `parseConnectTimeoutSetting`, which errors on a
+ * non-integer (including empty), so a present non-numeric value returns the failure
+ * sentinel. `0` parses to a zero duration (not an error), treated as unset so the
+ * default applies. An empty `PGCONNECT_TIMEOUT` env var is dropped by the caller
+ * (pgconn ignores empty `PG*` vars), so it never reaches here as `""`.
  */
 function libpqConnectTimeout(
   raw: string | null | undefined,
 ): number | undefined | typeof CONNECT_TIMEOUT_INVALID {
-  if (raw === null || raw === undefined || raw.length === 0) return undefined;
+  if (raw === null || raw === undefined) return undefined;
   if (!/^\d+$/.test(raw)) return CONNECT_TIMEOUT_INVALID;
   const seconds = Number(raw);
   return seconds > 0 ? seconds : undefined;
@@ -118,18 +123,30 @@ function defaultServiceFilePath(): string | undefined {
  * when no service is requested, or the failure sentinel when a requested service
  * cannot be resolved. The resolved settings sit above env/defaults but below the
  * explicit connection-string fields.
+ *
+ * pgconn records a connection-string `service` key unconditionally and merges it
+ * over `PGSERVICE` (`config.go:504,406`), so a *present* connStr `service` (even
+ * empty) overrides the env var; an empty service then fails resolution
+ * (`GetService("")` → not found → parse error), rather than silently using
+ * `PGSERVICE`/defaults. So `connStringService` is `null`/`undefined` only when the
+ * key is absent.
  */
 function resolveServiceSettings(
-  connStringService: string | undefined,
+  connStringService: string | null | undefined,
   connStringServicefile: string | undefined,
   env: LegacyParseEnv,
 ): Map<string, string> | typeof SERVICE_RESOLUTION_FAILED | undefined {
   const service =
-    connStringService !== undefined && connStringService.length > 0
+    connStringService !== null && connStringService !== undefined
       ? connStringService
       : libpqEnv(env, "PGSERVICE");
   if (service === undefined) {
     return undefined;
+  }
+  // A present-but-empty connString `service=` overrides PGSERVICE and fails
+  // resolution in pgconn (`GetService("")` → not found), so reject the parse.
+  if (service.length === 0) {
+    return SERVICE_RESOLUTION_FAILED;
   }
   const servicefile =
     (connStringServicefile !== undefined && connStringServicefile.length > 0
@@ -197,7 +214,13 @@ function buildLegacyHostList(
   for (let i = 0; i < hosts.length; i++) {
     const portRaw = i < ports.length ? ports[i]! : ports[0]!;
     if (!/^\d+$/.test(portRaw)) return undefined;
-    list.push({ host: hosts[i]!, port: Number(portRaw) });
+    // pgconn's `parsePort` rejects ports outside 1..65535 (`config.go:784-793`), so
+    // `0`/`70000` are parse errors rather than being deferred to the driver/OS. This
+    // is the single chokepoint every port path (query, structural, PGPORT) funnels
+    // through, matching pgconn's per-host `parsePort` call (`config.go:337`).
+    const port = Number(portRaw);
+    if (port < 1 || port > 65535) return undefined;
+    list.push({ host: hosts[i]!, port });
   }
   return list;
 }
@@ -330,7 +353,7 @@ function parseUrlConnectionString(
     // Resolve a pgservice (`?service=`/`PGSERVICE`) before applying defaults; its
     // settings sit above env/defaults but below the explicit URL fields.
     const serviceSettings = resolveServiceSettings(
-      query.get("service") ?? undefined,
+      query.get("service"),
       query.get("servicefile") ?? undefined,
       env,
     );
@@ -368,13 +391,13 @@ function parseUrlConnectionString(
     const passfileQuery = url.searchParams.get("passfile");
     const passfile =
       passfileQuery !== null && passfileQuery.length > 0 ? passfileQuery : svc("passfile");
-    // libpq `connect_timeout` (query, service, or `PGCONNECT_TIMEOUT`); a present
-    // non-numeric value is a parse error (pgconn's `parseConnectTimeoutSetting`).
-    const connectTimeout = libpqConnectTimeout(
-      url.searchParams.get("connect_timeout") ??
-        svc("connect_timeout") ??
-        libpqEnv(env, "PGCONNECT_TIMEOUT"),
-    );
+    // libpq `connect_timeout` (query, service, or `PGCONNECT_TIMEOUT`). A *present*
+    // query value (even empty) overrides service/env and is parsed (empty → error,
+    // pgconn's `parseConnectTimeoutSetting`); only an absent query param falls back.
+    const connectTimeoutRaw = url.searchParams.has("connect_timeout")
+      ? url.searchParams.get("connect_timeout")
+      : (svc("connect_timeout") ?? libpqEnv(env, "PGCONNECT_TIMEOUT"));
+    const connectTimeout = libpqConnectTimeout(connectTimeoutRaw);
     if (connectTimeout === CONNECT_TIMEOUT_INVALID) {
       return undefined;
     }
@@ -402,12 +425,16 @@ function parseUrlConnectionString(
         : structuralHosts.length > 0
           ? structuralHosts.join(",")
           : (svc("host") ?? libpqEnv(env, "PGHOST") ?? defaultLibpqHost());
-    // pgconn merges a `?port=` query setting over the structural port and then
-    // parses it, so an explicit query port — even empty (`?port=`) or non-numeric
-    // — that is not a valid number is a parse error. A bad `PGPORT` fallback is
-    // likewise rejected (`libpqPort` → undefined). `url.port` is always digits.
+    // pgconn copies a `?port=` query value verbatim into `settings["port"]` and the
+    // fallback builder splits it on commas, parsing each segment (`config.go:326-340`),
+    // so a multi-host URL may carry a comma-separated port list (`?port=5432,5433`).
+    // Reject only an empty `?port=` or a segment that is not numeric; `buildLegacyHostList`
+    // then zips and range-checks each. `url.port` is always digits.
     const portQuery = query.get("port");
-    if (portQuery !== null && !/^\d+$/.test(portQuery)) {
+    if (
+      portQuery !== null &&
+      (portQuery.length === 0 || portQuery.split(",").some((p) => !/^\d+$/.test(p)))
+    ) {
       return undefined;
     }
     let portString: string;
@@ -578,11 +605,13 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   const passfileParam = params.get("passfile");
   const passfile =
     passfileParam !== undefined && passfileParam.length > 0 ? passfileParam : svc("passfile");
-  // libpq `connect_timeout` (keyword, service, or `PGCONNECT_TIMEOUT`); a present
-  // non-numeric value is a parse error (pgconn's `parseConnectTimeoutSetting`).
-  const connectTimeout = libpqConnectTimeout(
-    params.get("connect_timeout") ?? svc("connect_timeout") ?? libpqEnv(env, "PGCONNECT_TIMEOUT"),
-  );
+  // libpq `connect_timeout` (keyword, service, or `PGCONNECT_TIMEOUT`). A *present*
+  // keyword (even empty) overrides service/env and is parsed (empty → error); only
+  // an absent keyword falls back.
+  const connectTimeoutRaw = params.has("connect_timeout")
+    ? params.get("connect_timeout")!
+    : (svc("connect_timeout") ?? libpqEnv(env, "PGCONNECT_TIMEOUT"));
+  const connectTimeout = libpqConnectTimeout(connectTimeoutRaw);
   if (connectTimeout === CONNECT_TIMEOUT_INVALID) return undefined;
   // Password precedence (pgconn): a `password=` entry — even empty — overrides the
   // service and PGPASSWORD; an empty resolved value then falls through to `.pgpass`.
@@ -616,9 +645,18 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
  * (`defaultSettings` → `user.Current()`), while an explicit `user=`/userinfo in
  * the connection string still wins over both (handled by the callers). The final
  * `"postgres"` guard covers minimal environments where neither is available.
+ *
+ * pgconn ignores **empty** `PG*` env vars (`parseEnvSettings` only records a value
+ * when non-empty, `config.go:436-441`), so an empty `PGUSER` falls through to the
+ * OS account rather than producing an empty username. `USER`/`USERNAME` stand in
+ * for `user.Current().Username`, so empty values there are skipped too.
  */
 function defaultOsUser(env: LegacyParseEnv): string {
-  return env("PGUSER") ?? env("USER") ?? env("USERNAME") ?? "postgres";
+  const nonEmpty = (name: string): string | undefined => {
+    const value = env(name);
+    return value !== undefined && value.length > 0 ? value : undefined;
+  };
+  return libpqEnv(env, "PGUSER") ?? nonEmpty("USER") ?? nonEmpty("USERNAME") ?? "postgres";
 }
 
 /**
