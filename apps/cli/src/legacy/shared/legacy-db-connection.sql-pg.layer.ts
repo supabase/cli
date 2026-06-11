@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
 import { PgClient } from "@effect/sql-pg";
-import { Effect, Layer, Redacted, type Scope } from "effect";
+import { Duration, Effect, Layer, Redacted, type Scope } from "effect";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import {
@@ -25,9 +25,10 @@ const SET_SESSION_ROLE = "SET SESSION ROLE postgres";
 /**
  * Whether the connecting user requires the `SET SESSION ROLE postgres` step-down.
  * Go strips any Supavisor `.{ref}` tenant suffix first (`strings.Split(user, ".")[0]`)
- * before comparing. Go additionally gates this on the connection being remote, but a
- * local connection always uses the plain `postgres` user, so a username-only check is
- * observably identical for the local/db-url/linked paths the resolver produces.
+ * before comparing. Go installs the step-down `AfterConnect` hook **only on the
+ * remote path** (`ConnectByConfigStream`, `connect.go:211-222`); the local path
+ * (`ConnectLocalPostgres`) never installs it, regardless of the configured user — so
+ * the caller must also gate on `!isLocal` (a local `--db-url` can set any user).
  */
 function needsRoleStepDown(user: string): boolean {
   const base = user.split(".")[0] ?? user;
@@ -272,6 +273,11 @@ const connect = (
             }),
         // TLS parity with Go (`internal/utils/connect.go`): see `legacySslOptionFor`.
         ...(sslOption === undefined ? {} : { ssl: sslOption }),
+        // Connect timeout parity: Go's `ToPostgresURL` always sets `connect_timeout`,
+        // defaulting to 10s (`connect.go:24-28`); `ConnectLocalPostgres` uses 2s for
+        // local (`connect.go:143-145`). A DSN/`PGCONNECT_TIMEOUT` value (>0) overrides
+        // both. Without this a black-holed host would hang to the OS/driver default.
+        connectTimeout: Duration.seconds(cfg.connectTimeoutSeconds ?? (isLocal ? 2 : 10)),
         maxConnections: 1,
       }).pipe(Effect.provide(Reactivity.layer));
 
@@ -311,15 +317,20 @@ const connect = (
       })),
     );
 
-    // The `pg` driver connects lazily and cannot replay pgconn's fallback, so
-    // probe each non-final attempt with `select 1` to force the connection and
-    // fall through to the next on failure. pgconn retries fallbacks only for
-    // connection-establishment errors; a server-side auth/authorization/catalog/
-    // privilege error terminates the chain (`pgconn.go:159-192`), so a terminal
-    // SQLSTATE re-raises instead of masking the primary's failure behind a later
-    // host. The final attempt is the lazy base case (no extra round-trip), so the
-    // common single-attempt path is byte-identical to a plain connect.
+    // The `pg` driver connects lazily and cannot replay pgconn's fallback, so probe
+    // every attempt with `select 1` to force the connection, falling through to the
+    // next on failure. pgconn retries fallbacks only for connection-establishment
+    // errors; a server-side auth/authorization/catalog/privilege error terminates the
+    // chain (`pgconn.go:159-192`), so a terminal SQLSTATE re-raises instead of masking
+    // the primary's failure behind a later host. The final attempt is probed too (not
+    // left lazy): Go always dials eagerly — the main path via `pgx.ConnectConfig` and
+    // the temp-role wait via `pgconn.ConnectConfig` (`db_url.go:192`) — so `connect`
+    // must return a live session for callers like `waitForTempRole` that don't run a
+    // follow-up query.
     const lastIndex = attempts.length - 1;
+    const lastProbed = attempts[lastIndex]!.client.pipe(
+      Effect.tap((candidate) => candidate`select 1`),
+    );
     const client = yield* attempts
       .slice(0, lastIndex)
       .reduceRight(
@@ -330,14 +341,16 @@ const connect = (
               legacyIsTerminalConnectError(error, usedTls) ? Effect.fail(error) : next,
             ),
           ),
-        attempts[lastIndex]!.client,
+        lastProbed,
       )
       .pipe(Effect.mapError(toConnectError));
 
-    // Step down from the temp/privileged login role before any further SQL.
-    // `maxConnections: 1` guarantees the single physical connection is reused, so
-    // the session-scoped role persists for every subsequent `exec`.
-    if (needsRoleStepDown(cfg.user)) {
+    // Step down from the temp/privileged login role before any further SQL — but
+    // only for remote connections: Go installs this hook in `ConnectByConfigStream`,
+    // not `ConnectLocalPostgres`, so a local `--db-url` using `supabase_admin`/
+    // `cli_login_*` must not run it. `maxConnections: 1` guarantees the single
+    // physical connection is reused, so the session-scoped role persists for `exec`.
+    if (!isLocal && needsRoleStepDown(cfg.user)) {
       yield* client.unsafe(SET_SESSION_ROLE).pipe(
         Effect.asVoid,
         Effect.mapError(

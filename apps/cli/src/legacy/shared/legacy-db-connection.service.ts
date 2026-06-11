@@ -42,6 +42,13 @@ export interface LegacyPgConnInput {
    * `verify-ca`. Absent → system roots / no CA pinning.
    */
   readonly sslrootcert?: string;
+  /**
+   * libpq `connect_timeout` in seconds (Go's `pgconn.Config.ConnectTimeout`, from
+   * the DSN or `PGCONNECT_TIMEOUT`). Only set when explicitly provided and > 0; the
+   * driver layer applies Go's default otherwise (10s remote, 2s local — see
+   * `ToPostgresURL`/`ConnectLocalPostgres`).
+   */
+  readonly connectTimeoutSeconds?: number;
 }
 
 /**
