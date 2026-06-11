@@ -12630,20 +12630,13 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "id",
-                  "hostname",
-                  "ssl",
-                  "ownership_verification",
-                  "custom_origin_server",
-                  "status"
-                ]
+                "required": ["id", "hostname", "ssl", "custom_origin_server", "status"]
               }
             },
             "required": ["success", "errors", "messages", "result"]
           }
         },
-        "required": ["status", "custom_hostname", "data"]
+        "required": ["data"]
       },
       "UpdateCustomHostnameBody": {
         "type": "object",

@@ -107,12 +107,16 @@ describe("legacy domains get integration", () => {
   });
 
   it.live("preserves validation_records in Go JSON output when the API omits it", () => {
+    const {
+      ownership_verification: _ownershipVerification,
+      ...resultWithoutOwnershipVerification
+    } = HOSTNAME_RESPONSE.data.result;
     const response: typeof V1GetHostnameConfigOutput.Type = {
       ...HOSTNAME_RESPONSE,
       data: {
         ...HOSTNAME_RESPONSE.data,
         result: {
-          ...HOSTNAME_RESPONSE.data.result,
+          ...resultWithoutOwnershipVerification,
           ssl: { status: "pending_validation" },
         },
       },
@@ -121,6 +125,7 @@ describe("legacy domains get integration", () => {
     return Effect.gen(function* () {
       yield* legacyDomainsGet(baseFlags);
       const parsed = JSON.parse(out.stdoutText) as typeof V1GetHostnameConfigOutput.Type;
+      expect(parsed.data.result.ownership_verification).toBeUndefined();
       expect(parsed.data.result.ssl.validation_records).toEqual([]);
     }).pipe(Effect.provide(layer));
   });

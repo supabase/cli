@@ -234,14 +234,16 @@ export const V1ActivateCustomHostnameInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1ActivateCustomHostnameOutput = Schema.Struct({
-  status: Schema.Literals([
-    "1_not_started",
-    "2_initiated",
-    "3_challenge_verified",
-    "4_origin_setup_completed",
-    "5_services_reconfigured",
-  ]),
-  custom_hostname: Schema.String,
+  status: Schema.optionalKey(
+    Schema.Literals([
+      "1_not_started",
+      "2_initiated",
+      "3_challenge_verified",
+      "4_origin_setup_completed",
+      "5_services_reconfigured",
+    ]),
+  ),
+  custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
     errors: Schema.Array(Schema.Unknown.annotate({ description: "Any JSON-serializable value" })),
@@ -258,11 +260,9 @@ export const V1ActivateCustomHostnameOutput = Schema.Struct({
           Schema.Array(Schema.Struct({ message: Schema.String })),
         ),
       }),
-      ownership_verification: Schema.Struct({
-        type: Schema.String,
-        name: Schema.String,
-        value: Schema.String,
-      }),
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ),
       custom_origin_server: Schema.String,
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
       status: Schema.String,
@@ -2289,14 +2289,16 @@ export const V1GetHostnameConfigInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetHostnameConfigOutput = Schema.Struct({
-  status: Schema.Literals([
-    "1_not_started",
-    "2_initiated",
-    "3_challenge_verified",
-    "4_origin_setup_completed",
-    "5_services_reconfigured",
-  ]),
-  custom_hostname: Schema.String,
+  status: Schema.optionalKey(
+    Schema.Literals([
+      "1_not_started",
+      "2_initiated",
+      "3_challenge_verified",
+      "4_origin_setup_completed",
+      "5_services_reconfigured",
+    ]),
+  ),
+  custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
     errors: Schema.Array(Schema.Unknown.annotate({ description: "Any JSON-serializable value" })),
@@ -2313,11 +2315,9 @@ export const V1GetHostnameConfigOutput = Schema.Struct({
           Schema.Array(Schema.Struct({ message: Schema.String })),
         ),
       }),
-      ownership_verification: Schema.Struct({
-        type: Schema.String,
-        name: Schema.String,
-        value: Schema.String,
-      }),
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ),
       custom_origin_server: Schema.String,
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
       status: Schema.String,
@@ -5254,14 +5254,16 @@ export const V1UpdateHostnameConfigInput = Schema.Struct({
   custom_hostname: Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(253)),
 });
 export const V1UpdateHostnameConfigOutput = Schema.Struct({
-  status: Schema.Literals([
-    "1_not_started",
-    "2_initiated",
-    "3_challenge_verified",
-    "4_origin_setup_completed",
-    "5_services_reconfigured",
-  ]),
-  custom_hostname: Schema.String,
+  status: Schema.optionalKey(
+    Schema.Literals([
+      "1_not_started",
+      "2_initiated",
+      "3_challenge_verified",
+      "4_origin_setup_completed",
+      "5_services_reconfigured",
+    ]),
+  ),
+  custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
     errors: Schema.Array(Schema.Unknown.annotate({ description: "Any JSON-serializable value" })),
@@ -5278,11 +5280,9 @@ export const V1UpdateHostnameConfigOutput = Schema.Struct({
           Schema.Array(Schema.Struct({ message: Schema.String })),
         ),
       }),
-      ownership_verification: Schema.Struct({
-        type: Schema.String,
-        name: Schema.String,
-        value: Schema.String,
-      }),
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ),
       custom_origin_server: Schema.String,
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
       status: Schema.String,
@@ -5831,14 +5831,16 @@ export const V1VerifyDnsConfigInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1VerifyDnsConfigOutput = Schema.Struct({
-  status: Schema.Literals([
-    "1_not_started",
-    "2_initiated",
-    "3_challenge_verified",
-    "4_origin_setup_completed",
-    "5_services_reconfigured",
-  ]),
-  custom_hostname: Schema.String,
+  status: Schema.optionalKey(
+    Schema.Literals([
+      "1_not_started",
+      "2_initiated",
+      "3_challenge_verified",
+      "4_origin_setup_completed",
+      "5_services_reconfigured",
+    ]),
+  ),
+  custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
     errors: Schema.Array(Schema.Unknown.annotate({ description: "Any JSON-serializable value" })),
@@ -5855,11 +5857,9 @@ export const V1VerifyDnsConfigOutput = Schema.Struct({
           Schema.Array(Schema.Struct({ message: Schema.String })),
         ),
       }),
-      ownership_verification: Schema.Struct({
-        type: Schema.String,
-        name: Schema.String,
-        value: Schema.String,
-      }),
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ),
       custom_origin_server: Schema.String,
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
       status: Schema.String,
