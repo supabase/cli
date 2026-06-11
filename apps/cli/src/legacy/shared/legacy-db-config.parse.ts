@@ -158,10 +158,18 @@ function resolveServiceSettings(
   return legacyServiceSettings(service, servicefile) ?? SERVICE_RESOLUTION_FAILED;
 }
 
-/** A service setting, treating empty as unset (consistent with `libpqEnv`). */
+/**
+ * A service setting: the raw value (including an intentional empty string) when the
+ * key is present, else `undefined`. Unlike env vars, pgconn does **not** empty-skip
+ * service settings — `parseServiceSettings` copies them verbatim and `mergeSettings`
+ * merges them unconditionally over env (`config.go:401-411` vs the empty-skip in
+ * `parseEnvSettings` `config.go:436-441`). So a present-but-empty service value
+ * (e.g. `password=` to suppress `PGPASSWORD` → `.pgpass`, or `connect_timeout=` to
+ * force a parse error) overrides env. Returning `""` here makes the callers' `??`
+ * chains honor that, since `??` preserves the empty string.
+ */
 function serviceValue(settings: Map<string, string> | undefined, key: string): string | undefined {
-  const value = settings?.get(key);
-  return value !== undefined && value.length > 0 ? value : undefined;
+  return settings?.get(key);
 }
 
 /**
@@ -455,9 +463,12 @@ function parseUrlConnectionString(
     const primary = hostList[0]!;
 
     // A present `?dbname=` (even empty) overrides the URL path verbatim (pgconn
-    // connects with an empty database — there is no `database` default). Only an
-    // absent param falls back to the path → service → PGDATABASE → resolved user.
-    const dbnameQuery = query.get("dbname");
+    // connects with an empty database — there is no `database` default). pgconn also
+    // accepts `database` as an alias for `dbname` (its query/DSN `nameMap`,
+    // `config.go:495-497`), copied into `settings["database"]`; prefer `dbname` when
+    // both appear (Go's map iteration has no defined precedence). Only an absent
+    // param falls back to the path → service → PGDATABASE → resolved user.
+    const dbnameQuery = query.get("dbname") ?? query.get("database");
     const structuralDb = decodeURIComponent(url.pathname.replace(/^\//, ""));
     const database =
       dbnameQuery !== null
@@ -588,8 +599,11 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   if (hostList === undefined || hostList.length === 0) return undefined;
   const primary = hostList[0]!;
   const user = params.get("user") ?? svc("user") ?? defaultOsUser(env);
+  // pgconn accepts `database` as an alias for `dbname` (`config.go:574-582`); prefer
+  // `dbname` when both appear. A present value (even empty) overrides service/env.
   const database =
     params.get("dbname") ??
+    params.get("database") ??
     svc("database") ??
     libpqEnv(env, "PGDATABASE") ??
     (user.length > 0 ? user : "postgres");
@@ -666,9 +680,16 @@ function defaultOsUser(env: LegacyParseEnv): string {
  * `[REDACTED]`) covers URL userinfo (`://user:secret@`), the malformed-but-
  * credential-bearing URL case, and libpq keyword/value DSNs (`password=…` /
  * `password='…'`).
+ *
+ * The URL-userinfo password span is greedy (`.*`) so it consumes a literal `@` or
+ * `/` inside a hand-typed password; the lookahead anchors the redaction boundary on
+ * the **last** `@` before the authority terminator (`/`, `?`, `#`, or end), so
+ * `postgres://user:p@ss/word@host/db` redacts the whole password rather than leaking
+ * a fragment. Where it cannot disambiguate it over-redacts, which is the safe
+ * direction for CWE-209 (over-redaction is fine; leaking is the bug).
  */
 export function redactLegacyConnectionString(value: string): string {
   return value
-    .replace(/(:\/\/[^:@/]*:)[^@/]*(@)/, "$1[REDACTED]$2")
+    .replace(/(:\/\/[^:@/?#]*:).*(@)(?=[^@/?#]*(?:[/?#]|$))/, "$1[REDACTED]$2")
     .replace(/(\bpassword\s*=\s*)('(?:[^'\\]|\\.)*'|\S+)/i, "$1[REDACTED]");
 }

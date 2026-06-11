@@ -755,6 +755,61 @@ describe("pgconn parse refinements", () => {
   });
 });
 
+describe("database= alias and empty service values (pgconn parity)", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "svc-empty-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("honors a `database=` query key as an alias for dbname", () => {
+    expect(parseLegacyConnectionString("postgres://host/postgres?database=prod")).toMatchObject({
+      database: "prod",
+    });
+  });
+
+  it("honors a `database=` keyword in the DSN form", () => {
+    expect(parseLegacyConnectionString("host=pg user=u database=prod")).toMatchObject({
+      database: "prod",
+    });
+  });
+
+  it("an empty service password= suppresses PGPASSWORD (falls through to .pgpass)", () => {
+    const sf = join(tmp, "svc.conf");
+    writeFileSync(sf, "[s]\nhost=h\nport=5432\nuser=u\ndbname=d\npassword=\n");
+    const env = (name: string): string | undefined =>
+      name === "PGPASSWORD"
+        ? "env-secret"
+        : name === "PGPASSFILE"
+          ? join(tmp, "no-pgpass")
+          : undefined;
+    // Empty service password overrides PGPASSWORD; no .pgpass match → "".
+    expect(
+      parseLegacyConnectionString(`postgres:///?service=s&servicefile=${sf}`, env)?.password,
+    ).toBe("");
+  });
+
+  it("an empty service connect_timeout= is a parse error", () => {
+    const sf = join(tmp, "svc.conf");
+    writeFileSync(sf, "[s]\nhost=h\nport=5432\nuser=u\nconnect_timeout=\n");
+    expect(parseLegacyConnectionString(`postgres:///?service=s&servicefile=${sf}`)).toBeUndefined();
+  });
+
+  it("still uses a non-empty service value normally", () => {
+    const sf = join(tmp, "svc.conf");
+    writeFileSync(sf, "[s]\nhost=svc.example.com\nport=6543\nuser=alice\ndbname=appdb\n");
+    expect(parseLegacyConnectionString(`postgres:///?service=s&servicefile=${sf}`)).toMatchObject({
+      host: "svc.example.com",
+      port: 6543,
+      user: "alice",
+      database: "appdb",
+    });
+  });
+});
+
 describe("redactLegacyConnectionString", () => {
   it("masks the password in a parseable URL", () => {
     const redacted = redactLegacyConnectionString("postgres://user:s3cret@example.com/db");
@@ -778,5 +833,22 @@ describe("redactLegacyConnectionString", () => {
     const redacted = redactLegacyConnectionString("host=h password='s3 cret' dbname=db");
     expect(redacted).toContain("password=[REDACTED]");
     expect(redacted).not.toContain("s3 cret");
+  });
+
+  it("does not leak a literal @ inside a malformed URL password (CWE-209)", () => {
+    const redacted = redactLegacyConnectionString("postgres://user:p@ssword@host/db");
+    expect(redacted).toContain("[REDACTED]");
+    expect(redacted).not.toContain("ssword");
+  });
+
+  it("does not leak a literal / inside a malformed URL password", () => {
+    const redacted = redactLegacyConnectionString("postgres://alice:p/a@bad/db");
+    expect(redacted).not.toContain("p/a");
+  });
+
+  it("redacts the full password across multiple literal @ and / chars", () => {
+    const redacted = redactLegacyConnectionString("postgres://u:p@ss/word@host:5432/db");
+    expect(redacted).not.toContain("p@ss/word");
+    expect(redacted).not.toContain("ss/word");
   });
 });
