@@ -13,6 +13,12 @@ export interface LegacyDockerRunOpts {
   readonly binds: ReadonlyArray<string>;
   readonly workingDir: Option.Option<string>;
   readonly securityOpt: ReadonlyArray<string>;
+  /**
+   * Extra `host:ip` mappings (`--add-host`). Go populates `HostConfig.ExtraHosts`
+   * in `DockerStart` with `host.docker.internal:host-gateway` on Linux
+   * (`apps/cli-go/internal/utils/docker_linux.go`); empty on macOS/Windows.
+   */
+  readonly extraHosts: ReadonlyArray<string>;
   readonly network: LegacyDockerNetwork;
 }
 

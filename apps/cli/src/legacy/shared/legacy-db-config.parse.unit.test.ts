@@ -653,6 +653,14 @@ describe("keyword/value DSN backslash handling (pgconn parity)", () => {
         ?.sslrootcert,
     ).toBe("C:\\certs\\root.pem");
   });
+
+  it("rejects an unquoted value ending in a lone backslash (pgconn 'invalid backslash')", () => {
+    expect(parseLegacyConnectionString("host=h user=u password=secret\\")).toBeUndefined();
+    // A complete trailing `\\` escape pair is still accepted (→ single backslash).
+    expect(
+      parseLegacyConnectionString("host=h user=u dbname=d sslrootcert=C:\\\\")?.sslrootcert,
+    ).toBe("C:\\");
+  });
 });
 
 describe("connect_timeout (pgconn parity)", () => {
@@ -777,6 +785,15 @@ describe("database= alias and empty service values (pgconn parity)", () => {
     });
   });
 
+  it("uses last-wins for dbname/database aliases in a DSN (pgconn remaps at parse time)", () => {
+    expect(
+      parseLegacyConnectionString("host=h user=u dbname=template1 database=appdb"),
+    ).toMatchObject({ database: "appdb" });
+    expect(
+      parseLegacyConnectionString("host=h user=u database=appdb dbname=template1"),
+    ).toMatchObject({ database: "template1" });
+  });
+
   it("an empty service password= suppresses PGPASSWORD (falls through to .pgpass)", () => {
     const sf = join(tmp, "svc.conf");
     writeFileSync(sf, "[s]\nhost=h\nport=5432\nuser=u\ndbname=d\npassword=\n");
@@ -888,5 +905,13 @@ describe("redactLegacyConnectionString", () => {
     const redacted = redactLegacyConnectionString("postgres://u:p@ss/word@host:5432/db");
     expect(redacted).not.toContain("p@ss/word");
     expect(redacted).not.toContain("ss/word");
+  });
+
+  it("fully redacts an unterminated quoted keyword/value password", () => {
+    const redacted = redactLegacyConnectionString("password='secret with spaces host=bad");
+    expect(redacted).toContain("password=[REDACTED]");
+    expect(redacted).not.toContain("secret");
+    expect(redacted).not.toContain("spaces");
+    expect(redacted).not.toContain("bad");
   });
 });

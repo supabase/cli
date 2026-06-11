@@ -578,6 +578,10 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
       i++;
     } else {
       while (i < n && !isSpace(value[i]!)) {
+        // pgconn's unquoted scan advances past any `\`, then errors with
+        // "invalid backslash" when the escape has no following char
+        // (`config.go:539-543`), so a lone trailing backslash is a parse error.
+        if (!isEscapedChar(i) && value[i] === "\\" && i + 1 >= n) return undefined;
         if (isEscapedChar(i)) i++;
         val += value[i];
         i++;
@@ -587,7 +591,9 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
     // leading `=value` or whitespace-only key must fail, not be silently dropped.
     // (Reachable only after a `=` was consumed, so this is exactly the empty-key case.)
     if (key.length === 0) return undefined;
-    params.set(key, val);
+    // pgconn remaps `dbname`→`database` at parse time (`config.go:574-582`), so both
+    // aliases share one settings slot and the last occurrence in the DSN wins.
+    params.set(key === "dbname" ? "database" : key, val);
   }
   // Omitted fields fall back to libpq `PG*` env vars and then the libpq defaults,
   // matching pgconn's `mergeSettings(defaultSettings, envSettings, connStringSettings)`.
@@ -624,10 +630,9 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   if (hostList === undefined || hostList.length === 0) return undefined;
   const primary = hostList[0]!;
   const user = params.get("user") ?? svc("user") ?? defaultOsUser(env);
-  // pgconn accepts `database` as an alias for `dbname` (`config.go:574-582`); prefer
-  // `dbname` when both appear. A present value (even empty) overrides service/env.
+  // `dbname` was remapped to `database` at parse time (last-wins alias), so read
+  // only `database` here. A present value (even empty) overrides service/env.
   const database =
-    params.get("dbname") ??
     params.get("database") ??
     svc("database") ??
     libpqEnv(env, "PGDATABASE") ??
@@ -712,9 +717,15 @@ function defaultOsUser(env: LegacyParseEnv): string {
  * `postgres://user:p@ss/word@host/db` redacts the whole password rather than leaking
  * a fragment. Where it cannot disambiguate it over-redacts, which is the safe
  * direction for CWE-209 (over-redaction is fine; leaking is the bug).
+ *
+ * The keyword-DSN `password=` branch matches a properly closed `'…'` value first
+ * (preserving any trailing `key=value` pairs), then an **unterminated** opening
+ * quote through end-of-string (a malformed `password='secret with spaces …` whose
+ * value has no closing quote — redact to EOL rather than leaking past the first
+ * space), then a bare unquoted token.
  */
 export function redactLegacyConnectionString(value: string): string {
   return value
     .replace(/(:\/\/[^:@/?#]*:).*(@)(?=[^@/?#]*(?:[/?#]|$))/, "$1[REDACTED]$2")
-    .replace(/(\bpassword\s*=\s*)('(?:[^'\\]|\\.)*'|\S+)/i, "$1[REDACTED]");
+    .replace(/(\bpassword\s*=\s*)('(?:[^'\\]|\\.)*'|'.*$|\S+)/i, "$1[REDACTED]");
 }

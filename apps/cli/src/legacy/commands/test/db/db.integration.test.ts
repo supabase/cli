@@ -196,6 +196,16 @@ describe("legacy test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("adds the host.docker.internal host-gateway mapping on Linux", () => {
+    // Go populates HostConfig.ExtraHosts with this on Linux (docker_linux.go); the
+    // test RuntimeInfo mock reports platform "linux".
+    const { layer, docker } = setup();
+    return Effect.gen(function* () {
+      yield* legacyTestDb(flags());
+      expect(docker.lastOpts?.extraHosts).toEqual(["host.docker.internal:host-gateway"]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("omits --security-opt inside Bitbucket Pipelines (BITBUCKET_CLONE_DIR set)", () => {
     // Go clears hostConfig.SecurityOpt when BITBUCKET_CLONE_DIR is set, because
     // Bitbucket rejects --security-opt (apps/cli-go/internal/utils/docker.go:288-293).

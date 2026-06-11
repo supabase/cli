@@ -285,14 +285,15 @@ const connect = (
       new LegacyDbConnectError({ message: `failed to connect to postgres: ${error}` });
 
     // Load the `sslrootcert` CA bundle (pgconn reads it into `RootCAs` at parse
-    // time; a missing/unreadable file aborts). Skipped for local connections,
-    // which never use TLS.
+    // time; a missing/unreadable file aborts). Skipped for local connections, which
+    // never use TLS. pgconn builds TLS per fallback host, so the CA must be loaded
+    // whenever ANY dial target is non-socket — a socket primary with a TCP fallback
+    // still needs it (`legacySslConfigsFor` already plaintexts socket targets, so
+    // the CA is never applied to a socket dial).
     const rootcertPath = cfg.sslrootcert;
+    const anyTcpTarget = dialTargets.some(({ dialHost }) => !legacyIsUnixSocketHost(dialHost));
     const caCert =
-      rootcertPath !== undefined &&
-      rootcertPath.length > 0 &&
-      !isLocal &&
-      !legacyIsUnixSocketHost(cfg.host)
+      rootcertPath !== undefined && rootcertPath.length > 0 && !isLocal && anyTcpTarget
         ? yield* Effect.try({
             try: () => readFileSync(rootcertPath, "utf8"),
             catch: (error) =>

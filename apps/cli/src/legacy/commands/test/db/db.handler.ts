@@ -166,6 +166,11 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
         // (`apps/cli-go/internal/utils/docker.go:288-293`). Match that exactly:
         // omit the option in Bitbucket CI, where it would abort container creation.
         const inBitbucket = (process.env["BITBUCKET_CLONE_DIR"] ?? "") !== "";
+        // Go adds `host.docker.internal:host-gateway` to every container's
+        // ExtraHosts on Linux (`apps/cli-go/internal/utils/docker_linux.go`); macOS/
+        // Windows Docker Desktop provide the mapping natively (empty there).
+        const extraHosts =
+          runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
         return yield* docker.run({
           image: legacyGetRegistryImageUrl(LEGACY_PG_PROVE_IMAGE),
           cmd: args.cmd,
@@ -173,6 +178,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
           binds: args.binds,
           workingDir: args.workingDir,
           securityOpt: inBitbucket ? [] : ["label:disable"],
+          extraHosts,
           network,
         });
       }),

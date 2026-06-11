@@ -7,7 +7,7 @@ import type { LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
  * `utils.DockerRunOnceWithConfig` — is unit-testable in isolation.
  */
 export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<string> {
-  const { network, binds, env, securityOpt, workingDir, image, cmd } = opts;
+  const { network, binds, env, securityOpt, extraHosts, workingDir, image, cmd } = opts;
   const networkArgs: ReadonlyArray<string> =
     network._tag === "host"
       ? ["--network", "host"]
@@ -18,6 +18,8 @@ export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<
     "run",
     "--rm",
     ...networkArgs,
+    // Go's `HostConfig.ExtraHosts` (DockerStart) → docker CLI `--add-host`.
+    ...extraHosts.flatMap((h) => ["--add-host", h]),
     ...binds.flatMap((b) => ["-v", b]),
     // Emit the key-only `-e KEY` form so values (e.g. PGPASSWORD) never appear
     // in the host process argv (`ps aux` / `/proc/<pid>/cmdline`). Docker reads

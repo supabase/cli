@@ -11,6 +11,7 @@ const base: LegacyDockerRunOpts = {
   binds: ["/host/a:/host/a:ro"],
   workingDir: Option.some("/host/a"),
   securityOpt: ["label:disable"],
+  extraHosts: [],
   network: { _tag: "named", name: "supabase_network_proj" },
 };
 
@@ -35,6 +36,21 @@ describe("buildLegacyDockerArgs", () => {
       "pg_prove",
       "-r",
       "/t",
+    ]);
+  });
+
+  test("emits --add-host for each extraHosts entry, right after the network args", () => {
+    const args = buildLegacyDockerArgs({
+      ...base,
+      extraHosts: ["host.docker.internal:host-gateway"],
+    });
+    expect(args.slice(0, 6)).toEqual([
+      "run",
+      "--rm",
+      "--network",
+      "supabase_network_proj",
+      "--add-host",
+      "host.docker.internal:host-gateway",
     ]);
   });
 
