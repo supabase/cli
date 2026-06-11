@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 import { legacyPgpassPassword } from "./legacy-pgpass.ts";
@@ -412,9 +412,11 @@ function parseUrlConnectionString(
     const options = url.searchParams.get("options") ?? svc("options") ?? null;
     // A `passfile=` setting (query or service) points `.pgpass` resolution at a
     // non-default file (pgconn `config.go:293`); non-empty wins over `PGPASSFILE`.
+    // A present `passfile=` (even empty) overrides PGPASSFILE/default; a present-empty
+    // value then resolves to no `.pgpass` (pgconn's `ReadPassfile("")` fails) →
+    // empty password. Only an absent param falls back to the service value.
     const passfileQuery = url.searchParams.get("passfile");
-    const passfile =
-      passfileQuery !== null && passfileQuery.length > 0 ? passfileQuery : svc("passfile");
+    const passfile = passfileQuery !== null ? passfileQuery : svc("passfile");
     // libpq `connect_timeout` (query, service, or `PGCONNECT_TIMEOUT`). A *present*
     // query value (even empty) overrides service/env and is parsed (empty → error,
     // pgconn's `parseConnectTimeoutSetting`); only an absent query param falls back.
@@ -646,9 +648,9 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   const options = params.get("options") ?? svc("options");
   // A `passfile=` setting (keyword or service) points `.pgpass` resolution at a
   // non-default file (pgconn `config.go:293`); non-empty wins over `PGPASSFILE`.
+  // A present `passfile=` (even empty) overrides PGPASSFILE/default (see URL branch).
   const passfileParam = params.get("passfile");
-  const passfile =
-    passfileParam !== undefined && passfileParam.length > 0 ? passfileParam : svc("passfile");
+  const passfile = passfileParam !== undefined ? passfileParam : svc("passfile");
   // libpq `connect_timeout` (keyword, service, or `PGCONNECT_TIMEOUT`). A *present*
   // keyword (even empty) overrides service/env and is parsed (empty → error); only
   // an absent keyword falls back.
@@ -691,16 +693,24 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
  * `"postgres"` guard covers minimal environments where neither is available.
  *
  * pgconn ignores **empty** `PG*` env vars (`parseEnvSettings` only records a value
- * when non-empty, `config.go:436-441`), so an empty `PGUSER` falls through to the
- * OS account rather than producing an empty username. `USER`/`USERNAME` stand in
- * for `user.Current().Username`, so empty values there are skipped too.
+ * when non-empty, `config.go:436-441`), so an empty `PGUSER` falls through to the OS
+ * account. The OS account is `user.Current().Username` (`defaults.go:21-23`) — the
+ * passwd entry for the effective uid, **not** the `$USER`/`$USERNAME` env vars (those
+ * are never consulted by pgconn; only `PGUSER` is an env override). Node's
+ * `os.userInfo().username` is the faithful analogue; it can throw when there is no
+ * passwd entry, mirroring Go's ignored-error path → the `"postgres"` guard.
  */
+function osAccountUsername(): string | undefined {
+  try {
+    const name = userInfo().username;
+    return name.length > 0 ? name : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function defaultOsUser(env: LegacyParseEnv): string {
-  const nonEmpty = (name: string): string | undefined => {
-    const value = env(name);
-    return value !== undefined && value.length > 0 ? value : undefined;
-  };
-  return libpqEnv(env, "PGUSER") ?? nonEmpty("USER") ?? nonEmpty("USERNAME") ?? "postgres";
+  return libpqEnv(env, "PGUSER") ?? osAccountUsername() ?? "postgres";
 }
 
 /**

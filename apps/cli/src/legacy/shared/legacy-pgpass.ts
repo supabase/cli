@@ -84,10 +84,16 @@ const processEnv: LegacyPassfileEnv = (name) => process.env[name];
  * Resolve the passfile path with pgconn's precedence (`config.go:293,369-377`): an
  * explicit `passfile=` connection-string setting wins, then `PGPASSFILE`, then the
  * libpq per-OS default (`~/.pgpass`, or `%APPDATA%/postgresql/pgpass.conf`).
+ *
+ * A *present* `passfile` (even an empty string) is authoritative: an empty value
+ * resolves to no usable passfile (`undefined`) rather than falling back to
+ * `PGPASSFILE`/the default, mirroring pgconn calling `ReadPassfile("")` (→
+ * `os.Open("")` fails → no `.pgpass` lookup → empty password). Only an *absent*
+ * (`undefined`) setting falls through to `PGPASSFILE`/the default.
  */
 function pgpassFilePath(env: LegacyPassfileEnv, passfile: string | undefined): string | undefined {
-  if (passfile !== undefined && passfile.length > 0) {
-    return passfile;
+  if (passfile !== undefined) {
+    return passfile.length > 0 ? passfile : undefined;
   }
   const explicit = env("PGPASSFILE");
   if (explicit !== undefined && explicit.length > 0) {

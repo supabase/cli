@@ -1,5 +1,5 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -8,8 +8,16 @@ import {
   redactLegacyConnectionString,
 } from "./legacy-db-config.parse.ts";
 
-const osUser =
-  process.env["PGUSER"] ?? process.env["USER"] ?? process.env["USERNAME"] ?? "postgres";
+// Mirrors the parser's default-user resolution: PGUSER (env) else the actual OS
+// account (os.userInfo().username, NOT $USER/$USERNAME) else "postgres".
+const osAccount = (() => {
+  try {
+    return userInfo().username || undefined;
+  } catch {
+    return undefined;
+  }
+})();
+const osUser = process.env["PGUSER"] ?? osAccount ?? "postgres";
 
 describe("parseLegacyConnectionString (URL form)", () => {
   it("parses host/port/user/password/database and percent-decodes userinfo", () => {
@@ -509,6 +517,18 @@ describe("passfile= DSN setting (pgconn parity)", () => {
       parseLegacyConnectionString("postgres://alice@db.example.com:6543/appdb")?.password,
     ).toBe("env-file-secret");
   });
+
+  it("a present-but-empty passfile= suppresses PGPASSFILE (→ empty password)", () => {
+    // pgconn: present-empty passfile overrides PGPASSFILE, then ReadPassfile("") fails
+    // → no .pgpass lookup → empty password (not the env-file credential).
+    expect(
+      parseLegacyConnectionString("postgres://alice@db.example.com:6543/appdb?passfile=")?.password,
+    ).toBe("");
+    expect(
+      parseLegacyConnectionString("host=db.example.com port=6543 dbname=appdb user=alice passfile=")
+        ?.password,
+    ).toBe("");
+  });
 });
 
 describe("injected env lookup (project dotenv parity)", () => {
@@ -743,11 +763,15 @@ describe("pgconn parse refinements", () => {
     expect(parseLegacyConnectionString("host=h user=u service=", env)).toBeUndefined();
   });
 
-  it("ignores an empty PGUSER, falling through to the OS account", () => {
-    const withUser = (name: string): string | undefined => ({ PGUSER: "", USER: "alice" })[name];
-    expect(parseLegacyConnectionString("postgres://host/db", withUser)?.user).toBe("alice");
-    const noUser = (name: string): string | undefined => (name === "PGUSER" ? "" : undefined);
-    expect(parseLegacyConnectionString("postgres://host/db", noUser)?.user).toBe("postgres");
+  it("uses the OS account (not $USER/$USERNAME) when PGUSER is empty/absent", () => {
+    // pgconn reads user.Current().Username for the default, never $USER/$USERNAME;
+    // a divergent $USER must be ignored. Empty PGUSER falls through to the OS account.
+    const env = (name: string): string | undefined =>
+      ({ PGUSER: "", USER: "not-the-account", USERNAME: "not-the-account" })[name];
+    expect(parseLegacyConnectionString("postgres://host/db", env)?.user).toBe(osUser);
+    expect(parseLegacyConnectionString("postgres://host/db", env)?.user).not.toBe(
+      "not-the-account",
+    );
   });
 
   it("rejects an empty connection-string connect_timeout but ignores an empty env var", () => {
