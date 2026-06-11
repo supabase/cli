@@ -233,11 +233,6 @@ func TestStartCommand(t *testing.T) {
 
 func TestSetupDatabase(t *testing.T) {
 	utils.Config.Db.MajorVersion = 15
-	// pg-delta catalog caching shells out to a subprocess that cannot use the in-process
-	// pgmock dialer; this suite exercises container/schema startup, not catalog caching.
-	prevPgDelta := utils.Config.Experimental.PgDelta
-	utils.Config.Experimental.PgDelta = nil
-	t.Cleanup(func() { utils.Config.Experimental.PgDelta = prevPgDelta })
 
 	t.Run("revokes default data api privileges when auto_expose_new_tables is unset", func(t *testing.T) {
 		utils.Config.Db.MajorVersion = 14
@@ -385,11 +380,6 @@ func TestSetupDatabase(t *testing.T) {
 	})
 }
 func TestStartDatabaseWithCustomSettings(t *testing.T) {
-	// pg-delta catalog caching shells out to a subprocess that cannot use the in-process
-	// pgmock dialer; this suite exercises container/schema startup, not catalog caching.
-	prevPgDelta := utils.Config.Experimental.PgDelta
-	utils.Config.Experimental.PgDelta = nil
-	t.Cleanup(func() { utils.Config.Experimental.PgDelta = prevPgDelta })
 	t.Run("starts database with custom MaxConnections", func(t *testing.T) {
 		// Setup
 		utils.Config.Db.MajorVersion = 15
