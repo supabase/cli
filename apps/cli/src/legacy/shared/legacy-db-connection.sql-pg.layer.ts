@@ -49,10 +49,14 @@ function needsRoleStepDown(user: string): boolean {
  * covers a direct IPv6 `--db-url` carrying `?options=…` and the DoH path when a
  * Supavisor URL resolves to an AAAA address.
  */
-export function legacyBuildConnectionUrl(cfg: LegacyPgConnInput, host: string): string {
+export function legacyBuildConnectionUrl(
+  cfg: LegacyPgConnInput,
+  host: string,
+  port: number = cfg.port,
+): string {
   const hostPart = net.isIP(host) === 6 ? `[${host}]` : host;
   const url = new URL(
-    `postgresql://${encodeURIComponent(cfg.user)}:${encodeURIComponent(cfg.password)}@${hostPart}:${cfg.port}/${encodeURIComponent(cfg.database)}`,
+    `postgresql://${encodeURIComponent(cfg.user)}:${encodeURIComponent(cfg.password)}@${hostPart}:${port}/${encodeURIComponent(cfg.database)}`,
   );
   if (cfg.options !== undefined && cfg.options.length > 0) {
     url.searchParams.set("options", cfg.options);
@@ -114,14 +118,21 @@ export function legacySslOptionFor(
 }
 
 /**
- * The ordered list of `ssl` configs to try for a connection, mirroring pgconn's
- * fallback list (`configTLS`, `config.go:772-780`). The `pg` driver carries a
- * single `ssl` option and cannot replay pgconn's internal TLS↔plaintext
- * fallback, so `connect` retries across this list:
+ * The ordered list of `ssl` configs to try for a connection. pgconn's raw
+ * `configTLS` fallback list (`config.go:772-780`) is **post-processed** by Go's
+ * `ConnectByUrl` (`apps/cli-go/internal/utils/connect.go:156-168`), which strips
+ * every non-TLS fallback whenever the primary config uses TLS ("No fallback from
+ * TLS to unsecure connection"). The `pg` driver carries a single `ssl` option and
+ * cannot replay pgconn's internal fallback, so `connect` retries across the
+ * *post-stripping* list:
  *
- * - `disable` → `[plaintext]`
- * - `allow` → `[plaintext, TLS]` (`{nil, tlsConfig}` — non-TLS primary)
- * - `prefer` / unset (pgconn's default) → `[TLS, plaintext]` (`{tlsConfig, nil}`)
+ * - `disable` → `[plaintext]` (primary is plaintext; nothing stripped)
+ * - `allow` → `[plaintext, TLS]` (`{nil, tlsConfig}` — non-TLS primary, so the
+ *   TLS fallback survives the strip)
+ * - `prefer` / unset (pgconn's default) → `[TLS]`. pgconn's raw list is
+ *   `{tlsConfig, nil}`, but the primary is TLS, so `ConnectByUrl` drops the
+ *   plaintext fallback. Go therefore **fails** rather than downgrading a default
+ *   remote connection to plaintext, and so must this port.
  * - `require` / `verify-ca` / `verify-full` → `[TLS]` (TLS only)
  *
  * `servername` (the original hostname) is per dial host — set when a DoH-resolved
@@ -147,8 +158,10 @@ export function legacySslConfigsFor(
   ) {
     return [legacySslOptionFor(effectiveMode, false, servername, caCert)];
   }
-  // prefer (and the unset default) try TLS first, then fall back to plaintext.
-  return [legacySslOptionFor(sslmode, false, servername, caCert), false];
+  // prefer (and the unset default): pgconn's raw list is `{tlsConfig, nil}`, but
+  // `ConnectByUrl` strips the plaintext fallback because the primary is TLS, so
+  // this is TLS-only — a failed TLS handshake must error, never downgrade.
+  return [legacySslOptionFor(sslmode, false, servername, caCert)];
 }
 
 /**
@@ -161,28 +174,40 @@ const connect = (
   { isLocal, dnsResolver }: LegacyDbConnectOptions,
 ): Effect.Effect<LegacyDbSession, LegacyDbConnectError, Scope.Scope> =>
   Effect.gen(function* () {
-    // Go installs the Cloudflare DoH resolver for remote connections when
-    // `--dns-resolver https` is set (`connect.go:211-213`). It resolves the host
-    // to **all** its IPs (`FallbackLookupIP`) and pgconn dials them in order, so
-    // we resolve the full list and retry each. We dial a resolved IP but keep the
-    // original hostname for the TLS `servername` (carried in the `ssl` option) so
-    // verification still targets the hostname. Local connections use the host
-    // verbatim (native resolver).
-    const dialHosts =
-      dnsResolver === "https" && !isLocal
-        ? yield* legacyResolveHostsOverHttps(cfg.host)
-        : [cfg.host];
+    // pgconn dials the primary host then each HA fallback in order
+    // (`config.go:326-362`); `cfg.fallbacks` carries the extras parsed from a
+    // libpq multi-host connection string. Go installs the Cloudflare DoH resolver
+    // for remote connections when `--dns-resolver https` is set
+    // (`connect.go:211-213`): it resolves each host to **all** its IPs
+    // (`FallbackLookupIP`) and dials them in order, so we resolve every config host
+    // up front and retry each. We dial a resolved IP but keep the original hostname
+    // for the TLS `servername` (carried in the `ssl` option) so verification still
+    // targets the hostname. Local connections use the host verbatim (native resolver).
+    const hostList = [{ host: cfg.host, port: cfg.port }, ...(cfg.fallbacks ?? [])];
+    const dialTargets: Array<{ dialHost: string; port: number; servername: string | undefined }> =
+      [];
+    for (const { host, port } of hostList) {
+      const resolved =
+        dnsResolver === "https" && !isLocal ? yield* legacyResolveHostsOverHttps(host) : [host];
+      for (const dialHost of resolved) {
+        dialTargets.push({ dialHost, port, servername: dialHost === host ? undefined : host });
+      }
+    }
     const hasOptions = cfg.options !== undefined && cfg.options.length > 0;
-    const makeClient = (dialHost: string, sslOption: boolean | ConnectionOptions | undefined) =>
+    const makeClient = (
+      dialHost: string,
+      port: number,
+      sslOption: boolean | ConnectionOptions | undefined,
+    ) =>
       PgClient.make({
         // When a libpq `options` param is present, route everything through the
         // connection string so it reaches the server (see `buildConnectionUrl`);
         // otherwise pass discrete fields to avoid round-tripping the password.
         ...(hasOptions
-          ? { url: Redacted.make(legacyBuildConnectionUrl(cfg, dialHost)) }
+          ? { url: Redacted.make(legacyBuildConnectionUrl(cfg, dialHost, port)) }
           : {
               host: dialHost,
-              port: cfg.port,
+              port,
               username: cfg.user,
               password: Redacted.make(cfg.password),
               database: cfg.database,
@@ -213,14 +238,13 @@ const connect = (
     // Build the ordered attempt list, mirroring pgconn's fallback loop
     // (`configTLS` fallback configs, expanded across each resolved address by
     // `expandWithIPs`): each TLS config (`legacySslConfigsFor`) is tried against
-    // each dial host. `servername` is per host (the original hostname when we
-    // dial a DoH-resolved IP).
-    const attempts = dialHosts.flatMap((dialHost) => {
-      const servername = dialHost === cfg.host ? undefined : cfg.host;
-      return legacySslConfigsFor(cfg.sslmode, isLocal, servername, caCert).map((ssl) =>
-        makeClient(dialHost, ssl),
-      );
-    });
+    // each dial target (host × resolved IPs). `servername` is per target (the
+    // original hostname when we dial a DoH-resolved IP).
+    const attempts = dialTargets.flatMap(({ dialHost, port, servername }) =>
+      legacySslConfigsFor(cfg.sslmode, isLocal, servername, caCert).map((ssl) =>
+        makeClient(dialHost, port, ssl),
+      ),
+    );
 
     // The `pg` driver connects lazily and cannot replay pgconn's fallback, so
     // probe each non-final attempt with `select 1` to force the connection and

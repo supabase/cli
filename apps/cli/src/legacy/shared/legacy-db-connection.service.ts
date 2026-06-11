@@ -13,6 +13,15 @@ export interface LegacyPgConnInput {
   readonly password: string;
   readonly database: string;
   /**
+   * Additional HA failover hosts beyond the primary `host`/`port`, in order.
+   * pgconn accepts libpq multi-host connection strings
+   * (`postgres://h1:5432,h2:5433/db` or `host=h1,h2 port=5432,5433`) and dials
+   * each in turn (`config.go:326-362`). `host`/`port` are the *primary*
+   * (`config.Host`/`config.Port`, used for `IsLocalDatabase` and `.pgpass`); these
+   * are the remaining `config.Fallbacks`. Absent for the common single-host case.
+   */
+  readonly fallbacks?: ReadonlyArray<{ readonly host: string; readonly port: number }>;
+  /**
    * libpq `options` startup parameter (Go's `pgconn.Config.RuntimeParams["options"]`).
    * Legacy Supavisor pooler URLs identify the tenant via `?options=reference=<ref>`
    * instead of a `<user>.<ref>` username; the driver layer must forward this so the

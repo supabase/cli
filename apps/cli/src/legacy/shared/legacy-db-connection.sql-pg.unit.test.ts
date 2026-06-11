@@ -29,6 +29,14 @@ describe("legacyBuildConnectionUrl", () => {
       "@203.0.113.10:6543/",
     );
   });
+
+  it("uses the per-host port override (for an HA fallback host) over cfg.port", () => {
+    // A multi-host config dials each fallback on its own port; the URL builder is
+    // told that port explicitly rather than reusing the primary cfg.port.
+    expect(legacyBuildConnectionUrl({ ...base, host: "h1" }, "h2.example.com", 5433)).toContain(
+      "@h2.example.com:5433/",
+    );
+  });
 });
 
 describe("legacySslOptionFor", () => {
@@ -118,14 +126,15 @@ describe("legacySslConfigsFor (pgconn fallback list)", () => {
     ]);
   });
 
-  it("prefer and unset are TLS primary with a plaintext fallback ({tlsConfig, nil})", () => {
+  it("prefer and unset are TLS only (ConnectByUrl strips the plaintext fallback)", () => {
+    // pgconn's raw list is `{tlsConfig, nil}`, but Go's ConnectByUrl removes the
+    // plaintext fallback when the primary is TLS, so a default remote connection
+    // fails rather than downgrading to plaintext.
     expect(legacySslConfigsFor("prefer", false, undefined)).toEqual([
       { rejectUnauthorized: false },
-      false,
     ]);
     expect(legacySslConfigsFor(undefined, false, undefined)).toEqual([
       { rejectUnauthorized: false },
-      false,
     ]);
   });
 
@@ -161,7 +170,6 @@ describe("legacySslConfigsFor (pgconn fallback list)", () => {
     // prefer stays unverified even with a root cert (pgconn: InsecureSkipVerify).
     expect(legacySslConfigsFor("prefer", false, undefined, ca)).toEqual([
       { rejectUnauthorized: false },
-      false,
     ]);
   });
 });

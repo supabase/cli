@@ -63,6 +63,93 @@ function unbracketIpv6(host: string): string {
 }
 
 /**
+ * Resolve a libpq password with pgconn's precedence (`mergeSettings` plus the
+ * `config.Password == ""` `.pgpass` fallback, `config.go:264-379`): a password
+ * supplied by the connection string — **even an explicit empty one**
+ * (`user:@host`, `?password=`, `password=`) — overrides `PGPASSWORD`, because the
+ * connection-string settings are merged over the env settings; an absent password
+ * falls back to `PGPASSWORD`. Either way, an empty resolved value then falls
+ * through to `.pgpass`. `connStringPassword` is `undefined` only when the string
+ * did not specify a password key at all. `host`/`port` are the primary host:
+ * pgconn keys `.pgpass` off `config.Host` (the first fallback host).
+ */
+function resolveLibpqPassword(
+  connStringPassword: string | undefined,
+  host: string,
+  port: number,
+  database: string,
+  user: string,
+): string {
+  const resolved = connStringPassword ?? libpqEnv("PGPASSWORD") ?? "";
+  return resolved.length > 0 ? resolved : legacyPgpassPassword(host, port, database, user);
+}
+
+/**
+ * Zip a comma-separated host list with a comma-separated port list into the
+ * ordered dial targets, mirroring pgconn's per-host fallback expansion
+ * (`config.go:326-362`): hosts and ports are split independently, and a host with
+ * no matching port reuses the first port (`ports[0]`). A non-numeric (or empty)
+ * port is a `parsePort` error, surfaced as `undefined` so the caller rejects the
+ * DSN. `hostString`/`portString` carry the bare hosts and ports only — for a URL,
+ * the structural `host:port` segments are pre-split by `parseHostPortSegment`.
+ */
+function buildLegacyHostList(
+  hostString: string,
+  portString: string,
+): Array<{ host: string; port: number }> | undefined {
+  const hosts = hostString.split(",");
+  const ports = portString.split(",");
+  const list: Array<{ host: string; port: number }> = [];
+  for (let i = 0; i < hosts.length; i++) {
+    const portRaw = i < ports.length ? ports[i]! : ports[0]!;
+    if (!/^\d+$/.test(portRaw)) return undefined;
+    list.push({ host: hosts[i]!, port: Number(portRaw) });
+  }
+  return list;
+}
+
+/** Extract a URL's authority (between `://` and the first `/`, `?`, or `#`). */
+function legacyUrlAuthority(url: string): string {
+  const schemeEnd = url.indexOf("://");
+  const rest = schemeEnd === -1 ? url : url.slice(schemeEnd + 3);
+  const end = rest.search(/[/?#]/);
+  return end === -1 ? rest : rest.slice(0, end);
+}
+
+/** Split a `host:port,host:port` list on top-level commas, respecting `[ipv6]`. */
+function splitHostPortList(value: string): string[] {
+  const segments: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of value) {
+    if (ch === "[") depth++;
+    else if (ch === "]") depth = Math.max(0, depth - 1);
+    if (ch === "," && depth === 0) {
+      segments.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  segments.push(current);
+  return segments;
+}
+
+/** Parse one `host`, `host:port`, `[ipv6]`, or `[ipv6]:port` authority segment. */
+function parseHostPortSegment(segment: string): { host: string; port: string } {
+  if (segment.startsWith("[")) {
+    const close = segment.indexOf("]");
+    if (close === -1) return { host: segment, port: "" };
+    const after = segment.slice(close + 1);
+    return { host: segment.slice(1, close), port: after.startsWith(":") ? after.slice(1) : "" };
+  }
+  const colon = segment.lastIndexOf(":");
+  return colon === -1
+    ? { host: segment, port: "" }
+    : { host: segment.slice(0, colon), port: segment.slice(colon + 1) };
+}
+
+/**
  * Parse a Postgres connection string into a `LegacyPgConnInput`. Mirrors Go's
  * `pgconn.ParseConfig` (`apps/cli-go/internal/utils/flags/db_url.go:64`), which
  * accepts **both** the WHATWG `postgres(ql)://…` URL form and the libpq
@@ -89,9 +176,35 @@ export function parseLegacyConnectionString(value: string): LegacyPgConnInput | 
 
 /** Parse the WHATWG `postgres(ql)://` URL form. */
 function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined {
+  const trimmed = value.trim();
+  // pgconn accepts libpq multi-host failover URLs (`postgres://h1:5432,h2:5433/db`,
+  // `config.go:166,326-362`), which WHATWG `new URL()` rejects (the comma'd
+  // host:port is not a valid authority). Hand-extract the authority so we can split
+  // the host list ourselves, then normalize the URL down to its first host so
+  // `new URL()` still parses the userinfo, path, and query exactly as before.
+  const authority = legacyUrlAuthority(trimmed);
+  // Go's `net/url` splits userinfo from host on the last `@`; literal `@` in a
+  // password must be percent-encoded, so the last `@` is the real boundary.
+  const atIdx = authority.lastIndexOf("@");
+  const userinfoRaw = atIdx === -1 ? "" : authority.slice(0, atIdx);
+  const hostPortRaw = atIdx === -1 ? authority : authority.slice(atIdx + 1);
+  const segments = splitHostPortList(hostPortRaw);
+  const multiHost = segments.length > 1;
+
+  let normalized = trimmed;
+  if (multiHost) {
+    const authorityStart = trimmed.indexOf("://") + 3;
+    const newAuthority =
+      atIdx === -1 ? segments[0]! : `${authority.slice(0, atIdx + 1)}${segments[0]!}`;
+    normalized =
+      trimmed.slice(0, authorityStart) +
+      newAuthority +
+      trimmed.slice(authorityStart + authority.length);
+  }
+
   let url: URL;
   try {
-    url = new URL(value);
+    url = new URL(normalized);
   } catch {
     return undefined;
   }
@@ -115,13 +228,6 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     // `mergeSettings(defaultSettings, envSettings, connStringSettings)`.
     const rawUser = queryOrElse("user", decodeURIComponent(url.username));
     const user = rawUser.length > 0 ? rawUser : defaultOsUser();
-    const rawPassword = queryOrElse("password", decodeURIComponent(url.password));
-    // WHATWG `URL.hostname` keeps the brackets around an IPv6 literal (`[::1]`),
-    // but `net`/node-postgres and `PGHOST` expect the bare address. Go's
-    // `url.Hostname()` returns the unbracketed host and only re-adds brackets when
-    // formatting a URL (`ToPostgresURL`), so strip them here.
-    const rawHost = queryOrElse("host", unbracketIpv6(url.hostname));
-    const rawDatabase = queryOrElse("dbname", decodeURIComponent(url.pathname.replace(/^\//, "")));
     // libpq fills `sslmode` from `PGSSLMODE` when the connection string omits it
     // (pgconn's `parseEnvSettings`), before the TLS-mode default.
     const sslmode = url.searchParams.get("sslmode") ?? libpqEnv("PGSSLMODE") ?? null;
@@ -131,6 +237,30 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     // libpq `sslrootcert` (query or `PGSSLROOTCERT`) pins the server CA.
     const sslrootcert = url.searchParams.get("sslrootcert") ?? libpqEnv("PGSSLROOTCERT") ?? null;
     const options = url.searchParams.get("options");
+
+    // Structural hosts/ports become pgconn's comma-joined `settings["host"]` /
+    // `settings["port"]`. WHATWG `URL.hostname` keeps the brackets around an IPv6
+    // literal (`[::1]`); Go's `url.Hostname()` returns the unbracketed host (only
+    // re-adding brackets when formatting via `ToPostgresURL`), so strip them. For a
+    // multi-host URL the per-segment host/port were already split out by hand.
+    const structuralHosts = multiHost
+      ? segments.map((s) => parseHostPortSegment(s).host).filter((h) => h.length > 0)
+      : url.hostname.length > 0
+        ? [unbracketIpv6(url.hostname)]
+        : [];
+    const structuralPorts = multiHost
+      ? segments.map((s) => parseHostPortSegment(s).port).filter((p) => p.length > 0)
+      : url.port.length > 0
+        ? [url.port]
+        : [];
+
+    const hostQuery = query.get("host");
+    const hostString =
+      hostQuery !== null && hostQuery.length > 0
+        ? hostQuery
+        : structuralHosts.length > 0
+          ? structuralHosts.join(",")
+          : (libpqEnv("PGHOST") ?? defaultLibpqHost());
     // pgconn merges a `?port=` query setting over the structural port and then
     // parses it, so an explicit query port — even empty (`?port=`) or non-numeric
     // — that is not a valid number is a parse error. A bad `PGPORT` fallback is
@@ -139,25 +269,51 @@ function parseUrlConnectionString(value: string): LegacyPgConnInput | undefined 
     if (portQuery !== null && !/^\d+$/.test(portQuery)) {
       return undefined;
     }
-    const rawPort = portQuery ?? url.port;
-    const port = rawPort.length > 0 ? Number(rawPort) : libpqPort(libpqEnv("PGPORT"));
-    if (port === undefined) {
+    let portString: string;
+    if (portQuery !== null) {
+      portString = portQuery;
+    } else if (structuralPorts.length > 0) {
+      portString = structuralPorts.join(",");
+    } else {
+      const envPort = libpqPort(libpqEnv("PGPORT"));
+      if (envPort === undefined) return undefined;
+      portString = String(envPort);
+    }
+
+    const hostList = buildLegacyHostList(hostString, portString);
+    if (hostList === undefined || hostList.length === 0) {
       return undefined;
     }
-    const host = rawHost.length > 0 ? rawHost : (libpqEnv("PGHOST") ?? defaultLibpqHost());
+    const primary = hostList[0]!;
+
+    const rawDatabase = queryOrElse("dbname", decodeURIComponent(url.pathname.replace(/^\//, "")));
     // Absent database → PGDATABASE, then the resolved user (libpq default).
     const database = rawDatabase.length > 0 ? rawDatabase : (libpqEnv("PGDATABASE") ?? user);
-    // Password precedence (pgconn): connection string → PGPASSWORD → `.pgpass`.
-    const password =
-      rawPassword.length > 0
-        ? rawPassword
-        : (libpqEnv("PGPASSWORD") ?? legacyPgpassPassword(host, port, database, user));
+
+    // Password precedence (pgconn): the query loop runs last, so `?password=`
+    // overrides the userinfo password. A `:` in the raw userinfo marks a present
+    // (possibly empty) userinfo password — `user:@host` — which WHATWG `url.password`
+    // cannot distinguish from an absent one (`user@host`), so detect it from the
+    // raw string. `resolveLibpqPassword` then applies the PGPASSWORD/`.pgpass` rules.
+    const connStringPassword = query.has("password")
+      ? (query.get("password") ?? "")
+      : userinfoRaw.includes(":")
+        ? decodeURIComponent(url.password)
+        : undefined;
+    const password = resolveLibpqPassword(
+      connStringPassword,
+      primary.host,
+      primary.port,
+      database,
+      user,
+    );
     return {
-      host,
-      port,
+      host: primary.host,
+      port: primary.port,
       user,
       password,
       database,
+      ...(hostList.length > 1 ? { fallbacks: hostList.slice(1) } : {}),
       ...(options !== null && options.length > 0 ? { options } : {}),
       ...(sslmode !== null && sslmode.length > 0 ? { sslmode } : {}),
       ...(sslrootcert !== null && sslrootcert.length > 0 ? { sslrootcert } : {}),
@@ -211,13 +367,24 @@ function parseKeywordValueDsn(value: string): LegacyPgConnInput | undefined {
   }
   // Omitted fields fall back to libpq `PG*` env vars and then the libpq defaults,
   // matching pgconn's `mergeSettings(defaultSettings, envSettings, connStringSettings)`.
-  const host =
+  // A libpq DSN also accepts comma-separated multi-host failover
+  // (`host=h1,h2 port=5432,5433`, `config.go:326-362`), zipped by `buildLegacyHostList`.
+  const hostString =
     params.get("host") ?? params.get("hostaddr") ?? libpqEnv("PGHOST") ?? defaultLibpqHost();
-  const portRaw = params.get("port");
-  const port =
-    portRaw !== undefined && portRaw.length > 0 ? Number(portRaw) : libpqPort(libpqEnv("PGPORT"));
-  // Explicit non-numeric `port=` → NaN; a bad `PGPORT` fallback → undefined.
-  if (port === undefined || Number.isNaN(port)) return undefined;
+  // Explicit empty/non-numeric `port=` is a parse error (pgconn's `parsePort`); an
+  // absent `port` falls back to `PGPORT` and then the libpq default.
+  const portParam = params.get("port");
+  let portString: string;
+  if (portParam !== undefined) {
+    portString = portParam;
+  } else {
+    const envPort = libpqPort(libpqEnv("PGPORT"));
+    if (envPort === undefined) return undefined;
+    portString = String(envPort);
+  }
+  const hostList = buildLegacyHostList(hostString, portString);
+  if (hostList === undefined || hostList.length === 0) return undefined;
+  const primary = hostList[0]!;
   const user = params.get("user") ?? defaultOsUser();
   const database =
     params.get("dbname") ?? libpqEnv("PGDATABASE") ?? (user.length > 0 ? user : "postgres");
@@ -227,17 +394,22 @@ function parseKeywordValueDsn(value: string): LegacyPgConnInput | undefined {
   if (isInvalidSslmode(sslmode)) return undefined;
   const sslrootcert = params.get("sslrootcert") ?? libpqEnv("PGSSLROOTCERT");
   const options = params.get("options");
-  // Password precedence (pgconn): connection string → PGPASSWORD → `.pgpass`.
-  const password =
-    params.get("password") ??
-    libpqEnv("PGPASSWORD") ??
-    legacyPgpassPassword(host, port, database, user);
+  // Password precedence (pgconn): a `password=` entry — even empty — overrides
+  // PGPASSWORD; an empty resolved value then falls through to `.pgpass`.
+  const password = resolveLibpqPassword(
+    params.has("password") ? params.get("password")! : undefined,
+    primary.host,
+    primary.port,
+    database,
+    user,
+  );
   return {
-    host,
-    port,
+    host: primary.host,
+    port: primary.port,
     user,
     password,
     database,
+    ...(hostList.length > 1 ? { fallbacks: hostList.slice(1) } : {}),
     ...(options !== undefined && options.length > 0 ? { options } : {}),
     ...(sslmode !== undefined && sslmode.length > 0 ? { sslmode } : {}),
     ...(sslrootcert !== undefined && sslrootcert.length > 0 ? { sslrootcert } : {}),

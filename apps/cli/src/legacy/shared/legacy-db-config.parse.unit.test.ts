@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   parseLegacyConnectionString,
@@ -315,6 +318,144 @@ describe("parseLegacyConnectionString (libpq keyword/value DSN)", () => {
 
   it("returns undefined for a non-numeric port", () => {
     expect(parseLegacyConnectionString("host=h port=abc")).toBeUndefined();
+  });
+});
+
+describe("empty-password precedence (pgconn parity)", () => {
+  // pgconn merges the connection-string password over PGPASSWORD, so an explicit
+  // *empty* password (`user:@host`, `?password=`, `password=`) suppresses
+  // PGPASSWORD and then falls through to `.pgpass` (config.go:264-379). Point
+  // PGPASSFILE at a temp file we control and set PGPASSWORD to prove which one wins.
+  let tmp: string;
+  let pgpassPath: string;
+  const prev: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "pgpass-"));
+    pgpassPath = join(tmp, ".pgpass");
+    for (const k of ["PGPASSWORD", "PGPASSFILE", "PGPORT", "PGDATABASE", "PGHOST"]) {
+      prev[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env["PGPASSWORD"] = "env-secret";
+    process.env["PGPASSFILE"] = pgpassPath;
+    // host db.example.com, port 6543, db appdb, user alice.
+    writeFileSync(pgpassPath, "db.example.com:6543:appdb:alice:pgpass-secret\n");
+  });
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(prev)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("uses PGPASSWORD when the URL has no password component at all (user@host)", () => {
+    expect(
+      parseLegacyConnectionString("postgres://alice@db.example.com:6543/appdb")?.password,
+    ).toBe("env-secret");
+  });
+
+  it("an explicit empty URL userinfo password (user:@host) suppresses PGPASSWORD → .pgpass", () => {
+    expect(
+      parseLegacyConnectionString("postgres://alice:@db.example.com:6543/appdb")?.password,
+    ).toBe("pgpass-secret");
+  });
+
+  it("an explicit empty ?password= suppresses PGPASSWORD → .pgpass", () => {
+    expect(
+      parseLegacyConnectionString("postgres://alice@db.example.com:6543/appdb?password=")?.password,
+    ).toBe("pgpass-secret");
+  });
+
+  it("an explicit empty DSN password= suppresses PGPASSWORD → .pgpass", () => {
+    expect(
+      parseLegacyConnectionString("host=db.example.com port=6543 dbname=appdb user=alice password=")
+        ?.password,
+    ).toBe("pgpass-secret");
+  });
+
+  it("falls through to an empty password when neither PGPASSWORD nor .pgpass match", () => {
+    delete process.env["PGPASSWORD"];
+    // No matching .pgpass line for this host → empty.
+    expect(
+      parseLegacyConnectionString("postgres://alice:@other.example.com:6543/appdb")?.password,
+    ).toBe("");
+  });
+});
+
+describe("multi-host failover (pgconn parity)", () => {
+  it("parses a comma-separated multi-host URL into primary + fallbacks", () => {
+    expect(parseLegacyConnectionString("postgres://u:pw@h1:5432,h2:5433/db")).toEqual({
+      host: "h1",
+      port: 5432,
+      user: "u",
+      password: "pw",
+      database: "db",
+      fallbacks: [{ host: "h2", port: 5433 }],
+    });
+  });
+
+  it("defaults every host to the first port when no host carries one", () => {
+    expect(parseLegacyConnectionString("postgres://u:pw@h1,h2,h3/db")).toMatchObject({
+      host: "h1",
+      port: 5432,
+      fallbacks: [
+        { host: "h2", port: 5432 },
+        { host: "h3", port: 5432 },
+      ],
+    });
+  });
+
+  it("zips hosts to the (compacted) port list exactly as pgconn does", () => {
+    // pgconn drops empty ports before zipping (config.go:462-488), so a host that
+    // omits a port does NOT inherit the previous host's port — it takes the next
+    // entry in the compacted port list, and only a host past the end reuses ports[0].
+    // For `h1:5432,h2,h3:5544` the port list is [5432, 5544]: h1→5432, h2→5544,
+    // h3 (index 2, past the end)→ports[0]=5432. This is pgconn's quirk, matched 1:1.
+    expect(parseLegacyConnectionString("postgres://u:pw@h1:5432,h2,h3:5544/db")).toMatchObject({
+      host: "h1",
+      port: 5432,
+      fallbacks: [
+        { host: "h2", port: 5544 },
+        { host: "h3", port: 5432 },
+      ],
+    });
+  });
+
+  it("handles bracketed IPv6 literals in a multi-host URL", () => {
+    expect(parseLegacyConnectionString("postgres://u:pw@[::1]:5432,[::2]:5433/db")).toMatchObject({
+      host: "::1",
+      port: 5432,
+      fallbacks: [{ host: "::2", port: 5433 }],
+    });
+  });
+
+  it("keeps the query string (sslmode) intact for a multi-host URL", () => {
+    expect(
+      parseLegacyConnectionString("postgres://u:pw@h1:5432,h2:5433/db?sslmode=require"),
+    ).toMatchObject({ host: "h1", sslmode: "require", fallbacks: [{ host: "h2", port: 5433 }] });
+  });
+
+  it("rejects a multi-host URL with a non-numeric port (pgconn parsePort error)", () => {
+    expect(parseLegacyConnectionString("postgres://u:pw@h1:5432,h2:bad/db")).toBeUndefined();
+  });
+
+  it("parses a comma-separated multi-host DSN into primary + fallbacks", () => {
+    expect(parseLegacyConnectionString("host=h1,h2 port=5432,5433 user=u dbname=db")).toMatchObject(
+      {
+        host: "h1",
+        port: 5432,
+        fallbacks: [{ host: "h2", port: 5433 }],
+      },
+    );
+  });
+
+  it("omits fallbacks for the common single-host case", () => {
+    expect(parseLegacyConnectionString("postgres://u:pw@h1:5432/db")).not.toHaveProperty(
+      "fallbacks",
+    );
   });
 });
 

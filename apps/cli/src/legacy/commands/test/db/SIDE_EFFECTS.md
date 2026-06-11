@@ -96,6 +96,15 @@ command (exit 1).
   `?options=reference=<ref>`) parameters are preserved on both forms. A malformed URL or
   percent escape surfaces as a redacted `failed to parse connection string` error, never
   an unhandled defect.
+- Multi-host failover connection strings (`postgres://h1:5432,h2:5433/db`,
+  `host=h1,h2 port=5432,5433`) are supported on both forms, matching pgconn
+  (`config.go:326-362`): the primary host is dialed first, then each fallback in order,
+  reusing the first port when a host omits one.
+- Password precedence matches pgconn/libpq (`config.go:264-379`): a password supplied by
+  the connection string — **even an explicit empty one** (`user:@host`, `?password=`,
+  `password=`) — overrides `PGPASSWORD`; an empty resolved value then falls through to
+  `.pgpass`. A connection string with no password key at all uses `PGPASSWORD` then
+  `.pgpass`.
 - `--dns-resolver https` (global flag, Go's `utils.DNSResolver`): for remote connections
   the DB host is resolved via Cloudflare DNS-over-HTTPS (`https://1.1.1.1/dns-query`)
   before dialing, mirroring Go's `cc.LookupFunc = FallbackLookupIP` (`connect.go:211`).
