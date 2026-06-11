@@ -9,6 +9,24 @@ export type LegacyHostnameResponse = typeof V1GetHostnameConfigOutput.Type;
 
 type LegacyHostnameSsl = LegacyHostnameResponse["data"]["result"]["ssl"];
 
+type LegacyHostnameStatus = Exclude<LegacyHostnameResponse["status"], undefined>;
+
+function getHostnameStatus(response: LegacyHostnameResponse): LegacyHostnameStatus | undefined {
+  if (response.status !== undefined) {
+    return response.status;
+  }
+  const result = response.data.result;
+  if (
+    result.status === "pending" ||
+    result.ssl.status === "initializing" ||
+    result.ssl.validation_records !== undefined ||
+    result.ownership_verification !== undefined
+  ) {
+    return "2_initiated";
+  }
+  return undefined;
+}
+
 /**
  * Byte-for-byte port of Go's `hostnames.PrintStatus`
  * (`apps/cli-go/internal/hostnames/common.go:24-59`). Returns the exact string
@@ -16,7 +34,7 @@ type LegacyHostnameSsl = LegacyHostnameResponse["data"]["result"]["ssl"];
  * `Fprintln` (adds `\n`) and `Fprintf` (does not).
  */
 export function formatHostnameStatus(response: LegacyHostnameResponse): string {
-  switch (response.status) {
+  switch (getHostnameStatus(response)) {
     case "5_services_reconfigured":
       // Fprintf — no trailing newline.
       return `Custom hostname setup completed. Project is now accessible at ${response.custom_hostname}.`;

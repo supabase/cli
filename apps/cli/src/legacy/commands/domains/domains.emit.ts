@@ -10,19 +10,25 @@ import {
 } from "../../shared/legacy-go-output.encoders.ts";
 import { formatHostnameStatus, type LegacyHostnameResponse } from "./domains.format.ts";
 
-function normalizeLegacyHostnameResponse(response: LegacyHostnameResponse): LegacyHostnameResponse {
-  if (response.data.result.ssl.validation_records !== undefined) {
-    return response;
-  }
+function normalizeLegacyHostnameResponse(
+  response: LegacyHostnameResponse,
+): Record<string, unknown> {
   return {
     ...response,
+    status: response.status ?? "",
+    custom_hostname: response.custom_hostname ?? "",
     data: {
       ...response.data,
       result: {
         ...response.data.result,
+        ownership_verification: response.data.result.ownership_verification ?? {
+          type: "",
+          name: "",
+          value: "",
+        },
         ssl: {
           ...response.data.result.ssl,
-          validation_records: [],
+          validation_records: response.data.result.ssl.validation_records ?? [],
         },
       },
     },
@@ -55,35 +61,34 @@ export const emitLegacyHostnameResult = Effect.fnUntraced(function* (
 ) {
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
-  const normalizedResponse = normalizeLegacyHostnameResponse(response);
 
   const goFmt = Option.getOrUndefined(goOutputFlag);
   const effectiveGoFmt =
     includeRawOutput && (goFmt === undefined || goFmt === "pretty") ? "json" : goFmt;
 
   if (effectiveGoFmt === "json") {
-    yield* output.raw(encodeGoJson(normalizedResponse));
+    yield* output.raw(encodeGoJson(normalizeLegacyHostnameResponse(response)));
     return;
   }
   if (effectiveGoFmt === "yaml") {
-    yield* output.raw(encodeYaml(normalizedResponse));
+    yield* output.raw(encodeYaml(normalizeLegacyHostnameResponse(response)));
     return;
   }
   if (effectiveGoFmt === "toml") {
-    yield* output.raw(encodeToml(normalizedResponse) + "\n");
+    yield* output.raw(encodeToml(normalizeLegacyHostnameResponse(response)) + "\n");
     return;
   }
   if (effectiveGoFmt === "env") {
-    yield* output.raw(encodeEnv(normalizedResponse) + "\n");
+    yield* output.raw(encodeEnv(normalizeLegacyHostnameResponse(response)) + "\n");
     return;
   }
 
   // goFmt is undefined or "pretty" — defer to the TS --output-format mode.
   if (output.format === "json" || output.format === "stream-json") {
-    yield* output.success("", normalizedResponse);
+    yield* output.success("", normalizeLegacyHostnameResponse(response));
     return;
   }
 
   // text mode (Go pretty parity): status to stderr, nothing to stdout.
-  yield* output.raw(formatHostnameStatus(normalizedResponse), "stderr");
+  yield* output.raw(formatHostnameStatus(response), "stderr");
 });

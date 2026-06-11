@@ -106,7 +106,7 @@ describe("legacy domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves validation_records in Go JSON output when the API omits it", () => {
+  it.live("backfills Go zero values in JSON output when the API omits nested fields", () => {
     const {
       ownership_verification: _ownershipVerification,
       ...resultWithoutOwnershipVerification
@@ -125,8 +125,72 @@ describe("legacy domains get integration", () => {
     return Effect.gen(function* () {
       yield* legacyDomainsGet(baseFlags);
       const parsed = JSON.parse(out.stdoutText) as typeof V1GetHostnameConfigOutput.Type;
-      expect(parsed.data.result.ownership_verification).toBeUndefined();
+      expect(parsed.data.result.ownership_verification).toEqual({ type: "", name: "", value: "" });
       expect(parsed.data.result.ssl.validation_records).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("backfills Go zero values in JSON output when the API omits envelope fields", () => {
+    const {
+      status: _status,
+      custom_hostname: _customHostname,
+      ...responseWithoutEnvelope
+    } = HOSTNAME_RESPONSE;
+    const {
+      ownership_verification: _ownershipVerification,
+      ...resultWithoutOwnershipVerification
+    } = HOSTNAME_RESPONSE.data.result;
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      ...responseWithoutEnvelope,
+      data: {
+        ...HOSTNAME_RESPONSE.data,
+        result: {
+          ...resultWithoutOwnershipVerification,
+          ssl: { status: "initializing" },
+          status: "pending",
+        },
+      },
+    };
+    const { layer, out } = setup({ goOutput: "json", response });
+    return Effect.gen(function* () {
+      yield* legacyDomainsGet(baseFlags);
+      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
+      expect(parsed.status).toBe("");
+      expect(parsed.custom_hostname).toBe("");
+      expect(parsed.data).toMatchObject({
+        result: {
+          ownership_verification: { type: "", name: "", value: "" },
+          ssl: { status: "initializing", validation_records: [] },
+          status: "pending",
+        },
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("prints processing guidance in text mode when the API omits envelope fields", () => {
+    const {
+      status: _status,
+      custom_hostname: _customHostname,
+      ...responseWithoutEnvelope
+    } = HOSTNAME_RESPONSE;
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      ...responseWithoutEnvelope,
+      data: {
+        ...HOSTNAME_RESPONSE.data,
+        result: {
+          ...HOSTNAME_RESPONSE.data.result,
+          ssl: { status: "initializing" },
+          status: "pending",
+        },
+      },
+    };
+    const { layer, out } = setup({ response });
+    return Effect.gen(function* () {
+      yield* legacyDomainsGet(baseFlags);
+      expect(out.stderrText).toBe(
+        "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
+      );
+      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
