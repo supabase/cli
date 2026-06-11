@@ -23,6 +23,10 @@ permissions:
   issues: write
   pull-requests: write
 
+concurrency:
+  group: close-stale-issues-and-prs
+  cancel-in-progress: false
+
 jobs:
   close-stale:
     runs-on: ubuntu-latest
