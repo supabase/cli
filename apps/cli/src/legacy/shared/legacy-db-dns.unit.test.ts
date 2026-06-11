@@ -29,6 +29,15 @@ describe("parseResolvedIps", () => {
     );
   });
 
+  it("rejects an A-record whose data is not a valid IP (tampered DoH credential-redirect)", () => {
+    // A non-IP payload like `1.2.3.4@attacker.com` must not be accepted: it would
+    // otherwise become the URL authority in legacyBuildConnectionUrl.
+    const payload = { Answer: [{ type: 1, data: "1.2.3.4@attacker.com" }] };
+    expect(() => parseResolvedIps(payload, "db.example.com")).toThrow(
+      "failed to locate valid IP for db.example.com",
+    );
+  });
+
   it("throws when there are no answers", () => {
     expect(() => parseResolvedIps({ Answer: [] }, "db.example.com")).toThrow(
       "failed to locate valid IP",

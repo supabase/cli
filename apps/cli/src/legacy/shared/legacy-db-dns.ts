@@ -29,7 +29,12 @@ export function parseResolvedIps(payload: unknown, host: string): string[] {
       isRecord(answer) &&
       (answer["type"] === TYPE_A || answer["type"] === TYPE_AAAA) &&
       typeof answer["data"] === "string" &&
-      answer["data"].length > 0
+      // Require a well-formed IP, not just a non-empty string. Go only ever uses
+      // the resolved value as a pgconn `LookupFunc` dial target (an IP); here it
+      // also flows into `legacyBuildConnectionUrl`, so a tampered DoH answer like
+      // `1.2.3.4@attacker.com` could otherwise become the URL authority and
+      // redirect the credentialed connection (CWE-20/CWE-350).
+      net.isIP(answer["data"]) !== 0
     ) {
       resolved.push(answer["data"]);
     }
