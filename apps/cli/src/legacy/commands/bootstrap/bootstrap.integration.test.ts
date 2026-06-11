@@ -417,6 +417,33 @@ describe("legacy bootstrap integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.live("forwards the prompted password (not the empty flag) when --password is empty", () => {
+    // An explicit `--password ""` (e.g. unset `$SUPABASE_DB_PASSWORD` expanded by
+    // the shell) leaves the password empty, so the create step prompts. Go reads
+    // the prompted value from viper for the in-process push, so the subprocess
+    // must receive the prompted password — never the literal empty flag value.
+    const s = setup({ promptPasswordResponses: ["prompted-pw"] });
+    const prev = process.env["SUPABASE_DB_PASSWORD"];
+    delete process.env["SUPABASE_DB_PASSWORD"];
+    return Effect.gen(function* () {
+      yield* legacyBootstrap(
+        flags({ template: Option.some("scratch"), password: Option.some("") }),
+        FAST_BACKOFF,
+      );
+      expect(s.proxyCalls).toHaveLength(1);
+      expect(s.proxyCalls[0]?.args).toEqual(["db", "push", "--include-roles", "--include-seed"]);
+      expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_DB_PASSWORD: "prompted-pw" });
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
+          else process.env["SUPABASE_DB_PASSWORD"] = prev;
+        }),
+      ),
+    );
+  });
+
   it.live("forwards a SUPABASE_DB_PASSWORD env var to the proxy as an env var", () => {
     const s = setup();
     const prev = process.env["SUPABASE_DB_PASSWORD"];

@@ -259,10 +259,17 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // bootstrap's `-p` to viper `DB_PASSWORD` and `db push` reads it from viper
     // (== the `SUPABASE_DB_PASSWORD` env var for the subprocess), so only a
     // flag-sourced password travels as `--password`; an env-/prompt-sourced one
-    // travels as the env var. `created.dbPassword` equals the env value in the
-    // env case (via `seededPassword`) and additionally carries the prompted value.
+    // travels as the env var.
+    //
+    // The flag branch keys on a *non-empty* flag value: an explicit `--password ""`
+    // (e.g. an unset `$SUPABASE_DB_PASSWORD` expanded by the shell) leaves viper
+    // `DB_PASSWORD` empty in Go too, so `create.promptMissingParams` prompts and
+    // `viper.Set`s the resolved value — which in-process `db push` then reads.
+    // Forwarding the literal empty flag would lose that prompted password, so an
+    // empty flag falls through to the resolved `created.dbPassword` (which carries
+    // the env- or prompt-sourced value) on the env channel.
     const pushArgs = ["db", "push", "--include-roles", "--include-seed"];
-    if (Option.isSome(flags.password)) {
+    if (Option.isSome(flags.password) && flags.password.value.length > 0) {
       pushArgs.push("--password", flags.password.value);
       yield* proxy.exec(pushArgs);
     } else {
