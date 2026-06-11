@@ -38,6 +38,7 @@ interface SetupOpts {
   readonly goOutput?: GoOutput;
   readonly status?: number;
   readonly network?: "fail";
+  readonly response?: typeof V1GetHostnameConfigOutput.Type;
 }
 
 const tempRoot = useLegacyTempWorkdir("supabase-domains-get-int-");
@@ -45,7 +46,7 @@ const tempRoot = useLegacyTempWorkdir("supabase-domains-get-int-");
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = mockLegacyPlatformApi({
-    response: { status: opts.status ?? 200, body: HOSTNAME_RESPONSE },
+    response: { status: opts.status ?? 200, body: opts.response ?? HOSTNAME_RESPONSE },
     network: opts.network,
   });
   const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
@@ -102,6 +103,25 @@ describe("legacy domains get integration", () => {
       // Structured -o output: human status is suppressed (Go's no-newline status
       // is fused with + stripped alongside its version-update notice — see emit).
       expect(out.stderrText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("preserves validation_records in Go JSON output when the API omits it", () => {
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      ...HOSTNAME_RESPONSE,
+      data: {
+        ...HOSTNAME_RESPONSE.data,
+        result: {
+          ...HOSTNAME_RESPONSE.data.result,
+          ssl: { status: "pending_validation" },
+        },
+      },
+    };
+    const { layer, out } = setup({ goOutput: "json", response });
+    return Effect.gen(function* () {
+      yield* legacyDomainsGet(baseFlags);
+      const parsed = JSON.parse(out.stdoutText) as typeof V1GetHostnameConfigOutput.Type;
+      expect(parsed.data.result.ssl.validation_records).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 

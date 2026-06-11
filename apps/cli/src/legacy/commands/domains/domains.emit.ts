@@ -10,6 +10,25 @@ import {
 } from "../../shared/legacy-go-output.encoders.ts";
 import { formatHostnameStatus, type LegacyHostnameResponse } from "./domains.format.ts";
 
+function normalizeLegacyHostnameResponse(response: LegacyHostnameResponse): LegacyHostnameResponse {
+  if (response.data.result.ssl.validation_records !== undefined) {
+    return response;
+  }
+  return {
+    ...response,
+    data: {
+      ...response.data,
+      result: {
+        ...response.data.result,
+        ssl: {
+          ...response.data.result.ssl,
+          validation_records: [],
+        },
+      },
+    },
+  };
+}
+
 /**
  * Emit a custom-hostname response across all output modes, mirroring the Go
  * subcommands (`apps/cli-go/internal/hostnames/{get,create,activate,reverify}`):
@@ -36,34 +55,35 @@ export const emitLegacyHostnameResult = Effect.fnUntraced(function* (
 ) {
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
+  const normalizedResponse = normalizeLegacyHostnameResponse(response);
 
   const goFmt = Option.getOrUndefined(goOutputFlag);
   const effectiveGoFmt =
     includeRawOutput && (goFmt === undefined || goFmt === "pretty") ? "json" : goFmt;
 
   if (effectiveGoFmt === "json") {
-    yield* output.raw(encodeGoJson(response));
+    yield* output.raw(encodeGoJson(normalizedResponse));
     return;
   }
   if (effectiveGoFmt === "yaml") {
-    yield* output.raw(encodeYaml(response));
+    yield* output.raw(encodeYaml(normalizedResponse));
     return;
   }
   if (effectiveGoFmt === "toml") {
-    yield* output.raw(encodeToml(response) + "\n");
+    yield* output.raw(encodeToml(normalizedResponse) + "\n");
     return;
   }
   if (effectiveGoFmt === "env") {
-    yield* output.raw(encodeEnv(response) + "\n");
+    yield* output.raw(encodeEnv(normalizedResponse) + "\n");
     return;
   }
 
   // goFmt is undefined or "pretty" — defer to the TS --output-format mode.
   if (output.format === "json" || output.format === "stream-json") {
-    yield* output.success("", response);
+    yield* output.success("", normalizedResponse);
     return;
   }
 
   // text mode (Go pretty parity): status to stderr, nothing to stdout.
-  yield* output.raw(formatHostnameStatus(response), "stderr");
+  yield* output.raw(formatHostnameStatus(normalizedResponse), "stderr");
 });
