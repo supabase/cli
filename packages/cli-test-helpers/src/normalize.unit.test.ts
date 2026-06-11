@@ -146,4 +146,10 @@ describe("normalize", () => {
       "\n  \n   ID                   | NAME\n  ----------------------|----------\n   <PROJECT_REF_1>      | My Org\n\n";
     expect(normalize(table)).toBe(table.replace(/[ \t]+$/gm, ""));
   });
+
+  it("can strip caller-provided patterns before shared normalization", () => {
+    expect(
+      normalize("status: transient\nversion: 2.0.0", { stripPatterns: [/^status: .+\n/gm] }),
+    ).toBe("version: <VERSION>");
+  });
 });
