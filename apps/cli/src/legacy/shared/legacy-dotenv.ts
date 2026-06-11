@@ -15,35 +15,72 @@ const EXPORT_PREFIX = /^\s*export\s+/;
  */
 export function parseDotEnv(contents: string): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const rawLine of contents.split("\n")) {
-    const line = rawLine.replace(EXPORT_PREFIX, "").trim();
-    if (line.length === 0 || line.startsWith("#")) {
-      continue;
-    }
-    // godotenv's `locateKeyName` ends the key at the first `=` **or** `:`
-    // (YAML-style), so `KEY: value` is accepted; the key chars must be
-    // `[A-Za-z0-9_.]`, and any `=`/`:` later in the value is preserved.
+  // godotenv normalizes CRLF→LF and scans the **whole buffer** with a cursor rather
+  // than line-by-line, so a quoted value may span newlines (a PEM block / private
+  // key). `parseBytes` (`joho/godotenv@v1.5.1/parser.go:20-45`).
+  let src = contents.replaceAll("\r\n", "\n");
+  for (;;) {
+    src = skipToStatementStart(src);
+    if (src.length === 0) break;
+    // `export ` prefix, then the key up to the first `=`/`:` (YAML-style). Key chars
+    // must be `[A-Za-z0-9_.]`; a stray char throws Go's "unexpected character".
+    src = src.replace(EXPORT_PREFIX, "");
     let sep = -1;
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i]!;
+    for (let i = 0; i < src.length; i++) {
+      const char = src[i]!;
       if (char === "=" || char === ":") {
         sep = i;
         break;
       }
+      if (char === "\n") break;
       if (char === " " || char === "\t") continue;
       if (!/[A-Za-z0-9_.]/.test(char)) {
-        throw new Error(`unexpected character "${char}" in variable name near "${line}"`);
+        throw new Error(`unexpected character "${char}" in variable name near "${firstLine(src)}"`);
       }
     }
-    const key = sep > 0 ? line.slice(0, sep).trim() : "";
+    const key = sep > 0 ? src.slice(0, sep).trim() : "";
     if (key.length === 0) {
-      throw new Error(`unexpected character "${line[0] ?? ""}" in variable name near "${line}"`);
+      throw new Error(
+        `unexpected character "${src[0] ?? ""}" in variable name near "${firstLine(src)}"`,
+      );
     }
-    // godotenv expands `$VAR`/`${VAR}` references against variables defined
-    // **earlier in the same file** (the in-progress map), so assign in file order.
-    result[key] = parseDotEnvValue(line.slice(sep + 1), result);
+    // godotenv expands `$VAR`/`${VAR}` references against variables defined **earlier
+    // in the same file** (the in-progress map), so assign in file order.
+    const { value, rest } = extractVarValue(src.slice(sep + 1), result);
+    result[key] = value;
+    src = rest;
   }
   return result;
+}
+
+/** The first physical line of `src` (for error messages, without leaking the rest). */
+function firstLine(src: string): string {
+  const nl = src.indexOf("\n");
+  return nl === -1 ? src : src.slice(0, nl);
+}
+
+/**
+ * Advance past blank lines and whole `#` comment lines to the next statement start,
+ * mirroring godotenv's `getStatementStart` (`parser.go:50-68`). Comments are skipped
+ * here (before value scanning), so an apostrophe inside a comment never opens a quote.
+ */
+function skipToStatementStart(src: string): string {
+  let i = 0;
+  while (i < src.length) {
+    const char = src[i]!;
+    if (char === " " || char === "\t" || char === "\n" || char === "\r") {
+      i++;
+      continue;
+    }
+    if (char === "#") {
+      const nl = src.indexOf("\n", i);
+      if (nl === -1) return "";
+      i = nl + 1;
+      continue;
+    }
+    break;
+  }
+  return src.slice(i);
 }
 
 // godotenv's `expandVarRegex` (`joho/godotenv/parser.go:253`): an optional
@@ -72,19 +109,31 @@ function expandVariables(value: string, vars: Record<string, string>): string {
 }
 
 /**
- * Extract a single dotenv value, matching godotenv's `extractVarValue`
- * (`joho/godotenv/parser.go`). A quoted value runs to its (unescaped) closing
- * quote and anything after it (e.g. a trailing comment) is discarded; an
- * unquoted value runs to the first ` #`/`\t#` inline comment, then is trimmed.
+ * Extract a single dotenv value starting just after the `=`/`:`, matching godotenv's
+ * `extractVarValue` (`joho/godotenv@v1.5.1/parser.go:120-190`). Returns the parsed
+ * value and the remaining buffer (`rest`) so the caller can continue scanning.
+ *
+ * A quoted value (single or double) runs to its matching unescaped closing quote
+ * **across newlines** — a PEM/private key spanning lines parses as one value, and an
+ * "unterminated quoted value" error only fires after scanning to end-of-input.
+ * Anything after the closing quote on that line (e.g. a trailing comment) is
+ * discarded. An unquoted value runs to the end of its line, strips the inline
+ * comment, and is trimmed. Double-quoted values expand `\n`/`\r` escapes and then
+ * `$VAR` references (real embedded newlines pass through verbatim); single-quoted
+ * values are literal.
  */
-function parseDotEnvValue(raw: string, vars: Record<string, string>): string {
-  // godotenv left-trims whitespace after `=` before inspecting the value.
+function extractVarValue(
+  raw: string,
+  vars: Record<string, string>,
+): { value: string; rest: string } {
+  // godotenv left-trims spaces/tabs after `=` (not newlines) before the value.
   const value = raw.replace(/^[ \t]+/, "");
   const quote = value[0];
   if (quote === '"' || quote === "'") {
     let end = -1;
     for (let i = 1; i < value.length; i++) {
-      // The terminator is a matching quote not preceded by a backslash escape.
+      // The terminator is a matching quote not preceded by a backslash escape; the
+      // scan crosses newlines, so a multiline quoted value closes on a later line.
       if (value[i] === quote && value[i - 1] !== "\\") {
         end = i;
         break;
@@ -94,22 +143,31 @@ function parseDotEnvValue(raw: string, vars: Record<string, string>): string {
       throw new Error("unterminated quoted value");
     }
     const inner = value.slice(1, end);
+    // Discard anything between the closing quote and the next newline (trailing
+    // comment); resume at that newline so the next statement is parsed cleanly.
+    const afterQuote = value.slice(end + 1);
+    const nl = afterQuote.indexOf("\n");
+    const rest = nl === -1 ? "" : afterQuote.slice(nl);
     if (quote === '"') {
-      // Double-quoted values expand escapes first, then variable references
-      // (godotenv: `expandVariables(expandEscapes(value), vars)`): `\n` / `\r`
-      // become real newlines, a backslash before any other char (except `$`) is
-      // dropped — so `\$` survives to suppress expansion in `expandVariables`.
+      // Double-quoted: expand escapes first, then variable references (godotenv:
+      // `expandVariables(expandEscapes(value), vars)`). `\n`/`\r` become real
+      // newlines, a backslash before any other char (except `$`) is dropped — so
+      // `\$` survives to suppress expansion. Real embedded newlines pass through.
       const escaped = inner
         .replaceAll("\\n", "\n")
         .replaceAll("\\r", "\r")
         .replace(/\\([^$])/g, "$1");
-      return expandVariables(escaped, vars);
+      return { value: expandVariables(escaped, vars), rest };
     }
     // Single-quoted values are taken literally (no escape or variable expansion).
-    return inner;
+    return { value: inner, rest };
   }
-  // Unquoted values: strip the inline comment, trim, then expand variables.
-  return expandVariables(stripInlineComment(value).trim(), vars);
+  // Unquoted values are single-line: run to the next newline, strip the inline
+  // comment, trim, then expand variables.
+  const nl = value.indexOf("\n");
+  const lineValue = nl === -1 ? value : value.slice(0, nl);
+  const rest = nl === -1 ? "" : value.slice(nl);
+  return { value: expandVariables(stripInlineComment(lineValue).trim(), vars), rest };
 }
 
 /**

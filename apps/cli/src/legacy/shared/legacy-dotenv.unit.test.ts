@@ -52,6 +52,32 @@ describe("parseDotEnv", () => {
     expect(() => parseDotEnv("!=")).toThrow(/unexpected character "!" in variable name/);
   });
 
+  describe("multiline quoted values (godotenv parity)", () => {
+    it("scans a double-quoted value across newlines, preserving embedded newlines", () => {
+      const pem = "-----BEGIN KEY-----\nline2\nline3\n-----END KEY-----";
+      const env = parseDotEnv(`KEY="${pem}"\nDB_PORT=54323`);
+      expect(env["KEY"]).toBe(pem);
+      expect(env["DB_PORT"]).toBe("54323");
+    });
+
+    it("scans a single-quoted value across newlines literally (no expansion)", () => {
+      const env = parseDotEnv("USER=alice\nA='line1\n$USER\nline3'\nB=after");
+      expect(env["A"]).toBe("line1\n$USER\nline3");
+      expect(env["B"]).toBe("after");
+    });
+
+    it("throws only after scanning to EOF for an unterminated multiline quote", () => {
+      expect(() => parseDotEnv('A="line1\nline2 with no close')).toThrow(
+        /unterminated quoted value/,
+      );
+    });
+
+    it("does not let an apostrophe in a comment swallow following lines", () => {
+      const env = parseDotEnv("# it's a comment\nDB_PASSWORD=secret\nDB_PORT=54323");
+      expect(env).toEqual({ DB_PASSWORD: "secret", DB_PORT: "54323" });
+    });
+  });
+
   describe("variable expansion (godotenv parity)", () => {
     it("expands $VAR and ${VAR} from earlier same-file definitions", () => {
       expect(parseDotEnv("DB_PORT=54323\nSUPABASE_DB_PORT=$DB_PORT\nURL=${DB_PORT}/db")).toEqual({
