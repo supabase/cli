@@ -107,13 +107,7 @@ var (
 					return diff.RunExplicit(cmd.Context(), diffFrom, diffTo, schema, outputPath, afero.NewOsFs())
 				}
 			}
-			useDelta := shouldUsePgDelta()
-			// An explicit --use-migra is an authoritative rollback: it forces migra even
-			// when pg-delta is enabled in config. The flag defaults to true, so only an
-			// explicit pass counts as opting out of pg-delta.
-			if cmd.Flags().Changed("use-migra") {
-				useDelta = false
-			}
+			useDelta := resolveDiffEngine(cmd.Flags().Changed("use-migra"), usePgAdmin, usePgSchema, shouldUsePgDelta())
 			if usePgAdmin {
 				return diff.RunPgAdmin(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs())
 			}
@@ -380,6 +374,19 @@ without the envelope.`,
 
 func shouldUsePgDelta() bool {
 	return utils.IsPgDeltaEnabled() || usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")
+}
+
+// resolveDiffEngine reports whether `db diff` should run in pg-delta mode. The config /
+// env default (pgDeltaDefault) applies unless an explicit non-pg-delta engine is selected:
+// --use-migra, --use-pgadmin, or --use-pg-schema is an authoritative rollback that clears
+// pg-delta mode so diff.Run skips pg-delta-specific declarative shadow setup and the
+// PGDELTA_DEBUG capture path. --use-migra defaults to true, so only an explicit pass
+// (useMigraChanged) counts as opting out.
+func resolveDiffEngine(useMigraChanged, usePgAdmin, usePgSchema, pgDeltaDefault bool) bool {
+	if useMigraChanged || usePgAdmin || usePgSchema {
+		return false
+	}
+	return pgDeltaDefault
 }
 
 // resolvePullDiffEngine selects whether migration-style db pull uses pg-delta for the
