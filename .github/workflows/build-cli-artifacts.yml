@@ -79,10 +79,23 @@ jobs:
           echo "Checking dist/..."
           ls -la dist/
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Check existing build artifacts cache
+        id: build-artifacts-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
           path: |
             packages/cli-*/bin/
             dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          enableCrossOsArchive: true
+          lookup-only: true
+
+      - name: Save build artifacts cache
+        if: steps.build-artifacts-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          enableCrossOsArchive: true
