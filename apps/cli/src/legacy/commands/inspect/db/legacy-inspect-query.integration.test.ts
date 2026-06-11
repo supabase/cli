@@ -22,6 +22,8 @@ import {
 import { legacyInspectDbDbStats } from "./db-stats/db-stats.handler.ts";
 import { legacyDbStatsSpec } from "./db-stats/db-stats.query.ts";
 import { legacyInspectDbLocks } from "./locks/locks.handler.ts";
+import { legacyInspectDbRoleStats } from "./role-stats/role-stats.handler.ts";
+import { legacyRoleStatsSpec } from "./role-stats/role-stats.query.ts";
 import {
   LegacyInspectMutuallyExclusiveFlagsError,
   type LegacyInspectConnectionFlags,
@@ -200,6 +202,27 @@ describe("legacy inspect db query runner", () => {
       expect(out.stdoutText).toContain("SELECT * FROM users");
       expect(out.stdoutText).toContain("true");
       expect(out.stdoutText).toContain("1234");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("renders an empty backtick-wrapped cell as two literal backticks (role-stats)", () => {
+    // Go wraps every role-stats cell in `` `%s` `` (role_stats.go:43); the postgres
+    // row has no custom config, so glamour emits an empty code span as the two
+    // literal backtick characters. The TS port must byte-match, including the
+    // resulting column width.
+    const ROLE_ROW = {
+      role_name: "postgres",
+      active_connections: 3,
+      connection_limit: 100,
+      custom_config: null,
+    };
+    const { layer, out } = setup({ rows: [ROLE_ROW] });
+    return Effect.gen(function* () {
+      yield* legacyInspectDbRoleStats(flags());
+      const cells = legacyRoleStatsSpec.project(ROLE_ROW, { conn: LOCAL_CONN, isLocal: true });
+      expect(cells[3]).toBe("``");
+      const expected = renderGlamourTable(legacyRoleStatsSpec.headers, [cells]);
+      expect(out.stdoutText).toBe(expected);
     }).pipe(Effect.provide(layer));
   });
 

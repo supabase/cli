@@ -1,5 +1,5 @@
 import {
-  legacyInspectStmt,
+  legacyInspectBacktickStmt,
   legacyInspectText,
   type LegacyInspectQuerySpec,
 } from "../legacy-inspect-query.ts";
@@ -43,7 +43,7 @@ export const legacyOutliersSpec: LegacyInspectQuerySpec = {
   params: () => [],
   headers: ["Query", "Execution Time", "Proportion of exec time", "Number Calls", "Sync IO time"],
   project: (row) => [
-    legacyInspectStmt(row["query"]),
+    legacyInspectBacktickStmt(row["query"]),
     legacyInspectText(row["total_exec_time"]),
     legacyInspectText(row["prop_exec_time"]),
     legacyInspectText(row["ncalls"]),

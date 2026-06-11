@@ -1,4 +1,8 @@
-import { legacyInspectText, type LegacyInspectQuerySpec } from "../legacy-inspect-query.ts";
+import {
+  legacyInspectPlainText,
+  legacyInspectText,
+  type LegacyInspectQuerySpec,
+} from "../legacy-inspect-query.ts";
 import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
 
 // Verbatim from `apps/cli-go/internal/inspect/vacuum_stats/vacuum_stats.sql`.
@@ -90,10 +94,12 @@ export const legacyVacuumStatsSpec: LegacyInspectQuerySpec = {
   ],
   project: (row) => [
     legacyInspectText(row["name"]),
-    legacyInspectText(row["last_vacuum"]),
-    legacyInspectText(row["last_autovacuum"]),
-    legacyInspectText(row["last_analyze"]),
-    legacyInspectText(row["last_autoanalyze"]),
+    // Go writes these four timestamp columns as bare `%s|` (no backtick code span,
+    // `vacuum_stats.go:53`), so an empty value stays empty rather than `` `` ``.
+    legacyInspectPlainText(row["last_vacuum"]),
+    legacyInspectPlainText(row["last_autovacuum"]),
+    legacyInspectPlainText(row["last_analyze"]),
+    legacyInspectPlainText(row["last_autoanalyze"]),
     // One-shot `-1` → `No stats` (JS String.replace with a string replaces only
     // the first occurrence, matching Go's `strings.Replace(..., 1)`).
     legacyInspectText(row["rowcount"]).replace("-1", "No stats"),

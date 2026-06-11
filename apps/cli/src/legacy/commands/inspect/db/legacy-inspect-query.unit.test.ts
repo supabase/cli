@@ -1,20 +1,39 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  legacyInspectBacktickStmt,
   legacyInspectBool,
   legacyInspectFloat1,
   legacyInspectInt,
+  legacyInspectPlainText,
   legacyInspectStmt,
   legacyInspectText,
 } from "./legacy-inspect-query.ts";
 import { legacyVacuumStatsSpec } from "./vacuum-stats/vacuum-stats.query.ts";
 
-describe("legacyInspectText (%s)", () => {
-  it("passes strings through and renders null/undefined as empty", () => {
+describe("legacyInspectText (backtick-wrapped `%s`)", () => {
+  it("passes a non-empty value through with its backticks stripped (glamour)", () => {
     expect(legacyInspectText("hello")).toBe("hello");
-    expect(legacyInspectText(null)).toBe("");
-    expect(legacyInspectText(undefined)).toBe("");
     expect(legacyInspectText(42)).toBe("42");
+  });
+  it("renders an empty/null value as the two literal backticks of an empty code span", () => {
+    // Go wraps the cell as `` `%s` ``; an empty code span isn't a valid token, so
+    // glamour emits the two backtick characters literally (e.g. role-stats
+    // `custom_config` for the `postgres` row). Matches `role_stats.go:43`.
+    expect(legacyInspectText("")).toBe("``");
+    expect(legacyInspectText(null)).toBe("``");
+    expect(legacyInspectText(undefined)).toBe("``");
+  });
+});
+
+describe("legacyInspectPlainText (unwrapped `%s`)", () => {
+  it("passes strings through and renders null/undefined as empty", () => {
+    // The unwrapped columns (vacuum_stats timestamps) have no code span, so an
+    // empty value stays empty rather than `` `` ``.
+    expect(legacyInspectPlainText("2024-01-01 00:00")).toBe("2024-01-01 00:00");
+    expect(legacyInspectPlainText("")).toBe("");
+    expect(legacyInspectPlainText(null)).toBe("");
+    expect(legacyInspectPlainText(undefined)).toBe("");
   });
 });
 
@@ -87,6 +106,19 @@ describe("legacyInspectStmt (whitespace-collapsed %s)", () => {
   });
   it("leaves a non-breaking space untouched (not in Go's `\\s`)", () => {
     expect(legacyInspectStmt("a b")).toBe("a b");
+  });
+});
+
+describe("legacyInspectBacktickStmt (backtick-wrapped, whitespace-collapsed `%s`)", () => {
+  it("collapses whitespace like legacyInspectStmt for a non-empty statement", () => {
+    // calls/outliers wrap the query in `` `%s` `` (calls.go:52), so a populated
+    // statement renders bare with its runs collapsed.
+    expect(legacyInspectBacktickStmt("SELECT\n  1")).toBe("SELECT 1");
+  });
+  it("renders an empty/null statement as the two literal backticks", () => {
+    expect(legacyInspectBacktickStmt("")).toBe("``");
+    expect(legacyInspectBacktickStmt(null)).toBe("``");
+    expect(legacyInspectBacktickStmt(undefined)).toBe("``");
   });
 });
 

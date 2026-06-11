@@ -66,8 +66,30 @@ export class LegacyInspectMutuallyExclusiveFlagsError extends Data.TaggedError(
 // type degrades to a string instead of throwing.
 // ---------------------------------------------------------------------------
 
-/** Go `%s` for a text column: `null`/`undefined` render as the empty string. */
+/**
+ * Go's backtick-wrapped `` `%s` `` text cell — the shape of almost every `inspect
+ * db` string column (e.g. `role_stats.go:43` wraps each cell in `` `…` ``).
+ *
+ * Glamour's `AsciiStyle` strips the backticks from a non-empty inline code span,
+ * so a populated cell renders as its bare value. But an EMPTY code span (`` `` ``)
+ * is not a valid token, so glamour passes the two backtick characters through
+ * literally. We therefore render an empty/null value as the two literal backticks
+ * to byte-match Go (and so the cell contributes width 2, exactly like Go's). The
+ * few columns Go leaves UNWRAPPED (`%s`, no code span) use `legacyInspectPlainText`.
+ */
 export function legacyInspectText(value: unknown): string {
+  const text = value === null || value === undefined ? "" : String(value);
+  return text === "" ? "``" : text;
+}
+
+/**
+ * Go's UNWRAPPED `%s` text cell (no backtick code span): an empty/null value
+ * renders as the empty string. Only the `vacuum_stats` timestamp columns
+ * (`Last_vacuum`/`Last_autovacuum`/`Last_analyze`/`Last_autoanalyze`) are written
+ * as bare `%s|` in Go (`vacuum_stats.go:53`); every other string column is wrapped
+ * (use `legacyInspectText`).
+ */
+export function legacyInspectPlainText(value: unknown): string {
   if (value === null || value === undefined) return "";
   return String(value);
 }
@@ -120,6 +142,17 @@ export function legacyInspectStmt(value: unknown): string {
   // alone. Replicate Go's exact character set: collapse runs of `[\t\n\f\r ]` and
   // replace each `\v` individually with a single space.
   return String(value).replace(/[\t\n\f\r ]+|\v/g, " ");
+}
+
+/**
+ * A whitespace-collapsed statement cell that Go ALSO wraps in backticks
+ * (`calls.go:52` / `outliers.go:50` write the query as `` `%s` ``, unlike
+ * `locks`/`blocking` which leave it bare). Same empty-code-span rule as
+ * `legacyInspectText`: an empty value surfaces as the two literal backticks.
+ */
+export function legacyInspectBacktickStmt(value: unknown): string {
+  const stmt = legacyInspectStmt(value);
+  return stmt === "" ? "``" : stmt;
 }
 
 /**
