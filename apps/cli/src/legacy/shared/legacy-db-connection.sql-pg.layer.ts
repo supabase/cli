@@ -34,6 +34,46 @@ function needsRoleStepDown(user: string): boolean {
   return base.toLowerCase() === SUPERUSER_ROLE || base.startsWith(CLI_LOGIN_PREFIX);
 }
 
+// pgconn terminates the multi-host fallback chain (rather than trying the next
+// host) when the server returns an authentication/authorization/catalog/privilege
+// error, surfacing it instead of masking it behind a later host (jackc/pgconn
+// `pgconn.go:159-192`, documented at `:127-130`). These are the SQLSTATEs pgconn
+// breaks on; `28000` is gated on the failed attempt having used TLS (`pgconn.go:182`,
+// `fc.TLSConfig != nil`).
+const LEGACY_TERMINAL_SQLSTATES = new Set(["28P01", "3D000", "42501"]);
+const LEGACY_TLS_GATED_SQLSTATE = "28000";
+
+/**
+ * Whether a failed connection attempt should terminate the multi-host fallback
+ * chain instead of falling through to the next host. Mirrors pgconn's
+ * `ConnectConfig`, which retries fallbacks only for connection-establishment
+ * errors and returns server-side auth errors immediately. The `pg` driver attaches
+ * the Postgres SQLSTATE as a `code` property on the server error (carried through
+ * `@effect/sql`'s `SqlError.cause`), so we walk the `cause` chain looking for one.
+ */
+export function legacyIsTerminalConnectError(error: unknown, usedTls: boolean): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 6 && typeof current === "object" && current !== null; depth++) {
+    const code = Reflect.get(current, "code");
+    if (typeof code === "string") {
+      if (LEGACY_TERMINAL_SQLSTATES.has(code)) return true;
+      if (code === LEGACY_TLS_GATED_SQLSTATE && usedTls) return true;
+    }
+    current = Reflect.get(current, "cause");
+  }
+  return false;
+}
+
+/**
+ * Whether a dial host is a libpq unix-socket path (an absolute path). pgconn skips
+ * TLS entirely for a unix `NetworkAddress` regardless of `sslmode` (jackc/pgconn
+ * `configTLS`), so a socket DSN connects in plaintext — mirrored here by forcing
+ * the plaintext attempt for socket hosts.
+ */
+export function legacyIsUnixSocketHost(host: string): boolean {
+  return host.startsWith("/");
+}
+
 /**
  * Build a `postgresql://` connection string carrying the libpq `options` startup
  * parameter. `PgClient.make` only forwards a fixed set of discrete fields to the
@@ -145,8 +185,14 @@ export function legacySslConfigsFor(
   isLocal: boolean,
   servername: string | undefined,
   caCert?: string,
+  host?: string,
 ): Array<boolean | ConnectionOptions | undefined> {
   if (isLocal) return [undefined];
+  // pgconn skips TLS entirely for a unix-socket host (`NetworkAddress == "unix"`)
+  // regardless of `sslmode`, so a socket DSN connects in plaintext; never send an
+  // SSL negotiation over the socket. Independent of the local/remote flag because a
+  // socket path is not the local services hostname (so `isLocal` is `false`).
+  if (host !== undefined && legacyIsUnixSocketHost(host)) return [undefined];
   if (sslmode === "disable") return [false];
   if (sslmode === "allow") return [false, legacySslOptionFor("require", false, servername, caCert)];
   // pgconn: `require` + a root cert behaves like `verify-ca` (`configTLS`).
@@ -187,8 +233,12 @@ const connect = (
     const dialTargets: Array<{ dialHost: string; port: number; servername: string | undefined }> =
       [];
     for (const { host, port } of hostList) {
+      // pgconn never resolves a unix-socket host over DNS, so skip DoH for socket
+      // paths (DoH-resolving `/var/run/postgresql` is meaningless).
       const resolved =
-        dnsResolver === "https" && !isLocal ? yield* legacyResolveHostsOverHttps(host) : [host];
+        dnsResolver === "https" && !isLocal && !legacyIsUnixSocketHost(host)
+          ? yield* legacyResolveHostsOverHttps(host)
+          : [host];
       for (const dialHost of resolved) {
         dialTargets.push({ dialHost, port, servername: dialHost === host ? undefined : host });
       }
@@ -225,7 +275,10 @@ const connect = (
     // which never use TLS.
     const rootcertPath = cfg.sslrootcert;
     const caCert =
-      rootcertPath !== undefined && rootcertPath.length > 0 && !isLocal
+      rootcertPath !== undefined &&
+      rootcertPath.length > 0 &&
+      !isLocal &&
+      !legacyIsUnixSocketHost(cfg.host)
         ? yield* Effect.try({
             try: () => readFileSync(rootcertPath, "utf8"),
             catch: (error) =>
@@ -241,22 +294,35 @@ const connect = (
     // each dial target (host × resolved IPs). `servername` is per target (the
     // original hostname when we dial a DoH-resolved IP).
     const attempts = dialTargets.flatMap(({ dialHost, port, servername }) =>
-      legacySslConfigsFor(cfg.sslmode, isLocal, servername, caCert).map((ssl) =>
-        makeClient(dialHost, port, ssl),
-      ),
+      legacySslConfigsFor(cfg.sslmode, isLocal, servername, caCert, dialHost).map((ssl) => ({
+        client: makeClient(dialHost, port, ssl),
+        // pgconn only short-circuits the fallback chain on an auth error when the
+        // failed attempt used TLS (`pgconn.go:182`, gated on `fc.TLSConfig != nil`);
+        // a TLS config is any non-plaintext `ssl` value.
+        usedTls: ssl !== undefined && ssl !== false,
+      })),
     );
 
     // The `pg` driver connects lazily and cannot replay pgconn's fallback, so
     // probe each non-final attempt with `select 1` to force the connection and
-    // fall through to the next on failure. `reduceRight` with no seed makes the
-    // final attempt the base case — it is left lazy (no extra round-trip), so the
+    // fall through to the next on failure. pgconn retries fallbacks only for
+    // connection-establishment errors; a server-side auth/authorization/catalog/
+    // privilege error terminates the chain (`pgconn.go:159-192`), so a terminal
+    // SQLSTATE re-raises instead of masking the primary's failure behind a later
+    // host. The final attempt is the lazy base case (no extra round-trip), so the
     // common single-attempt path is byte-identical to a plain connect.
+    const lastIndex = attempts.length - 1;
     const client = yield* attempts
-      .reduceRight((next, attempt) =>
-        attempt.pipe(
-          Effect.tap((candidate) => candidate`select 1`),
-          Effect.catch(() => next),
-        ),
+      .slice(0, lastIndex)
+      .reduceRight(
+        (next, { client: attempt, usedTls }) =>
+          attempt.pipe(
+            Effect.tap((candidate) => candidate`select 1`),
+            Effect.catch((error) =>
+              legacyIsTerminalConnectError(error, usedTls) ? Effect.fail(error) : next,
+            ),
+          ),
+        attempts[lastIndex]!.client,
       )
       .pipe(Effect.mapError(toConnectError));
 

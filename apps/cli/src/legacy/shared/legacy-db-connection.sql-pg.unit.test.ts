@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   legacyBuildConnectionUrl,
+  legacyIsTerminalConnectError,
+  legacyIsUnixSocketHost,
   legacySslConfigsFor,
   legacySslOptionFor,
 } from "./legacy-db-connection.sql-pg.layer.ts";
@@ -171,5 +173,50 @@ describe("legacySslConfigsFor (pgconn fallback list)", () => {
     expect(legacySslConfigsFor("prefer", false, undefined, ca)).toEqual([
       { rejectUnauthorized: false },
     ]);
+  });
+
+  it("forces a single plaintext attempt for a unix-socket host regardless of sslmode", () => {
+    // pgconn skips TLS for a unix NetworkAddress, so a socket DSN connects in
+    // plaintext even though the host is not the local services hostname (isLocal=false).
+    expect(
+      legacySslConfigsFor("require", false, undefined, undefined, "/var/run/postgresql"),
+    ).toEqual([undefined]);
+    expect(legacySslConfigsFor("verify-full", false, undefined, "ca", "/tmp/.s.PGSQL")).toEqual([
+      undefined,
+    ]);
+    // A non-socket host still follows the normal sslmode fallback list.
+    expect(legacySslConfigsFor("require", false, undefined, undefined, "db.example.com")).toEqual([
+      { rejectUnauthorized: false },
+    ]);
+  });
+});
+
+describe("legacyIsUnixSocketHost", () => {
+  it("treats an absolute path as a unix socket and a hostname/IP as not", () => {
+    expect(legacyIsUnixSocketHost("/var/run/postgresql")).toBe(true);
+    expect(legacyIsUnixSocketHost("db.example.com")).toBe(false);
+    expect(legacyIsUnixSocketHost("127.0.0.1")).toBe(false);
+    expect(legacyIsUnixSocketHost("::1")).toBe(false);
+  });
+});
+
+describe("legacyIsTerminalConnectError (pgconn fallback termination)", () => {
+  it("terminates on auth/catalog/privilege SQLSTATEs carried on the error cause", () => {
+    // The pg driver attaches the SQLSTATE as `code`; @effect/sql wraps it in `cause`.
+    expect(legacyIsTerminalConnectError({ cause: { code: "28P01" } }, false)).toBe(true);
+    expect(legacyIsTerminalConnectError({ cause: { code: "3D000" } }, true)).toBe(true);
+    expect(legacyIsTerminalConnectError({ code: "42501" }, false)).toBe(true);
+  });
+
+  it("gates 28000 on the attempt having used TLS (pgconn fc.TLSConfig != nil)", () => {
+    expect(legacyIsTerminalConnectError({ code: "28000" }, true)).toBe(true);
+    expect(legacyIsTerminalConnectError({ code: "28000" }, false)).toBe(false);
+  });
+
+  it("falls through (returns false) for network/dial errors with no SQLSTATE", () => {
+    expect(legacyIsTerminalConnectError({ code: "ECONNREFUSED" }, true)).toBe(false);
+    expect(legacyIsTerminalConnectError(new Error("connection refused"), true)).toBe(false);
+    expect(legacyIsTerminalConnectError("boom", true)).toBe(false);
+    expect(legacyIsTerminalConnectError(undefined, false)).toBe(false);
   });
 });
