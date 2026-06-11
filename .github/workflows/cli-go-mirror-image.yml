@@ -54,6 +54,7 @@ jobs:
           GHCR_IMAGE: ghcr.io/supabase/${{ steps.strip.outputs.image }}
         run: |
           docker buildx imagetools create \
+            --prefer-index=false \
             -t "$ECR_IMAGE" \
             -t "$GHCR_IMAGE" \
             "$SOURCE_IMAGE"
