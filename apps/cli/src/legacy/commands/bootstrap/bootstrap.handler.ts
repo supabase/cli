@@ -253,9 +253,26 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // No instrumentation wrap: the subprocess fires its own push telemetry.
     // `bootstrap.go:122-127` -> push.Run(..., includeRoles, includeSeed) =>
     // `--include-roles --include-seed` (no `--include-all`).
+    //
+    // Channel parity (CLI-1617): the proxy must be called 1:1 with the user's
+    // input — a flag stays a flag, an env var stays an env var. Go binds
+    // bootstrap's `-p` to viper `DB_PASSWORD` and `db push` reads it from viper
+    // (== the `SUPABASE_DB_PASSWORD` env var for the subprocess), so only a
+    // flag-sourced password travels as `--password`; an env-/prompt-sourced one
+    // travels as the env var. `created.dbPassword` equals the env value in the
+    // env case (via `seededPassword`) and additionally carries the prompted value.
     const pushArgs = ["db", "push", "--include-roles", "--include-seed"];
-    if (created.dbPassword.length > 0) pushArgs.push("--password", created.dbPassword);
-    yield* proxy.exec(pushArgs);
+    if (Option.isSome(flags.password)) {
+      pushArgs.push("--password", flags.password.value);
+      yield* proxy.exec(pushArgs);
+    } else {
+      yield* proxy.exec(
+        pushArgs,
+        created.dbPassword.length > 0
+          ? { env: { SUPABASE_DB_PASSWORD: created.dbPassword } }
+          : undefined,
+      );
+    }
 
     // M. Start suggestion. `bootstrap.go:128-130`.
     if (isText) {
