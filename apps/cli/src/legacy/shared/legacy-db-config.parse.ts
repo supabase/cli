@@ -1,6 +1,9 @@
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 import { legacyPgpassPassword } from "./legacy-pgpass.ts";
+import { legacyServiceSettings } from "./legacy-pgservicefile.ts";
 
 /** Go's `pgconn` default direct Postgres port. */
 const DIRECT_PORT = 5432;
@@ -72,6 +75,58 @@ function libpqPort(raw: string | undefined): number | undefined {
 /** Strip the brackets WHATWG `URL.hostname` keeps around an IPv6 literal (`[::1]`). */
 function unbracketIpv6(host: string): string {
   return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+}
+
+/**
+ * Sentinel returned when a `service` is requested but cannot be resolved (missing
+ * service file, unknown service, or a malformed file). pgconn fails the whole
+ * parse in that case (`config.go:253`), so the caller surfaces a parse error
+ * rather than silently connecting to the defaults.
+ */
+const SERVICE_RESOLUTION_FAILED = Symbol("service-resolution-failed");
+
+/** libpq's default service file (`~/.pg_service.conf`); `PGSERVICEFILE` overrides. */
+function defaultServiceFilePath(): string | undefined {
+  const home = homedir();
+  return home.length > 0 ? join(home, ".pg_service.conf") : undefined;
+}
+
+/**
+ * Resolve pgservice settings, mirroring pgconn (`config.go:250-256`): when a
+ * `service` is set (connection string `service=`/`?service=`, else `PGSERVICE`),
+ * read the service file (connection string `servicefile=`/`?servicefile=`, then
+ * `PGSERVICEFILE`, then `~/.pg_service.conf`) and return the named section's
+ * settings (with `dbname` already remapped to `database`). Returns `undefined`
+ * when no service is requested, or the failure sentinel when a requested service
+ * cannot be resolved. The resolved settings sit above env/defaults but below the
+ * explicit connection-string fields.
+ */
+function resolveServiceSettings(
+  connStringService: string | undefined,
+  connStringServicefile: string | undefined,
+  env: LegacyParseEnv,
+): Map<string, string> | typeof SERVICE_RESOLUTION_FAILED | undefined {
+  const service =
+    connStringService !== undefined && connStringService.length > 0
+      ? connStringService
+      : libpqEnv(env, "PGSERVICE");
+  if (service === undefined) {
+    return undefined;
+  }
+  const servicefile =
+    (connStringServicefile !== undefined && connStringServicefile.length > 0
+      ? connStringServicefile
+      : libpqEnv(env, "PGSERVICEFILE")) ?? defaultServiceFilePath();
+  if (servicefile === undefined) {
+    return SERVICE_RESOLUTION_FAILED;
+  }
+  return legacyServiceSettings(service, servicefile) ?? SERVICE_RESOLUTION_FAILED;
+}
+
+/** A service setting, treating empty as unset (consistent with `libpqEnv`). */
+function serviceValue(settings: Map<string, string> | undefined, key: string): string | undefined {
+  const value = settings?.get(key);
+  return value !== undefined && value.length > 0 ? value : undefined;
 }
 
 /**
@@ -256,22 +311,39 @@ function parseUrlConnectionString(
     // A URL that omits a field falls back to the libpq `PG*` env vars and then the
     // libpq defaults, matching pgconn's
     // `mergeSettings(defaultSettings, envSettings, connStringSettings)`.
+    // Resolve a pgservice (`?service=`/`PGSERVICE`) before applying defaults; its
+    // settings sit above env/defaults but below the explicit URL fields.
+    const serviceSettings = resolveServiceSettings(
+      query.get("service") ?? undefined,
+      query.get("servicefile") ?? undefined,
+      env,
+    );
+    if (serviceSettings === SERVICE_RESOLUTION_FAILED) {
+      return undefined;
+    }
+    const svc = (key: string): string | undefined => serviceValue(serviceSettings, key);
+
     const rawUser = queryOrElse("user", decodeURIComponent(url.username));
-    const user = rawUser.length > 0 ? rawUser : defaultOsUser(env);
-    // libpq fills `sslmode` from `PGSSLMODE` when the connection string omits it
-    // (pgconn's `parseEnvSettings`), before the TLS-mode default.
-    const sslmode = url.searchParams.get("sslmode") ?? libpqEnv(env, "PGSSLMODE") ?? null;
+    const user = rawUser.length > 0 ? rawUser : (svc("user") ?? defaultOsUser(env));
+    // libpq fills `sslmode` from the service, then `PGSSLMODE`, when the connection
+    // string omits it (pgconn's merge order), before the TLS-mode default.
+    const sslmode =
+      url.searchParams.get("sslmode") ?? svc("sslmode") ?? libpqEnv(env, "PGSSLMODE") ?? null;
     if (isInvalidSslmode(sslmode)) {
       return undefined;
     }
-    // libpq `sslrootcert` (query or `PGSSLROOTCERT`) pins the server CA.
+    // libpq `sslrootcert` (query, service, or `PGSSLROOTCERT`) pins the server CA.
     const sslrootcert =
-      url.searchParams.get("sslrootcert") ?? libpqEnv(env, "PGSSLROOTCERT") ?? null;
-    const options = url.searchParams.get("options");
-    // A `passfile=` query setting points `.pgpass` resolution at a non-default file
-    // (pgconn `config.go:293`); a non-empty value wins over `PGPASSFILE`/the default.
+      url.searchParams.get("sslrootcert") ??
+      svc("sslrootcert") ??
+      libpqEnv(env, "PGSSLROOTCERT") ??
+      null;
+    const options = url.searchParams.get("options") ?? svc("options") ?? null;
+    // A `passfile=` setting (query or service) points `.pgpass` resolution at a
+    // non-default file (pgconn `config.go:293`); non-empty wins over `PGPASSFILE`.
     const passfileQuery = url.searchParams.get("passfile");
-    const passfile = passfileQuery !== null && passfileQuery.length > 0 ? passfileQuery : undefined;
+    const passfile =
+      passfileQuery !== null && passfileQuery.length > 0 ? passfileQuery : svc("passfile");
 
     // Structural hosts/ports become pgconn's comma-joined `settings["host"]` /
     // `settings["port"]`. WHATWG `URL.hostname` keeps the brackets around an IPv6
@@ -295,7 +367,7 @@ function parseUrlConnectionString(
         ? hostQuery
         : structuralHosts.length > 0
           ? structuralHosts.join(",")
-          : (libpqEnv(env, "PGHOST") ?? defaultLibpqHost());
+          : (svc("host") ?? libpqEnv(env, "PGHOST") ?? defaultLibpqHost());
     // pgconn merges a `?port=` query setting over the structural port and then
     // parses it, so an explicit query port — even empty (`?port=`) or non-numeric
     // — that is not a valid number is a parse error. A bad `PGPORT` fallback is
@@ -310,7 +382,7 @@ function parseUrlConnectionString(
     } else if (structuralPorts.length > 0) {
       portString = structuralPorts.join(",");
     } else {
-      const envPort = libpqPort(libpqEnv(env, "PGPORT"));
+      const envPort = libpqPort(svc("port") ?? libpqEnv(env, "PGPORT"));
       if (envPort === undefined) return undefined;
       portString = String(envPort);
     }
@@ -322,8 +394,11 @@ function parseUrlConnectionString(
     const primary = hostList[0]!;
 
     const rawDatabase = queryOrElse("dbname", decodeURIComponent(url.pathname.replace(/^\//, "")));
-    // Absent database → PGDATABASE, then the resolved user (libpq default).
-    const database = rawDatabase.length > 0 ? rawDatabase : (libpqEnv(env, "PGDATABASE") ?? user);
+    // Absent database → service, then PGDATABASE, then the resolved user (libpq default).
+    const database =
+      rawDatabase.length > 0
+        ? rawDatabase
+        : (svc("database") ?? libpqEnv(env, "PGDATABASE") ?? user);
 
     // Password precedence (pgconn): the query loop runs last, so `?password=`
     // overrides the userinfo password. A `:` in the raw userinfo marks a present
@@ -335,8 +410,10 @@ function parseUrlConnectionString(
       : userinfoRaw.includes(":")
         ? decodeURIComponent(url.password)
         : undefined;
+    // Service password sits below the connection string but above PGPASSWORD/.pgpass.
+    // An explicit (even empty) connection-string password still wins (`?? ""`).
     const password = resolveLibpqPassword(
-      connStringPassword,
+      connStringPassword ?? svc("password"),
       primary.host,
       primary.port,
       database,
@@ -406,40 +483,58 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   // matching pgconn's `mergeSettings(defaultSettings, envSettings, connStringSettings)`.
   // A libpq DSN also accepts comma-separated multi-host failover
   // (`host=h1,h2 port=5432,5433`, `config.go:326-362`), zipped by `buildLegacyHostList`.
+  // Resolve a pgservice (`service=`/`PGSERVICE`); its settings sit above
+  // env/defaults but below the explicit DSN keywords.
+  const serviceSettings = resolveServiceSettings(
+    params.get("service"),
+    params.get("servicefile"),
+    env,
+  );
+  if (serviceSettings === SERVICE_RESOLUTION_FAILED) return undefined;
+  const svc = (key: string): string | undefined => serviceValue(serviceSettings, key);
+
   const hostString =
-    params.get("host") ?? params.get("hostaddr") ?? libpqEnv(env, "PGHOST") ?? defaultLibpqHost();
+    params.get("host") ??
+    params.get("hostaddr") ??
+    svc("host") ??
+    libpqEnv(env, "PGHOST") ??
+    defaultLibpqHost();
   // Explicit empty/non-numeric `port=` is a parse error (pgconn's `parsePort`); an
-  // absent `port` falls back to `PGPORT` and then the libpq default.
+  // absent `port` falls back to the service, then `PGPORT`, then the libpq default.
   const portParam = params.get("port");
   let portString: string;
   if (portParam !== undefined) {
     portString = portParam;
   } else {
-    const envPort = libpqPort(libpqEnv(env, "PGPORT"));
+    const envPort = libpqPort(svc("port") ?? libpqEnv(env, "PGPORT"));
     if (envPort === undefined) return undefined;
     portString = String(envPort);
   }
   const hostList = buildLegacyHostList(hostString, portString);
   if (hostList === undefined || hostList.length === 0) return undefined;
   const primary = hostList[0]!;
-  const user = params.get("user") ?? defaultOsUser(env);
+  const user = params.get("user") ?? svc("user") ?? defaultOsUser(env);
   const database =
-    params.get("dbname") ?? libpqEnv(env, "PGDATABASE") ?? (user.length > 0 ? user : "postgres");
-  // libpq fills `sslmode` from `PGSSLMODE` when the DSN omits it (pgconn's
-  // `parseEnvSettings`), before the TLS-mode default.
-  const sslmode = params.get("sslmode") ?? libpqEnv(env, "PGSSLMODE");
+    params.get("dbname") ??
+    svc("database") ??
+    libpqEnv(env, "PGDATABASE") ??
+    (user.length > 0 ? user : "postgres");
+  // libpq fills `sslmode` from the service, then `PGSSLMODE`, when the DSN omits it
+  // (pgconn's merge order), before the TLS-mode default.
+  const sslmode = params.get("sslmode") ?? svc("sslmode") ?? libpqEnv(env, "PGSSLMODE");
   if (isInvalidSslmode(sslmode)) return undefined;
-  const sslrootcert = params.get("sslrootcert") ?? libpqEnv(env, "PGSSLROOTCERT");
-  const options = params.get("options");
-  // A `passfile=` keyword points `.pgpass` resolution at a non-default file
-  // (pgconn `config.go:293`); a non-empty value wins over `PGPASSFILE`/the default.
+  const sslrootcert =
+    params.get("sslrootcert") ?? svc("sslrootcert") ?? libpqEnv(env, "PGSSLROOTCERT");
+  const options = params.get("options") ?? svc("options");
+  // A `passfile=` setting (keyword or service) points `.pgpass` resolution at a
+  // non-default file (pgconn `config.go:293`); non-empty wins over `PGPASSFILE`.
   const passfileParam = params.get("passfile");
   const passfile =
-    passfileParam !== undefined && passfileParam.length > 0 ? passfileParam : undefined;
-  // Password precedence (pgconn): a `password=` entry — even empty — overrides
-  // PGPASSWORD; an empty resolved value then falls through to `.pgpass`.
+    passfileParam !== undefined && passfileParam.length > 0 ? passfileParam : svc("passfile");
+  // Password precedence (pgconn): a `password=` entry — even empty — overrides the
+  // service and PGPASSWORD; an empty resolved value then falls through to `.pgpass`.
   const password = resolveLibpqPassword(
-    params.has("password") ? params.get("password")! : undefined,
+    params.has("password") ? params.get("password")! : svc("password"),
     primary.host,
     primary.port,
     database,

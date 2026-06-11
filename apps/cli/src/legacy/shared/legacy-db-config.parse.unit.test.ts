@@ -549,6 +549,85 @@ describe("injected env lookup (project dotenv parity)", () => {
   });
 });
 
+describe("pgservice resolution (pgconn parity)", () => {
+  // pgconn resolves a `service=`/`PGSERVICE` against the service file and merges
+  // its settings between env and the explicit connection-string fields
+  // (config.go:250-256). dbname is remapped to database. An unresolvable service
+  // is a hard parse error.
+  let tmp: string;
+  let servicefile: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "pgservice-parse-"));
+    servicefile = join(tmp, "pg_service.conf");
+    writeFileSync(
+      servicefile,
+      "[prod]\nhost=db.example.com\nport=6543\nuser=alice\npassword=svc-secret\ndbname=appdb\nsslmode=require\n",
+    );
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("resolves host/port/user/password/database/sslmode from the named service", () => {
+    expect(
+      parseLegacyConnectionString(`postgresql:///?service=prod&servicefile=${servicefile}`),
+    ).toEqual({
+      host: "db.example.com",
+      port: 6543,
+      user: "alice",
+      password: "svc-secret",
+      database: "appdb",
+      sslmode: "require",
+    });
+  });
+
+  it("resolves a service from the keyword/value DSN form too", () => {
+    expect(parseLegacyConnectionString(`service=prod servicefile=${servicefile}`)).toEqual({
+      host: "db.example.com",
+      port: 6543,
+      user: "alice",
+      password: "svc-secret",
+      database: "appdb",
+      sslmode: "require",
+    });
+  });
+
+  it("lets explicit connection-string fields override the service settings", () => {
+    expect(
+      parseLegacyConnectionString(
+        `postgresql://bob:pw@real.example.com:5555/realdb?service=prod&servicefile=${servicefile}`,
+      ),
+    ).toEqual({
+      host: "real.example.com",
+      port: 5555,
+      user: "bob",
+      password: "pw",
+      database: "realdb",
+      sslmode: "require",
+    });
+  });
+
+  it("resolves the service from the injected env (PGSERVICE/PGSERVICEFILE)", () => {
+    const env = (name: string): string | undefined =>
+      ({ PGSERVICE: "prod", PGSERVICEFILE: servicefile })[name];
+    expect(parseLegacyConnectionString("postgresql:///", env)?.host).toBe("db.example.com");
+  });
+
+  it("fails to parse (undefined) when the service is unknown", () => {
+    expect(
+      parseLegacyConnectionString(`postgresql:///?service=missing&servicefile=${servicefile}`),
+    ).toBeUndefined();
+  });
+
+  it("fails to parse (undefined) when the service file does not exist", () => {
+    expect(
+      parseLegacyConnectionString(`postgresql:///?service=prod&servicefile=${join(tmp, "nope")}`),
+    ).toBeUndefined();
+  });
+});
+
 describe("redactLegacyConnectionString", () => {
   it("masks the password in a parseable URL", () => {
     const redacted = redactLegacyConnectionString("postgres://user:s3cret@example.com/db");
