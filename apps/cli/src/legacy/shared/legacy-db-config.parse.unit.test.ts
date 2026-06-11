@@ -628,6 +628,88 @@ describe("pgservice resolution (pgconn parity)", () => {
   });
 });
 
+describe("keyword/value DSN backslash handling (pgconn parity)", () => {
+  it("preserves backslashes before ordinary chars (Windows cert paths)", () => {
+    // pgconn unescapes only \\ and \', so a Windows path keeps its backslashes.
+    expect(
+      parseLegacyConnectionString("host=h dbname=d user=u sslrootcert=C:\\certs\\root.pem")
+        ?.sslrootcert,
+    ).toBe("C:\\certs\\root.pem");
+  });
+
+  it("unescapes \\\\ and \\' inside a single-quoted value", () => {
+    // password 'a\\b' → a\b ; password 'it\'s' → it's
+    expect(parseLegacyConnectionString("host=h dbname=d user=u password='a\\\\b'")?.password).toBe(
+      "a\\b",
+    );
+    expect(parseLegacyConnectionString("host=h dbname=d user=u password='it\\'s'")?.password).toBe(
+      "it's",
+    );
+  });
+
+  it("preserves a backslash before an ordinary char inside quotes", () => {
+    expect(
+      parseLegacyConnectionString("host=h dbname=d user=u sslrootcert='C:\\certs\\root.pem'")
+        ?.sslrootcert,
+    ).toBe("C:\\certs\\root.pem");
+  });
+});
+
+describe("connect_timeout (pgconn parity)", () => {
+  it("parses connect_timeout from a URL query into connectTimeoutSeconds", () => {
+    expect(parseLegacyConnectionString("postgres://u:p@h/db?connect_timeout=15")).toMatchObject({
+      connectTimeoutSeconds: 15,
+    });
+  });
+
+  it("parses connect_timeout from a keyword/value DSN", () => {
+    expect(parseLegacyConnectionString("host=h dbname=d user=u connect_timeout=7")).toMatchObject({
+      connectTimeoutSeconds: 7,
+    });
+  });
+
+  it("falls back to PGCONNECT_TIMEOUT from the injected env", () => {
+    const env = (name: string): string | undefined =>
+      name === "PGCONNECT_TIMEOUT" ? "20" : undefined;
+    expect(parseLegacyConnectionString("postgres://u:p@h/db", env)).toMatchObject({
+      connectTimeoutSeconds: 20,
+    });
+  });
+
+  it("omits connectTimeoutSeconds when unset or zero (driver applies Go's default)", () => {
+    expect(parseLegacyConnectionString("postgres://u:p@h/db")).not.toHaveProperty(
+      "connectTimeoutSeconds",
+    );
+    expect(parseLegacyConnectionString("postgres://u:p@h/db?connect_timeout=0")).not.toHaveProperty(
+      "connectTimeoutSeconds",
+    );
+  });
+
+  it("rejects a non-numeric connect_timeout as a parse error", () => {
+    expect(parseLegacyConnectionString("postgres://u:p@h/db?connect_timeout=abc")).toBeUndefined();
+    expect(parseLegacyConnectionString("host=h user=u connect_timeout=abc")).toBeUndefined();
+  });
+});
+
+describe("empty URL query overrides (pgconn parity)", () => {
+  it("an empty ?dbname= overrides the path with an empty database", () => {
+    expect(parseLegacyConnectionString("postgres://u:p@host/production?dbname=")).toMatchObject({
+      database: "",
+    });
+  });
+
+  it("an empty ?user= overrides the userinfo with an empty user", () => {
+    expect(parseLegacyConnectionString("postgres://alice@host/db?user=")?.user).toBe("");
+  });
+
+  it("an absent dbname/user query still falls back to path/userinfo", () => {
+    expect(parseLegacyConnectionString("postgres://alice@host/realdb")).toMatchObject({
+      user: "alice",
+      database: "realdb",
+    });
+  });
+});
+
 describe("redactLegacyConnectionString", () => {
   it("masks the password in a parseable URL", () => {
     const redacted = redactLegacyConnectionString("postgres://user:s3cret@example.com/db");

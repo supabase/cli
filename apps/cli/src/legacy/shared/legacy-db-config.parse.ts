@@ -77,6 +77,24 @@ function unbracketIpv6(host: string): string {
   return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 }
 
+/** Sentinel for a present-but-non-numeric `connect_timeout` (pgconn parse error). */
+const CONNECT_TIMEOUT_INVALID = Symbol("connect-timeout-invalid");
+
+/**
+ * Resolve the libpq `connect_timeout` (seconds). Returns the positive integer when
+ * set, `undefined` when unset/empty/zero (the driver layer then applies Go's
+ * 10s/2s default), or the failure sentinel for a present non-numeric value —
+ * pgconn's `parseConnectTimeoutSetting` reports a parse error rather than ignoring.
+ */
+function libpqConnectTimeout(
+  raw: string | null | undefined,
+): number | undefined | typeof CONNECT_TIMEOUT_INVALID {
+  if (raw === null || raw === undefined || raw.length === 0) return undefined;
+  if (!/^\d+$/.test(raw)) return CONNECT_TIMEOUT_INVALID;
+  const seconds = Number(raw);
+  return seconds > 0 ? seconds : undefined;
+}
+
 /**
  * Sentinel returned when a `service` is requested but cannot be resolved (missing
  * service file, unknown service, or a malformed file). pgconn fails the whole
@@ -298,15 +316,13 @@ function parseUrlConnectionString(
     // Keep it inside the try so a bad escape yields a normal parse failure
     // rather than an untyped defect (CWE-209-safe: the caller redacts the URL).
     const query = url.searchParams;
-    // pgconn's `parseURLSettings` runs the query-param loop **last**, so libpq
-    // URL query settings (`?host=/socket`, `?port=`, `?dbname=`, `?user=`,
-    // `?password=`) override the structural userinfo/host/path. A non-empty query
-    // value wins; otherwise we fall back to the structural part. `searchParams`
+    // pgconn's `parseURLSettings` runs the query-param loop **last** and sets
+    // `settings[k] = v` unconditionally (`config.go:499-505`), so a libpq URL query
+    // setting (`?host=`, `?port=`, `?dbname=`, `?user=`, `?password=`) overrides the
+    // structural userinfo/host/path **even when empty** — a present-but-empty
+    // `?dbname=` yields an empty database, distinct from an absent param. So branch
+    // on `query.has(key)` (present, even ""), not on a non-empty check. `searchParams`
     // already percent-decodes, so query values are used verbatim.
-    const queryOrElse = (key: string, structural: string): string => {
-      const q = query.get(key);
-      return q !== null && q.length > 0 ? q : structural;
-    };
 
     // A URL that omits a field falls back to the libpq `PG*` env vars and then the
     // libpq defaults, matching pgconn's
@@ -323,8 +339,16 @@ function parseUrlConnectionString(
     }
     const svc = (key: string): string | undefined => serviceValue(serviceSettings, key);
 
-    const rawUser = queryOrElse("user", decodeURIComponent(url.username));
-    const user = rawUser.length > 0 ? rawUser : (svc("user") ?? defaultOsUser(env));
+    // A present `?user=` (even empty) overrides the userinfo; only an absent param
+    // falls back to userinfo → service → OS user.
+    const userQuery = query.get("user");
+    const structuralUser = decodeURIComponent(url.username);
+    const user =
+      userQuery !== null
+        ? userQuery
+        : structuralUser.length > 0
+          ? structuralUser
+          : (svc("user") ?? defaultOsUser(env));
     // libpq fills `sslmode` from the service, then `PGSSLMODE`, when the connection
     // string omits it (pgconn's merge order), before the TLS-mode default.
     const sslmode =
@@ -344,6 +368,16 @@ function parseUrlConnectionString(
     const passfileQuery = url.searchParams.get("passfile");
     const passfile =
       passfileQuery !== null && passfileQuery.length > 0 ? passfileQuery : svc("passfile");
+    // libpq `connect_timeout` (query, service, or `PGCONNECT_TIMEOUT`); a present
+    // non-numeric value is a parse error (pgconn's `parseConnectTimeoutSetting`).
+    const connectTimeout = libpqConnectTimeout(
+      url.searchParams.get("connect_timeout") ??
+        svc("connect_timeout") ??
+        libpqEnv(env, "PGCONNECT_TIMEOUT"),
+    );
+    if (connectTimeout === CONNECT_TIMEOUT_INVALID) {
+      return undefined;
+    }
 
     // Structural hosts/ports become pgconn's comma-joined `settings["host"]` /
     // `settings["port"]`. WHATWG `URL.hostname` keeps the brackets around an IPv6
@@ -393,12 +427,17 @@ function parseUrlConnectionString(
     }
     const primary = hostList[0]!;
 
-    const rawDatabase = queryOrElse("dbname", decodeURIComponent(url.pathname.replace(/^\//, "")));
-    // Absent database → service, then PGDATABASE, then the resolved user (libpq default).
+    // A present `?dbname=` (even empty) overrides the URL path verbatim (pgconn
+    // connects with an empty database — there is no `database` default). Only an
+    // absent param falls back to the path → service → PGDATABASE → resolved user.
+    const dbnameQuery = query.get("dbname");
+    const structuralDb = decodeURIComponent(url.pathname.replace(/^\//, ""));
     const database =
-      rawDatabase.length > 0
-        ? rawDatabase
-        : (svc("database") ?? libpqEnv(env, "PGDATABASE") ?? user);
+      dbnameQuery !== null
+        ? dbnameQuery
+        : structuralDb.length > 0
+          ? structuralDb
+          : (svc("database") ?? libpqEnv(env, "PGDATABASE") ?? user);
 
     // Password precedence (pgconn): the query loop runs last, so `?password=`
     // overrides the userinfo password. A `:` in the raw userinfo marks a present
@@ -431,6 +470,7 @@ function parseUrlConnectionString(
       ...(options !== null && options.length > 0 ? { options } : {}),
       ...(sslmode !== null && sslmode.length > 0 ? { sslmode } : {}),
       ...(sslrootcert !== null && sslrootcert.length > 0 ? { sslrootcert } : {}),
+      ...(connectTimeout !== undefined ? { connectTimeoutSeconds: connectTimeout } : {}),
     };
   } catch {
     return undefined;
@@ -459,12 +499,19 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
     if (value[i] !== "=") return undefined;
     i++;
     while (i < n && isSpace(value[i]!)) i++;
-    // Value: single-quoted (with `\` escapes) or bare (until whitespace).
+    // Value: single-quoted (with `\` escapes) or bare (until whitespace). pgconn's
+    // `parseDSNSettings` unescapes **only** `\\`→`\` and `\'`→`'`; a backslash before
+    // any other char is preserved (`config.go:539-566`), so Windows cert paths like
+    // `C:\certs\root.pem` and literal `\n` in a password survive intact. (A `\'`
+    // inside a quoted value is data, not the closing quote.)
+    const isEscapedChar = (j: number): boolean =>
+      value[j] === "\\" && j + 1 < n && (value[j + 1] === "\\" || value[j + 1] === "'");
     let val = "";
     if (value[i] === "'") {
       i++;
+      // An escaped `\'` is consumed in the body, so a bare `'` is the terminator.
       while (i < n && value[i] !== "'") {
-        if (value[i] === "\\" && i + 1 < n) i++;
+        if (isEscapedChar(i)) i++;
         val += value[i];
         i++;
       }
@@ -472,7 +519,7 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
       i++;
     } else {
       while (i < n && !isSpace(value[i]!)) {
-        if (value[i] === "\\" && i + 1 < n) i++;
+        if (isEscapedChar(i)) i++;
         val += value[i];
         i++;
       }
@@ -531,6 +578,12 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   const passfileParam = params.get("passfile");
   const passfile =
     passfileParam !== undefined && passfileParam.length > 0 ? passfileParam : svc("passfile");
+  // libpq `connect_timeout` (keyword, service, or `PGCONNECT_TIMEOUT`); a present
+  // non-numeric value is a parse error (pgconn's `parseConnectTimeoutSetting`).
+  const connectTimeout = libpqConnectTimeout(
+    params.get("connect_timeout") ?? svc("connect_timeout") ?? libpqEnv(env, "PGCONNECT_TIMEOUT"),
+  );
+  if (connectTimeout === CONNECT_TIMEOUT_INVALID) return undefined;
   // Password precedence (pgconn): a `password=` entry — even empty — overrides the
   // service and PGPASSWORD; an empty resolved value then falls through to `.pgpass`.
   const password = resolveLibpqPassword(
@@ -552,6 +605,7 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
     ...(options !== undefined && options.length > 0 ? { options } : {}),
     ...(sslmode !== undefined && sslmode.length > 0 ? { sslmode } : {}),
     ...(sslrootcert !== undefined && sslrootcert.length > 0 ? { sslrootcert } : {}),
+    ...(connectTimeout !== undefined ? { connectTimeoutSeconds: connectTimeout } : {}),
   };
 }
 
