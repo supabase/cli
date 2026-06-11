@@ -148,11 +148,15 @@ function resolveServiceSettings(
   if (service.length === 0) {
     return SERVICE_RESOLUTION_FAILED;
   }
+  // A present connString `servicefile` (even empty) overrides PGSERVICEFILE
+  // unconditionally (pgconn `config.go:504,256`); an empty path then fails
+  // `ReadServicefile("")` → parse error. Only an absent key falls back to
+  // PGSERVICEFILE then the default `~/.pg_service.conf`.
   const servicefile =
-    (connStringServicefile !== undefined && connStringServicefile.length > 0
+    connStringServicefile !== undefined
       ? connStringServicefile
-      : libpqEnv(env, "PGSERVICEFILE")) ?? defaultServiceFilePath();
-  if (servicefile === undefined) {
+      : (libpqEnv(env, "PGSERVICEFILE") ?? defaultServiceFilePath());
+  if (servicefile === undefined || servicefile.length === 0) {
     return SERVICE_RESOLUTION_FAILED;
   }
   return legacyServiceSettings(service, servicefile) ?? SERVICE_RESOLUTION_FAILED;
@@ -324,12 +328,24 @@ function parseUrlConnectionString(
   const hostPortRaw = atIdx === -1 ? authority : authority.slice(atIdx + 1);
   const segments = splitHostPortList(hostPortRaw);
   const multiHost = segments.length > 1;
+  // pgconn accepts a port-only authority (`postgres://:5433/db`): `net.SplitHostPort`
+  // yields an empty host + the port, so the host falls back to PGHOST/default while
+  // the port is kept (`config.go:464-488`). WHATWG `new URL()` throws on an empty
+  // host with a port, so route that through the same hand-split path as multi-host.
+  const firstSegmentHost = parseHostPortSegment(segments[0]!).host;
+  const emptyHostAuthority = !multiHost && firstSegmentHost.length === 0 && hostPortRaw.length > 0;
+  const useHandSplit = multiHost || emptyHostAuthority;
 
   let normalized = trimmed;
-  if (multiHost) {
+  if (useHandSplit) {
     const authorityStart = trimmed.indexOf("://") + 3;
+    // Substitute a placeholder host so `new URL()` can parse the userinfo/path/query;
+    // the real host(s)/port(s) come from the hand-split segments below. A non-empty
+    // first segment (multi-host) is reused verbatim; an empty host gets a literal
+    // placeholder (never read — structural host/port override it).
+    const placeholderHost = firstSegmentHost.length > 0 ? segments[0]! : "placeholder.invalid";
     const newAuthority =
-      atIdx === -1 ? segments[0]! : `${authority.slice(0, atIdx + 1)}${segments[0]!}`;
+      atIdx === -1 ? placeholderHost : `${authority.slice(0, atIdx + 1)}${placeholderHost}`;
     normalized =
       trimmed.slice(0, authorityStart) +
       newAuthority +
@@ -415,20 +431,25 @@ function parseUrlConnectionString(
     // literal (`[::1]`); Go's `url.Hostname()` returns the unbracketed host (only
     // re-adding brackets when formatting via `ToPostgresURL`), so strip them. For a
     // multi-host URL the per-segment host/port were already split out by hand.
-    const structuralHosts = multiHost
+    const structuralHosts = useHandSplit
       ? segments.map((s) => parseHostPortSegment(s).host).filter((h) => h.length > 0)
       : url.hostname.length > 0
         ? [unbracketIpv6(url.hostname)]
         : [];
-    const structuralPorts = multiHost
+    const structuralPorts = useHandSplit
       ? segments.map((s) => parseHostPortSegment(s).port).filter((p) => p.length > 0)
       : url.port.length > 0
         ? [url.port]
         : [];
 
+    // A present `?host=` (even empty) overrides the structural host verbatim
+    // (pgconn copies it into `settings["host"]` unconditionally, `config.go:499-505`,
+    // and an empty value is a literal empty host — it does NOT re-fall-back to
+    // PGHOST/default). Only an absent param falls back to structural → service →
+    // PGHOST → default.
     const hostQuery = query.get("host");
     const hostString =
-      hostQuery !== null && hostQuery.length > 0
+      hostQuery !== null
         ? hostQuery
         : structuralHosts.length > 0
           ? structuralHosts.join(",")
@@ -562,7 +583,11 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
         i++;
       }
     }
-    if (key.length > 0) params.set(key, val);
+    // pgconn rejects an empty keyword with "invalid dsn" (`config.go:578-580`); a
+    // leading `=value` or whitespace-only key must fail, not be silently dropped.
+    // (Reachable only after a `=` was consumed, so this is exactly the empty-key case.)
+    if (key.length === 0) return undefined;
+    params.set(key, val);
   }
   // Omitted fields fall back to libpq `PG*` env vars and then the libpq defaults,
   // matching pgconn's `mergeSettings(defaultSettings, envSettings, connStringSettings)`.
@@ -578,12 +603,12 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   if (serviceSettings === SERVICE_RESOLUTION_FAILED) return undefined;
   const svc = (key: string): string | undefined => serviceValue(serviceSettings, key);
 
+  // pgconn v1.14.3 has no `hostaddr` support: it stores `hostaddr` only as a runtime
+  // param and builds `config.Host` solely from `settings["host"]` (`config.go:326,364`),
+  // so a `hostaddr`-only DSN dials `defaultHost()` (`defaults.go:15`), never the address.
+  // Don't use `hostaddr` as a host fallback (it would dial a different endpoint than Go).
   const hostString =
-    params.get("host") ??
-    params.get("hostaddr") ??
-    svc("host") ??
-    libpqEnv(env, "PGHOST") ??
-    defaultLibpqHost();
+    params.get("host") ?? svc("host") ?? libpqEnv(env, "PGHOST") ?? defaultLibpqHost();
   // Explicit empty/non-numeric `port=` is a parse error (pgconn's `parsePort`); an
   // absent `port` falls back to the service, then `PGPORT`, then the libpq default.
   const portParam = params.get("port");

@@ -810,6 +810,44 @@ describe("database= alias and empty service values (pgconn parity)", () => {
   });
 });
 
+describe("more pgconn parse refinements", () => {
+  it("honors a present-but-empty ?host= as a literal empty host (overrides structural)", () => {
+    expect(
+      parseLegacyConnectionString("postgres://remote.example.com/postgres?host="),
+    ).toMatchObject({ host: "", database: "postgres" });
+  });
+
+  it("accepts a port-only URL, falling the host back to PGHOST/default", () => {
+    const env = (name: string): string | undefined => (name === "PGHOST" ? "envhost" : undefined);
+    expect(parseLegacyConnectionString("postgres://:5433/postgres", env)).toMatchObject({
+      host: "envhost",
+      port: 5433,
+      database: "postgres",
+    });
+  });
+
+  it("does not dial hostaddr as the host (pgconn ignores hostaddr)", () => {
+    const env = (name: string): string | undefined => (name === "PGHOST" ? "envhost" : undefined);
+    const parsed = parseLegacyConnectionString("hostaddr=10.0.0.5 user=u", env);
+    expect(parsed?.host).toBe("envhost");
+    expect(parsed?.host).not.toBe("10.0.0.5");
+  });
+
+  it("rejects a DSN with an empty key", () => {
+    expect(parseLegacyConnectionString("=ignored host=prod.example.com")).toBeUndefined();
+    expect(parseLegacyConnectionString("  =value host=h")).toBeUndefined();
+  });
+
+  it("treats a present-but-empty servicefile= as a parse error (overrides PGSERVICEFILE)", () => {
+    const env = (name: string): string | undefined =>
+      name === "PGSERVICEFILE" ? "/some/pg_service.conf" : undefined;
+    expect(parseLegacyConnectionString("service=prod servicefile= host=h", env)).toBeUndefined();
+    expect(
+      parseLegacyConnectionString("postgres://host/db?service=prod&servicefile=", env),
+    ).toBeUndefined();
+  });
+});
+
 describe("redactLegacyConnectionString", () => {
   it("masks the password in a parseable URL", () => {
     const redacted = redactLegacyConnectionString("postgres://user:s3cret@example.com/db");
