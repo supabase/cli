@@ -82,7 +82,7 @@ jobs:
       VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
@@ -198,7 +198,7 @@ jobs:
           permission-workflows: write
 
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: true
           token: ${{ steps.app-token.outputs.token }}
@@ -350,7 +350,7 @@ jobs:
       VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
@@ -375,6 +375,7 @@ jobs:
 
       - name: Configure git for tap push
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           gh auth setup-git
@@ -384,6 +385,7 @@ jobs:
       - name: Update Homebrew formula
         run: pnpm exec bun apps/cli/scripts/update-homebrew.ts --version "${VERSION}" --name "${BREW_NAME}"
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   publish-scoop:
@@ -395,7 +397,7 @@ jobs:
       VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
@@ -420,6 +422,7 @@ jobs:
 
       - name: Configure git for bucket push
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           gh auth setup-git
@@ -429,6 +432,7 @@ jobs:
       - name: Update Scoop manifest
         run: pnpm exec bun apps/cli/scripts/update-scoop.ts --version "${VERSION}" --name "${SCOOP_NAME}"
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   # Post-publish smoke test for the `supabase/setup-cli` GitHub Action against

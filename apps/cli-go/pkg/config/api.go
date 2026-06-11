@@ -14,13 +14,13 @@ type (
 		Schemas         []string `toml:"schemas" json:"schemas"`
 		ExtraSearchPath []string `toml:"extra_search_path" json:"extra_search_path"`
 		MaxRows         uint     `toml:"max_rows" json:"max_rows"`
-		// When unset (default today), new tables, views, sequences and functions created in
-		// the `public` schema by `postgres` are automatically reachable through the Data API
-		// roles `anon`, `authenticated`, and `service_role`, matching long-standing local
-		// behaviour. Set to false to match the new cloud default and require explicit GRANTs
-		// to expose entities through the Data API; set to true to opt out of the upcoming
-		// transition once the platform default flips. Stored as a pointer so the migration
-		// path (unset -> default true today, default false from May 30, removed in October)
+		// When unset (default), new tables, views, sequences and functions created in the
+		// `public` schema by `postgres` are NOT automatically reachable through the Data API
+		// roles `anon`, `authenticated`, and `service_role`; explicit GRANTs are required,
+		// matching the new cloud default. Set to true to keep the legacy behaviour of
+		// auto-exposing new entities (deprecated; the field is removed on 2026-10-30). Set to
+		// false to pin the new default explicitly. Stored as a pointer so the migration path
+		// (unset -> default true before May 30 2026, default false after, removed in October)
 		// can flip the implicit value without losing the explicit user choice.
 		AutoExposeNewTables *bool `toml:"auto_expose_new_tables,omitempty" json:"auto_expose_new_tables,omitempty"`
 		// Local only config

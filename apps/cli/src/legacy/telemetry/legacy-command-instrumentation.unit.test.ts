@@ -4,6 +4,7 @@ import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.
 import { CurrentAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { withLegacyCommandInstrumentation } from "./legacy-command-instrumentation.ts";
+import { mockOutput } from "../../../tests/helpers/mocks.ts";
 
 function mockContextualAnalytics() {
   const captured: Array<{
@@ -46,6 +47,7 @@ describe("withLegacyCommandInstrumentation", () => {
     }).pipe(
       withLegacyCommandInstrumentation(),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed(["backups", "list"]),
@@ -60,6 +62,56 @@ describe("withLegacyCommandInstrumentation", () => {
           expect(event?.properties.command).toBe("backups list");
           expect(event?.properties.exit_code).toBe(0);
           expect(typeof event?.properties.duration_ms).toBe("number");
+          expect(event?.properties.output_format).toBe("text");
+        }),
+      ),
+    );
+  });
+
+  it.live("reports legacy Go machine output formats emitted through the text layer", () => {
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["backups", "list", "--output", "yaml"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties.output_format).toBe("yaml");
+        }),
+      ),
+    );
+  });
+
+  it.live("keeps the TS output format when legacy --output pretty defers to it", () => {
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "json" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "backups",
+            "list",
+            "--output",
+            "pretty",
+            "--output-format",
+            "json",
+          ]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured[0]?.properties.output_format).toBe("json");
         }),
       ),
     );
@@ -73,6 +125,7 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { projectRef: Option.some("abcdefghijklmnopqrst") },
       }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed(["secrets", "list", "--project-ref", "abcdefghijklmnopqrst"]),
@@ -99,6 +152,7 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { envFile: Option.some("/path/to/.env") },
       }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed(["secrets", "set", "--env-file=/path/to/.env"]),
@@ -125,6 +179,7 @@ describe("withLegacyCommandInstrumentation", () => {
         },
       }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed([
@@ -157,6 +212,7 @@ describe("withLegacyCommandInstrumentation", () => {
         safeFlags: ["project-ref"],
       }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed(["link", "--project-ref", "abcdefghijklmnopqrst"]),
@@ -180,6 +236,7 @@ describe("withLegacyCommandInstrumentation", () => {
     return Effect.void.pipe(
       withLegacyCommandInstrumentation({ flags: {} }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
       Effect.provide(commandRuntimeLayer(["backups", "list"])),
       Effect.tap(() =>
@@ -196,6 +253,7 @@ describe("withLegacyCommandInstrumentation", () => {
 
     return withLegacyCommandInstrumentation()(Effect.fail(new Error("boom"))).pipe(
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
       Effect.provide(commandRuntimeLayer(["backups", "list"])),
       Effect.exit,
@@ -215,6 +273,7 @@ describe("withLegacyCommandInstrumentation", () => {
     return Effect.sync(() => "ok").pipe(
       withLegacyCommandInstrumentation({ analytics: false }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["telemetry", "enable"]) })),
       Effect.provide(commandRuntimeLayer(["telemetry", "enable"])),
       Effect.tap(() =>
@@ -236,6 +295,7 @@ describe("withLegacyCommandInstrumentation", () => {
         },
       }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
           args: Effect.succeed([

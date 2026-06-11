@@ -75,7 +75,7 @@ Create three empty repos on your own GitHub account:
 | Homebrew tap                 | Must be named `homebrew-<anything>` (so `brew tap <owner>/<anything>` works) | `[avallete/homebrew-supabase-shim-poc](https://github.com/avallete/homebrew-supabase-shim-poc)` |
 | Scoop bucket                 | None                                                                         | `[avallete/scoop-bucket](https://github.com/avallete/scoop-bucket)`                             |
 
-All three can be empty git trees — the updater scripts `gh repo clone` them into a tmpdir, write their generated file, commit, and push.
+All three can be empty git trees. The downstream updater scripts clone the Homebrew tap / Scoop bucket into a tmpdir with git, write their generated file, commit, and push.
 
 Authenticate the GitHub CLI once with write access to all three:
 
@@ -285,7 +285,7 @@ The matrix does not yet include `windows-11-arm` (gate 6) or an Alpine musl runn
 
 ### Post-publish: Homebrew + Scoop
 
-Both updaters run automatically from `release-shared.yml`'s `publish-homebrew` and `publish-scoop` jobs after the GitHub Release is finalised. Each job mints a GitHub App token scoped to `homebrew-tap` / `scoop-bucket` (via `actions/create-github-app-token` with the `APP_ID` + `GH_APP_PRIVATE_KEY` secrets), runs `gh auth setup-git` + sets a `github-actions[bot]` git identity, then invokes `apps/cli/scripts/update-homebrew.ts` / `update-scoop.ts` with `--name <brew_name>` / `--name <scoop_name>`:
+Both updaters run automatically from `release-shared.yml`'s `publish-homebrew` and `publish-scoop` jobs after the GitHub Release is finalised. Each job mints a GitHub App token scoped to `homebrew-tap` / `scoop-bucket` (via `actions/create-github-app-token` with the `GH_APP_CLIENT_ID` + `GH_APP_PRIVATE_KEY` secrets), runs `gh auth setup-git` + sets a `github-actions[bot]` git identity, then invokes `apps/cli/scripts/update-homebrew.ts` / `update-scoop.ts` with `--name <brew_name>` / `--name <scoop_name>`:
 
 - `stable` → `--name supabase` (the default formula / manifest, what `brew install supabase` resolves)
 - `beta` → `--name supabase-beta` (a separate formula / manifest for the prerelease channel)

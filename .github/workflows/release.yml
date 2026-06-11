@@ -35,6 +35,13 @@ on:
         type: boolean
         default: true
 
+# The release pipeline mutates external package registries, git tags, GitHub
+# Releases, Homebrew, and Scoop. Keep one release per ref active at a time so
+# duplicate push events cannot race the same computed version.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 

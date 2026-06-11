@@ -11,9 +11,10 @@ import "context"
 const (
 	//   - EventCommandExecuted: sent after a CLI command finishes, whether it
 	//     succeeds or fails. This helps measure command usage, failure rates, and
-	//     runtime. Event-specific properties are PropExitCode (process exit code)
-	//     and PropDurationMs (command runtime in milliseconds). Related groups:
-	//     none added directly by this event.
+	//     runtime. Event-specific properties are PropExitCode (process exit code),
+	//     PropDurationMs (command runtime in milliseconds), and PropOutputFormat
+	//     (the resolved output format the command used). Related groups: none
+	//     added directly by this event.
 	EventCommandExecuted = "cli_command_executed"
 	//   - EventProjectLinked: sent after the local CLI directory is linked to a
 	//     Supabase project. This helps measure project-linking adoption and connect
@@ -109,6 +110,10 @@ const (
 	PropExitCode = "exit_code"
 	// PropDurationMs is the command runtime in milliseconds.
 	PropDurationMs = "duration_ms"
+	// PropOutputFormat is the resolved output format the command used (for
+	// example "pretty", "json", "yaml"), after agent auto-detection and any
+	// command-local override are applied.
+	PropOutputFormat = "output_format"
 )
 
 // Group identifiers associate events with higher-level entities in PostHog.

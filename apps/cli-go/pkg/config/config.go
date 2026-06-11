@@ -830,6 +830,9 @@ func (c *config) Validate(fsys fs.FS) error {
 		}
 	}
 	// Validate api config
+	if c.Api.AutoExposeNewTables != nil && *c.Api.AutoExposeNewTables {
+		fmt.Fprintln(os.Stderr, "WARN: api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Remove the field or set it to false to adopt the new default of revoking Data API privileges on new entities in the public schema.")
+	}
 	if c.Api.Enabled {
 		if c.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")

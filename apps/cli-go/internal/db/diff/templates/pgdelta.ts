@@ -41,11 +41,25 @@ try {
   const result = await createPlan(
     await resolveInput(source),
     await resolveInput(target),
-    supabase,
+    {
+      ...supabase,
+      skipDefaultPrivilegeSubtraction: true,
+    },
   );
   let statements = result?.plan.statements ?? [];
   if (formatOptions != null) {
     statements = formatSqlStatements(statements, formatOptions);
+  }
+  if (Deno.env.get("PGDELTA_DEBUG")) {
+    console.error(
+      JSON.stringify({
+        statementCount: statements.length,
+        source: source ? "connected" : "null",
+        target: target ? "connected" : "null",
+        includedSchemas: includedSchemas ?? null,
+        skipDefaultPrivilegeSubtraction: true,
+      }),
+    );
   }
   for (const sql of statements) {
     console.log(`${sql};`);

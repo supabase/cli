@@ -175,8 +175,9 @@ func Execute() {
 		if service := telemetry.FromContext(executedCmd.Context()); service != nil {
 			ensureProjectGroupsCached(executedCmd.Context(), service)
 			_ = service.Capture(executedCmd.Context(), telemetry.EventCommandExecuted, map[string]any{
-				telemetry.PropExitCode:   exitCode(err),
-				telemetry.PropDurationMs: time.Since(startedAt).Milliseconds(),
+				telemetry.PropExitCode:     exitCode(err),
+				telemetry.PropDurationMs:   time.Since(startedAt).Milliseconds(),
+				telemetry.PropOutputFormat: utils.OutputFormat.Value,
 			}, nil)
 			_ = service.Close()
 		}

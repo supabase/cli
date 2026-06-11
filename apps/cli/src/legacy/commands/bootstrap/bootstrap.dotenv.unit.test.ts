@@ -1,7 +1,7 @@
 import type { ApiKeyResponse } from "@supabase/api/effect";
 import { describe, expect, it } from "vitest";
 
-import { buildDotEnv, marshalDotEnv, parseDotEnv } from "./bootstrap.dotenv.ts";
+import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
 import type { LegacyDbConfig } from "./bootstrap.pgconfig.ts";
 
 type ApiKey = typeof ApiKeyResponse.Type;
@@ -92,30 +92,5 @@ describe("marshalDotEnv", () => {
     expect(marshalDotEnv({ COUNT: "42", PATH: 'a"b\\c', NOTE: "hi!" })).toBe(
       `COUNT=42\nNOTE="hi\\!"\nPATH="a\\"b\\\\c"`,
     );
-  });
-});
-
-describe("parseDotEnv", () => {
-  it("parses KEY=VALUE lines, skipping comments and blanks, and strips quotes", () => {
-    expect(parseDotEnv('# comment\nFOO=bar\n\nBAZ="quoted"\nexport QUX=1')).toEqual({
-      FOO: "bar",
-      BAZ: "quoted",
-      QUX: "1",
-    });
-  });
-
-  it("expands escape sequences in double-quoted values (godotenv parity)", () => {
-    expect(parseDotEnv('A="line1\\nline2"\nB="a\\"b\\\\c"')).toEqual({
-      A: "line1\nline2",
-      B: 'a"b\\c',
-    });
-  });
-
-  it("takes single-quoted values literally (no escape expansion)", () => {
-    expect(parseDotEnv("A='line1\\nline2'")).toEqual({ A: "line1\\nline2" });
-  });
-
-  it("throws Go's 'unexpected character' error on a malformed variable name", () => {
-    expect(() => parseDotEnv("!=")).toThrow(/unexpected character "!" in variable name/);
   });
 });

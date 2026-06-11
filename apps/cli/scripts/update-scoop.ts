@@ -113,19 +113,31 @@ if (local || dryRun) {
   process.exit(0);
 }
 
+async function hasStagedChanges(repoDir: string, repoPath: string): Promise<boolean> {
+  const diff =
+    await $`git -C ${repoDir} diff --cached --quiet --exit-code -- ${repoPath}`.nothrow();
+  if (diff.exitCode === 0) return false;
+  if (diff.exitCode === 1) return true;
+  throw new Error(`Failed to inspect staged changes for ${repoPath}`);
+}
+
 // Clone bucket repo, update manifest, commit, push
 const tmpDir = await mkdtemp(path.join(tmpdir(), "scoop-bucket-"));
 try {
-  await $`gh repo clone ${bucket} ${tmpDir}`;
+  const bucketUrl = `https://github.com/${bucket}.git`;
+  await $`git clone ${bucketUrl} ${tmpDir}`;
 
   const bucketManifestPath = path.join(tmpDir, manifestFileName);
   await writeFile(bucketManifestPath, manifestJson);
 
   await $`git -C ${tmpDir} add ${manifestFileName}`;
-  await $`git -C ${tmpDir} commit -m ${name + " " + version}`;
-  await $`git -C ${tmpDir} push`;
-
-  console.log(`Pushed manifest update to ${bucket}`);
+  if (await hasStagedChanges(tmpDir, manifestFileName)) {
+    await $`git -C ${tmpDir} commit -m ${name + " " + version}`;
+    await $`git -C ${tmpDir} push`;
+    console.log(`Pushed manifest update to ${bucket}`);
+  } else {
+    console.log(`Manifest ${manifestFileName} is already up to date in ${bucket}`);
+  }
 } finally {
   await rm(tmpDir, { recursive: true });
 }

@@ -120,21 +120,34 @@ if (local || dryRun) {
   process.exit(0);
 }
 
+async function hasStagedChanges(repoDir: string, repoPath: string): Promise<boolean> {
+  const diff =
+    await $`git -C ${repoDir} diff --cached --quiet --exit-code -- ${repoPath}`.nothrow();
+  if (diff.exitCode === 0) return false;
+  if (diff.exitCode === 1) return true;
+  throw new Error(`Failed to inspect staged changes for ${repoPath}`);
+}
+
 // Clone tap repo, update formula, commit, push
 const tmpDir = await mkdtemp(path.join(tmpdir(), "homebrew-tap-"));
 try {
-  await $`gh repo clone ${tap} ${tmpDir}`;
+  const tapUrl = `https://github.com/${tap}.git`;
+  await $`git clone ${tapUrl} ${tmpDir}`;
 
   const formulaDir = path.join(tmpDir, "Formula");
   await $`mkdir -p ${formulaDir}`;
   const tapFormulaPath = path.join(formulaDir, formulaFileName);
+  const tapFormulaRepoPath = `Formula/${formulaFileName}`;
   await writeFile(tapFormulaPath, formula);
 
-  await $`git -C ${tmpDir} add Formula/${formulaFileName}`;
-  await $`git -C ${tmpDir} commit -m ${name + " " + version}`;
-  await $`git -C ${tmpDir} push`;
-
-  console.log(`Pushed formula update to ${tap}`);
+  await $`git -C ${tmpDir} add ${tapFormulaRepoPath}`;
+  if (await hasStagedChanges(tmpDir, tapFormulaRepoPath)) {
+    await $`git -C ${tmpDir} commit -m ${name + " " + version}`;
+    await $`git -C ${tmpDir} push`;
+    console.log(`Pushed formula update to ${tap}`);
+  } else {
+    console.log(`Formula ${formulaFileName} is already up to date in ${tap}`);
+  }
 } finally {
   await rm(tmpDir, { recursive: true });
 }
