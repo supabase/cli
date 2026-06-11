@@ -18,10 +18,10 @@ extra_search_path = ["public", "extensions"]
 max_rows = 1000
 # Controls whether new tables, views, sequences and functions created in the \`public\` schema by
 # \`postgres\` are reachable through the Data API roles (\`anon\`, \`authenticated\`, \`service_role\`)
-# without explicit GRANTs. When unset, new entities are NOT auto-exposed, matching the new cloud
-# default. Set to \`true\` to keep the legacy behaviour of auto-exposing new entities; this is
-# deprecated and the field is removed on 2026-10-30 once the always-revoked behaviour is permanent.
-# auto_expose_new_tables = true
+# without explicit GRANTs. Leave unset today to preserve local behaviour. The implicit default
+# flips to \`false\` on 2026-05-30 to match the new cloud default, and the field is removed in
+# 2026-10-30 once the always-revoked behaviour is permanent. Set to \`false\` to opt in early.
+# auto_expose_new_tables = false
 
 [api.tls]
 # Enable HTTPS endpoints locally using a self-signed certificate.
@@ -404,9 +404,10 @@ s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
 
-# [experimental.pgdelta]
-# When enabled, pg-delta becomes the active engine for supported schema flows.
-# enabled = false
+# pg-delta is the schema diff engine for db diff / db pull / db remote commit.
+# Set enabled = false to fall back to the legacy migra engine.
+[experimental.pgdelta]
+enabled = true
 # Directory under \`supabase/\` where declarative files are written.
 # declarative_schema_path = "./database"
 # JSON string passed through to pg-delta SQL formatting.

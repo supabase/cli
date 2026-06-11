@@ -84,6 +84,7 @@ var (
 	usePgAdmin     bool
 	usePgSchema    bool
 	usePgDelta     bool
+	useDeclarative bool
 	pullDiffEngine = utils.EnumFlag{
 		Allowed: []string{"migra", "pg-delta"},
 		Value:   "migra",
@@ -107,6 +108,12 @@ var (
 				}
 			}
 			useDelta := shouldUsePgDelta()
+			// An explicit --use-migra is an authoritative rollback: it forces migra even
+			// when pg-delta is enabled in config. The flag defaults to true, so only an
+			// explicit pass counts as opting out of pg-delta.
+			if cmd.Flags().Changed("use-migra") {
+				useDelta = false
+			}
 			if usePgAdmin {
 				return diff.RunPgAdmin(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs())
 			}
@@ -176,12 +183,19 @@ var (
 			if len(args) > 0 {
 				name = args[0]
 			}
+			// Declarative export is opt-in via --declarative. Enabling pg-delta in config
+			// does not switch db pull to declarative output; it keeps the migration-file
+			// workflow and only defaults the shadow diff engine below.
+			useDeclarativePgDelta := useDeclarative
+			usePgDeltaDiff := resolvePullDiffEngine(
+				cmd.Flags().Changed("diff-engine"),
+				pullDiffEngine.Value,
+				shouldUsePgDelta(),
+			)
 			pullDiffer := diff.DiffSchemaMigra
-			usePgDeltaDiff := pullDiffEngine.Value == "pg-delta"
 			if usePgDeltaDiff {
 				pullDiffer = diff.DiffPgDelta
 			}
-			useDeclarativePgDelta := shouldUseDeclarativePgDeltaPull(usePgDeltaDiff)
 			return pull.Run(cmd.Context(), schema, flags.DbConfig, name, useDeclarativePgDelta, usePgDeltaDiff, pullDiffer, afero.NewOsFs())
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
@@ -210,8 +224,15 @@ var (
 		Use:        "commit",
 		Short:      "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			useDelta := shouldUsePgDelta()
-			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", useDelta, false, diff.DiffSchemaMigra, afero.NewOsFs())
+			// remote commit always writes a timestamped migration file. When pg-delta is
+			// enabled it only swaps the shadow diff engine; it never switches to the
+			// declarative export path.
+			usePgDeltaDiff := shouldUsePgDelta()
+			pullDiffer := diff.DiffSchemaMigra
+			if usePgDeltaDiff {
+				pullDiffer = diff.DiffPgDelta
+			}
+			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", false, usePgDeltaDiff, pullDiffer, afero.NewOsFs())
 		},
 	}
 
@@ -361,11 +382,15 @@ func shouldUsePgDelta() bool {
 	return utils.IsPgDeltaEnabled() || usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")
 }
 
-func shouldUseDeclarativePgDeltaPull(usePgDeltaDiff bool) bool {
-	if usePgDeltaDiff {
-		return false
+// resolvePullDiffEngine selects whether migration-style db pull uses pg-delta for the
+// shadow diff step. An explicit --diff-engine flag always wins, so --diff-engine migra is
+// an authoritative rollback even when pg-delta is enabled in config; otherwise the default
+// follows whether pg-delta is the active engine (config / env).
+func resolvePullDiffEngine(engineFlagChanged bool, engine string, pgDeltaDefault bool) bool {
+	if engineFlagChanged {
+		return engine == "pg-delta"
 	}
-	return shouldUsePgDelta()
+	return pgDeltaDefault
 }
 
 func init() {
@@ -427,15 +452,18 @@ func init() {
 	dbCmd.AddCommand(dbPushCmd)
 	// Build pull command
 	pullFlags := dbPullCmd.Flags()
-	// This flag activates declarative pull output through pg-delta instead of the
-	// legacy migration SQL pull path.
-	pullFlags.BoolVar(&usePgDelta, "use-pg-delta", false, "Use pg-delta to pull declarative schema.")
+	// --declarative switches pull output from a timestamped migration to declarative
+	// schema files exported through pg-delta. --use-pg-delta is the deprecated alias.
+	pullFlags.BoolVar(&useDeclarative, "declarative", false, "Pull schema as declarative files using pg-delta instead of creating a migration.")
+	pullFlags.BoolVar(&useDeclarative, "use-pg-delta", false, "Use pg-delta to pull declarative schema.")
+	cobra.CheckErr(pullFlags.MarkDeprecated("use-pg-delta", "use --declarative instead."))
 	pullFlags.Var(&pullDiffEngine, "diff-engine", "Diff engine to use for migration-style db pull.")
 	pullFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	pullFlags.String("db-url", "", "Pulls from the database specified by the connection string (must be percent-encoded).")
 	pullFlags.Bool("linked", true, "Pulls from the linked project.")
 	pullFlags.Bool("local", false, "Pulls from the local database.")
 	dbPullCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
+	dbPullCmd.MarkFlagsMutuallyExclusive("declarative", "diff-engine")
 	dbPullCmd.MarkFlagsMutuallyExclusive("use-pg-delta", "diff-engine")
 	pullFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pullFlags.Lookup("password")))

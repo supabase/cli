@@ -242,6 +242,49 @@ format_options = "not-json"
 		err := config.Load("", fsys)
 		assert.ErrorContains(t, err, "experimental.pgdelta.format_options")
 	})
+
+	t.Run("init scaffold opts into pgdelta", func(t *testing.T) {
+		config := NewConfig()
+		// supabase init renders the scaffold with the pg-delta opt-in flag set
+		config.Experimental.PgDeltaInitEnabled = true
+		var buf bytes.Buffer
+		require.NoError(t, config.Eject(&buf))
+		fsys := fs.MapFS{"supabase/config.toml": &fs.MapFile{Data: buf.Bytes()}}
+		// Reloading the generated config resolves to pg-delta
+		require.NoError(t, config.Load("", fsys))
+		require.NotNil(t, config.Experimental.PgDelta)
+		assert.True(t, config.Experimental.PgDelta.Enabled)
+	})
+
+	t.Run("absent pgdelta section falls back to migra", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental]
+orioledb_version = ""
+`)},
+		}
+
+		// The default ejected by mergeDefaultValues keeps pg-delta disabled, so a config
+		// without the section resolves to migra (PgDelta is non-nil only for version pinning).
+		require.NoError(t, config.Load("", fsys))
+		require.NotNil(t, config.Experimental.PgDelta)
+		assert.False(t, config.Experimental.PgDelta.Enabled)
+	})
+
+	t.Run("explicit enabled false restores migra", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental.pgdelta]
+enabled = false
+`)},
+		}
+
+		require.NoError(t, config.Load("", fsys))
+		require.NotNil(t, config.Experimental.PgDelta)
+		assert.False(t, config.Experimental.PgDelta.Enabled)
+	})
 }
 
 func TestPgDeltaNpmVersionPinning(t *testing.T) {
