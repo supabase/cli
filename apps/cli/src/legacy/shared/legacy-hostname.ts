@@ -23,7 +23,12 @@ export function legacyGetHostname(): string {
     try {
       const url = new URL(dockerHost);
       if (url.protocol === "tcp:" && url.hostname.length > 0) {
-        return url.hostname;
+        // WHATWG `URL.hostname` returns an IPv6 host bracketed (`[::1]`), but Go's
+        // `net.SplitHostPort` (`misc.go:307`) returns the bare host (`::1`). Strip a
+        // single surrounding bracket pair so local-stack probes dial/compare the
+        // same host Go does; IPv4 and named hosts are returned unchanged.
+        const host = url.hostname;
+        return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
       }
     } catch {
       // Unparseable DOCKER_HOST → fall through to the loopback default.

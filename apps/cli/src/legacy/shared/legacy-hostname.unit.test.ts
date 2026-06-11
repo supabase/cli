@@ -38,6 +38,17 @@ describe("legacyGetHostname", () => {
     ).toBe("docker-host");
   });
 
+  it("strips the brackets from an IPv6 tcp:// DOCKER_HOST (net.SplitHostPort parity)", () => {
+    // WHATWG URL.hostname returns `[::1]`; Go's net.SplitHostPort returns the bare
+    // `::1`, which is what gets dialed/compared, so the brackets must be stripped.
+    expect(
+      withEnv(
+        { SUPABASE_SERVICES_HOSTNAME: undefined, DOCKER_HOST: "tcp://[::1]:2375" },
+        legacyGetHostname,
+      ),
+    ).toBe("::1");
+  });
+
   it("falls back to 127.0.0.1 for a unix-socket DOCKER_HOST", () => {
     expect(
       withEnv(
