@@ -463,7 +463,7 @@ func init() {
 	// schema files exported through pg-delta. --use-pg-delta is the deprecated alias.
 	pullFlags.BoolVar(&useDeclarative, "declarative", false, "Pull schema as declarative files using pg-delta instead of creating a migration.")
 	pullFlags.BoolVar(&useDeclarative, "use-pg-delta", false, "Use pg-delta to pull declarative schema.")
-	cobra.CheckErr(pullFlags.MarkDeprecated("use-pg-delta", "use --declarative instead."))
+	cobra.CheckErr(pullFlags.MarkDeprecated("use-pg-delta", "use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead."))
 	pullFlags.Var(&pullDiffEngine, "diff-engine", "Diff engine to use for migration-style db pull.")
 	pullFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	pullFlags.String("db-url", "", "Pulls from the database specified by the connection string (must be percent-encoded).")

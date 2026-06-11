@@ -13,7 +13,9 @@ const config = {
     ),
   ),
   usePgDelta: Flag.boolean("use-pg-delta").pipe(
-    Flag.withDescription("Deprecated alias for --declarative."),
+    Flag.withDescription(
+      "Deprecated alias for --declarative. Use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.",
+    ),
   ),
   diffEngine: Flag.choice("diff-engine", ["migra", "pg-delta"] as const).pipe(
     Flag.withDescription("Diff engine to use for migration-style db pull."),
