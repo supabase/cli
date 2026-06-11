@@ -629,6 +629,9 @@ type ClientInterface interface {
 	// V1DisableReadonlyModeTemporarily request
 	V1DisableReadonlyModeTemporarily(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1RestartAProject request
+	V1RestartAProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1ListAvailableRestoreVersions request
 	V1ListAvailableRestoreVersions(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3043,6 +3046,18 @@ func (c *Client) V1GetReadonlyModeStatus(ctx context.Context, ref string, reqEdi
 
 func (c *Client) V1DisableReadonlyModeTemporarily(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1DisableReadonlyModeTemporarilyRequest(c.Server, ref)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1RestartAProject(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1RestartAProjectRequest(c.Server, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -10271,6 +10286,40 @@ func NewV1DisableReadonlyModeTemporarilyRequest(server string, ref string) (*htt
 	return req, nil
 }
 
+// NewV1RestartAProjectRequest generates requests for V1RestartAProject
+func NewV1RestartAProjectRequest(server string, ref string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/restart", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewV1ListAvailableRestoreVersionsRequest generates requests for V1ListAvailableRestoreVersions
 func NewV1ListAvailableRestoreVersionsRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -11699,6 +11748,9 @@ type ClientWithResponsesInterface interface {
 
 	// V1DisableReadonlyModeTemporarilyWithResponse request
 	V1DisableReadonlyModeTemporarilyWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1DisableReadonlyModeTemporarilyResponse, error)
+
+	// V1RestartAProjectWithResponse request
+	V1RestartAProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1RestartAProjectResponse, error)
 
 	// V1ListAvailableRestoreVersionsWithResponse request
 	V1ListAvailableRestoreVersionsWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListAvailableRestoreVersionsResponse, error)
@@ -14927,6 +14979,27 @@ func (r V1DisableReadonlyModeTemporarilyResponse) StatusCode() int {
 	return 0
 }
 
+type V1RestartAProjectResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1RestartAProjectResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1RestartAProjectResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1ListAvailableRestoreVersionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -17053,6 +17126,15 @@ func (c *ClientWithResponses) V1DisableReadonlyModeTemporarilyWithResponse(ctx c
 		return nil, err
 	}
 	return ParseV1DisableReadonlyModeTemporarilyResponse(rsp)
+}
+
+// V1RestartAProjectWithResponse request returning *V1RestartAProjectResponse
+func (c *ClientWithResponses) V1RestartAProjectWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1RestartAProjectResponse, error) {
+	rsp, err := c.V1RestartAProject(ctx, ref, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1RestartAProjectResponse(rsp)
 }
 
 // V1ListAvailableRestoreVersionsWithResponse request returning *V1ListAvailableRestoreVersionsResponse
@@ -20707,6 +20789,22 @@ func ParseV1DisableReadonlyModeTemporarilyResponse(rsp *http.Response) (*V1Disab
 	}
 
 	response := &V1DisableReadonlyModeTemporarilyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseV1RestartAProjectResponse parses an HTTP response from a V1RestartAProjectWithResponse call
+func ParseV1RestartAProjectResponse(rsp *http.Response) (*V1RestartAProjectResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1RestartAProjectResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
