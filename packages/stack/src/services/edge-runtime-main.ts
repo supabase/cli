@@ -1,19 +1,6 @@
 declare const Deno: any;
 declare const EdgeRuntime: any;
 
-// `jose` is provided by a static `import * as jose from "jsr:@panva/jose@6"`
-// that edge-runtime.ts prepends when materializing this script for the Deno
-// edge runtime. Keeping the `jsr:` specifier out of this file's source lets the
-// bun workspace type-check, lint, and bundle it without resolving a Deno-only
-// module. It is declared here for type-checking only.
-type JwksResolver = (...args: ReadonlyArray<unknown>) => Promise<CryptoKey>;
-declare const jose: {
-  decodeProtectedHeader(token: string): { readonly alg?: string };
-  jwtVerify(jwt: string, key: Uint8Array | JwksResolver): Promise<unknown>;
-  createLocalJWKSet(jwks: { readonly keys: ReadonlyArray<unknown> }): JwksResolver;
-  createRemoteJWKSet(url: URL): JwksResolver;
-};
-
 const placeholder = {
   code: "FUNCTIONS_NOT_CONFIGURED",
   message: "Edge Functions are not configured for this local stack yet.",
@@ -34,44 +21,106 @@ async function loadConfig() {
   }
 }
 
-async function isValidLegacyJwt(jwtSecret: string, jwt: string) {
-  try {
-    await jose.jwtVerify(jwt, new TextEncoder().encode(jwtSecret));
-    return true;
-  } catch (error) {
-    console.error("Symmetric legacy JWT verification failed", error);
-    return false;
-  }
+function base64UrlToBytes(value: string) {
+  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+  return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
 }
 
-function createLocalJwks(jwks: string): JwksResolver | null {
-  try {
-    return jose.createLocalJWKSet(JSON.parse(jwks));
-  } catch {
-    return null;
-  }
+interface Jwk {
+  readonly kty?: string;
+  readonly kid?: string;
 }
 
-async function isValidAsymmetricJwt(jwks: string, jwksUrl: string, jwt: string) {
-  // Prefer the JWKS injected by the CLI. If it has no key matching the token
-  // (e.g. an asymmetric key minted elsewhere is absent from the local set),
-  // fall back to the auth service's well-known JWKS endpoint.
-  const localJwks = createLocalJwks(jwks);
-  if (localJwks) {
+interface Jwks {
+  readonly keys: ReadonlyArray<Jwk>;
+}
+
+// Asymmetric algorithms supported during the migration to new JWT keys, mapped
+// to the WebCrypto import/verify parameters used to validate their signatures.
+const ASYMMETRIC_ALGORITHMS = {
+  ES256: {
+    kty: "EC",
+    importParams: { name: "ECDSA", namedCurve: "P-256" },
+    verifyParams: { name: "ECDSA", hash: "SHA-256" },
+  },
+  RS256: {
+    kty: "RSA",
+    importParams: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    verifyParams: { name: "RSASSA-PKCS1-v1_5" },
+  },
+};
+
+type AsymmetricAlgorithm = keyof typeof ASYMMETRIC_ALGORITHMS;
+
+async function verifyLegacyHs256(secret: string, signingInput: string, signature: string) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+  return crypto.subtle.verify(
+    "HMAC",
+    key,
+    base64UrlToBytes(signature),
+    new TextEncoder().encode(signingInput),
+  );
+}
+
+async function verifyWithJwks(
+  alg: AsymmetricAlgorithm,
+  kid: string | undefined,
+  signingInput: string,
+  signature: string,
+  jwks: Jwks,
+) {
+  const spec = ASYMMETRIC_ALGORITHMS[alg];
+  const data = new TextEncoder().encode(signingInput);
+  const sig = base64UrlToBytes(signature);
+  const candidates = jwks.keys.filter(
+    (key) => key.kty === spec.kty && (kid === undefined || key.kid === kid),
+  );
+  for (const jwk of candidates) {
     try {
-      await jose.jwtVerify(jwt, localJwks);
-      return true;
-    } catch {
-      // No matching/valid local key — try the remote JWKS below.
+      const key = await crypto.subtle.importKey("jwk", jwk, spec.importParams, false, ["verify"]);
+      if (await crypto.subtle.verify(spec.verifyParams, key, sig, data)) return true;
+    } catch (error) {
+      console.error("Asymmetric JWK verification failed", error);
     }
   }
-  try {
-    await jose.jwtVerify(jwt, jose.createRemoteJWKSet(new URL(jwksUrl)));
-    return true;
-  } catch (error) {
-    console.error("Asymmetric JWT verification failed", error);
-    return false;
+  return false;
+}
+
+function toJwks(value: unknown): Jwks {
+  if (value !== null && typeof value === "object" && "keys" in value && Array.isArray(value.keys)) {
+    return { keys: value.keys };
   }
+  return { keys: [] };
+}
+
+function parseLocalJwks(jwks: string): Jwks {
+  try {
+    return toJwks(JSON.parse(jwks));
+  } catch {
+    return { keys: [] };
+  }
+}
+
+// Cache the well-known JWKS per URL so asymmetric verification does not refetch
+// `/auth/v1/.well-known/jwks.json` on every request.
+const remoteJwksCache = new Map<string, Promise<Jwks>>();
+
+function fetchRemoteJwks(jwksUrl: string): Promise<Jwks> {
+  const cached = remoteJwksCache.get(jwksUrl);
+  if (cached) return cached;
+  const pending = fetch(jwksUrl)
+    .then((res) => res.json())
+    .then(toJwks);
+  pending.catch(() => remoteJwksCache.delete(jwksUrl));
+  remoteJwksCache.set(jwksUrl, pending);
+  return pending;
 }
 
 // Hybrid JWT verification: asymmetric (ES256 | RS256) tokens are verified
@@ -79,20 +128,37 @@ async function isValidAsymmetricJwt(jwks: string, jwksUrl: string, jwt: string) 
 // Mirrors the Go CLI runtime (supabase/cli#4721, #4985) during the migration
 // to the new asymmetric JWT keys.
 async function verifyHybridJwt(config: any, jwt: string) {
-  let alg: string | undefined;
+  const parts = jwt.split(".");
+  if (parts.length !== 3) return false;
+  const [header, payload, signature] = parts;
+  const signingInput = `${header}.${payload}`;
+
+  let decodedHeader: { alg?: string; kid?: string };
   try {
-    ({ alg } = jose.decodeProtectedHeader(jwt));
+    decodedHeader = JSON.parse(new TextDecoder().decode(base64UrlToBytes(header!)));
   } catch (error) {
     console.error("Failed to decode JWT header", error);
     return false;
   }
 
-  if (alg === "HS256") {
-    return isValidLegacyJwt(config.jwtSecret, jwt);
-  }
-  if (alg === "ES256" || alg === "RS256") {
-    const jwksUrl = new URL("/auth/v1/.well-known/jwks.json", config.supabaseUrl).href;
-    return isValidAsymmetricJwt(config.jwks, jwksUrl, jwt);
+  try {
+    if (decodedHeader.alg === "HS256") {
+      return await verifyLegacyHs256(config.jwtSecret, signingInput, signature!);
+    }
+    if (decodedHeader.alg === "ES256" || decodedHeader.alg === "RS256") {
+      const { alg, kid } = decodedHeader;
+      // Prefer the JWKS injected by the CLI; fall back to the auth service's
+      // well-known endpoint for keys minted elsewhere.
+      const localJwks = parseLocalJwks(config.jwks);
+      if (await verifyWithJwks(alg, kid, signingInput, signature!, localJwks)) {
+        return true;
+      }
+      const jwksUrl = new URL("/auth/v1/.well-known/jwks.json", config.supabaseUrl).href;
+      const remoteJwks = await fetchRemoteJwks(jwksUrl);
+      return await verifyWithJwks(alg, kid, signingInput, signature!, remoteJwks);
+    }
+  } catch (error) {
+    console.error("JWT verification failed", error);
   }
   return false;
 }

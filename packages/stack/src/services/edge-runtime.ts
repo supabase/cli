@@ -27,13 +27,8 @@ interface DockerEdgeRuntimeOptions extends EdgeRuntimeOptions {
 const bootstrapFileName = "index.ts";
 const bootstrapMountDir = "/workspace";
 const bootstrapSourcePath = new URL("./edge-runtime-main.ts", import.meta.url);
-// jose is imported here (rather than in edge-runtime-main.ts) so the bun
-// workspace toolchain never has to resolve the Deno-only `jsr:` specifier; the
-// runtime script consumes it as an ambient `jose` global. See edge-runtime-main.ts.
-const joseImport = 'import * as jose from "jsr:@panva/jose@6";\n';
 const resolvedBootstrapSource =
-  joseImport +
-  (bootstrapSource === "" ? readFileSync(bootstrapSourcePath, "utf8") : bootstrapSource);
+  bootstrapSource === "" ? readFileSync(bootstrapSourcePath, "utf8") : bootstrapSource;
 
 function ensureBootstrapScript(runtimeRoot: string): string {
   const bootstrapDir = join(runtimeRoot, "edge-runtime");
