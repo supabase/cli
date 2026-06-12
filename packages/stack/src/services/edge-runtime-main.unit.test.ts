@@ -60,6 +60,7 @@ async function mintAsymmetricJwt(opts: {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("verifyHybridJwt — HS256 legacy path", () => {
@@ -130,6 +131,35 @@ describe.each(["ES256", "RS256"] as const)("verifyHybridJwt — %s asymmetric pa
     expect(await verifyHybridJwt(config, token)).toBe(true);
   });
 
+  it("refetches the remote JWKS after the cache TTL expires", async () => {
+    const signer = await generateAsymmetricKey(alg, "rotated");
+    const stale = await generateAsymmetricKey(alg, "old");
+    const token = await mintAsymmetricJwt({ alg, privateKey: signer.privateKey, kid: "rotated" });
+    const supabaseUrl = `http://remote-rotation-${alg.toLowerCase()}.test`;
+    const config = { jwtSecret: JWT_SECRET, jwks: generateJwks(JWT_SECRET), supabaseUrl };
+
+    let currentKeys = [stale.jwk];
+    const fetchMock = vi.fn(async () => Response.json({ keys: currentKeys }));
+    vi.stubGlobal("fetch", fetchMock);
+    let clock = 1_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+
+    // Only the stale key is published, so the token misses and is rejected.
+    expect(await verifyHybridJwt(config, token)).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Within the TTL the cached (stale) set is reused — still a miss, no refetch.
+    clock += 60_000;
+    expect(await verifyHybridJwt(config, token)).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // After the TTL elapses the rotated-in key is fetched and verifies.
+    currentKeys = [signer.jwk];
+    clock += 5 * 60 * 1000;
+    expect(await verifyHybridJwt(config, token)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("falls back to the remote well-known JWKS when the local set has no match", async () => {
     const { privateKey, jwk } = await generateAsymmetricKey(alg, "remote-kid");
     const token = await mintAsymmetricJwt({ alg, privateKey, kid: "remote-kid" });
@@ -179,6 +209,16 @@ describe("verifyHybridJwt — claim validation", () => {
       .digest("base64url");
     expect(await verifyHybridJwt(config, `${header}.${payload}.${signature}`)).toBe(false);
   });
+
+  it("rejects a JSON null payload without throwing past the gate", async () => {
+    const header = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+    const payload = b64url("null");
+    const { createHmac } = await import("node:crypto");
+    const signature = createHmac("sha256", JWT_SECRET)
+      .update(`${header}.${payload}`)
+      .digest("base64url");
+    expect(await verifyHybridJwt(config, `${header}.${payload}.${signature}`)).toBe(false);
+  });
 });
 
 describe("areClaimsValid", () => {
@@ -191,6 +231,16 @@ describe("areClaimsValid", () => {
   it("tolerates clock skew around exp", () => {
     expect(areClaimsValid(b64url(JSON.stringify({ exp: now - 30 })))).toBe(true);
     expect(areClaimsValid(b64url(JSON.stringify({ exp: now - 120 })))).toBe(false);
+  });
+
+  it("rejects non-numeric exp/nbf claims", () => {
+    expect(areClaimsValid(b64url(JSON.stringify({ exp: "9999999999" })))).toBe(false);
+    expect(areClaimsValid(b64url(JSON.stringify({ nbf: "1" })))).toBe(false);
+  });
+
+  it("rejects non-object payloads", () => {
+    expect(areClaimsValid(b64url("null"))).toBe(false);
+    expect(areClaimsValid(b64url(JSON.stringify("a-string")))).toBe(false);
   });
 
   it("returns false for an undecodable payload", () => {

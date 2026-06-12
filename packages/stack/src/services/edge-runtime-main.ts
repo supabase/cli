@@ -114,46 +114,56 @@ function parseLocalJwks(jwks: string): Jwks {
 }
 
 // Cache the well-known JWKS per URL so asymmetric verification does not refetch
-// `/auth/v1/.well-known/jwks.json` on every request.
-const remoteJwksCache = new Map<string, Promise<Jwks>>();
+// `/auth/v1/.well-known/jwks.json` on every request. A short TTL bounds how long
+// a rotated or revoked signing key can keep verifying against a stale cached set
+// before the runtime picks up the issuer's current keys.
+const REMOTE_JWKS_TTL_MS = 5 * 60 * 1000;
+const remoteJwksCache = new Map<string, { cachedAt: number; jwks: Promise<Jwks> }>();
 
 function fetchRemoteJwks(jwksUrl: string): Promise<Jwks> {
   const cached = remoteJwksCache.get(jwksUrl);
-  if (cached) return cached;
-  const pending = fetch(jwksUrl)
+  if (cached && Date.now() - cached.cachedAt < REMOTE_JWKS_TTL_MS) return cached.jwks;
+  const cachedAt = Date.now();
+  const jwks = fetch(jwksUrl)
     .then((res) => {
       // Without this, a non-2xx response with a JSON body (e.g. a 502/404 from
       // the gateway during startup) would parse into an empty key set and be
-      // cached permanently, rejecting every asymmetric token until restart.
+      // cached, rejecting every asymmetric token until the entry expires.
       if (!res.ok) throw new Error(`JWKS fetch failed: ${res.status}`);
       return res.json();
     })
     .then(toJwks)
-    .then((jwks) => {
+    .then((parsed) => {
       // Don't cache an empty key set: the auth service may not have published
       // its keys yet, so allow a refetch on the next request instead.
-      if (jwks.keys.length === 0) remoteJwksCache.delete(jwksUrl);
-      return jwks;
+      if (parsed.keys.length === 0) remoteJwksCache.delete(jwksUrl);
+      return parsed;
     });
-  pending.catch(() => remoteJwksCache.delete(jwksUrl));
-  remoteJwksCache.set(jwksUrl, pending);
-  return pending;
+  jwks.catch(() => remoteJwksCache.delete(jwksUrl));
+  remoteJwksCache.set(jwksUrl, { cachedAt, jwks });
+  return jwks;
 }
 
 // Reject expired (`exp`) or not-yet-valid (`nbf`) tokens regardless of
 // signature, matching the Go/Docker runtime (jose / golang-jwt validate these
 // by default). A small clock-skew window avoids spurious failures locally.
 export function areClaimsValid(payload: string): boolean {
-  let claims: { exp?: unknown; nbf?: unknown };
+  let claims: unknown;
   try {
     claims = JSON.parse(new TextDecoder().decode(base64UrlToBytes(payload)));
   } catch {
     return false;
   }
+  // A valid JWT payload must be a JSON object; reject anything else (e.g. `null`
+  // or a bare string) rather than dereferencing it and throwing past the gate.
+  if (typeof claims !== "object" || claims === null) return false;
+  const { exp, nbf } = claims as { exp?: unknown; nbf?: unknown };
   const now = Math.floor(Date.now() / 1000);
   const skew = 60;
-  if (typeof claims.exp === "number" && claims.exp + skew < now) return false;
-  if (typeof claims.nbf === "number" && claims.nbf - skew > now) return false;
+  // exp/nbf must be NumericDate (a number) per the JWT spec — reject malformed
+  // non-numeric values instead of silently skipping the check.
+  if (exp !== undefined && (typeof exp !== "number" || exp + skew < now)) return false;
+  if (nbf !== undefined && (typeof nbf !== "number" || nbf - skew > now)) return false;
   return true;
 }
 
