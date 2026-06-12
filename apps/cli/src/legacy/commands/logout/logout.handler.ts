@@ -48,7 +48,12 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
         }),
       ),
     );
-    if (notLoggedIn) return;
+    if (notLoggedIn) {
+      // Still forget the telemetry identity: a stale distinct_id can outlive
+      // the token (e.g. the token file was removed manually).
+      yield* telemetryState.clearDistinctId;
+      return;
+    }
 
     // Best-effort sweep of all stored project DB passwords (`logout.go:29-31`).
     yield* credentials.deleteAllProjectCredentials;

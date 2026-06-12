@@ -183,9 +183,16 @@ export const legacyTelemetryStateLayer = Layer.effect(
         // happen in persistent runtimes. The alias is fire-and-forget so a
         // PostHog delivery error never prevents the `distinct_id` persist.
         Effect.gen(function* () {
+          // Alias only the first identity this device ever sees — re-aliasing
+          // on re-login would merge a second user into the device's existing
+          // person graph in PostHog. Stamp and persist always.
+          const current = runtime.identity.current();
+          const firstIdentity = current === undefined || current.length === 0;
           runtime.identity.stamp(distinctId);
           if (isEphemeralIdentityRuntime(runtime)) return;
-          yield* analytics.alias(distinctId, runtime.deviceId).pipe(Effect.ignore);
+          if (firstIdentity) {
+            yield* analytics.alias(distinctId, runtime.deviceId).pipe(Effect.ignore);
+          }
           yield* provide(persistLegacyDistinctId(distinctId));
         }).pipe(Effect.ignore),
       clearDistinctId: Effect.sync(() => {

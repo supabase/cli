@@ -438,15 +438,41 @@ describe("legacyPlatformApiLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("does not stitch identity when a distinct_id is already known", () => {
-    const configDir = tempTelemetryConfig({ distinctId: "existing-user" });
+  it.effect("concurrent first authenticated responses stitch exactly once", () => {
+    const configDir = tempTelemetryConfig();
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir, distinctId: "existing-user" }),
+      withBaseDeps({ analytics, configDir }),
+    );
+
+    return Effect.gen(function* () {
+      try {
+        const api = yield* LegacyPlatformApi;
+        yield* Effect.all([api.v1.listAllProjects(), api.v1.listAllProjects()], {
+          concurrency: "unbounded",
+        });
+
+        expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
+      } finally {
+        rmSync(configDir, { recursive: true, force: true });
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("stamps over a stale persisted distinct_id without alias or file write", () => {
+    const configDir = tempTelemetryConfig({ distinctId: "existing-user" });
+    const analytics = mockAnalytics();
+    const identity = makeTelemetryIdentity("existing-user");
+    const http = captureRequests({ "X-Gotrue-Id": "user-123" });
+    const layer = legacyPlatformApiLayer.pipe(
+      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCredentials(Option.none())),
+      Layer.provide(http.layer),
+      withBaseDeps({ analytics, configDir, identity }),
     );
 
     return Effect.gen(function* () {
@@ -454,6 +480,7 @@ describe("legacyPlatformApiLayer", () => {
         const api = yield* LegacyPlatformApi;
         yield* api.v1.listAllProjects();
 
+        expect(identity.current()).toBe("user-123");
         expect(analytics.aliases).toEqual([]);
         expect(analytics.identifies).toEqual([]);
         expect(readTelemetryConfig(configDir).distinct_id).toBe("existing-user");

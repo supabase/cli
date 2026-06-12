@@ -215,6 +215,38 @@ describe("login", () => {
       );
     });
 
+    it.live("token-based re-login as a different user persists without re-aliasing", () => {
+      const homeDir = makeTempDir();
+      const identity = makeTelemetryIdentity("user-a");
+      const { layer, analytics } = setupWithEnv({ SUPABASE_HOME: homeDir }, { isTTY: false });
+      const runtime = TelemetryRuntime.of({
+        configDir: homeDir,
+        tracesDir: path.join(homeDir, "traces"),
+        consent: "granted",
+        showDebug: false,
+        deviceId: "test-device-id",
+        sessionId: "test-session-id",
+        identity,
+        isFirstRun: false,
+        isTty: true,
+        isCi: false,
+        os: "linux",
+        arch: "x64",
+        cliVersion: "0.1.0",
+      });
+      return Effect.gen(function* () {
+        yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) }).pipe(
+          Effect.provideService(TelemetryRuntime, runtime),
+        );
+        expect(identity.current()).toBe("user-123");
+        expect(analytics.aliased).toEqual([]);
+        expect(readTelemetryConfig(homeDir).distinct_id).toBe("user-123");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+      );
+    });
+
     it.live("token-based login clears a stale distinct_id when profile lookup fails", () => {
       const homeDir = makeTempDir();
       writeTelemetryConfig(homeDir, {

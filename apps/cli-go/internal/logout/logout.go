@@ -20,6 +20,11 @@ func Run(ctx context.Context, stdout *os.File, fsys afero.Fs) error {
 	}
 
 	if err := utils.DeleteAccessToken(fsys); errors.Is(err, utils.ErrNotLoggedIn) {
+		// Still forget the telemetry identity: a stale distinct_id can outlive
+		// the token (e.g. the token file was removed manually).
+		if cerr := phtelemetry.FromContext(ctx).ClearDistinctID(); cerr != nil {
+			fmt.Fprintln(utils.GetDebugLogger(), cerr)
+		}
 		fmt.Fprintln(os.Stderr, err)
 		return nil
 	} else if err != nil {

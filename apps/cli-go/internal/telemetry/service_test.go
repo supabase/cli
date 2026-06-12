@@ -187,6 +187,118 @@ func TestServiceStitchLoginInEphemeralRuntimeStampsWithoutPersisting(t *testing.
 	assert.Empty(t, state.DistinctID)
 }
 
+func TestServiceObserveAuthenticatedUser(t *testing.T) {
+	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
+
+	t.Run("stamps over a stale persisted identity without alias or state write", func(t *testing.T) {
+		t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+		fsys := afero.NewMemMapFs()
+		analytics := &fakeAnalytics{enabled: true}
+		require.NoError(t, SaveState(State{
+			Enabled:           true,
+			DeviceID:          uuid.NewString(),
+			SessionID:         uuid.NewString(),
+			SessionLastActive: now,
+			SchemaVersion:     SchemaVersion,
+			DistinctID:        "old-user",
+		}, fsys))
+
+		service, err := NewService(fsys, Options{
+			Analytics: analytics,
+			Now:       func() time.Time { return now },
+			IsTTY:     true,
+		})
+		require.NoError(t, err)
+
+		require.NoError(t, service.ObserveAuthenticatedUser("new-user"))
+		require.NoError(t, service.Capture(context.Background(), EventCommandExecuted, nil, nil))
+
+		assert.Empty(t, analytics.aliases)
+		assert.Empty(t, analytics.identifies)
+		require.Len(t, analytics.captures, 1)
+		assert.Equal(t, "new-user", analytics.captures[0].distinctID)
+
+		state, err := LoadState(fsys)
+		require.NoError(t, err)
+		assert.Equal(t, "old-user", state.DistinctID)
+	})
+
+	t.Run("performs the full stitch when no identity exists yet", func(t *testing.T) {
+		t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+		fsys := afero.NewMemMapFs()
+		analytics := &fakeAnalytics{enabled: true}
+
+		service, err := NewService(fsys, Options{
+			Analytics: analytics,
+			Now:       func() time.Time { return now },
+			IsTTY:     true,
+		})
+		require.NoError(t, err)
+
+		require.NoError(t, service.ObserveAuthenticatedUser("user-123"))
+
+		require.Len(t, analytics.aliases, 1)
+		assert.Equal(t, "user-123", analytics.aliases[0].distinctID)
+		state, err := LoadState(fsys)
+		require.NoError(t, err)
+		assert.Equal(t, "user-123", state.DistinctID)
+	})
+}
+
+func TestServiceStitchLoginReloginDoesNotRealias(t *testing.T) {
+	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
+	t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+	fsys := afero.NewMemMapFs()
+	analytics := &fakeAnalytics{enabled: true}
+	require.NoError(t, SaveState(State{
+		Enabled:           true,
+		DeviceID:          uuid.NewString(),
+		SessionID:         uuid.NewString(),
+		SessionLastActive: now,
+		SchemaVersion:     SchemaVersion,
+		DistinctID:        "user-a",
+	}, fsys))
+
+	service, err := NewService(fsys, Options{
+		Analytics: analytics,
+		Now:       func() time.Time { return now },
+		IsTTY:     true,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, service.StitchLogin("user-b"))
+
+	assert.Empty(t, analytics.aliases)
+	state, err := LoadState(fsys)
+	require.NoError(t, err)
+	assert.Equal(t, "user-b", state.DistinctID)
+
+	require.NoError(t, service.Capture(context.Background(), EventLoginCompleted, nil, nil))
+	require.Len(t, analytics.captures, 1)
+	assert.Equal(t, "user-b", analytics.captures[0].distinctID)
+}
+
+func TestServiceStitchLoginIsIdempotentWithinProcess(t *testing.T) {
+	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
+	t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+	fsys := afero.NewMemMapFs()
+	analytics := &fakeAnalytics{enabled: true}
+
+	service, err := NewService(fsys, Options{
+		Analytics: analytics,
+		Now:       func() time.Time { return now },
+		IsTTY:     true,
+	})
+	require.NoError(t, err)
+
+	// The response hook stitches first; the login command then calls
+	// StitchLogin directly with the same id. One alias total.
+	require.NoError(t, service.ObserveAuthenticatedUser("user-123"))
+	require.NoError(t, service.StitchLogin("user-123"))
+
+	require.Len(t, analytics.aliases, 1)
+}
+
 func TestServiceCapturePrefersInMemoryUserIDOverPersistedDistinctID(t *testing.T) {
 	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
 	t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")

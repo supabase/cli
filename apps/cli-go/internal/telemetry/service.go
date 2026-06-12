@@ -139,17 +139,38 @@ func (s *Service) StitchLogin(distinctID string) error {
 	if s == nil {
 		return nil
 	}
+	// Alias only the first identity this device ever sees. Re-aliasing on
+	// re-login (or on the login command's call after the response hook has
+	// already stitched) would merge a second user into the device's existing
+	// person graph in PostHog.
+	firstIdentity := s.userID == "" && s.state.DistinctID == ""
 	s.userID = distinctID
 	if s.isEphemeralIdentityRuntime() {
 		return nil
 	}
-	if s.canSend() {
+	if firstIdentity && s.canSend() {
 		if err := s.analytics.Alias(distinctID, s.state.DeviceID); err != nil {
 			return err
 		}
 	}
 	s.state.DistinctID = distinctID
 	return SaveState(s.state, s.fsys)
+}
+
+// ObserveAuthenticatedUser records who the current process is authenticated
+// as. First-time identities get the full stitch; when an identity already
+// exists (e.g. telemetry.json holds a previous user but the active token
+// belongs to another), only the in-memory stamp is updated — re-aliasing the
+// device to a second user would merge unrelated person graphs in PostHog.
+func (s *Service) ObserveAuthenticatedUser(distinctID string) error {
+	if s == nil {
+		return nil
+	}
+	if s.NeedsIdentityStitch() {
+		return s.StitchLogin(distinctID)
+	}
+	s.userID = distinctID
+	return nil
 }
 
 func (s *Service) ClearDistinctID() error {

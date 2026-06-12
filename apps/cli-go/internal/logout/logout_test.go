@@ -137,6 +137,27 @@ func TestLogoutCommand(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("clears telemetry identity even when not logged in", func(t *testing.T) {
+		keyring.MockInit()
+		t.Cleanup(fstest.MockStdin(t, "y"))
+		t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+		fsys := afero.NewMemMapFs()
+		analytics := &fakeAnalytics{enabled: true}
+		service, err := phtelemetry.NewService(fsys, phtelemetry.Options{
+			Analytics: analytics,
+			IsTTY:     true,
+		})
+		require.NoError(t, err)
+		require.NoError(t, service.StitchLogin("user-123"))
+		ctx := phtelemetry.WithService(context.Background(), service)
+
+		require.NoError(t, Run(ctx, os.Stdout, fsys))
+
+		state, err := phtelemetry.LoadState(fsys)
+		require.NoError(t, err)
+		assert.Empty(t, state.DistinctID)
+	})
+
 	t.Run("throws error on failure to delete", func(t *testing.T) {
 		keyring.MockInitWithError(keyring.ErrNotFound)
 		t.Cleanup(fstest.MockStdin(t, "y"))

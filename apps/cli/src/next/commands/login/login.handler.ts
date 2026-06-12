@@ -56,9 +56,15 @@ const resolveAuthenticatedDistinctId = Effect.fnUntraced(function* (
   // the telemetry.json write only happen where the file survives between runs.
   // See docs/adr/0013-hybrid-stitch-stamp-identity-attribution.md.
   const distinctId = profileExit.value.gotrue_id;
+  // Alias only the first identity this device ever sees — re-aliasing on
+  // re-login would merge a second user into the device's person graph.
+  const current = telemetryRuntime.identity.current();
+  const firstIdentity = current === undefined || current.length === 0;
   telemetryRuntime.identity.stamp(distinctId);
   if (!isEphemeralIdentityRuntime(telemetryRuntime)) {
-    yield* analytics.alias(distinctId, telemetryRuntime.deviceId);
+    if (firstIdentity) {
+      yield* analytics.alias(distinctId, telemetryRuntime.deviceId);
+    }
     yield* saveDistinctId(configDir, distinctId);
   }
   return Option.some(distinctId);

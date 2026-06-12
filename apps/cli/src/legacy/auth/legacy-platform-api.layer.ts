@@ -65,13 +65,25 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
   const debugLogger = yield* LegacyDebugLogger;
   let stitchAttempted = false;
 
-  const needsIdentityStitch =
-    runtime.consent === "granted" &&
-    (runtime.identity.current() === undefined || runtime.identity.current()?.length === 0);
+  const hasIdentity = () => {
+    const current = runtime.identity.current();
+    return current !== undefined && current.length > 0;
+  };
 
   const stitchIdentity = (gotrueId: string) =>
     Effect.gen(function* () {
-      if (!needsIdentityStitch || stitchAttempted) return;
+      if (runtime.consent !== "granted" || stitchAttempted) return;
+      // Mark before the first yield: concurrent authenticated responses must
+      // not both pass this guard and double-stitch.
+      stitchAttempted = true;
+      if (hasIdentity()) {
+        // An identity already exists (e.g. telemetry.json holds a previous
+        // user but the active token belongs to another). Stamp memory only —
+        // re-aliasing the device to a second user would merge unrelated
+        // person graphs in PostHog. Mirrors Go's ObserveAuthenticatedUser.
+        runtime.identity.stamp(gotrueId);
+        return;
+      }
 
       const telemetryPath = path.join(runtime.configDir, "telemetry.json");
       const existing = yield* fs.readFileString(telemetryPath).pipe(Effect.option);
@@ -88,8 +100,6 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
       });
       const enabled = boolField(prior, "enabled") ?? true;
       if (!enabled) return;
-
-      stitchAttempted = true;
 
       // The in-memory stamp always happens so subsequent captures in this
       // process carry the user's id; the alias (merging pre-login history) and

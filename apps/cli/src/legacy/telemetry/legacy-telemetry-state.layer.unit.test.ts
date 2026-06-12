@@ -125,6 +125,20 @@ describe("legacyTelemetryStateLayer.stitchLogin / clearDistinctId", () => {
     }).pipe(Effect.provide(makeLayer(analytics)));
   });
 
+  it.effect("stitchLogin with an existing identity persists and stamps without re-aliasing", () => {
+    seedState("user-a");
+    const analytics = mockAnalytics();
+    const runtime = makeRuntime();
+    runtime.identity.stamp("user-a");
+    return Effect.gen(function* () {
+      const state = yield* LegacyTelemetryState;
+      yield* state.stitchLogin("user-b");
+      expect(analytics.aliased).toEqual([]);
+      expect(readState().distinct_id).toBe("user-b");
+      expect(runtime.identity.current()).toBe("user-b");
+    }).pipe(Effect.provide(makeLayer(analytics, runtime)));
+  });
+
   it.effect(
     "clearDistinctId removes the persisted distinct_id and empties the in-process identity",
     () => {

@@ -102,11 +102,11 @@ describe("legacy logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("does not clear the telemetry identity when not logged in", () => {
+  it.live("clears the telemetry identity even when not logged in", () => {
     const { layer, telemetry } = setupLegacyLogout({ confirm: true, deleteOutcome: "notLoggedIn" });
     return Effect.gen(function* () {
       yield* legacyLogout();
-      expect(telemetry.clearedDistinctId).toBe(false);
+      expect(telemetry.clearedDistinctId).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
