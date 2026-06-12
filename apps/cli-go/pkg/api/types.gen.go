@@ -55,6 +55,7 @@ const (
 	ApplyProjectAddonBodyAddonTypeAuthMfaWebAuthn ApplyProjectAddonBodyAddonType = "auth_mfa_web_authn"
 	ApplyProjectAddonBodyAddonTypeComputeInstance ApplyProjectAddonBodyAddonType = "compute_instance"
 	ApplyProjectAddonBodyAddonTypeCustomDomain    ApplyProjectAddonBodyAddonType = "custom_domain"
+	ApplyProjectAddonBodyAddonTypeEtlPipeline     ApplyProjectAddonBodyAddonType = "etl_pipeline"
 	ApplyProjectAddonBodyAddonTypeIpv4            ApplyProjectAddonBodyAddonType = "ipv4"
 	ApplyProjectAddonBodyAddonTypeLogDrain        ApplyProjectAddonBodyAddonType = "log_drain"
 	ApplyProjectAddonBodyAddonTypePitr            ApplyProjectAddonBodyAddonType = "pitr"
@@ -543,6 +544,7 @@ const (
 	ListProjectAddonsResponseAvailableAddonsTypeAuthMfaWebAuthn ListProjectAddonsResponseAvailableAddonsType = "auth_mfa_web_authn"
 	ListProjectAddonsResponseAvailableAddonsTypeComputeInstance ListProjectAddonsResponseAvailableAddonsType = "compute_instance"
 	ListProjectAddonsResponseAvailableAddonsTypeCustomDomain    ListProjectAddonsResponseAvailableAddonsType = "custom_domain"
+	ListProjectAddonsResponseAvailableAddonsTypeEtlPipeline     ListProjectAddonsResponseAvailableAddonsType = "etl_pipeline"
 	ListProjectAddonsResponseAvailableAddonsTypeIpv4            ListProjectAddonsResponseAvailableAddonsType = "ipv4"
 	ListProjectAddonsResponseAvailableAddonsTypeLogDrain        ListProjectAddonsResponseAvailableAddonsType = "log_drain"
 	ListProjectAddonsResponseAvailableAddonsTypePitr            ListProjectAddonsResponseAvailableAddonsType = "pitr"
@@ -602,6 +604,11 @@ const (
 	ListProjectAddonsResponseAvailableAddonsVariantsId6LogDrainDefault ListProjectAddonsResponseAvailableAddonsVariantsId6 = "log_drain_default"
 )
 
+// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId7.
+const (
+	ListProjectAddonsResponseAvailableAddonsVariantsId7EtlPipelineDefault ListProjectAddonsResponseAvailableAddonsVariantsId7 = "etl_pipeline_default"
+)
+
 // Defines values for ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval.
 const (
 	ListProjectAddonsResponseAvailableAddonsVariantsPriceIntervalHourly  ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval = "hourly"
@@ -620,6 +627,7 @@ const (
 	ListProjectAddonsResponseSelectedAddonsTypeAuthMfaWebAuthn ListProjectAddonsResponseSelectedAddonsType = "auth_mfa_web_authn"
 	ListProjectAddonsResponseSelectedAddonsTypeComputeInstance ListProjectAddonsResponseSelectedAddonsType = "compute_instance"
 	ListProjectAddonsResponseSelectedAddonsTypeCustomDomain    ListProjectAddonsResponseSelectedAddonsType = "custom_domain"
+	ListProjectAddonsResponseSelectedAddonsTypeEtlPipeline     ListProjectAddonsResponseSelectedAddonsType = "etl_pipeline"
 	ListProjectAddonsResponseSelectedAddonsTypeIpv4            ListProjectAddonsResponseSelectedAddonsType = "ipv4"
 	ListProjectAddonsResponseSelectedAddonsTypeLogDrain        ListProjectAddonsResponseSelectedAddonsType = "log_drain"
 	ListProjectAddonsResponseSelectedAddonsTypePitr            ListProjectAddonsResponseSelectedAddonsType = "pitr"
@@ -677,6 +685,11 @@ const (
 // Defines values for ListProjectAddonsResponseSelectedAddonsVariantId6.
 const (
 	ListProjectAddonsResponseSelectedAddonsVariantId6LogDrainDefault ListProjectAddonsResponseSelectedAddonsVariantId6 = "log_drain_default"
+)
+
+// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId7.
+const (
+	ListProjectAddonsResponseSelectedAddonsVariantId7EtlPipelineDefault ListProjectAddonsResponseSelectedAddonsVariantId7 = "etl_pipeline_default"
 )
 
 // Defines values for ListProjectAddonsResponseSelectedAddonsVariantPriceInterval.
@@ -3015,6 +3028,9 @@ type ListProjectAddonsResponseAvailableAddonsVariantsId5 string
 // ListProjectAddonsResponseAvailableAddonsVariantsId6 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.6.
 type ListProjectAddonsResponseAvailableAddonsVariantsId6 string
 
+// ListProjectAddonsResponseAvailableAddonsVariantsId7 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.7.
+type ListProjectAddonsResponseAvailableAddonsVariantsId7 string
+
 // ListProjectAddonsResponse_AvailableAddons_Variants_Id defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.
 type ListProjectAddonsResponse_AvailableAddons_Variants_Id struct {
 	union json.RawMessage
@@ -3049,6 +3065,9 @@ type ListProjectAddonsResponseSelectedAddonsVariantId5 string
 
 // ListProjectAddonsResponseSelectedAddonsVariantId6 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.6.
 type ListProjectAddonsResponseSelectedAddonsVariantId6 string
+
+// ListProjectAddonsResponseSelectedAddonsVariantId7 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.7.
+type ListProjectAddonsResponseSelectedAddonsVariantId7 string
 
 // ListProjectAddonsResponse_SelectedAddons_Variant_Id defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.
 type ListProjectAddonsResponse_SelectedAddons_Variant_Id struct {
@@ -6350,6 +6369,32 @@ func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProject
 	return err
 }
 
+// AsListProjectAddonsResponseAvailableAddonsVariantsId7 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId7
+func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId7() (ListProjectAddonsResponseAvailableAddonsVariantsId7, error) {
+	var body ListProjectAddonsResponseAvailableAddonsVariantsId7
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseAvailableAddonsVariantsId7 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId7
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId7(v ListProjectAddonsResponseAvailableAddonsVariantsId7) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseAvailableAddonsVariantsId7 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId7
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId7(v ListProjectAddonsResponseAvailableAddonsVariantsId7) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
@@ -6532,6 +6577,32 @@ func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAdd
 
 // MergeListProjectAddonsResponseSelectedAddonsVariantId6 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId6
 func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId6(v ListProjectAddonsResponseSelectedAddonsVariantId6) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseSelectedAddonsVariantId7 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId7
+func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId7() (ListProjectAddonsResponseSelectedAddonsVariantId7, error) {
+	var body ListProjectAddonsResponseSelectedAddonsVariantId7
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseSelectedAddonsVariantId7 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId7
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId7(v ListProjectAddonsResponseSelectedAddonsVariantId7) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseSelectedAddonsVariantId7 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId7
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId7(v ListProjectAddonsResponseSelectedAddonsVariantId7) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
