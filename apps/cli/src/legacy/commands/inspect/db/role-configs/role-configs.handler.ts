@@ -1,14 +1,11 @@
-import { Effect, Option } from "effect";
-import { LegacyGoProxy } from "../../../../../shared/legacy/go-proxy.service.ts";
-import type { LegacyInspectDbRoleConfigsFlags } from "./role-configs.command.ts";
+import {
+  legacyInspectDeprecationNotice,
+  legacyMakeInspectDbHandler,
+} from "../legacy-inspect-query.ts";
+import { legacyRoleStatsSpec } from "../role-stats/role-stats.query.ts";
 
-export const legacyInspectDbRoleConfigs = Effect.fn("legacy.inspect.db.role-configs")(function* (
-  flags: LegacyInspectDbRoleConfigsFlags,
-) {
-  const proxy = yield* LegacyGoProxy;
-  const args: string[] = ["inspect", "db", "role-configs"];
-  if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
-  if (flags.linked) args.push("--linked");
-  if (flags.local) args.push("--local");
-  yield* proxy.exec(args);
-});
+export const legacyInspectDbRoleConfigs = legacyMakeInspectDbHandler(
+  legacyRoleStatsSpec,
+  "legacy.inspect.db.role-configs",
+  legacyInspectDeprecationNotice("role-configs", "role-stats"),
+);

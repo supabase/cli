@@ -4088,6 +4088,11 @@ export const V1ResetABranchOutput = Schema.Struct({
   workflow_run_id: Schema.String,
   message: Schema.Literal("ok"),
 });
+export const V1RestartAProjectInput = Schema.Struct({
+  ref: Schema.String.check(Schema.isMinLength(20))
+    .check(Schema.isMaxLength(20))
+    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+});
 export const V1RestoreABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union(
     [
@@ -5890,6 +5895,7 @@ export const V1PauseAProjectOutput = Schema.Void;
 export const V1ReadOnlyQueryOutput = Schema.Void;
 export const V1RemoveAReadReplicaOutput = Schema.Void;
 export const V1RemoveProjectAddonOutput = Schema.Void;
+export const V1RestartAProjectOutput = Schema.Void;
 export const V1RestoreAProjectOutput = Schema.Void;
 export const V1RestorePhysicalBackupOutput = Schema.Void;
 export const V1RestorePitrBackupOutput = Schema.Void;
@@ -6033,6 +6039,7 @@ export const openApiOperationIdMap = {
   "v1-remove-project-addon": "v1RemoveProjectAddon",
   "v1-remove-project-signing-key": "v1RemoveProjectSigningKey",
   "v1-reset-a-branch": "v1ResetABranch",
+  "v1-restart-a-project": "v1RestartAProject",
   "v1-restore-a-branch": "v1RestoreABranch",
   "v1-restore-a-project": "v1RestoreAProject",
   "v1-restore-physical-backup": "v1RestorePhysicalBackup",
@@ -7861,6 +7868,19 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V1ResetABranchInput,
     outputSchema: V1ResetABranchOutput,
+  },
+  v1RestartAProject: {
+    id: "v1RestartAProject",
+    description: "Restarts the given project",
+    method: "POST",
+    path: "/v1/projects/{ref}/restart",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V1RestartAProjectInput,
+    outputSchema: V1RestartAProjectOutput,
   },
   v1RestoreABranch: {
     id: "v1RestoreABranch",
