@@ -30,7 +30,7 @@ func DiffPgSchema(ctx context.Context, source, target pgconn.Config, schema []st
 		opts = append(opts, pgschema.WithIncludeSchemas(schema...))
 	} else {
 		opts = append(opts,
-			pgschema.WithExcludeSchemas(managedSchemas...),
+			pgschema.WithExcludeSchemas(managedDiffSchemas()...),
 			pgschema.WithExcludeSchemas(
 				"topology", // unsupported due to views
 				"realtime", // unsupported due to partitioned table

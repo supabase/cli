@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"slices"
 	"strings"
 
 	"github.com/docker/docker/api/types/container"
@@ -55,6 +56,17 @@ var (
 		"supabase_migrations",
 	}
 )
+
+// managedDiffSchemas returns the schemas excluded from schema diffing. When the
+// Stripe Sync Engine is enabled, its schema is owned by the engine (which
+// recreates it via its own migrations), so it must be excluded too — otherwise
+// db diff / db pull would try to manage tables the engine owns.
+func managedDiffSchemas() []string {
+	if utils.Config.StripeSync.Enabled && len(utils.Config.StripeSync.Schema) > 0 {
+		return append(slices.Clone(managedSchemas), utils.Config.StripeSync.Schema)
+	}
+	return managedSchemas
+}
 
 // Diffs local database schema against shadow, dumps output to stdout.
 func DiffSchemaMigraBash(ctx context.Context, source, target pgconn.Config, schema []string, options ...func(*pgx.ConnConfig)) (string, error) {
@@ -134,7 +146,7 @@ func DiffSchemaMigra(ctx context.Context, source, target pgconn.Config, schema [
 	if len(schema) > 0 {
 		env = append(env, "INCLUDED_SCHEMAS="+strings.Join(schema, ","))
 	} else {
-		env = append(env, "EXCLUDED_SCHEMAS="+strings.Join(managedSchemas, ","))
+		env = append(env, "EXCLUDED_SCHEMAS="+strings.Join(managedDiffSchemas(), ","))
 	}
 	// Migra also executes via Edge Runtime because the TypeScript implementation
 	// shares the same containerized execution environment as other diff engines.
