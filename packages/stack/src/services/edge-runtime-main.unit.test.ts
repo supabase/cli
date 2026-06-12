@@ -241,6 +241,7 @@ describe("areClaimsValid", () => {
   it("rejects non-object payloads", () => {
     expect(areClaimsValid(b64url("null"))).toBe(false);
     expect(areClaimsValid(b64url(JSON.stringify("a-string")))).toBe(false);
+    expect(areClaimsValid(b64url(JSON.stringify([])))).toBe(false);
   });
 
   it("returns false for an undecodable payload", () => {

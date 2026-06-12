@@ -154,9 +154,10 @@ export function areClaimsValid(payload: string): boolean {
   } catch {
     return false;
   }
-  // A valid JWT payload must be a JSON object; reject anything else (e.g. `null`
-  // or a bare string) rather than dereferencing it and throwing past the gate.
-  if (typeof claims !== "object" || claims === null) return false;
+  // A valid JWT payload must be a JSON object; reject anything else (e.g. `null`,
+  // a bare string, or an array) rather than dereferencing it and throwing past
+  // the gate or treating a non-claims-set as valid.
+  if (typeof claims !== "object" || claims === null || Array.isArray(claims)) return false;
   const { exp, nbf } = claims as { exp?: unknown; nbf?: unknown };
   const now = Math.floor(Date.now() / 1000);
   const skew = 60;
