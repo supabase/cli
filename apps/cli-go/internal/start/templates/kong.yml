@@ -182,10 +182,10 @@ services:
         config:
           add:
             headers:
-              - "Authorization: {{ .BearerToken }}"
+              - "sb-api-key: {{ .BearerToken }}"
           replace:
             headers:
-              - "Authorization: {{ .BearerToken }}"
+              - "sb-api-key: {{ .BearerToken }}"
   # Management API endpoints
   - name: well-known-oauth
     _comment: "GoTrue: /.well-known/oauth-authorization-server -> http://auth:9999/.well-known/oauth-authorization-server"

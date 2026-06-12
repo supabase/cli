@@ -18,8 +18,9 @@ import { legacyLinkServicesCore } from "../../shared/legacy-link-services-core.t
 import { legacyProjectCreateCore } from "../../shared/legacy-project-create-core.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
 import { legacyExtractServiceKeys } from "../../shared/legacy-tenant-keys.ts";
+import { parseDotEnv } from "../../shared/legacy-dotenv.ts";
 import { initProject } from "../../../shared/init/project-init.ts";
-import { buildDotEnv, marshalDotEnv, parseDotEnv } from "./bootstrap.dotenv.ts";
+import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
 import {
   LegacyBootstrapHealthError,
   LegacyBootstrapInvalidTemplateError,
