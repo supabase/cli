@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
-import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { legacyTempPaths } from "../shared/legacy-temp-paths.ts";
@@ -34,7 +34,7 @@ export const legacyProjectRefLayer = Layer.effect(
     const cliConfig = yield* LegacyCliConfig;
     const tty = yield* Tty;
     const output = yield* Output;
-    const api = yield* LegacyPlatformApi;
+    const apiFactory = yield* LegacyPlatformApiFactory;
 
     const refPath = legacyTempPaths(path, cliConfig.workdir).projectRef;
 
@@ -47,6 +47,21 @@ export const legacyProjectRefLayer = Layer.effect(
     });
 
     const promptForProjectRef = Effect.fnUntraced(function* (title: string) {
+      // The Management API client is built lazily here (not at layer-build time)
+      // so tokenless callers never pay the access-token requirement unless they
+      // actually reach the prompt. A missing/invalid token surfaces as
+      // `LegacyProjectNotLinkedError`, matching how a failed project listing is
+      // reported below.
+      const api = yield* apiFactory.make.pipe(
+        Effect.mapError(
+          (cause) =>
+            new LegacyProjectNotLinkedError({
+              message: `${PROJECT_NOT_LINKED_MESSAGE}\n  Reason: ${
+                cause instanceof Error ? cause.message : String(cause)
+              }`,
+            }),
+        ),
+      );
       const projects = yield* api.v1.listAllProjects().pipe(
         Effect.mapError(
           (cause) =>

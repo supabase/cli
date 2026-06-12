@@ -62,7 +62,15 @@ function isEphemeralIdentityRuntime(runtime: {
   return runtime.isCi || (runtime.isFirstRun && !runtime.isTty);
 }
 
-const makeLegacyPlatformApiServices = Effect.gen(function* () {
+/**
+ * Builds the typed Management API client, resolving (and requiring) an access
+ * token in the process. Exported on its own — rather than only as a `Layer` —
+ * so callers that must stay tokenless until the API is actually needed can defer
+ * construction behind `LegacyPlatformApiFactory.make` instead of eagerly building
+ * the client (and failing with `LegacyPlatformAuthRequiredError`) at layer-build
+ * time. See `legacy-platform-api-factory.layer.ts`.
+ */
+export const legacyMakePlatformApi = Effect.gen(function* () {
   const cliConfig = yield* LegacyCliConfig;
   const credentials = yield* LegacyCredentials;
   const analytics = yield* Analytics;
@@ -156,7 +164,7 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
     );
   }
 
-  const api = yield* makeApiClient(
+  return yield* makeApiClient(
     {
       baseUrl: cliConfig.apiUrl,
       accessToken: storedToken.value,
@@ -166,7 +174,6 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
       transformClient,
     },
   );
-  return Layer.succeed(LegacyPlatformApi, api);
 });
 
-export const legacyPlatformApiLayer = Layer.unwrap(makeLegacyPlatformApiServices);
+export const legacyPlatformApiLayer = Layer.effect(LegacyPlatformApi, legacyMakePlatformApi);

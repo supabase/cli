@@ -21,6 +21,7 @@ import {
   LegacyNotLoggedInError,
 } from "../../src/legacy/auth/legacy-errors.ts";
 import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../../src/legacy/auth/legacy-platform-api-factory.service.ts";
 import {
   LegacyLoginApi,
   type LegacyLoginSessionResponse,
@@ -671,15 +672,28 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
     ),
   );
 
+  // The resolver and the `gen types` handler consume the lazy `LegacyPlatformApiFactory`.
+  // Back its `make` with the same mock client `opts.api.layer` provides, so tests
+  // exercise the real lazy path without needing an access token. Management
+  // handlers that yield `LegacyPlatformApi` directly still get `opts.api.layer`.
+  const apiFactory = Layer.effect(
+    LegacyPlatformApiFactory,
+    Effect.gen(function* () {
+      const client = yield* LegacyPlatformApi;
+      return LegacyPlatformApiFactory.of({ make: Effect.succeed(client) });
+    }),
+  ).pipe(Layer.provide(opts.api.layer));
+
   return Layer.mergeAll(
     opts.out.layer,
     opts.api.layer,
+    apiFactory,
     opts.cliConfig,
     tty,
     processControl,
     runtimeInfo,
     legacyProjectRefLayer.pipe(
-      Layer.provide(opts.api.layer),
+      Layer.provide(apiFactory),
       Layer.provide(opts.cliConfig),
       Layer.provide(tty),
       Layer.provide(opts.out.layer),

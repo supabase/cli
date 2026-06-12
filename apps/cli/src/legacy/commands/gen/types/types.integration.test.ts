@@ -5,13 +5,22 @@ import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { CliOutput, Command } from "effect/unstable/cli";
 import { Deferred, Effect, Exit, Layer, Option, Sink, Stdio, Stream } from "effect";
 import {
+  LEGACY_GLOBAL_FLAGS,
   LegacyDebugFlag,
   LegacyNetworkIdFlag,
   LegacyOutputFlag,
 } from "../../../../shared/legacy/global-flags.ts";
-import { mockOutput, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
+import {
+  mockAnalytics,
+  mockOutput,
+  mockProcessControl,
+  mockRuntimeInfo,
+  mockTty,
+  processEnvLayer,
+} from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   LEGACY_VALID_REF,
@@ -21,6 +30,9 @@ import {
   mockLegacyTelemetryStateTracked,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
+import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
+import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
+import { legacyGenCommand } from "../gen.command.ts";
 import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { legacyGenTypes } from "./types.handler.ts";
 import { parseQueryTimeoutSeconds, resolvePgmetaImage } from "./types.shared.ts";
@@ -275,7 +287,93 @@ async function withSslProbeServer<T>(
   }
 }
 
+const legacyTestRoot = Command.make("supabase").pipe(
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+  Command.withSubcommands([legacyGenCommand]),
+);
+
 describe("legacy gen types", () => {
+  // Regression for CLI-1619: `gen types --local` must run through the real
+  // command runtime (`legacyGenTypesRuntimeLayer`) without an access token. The
+  // pre-refactor management runtime built the Management API client eagerly and
+  // failed with "Access token not provided" before the local branch ran.
+  it.live("runs tokenless local generation through command wiring", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-command-local-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "demo"',
+              "",
+              "[api]",
+              'schemas = ["public"]',
+              "",
+              "[db]",
+              `port = ${port}`,
+            ].join("\n"),
+          );
+          const out = mockOutput({ format: "text", interactive: false });
+          const analytics = mockAnalytics();
+          const child = mockSequentialChildProcessSpawner([
+            { exitCode: 0 },
+            { exitCode: 0, stdout: ["export type Database = {};"] },
+          ]);
+          const args = [
+            "gen",
+            "types",
+            "typescript",
+            "--local",
+            "--schema",
+            "public",
+            "--workdir",
+            workdir,
+          ];
+          const layer = Layer.mergeAll(
+            BunServices.layer,
+            CliOutput.layer(textCliOutputFormatter()),
+            out.layer,
+            analytics.layer,
+            processEnvLayer({ SUPABASE_HOME: workdir }),
+            mockRuntimeInfo({ cwd: workdir, homeDir: workdir }),
+            mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+            child.layer,
+            Stdio.layerTest({ args: Effect.succeed(args) }),
+            Layer.succeed(
+              TelemetryRuntime,
+              TelemetryRuntime.of({
+                configDir: join(workdir, ".supabase"),
+                tracesDir: join(workdir, ".supabase", "traces"),
+                consent: "granted",
+                showDebug: false,
+                deviceId: "test-device-id",
+                sessionId: "test-session-id",
+                distinctId: undefined,
+                isFirstRun: false,
+                isTty: false,
+                isCi: false,
+                os: "linux",
+                arch: "x64",
+                cliVersion: "0.1.0",
+              }),
+            ),
+          );
+
+          await Effect.runPromise(
+            Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(args).pipe(
+              Effect.provide(layer),
+            ) as Effect.Effect<void>,
+          );
+
+          expect(out.stdoutText).toContain("export type Database = {};");
+          expect(out.stderrText).not.toContain("Access token not provided");
+          expect(child.spawned).toHaveLength(2);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
   it.effect("accepts Go-style microsecond duration aliases", () =>
     Effect.gen(function* () {
       expect(yield* parseQueryTimeoutSeconds(`15${"µ"}s`)).toBe(0);

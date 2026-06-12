@@ -3,7 +3,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
 import { PROJECT_NOT_LINKED_MESSAGE } from "../../../config/legacy-project-ref.service.ts";
@@ -159,7 +159,7 @@ function hasExplicitLongFlag(rawArgs: ReadonlyArray<string>, flagName: string): 
 
 export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: LegacyGenTypesFlags) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
+  const apiFactory = yield* LegacyPlatformApiFactory;
   const cliConfig = yield* LegacyCliConfig;
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
@@ -235,6 +235,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         );
       }
 
+      // Built lazily: only the project-ref branches (linked / project-id / bare)
+      // reach this point, so `--local` and `--db-url` stay tokenless. A missing
+      // token surfaces here as `LegacyPlatformAuthRequiredError`, matching the
+      // pre-refactor behaviour where the runtime failed eagerly.
+      const api = yield* apiFactory.make;
       const response = yield* api.v1
         .generateTypescriptTypes({
           ref: projectRef,

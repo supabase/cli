@@ -1,14 +1,27 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { CliOutput, Command } from "effect/unstable/cli";
+import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
-import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { LEGACY_GLOBAL_FLAGS, LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import {
+  mockAnalytics,
+  mockOutput,
+  mockRuntimeInfo,
+  mockTty,
+  processEnvLayer,
+} from "../../../../tests/helpers/mocks.ts";
 import { mockLegacyTelemetryStateTracked } from "../../../../tests/helpers/legacy-mocks.ts";
 import { listLocalServiceVersions } from "../../../shared/services/services.shared.ts";
+import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
+import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
+import { legacyServicesCommand } from "./services.command.ts";
 import { legacyServices } from "./services.handler.ts";
 
 const LOCAL_POSTGRES_SERVICE = listLocalServiceVersions().find(
@@ -92,7 +105,61 @@ function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
   }
 }
 
+const legacyTestRoot = Command.make("supabase").pipe(
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+  Command.withSubcommands([legacyServicesCommand]),
+);
+
 describe("legacy services", () => {
+  // Regression for CLI-1619: a tokenless `services` invocation must print the
+  // local matrix through the real command runtime (`legacyServicesRuntimeLayer`)
+  // instead of failing on eager Management API construction.
+  it.live("runs a tokenless local service listing through command wiring", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-services-"));
+    const out = mockOutput({ format: "text", interactive: false });
+    const analytics = mockAnalytics();
+    const args = ["services"];
+    const layer = Layer.mergeAll(
+      BunServices.layer,
+      CliOutput.layer(textCliOutputFormatter()),
+      out.layer,
+      analytics.layer,
+      processEnvLayer({ SUPABASE_HOME: workdir }),
+      mockRuntimeInfo({ cwd: workdir, homeDir: workdir }),
+      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+      Stdio.layerTest({ args: Effect.succeed(args) }),
+      Layer.succeed(
+        TelemetryRuntime,
+        TelemetryRuntime.of({
+          configDir: join(workdir, ".supabase"),
+          tracesDir: join(workdir, ".supabase", "traces"),
+          consent: "granted",
+          showDebug: false,
+          deviceId: "test-device-id",
+          sessionId: "test-session-id",
+          distinctId: undefined,
+          isFirstRun: false,
+          isTty: false,
+          isCi: false,
+          os: "linux",
+          arch: "x64",
+          cliVersion: "0.1.0",
+        }),
+      ),
+    );
+
+    const run = Effect.gen(function* () {
+      yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(args);
+      expect(out.stdoutText).toContain("supabase/postgres");
+      expect(out.stdoutText).toContain("supabase/gotrue");
+      expect(out.stderrText).not.toContain("Access token not provided");
+    }).pipe(Effect.provide(layer));
+
+    // `Command.runWith`'s Environment type retains handler/global-flag services
+    // even though the runtime above provides them.
+    return run as Effect.Effect<void>;
+  });
+
   it.live("prints the services table by default", () => {
     const { layer, out } = setup();
 

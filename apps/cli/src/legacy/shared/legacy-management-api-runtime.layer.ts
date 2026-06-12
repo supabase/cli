@@ -7,6 +7,7 @@ import { legacyCredentialsLayer } from "../auth/legacy-credentials.layer.ts";
 import { legacyHttpClientLayer } from "../auth/legacy-http-debug.layer.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { legacyPlatformApiLayer } from "../auth/legacy-platform-api.layer.ts";
+import { legacyPlatformApiFactoryLayer } from "../auth/legacy-platform-api-factory.layer.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
 import { LegacyProjectRefResolver } from "../config/legacy-project-ref.service.ts";
@@ -58,11 +59,20 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
     Layer.provide(legacyDebugLoggerLayer),
   );
   // `legacyPlatformApiLayer` applies typed API debug logging after generated
-  // requests have been prefixed with the active profile's API URL.
+  // requests have been prefixed with the active profile's API URL. Management
+  // commands need the token up front, so it stays eager at the top level for
+  // handlers that yield `LegacyPlatformApi` directly.
   const platformApiStack = legacyPlatformApiLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliConfig),
     Layer.provide(FetchHttpClient.layer),
+    Layer.provide(legacyDebugLoggerLayer),
+  );
+  // The project-ref resolver only touches the Management API inside its TTY
+  // prompt, so it consumes the lazy factory rather than the eager client.
+  const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
+    Layer.provide(credentials),
+    Layer.provide(cliConfig),
     Layer.provide(legacyDebugLoggerLayer),
   );
   const built = Layer.mergeAll(
@@ -70,7 +80,7 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
     httpClient,
     credentials,
     cliConfig,
-    legacyProjectRefLayer.pipe(Layer.provide(platformApiStack), Layer.provide(cliConfig)),
+    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
     legacyLinkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliConfig),
