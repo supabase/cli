@@ -62,29 +62,29 @@ type UploadOptions struct {
 	KeyPrefix      string
 }
 
-func isUploadableEntry(fsys fs.FS, path string, info fs.DirEntry) (bool, error) {
+func isUploadableEntry(fsys fs.FS, filePath string, info fs.DirEntry) bool {
 	if info.Type().IsRegular() {
-		return true, nil
+		return true
 	}
 	if info.Type().IsDir() {
-		return false, nil
+		return false
 	}
 	if info.Type()&fs.ModeSymlink != 0 {
-		f, err := fsys.Open(path)
+		f, err := fsys.Open(filePath)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Skipping non-regular file:", path)
-			return false, nil
+			fmt.Fprintln(os.Stderr, "Skipping non-regular file:", filePath)
+			return false
 		}
+		defer f.Close()
 		stat, err := f.Stat()
-		_ = f.Close()
 		if err != nil || !stat.Mode().IsRegular() {
-			fmt.Fprintln(os.Stderr, "Skipping non-regular file:", path)
-			return false, nil
+			fmt.Fprintln(os.Stderr, "Skipping non-regular file:", filePath)
+			return false
 		}
-		return true, nil
+		return true
 	}
-	fmt.Fprintln(os.Stderr, "Skipping non-regular file:", path)
-	return false, nil
+	fmt.Fprintln(os.Stderr, "Skipping non-regular file:", filePath)
+	return false
 }
 
 func (s *StorageAPI) UpsertObjects(ctx context.Context, bucketConfig config.BucketConfig, fsys fs.FS, opts ...func(*UploadOptions)) error {
@@ -102,11 +102,7 @@ func (s *StorageAPI) UpsertObjects(ctx context.Context, bucketConfig config.Buck
 			if err != nil {
 				return errors.New(err)
 			}
-			uploadable, err := isUploadableEntry(fsys, filePath, info)
-			if err != nil {
-				return err
-			}
-			if !uploadable {
+			if !isUploadableEntry(fsys, filePath, info) {
 				return nil
 			}
 			dstPath := uo.KeyPrefix

@@ -120,7 +120,7 @@ func TestUpsertObjects(t *testing.T) {
 		seedsDir := filepath.Join(tmpDir, "seeds")
 		require.NoError(t, os.MkdirAll(fixturesDir, 0o755))
 		require.NoError(t, os.MkdirAll(seedsDir, 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(fixturesDir, "pizza.jpg"), []byte("image"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(fixturesDir, "pizza.jpg"), []byte("image"), 0o600))
 		require.NoError(t, os.Symlink(filepath.Join(fixturesDir, "pizza.jpg"), filepath.Join(seedsDir, "pizza.jpg")))
 
 		defer gock.OffAll()
@@ -158,6 +158,11 @@ func captureStderr(t *testing.T, fn func()) string {
 	require.NoError(t, err)
 	original := os.Stderr
 	os.Stderr = writer
+	t.Cleanup(func() {
+		os.Stderr = original
+		_ = reader.Close()
+		_ = writer.Close()
+	})
 	done := make(chan struct{})
 	var buf bytes.Buffer
 	go func() {
@@ -165,8 +170,9 @@ func captureStderr(t *testing.T, fn func()) string {
 		close(done)
 	}()
 	fn()
-	require.NoError(t, writer.Close())
+	closeErr := writer.Close()
 	os.Stderr = original
 	<-done
+	require.NoError(t, closeErr)
 	return buf.String()
 }
