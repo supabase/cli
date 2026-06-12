@@ -353,6 +353,9 @@ func TestServiceStitchLoginRetriesAliasAfterEnqueueFailure(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Error(t, service.StitchLogin("user-123"))
+	require.NoError(t, service.Capture(context.Background(), EventLoginCompleted, nil, nil))
+	require.Len(t, analytics.captures, 1)
+	assert.Equal(t, "user-123", analytics.captures[0].distinctID)
 	state, err := LoadState(fsys)
 	require.NoError(t, err)
 	assert.Empty(t, state.DistinctID)

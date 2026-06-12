@@ -144,17 +144,17 @@ func (s *Service) StitchLogin(distinctID string) error {
 	// re-login (or on the login command's call after the response hook has
 	// already stitched) would merge a second user into the device's existing
 	// person graph in PostHog.
-	firstIdentity := s.userID == "" && s.state.DistinctID == ""
+	firstIdentity := s.state.DistinctID == ""
 	s.userID = distinctID
 	if s.isEphemeralIdentityRuntime() {
 		return nil
 	}
 	if firstIdentity && s.canSend() {
 		if err := s.analytics.Alias(distinctID, s.state.DeviceID); err != nil {
-			// Leave the identity re-stitchable: nothing was enqueued, so a
-			// retry (e.g. the login command after the response hook errored)
-			// must still qualify as the first identity.
-			s.userID = ""
+			// Leave the identity re-stitchable without dropping the in-memory
+			// stamp: nothing was enqueued, so a retry (e.g. the login command
+			// after the response hook errored) must still qualify as the first
+			// identity, but captures in this process should remain attributed.
 			return err
 		}
 	}
