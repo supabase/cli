@@ -4,9 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createStack, type StackHandle } from "../src/node.ts";
+import { generateJwt } from "../src/JwtGenerator.ts";
 import { setupTestTable } from "./helpers/e2e.ts";
 
 const STACK_E2E_TEST_TIMEOUT_MS = 5_000;
+const JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
 
 describe("createStack e2e", () => {
   let stack: StackHandle;
@@ -22,7 +24,7 @@ describe("createStack e2e", () => {
     stack = await createStack({
       projectDir,
       functions: { noVerifyJwt: true },
-      jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
+      jwtSecret: JWT_SECRET,
       postgres: { dataDir },
     });
 
@@ -92,6 +94,33 @@ describe("createStack e2e", () => {
 
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("later");
+  });
+
+  test("enforces hybrid JWT verification on Edge Functions", { timeout: 20_000 }, async () => {
+    writeFunction(projectDir, "secure", "secure");
+    // verify_jwt defaults to true, so this turns verification back on.
+    await stack.reloadFunctions();
+    const url = `${stack.url}/functions/v1/secure`;
+
+    // Missing credentials are rejected before reaching the function.
+    const missing = await fetch(url);
+    expect(missing.status).toBe(401);
+
+    // A well-formed token signed with the wrong secret fails signature checks.
+    const forged = generateJwt("a-different-secret-at-least-32-characters-long", "anon");
+    const forgedRes = await fetch(url, { headers: { Authorization: `Bearer ${forged}` } });
+    expect(forgedRes.status).toBe(401);
+
+    // A valid HS256 token is accepted via the legacy/hybrid path.
+    const valid = generateJwt(JWT_SECRET, "anon");
+    const bearerRes = await fetch(url, { headers: { Authorization: `Bearer ${valid}` } });
+    expect(bearerRes.status).toBe(200);
+    expect(await bearerRes.text()).toBe("secure");
+
+    // The apikey -> minted sb-api-key compatibility path is accepted too.
+    const apiKeyRes = await fetch(url, { headers: { apikey: stack.publishableKey } });
+    expect(apiKeyRes.status).toBe(200);
+    expect(await apiKeyRes.text()).toBe("secure");
   });
 
   test(
