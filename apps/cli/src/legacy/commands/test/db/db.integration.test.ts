@@ -73,6 +73,7 @@ function mockDbConnection(opts: {
         }
       }),
     extensionExists: () => Effect.succeed(opts.existed ?? false),
+    query: () => Effect.succeed([]),
   };
   const connectCalls: Array<{
     cfg: LegacyPgConnInput;

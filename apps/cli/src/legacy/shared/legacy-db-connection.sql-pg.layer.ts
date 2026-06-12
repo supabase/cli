@@ -371,6 +371,10 @@ const connect = (
           Effect.asVoid,
           Effect.mapError((error) => new LegacyDbExecError({ message: String(error) })),
         ),
+      query: (sql, params) =>
+        client
+          .unsafe<Record<string, unknown>>(sql, params)
+          .pipe(Effect.mapError((error) => new LegacyDbExecError({ message: String(error) }))),
       extensionExists: (name) =>
         client`select 1 from pg_extension where extname = ${name}`.pipe(
           Effect.map((rows) => rows.length > 0),
