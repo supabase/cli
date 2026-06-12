@@ -55,7 +55,7 @@ function numberField(value: unknown, key: string): number | undefined {
   return typeof field === "number" && Number.isFinite(field) ? field : undefined;
 }
 
-const makeLegacyPlatformApiServices = Effect.gen(function* () {
+export const legacyMakePlatformApi = Effect.gen(function* () {
   const cliConfig = yield* LegacyCliConfig;
   const credentials = yield* LegacyCredentials;
   const analytics = yield* Analytics;
@@ -165,7 +165,7 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
     );
   }
 
-  const api = yield* makeApiClient(
+  return yield* makeApiClient(
     {
       baseUrl: cliConfig.apiUrl,
       accessToken: storedToken.value,
@@ -175,7 +175,6 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
       transformClient,
     },
   );
-  return Layer.succeed(LegacyPlatformApi, api);
 });
 
-export const legacyPlatformApiLayer = Layer.unwrap(makeLegacyPlatformApiServices);
+export const legacyPlatformApiLayer = Layer.effect(LegacyPlatformApi, legacyMakePlatformApi);

@@ -1,24 +1,19 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command } from "effect/unstable/cli";
 import { legacyInspectDbIndexSizes } from "./index-sizes.handler.ts";
+import {
+  LEGACY_INSPECT_DB_FLAGS,
+  legacyInspectDbCommandHandler,
+} from "../legacy-inspect-db-command.ts";
+import { legacyInspectDbRuntimeLayer } from "../db.layers.ts";
 
-const config = {
-  dbUrl: Flag.string("db-url").pipe(
-    Flag.withDescription(
-      "Inspect the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.boolean("linked").pipe(Flag.withDescription("Inspect the linked project.")),
-  local: Flag.boolean("local").pipe(Flag.withDescription("Inspect the local database.")),
-} as const;
-
-export type LegacyInspectDbIndexSizesFlags = CliCommand.Command.Config.Infer<typeof config>;
-
-export const legacyInspectDbIndexSizesCommand = Command.make("index-sizes", config).pipe(
+export const legacyInspectDbIndexSizesCommand = Command.make(
+  "index-sizes",
+  LEGACY_INSPECT_DB_FLAGS,
+).pipe(
   Command.withDescription(
     'Show index sizes of individual indexes. Deprecated: use "index-stats" instead.',
   ),
   Command.withShortDescription("Show individual index sizes (deprecated)"),
-  Command.withHandler((flags) => legacyInspectDbIndexSizes(flags)),
+  Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbIndexSizes)),
+  Command.provide(legacyInspectDbRuntimeLayer("index-sizes")),
 );

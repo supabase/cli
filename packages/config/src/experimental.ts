@@ -75,6 +75,30 @@ export const experimental = Schema.Struct({
       }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
   ),
+  pgdelta: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.Boolean.annotate({
+        default: false,
+        description:
+          "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit. Set false to fall back to the legacy migra engine.",
+        tags,
+      }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+      declarative_schema_path: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "Directory under supabase/ where declarative schema files are written.",
+          examples: ["./database"],
+          tags,
+        }),
+      ),
+      format_options: Schema.optionalKey(
+        Schema.String.annotate({
+          description: "JSON string passed through to pg-delta SQL formatting.",
+          examples: ['{"keywordCase":"upper","indent":2,"maxWidth":80,"commaStyle":"trailing"}'],
+          tags,
+        }),
+      ),
+    }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({}))),
+  ),
   inspect: Schema.optionalKey(
     Schema.Struct({
       rules: Schema.Array(inspectRule)

@@ -234,14 +234,16 @@ export const V1ActivateCustomHostnameInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1ActivateCustomHostnameOutput = Schema.Struct({
-  status: Schema.Literals([
-    "1_not_started",
-    "2_initiated",
-    "3_challenge_verified",
-    "4_origin_setup_completed",
-    "5_services_reconfigured",
-  ]),
-  custom_hostname: Schema.String,
+  status: Schema.optionalKey(
+    Schema.Literals([
+      "1_not_started",
+      "2_initiated",
+      "3_challenge_verified",
+      "4_origin_setup_completed",
+      "5_services_reconfigured",
+    ]),
+  ),
+  custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
     errors: Schema.Array(Schema.Unknown.annotate({ description: "Any JSON-serializable value" })),
@@ -258,11 +260,9 @@ export const V1ActivateCustomHostnameOutput = Schema.Struct({
           Schema.Array(Schema.Struct({ message: Schema.String })),
         ),
       }),
-      ownership_verification: Schema.Struct({
-        type: Schema.String,
-        name: Schema.String,
-        value: Schema.String,
-      }),
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ),
       custom_origin_server: Schema.String,
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
       status: Schema.String,
@@ -2289,14 +2289,16 @@ export const V1GetHostnameConfigInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1GetHostnameConfigOutput = Schema.Struct({
-  status: Schema.Literals([
-    "1_not_started",
-    "2_initiated",
-    "3_challenge_verified",
-    "4_origin_setup_completed",
-    "5_services_reconfigured",
-  ]),
-  custom_hostname: Schema.String,
+  status: Schema.optionalKey(
+    Schema.Literals([
+      "1_not_started",
+      "2_initiated",
+      "3_challenge_verified",
+      "4_origin_setup_completed",
+      "5_services_reconfigured",
+    ]),
+  ),
+  custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
     errors: Schema.Array(Schema.Unknown.annotate({ description: "Any JSON-serializable value" })),
@@ -2313,11 +2315,9 @@ export const V1GetHostnameConfigOutput = Schema.Struct({
           Schema.Array(Schema.Struct({ message: Schema.String })),
         ),
       }),
-      ownership_verification: Schema.Struct({
-        type: Schema.String,
-        name: Schema.String,
-        value: Schema.String,
-      }),
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ),
       custom_origin_server: Schema.String,
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
       status: Schema.String,
@@ -4088,6 +4088,11 @@ export const V1ResetABranchOutput = Schema.Struct({
   workflow_run_id: Schema.String,
   message: Schema.Literal("ok"),
 });
+export const V1RestartAProjectInput = Schema.Struct({
+  ref: Schema.String.check(Schema.isMinLength(20))
+    .check(Schema.isMaxLength(20))
+    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+});
 export const V1RestoreABranchInput = Schema.Struct({
   branch_id_or_ref: Schema.Union(
     [
@@ -5254,14 +5259,16 @@ export const V1UpdateHostnameConfigInput = Schema.Struct({
   custom_hostname: Schema.String.check(Schema.isMinLength(1)).check(Schema.isMaxLength(253)),
 });
 export const V1UpdateHostnameConfigOutput = Schema.Struct({
-  status: Schema.Literals([
-    "1_not_started",
-    "2_initiated",
-    "3_challenge_verified",
-    "4_origin_setup_completed",
-    "5_services_reconfigured",
-  ]),
-  custom_hostname: Schema.String,
+  status: Schema.optionalKey(
+    Schema.Literals([
+      "1_not_started",
+      "2_initiated",
+      "3_challenge_verified",
+      "4_origin_setup_completed",
+      "5_services_reconfigured",
+    ]),
+  ),
+  custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
     errors: Schema.Array(Schema.Unknown.annotate({ description: "Any JSON-serializable value" })),
@@ -5278,11 +5285,9 @@ export const V1UpdateHostnameConfigOutput = Schema.Struct({
           Schema.Array(Schema.Struct({ message: Schema.String })),
         ),
       }),
-      ownership_verification: Schema.Struct({
-        type: Schema.String,
-        name: Schema.String,
-        value: Schema.String,
-      }),
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ),
       custom_origin_server: Schema.String,
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
       status: Schema.String,
@@ -5831,14 +5836,16 @@ export const V1VerifyDnsConfigInput = Schema.Struct({
     .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
 });
 export const V1VerifyDnsConfigOutput = Schema.Struct({
-  status: Schema.Literals([
-    "1_not_started",
-    "2_initiated",
-    "3_challenge_verified",
-    "4_origin_setup_completed",
-    "5_services_reconfigured",
-  ]),
-  custom_hostname: Schema.String,
+  status: Schema.optionalKey(
+    Schema.Literals([
+      "1_not_started",
+      "2_initiated",
+      "3_challenge_verified",
+      "4_origin_setup_completed",
+      "5_services_reconfigured",
+    ]),
+  ),
+  custom_hostname: Schema.optionalKey(Schema.String),
   data: Schema.Struct({
     success: Schema.Boolean,
     errors: Schema.Array(Schema.Unknown.annotate({ description: "Any JSON-serializable value" })),
@@ -5855,11 +5862,9 @@ export const V1VerifyDnsConfigOutput = Schema.Struct({
           Schema.Array(Schema.Struct({ message: Schema.String })),
         ),
       }),
-      ownership_verification: Schema.Struct({
-        type: Schema.String,
-        name: Schema.String,
-        value: Schema.String,
-      }),
+      ownership_verification: Schema.optionalKey(
+        Schema.Struct({ type: Schema.String, name: Schema.String, value: Schema.String }),
+      ),
       custom_origin_server: Schema.String,
       verification_errors: Schema.optionalKey(Schema.Array(Schema.String)),
       status: Schema.String,
@@ -5890,6 +5895,7 @@ export const V1PauseAProjectOutput = Schema.Void;
 export const V1ReadOnlyQueryOutput = Schema.Void;
 export const V1RemoveAReadReplicaOutput = Schema.Void;
 export const V1RemoveProjectAddonOutput = Schema.Void;
+export const V1RestartAProjectOutput = Schema.Void;
 export const V1RestoreAProjectOutput = Schema.Void;
 export const V1RestorePhysicalBackupOutput = Schema.Void;
 export const V1RestorePitrBackupOutput = Schema.Void;
@@ -6033,6 +6039,7 @@ export const openApiOperationIdMap = {
   "v1-remove-project-addon": "v1RemoveProjectAddon",
   "v1-remove-project-signing-key": "v1RemoveProjectSigningKey",
   "v1-reset-a-branch": "v1ResetABranch",
+  "v1-restart-a-project": "v1RestartAProject",
   "v1-restore-a-branch": "v1RestoreABranch",
   "v1-restore-a-project": "v1RestoreAProject",
   "v1-restore-physical-backup": "v1RestorePhysicalBackup",
@@ -7861,6 +7868,19 @@ export const operationDefinitions = {
     response: { kind: "json" },
     inputSchema: V1ResetABranchInput,
     outputSchema: V1ResetABranchOutput,
+  },
+  v1RestartAProject: {
+    id: "v1RestartAProject",
+    description: "Restarts the given project",
+    method: "POST",
+    path: "/v1/projects/{ref}/restart",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "void" },
+    inputSchema: V1RestartAProjectInput,
+    outputSchema: V1RestartAProjectOutput,
   },
   v1RestoreABranch: {
     id: "v1RestoreABranch",

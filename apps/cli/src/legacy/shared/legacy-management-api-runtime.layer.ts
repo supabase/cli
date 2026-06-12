@@ -5,6 +5,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { LegacyCredentials } from "../auth/legacy-credentials.service.ts";
 import { legacyCredentialsLayer } from "../auth/legacy-credentials.layer.ts";
 import { legacyHttpClientLayer } from "../auth/legacy-http-debug.layer.ts";
+import { legacyPlatformApiFactoryFromApiLayer } from "../auth/legacy-platform-api-factory.layer.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { legacyPlatformApiLayer } from "../auth/legacy-platform-api.layer.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
@@ -65,12 +66,16 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(legacyDebugLoggerLayer),
   );
+  const platformApiFactory = legacyPlatformApiFactoryFromApiLayer.pipe(
+    Layer.provide(platformApiStack),
+  );
   const built = Layer.mergeAll(
     platformApiStack,
+    platformApiFactory,
     httpClient,
     credentials,
     cliConfig,
-    legacyProjectRefLayer.pipe(Layer.provide(platformApiStack), Layer.provide(cliConfig)),
+    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
     legacyLinkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliConfig),
