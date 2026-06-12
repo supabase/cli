@@ -1,27 +1,18 @@
 declare const Deno: any;
 declare const EdgeRuntime: any;
 
-// Surface of the Deno-only `jsr:@panva/jose@6` module used by this script.
-// We hand-type it (rather than importing its types) because the bun workspace
-// type-checker cannot resolve the `jsr:` specifier.
+// `jose` is provided by a static `import * as jose from "jsr:@panva/jose@6"`
+// that edge-runtime.ts prepends when materializing this script for the Deno
+// edge runtime. Keeping the `jsr:` specifier out of this file's source lets the
+// bun workspace type-check, lint, and bundle it without resolving a Deno-only
+// module. It is declared here for type-checking only.
 type JwksResolver = (...args: ReadonlyArray<unknown>) => Promise<CryptoKey>;
-type JwtVerifyKey = Uint8Array | JwksResolver;
-interface Jose {
+declare const jose: {
   decodeProtectedHeader(token: string): { readonly alg?: string };
-  jwtVerify(jwt: string, key: JwtVerifyKey): Promise<unknown>;
+  jwtVerify(jwt: string, key: Uint8Array | JwksResolver): Promise<unknown>;
   createLocalJWKSet(jwks: { readonly keys: ReadonlyArray<unknown> }): JwksResolver;
   createRemoteJWKSet(url: URL): JwksResolver;
-}
-
-// jose is loaded lazily via dynamic import so it only resolves inside the edge
-// runtime. The specifier is typed as `string` so the workspace type-checker
-// (which also compiles this text-embedded file) does not try to resolve the
-// Deno-only `jsr:` module.
-let josePromise: Promise<Jose> | null = null;
-function loadJose(): Promise<Jose> {
-  const specifier: string = "jsr:@panva/jose@6";
-  return (josePromise ??= import(specifier));
-}
+};
 
 const placeholder = {
   code: "FUNCTIONS_NOT_CONFIGURED",
@@ -43,7 +34,7 @@ async function loadConfig() {
   }
 }
 
-async function isValidLegacyJwt(jose: Jose, jwtSecret: string, jwt: string) {
+async function isValidLegacyJwt(jwtSecret: string, jwt: string) {
   try {
     await jose.jwtVerify(jwt, new TextEncoder().encode(jwtSecret));
     return true;
@@ -53,7 +44,7 @@ async function isValidLegacyJwt(jose: Jose, jwtSecret: string, jwt: string) {
   }
 }
 
-function createLocalJwks(jose: Jose, jwks: string): JwksResolver | null {
+function createLocalJwks(jwks: string): JwksResolver | null {
   try {
     return jose.createLocalJWKSet(JSON.parse(jwks));
   } catch {
@@ -61,11 +52,11 @@ function createLocalJwks(jose: Jose, jwks: string): JwksResolver | null {
   }
 }
 
-async function isValidAsymmetricJwt(jose: Jose, jwks: string, jwksUrl: string, jwt: string) {
+async function isValidAsymmetricJwt(jwks: string, jwksUrl: string, jwt: string) {
   // Prefer the JWKS injected by the CLI. If it has no key matching the token
   // (e.g. an asymmetric key minted elsewhere is absent from the local set),
   // fall back to the auth service's well-known JWKS endpoint.
-  const localJwks = createLocalJwks(jose, jwks);
+  const localJwks = createLocalJwks(jwks);
   if (localJwks) {
     try {
       await jose.jwtVerify(jwt, localJwks);
@@ -88,8 +79,6 @@ async function isValidAsymmetricJwt(jose: Jose, jwks: string, jwksUrl: string, j
 // Mirrors the Go CLI runtime (supabase/cli#4721, #4985) during the migration
 // to the new asymmetric JWT keys.
 async function verifyHybridJwt(config: any, jwt: string) {
-  const jose = await loadJose();
-
   let alg: string | undefined;
   try {
     ({ alg } = jose.decodeProtectedHeader(jwt));
@@ -99,11 +88,11 @@ async function verifyHybridJwt(config: any, jwt: string) {
   }
 
   if (alg === "HS256") {
-    return isValidLegacyJwt(jose, config.jwtSecret, jwt);
+    return isValidLegacyJwt(config.jwtSecret, jwt);
   }
   if (alg === "ES256" || alg === "RS256") {
     const jwksUrl = new URL("/auth/v1/.well-known/jwks.json", config.supabaseUrl).href;
-    return isValidAsymmetricJwt(jose, config.jwks, jwksUrl, jwt);
+    return isValidAsymmetricJwt(config.jwks, jwksUrl, jwt);
   }
   return false;
 }
