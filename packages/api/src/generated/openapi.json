@@ -11627,6 +11627,10 @@
             "type": "string",
             "format": "uri",
             "description": "Template URL used to create the project from the CLI."
+          },
+          "high_availability": {
+            "type": "boolean",
+            "description": "Whether to enable high availability for the project."
           }
         },
         "required": ["db_pass", "name", "organization_slug"],

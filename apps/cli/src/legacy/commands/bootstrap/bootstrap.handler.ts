@@ -176,6 +176,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       dbPassword: seededPassword,
       region: undefined,
       size: undefined,
+      highAvailability: undefined,
       templateUrl: starter.url.length > 0 ? starter.url : undefined,
       emitStructuredResult: false,
     });
