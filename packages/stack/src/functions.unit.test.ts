@@ -78,6 +78,10 @@ describe("stack Functions runtime config", () => {
         CONFIG_ONLY: "from-project-env",
         SHARED: "from-project-env",
       });
+      // JWKS is injected so the edge runtime can verify asymmetric JWTs.
+      expect(JSON.parse(config!.jwks)).toEqual({
+        keys: [expect.objectContaining({ kty: "oct", k: expect.any(String) })],
+      });
     }).pipe(
       Effect.provide(BunServices.layer),
       Effect.ensuring(Effect.promise(() => rm(cwd, { recursive: true, force: true }))),

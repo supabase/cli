@@ -48,7 +48,8 @@
       "@typescript/native-preview",
       "oxfmt",
       "oxlint",
-      "oxlint-tsgolint"
+      "oxlint-tsgolint",
+      "jsr"
     ],
     "ignoreBinaries": [
       "nx",

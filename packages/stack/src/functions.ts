@@ -8,6 +8,7 @@ import {
   type ResolvedFunctionConfig,
 } from "@supabase/config";
 import { Effect, FileSystem, Path, Redacted } from "effect";
+import { generateJwks } from "./JwtGenerator.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
 
 export interface FunctionsConfig {
@@ -27,6 +28,7 @@ export interface FunctionsRuntimeConfig {
   readonly publishableKey: string;
   readonly secretKey: string;
   readonly jwtSecret: string;
+  readonly jwks: string;
   readonly env: Readonly<Record<string, string>>;
   readonly functions: Readonly<
     Record<
@@ -198,6 +200,7 @@ export const resolveFunctionsRuntimeConfig = Effect.fnUntraced(function* (
     publishableKey: stackConfig.publishableKey,
     secretKey: stackConfig.secretKey,
     jwtSecret: stackConfig.jwtSecret,
+    jwks: generateJwks(stackConfig.jwtSecret),
     env,
     functions: Object.fromEntries(
       enabledManifest.map(([slug, config]) => [

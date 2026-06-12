@@ -1,6 +1,16 @@
 declare const Deno: any;
 declare const EdgeRuntime: any;
 
+type Jose = typeof import("jsr:@panva/jose@6");
+
+// jose is loaded lazily via dynamic import so the workspace test toolchain
+// (which transforms this text-embedded file) never has to resolve the
+// Deno-only `jsr:` specifier. The import only runs inside the edge runtime.
+let josePromise: Promise<Jose> | null = null;
+function loadJose() {
+  return (josePromise ??= import("jsr:@panva/jose@6"));
+}
+
 const placeholder = {
   code: "FUNCTIONS_NOT_CONFIGURED",
   message: "Edge Functions are not configured for this local stack yet.",
@@ -21,43 +31,60 @@ async function loadConfig() {
   }
 }
 
-function base64UrlToBytes(value: string) {
-  const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
-  return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
-}
-
-function bytesEqual(left: Uint8Array, right: Uint8Array) {
-  if (left.byteLength !== right.byteLength) return false;
-  let result = 0;
-  for (let i = 0; i < left.byteLength; i++) {
-    result |= left[i]! ^ right[i]!;
+async function isValidLegacyJwt(jose: Jose, jwtSecret: string, jwt: string) {
+  try {
+    await jose.jwtVerify(jwt, new TextEncoder().encode(jwtSecret));
+    return true;
+  } catch (error) {
+    console.error("Symmetric legacy JWT verification failed", error);
+    return false;
   }
-  return result === 0;
 }
 
-async function isValidLocalJwt(secret: string, jwt: string) {
-  const parts = jwt.split(".");
-  if (parts.length !== 3) return false;
-  const [header, payload, signature] = parts;
-  const decodedHeader = JSON.parse(new TextDecoder().decode(base64UrlToBytes(header!)));
+function createLocalJwks(jose: Jose, jwks: string) {
+  try {
+    return jose.createLocalJWKSet(JSON.parse(jwks));
+  } catch {
+    return null;
+  }
+}
 
-  // WARN:(kallebysantos) Go version supports Asymmetric JWTs (ES256 | RS256) via SUPABASE_JWKS env
-  // It must be ported to TS as well
-  if (decodedHeader.alg !== "HS256") return false;
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const signed = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(`${header}.${payload}`),
-  );
-  return bytesEqual(new Uint8Array(signed), base64UrlToBytes(signature!));
+async function isValidAsymmetricJwt(jose: Jose, jwks: string, jwksUrl: string, jwt: string) {
+  try {
+    // Prefer the JWKS injected by the CLI; fall back to fetching it from the
+    // local auth service's well-known endpoint for keys minted elsewhere.
+    const keySet = createLocalJwks(jose, jwks) ?? jose.createRemoteJWKSet(new URL(jwksUrl));
+    await jose.jwtVerify(jwt, keySet);
+    return true;
+  } catch (error) {
+    console.error("Asymmetric JWT verification failed", error);
+    return false;
+  }
+}
+
+// Hybrid JWT verification: asymmetric (ES256 | RS256) tokens are verified
+// against the JWKS, with the legacy symmetric secret (HS256) as a fallback.
+// Mirrors the Go CLI runtime (supabase/cli#4721, #4985) during the migration
+// to the new asymmetric JWT keys.
+async function verifyHybridJwt(config: any, jwt: string) {
+  const jose = await loadJose();
+
+  let alg: string | undefined;
+  try {
+    ({ alg } = jose.decodeProtectedHeader(jwt));
+  } catch (error) {
+    console.error("Failed to decode JWT header", error);
+    return false;
+  }
+
+  if (alg === "HS256") {
+    return isValidLegacyJwt(jose, config.jwtSecret, jwt);
+  }
+  if (alg === "ES256" || alg === "RS256") {
+    const jwksUrl = new URL("/auth/v1/.well-known/jwks.json", config.supabaseUrl).href;
+    return isValidAsymmetricJwt(jose, config.jwks, jwksUrl, jwt);
+  }
+  return false;
 }
 
 async function verifyRequest(req: Request, config: any, functionConfig: any) {
@@ -79,11 +106,7 @@ async function verifyRequest(req: Request, config: any, functionConfig: any) {
     return Response.json({ msg: "Auth header is not 'Bearer {token}'" }, { status: 401 });
   }
 
-  try {
-    if (await isValidLocalJwt(config.jwtSecret, token)) return null;
-  } catch (error) {
-    console.error("JWT verification failed", error);
-  }
+  if (await verifyHybridJwt(config, token)) return null;
   return Response.json({ msg: "Invalid JWT" }, { status: 401 });
 }
 
@@ -108,6 +131,7 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
     SUPABASE_DB_URL: config.dbUrl,
     SUPABASE_PUBLISHABLE_KEYS: JSON.stringify({ default: config.publishableKey }),
     SUPABASE_SECRET_KEYS: JSON.stringify({ default: config.secretKey }),
+    SUPABASE_JWKS: config.jwks,
   });
 
   try {
