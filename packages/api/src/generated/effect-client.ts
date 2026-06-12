@@ -1774,6 +1774,20 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v1ResetABranch">(operationDefinitions.v1ResetABranch, input);
       }),
+    restartAProject: (
+      input: typeof operationDefinitions.v1RestartAProject.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1RestartAProject.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1RestartAProject">(
+          operationDefinitions.v1RestartAProject,
+          input,
+        );
+      }),
     restoreABranch: (
       input: typeof operationDefinitions.v1RestoreABranch.inputSchema.Type,
     ): Effect.Effect<
@@ -2783,6 +2797,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v1ResetABranch.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v1.resetABranch(decoded)));
+    case "v1RestartAProject":
+      return Schema.decodeUnknownEffect(operationDefinitions.v1RestartAProject.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v1.restartAProject(decoded)));
     case "v1RestoreABranch":
       return Schema.decodeUnknownEffect(operationDefinitions.v1RestoreABranch.inputSchema)(
         input,
