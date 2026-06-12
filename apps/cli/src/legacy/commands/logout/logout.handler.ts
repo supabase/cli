@@ -51,7 +51,7 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
     if (notLoggedIn) {
       // Still forget the telemetry identity: a stale distinct_id can outlive
       // the token (e.g. the token file was removed manually).
-      yield* telemetryState.clearDistinctId;
+      yield* telemetryState.resetIdentity;
       return;
     }
 
@@ -60,7 +60,7 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
 
     // Forget the telemetry identity (in-process stamp + persisted distinct_id)
     // so post-logout events fall back to the anonymous device id.
-    yield* telemetryState.clearDistinctId;
+    yield* telemetryState.resetIdentity;
 
     if (output.format !== "text") {
       yield* output.success(LOGGED_OUT_MSG);

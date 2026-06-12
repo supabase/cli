@@ -94,19 +94,19 @@ describe("legacy logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("clears the telemetry identity on successful logout", () => {
+  it.live("resets the telemetry identity on successful logout", () => {
     const { layer, telemetry } = setupLegacyLogout({ confirm: true });
     return Effect.gen(function* () {
       yield* legacyLogout();
-      expect(telemetry.clearedDistinctId).toBe(true);
+      expect(telemetry.identityReset).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("clears the telemetry identity even when not logged in", () => {
+  it.live("resets the telemetry identity even when not logged in", () => {
     const { layer, telemetry } = setupLegacyLogout({ confirm: true, deleteOutcome: "notLoggedIn" });
     return Effect.gen(function* () {
       yield* legacyLogout();
-      expect(telemetry.clearedDistinctId).toBe(true);
+      expect(telemetry.identityReset).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 

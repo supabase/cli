@@ -20,6 +20,12 @@ interface LegacyTelemetryStateShape {
    */
   readonly stitchLogin: (distinctId: string) => Effect.Effect<void>;
   /**
+   * Logout-only: forgets the user and rotates the persisted `device_id`, so a
+   * later login as a different account aliases a fresh device instead of one
+   * already merged into the previous user's person graph.
+   */
+  readonly resetIdentity: Effect.Effect<void>;
+  /**
    * Clears the persisted telemetry `distinct_id`. Mirrors Go's
    * `Service.ClearDistinctID` (`service.go:145-151`).
    *

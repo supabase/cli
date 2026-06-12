@@ -144,6 +144,17 @@ const persistLegacyDistinctId = Effect.fn("legacy.telemetry.persistDistinctId")(
   yield* fs.writeFileString(filePath, JSON.stringify(nextState));
 });
 
+const persistLegacyIdentityReset = Effect.fn("legacy.telemetry.persistIdentityReset")(function* () {
+  const base = yield* loadOrCreateLegacyTelemetryState();
+  const fs = yield* FileSystem.FileSystem;
+  const pathSvc = yield* Path.Path;
+  const { distinct_id: _drop, ...rest } = base;
+  const nextState: State = { ...rest, device_id: crypto.randomUUID() };
+  const filePath = legacyTelemetryPath(process.env, pathSvc);
+  yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
+  yield* fs.writeFileString(filePath, JSON.stringify(nextState));
+});
+
 /**
  * Writes `<SUPABASE_HOME or ~/.supabase>/telemetry.json` on every command run.
  * Mirrors Go's `LoadOrCreateState` (`apps/cli-go/internal/telemetry/state.go:74-98`):
@@ -202,6 +213,9 @@ export const legacyTelemetryStateLayer = Layer.effect(
         Effect.asVoid,
         Effect.ignore,
       ),
+      resetIdentity: Effect.sync(() => {
+        runtime.identity.clear();
+      }).pipe(Effect.andThen(provide(persistLegacyIdentityReset())), Effect.asVoid, Effect.ignore),
     });
   }),
 );

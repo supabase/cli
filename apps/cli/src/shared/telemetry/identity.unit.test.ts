@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
-import { makeTelemetryIdentity, resolveIdentity } from "./identity.ts";
+import { makeTelemetryIdentity, resetIdentity, resolveIdentity } from "./identity.ts";
 import type { TelemetryConfig } from "./types.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -154,6 +154,29 @@ describe("resolveIdentity", () => {
       yield* resolveIdentity(dir);
       const config = readConfig(dir);
       expect(config.session_last_active).toBeGreaterThanOrEqual(before);
+    }).pipe(
+      Effect.provide(fsLayer),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+});
+
+describe("resetIdentity", () => {
+  it.live("rotates the persisted device_id and drops the distinct_id", () => {
+    const dir = makeTempDir();
+    writeConfig(dir, {
+      consent: "granted",
+      device_id: "old-device-id",
+      session_id: "session-id",
+      session_last_active: Date.now(),
+      distinct_id: "user-a",
+    });
+    return Effect.gen(function* () {
+      yield* resetIdentity(dir);
+      const config = readConfig(dir);
+      expect(config.distinct_id).toBeUndefined();
+      expect(config.device_id).not.toBe("old-device-id");
+      expect(config.consent).toBe("granted");
     }).pipe(
       Effect.provide(fsLayer),
       Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),

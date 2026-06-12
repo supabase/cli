@@ -22,7 +22,7 @@ func Run(ctx context.Context, stdout *os.File, fsys afero.Fs) error {
 	if err := utils.DeleteAccessToken(fsys); errors.Is(err, utils.ErrNotLoggedIn) {
 		// Still forget the telemetry identity: a stale distinct_id can outlive
 		// the token (e.g. the token file was removed manually).
-		if cerr := phtelemetry.FromContext(ctx).ClearDistinctID(); cerr != nil {
+		if cerr := phtelemetry.FromContext(ctx).ResetIdentity(); cerr != nil {
 			fmt.Fprintln(utils.GetDebugLogger(), cerr)
 		}
 		fmt.Fprintln(os.Stderr, err)
@@ -36,7 +36,7 @@ func Run(ctx context.Context, stdout *os.File, fsys afero.Fs) error {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
 
-	if err := phtelemetry.FromContext(ctx).ClearDistinctID(); err != nil {
+	if err := phtelemetry.FromContext(ctx).ResetIdentity(); err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
 

@@ -66,6 +66,7 @@ export const mockLegacyTelemetryStateLayer = Layer.succeed(LegacyTelemetryState,
   flush: Effect.void,
   stitchLogin: () => Effect.void,
   clearDistinctId: Effect.void,
+  resetIdentity: Effect.void,
 });
 
 // Default LegacyCredentials mock. `mockLegacyCliConfig` defaults to an env-set
@@ -264,10 +265,12 @@ export function mockLegacyTelemetryStateTracked(): {
   readonly flushed: boolean;
   readonly stitchedDistinctId: string | undefined;
   readonly clearedDistinctId: boolean;
+  readonly identityReset: boolean;
 } {
   let flushed = false;
   let stitchedDistinctId: string | undefined;
   let clearedDistinctId = false;
+  let identityReset = false;
   const layer = Layer.succeed(LegacyTelemetryState, {
     get flush() {
       return Effect.sync(() => {
@@ -283,6 +286,11 @@ export function mockLegacyTelemetryStateTracked(): {
         clearedDistinctId = true;
       });
     },
+    get resetIdentity() {
+      return Effect.sync(() => {
+        identityReset = true;
+      });
+    },
   });
   return {
     layer,
@@ -294,6 +302,9 @@ export function mockLegacyTelemetryStateTracked(): {
     },
     get clearedDistinctId() {
       return clearedDistinctId;
+    },
+    get identityReset() {
+      return identityReset;
     },
   };
 }

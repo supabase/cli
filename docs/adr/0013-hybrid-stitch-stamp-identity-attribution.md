@@ -19,7 +19,7 @@ Use a hybrid of stitching and stamping, differentiated by environment:
 - **Stitch only in persistent environments.** On a developer laptop's first login, additionally fire exactly one `$create_alias` (no `$identify`) to merge pre-login history, and persist the UUID to `~/.supabase/telemetry.json` so later runs start identified. In ephemeral environments (detected as `isCI || (isFirstRun && !isTTY)`), never alias and never write state.
 - **The gate lives inside `StitchLogin`,** not at call sites. The function always stashes the UUID in memory; the persistent-only side effects (alias + state write) branch internally. Rationale: the previous call-site gate was added to the `OnGotrueID` hook but missed the `login` command's direct call, quietly leaking aliases from CI `supabase login --token` runs. Centralizing makes the gate unforgettable for future callers.
 - **Memory wins over disk.** When the in-process UUID and the persisted `distinct_id` disagree (e.g. re-login as a different user), the in-memory value is used.
-- **Logout clears both.** `ClearDistinctID` wipes the in-memory UUID and the persisted state together, so post-logout events immediately fall back to the device ID.
+- **Logout resets the identity entirely.** Logout wipes the in-memory UUID and the persisted `distinct_id`, and **rotates the device ID**. Rotation makes cross-account contamination structurally impossible: a later login as a different account aliases a fresh device instead of one already merged into the previous user's person graph. Transient failure paths (e.g. a profile lookup error during login) only clear the identity and keep the device ID, preserving anonymous-history continuity.
 - **All three identity surfaces change together:** the Go CLI (`apps/cli-go/internal/telemetry/`), the legacy TS shell (`apps/cli/src/legacy/auth/legacy-platform-api.layer.ts`), and the next TS shell (`apps/cli/src/next/commands/login/`).
 
 ## Considered Options
@@ -34,3 +34,5 @@ Use a hybrid of stitching and stamping, differentiated by environment:
 - Events fired before the first authenticated call in a process remain device-scoped in ephemeral environments (typically 0–3 events per run). Accepted loss.
 - The TS shells need a mutable identity slot consulted at capture time, replacing the startup-snapshot-only `runtime.distinctId`.
 - `$identify` is fully retired from the stitch path on all surfaces (it survives only where person properties are genuinely set).
+- `$create_alias` fires only for the **first** identity a device ever sees. Re-login (or the login command's direct stitch after the response hook already stitched) stamps and persists without re-aliasing — re-aliasing an already-merged device would attempt to merge unrelated person graphs.
+- In the TS shells, the rotated device ID takes effect from the next process; capture events in the tail of the logout process itself still carry the startup device-ID snapshot. Go rotates in-process as well.

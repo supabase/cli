@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -150,6 +151,10 @@ func (s *Service) StitchLogin(distinctID string) error {
 	}
 	if firstIdentity && s.canSend() {
 		if err := s.analytics.Alias(distinctID, s.state.DeviceID); err != nil {
+			// Leave the identity re-stitchable: nothing was enqueued, so a
+			// retry (e.g. the login command after the response hook errored)
+			// must still qualify as the first identity.
+			s.userID = ""
 			return err
 		}
 	}
@@ -171,6 +176,21 @@ func (s *Service) ObserveAuthenticatedUser(distinctID string) error {
 	}
 	s.userID = distinctID
 	return nil
+}
+
+// ResetIdentity severs the link between this device and the logged-out user:
+// the identity is forgotten and the device ID is rotated, so a later login as
+// a different account aliases a fresh device instead of one already merged
+// into the previous user's person graph. Logout-only — transient failure
+// paths use ClearDistinctID, which keeps the device ID.
+func (s *Service) ResetIdentity() error {
+	if s == nil {
+		return nil
+	}
+	s.userID = ""
+	s.state.DistinctID = ""
+	s.state.DeviceID = uuid.NewString()
+	return SaveState(s.state, s.fsys)
 }
 
 func (s *Service) ClearDistinctID() error {

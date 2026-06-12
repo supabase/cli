@@ -139,6 +139,21 @@ describe("legacyTelemetryStateLayer.stitchLogin / clearDistinctId", () => {
     }).pipe(Effect.provide(makeLayer(analytics, runtime)));
   });
 
+  it.effect("resetIdentity rotates the device id and forgets the user", () => {
+    seedState("user-a");
+    const analytics = mockAnalytics();
+    const runtime = makeRuntime();
+    runtime.identity.stamp("user-a");
+    return Effect.gen(function* () {
+      const state = yield* LegacyTelemetryState;
+      yield* state.resetIdentity;
+      const next = readState();
+      expect(next.distinct_id).toBeUndefined();
+      expect(next.device_id).not.toBe("device-xyz");
+      expect(runtime.identity.current()).toBeUndefined();
+    }).pipe(Effect.provide(makeLayer(analytics, runtime)));
+  });
+
   it.effect(
     "clearDistinctId removes the persisted distinct_id and empties the in-process identity",
     () => {
