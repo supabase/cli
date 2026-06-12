@@ -1,7 +1,12 @@
 import { describe, expect, test } from "vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit } from "effect";
-import { excludeFlag, serviceVersionFlag } from "./start.command.ts";
+import {
+  AUTO_EXPOSE_NEW_TABLES_DEPRECATION_WARNING,
+  excludeFlag,
+  resolveAutoExposeNewTables,
+  serviceVersionFlag,
+} from "./start.command.ts";
 
 describe("start command exclude flag", () => {
   test("parses repeated excluded services", async () => {
@@ -42,5 +47,28 @@ describe("start command exclude flag", () => {
     );
 
     expect(overrides).toEqual(["auth=v2.180.0", "postgres=17.4.1.045"]);
+  });
+});
+
+describe("resolveAutoExposeNewTables", () => {
+  test("defaults to false (revoke) when the flag is unset", () => {
+    expect(resolveAutoExposeNewTables(undefined)).toEqual({
+      autoExposeNewTables: false,
+      deprecationWarning: undefined,
+    });
+  });
+
+  test("keeps legacy auto-expose behaviour and warns when explicitly true", () => {
+    expect(resolveAutoExposeNewTables(true)).toEqual({
+      autoExposeNewTables: true,
+      deprecationWarning: AUTO_EXPOSE_NEW_TABLES_DEPRECATION_WARNING,
+    });
+  });
+
+  test("revokes without warning when explicitly false", () => {
+    expect(resolveAutoExposeNewTables(false)).toEqual({
+      autoExposeNewTables: false,
+      deprecationWarning: undefined,
+    });
   });
 });

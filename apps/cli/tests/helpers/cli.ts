@@ -22,6 +22,39 @@ const NEXT_BINARY_PATH = fileURLToPath(
   new URL(`../../dist/supabase-next${BINARY_EXT}`, import.meta.url),
 );
 
+// E2E subprocesses should only enter agent output mode when a test explicitly
+// opts in via `options.env`. Keep this list aligned with @vercel/detect-agent
+// env probes so a developer's shell cannot accidentally change CLI rendering.
+const AGENT_DETECTION_ENV_KEYS: readonly string[] = [
+  "AI_AGENT",
+  "CURSOR_TRACE_ID",
+  "CURSOR_AGENT",
+  "CURSOR_EXTENSION_HOST_ROLE",
+  "GEMINI_CLI",
+  "CODEX_SANDBOX",
+  "CODEX_CI",
+  "CODEX_THREAD_ID",
+  "ANTIGRAVITY_AGENT",
+  "AUGMENT_AGENT",
+  "OPENCODE_CLIENT",
+  "CLAUDECODE",
+  "CLAUDE_CODE",
+  "CLAUDE_CODE_IS_COWORK",
+  "REPL_ID",
+  "COPILOT_MODEL",
+  "COPILOT_ALLOW_ALL",
+  "COPILOT_GITHUB_TOKEN",
+];
+
+function subprocessBaseEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) env[key] = value;
+  }
+  for (const key of AGENT_DETECTION_ENV_KEYS) delete env[key];
+  return env;
+}
+
 function assertBuildArtifactsExist(shell: "legacy" | "next", binaryPath: string): void {
   if (!existsSync(SHIM_PATH) || !existsSync(binaryPath)) {
     throw new Error(
@@ -196,7 +229,7 @@ export function spawnSupabase(
   let execCmd: string;
   let execArgs: string[];
   const env: Record<string, string> = {
-    ...process.env,
+    ...subprocessBaseEnv(),
     SUPABASE_HOME: homeDir,
     SUPABASE_NO_KEYRING: "1",
     SUPABASE_TELEMETRY_DISABLED: "1",

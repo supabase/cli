@@ -111,6 +111,27 @@ export interface RunResult {
   files: FileRecord[];
 }
 
+interface ParityChannelNormalizeOptions {
+  readonly stdout?: NormalizeOptions;
+  readonly stderr?: NormalizeOptions;
+}
+
+type ParityNormalizeOptions = NormalizeOptions | ParityChannelNormalizeOptions;
+
+function isChannelNormalizeOptions(
+  options: ParityNormalizeOptions | undefined,
+): options is ParityChannelNormalizeOptions {
+  return options !== undefined && ("stdout" in options || "stderr" in options);
+}
+
+function normalizeChannel(
+  output: string,
+  options: ParityNormalizeOptions | undefined,
+  channel: "stdout" | "stderr",
+): string {
+  return normalize(output, isChannelNormalizeOptions(options) ? options[channel] : options);
+}
+
 // ---------------------------------------------------------------------------
 // Git-based file snapshot
 // ---------------------------------------------------------------------------
@@ -215,14 +236,14 @@ async function collectRunResult(
   dir: string,
   apiUrl: string,
   extraEnv?: Record<string, string>,
-  normalizeOptions?: NormalizeOptions,
+  normalizeOptions?: ParityNormalizeOptions,
 ): Promise<RunResult> {
   const result = await exec(harness, cmd, extraEnv ? { env: extraEnv } : undefined);
   const requests = await fetchRequestLog(apiUrl);
   const files = snapshotChangedFiles(dir);
   return {
-    stdout: normalize(result.stdout, normalizeOptions),
-    stderr: normalize(result.stderr, normalizeOptions),
+    stdout: normalizeChannel(result.stdout, normalizeOptions, "stdout"),
+    stderr: normalizeChannel(result.stderr, normalizeOptions, "stderr"),
     exitCode: result.exitCode,
     requests,
     files,
@@ -313,7 +334,7 @@ export interface ParityOptions {
   /** Additional environment variables injected into both CLI subprocesses. */
   extraEnv?: Record<string, string>;
   /** Fine-grained normalization controls for stdout/stderr parity comparison. */
-  normalize?: NormalizeOptions;
+  normalize?: ParityNormalizeOptions;
 }
 
 /**

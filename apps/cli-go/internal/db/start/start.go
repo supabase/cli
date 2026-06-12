@@ -415,15 +415,16 @@ alter default privileges for role postgres in schema public
 // `[api].auto_expose_new_tables` flag in config.toml. The flag is tri-state to give users a
 // safe migration window:
 //
-//   - unset (default today): keep the bundled initial-schema GRANTs in place, so local matches
-//     long-standing behaviour. This implicit default flips to false on May 30, 2026, and the
-//     flag is removed entirely in October 2026 (always-revoked behaviour).
-//   - true: explicit opt-in to today's behaviour. Treated identically to unset for now; from
-//     May 30 the CLI will warn that the flag is being deprecated.
-//   - false: revoke the default Data API GRANTs so newly-created entities in `public` require
-//     explicit GRANTs to surface through the Data API, matching the new cloud default.
+//   - unset (default): revoke the default Data API GRANTs so newly-created entities in `public`
+//     require explicit GRANTs to surface through the Data API, matching the new cloud default.
+//     The implicit default flipped to false on May 30, 2026; the flag is removed entirely in
+//     October 2026 (always-revoked behaviour).
+//   - true: explicit opt-in to the legacy behaviour of keeping the bundled initial-schema GRANTs
+//     in place. Deprecated: config loading warns that the flag is removed on October 30, 2026.
+//   - false: revoke the default Data API GRANTs (same as unset). Kept so users can pin the new
+//     behaviour explicitly during the deprecation window.
 func ApplyApiPrivileges(ctx context.Context, conn *pgx.Conn) error {
-	if utils.Config.Api.AutoExposeNewTables == nil || *utils.Config.Api.AutoExposeNewTables {
+	if utils.Config.Api.AutoExposeNewTables != nil && *utils.Config.Api.AutoExposeNewTables {
 		return nil
 	}
 	file, err := migration.NewMigrationFromReader(strings.NewReader(RevokeDefaultDataApiPrivilegesSql))

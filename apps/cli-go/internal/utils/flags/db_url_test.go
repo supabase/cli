@@ -3,10 +3,12 @@ package flags
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/h2non/gock"
 	"github.com/spf13/afero"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -14,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/api"
 )
 
 func TestParseDatabaseConfig(t *testing.T) {
@@ -82,6 +85,64 @@ func TestParseDatabaseConfig(t *testing.T) {
 
 		assert.NoError(t, err)
 		assert.True(t, strings.HasPrefix(DbConfig.Host, utils.GetSupabaseDbHost(project)))
+	})
+}
+
+func TestResolvePoolerConfigForFallback(t *testing.T) {
+	ref := apitest.RandomProjectRef()
+
+	t.Run("uses linked pooler url with db password", func(t *testing.T) {
+		utils.Config.Db.Pooler.ConnectionString = "postgres://postgres." + ref + ":[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+		viper.Set("DB_PASSWORD", "secret")
+		t.Cleanup(func() {
+			utils.Config.Db.Pooler.ConnectionString = ""
+			viper.Set("DB_PASSWORD", "")
+		})
+
+		config, err := ResolvePoolerConfigForFallback(context.Background(), ref)
+
+		require.NoError(t, err)
+		assert.Equal(t, "aws-0-us-east-1.pooler.supabase.com", config.Host)
+		assert.Equal(t, uint16(5432), config.Port)
+		assert.Equal(t, "postgres."+ref, config.User)
+		assert.Equal(t, "secret", config.Password)
+	})
+
+	t.Run("falls back to api pooler config", func(t *testing.T) {
+		poolerURL := "postgres://postgres." + ref + ":[YOUR-PASSWORD]@aws-0-eu-west-1.pooler.supabase.com:6543/postgres"
+		utils.Config.Db.Pooler.ConnectionString = ""
+		viper.Set("DB_PASSWORD", "secret")
+		t.Cleanup(func() { viper.Set("DB_PASSWORD", "") })
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + ref + "/config/database/pooler").
+			Reply(http.StatusOK).
+			JSON([]api.SupavisorConfigResponse{{
+				DatabaseType:     api.SupavisorConfigResponseDatabaseTypePRIMARY,
+				ConnectionString: poolerURL,
+			}})
+
+		config, err := ResolvePoolerConfigForFallback(context.Background(), ref)
+
+		require.NoError(t, err)
+		assert.Equal(t, "aws-0-eu-west-1.pooler.supabase.com", config.Host)
+		assert.Equal(t, uint16(5432), config.Port)
+		assert.Equal(t, "secret", config.Password)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("returns error when api pooler is unavailable", func(t *testing.T) {
+		utils.Config.Db.Pooler.ConnectionString = ""
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + ref + "/config/database/pooler").
+			Reply(http.StatusOK).
+			JSON([]api.SupavisorConfigResponse{})
+
+		_, err := ResolvePoolerConfigForFallback(context.Background(), ref)
+
+		assert.Error(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
 

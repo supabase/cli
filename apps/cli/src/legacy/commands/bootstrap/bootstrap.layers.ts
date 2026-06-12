@@ -1,8 +1,12 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 
 import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
 import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
 import { legacyPlatformApiLayer } from "../../auth/legacy-platform-api.layer.ts";
+import {
+  LegacyPlatformApi,
+  LegacyPlatformApiFactory,
+} from "../../auth/legacy-platform-api.service.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyProjectRefLayer } from "../../config/legacy-project-ref.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
@@ -42,13 +46,25 @@ const platformApi = legacyPlatformApiLayer.pipe(
   Layer.provide(httpClient),
   Layer.provide(debugLogger),
 );
+const platformApiFactory = Layer.effect(
+  LegacyPlatformApiFactory,
+  LegacyPlatformApi.pipe(
+    Effect.map((api) =>
+      LegacyPlatformApiFactory.of({
+        make: Effect.succeed(api),
+      }),
+    ),
+  ),
+);
+const platformApiFactoryStack = platformApiFactory.pipe(Layer.provide(platformApi));
 
 export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
   platformApi,
+  platformApiFactoryStack,
   httpClient,
   credentials,
   cliConfig,
-  legacyProjectRefLayer.pipe(Layer.provide(platformApi), Layer.provide(cliConfig)),
+  legacyProjectRefLayer.pipe(Layer.provide(platformApiFactoryStack), Layer.provide(cliConfig)),
   legacyLinkedProjectCacheLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliConfig),

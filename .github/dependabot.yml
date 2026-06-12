@@ -31,6 +31,10 @@ updates:
           - patch
         exclude-patterns:
           - github.com/compose-spec/compose-go/v2
+    ignore:
+      - dependency-name: "github.com/compose-spec/compose-go/v2"
+      - dependency-name: "github.com/docker/cli"
+      - dependency-name: "github.com/docker/docker"
     cooldown:
       default-days: 7
   - package-ecosystem: "npm"

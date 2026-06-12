@@ -2,7 +2,7 @@ import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { parse as parseYaml } from "yaml";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
-import { legacyProjectHost } from "../shared/legacy-profile.ts";
+import { legacyPoolerHost, legacyProjectHost } from "../shared/legacy-profile.ts";
 import {
   LegacyDebugLogger,
   type LegacyDebugLoggerShape,
@@ -15,6 +15,7 @@ interface ResolvedProfile {
   readonly name: string;
   readonly apiUrl: string;
   readonly projectHost: string;
+  readonly poolerHost: string;
 }
 
 const BUILTIN_PROFILE_API_URLS: Record<LegacyProfileName, string> = {
@@ -36,16 +37,27 @@ function resolvedBuiltin(name: LegacyProfileName): ResolvedProfile {
     name,
     apiUrl: BUILTIN_PROFILE_API_URLS[name],
     projectHost: legacyProjectHost(name),
+    poolerHost: legacyPoolerHost(name),
   };
 }
 
-function safeParseYaml(
-  text: string,
-): { name?: unknown; api_url?: unknown; project_host?: unknown } | undefined {
+function safeParseYaml(text: string):
+  | {
+      name?: unknown;
+      api_url?: unknown;
+      project_host?: unknown;
+      pooler_host?: unknown;
+    }
+  | undefined {
   try {
     const value = parseYaml(text);
     return value !== null && typeof value === "object"
-      ? (value as { name?: unknown; api_url?: unknown; project_host?: unknown })
+      ? (value as {
+          name?: unknown;
+          api_url?: unknown;
+          project_host?: unknown;
+          pooler_host?: unknown;
+        })
       : undefined;
   } catch {
     return undefined;
@@ -71,7 +83,9 @@ function unknownMessage(error: unknown): string {
  * The cli-e2e harness depends on (2) — it writes a per-test YAML profile and
  * sets `SUPABASE_PROFILE=<that-path>` so both the Go and ts-legacy binaries
  * route requests to the local replay server. YAML profiles may also carry a
- * `project_host:` key (Go's `Profile.ProjectHost`); it defaults to `supabase.co`.
+ * `project_host:` key (Go's `Profile.ProjectHost`; defaults to `supabase.co`) and
+ * a `pooler_host:` key (Go's `Profile.PoolerHost`; `omitempty`, defaults to empty
+ * which disables the linked pooler MITM domain assertion).
  */
 function resolveProfile(
   flagValue: string,
@@ -129,6 +143,10 @@ function resolveProfile(
         typeof parsed.project_host === "string"
           ? parsed.project_host
           : legacyProjectHost("supabase"),
+      // Go's `Profile.PoolerHost` is `omitempty` (`profile.go:23`): a YAML profile
+      // that omits `pooler_host:` yields an empty host, which disables the MITM
+      // domain assertion — it must NOT fall back to the production `supabase.com`.
+      poolerHost: typeof parsed.pooler_host === "string" ? parsed.pooler_host : "",
     };
   });
 }
@@ -181,6 +199,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
           name: profile,
           apiUrl,
           projectHost,
+          poolerHost,
         } = yield* resolveProfile(
           profileFlag,
           env["SUPABASE_PROFILE"],
@@ -216,6 +235,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
           profile,
           apiUrl,
           projectHost,
+          poolerHost,
           accessToken,
           projectId,
           workdir,

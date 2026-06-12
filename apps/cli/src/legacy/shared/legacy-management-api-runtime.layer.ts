@@ -1,11 +1,14 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 import { FetchHttpClient } from "effect/unstable/http";
 
 import { LegacyCredentials } from "../auth/legacy-credentials.service.ts";
 import { legacyCredentialsLayer } from "../auth/legacy-credentials.layer.ts";
 import { legacyHttpClientLayer } from "../auth/legacy-http-debug.layer.ts";
-import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
+import {
+  LegacyPlatformApi,
+  LegacyPlatformApiFactory,
+} from "../auth/legacy-platform-api.service.ts";
 import { legacyPlatformApiLayer } from "../auth/legacy-platform-api.layer.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
@@ -65,12 +68,24 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(legacyDebugLoggerLayer),
   );
+  const platformApiFactory = Layer.effect(
+    LegacyPlatformApiFactory,
+    LegacyPlatformApi.pipe(
+      Effect.map((api) =>
+        LegacyPlatformApiFactory.of({
+          make: Effect.succeed(api),
+        }),
+      ),
+    ),
+  );
+  const platformApiFactoryStack = platformApiFactory.pipe(Layer.provide(platformApiStack));
   const built = Layer.mergeAll(
     platformApiStack,
+    platformApiFactoryStack,
     httpClient,
     credentials,
     cliConfig,
-    legacyProjectRefLayer.pipe(Layer.provide(platformApiStack), Layer.provide(cliConfig)),
+    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactoryStack), Layer.provide(cliConfig)),
     legacyLinkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliConfig),
@@ -115,6 +130,7 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
  */
 type LegacyManagementApiServices =
   | LegacyPlatformApi
+  | LegacyPlatformApiFactory
   | HttpClient.HttpClient
   | LegacyCredentials
   | LegacyCliConfig
@@ -122,3 +138,17 @@ type LegacyManagementApiServices =
   | LegacyLinkedProjectCache
   | LegacyTelemetryState
   | CommandRuntime;
+
+/**
+ * The ambient services this runtime layer itself requires (global flags, root
+ * services, etc.) and the error it can fail with at build (access-token
+ * resolution). Exported as named types so consumers that provide this layer
+ * lazily (e.g. `legacy-db-config.layer.ts`'s `--linked` branch) can express
+ * their own requirement/error channels without re-deriving the structural
+ * inference at each call site.
+ */
+type LegacyManagementApiRuntime = ReturnType<typeof legacyManagementApiRuntimeLayer>;
+export type LegacyManagementApiRuntimeRequirements =
+  LegacyManagementApiRuntime extends Layer.Layer<infer _A, infer _E, infer R> ? R : never;
+export type LegacyManagementApiRuntimeError =
+  LegacyManagementApiRuntime extends Layer.Layer<infer _A, infer E, infer _R> ? E : never;

@@ -80,9 +80,11 @@ func TestSquashCommand(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), "test-db")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
-		// Setup mock postgres
+		// Setup mock postgres: with auto_expose_new_tables unset, the shadow database setup
+		// revokes the default Data API GRANTs before applying migration history.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		helper.MockApiPrivilegesRevoke(conn)
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
@@ -307,9 +309,11 @@ func TestSquashMigrations(t *testing.T) {
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Db.Image), "test-db")
 		require.NoError(t, apitest.MockDockerLogs(utils.Docker, "test-db", sql))
-		// Setup mock postgres
+		// Setup mock postgres: with auto_expose_new_tables unset, the shadow database setup
+		// revokes the default Data API GRANTs before applying migration history.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		helper.MockApiPrivilegesRevoke(conn)
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").

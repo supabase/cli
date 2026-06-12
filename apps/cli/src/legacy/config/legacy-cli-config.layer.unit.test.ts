@@ -55,6 +55,7 @@ describe("legacyCliConfigLayer", () => {
       expect(config.profile).toBe("supabase");
       expect(config.apiUrl).toBe("https://api.supabase.com");
       expect(config.projectHost).toBe("supabase.co");
+      expect(config.poolerHost).toBe("supabase.com");
     }).pipe(Effect.provide(makeLayer({ cwd: tempRoot }))),
   );
 
@@ -64,6 +65,7 @@ describe("legacyCliConfigLayer", () => {
       expect(config.profile).toBe("supabase-staging");
       expect(config.apiUrl).toBe("https://api.supabase.green");
       expect(config.projectHost).toBe("supabase.red");
+      expect(config.poolerHost).toBe("supabase.green");
     }).pipe(
       Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: "supabase-staging" }, cwd: tempRoot })),
     ),
@@ -139,26 +141,35 @@ describe("legacyCliConfigLayer", () => {
       ),
   );
 
-  it.effect("loads api_url and name from a YAML profile file (Go-parity dual semantics)", () => {
+  it.effect("loads api_url, name, and pooler_host from a YAML profile file", () => {
     const profilePath = join(tempRoot, "profile.yaml");
     writeFileSync(
       profilePath,
-      ["name: cli-e2e", 'api_url: "http://127.0.0.1:9999"', "project_host: localhost"].join("\n"),
+      [
+        "name: cli-e2e",
+        'api_url: "http://127.0.0.1:9999"',
+        "project_host: localhost",
+        "pooler_host: staging.example.com",
+      ].join("\n"),
     );
     return Effect.gen(function* () {
       const config = yield* LegacyCliConfig;
       expect(config.profile).toBe("cli-e2e");
       expect(config.apiUrl).toBe("http://127.0.0.1:9999");
       expect(config.projectHost).toBe("localhost");
+      expect(config.poolerHost).toBe("staging.example.com");
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
   });
 
-  it.effect("defaults project_host to supabase.co when a YAML profile omits it", () => {
+  it.effect("defaults project_host to supabase.co and pooler_host to empty when omitted", () => {
     const profilePath = join(tempRoot, "no-host.yaml");
     writeFileSync(profilePath, ["name: cli-e2e", 'api_url: "http://127.0.0.1:9999"'].join("\n"));
     return Effect.gen(function* () {
       const config = yield* LegacyCliConfig;
       expect(config.projectHost).toBe("supabase.co");
+      // Go's Profile.PoolerHost is `omitempty`: an absent pooler_host disables the
+      // MITM domain assertion rather than falling back to supabase.com.
+      expect(config.poolerHost).toBe("");
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
   });
 

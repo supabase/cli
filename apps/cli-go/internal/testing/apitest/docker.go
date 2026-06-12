@@ -120,6 +120,33 @@ func MockDockerLogsExitCode(docker *client.Client, containerID string, exitCode 
 	return setupDockerLogs(docker, containerID, "", exitCode)
 }
 
+// MockDockerErrorLogs streams stderr output alongside a non-zero exit code,
+// mirroring a container whose command failed (e.g. pg_dump unable to reach the
+// database).
+func MockDockerErrorLogs(docker *client.Client, containerID string, exitCode int, stderr string) error {
+	var body bytes.Buffer
+	writer := stdcopy.NewStdWriter(&body, stdcopy.Stderr)
+	if _, err := io.Copy(writer, strings.NewReader(stderr)); err != nil {
+		return err
+	}
+	gock.New(docker.DaemonHost()).
+		Get("/v"+docker.ClientVersion()+"/containers/"+containerID+"/logs").
+		Reply(http.StatusOK).
+		SetHeader("Content-Type", "application/vnd.docker.raw-stream").
+		Body(&body)
+	gock.New(docker.DaemonHost()).
+		Get("/v" + docker.ClientVersion() + "/containers/" + containerID + "/json").
+		Reply(http.StatusOK).
+		JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+			State: &container.State{
+				ExitCode: exitCode,
+			}}})
+	gock.New(docker.DaemonHost()).
+		Delete("/v" + docker.ClientVersion() + "/containers/" + containerID).
+		Reply(http.StatusOK)
+	return nil
+}
+
 func ListUnmatchedRequests() []string {
 	result := make([]string, len(gock.GetUnmatchedRequests()))
 	for i, r := range gock.GetUnmatchedRequests() {
