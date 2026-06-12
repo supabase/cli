@@ -20,7 +20,10 @@ import {
   LegacyInvalidAccessTokenError,
   LegacyNotLoggedInError,
 } from "../../src/legacy/auth/legacy-errors.ts";
-import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
+import {
+  LegacyPlatformApi,
+  LegacyPlatformApiFactory,
+} from "../../src/legacy/auth/legacy-platform-api.service.ts";
 import {
   LegacyLoginApi,
   type LegacyLoginSessionResponse,
@@ -679,7 +682,11 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
     processControl,
     runtimeInfo,
     legacyProjectRefLayer.pipe(
-      Layer.provide(opts.api.layer),
+      Layer.provide(
+        Layer.succeed(LegacyPlatformApiFactory, {
+          make: LegacyPlatformApi.pipe(Effect.provide(opts.api.layer)),
+        }),
+      ),
       Layer.provide(opts.cliConfig),
       Layer.provide(tty),
       Layer.provide(opts.out.layer),

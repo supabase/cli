@@ -41,6 +41,9 @@ async function isValidLocalJwt(secret: string, jwt: string) {
   if (parts.length !== 3) return false;
   const [header, payload, signature] = parts;
   const decodedHeader = JSON.parse(new TextDecoder().decode(base64UrlToBytes(header!)));
+
+  // WARN:(kallebysantos) Go version supports Asymmetric JWTs (ES256 | RS256) via SUPABASE_JWKS env
+  // It must be ported to TS as well
   if (decodedHeader.alg !== "HS256") return false;
   const key = await crypto.subtle.importKey(
     "raw",
@@ -59,11 +62,23 @@ async function isValidLocalJwt(secret: string, jwt: string) {
 
 async function verifyRequest(req: Request, config: any, functionConfig: any) {
   if (!functionConfig.verifyJWT || req.method === "OPTIONS") return null;
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
+  const bearerToken = req.headers.get("authorization")?.slice("Bearer ".length);
+  const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key")?.replace("Bearer", "")?.trim();
+
+  if (!bearerToken && !sbApiKeyCompatibilityToken) {
     return Response.json({ msg: "Missing authorization header" }, { status: 401 });
   }
-  const token = authHeader.slice("Bearer ".length);
+
+  // NOTE:(kallebysantos) Compatibility mode is triggered when all conditions match:
+  // - API proxy mints a temp token
+  // - Original bearer is not present or is ApiKey
+  const token =
+    !bearerToken || bearerToken.startsWith("sb_") ? sbApiKeyCompatibilityToken : bearerToken;
+
+  if (!token) {
+    return Response.json({ msg: "Auth header is not 'Bearer {token}'" }, { status: 401 });
+  }
+
   try {
     if (await isValidLocalJwt(config.jwtSecret, token)) return null;
   } catch (error) {

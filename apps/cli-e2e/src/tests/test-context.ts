@@ -9,6 +9,31 @@ import {
 } from "@supabase/cli-test-helpers";
 import { ACCESS_TOKEN, isRecording, TARGET } from "./env.ts";
 
+type ParityNormalizeOptions = NonNullable<Parameters<typeof runParity>[0]["normalize"]>;
+type ParityChannelNormalizeOptions = Extract<
+  ParityNormalizeOptions,
+  { stdout?: unknown; stderr?: unknown }
+>;
+
+function isChannelNormalizeOptions(
+  options: ParityNormalizeOptions | undefined,
+): options is ParityChannelNormalizeOptions {
+  return options !== undefined && ("stdout" in options || "stderr" in options);
+}
+
+function withNormalizeVersions(
+  normalize: ParityNormalizeOptions | undefined,
+  versions: boolean | undefined,
+): ParityNormalizeOptions | undefined {
+  if (versions === undefined) return normalize;
+  if (normalize === undefined) return { versions };
+  if (!isChannelNormalizeOptions(normalize)) return { ...normalize, versions };
+  return {
+    stdout: { ...normalize.stdout, versions },
+    stderr: { ...normalize.stderr, versions },
+  };
+}
+
 function slugify(name: string): string {
   return name
     .toLowerCase()
@@ -146,6 +171,7 @@ export function testParity(
     workspaceSetup?: (dir: string) => void;
     sortStdoutRows?: boolean;
     normalizeVersions?: boolean;
+    normalize?: ParityNormalizeOptions;
   },
 ): void {
   const label = opts?.failureType
@@ -164,13 +190,14 @@ export function testParity(
     }
 
     try {
+      const normalize = withNormalizeVersions(opts?.normalize, opts?.normalizeVersions);
       await runParity(
         {
           apiUrl: serverUrl,
           accessToken: ACCESS_TOKEN,
           workspaceSetup: opts?.workspaceSetup,
           sortStdoutRows: opts?.sortStdoutRows,
-          normalize: { versions: opts?.normalizeVersions },
+          normalize,
         },
         cmd,
       );

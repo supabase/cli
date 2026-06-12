@@ -62,7 +62,7 @@ function isEphemeralIdentityRuntime(runtime: {
   return runtime.isCi || (runtime.isFirstRun && !runtime.isTty);
 }
 
-const makeLegacyPlatformApiServices = Effect.gen(function* () {
+export const legacyMakePlatformApi = Effect.gen(function* () {
   const cliConfig = yield* LegacyCliConfig;
   const credentials = yield* LegacyCredentials;
   const analytics = yield* Analytics;
@@ -156,7 +156,7 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
     );
   }
 
-  const api = yield* makeApiClient(
+  return yield* makeApiClient(
     {
       baseUrl: cliConfig.apiUrl,
       accessToken: storedToken.value,
@@ -166,7 +166,6 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
       transformClient,
     },
   );
-  return Layer.succeed(LegacyPlatformApi, api);
 });
 
-export const legacyPlatformApiLayer = Layer.unwrap(makeLegacyPlatformApiServices);
+export const legacyPlatformApiLayer = Layer.effect(LegacyPlatformApi, legacyMakePlatformApi);

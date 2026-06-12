@@ -11,6 +11,33 @@ import {
 const FUNCTIONS_DEV_STARTUP_TIMEOUT_MS = 60_000;
 const FUNCTIONS_DEV_STEP_TIMEOUT_MS = 30_000;
 const FUNCTIONS_DEV_TEST_TIMEOUT_MS = 90_000;
+const FUNCTION_FILES_RESTART_PATTERN = /Function files changed\. Restarting edge-runtime\./;
+const FUNCTION_FILES_RESTART_PATTERN_GLOBAL = /Function files changed\. Restarting edge-runtime\./g;
+
+type SpawnedSupabase = ReturnType<typeof spawnSupabase>;
+
+function countOutputMatches(proc: SpawnedSupabase, pattern: RegExp): number {
+  return [...`${proc.stdout()}\n${proc.stderr()}`.matchAll(pattern)].length;
+}
+
+async function waitForOutputMatchCount(
+  proc: SpawnedSupabase,
+  pattern: RegExp,
+  expectedCount: number,
+) {
+  const deadline = Date.now() + FUNCTIONS_DEV_STEP_TIMEOUT_MS;
+
+  while (Date.now() < deadline) {
+    if (countOutputMatches(proc, pattern) >= expectedCount) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  throw new Error(
+    `Timed out waiting for ${expectedCount.toString()} occurrences of ${pattern.toString()}`,
+  );
+}
 
 async function waitForFunctionResponse(
   url: string,
@@ -74,10 +101,7 @@ describe("supabase functions dev", () => {
         });
         expect(newResult.exitCode).toBe(0);
 
-        await devProc.waitForOutput(
-          /Function files changed\. Restarting edge-runtime\./,
-          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
-        );
+        await devProc.waitForOutput(FUNCTION_FILES_RESTART_PATTERN, FUNCTIONS_DEV_STEP_TIMEOUT_MS);
 
         await waitForFunctionResponse(functionUrl, {}, (response, body) => {
           expect(response.status).toBe(401);
@@ -111,6 +135,7 @@ verify_jwt = false
           },
         );
 
+        const restartCount = countOutputMatches(devProc, FUNCTION_FILES_RESTART_PATTERN_GLOBAL);
         await writeFile(
           functionPath,
           `Deno.serve(() => {
@@ -119,6 +144,11 @@ verify_jwt = false
   });
 });
 `,
+        );
+        await waitForOutputMatchCount(
+          devProc,
+          FUNCTION_FILES_RESTART_PATTERN_GLOBAL,
+          restartCount + 1,
         );
 
         await waitForFunctionResponse(

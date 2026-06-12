@@ -37,13 +37,10 @@ function normalizeLegacyHostnameResponse(response: LegacyHostnameResponse): Lega
  *     `PrintStatus`), and nothing goes to stdout.
  *   - In a structured Go `-o` mode (`json`/`yaml`/`toml`/`env`) the encoded
  *     response goes to **stdout** and the human status is **suppressed**. Go
- *     technically still writes `PrintStatus` to stderr here, but because the
- *     `5_services_reconfigured`/`4_origin_setup_completed` messages carry no
- *     trailing newline they get fused with — and stripped alongside — Go's
- *     version-update notice (see `normalize.ts` rule 11), so the observable Go
- *     stderr in machine-output mode is empty. Suppressing keeps stdout clean and
- *     matches that contract (verified by the `domains get --output json` parity
- *     e2e).
+ *     technically still writes `PrintStatus` to stderr here. Suppressing keeps
+ *     stdout/stderr stable for machine consumers; the parity e2e opts in to
+ *     normalizing Go's stderr-only status instead of depending on upgrade-check
+ *     output to erase it.
  *   - `--include-raw-output` (deprecated) forces `-o` to `json` when it is unset
  *     or `pretty`.
  *   - For the TS-native `--output-format json|stream-json` modes (no Go `-o`),
