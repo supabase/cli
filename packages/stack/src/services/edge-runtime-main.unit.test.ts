@@ -86,25 +86,29 @@ describe("verifyHybridJwt — HS256 legacy path", () => {
 });
 
 describe.each(["ES256", "RS256"] as const)("verifyHybridJwt — %s asymmetric path", (alg) => {
-  it("accepts a token verified against the local JWKS", async () => {
+  it("verifies a token against the auth service's well-known JWKS", async () => {
     const { privateKey, jwk } = await generateAsymmetricKey(alg, "key-1");
     const token = await mintAsymmetricJwt({ alg, privateKey, kid: "key-1" });
-    const config = {
-      jwtSecret: JWT_SECRET,
-      jwks: JSON.stringify({ keys: [jwk] }),
-      supabaseUrl: SUPABASE_URL,
-    };
+    const fetchMock = vi.fn(async () => Response.json({ keys: [jwk] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const supabaseUrl = `http://asym-accept-${alg.toLowerCase()}.test`;
+    const config = { jwtSecret: JWT_SECRET, jwks: generateJwks(JWT_SECRET), supabaseUrl };
     expect(await verifyHybridJwt(config, token)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(`${supabaseUrl}/auth/v1/.well-known/jwks.json`);
   });
 
   it("rejects a token signed by a key absent from the JWKS", async () => {
     const signer = await generateAsymmetricKey(alg, "key-1");
     const other = await generateAsymmetricKey(alg, "key-2");
     const token = await mintAsymmetricJwt({ alg, privateKey: signer.privateKey, kid: "key-1" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ keys: [other.jwk] })),
+    );
     const config = {
       jwtSecret: JWT_SECRET,
-      jwks: JSON.stringify({ keys: [other.jwk] }),
-      supabaseUrl: SUPABASE_URL,
+      jwks: generateJwks(JWT_SECRET),
+      supabaseUrl: `http://asym-absent-${alg.toLowerCase()}.test`,
     };
     expect(await verifyHybridJwt(config, token)).toBe(false);
   });
@@ -112,10 +116,14 @@ describe.each(["ES256", "RS256"] as const)("verifyHybridJwt — %s asymmetric pa
   it("excludes keys whose kid does not match the token", async () => {
     const { privateKey, jwk } = await generateAsymmetricKey(alg, "real-kid");
     const token = await mintAsymmetricJwt({ alg, privateKey, kid: "wrong-kid" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ keys: [jwk] })),
+    );
     const config = {
       jwtSecret: JWT_SECRET,
-      jwks: JSON.stringify({ keys: [jwk] }),
-      supabaseUrl: SUPABASE_URL,
+      jwks: generateJwks(JWT_SECRET),
+      supabaseUrl: `http://asym-kid-${alg.toLowerCase()}.test`,
     };
     expect(await verifyHybridJwt(config, token)).toBe(false);
   });
@@ -123,10 +131,14 @@ describe.each(["ES256", "RS256"] as const)("verifyHybridJwt — %s asymmetric pa
   it("matches keyless JWKS entries when the token carries a kid", async () => {
     const { privateKey, jwk } = await generateAsymmetricKey(alg);
     const token = await mintAsymmetricJwt({ alg, privateKey, kid: "any-kid" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ keys: [jwk] })),
+    );
     const config = {
       jwtSecret: JWT_SECRET,
-      jwks: JSON.stringify({ keys: [jwk] }),
-      supabaseUrl: SUPABASE_URL,
+      jwks: generateJwks(JWT_SECRET),
+      supabaseUrl: `http://asym-keyless-${alg.toLowerCase()}.test`,
     };
     expect(await verifyHybridJwt(config, token)).toBe(true);
   });
@@ -158,24 +170,6 @@ describe.each(["ES256", "RS256"] as const)("verifyHybridJwt — %s asymmetric pa
     clock += 5 * 60 * 1000;
     expect(await verifyHybridJwt(config, token)).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-  });
-
-  it("falls back to the remote well-known JWKS when the local set has no match", async () => {
-    const { privateKey, jwk } = await generateAsymmetricKey(alg, "remote-kid");
-    const token = await mintAsymmetricJwt({ alg, privateKey, kid: "remote-kid" });
-    const fetchMock = vi.fn(async () => Response.json({ keys: [jwk] }));
-    vi.stubGlobal("fetch", fetchMock);
-    // Unique per alg so the module-level remote JWKS cache (keyed by URL) does
-    // not leak the other parametrized run's key set into this one.
-    const supabaseUrl = `http://remote-fallback-${alg.toLowerCase()}.test`;
-    const config = {
-      jwtSecret: JWT_SECRET,
-      // oct-only local set never matches an asymmetric token, forcing fallback.
-      jwks: generateJwks(JWT_SECRET),
-      supabaseUrl,
-    };
-    expect(await verifyHybridJwt(config, token)).toBe(true);
-    expect(fetchMock).toHaveBeenCalledWith(`${supabaseUrl}/auth/v1/.well-known/jwks.json`);
   });
 });
 

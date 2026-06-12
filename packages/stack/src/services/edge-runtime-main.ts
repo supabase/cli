@@ -105,14 +105,6 @@ function toJwks(value: unknown): Jwks {
   return { keys: [] };
 }
 
-function parseLocalJwks(jwks: string): Jwks {
-  try {
-    return toJwks(JSON.parse(jwks));
-  } catch {
-    return { keys: [] };
-  }
-}
-
 // Cache the well-known JWKS per URL so asymmetric verification does not refetch
 // `/auth/v1/.well-known/jwks.json` on every request. A short TTL bounds how long
 // a rotated or revoked signing key can keep verifying against a stale cached set
@@ -194,15 +186,11 @@ export async function verifyHybridJwt(config: any, jwt: string) {
     }
     if (decodedHeader.alg === "ES256" || decodedHeader.alg === "RS256") {
       const { alg, kid } = decodedHeader;
-      // The CLI-injected `config.jwks` is currently symmetric-only (an `oct`
-      // key derived from jwtSecret), so it never matches an ES256/RS256 token
-      // today — this local check is future-proofing for when the stack config
-      // grows asymmetric signing keys. Real asymmetric verification currently
-      // resolves through the auth service's well-known endpoint below.
-      const localJwks = parseLocalJwks(config.jwks);
-      if (await verifyWithJwks(alg, kid, signingInput, signature!, localJwks)) {
-        return true;
-      }
+      // The local auth service signs HS256 with the symmetric secret and does not
+      // publish asymmetric signing keys, so ES256/RS256 tokens are verified against
+      // its well-known JWKS (covering keys minted elsewhere). The CLI does not yet
+      // resolve `auth.signing_keys_path` / `auth.third_party` locally — see the
+      // SUPABASE_JWKS TODO in serveFunction.
       const jwksUrl = new URL("/auth/v1/.well-known/jwks.json", config.supabaseUrl).href;
       const remoteJwks = await fetchRemoteJwks(jwksUrl);
       return await verifyWithJwks(alg, kid, signingInput, signature!, remoteJwks);
@@ -257,6 +245,11 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
     SUPABASE_DB_URL: config.dbUrl,
     SUPABASE_PUBLISHABLE_KEYS: JSON.stringify({ default: config.publishableKey }),
     SUPABASE_SECRET_KEYS: JSON.stringify({ default: config.secretKey }),
+    // The oct(jwtSecret) JWKS the Server SDK uses to verify user JWTs — correct
+    // for the default local HS256 issuer.
+    // TODO: also resolve from auth.signing_keys_path / auth.third_party (like the
+    // Go CLI's Auth.ResolveJWKS) so SDK `auth: "user"` works for projects
+    // configured with asymmetric signing keys.
     SUPABASE_JWKS: config.jwks,
   });
 
