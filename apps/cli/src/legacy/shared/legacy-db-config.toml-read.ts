@@ -57,7 +57,10 @@ const ENV_PATTERN = /^env\((.*)\)$/;
  * against the shell environment first and then the project `.env` files, matching
  * Go's `loadNestedEnv` (which populates the process env before `LoadEnvHook`).
  */
-function expandEnv(value: string, lookup: EnvLookup): string {
+export function legacyExpandEnv(
+  value: string,
+  lookup: (name: string) => string | undefined,
+): string {
   const matches = ENV_PATTERN.exec(value);
   if (matches !== null) {
     const env = lookup(matches[1] ?? "");
@@ -89,7 +92,7 @@ function resolvePort(value: unknown, fallback: number, lookup: EnvLookup): numbe
     return Number.isInteger(value) && value >= 0 && value <= MAX_PORT ? value : undefined;
   }
   if (typeof value === "string") {
-    const expanded = expandEnv(value, lookup);
+    const expanded = legacyExpandEnv(value, lookup);
     if (/^\d+$/.test(expanded)) {
       const parsed = Number(expanded);
       if (parsed <= MAX_PORT) return parsed;
@@ -264,7 +267,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   const values: LegacyDbTomlValues = {
     port,
     shadowPort,
-    password: passwordRaw !== undefined ? expandEnv(passwordRaw, lookup) : DEFAULT_PASSWORD,
+    password: passwordRaw !== undefined ? legacyExpandEnv(passwordRaw, lookup) : DEFAULT_PASSWORD,
     poolerConnectionString,
     projectId,
   };

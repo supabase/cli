@@ -1,5 +1,9 @@
 import { Context, type Effect, type Scope } from "effect";
-import type { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
+import type {
+  LegacyDbConnectError,
+  LegacyDbCopyError,
+  LegacyDbExecError,
+} from "./legacy-db-connection.errors.ts";
 
 /**
  * Plain Postgres connection parameters, mirroring Go's `pgconn.Config`
@@ -86,6 +90,22 @@ export interface LegacyDbSession {
    * See `apps/cli-go/internal/db/test/test.go:57-78`.
    */
   readonly extensionExists: (name: string) => Effect.Effect<boolean, LegacyDbExecError>;
+  /**
+   * Run a server-side `COPY (...) TO STDOUT` and return its raw bytes. Mirrors
+   * Go's `copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`), which
+   * streams `pgconn.CopyTo` into a file. `sql` is the already-wrapped COPY
+   * statement (e.g. `COPY (<query>) TO STDOUT WITH CSV HEADER`); the driver does
+   * not wrap it. Used by `inspect report` to produce byte-identical CSVs by
+   * construction (the server serializes the values, never the TS side).
+   *
+   * The driver opens ONE dedicated raw connection (node-postgres' COPY protocol
+   * needs the raw client, which `@effect/sql-pg` does not expose) against the same
+   * resolved dial target the primary connection won — so TLS / fallback / DoH
+   * parity is preserved — and reuses it for every copy, matching Go's single
+   * `pgconn` for all report queries. The connection is opened lazily on the first
+   * copy and closed when the owning session's scope closes.
+   */
+  readonly copyToCsv: (sql: string) => Effect.Effect<Uint8Array, LegacyDbCopyError>;
 }
 
 /** Per-connection options the driver layer cannot infer from `cfg` alone. */

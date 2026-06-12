@@ -1,6 +1,10 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyInspectReport } from "./report.handler.ts";
+import { legacyInspectReportRuntimeLayer } from "./report.layers.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -21,6 +25,19 @@ export type LegacyInspectReportFlags = CliCommand.Command.Config.Infer<typeof co
 
 export const legacyInspectReportCommand = Command.make("report", config).pipe(
   Command.withDescription("Generate a CSV output for all inspect commands."),
-  Command.withShortDescription("Generate CSV report for all inspect commands"),
-  Command.withHandler((flags) => legacyInspectReport(flags)),
+  Command.withShortDescription("Generate a CSV output for all inspect commands"),
+  Command.withHandler((flags) =>
+    legacyInspectReport(flags).pipe(
+      withLegacyCommandInstrumentation({
+        flags: {
+          "db-url": flags.dbUrl,
+          linked: flags.linked,
+          local: flags.local,
+          "output-dir": flags.outputDir,
+        },
+      }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyInspectReportRuntimeLayer),
 );
