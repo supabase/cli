@@ -6,9 +6,15 @@ import { vi } from "vitest";
 import { legacyRoot } from "../../legacy/cli/root.ts";
 import { nextRoot } from "../../next/cli/root.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
+import { CliArgs } from "./cli-args.service.ts";
 
 describe("CLI --version (text)", () => {
-  const versionLayer = Layer.mergeAll(CliOutput.layer(textCliOutputFormatter()), BunServices.layer);
+  const versionLayer = (args: ReadonlyArray<string>) =>
+    Layer.mergeAll(
+      CliOutput.layer(textCliOutputFormatter()),
+      Layer.succeed(CliArgs, { args }),
+      BunServices.layer,
+    );
 
   test("legacy shell prints bare semver on stdout", async () => {
     const logs: string[] = [];
@@ -28,7 +34,7 @@ describe("CLI --version (text)", () => {
       // `--version` exits early; only BunServices + CliOutput are needed at runtime here.
       await Effect.runPromise(
         Command.runWith(legacyRoot, { version: "2.99.0-beta.1" })(["--version"]).pipe(
-          Effect.provide(versionLayer),
+          Effect.provide(versionLayer(["--version"])),
         ) as Effect.Effect<void>,
       );
     } finally {
@@ -55,7 +61,7 @@ describe("CLI --version (text)", () => {
     try {
       await Effect.runPromise(
         Command.runWith(nextRoot, { version: "2.99.0-beta.1" })(["--version"]).pipe(
-          Effect.provide(versionLayer),
+          Effect.provide(versionLayer(["--version"])),
         ) as Effect.Effect<void>,
       );
     } finally {

@@ -5,6 +5,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { LegacyCredentials } from "../auth/legacy-credentials.service.ts";
 import { legacyCredentialsLayer } from "../auth/legacy-credentials.layer.ts";
 import { legacyHttpClientLayer } from "../auth/legacy-http-debug.layer.ts";
+import { legacyPlatformApiFactoryFromApiLayer } from "../auth/legacy-platform-api-factory.layer.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { legacyPlatformApiLayer } from "../auth/legacy-platform-api.layer.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
@@ -65,12 +66,16 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(legacyDebugLoggerLayer),
   );
+  const platformApiFactory = legacyPlatformApiFactoryFromApiLayer.pipe(
+    Layer.provide(platformApiStack),
+  );
   const built = Layer.mergeAll(
     platformApiStack,
+    platformApiFactory,
     httpClient,
     credentials,
     cliConfig,
-    legacyProjectRefLayer.pipe(Layer.provide(platformApiStack), Layer.provide(cliConfig)),
+    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
     legacyLinkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliConfig),
@@ -113,7 +118,7 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
  * provided by `runCli` / the shared `cliProgramFor`, not by this command-level
  * runtime layer.
  */
-export type LegacyManagementApiServices =
+type LegacyManagementApiServices =
   | LegacyPlatformApi
   | HttpClient.HttpClient
   | LegacyCredentials
@@ -122,3 +127,17 @@ export type LegacyManagementApiServices =
   | LegacyLinkedProjectCache
   | LegacyTelemetryState
   | CommandRuntime;
+
+/**
+ * The ambient services this runtime layer itself requires (global flags, root
+ * services, etc.) and the error it can fail with at build (access-token
+ * resolution). Exported as named types so consumers that provide this layer
+ * lazily (e.g. `legacy-db-config.layer.ts`'s `--linked` branch) can express
+ * their own requirement/error channels without re-deriving the structural
+ * inference at each call site.
+ */
+type LegacyManagementApiRuntime = ReturnType<typeof legacyManagementApiRuntimeLayer>;
+export type LegacyManagementApiRuntimeRequirements =
+  LegacyManagementApiRuntime extends Layer.Layer<infer _A, infer _E, infer R> ? R : never;
+export type LegacyManagementApiRuntimeError =
+  LegacyManagementApiRuntime extends Layer.Layer<infer _A, infer E, infer _R> ? E : never;

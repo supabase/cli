@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyBillingUrl, legacyDashboardUrl, legacyProjectHost } from "./legacy-profile.ts";
+import {
+  legacyBillingUrl,
+  legacyDashboardUrl,
+  legacyPoolerHost,
+  legacyProjectHost,
+} from "./legacy-profile.ts";
 
 describe("legacyProjectHost", () => {
   it("maps built-in profile names to the Go project_host", () => {
@@ -12,6 +17,22 @@ describe("legacyProjectHost", () => {
 
   it("falls back to supabase.co for unknown / YAML-mode profiles", () => {
     expect(legacyProjectHost("custom-profile")).toBe("supabase.co");
+  });
+});
+
+describe("legacyPoolerHost", () => {
+  it("maps built-in profile names to the Go pooler_host", () => {
+    expect(legacyPoolerHost("supabase")).toBe("supabase.com");
+    expect(legacyPoolerHost("supabase-staging")).toBe("supabase.green");
+    expect(legacyPoolerHost("snap")).toBe("snapcloud.co");
+  });
+
+  it("returns an empty pooler_host for supabase-local (no domain assertion)", () => {
+    expect(legacyPoolerHost("supabase-local")).toBe("");
+  });
+
+  it("falls back to supabase.com for unknown / YAML-mode profiles", () => {
+    expect(legacyPoolerHost("custom-profile")).toBe("supabase.com");
   });
 });
 

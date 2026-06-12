@@ -7,8 +7,15 @@ const config = {
     Argument.withDescription("Optional name for the migration file."),
     Argument.optional,
   ),
+  declarative: Flag.boolean("declarative").pipe(
+    Flag.withDescription(
+      "Pull schema as declarative files using pg-delta instead of creating a migration.",
+    ),
+  ),
   usePgDelta: Flag.boolean("use-pg-delta").pipe(
-    Flag.withDescription("Use pg-delta to pull declarative schema."),
+    Flag.withDescription(
+      "Deprecated alias for --declarative. Use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.",
+    ),
   ),
   diffEngine: Flag.choice("diff-engine", ["migra", "pg-delta"] as const).pipe(
     Flag.withDescription("Diff engine to use for migration-style db pull."),

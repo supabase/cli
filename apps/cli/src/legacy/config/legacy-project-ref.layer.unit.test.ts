@@ -8,6 +8,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, Layer, Option } from "effect";
 import { afterEach, beforeEach } from "vitest";
 
+import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
@@ -22,6 +23,7 @@ function mockCliConfig(opts: { workdir: string; projectId?: string }) {
     profile: "supabase",
     apiUrl: "https://api.supabase.com",
     projectHost: "supabase.co",
+    poolerHost: "supabase.com",
     accessToken: Option.none(),
     projectId: opts.projectId === undefined ? Option.none() : Option.some(opts.projectId),
     workdir: opts.workdir,
@@ -66,7 +68,11 @@ function makeLayer(opts: {
     Layer.provide(mockCliConfig(opts)),
     Layer.provide(mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false })),
     Layer.provide(out.layer),
-    Layer.provide(mockPlatformApi(opts.projects ?? [])),
+    Layer.provide(
+      Layer.succeed(LegacyPlatformApiFactory, {
+        make: LegacyPlatformApi.pipe(Effect.provide(mockPlatformApi(opts.projects ?? []))),
+      }),
+    ),
     Layer.provide(BunServices.layer),
   );
   return { layer, out };

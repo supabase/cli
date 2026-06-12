@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	phtelemetry "github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/testing/apitest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	supabaseapi "github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/config"
@@ -201,9 +202,11 @@ func TestDatabaseStart(t *testing.T) {
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Analytics.Image), utils.LogflareId)
 		utils.VectorId = "test-vector"
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.Analytics.VectorImage), utils.VectorId)
-		// Setup mock postgres
+		// Setup mock postgres: with auto_expose_new_tables unset, the default Data API GRANTs
+		// are revoked by default during database setup.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		helper.MockApiPrivilegesRevoke(conn)
 		// Setup health probes
 		started := []string{
 			utils.DbId, utils.KongId, utils.GotrueId, utils.InbucketId, utils.RealtimeId,

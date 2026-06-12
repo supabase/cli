@@ -1021,6 +1021,7 @@
     },
     "/v1/oauth/token": {
       "post": {
+        "description": "Supports `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:jwt-bearer` grant types. The `jwt-bearer` grant type (IDJAG — identity-directed JWT assertion) is in beta and available on Team and Enterprise plans only.",
         "operationId": "v1-exchange-oauth-token",
         "parameters": [],
         "requestBody": {
@@ -4868,7 +4869,7 @@
           }
         },
         "responses": {
-          "201": {
+          "204": {
             "description": ""
           },
           "401": {
@@ -4936,7 +4937,7 @@
           }
         },
         "responses": {
-          "201": {
+          "204": {
             "description": ""
           },
           "401": {
@@ -5949,6 +5950,58 @@
           }
         ],
         "summary": "Pauses the given project",
+        "tags": ["Projects"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: projects:write",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["infra", "management-api"],
+        "x-oauth-scope": "projects:write"
+      }
+    },
+    "/v1/projects/{ref}/restart": {
+      "post": {
+        "operationId": "v1-restart-a-project",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": ""
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden action"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "fga_permissions": ["project_admin_write"]
+          }
+        ],
+        "summary": "Restarts the given project",
         "tags": ["Projects"],
         "x-badges": [
           {
@@ -11845,7 +11898,11 @@
         "properties": {
           "grant_type": {
             "type": "string",
-            "enum": ["authorization_code", "refresh_token"]
+            "enum": [
+              "authorization_code",
+              "refresh_token",
+              "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ]
           },
           "client_id": {
             "type": "string",
@@ -11865,6 +11922,10 @@
           },
           "refresh_token": {
             "type": "string"
+          },
+          "assertion": {
+            "type": "string",
+            "description": "IDJAG assertion JWT for grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer. Beta - available on Team and Enterprise plans only."
           },
           "resource": {
             "type": "string",
@@ -11893,7 +11954,8 @@
             "type": "string"
           },
           "refresh_token": {
-            "type": "string"
+            "type": "string",
+            "description": "The `urn:ietf:params:oauth:grant-type:jwt-bearer` grant type issues access tokens only, no refresh token is returned and the token cannot be revoked via `/v1/oauth/revoke`."
           },
           "expires_in": {
             "type": "integer"
@@ -11903,7 +11965,7 @@
             "enum": ["Bearer"]
           }
         },
-        "required": ["access_token", "refresh_token", "expires_in", "token_type"],
+        "required": ["access_token", "expires_in", "token_type"],
         "additionalProperties": false
       },
       "OAuthRevokeTokenBody": {
@@ -12590,7 +12652,7 @@
                         }
                       }
                     },
-                    "required": ["status", "validation_records"]
+                    "required": ["status"]
                   },
                   "ownership_verification": {
                     "type": "object",
@@ -12620,20 +12682,13 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "id",
-                  "hostname",
-                  "ssl",
-                  "ownership_verification",
-                  "custom_origin_server",
-                  "status"
-                ]
+                "required": ["id", "hostname", "ssl", "custom_origin_server", "status"]
               }
             },
             "required": ["success", "errors", "messages", "result"]
           }
         },
-        "required": ["status", "custom_hostname", "data"]
+        "required": ["data"]
       },
       "UpdateCustomHostnameBody": {
         "type": "object",
@@ -15148,7 +15203,6 @@
           "mfa_phone_template",
           "mfa_phone_max_frequency",
           "nimbus_oauth_client_id",
-          "nimbus_oauth_email_optional",
           "nimbus_oauth_client_secret",
           "password_hibp_enabled",
           "password_min_length",

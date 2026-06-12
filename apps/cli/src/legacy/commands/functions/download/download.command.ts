@@ -1,5 +1,8 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyFunctionsDownload } from "./download.handler.ts";
 
 const config = {
@@ -31,5 +34,21 @@ export const legacyFunctionsDownloadCommand = Command.make("download", config).p
     "Download the source code for a Function from the linked Supabase project. If no function name is provided, downloads all functions.",
   ),
   Command.withShortDescription("Download a Function from Supabase"),
-  Command.withHandler((flags) => legacyFunctionsDownload(flags)),
+  Command.withExamples([
+    {
+      command: "supabase functions download hello-world",
+      description: "Download a single function from the linked project",
+    },
+    {
+      command: "supabase functions download --project-ref abcdefghijklmnopqrst",
+      description: "Download all functions from a specific project",
+    },
+  ]),
+  Command.withHandler((flags) =>
+    legacyFunctionsDownload(flags).pipe(
+      withLegacyCommandInstrumentation({ flags }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyManagementApiRuntimeLayer(["functions", "download"])),
 );

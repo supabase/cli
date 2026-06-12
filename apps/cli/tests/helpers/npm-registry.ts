@@ -195,6 +195,16 @@ async function inspectVerdaccioTarball(storageDir: string, pkg: string): Promise
   for (const line of binLines) console.log(line);
 }
 
+async function hasVerdaccioTarball(storageDir: string, pkg: string): Promise<boolean> {
+  const pkgStorage = path.join(storageDir, "@supabase", pkg);
+  try {
+    const files = await readdir(pkgStorage);
+    return files.some((f) => f.endsWith(".tgz"));
+  } catch {
+    return false;
+  }
+}
+
 export function describeError(e: unknown): string {
   if (e instanceof Error) {
     const parts = [e.stack ?? `${e.name}: ${e.message}`];
@@ -264,18 +274,23 @@ listen: 0.0.0.0:${PORT}
   await using registry = await startVerdaccio(configPath, PORT);
   console.log(`Registry ready at ${registry.url}\n`);
 
-  // Publish platform packages in parallel
   const platformPackages = ALL_PACKAGES.filter((p) => p !== "cli");
   console.log("Publishing platform packages...");
-  await Promise.all(
-    platformPackages.map(async (pkg) => {
-      const pkgDir = path.join(root, "packages", pkg);
+  for (const pkg of platformPackages) {
+    const pkgDir = path.join(root, "packages", pkg);
+    try {
       await $`pnpm publish --registry ${registry.url} --tag ${tag} --no-git-checks`
         .cwd(pkgDir)
         .env(publishEnv);
       console.log(`  @supabase/${pkg}`);
-    }),
-  );
+    } catch (e) {
+      if (await hasVerdaccioTarball(storageDir, pkg)) {
+        console.log(`  @supabase/${pkg} (already present in local registry)`);
+        continue;
+      }
+      throw e;
+    }
+  }
 
   // Inspect what Verdaccio actually received — directly answers whether
   // `publishConfig.executableFiles` is being applied to the published tarball.

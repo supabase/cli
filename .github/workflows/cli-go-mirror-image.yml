@@ -46,9 +46,15 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: akhilerm/tag-push-action@f35ff2cb99d407368b5c727adbcc14a2ed81d509 # v2.2.0
-        with:
-          src: docker.io/${{ github.event.client_payload.image || inputs.image }}
-          dst: |
-            public.ecr.aws/supabase/${{ steps.strip.outputs.image }}
-            ghcr.io/supabase/${{ steps.strip.outputs.image }}
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Mirror image
+        env:
+          SOURCE_IMAGE: docker.io/${{ github.event.client_payload.image || inputs.image }}
+          ECR_IMAGE: public.ecr.aws/supabase/${{ steps.strip.outputs.image }}
+          GHCR_IMAGE: ghcr.io/supabase/${{ steps.strip.outputs.image }}
+        run: |
+          docker buildx imagetools create \
+            --prefer-index=false \
+            -t "$ECR_IMAGE" \
+            -t "$GHCR_IMAGE" \
+            "$SOURCE_IMAGE"

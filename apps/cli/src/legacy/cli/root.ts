@@ -39,6 +39,10 @@ import { OutputFormatFlag } from "../../shared/cli/global-flags.ts";
 import { outputLayerFor } from "../../shared/output/output.layer.ts";
 import { legacyQuietProgressTextOutputLayer } from "../output/legacy-quiet-progress-text-output.layer.ts";
 import { makeGoProxyLayer } from "../../shared/legacy/go-proxy.layer.ts";
+import { AiTool } from "../../shared/telemetry/ai-tool.service.ts";
+import { aiToolLayer } from "../../shared/telemetry/ai-tool.layer.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../../shared/cli/agent-output.ts";
 import {
   LEGACY_GLOBAL_FLAGS,
   LegacyAgentFlag,
@@ -96,7 +100,7 @@ export const legacyRoot = Command.make("supabase").pipe(
   Command.provide(
     Layer.unwrap(
       Effect.gen(function* () {
-        const outputFormat = yield* OutputFormatFlag;
+        const explicitOutputFormat = yield* OutputFormatFlag;
         const goOutput = yield* LegacyOutputFlag;
         const profile = yield* LegacyProfileFlag;
         const debug = yield* LegacyDebugFlag;
@@ -107,6 +111,19 @@ export const legacyRoot = Command.make("supabase").pipe(
         const dnsResolver = yield* LegacyDnsResolverFlag;
         const createTicket = yield* LegacyCreateTicketFlag;
         const agent = yield* LegacyAgentFlag;
+        const cliArgs = yield* CliArgs;
+
+        const aiTool = yield* AiTool.pipe(Effect.provide(aiToolLayer));
+        // An explicit Go --output is a complete format choice (even `-o pretty`
+        // must keep its human table), so the agent JSON default only applies
+        // when that flag is absent.
+        const outputFormat = resolveAgentOutputFormat({
+          explicitOutputFormat,
+          legacyOutputFormat: goOutput,
+          agentOverride: agent,
+          detectedAgentName: aiTool.name,
+          isBuiltInTextRequest: isBuiltInTextRequest(cliArgs.args),
+        });
 
         // Build args to prepend to every proxy exec call.
         // --output: use explicit --output if set, otherwise map from --output-format.

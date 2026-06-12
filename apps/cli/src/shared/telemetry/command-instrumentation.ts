@@ -4,6 +4,7 @@ import {
   getCommandRuntimeCommand,
   getCommandRuntimeSpanName,
 } from "../runtime/command-runtime.service.ts";
+import { Output } from "../output/output.service.ts";
 import { withAnalyticsContext } from "./analytics-context.ts";
 import { Analytics } from "./analytics.service.ts";
 
@@ -99,6 +100,7 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
         });
 
         const analytics = yield* Analytics;
+        const output = yield* Output;
         const stdio = yield* Stdio.Stdio;
         const args = yield* stdio.args;
         const startedAt = yield* Clock.currentTimeMillis;
@@ -120,6 +122,7 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
           .capture("cli_command_executed", {
             exit_code: Exit.isSuccess(exit) ? 0 : 1,
             duration_ms: finishedAt - startedAt,
+            output_format: output.format,
           })
           .pipe(withAnalyticsContext(analyticsContext));
 
@@ -133,12 +136,12 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
 
 export function withCommandInstrumentation(): <A, E, R>(
   self: Effect.Effect<A, E, R>,
-) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio>;
+) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio | Output>;
 export function withCommandInstrumentation<Flags extends Record<string, unknown>>(
   options: CommandInstrumentationOptions<Flags>,
 ): <A, E, R>(
   self: Effect.Effect<A, E, R>,
-) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio>;
+) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio | Output>;
 export function withCommandInstrumentation<Flags extends Record<string, unknown>>(
   options?: CommandInstrumentationOptions<Flags>,
 ) {

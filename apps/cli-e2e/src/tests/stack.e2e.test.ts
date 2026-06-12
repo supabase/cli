@@ -73,7 +73,7 @@ describe("services", () => {
     expect(result.stdout).toContain("storage");
   });
 
-  testParity(["services"]);
+  testParity(["services"], { normalizeVersions: false });
 });
 
 // ---------------------------------------------------------------------------
