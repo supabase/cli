@@ -194,6 +194,44 @@ describe("legacy domains get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("prints outstanding ACME validation records in text mode", () => {
+    const response: typeof V1GetHostnameConfigOutput.Type = {
+      status: "2_initiated",
+      custom_hostname: "sbstg4.thewheatfield.org",
+      data: {
+        success: true,
+        errors: [],
+        messages: [],
+        result: {
+          id: "bd8d3485-bcfb-41cd-a094-ccec2af6be48",
+          hostname: "sbstg4.thewheatfield.org",
+          ownership_verification: { name: "", type: "", value: "" },
+          custom_origin_server: "coekrxjvyzzhmchfbwzr.supabase.red",
+          status: "active",
+          ssl: {
+            status: "pending_validation",
+            validation_records: [
+              {
+                txt_name: "_acme-challenge.sbstg4.thewheatfield.org",
+                txt_value: "i6XyXv3kU4SRX9YcCE8h4LExoHE6y_poV1-5R1cjpk4",
+              },
+            ],
+          },
+        },
+      },
+    };
+    const { layer, out } = setup({ response });
+    return Effect.gen(function* () {
+      yield* legacyDomainsGet(baseFlags);
+      expect(out.stderrText).toBe(
+        "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
+          "Required outstanding validation records:\n" +
+          "\t_acme-challenge.sbstg4.thewheatfield.org TXT -> i6XyXv3kU4SRX9YcCE8h4LExoHE6y_poV1-5R1cjpk4",
+      );
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("emits YAML to stdout for -o yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
