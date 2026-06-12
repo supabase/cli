@@ -35,12 +35,21 @@ function normalizeLegacyHostnameResponse(
   };
 }
 
+function terminateHumanStatus(status: string): string {
+  if (status === "" || status.endsWith("\n")) {
+    return status;
+  }
+  return `${status}\n`;
+}
+
 /**
  * Emit a custom-hostname response across all output modes, mirroring the Go
  * subcommands (`apps/cli-go/internal/hostnames/{get,create,activate,reverify}`):
  *
  *   - In `pretty`/text mode the human status text goes to **stderr** (Go's
- *     `PrintStatus`), and nothing goes to stdout.
+ *     `PrintStatus`), and nothing goes to stdout. Unlike Go's no-newline
+ *     `Fprintf` branches, the final human status is newline-terminated so an
+ *     interactive shell prompt cannot redraw over the last line.
  *   - In a structured Go `-o` mode (`json`/`yaml`/`toml`/`env`) the encoded
  *     response goes to **stdout** and the human status is **suppressed**. Go
  *     technically still writes `PrintStatus` to stderr here, but because the
@@ -90,5 +99,5 @@ export const emitLegacyHostnameResult = Effect.fnUntraced(function* (
   }
 
   // text mode (Go pretty parity): status to stderr, nothing to stdout.
-  yield* output.raw(formatHostnameStatus(response), "stderr");
+  yield* output.raw(terminateHumanStatus(formatHostnameStatus(response)), "stderr");
 });

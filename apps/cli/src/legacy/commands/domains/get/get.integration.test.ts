@@ -226,7 +226,7 @@ describe("legacy domains get integration", () => {
       expect(out.stderrText).toBe(
         "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\n" +
           "Required outstanding validation records:\n" +
-          "\t_acme-challenge.sbstg4.thewheatfield.org TXT -> i6XyXv3kU4SRX9YcCE8h4LExoHE6y_poV1-5R1cjpk4",
+          "\t_acme-challenge.sbstg4.thewheatfield.org TXT -> i6XyXv3kU4SRX9YcCE8h4LExoHE6y_poV1-5R1cjpk4\n",
       );
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
