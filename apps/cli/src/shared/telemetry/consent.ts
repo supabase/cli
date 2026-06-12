@@ -80,7 +80,10 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   yield* fs.makeDirectory(configDir, { recursive: true, mode: 0o700 });
   const configPath = path.join(configDir, "telemetry.json");
-  const tmpPath = `${configPath}.tmp.${Date.now()}`;
+  // Random suffix, not a timestamp: concurrent writers (parallel test files,
+  // two CLI processes) in the same millisecond would otherwise share a tmp
+  // path and race the rename into ENOENT.
+  const tmpPath = `${configPath}.tmp.${crypto.randomUUID()}`;
   yield* fs.writeFileString(tmpPath, encodePrettyJson(encodeTelemetryConfig(config)), {
     mode: 0o600,
   });
