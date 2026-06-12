@@ -87,4 +87,58 @@ describe("legacyReadInspectRules", () => {
       }
     }),
   );
+
+  it.effect("weakly coerces scalar rule fields to strings, matching Go's decoder", () =>
+    Effect.gen(function* () {
+      // Go's viper UnmarshalExact keeps WeaklyTypedInput:true, so an int/bool field
+      // coerces to its string form (123 → "123", true → "1") rather than erroring.
+      const rules = yield* readRules(
+        makeWorkdir(
+          [
+            "[[experimental.inspect.rules]]",
+            "query = 123",
+            'name = "r"',
+            "pass = true",
+            'fail = "bad"',
+            "",
+          ].join("\n"),
+        ),
+      );
+      expect(rules[0]?.query).toBe("123");
+      expect(rules[0]?.pass).toBe("1");
+    }),
+  );
+
+  it.effect("fails when an inspect.rules entry is not a table (Go aborts)", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        readRules(makeWorkdir('[experimental.inspect]\nrules = ["not-a-table"]\n')),
+      );
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(JSON.stringify(exit.cause)).toContain("expected a map or struct");
+      }
+    }),
+  );
+
+  it.effect("fails when a rule field is a non-coercible type (nested table)", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        readRules(
+          makeWorkdir(
+            [
+              "[[experimental.inspect.rules]]",
+              "[experimental.inspect.rules.query]",
+              'a = "b"',
+              "",
+            ].join("\n"),
+          ),
+        ),
+      );
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(JSON.stringify(exit.cause)).toContain("expected a string");
+      }
+    }),
+  );
 });

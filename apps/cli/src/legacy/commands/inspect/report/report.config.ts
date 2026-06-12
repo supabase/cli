@@ -15,8 +15,23 @@ function asRecord(value: unknown): RawDoc | undefined {
     : undefined;
 }
 
-function asString(value: unknown): string {
-  return typeof value === "string" ? value : "";
+/**
+ * Coerce a rule field value to a string, mirroring Go's mapstructure decoder under
+ * viper's default `WeaklyTypedInput: true` (Go's `config.Load` calls
+ * `v.UnmarshalExact` without disabling it — `apps/cli-go/pkg/config/config.go:579-584`):
+ * a string passes through; a number/bigint becomes its decimal string; a boolean
+ * becomes `"1"`/`"0"`; a missing field is the zero value `""`. Any other type (a
+ * nested table/array/datetime as a scalar field) is NOT coercible — mapstructure's
+ * `decodeString` falls through to "expected type 'string'" and Go aborts — so this
+ * returns `undefined` to signal the caller to fail with `LegacyDbConfigLoadError`.
+ */
+function coerceRuleField(value: unknown): string | undefined {
+  if (value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "boolean") return value ? "1" : "0";
+  return undefined;
 }
 
 /**
@@ -77,14 +92,36 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
   const lookup = (name: string): string | undefined => process.env[name] ?? projectEnv[name];
 
   const rules: Array<LegacyInspectRule> = [];
-  for (const entry of rawRules) {
-    const record = asRecord(entry);
-    if (record === undefined) continue;
+  for (let index = 0; index < rawRules.length; index++) {
+    const record = asRecord(rawRules[index]);
+    // A non-table array entry (e.g. `rules = ["foo"]`) is rejected by Go: mapstructure
+    // routes the element into `decodeStruct`, whose default branch returns "expected a
+    // map or struct", aborting `config.Load`. Match that rather than silently skipping.
+    if (record === undefined) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: `failed to load config: experimental.inspect.rules[${index}] expected a map or struct`,
+        }),
+      );
+    }
+    const fields: Record<string, string> = {};
+    for (const field of ["query", "name", "pass", "fail"] as const) {
+      const coerced = coerceRuleField(record[field]);
+      // A non-coercible field type (nested table/array/datetime) aborts in Go too.
+      if (coerced === undefined) {
+        return yield* Effect.fail(
+          new LegacyDbConfigLoadError({
+            message: `failed to load config: experimental.inspect.rules[${index}].${field} expected a string`,
+          }),
+        );
+      }
+      fields[field] = legacyExpandEnv(coerced, lookup);
+    }
     rules.push({
-      query: legacyExpandEnv(asString(record["query"]), lookup),
-      name: legacyExpandEnv(asString(record["name"]), lookup),
-      pass: legacyExpandEnv(asString(record["pass"]), lookup),
-      fail: legacyExpandEnv(asString(record["fail"]), lookup),
+      query: fields["query"]!,
+      name: fields["name"]!,
+      pass: fields["pass"]!,
+      fail: fields["fail"]!,
     });
   }
   return rules as ReadonlyArray<LegacyInspectRule>;
