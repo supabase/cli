@@ -85,6 +85,13 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
     );
   }
 
+  // Read + validate the custom `[experimental.inspect.rules]` BEFORE any DB work.
+  // Go loads and validates the whole config in `PersistentPreRunE` (via
+  // `flags.ParseDatabaseConfig` → `LoadConfig`, `cmd/root.go:118`), so a malformed
+  // `inspect.rules` config aborts before connecting or writing any CSV files. They
+  // are applied later (in `printSummary`), but validated here for parity.
+  const configRules = yield* legacyReadInspectRules(fs, path, cliConfig.workdir);
+
   // Go's `--linked` defaults to true, so absence of the others resolves to linked.
   const linked = flags.linked || (Option.isNone(flags.dbUrl) && !flags.local);
   const cfg = yield* resolver.resolve({
@@ -146,8 +153,8 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
     yield* output.raw(`Reports saved to ${legacyBold(outDir, tty.stdoutIsTty)}\n`, "stderr");
   }
 
-  // Custom `[experimental.inspect.rules]` replace the 7 defaults when present.
-  const configRules = yield* legacyReadInspectRules(fs, path, cliConfig.workdir);
+  // Custom `[experimental.inspect.rules]` (read + validated up front) replace the 7
+  // defaults when present.
   const rules = configRules.length > 0 ? configRules : LEGACY_DEFAULT_INSPECT_RULES;
   if (configRules.length === 0 && isText) {
     yield* output.raw("Loading default rules...\n", "stderr");

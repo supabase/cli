@@ -121,6 +121,60 @@ describe("legacyReadInspectRules", () => {
     }),
   );
 
+  it.effect("rejects unknown keys in a rule table (Go's UnmarshalExact ErrorUnused)", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        readRules(
+          makeWorkdir(
+            [
+              "[[experimental.inspect.rules]]",
+              'query = "SELECT 1"',
+              'name = "r"',
+              'pass = "ok"',
+              'fail = "bad"',
+              'fails = "typo"',
+              "",
+            ].join("\n"),
+          ),
+        ),
+      );
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(JSON.stringify(exit.cause)).toContain("invalid keys: fails");
+      }
+    }),
+  );
+
+  it.effect("accepts a single inline rules table as one rule (Go weak-typing wrap)", () =>
+    Effect.gen(function* () {
+      const rules = yield* readRules(
+        makeWorkdir(
+          [
+            "[experimental.inspect.rules]",
+            'query = "SELECT 1"',
+            'name = "solo"',
+            'pass = "ok"',
+            'fail = "bad"',
+            "",
+          ].join("\n"),
+        ),
+      );
+      expect(rules).toEqual([{ query: "SELECT 1", name: "solo", pass: "ok", fail: "bad" }]);
+    }),
+  );
+
+  it.effect("fails when rules is a scalar string (Go aborts)", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        readRules(makeWorkdir('[experimental.inspect]\nrules = "oops"\n')),
+      );
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(JSON.stringify(exit.cause)).toContain("expected a map or struct");
+      }
+    }),
+  );
+
   it.effect("fails when a rule field is a non-coercible type (nested table)", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(

@@ -340,6 +340,38 @@ describe("legacy inspect report", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("aborts on a malformed config.toml before connecting or writing any CSV", () => {
+    const base = tempDir("supabase-report-out-");
+    const workdir = tempDir("supabase-report-workdir-");
+    mkdirSync(join(workdir, "supabase"), { recursive: true });
+    // An invalid rule config (unknown key) — Go loads config in PersistentPreRun, so
+    // it must abort before the DB connection and before any CSV files are written.
+    writeFileSync(
+      join(workdir, "supabase", "config.toml"),
+      [
+        "[[experimental.inspect.rules]]",
+        'query = "SELECT 1"',
+        'name = "r"',
+        'pass = "ok"',
+        'fail = "bad"',
+        'typo = "x"',
+        "",
+      ].join("\n"),
+    );
+    const { layer, connection } = setupLegacyReport({ workdir });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("invalid keys: typo");
+      }
+      // No connection and no dated output folder — config validation ran first,
+      // before mkdir / connect / COPY (base itself is the pre-created temp dir).
+      expect(connection.copiedSql.length).toBe(0);
+      expect(readdirSync(base).length).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("emits a structured result and writes CSVs but no table in json mode", () => {
     const base = tempDir("supabase-report-out-");
     const { layer, out } = setupLegacyReport({ format: "json", csvs: DEFAULT_RULE_CSVS });
