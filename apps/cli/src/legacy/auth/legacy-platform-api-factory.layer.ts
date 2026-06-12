@@ -1,25 +1,12 @@
 import { FetchHttpClient } from "effect/unstable/http";
-import { Effect, FileSystem, Layer, Path } from "effect";
-import type * as HttpClient from "effect/unstable/http/HttpClient";
+import { Effect, Layer } from "effect";
 
-import { Analytics } from "../../shared/telemetry/analytics.service.ts";
-import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
-import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
-import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import { legacyMakePlatformApi } from "./legacy-platform-api.layer.ts";
 import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
 import { LegacyPlatformApiFactory } from "./legacy-platform-api-factory.service.ts";
 
 type LegacyPlatformApiDeps =
-  | Analytics
-  | LegacyCliConfig
-  | LegacyCredentials
-  | LegacyDebugLogger
-  | FileSystem.FileSystem
-  | HttpClient.HttpClient
-  | Path.Path
-  | TelemetryRuntime;
+  typeof legacyMakePlatformApi extends Effect.Effect<infer _A, infer _E, infer R> ? R : never;
 
 /**
  * Captures the surrounding Management API context without resolving an access
@@ -30,8 +17,10 @@ export const legacyPlatformApiFactoryLayer = Layer.effect(
   LegacyPlatformApiFactory,
   Effect.gen(function* () {
     const context = yield* Effect.context<LegacyPlatformApiDeps>();
+    const make = yield* legacyMakePlatformApi.pipe(Effect.provideContext(context), Effect.cached);
+
     return LegacyPlatformApiFactory.of({
-      make: legacyMakePlatformApi.pipe(Effect.provideContext(context)),
+      make,
     });
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer));
