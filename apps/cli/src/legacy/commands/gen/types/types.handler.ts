@@ -3,11 +3,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
-import { PROJECT_NOT_LINKED_MESSAGE } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import {
+  LegacyProjectRefResolver,
+  PROJECT_NOT_LINKED_MESSAGE,
+} from "../../../config/legacy-project-ref.service.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { legacyTempPaths } from "../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -15,6 +16,7 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
+import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api.service.ts";
 import {
   buildPostgresUrl,
   defaultSchemas,
@@ -159,10 +161,7 @@ function hasExplicitLongFlag(rawArgs: ReadonlyArray<string>, flagName: string): 
 
 export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: LegacyGenTypesFlags) {
   const output = yield* Output;
-  const api = yield* LegacyPlatformApi;
   const cliConfig = yield* LegacyCliConfig;
-  const resolver = yield* LegacyProjectRefResolver;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -171,6 +170,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const debug = yield* LegacyDebugFlag;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const rawArgs = yield* stdio.args;
+  const platformApi = yield* LegacyPlatformApiFactory;
+  const projectRef = yield* LegacyProjectRefResolver;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
 
   yield* ensureMutuallyExclusive(
     ["local", "linked", "project-id", "db-url"],
@@ -235,6 +237,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         );
       }
 
+      const api = yield* platformApi.make;
       const response = yield* api.v1
         .generateTypescriptTypes({
           ref: projectRef,
@@ -432,7 +435,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
 
     if (flags.linked) {
       const loaded = yield* loadConfig();
-      const ref = yield* resolver.resolve(Option.none());
+      const ref = yield* projectRef.resolve(Option.none());
       yield* runProjectTypes(
         ref,
         schemas.length > 0 ? schemas : defaultSchemas(loaded?.config.api.schemas),
@@ -442,7 +445,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
 
     if (Option.isSome(flags.projectId)) {
       const loaded = yield* loadConfig();
-      const ref = yield* resolver.resolve(flags.projectId);
+      const ref = yield* projectRef.resolve(flags.projectId);
       yield* runProjectTypes(
         ref,
         schemas.length > 0 ? schemas : defaultSchemas(loaded?.config.api.schemas),
@@ -450,7 +453,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       return;
     }
 
-    const resolvedRef = yield* resolver.resolve(Option.none()).pipe(
+    const resolvedRef = yield* projectRef.resolve(Option.none()).pipe(
       Effect.catch((cause) => {
         if (
           cause instanceof LegacyProjectNotLinkedError &&

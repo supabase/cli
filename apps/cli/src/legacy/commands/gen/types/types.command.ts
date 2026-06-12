@@ -1,9 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyGenTypes } from "./types.handler.ts";
+import { legacyGenTypesRuntimeLayer } from "./types.layers.ts";
 
 const LANG_VALUES = ["typescript", "go", "swift", "python"] as const;
 const SWIFT_ACCESS_CONTROL_VALUES = ["internal", "public"] as const;
@@ -74,5 +74,5 @@ export const legacyGenTypesCommand = Command.make("types", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["gen", "types"])),
+  Command.provide(legacyGenTypesRuntimeLayer),
 );
