@@ -46,6 +46,7 @@ import { Stdin } from "../../src/shared/runtime/stdin.service.ts";
 import { Tty } from "../../src/shared/runtime/tty.service.ts";
 import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../src/shared/telemetry/runtime.service.ts";
+import { makeTelemetryIdentity } from "../../src/shared/telemetry/identity.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -565,7 +566,7 @@ export function mockTelemetryRuntime(
       showDebug: opts.showDebug ?? false,
       deviceId: opts.deviceId ?? "test-device-id",
       sessionId: opts.sessionId ?? "test-session-id",
-      distinctId: opts.distinctId,
+      identity: makeTelemetryIdentity(opts.distinctId),
       isFirstRun: opts.isFirstRun ?? false,
       isTty: opts.isTty ?? false,
       isCi: opts.isCi ?? false,

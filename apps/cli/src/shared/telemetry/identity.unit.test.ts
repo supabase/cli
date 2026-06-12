@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Effect } from "effect";
-import { resolveIdentity } from "./identity.ts";
+import { makeTelemetryIdentity, resolveIdentity } from "./identity.ts";
 import type { TelemetryConfig } from "./types.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -158,5 +158,30 @@ describe("resolveIdentity", () => {
       Effect.provide(fsLayer),
       Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
+  });
+});
+
+describe("makeTelemetryIdentity", () => {
+  it("starts with the persisted distinct_id when given one", () => {
+    const identity = makeTelemetryIdentity("disk-user");
+    expect(identity.current()).toBe("disk-user");
+  });
+
+  it("starts empty when nothing is persisted", () => {
+    const identity = makeTelemetryIdentity(undefined);
+    expect(identity.current()).toBeUndefined();
+  });
+
+  it("stamp overrides the persisted snapshot for the rest of the process", () => {
+    const identity = makeTelemetryIdentity("disk-user");
+    identity.stamp("fresh-user");
+    expect(identity.current()).toBe("fresh-user");
+  });
+
+  it("clear empties both stamped and snapshot identity", () => {
+    const identity = makeTelemetryIdentity("disk-user");
+    identity.stamp("fresh-user");
+    identity.clear();
+    expect(identity.current()).toBeUndefined();
   });
 });

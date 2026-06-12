@@ -141,6 +141,7 @@ func TestServiceStitchLoginPersistsDistinctID(t *testing.T) {
 	service, err := NewService(fsys, Options{
 		Analytics: analytics,
 		Now:       func() time.Time { return now },
+		IsTTY:     true,
 	})
 	require.NoError(t, err)
 	deviceID := service.state.DeviceID
@@ -158,6 +159,64 @@ func TestServiceStitchLoginPersistsDistinctID(t *testing.T) {
 	state, err := LoadState(fsys)
 	require.NoError(t, err)
 	assert.Equal(t, "user-123", state.DistinctID)
+}
+
+func TestServiceStitchLoginInEphemeralRuntimeStampsWithoutPersisting(t *testing.T) {
+	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
+	t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+	fsys := afero.NewMemMapFs()
+	analytics := &fakeAnalytics{enabled: true}
+
+	service, err := NewService(fsys, Options{
+		Analytics: analytics,
+		Now:       func() time.Time { return now },
+		IsCI:      true,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, service.StitchLogin("user-123"))
+	require.NoError(t, service.Capture(context.Background(), EventCommandExecuted, nil, nil))
+
+	require.Len(t, analytics.captures, 1)
+	assert.Equal(t, "user-123", analytics.captures[0].distinctID)
+	assert.Empty(t, analytics.aliases)
+	assert.Empty(t, analytics.identifies)
+
+	state, err := LoadState(fsys)
+	require.NoError(t, err)
+	assert.Empty(t, state.DistinctID)
+}
+
+func TestServiceCapturePrefersInMemoryUserIDOverPersistedDistinctID(t *testing.T) {
+	now := time.Date(2026, time.April, 1, 12, 0, 0, 0, time.UTC)
+	t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+	fsys := afero.NewMemMapFs()
+	analytics := &fakeAnalytics{enabled: true}
+	require.NoError(t, SaveState(State{
+		Enabled:           true,
+		DeviceID:          uuid.NewString(),
+		SessionID:         uuid.NewString(),
+		SessionLastActive: now,
+		SchemaVersion:     SchemaVersion,
+		DistinctID:        "old-user",
+	}, fsys))
+
+	service, err := NewService(fsys, Options{
+		Analytics: analytics,
+		Now:       func() time.Time { return now },
+		IsCI:      true,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, service.StitchLogin("new-user"))
+	require.NoError(t, service.Capture(context.Background(), EventLoginCompleted, nil, nil))
+
+	require.Len(t, analytics.captures, 1)
+	assert.Equal(t, "new-user", analytics.captures[0].distinctID)
+
+	state, err := LoadState(fsys)
+	require.NoError(t, err)
+	assert.Equal(t, "old-user", state.DistinctID)
 }
 
 func TestServiceClearDistinctIDFallsBackToDeviceID(t *testing.T) {
@@ -234,7 +293,7 @@ func TestServiceNeedsIdentityStitch(t *testing.T) {
 		assert.False(t, service.NeedsIdentityStitch())
 	})
 
-	t.Run("false in CI even with empty DistinctID", func(t *testing.T) {
+	t.Run("true in CI with empty DistinctID so capture stamping can start", func(t *testing.T) {
 		ciFsys := afero.NewMemMapFs()
 		ciService, err := NewService(ciFsys, Options{
 			Analytics: &fakeAnalytics{enabled: true},
@@ -242,17 +301,29 @@ func TestServiceNeedsIdentityStitch(t *testing.T) {
 			IsCI:      true,
 		})
 		require.NoError(t, err)
-		assert.False(t, ciService.NeedsIdentityStitch())
+		assert.True(t, ciService.NeedsIdentityStitch())
 	})
 
-	t.Run("false in first-run non-TTY runtime", func(t *testing.T) {
+	t.Run("false after StitchLogin in ephemeral runtime despite nothing persisted", func(t *testing.T) {
+		ephemeralFsys := afero.NewMemMapFs()
+		ephemeralService, err := NewService(ephemeralFsys, Options{
+			Analytics: &fakeAnalytics{enabled: true},
+			Now:       func() time.Time { return now },
+			IsCI:      true,
+		})
+		require.NoError(t, err)
+		require.NoError(t, ephemeralService.StitchLogin("user-123"))
+		assert.False(t, ephemeralService.NeedsIdentityStitch())
+	})
+
+	t.Run("true in first-run non-TTY runtime", func(t *testing.T) {
 		ephemeralFsys := afero.NewMemMapFs()
 		ephemeralService, err := NewService(ephemeralFsys, Options{
 			Analytics: &fakeAnalytics{enabled: true},
 			Now:       func() time.Time { return now },
 		})
 		require.NoError(t, err)
-		assert.False(t, ephemeralService.NeedsIdentityStitch())
+		assert.True(t, ephemeralService.NeedsIdentityStitch())
 	})
 
 	t.Run("true in persisted non-TTY runtime", func(t *testing.T) {

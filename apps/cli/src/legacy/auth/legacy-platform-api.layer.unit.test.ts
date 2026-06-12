@@ -12,6 +12,7 @@ import { vi } from "vitest";
 import { LegacyDebugFlag } from "../../shared/legacy/global-flags.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
+import { makeTelemetryIdentity, type TelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
@@ -56,6 +57,7 @@ function mockTelemetryRuntime(
     configDir?: string;
     deviceId?: string;
     distinctId?: string;
+    identity?: TelemetryIdentity;
     isFirstRun?: boolean;
     isTty?: boolean;
     isCi?: boolean;
@@ -71,7 +73,7 @@ function mockTelemetryRuntime(
       showDebug: false,
       deviceId: opts.deviceId ?? "device-123",
       sessionId: "session-123",
-      ...(opts.distinctId === undefined ? {} : { distinctId: opts.distinctId }),
+      identity: opts.identity ?? makeTelemetryIdentity(opts.distinctId),
       isFirstRun: opts.isFirstRun ?? false,
       isTty: opts.isTty ?? false,
       isCi: opts.isCi ?? false,
@@ -160,6 +162,7 @@ function withBaseDeps(
     analytics?: ReturnType<typeof mockAnalytics>;
     configDir?: string;
     distinctId?: string;
+    identity?: TelemetryIdentity;
     isFirstRun?: boolean;
     isTty?: boolean;
     isCi?: boolean;
@@ -174,6 +177,7 @@ function withBaseDeps(
         mockTelemetryRuntime({
           configDir: opts.configDir,
           distinctId: opts.distinctId,
+          identity: opts.identity,
           isFirstRun: opts.isFirstRun,
           isTty: opts.isTty,
           isCi: opts.isCi,
@@ -328,12 +332,13 @@ describe("legacyPlatformApiLayer", () => {
   it.effect("stitches identity from X-Gotrue-Id responses outside CI", () => {
     const configDir = tempTelemetryConfig();
     const analytics = mockAnalytics();
+    const identity = makeTelemetryIdentity(undefined);
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir }),
+      withBaseDeps({ analytics, configDir, identity }),
     );
 
     return Effect.gen(function* () {
@@ -341,6 +346,7 @@ describe("legacyPlatformApiLayer", () => {
         const api = yield* LegacyPlatformApi;
         yield* api.v1.listAllProjects();
 
+        expect(identity.current()).toBe("user-123");
         expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
         expect(analytics.identifies).toEqual([]);
         const telemetry = readTelemetryConfig(configDir);
@@ -353,15 +359,16 @@ describe("legacyPlatformApiLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("does not stitch identity from X-Gotrue-Id responses in CI", () => {
+  it.effect("stamps in-process identity in CI without alias or persisted distinct_id", () => {
     const configDir = tempTelemetryConfig();
     const analytics = mockAnalytics();
+    const identity = makeTelemetryIdentity(undefined);
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir, isCi: true }),
+      withBaseDeps({ analytics, configDir, identity, isCi: true }),
     );
 
     return Effect.gen(function* () {
@@ -369,6 +376,7 @@ describe("legacyPlatformApiLayer", () => {
         const api = yield* LegacyPlatformApi;
         yield* api.v1.listAllProjects();
 
+        expect(identity.current()).toBe("user-123");
         expect(analytics.aliases).toEqual([]);
         expect(analytics.identifies).toEqual([]);
         expect(readTelemetryConfig(configDir).distinct_id).toBeUndefined();
@@ -378,15 +386,16 @@ describe("legacyPlatformApiLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("does not stitch identity in a first-run non-TTY runtime", () => {
+  it.effect("stamps without alias or file write in a first-run non-TTY runtime", () => {
     const configDir = mkdtempSync(path.join(tmpdir(), "supabase-legacy-platform-api-"));
     const analytics = mockAnalytics();
+    const identity = makeTelemetryIdentity(undefined);
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir, isFirstRun: true, isTty: false }),
+      withBaseDeps({ analytics, configDir, identity, isFirstRun: true, isTty: false }),
     );
 
     return Effect.gen(function* () {
@@ -394,6 +403,7 @@ describe("legacyPlatformApiLayer", () => {
         const api = yield* LegacyPlatformApi;
         yield* api.v1.listAllProjects();
 
+        expect(identity.current()).toBe("user-123");
         expect(analytics.aliases).toEqual([]);
         expect(analytics.identifies).toEqual([]);
         expect(existsSync(path.join(configDir, "telemetry.json"))).toBe(false);

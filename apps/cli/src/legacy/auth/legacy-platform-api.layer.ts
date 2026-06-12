@@ -8,6 +8,7 @@ import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
+import { isEphemeralIdentityRuntime } from "../../shared/telemetry/identity.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import { LegacyPlatformAuthRequiredError } from "./legacy-errors.ts";
 import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
@@ -54,14 +55,6 @@ function numberField(value: unknown, key: string): number | undefined {
   return typeof field === "number" && Number.isFinite(field) ? field : undefined;
 }
 
-function isEphemeralIdentityRuntime(runtime: {
-  readonly isCi: boolean;
-  readonly isFirstRun: boolean;
-  readonly isTty: boolean;
-}) {
-  return runtime.isCi || (runtime.isFirstRun && !runtime.isTty);
-}
-
 const makeLegacyPlatformApiServices = Effect.gen(function* () {
   const cliConfig = yield* LegacyCliConfig;
   const credentials = yield* LegacyCredentials;
@@ -74,8 +67,7 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
 
   const needsIdentityStitch =
     runtime.consent === "granted" &&
-    !isEphemeralIdentityRuntime(runtime) &&
-    (runtime.distinctId === undefined || runtime.distinctId.length === 0);
+    (runtime.identity.current() === undefined || runtime.identity.current()?.length === 0);
 
   const stitchIdentity = (gotrueId: string) =>
     Effect.gen(function* () {
@@ -98,6 +90,13 @@ const makeLegacyPlatformApiServices = Effect.gen(function* () {
       if (!enabled) return;
 
       stitchAttempted = true;
+
+      // The in-memory stamp always happens so subsequent captures in this
+      // process carry the user's id; the alias (merging pre-login history) and
+      // the telemetry.json write are only worthwhile where the file survives.
+      // Same rules as LegacyTelemetryState.stitchLogin and Go's StitchLogin.
+      runtime.identity.stamp(gotrueId);
+      if (isEphemeralIdentityRuntime(runtime)) return;
 
       yield* analytics.alias(gotrueId, runtime.deviceId);
 

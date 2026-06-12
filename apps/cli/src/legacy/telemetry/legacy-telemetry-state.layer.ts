@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
+import { isEphemeralIdentityRuntime } from "../../shared/telemetry/identity.ts";
 import { LegacyTelemetryState } from "./legacy-telemetry-state.service.ts";
 
 interface State {
@@ -176,16 +177,21 @@ export const legacyTelemetryStateLayer = Layer.effect(
     return LegacyTelemetryState.of({
       flush: provide(loadOrCreateLegacyTelemetryState()).pipe(Effect.asVoid, Effect.ignore),
       stitchLogin: (distinctId: string) =>
-        // Go's `StitchLogin` always sets `state.DistinctID = distinctId`
-        // (replacing any stale value) and sends the alias through analytics,
-        // which gates delivery on consent (`service.go:132-143`). The alias is
-        // fire-and-forget here so a PostHog delivery error never prevents the
-        // `distinct_id` from being persisted to `telemetry.json`.
+        // Mirrors Go's `StitchLogin`: the in-memory stamp always happens so
+        // subsequent captures in this process carry the user's id; the alias
+        // (which merges pre-login history) and the `telemetry.json` write only
+        // happen in persistent runtimes. The alias is fire-and-forget so a
+        // PostHog delivery error never prevents the `distinct_id` persist.
         Effect.gen(function* () {
+          runtime.identity.stamp(distinctId);
+          if (isEphemeralIdentityRuntime(runtime)) return;
           yield* analytics.alias(distinctId, runtime.deviceId).pipe(Effect.ignore);
           yield* provide(persistLegacyDistinctId(distinctId));
         }).pipe(Effect.ignore),
-      clearDistinctId: provide(persistLegacyDistinctId(undefined)).pipe(
+      clearDistinctId: Effect.sync(() => {
+        runtime.identity.clear();
+      }).pipe(
+        Effect.andThen(provide(persistLegacyDistinctId(undefined))),
         Effect.asVoid,
         Effect.ignore,
       ),

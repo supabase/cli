@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	phtelemetry "github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 )
@@ -27,6 +28,10 @@ func Run(ctx context.Context, stdout *os.File, fsys afero.Fs) error {
 
 	// Delete all possible stored project credentials
 	if err := credentials.StoreProvider.DeleteAll(); err != nil {
+		fmt.Fprintln(utils.GetDebugLogger(), err)
+	}
+
+	if err := phtelemetry.FromContext(ctx).ClearDistinctID(); err != nil {
 		fmt.Fprintln(utils.GetDebugLogger(), err)
 	}
 

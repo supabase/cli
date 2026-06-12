@@ -53,6 +53,10 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
     // Best-effort sweep of all stored project DB passwords (`logout.go:29-31`).
     yield* credentials.deleteAllProjectCredentials;
 
+    // Forget the telemetry identity (in-process stamp + persisted distinct_id)
+    // so post-logout events fall back to the anonymous device id.
+    yield* telemetryState.clearDistinctId;
+
     if (output.format !== "text") {
       yield* output.success(LOGGED_OUT_MSG);
       return;

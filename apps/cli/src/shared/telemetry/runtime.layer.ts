@@ -5,7 +5,7 @@ import { CLI_VERSION } from "../cli/version.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
 import { getConfigDir, getEffectiveConsent, readTelemetryConfig } from "./consent.ts";
-import { resolveIdentity } from "./identity.ts";
+import { makeTelemetryIdentity, resolveIdentity } from "./identity.ts";
 import type { TelemetryConfig } from "./types.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
 
@@ -77,7 +77,7 @@ export const telemetryRuntimeLayer = Layer.effect(
       showDebug,
       deviceId: identity.deviceId,
       sessionId: identity.sessionId,
-      distinctId: identity.distinctId,
+      identity: makeTelemetryIdentity(identity.distinctId),
       isFirstRun: identity.isFirstRun,
       isTty,
       isCi,

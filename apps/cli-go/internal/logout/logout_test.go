@@ -8,12 +8,44 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	phtelemetry "github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/credentials"
 	"github.com/zalando/go-keyring"
 )
+
+type captureCall struct {
+	distinctID string
+	event      string
+}
+
+type fakeAnalytics struct {
+	enabled  bool
+	captures []captureCall
+	aliases  []string
+}
+
+func (f *fakeAnalytics) Enabled() bool { return f.enabled }
+
+func (f *fakeAnalytics) Capture(distinctID string, event string, properties map[string]any, groups map[string]string) error {
+	f.captures = append(f.captures, captureCall{distinctID: distinctID, event: event})
+	return nil
+}
+
+func (f *fakeAnalytics) Identify(distinctID string, properties map[string]any) error { return nil }
+
+func (f *fakeAnalytics) Alias(distinctID string, alias string) error {
+	f.aliases = append(f.aliases, distinctID)
+	return nil
+}
+
+func (f *fakeAnalytics) GroupIdentify(groupType string, groupKey string, properties map[string]any) error {
+	return nil
+}
+
+func (f *fakeAnalytics) Close() error { return nil }
 
 func TestLogoutCommand(t *testing.T) {
 	token := string(apitest.RandomAccessToken(t))
@@ -52,6 +84,32 @@ func TestLogoutCommand(t *testing.T) {
 		// check that project 2 has been removed
 		saved, _ = credentials.StoreProvider.Get("project2")
 		assert.Empty(t, saved)
+	})
+
+	t.Run("clears telemetry identity from memory and disk", func(t *testing.T) {
+		keyring.MockInit()
+		t.Cleanup(fstest.MockStdin(t, "y"))
+		t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.SaveAccessToken(token, fsys))
+		analytics := &fakeAnalytics{enabled: true}
+		service, err := phtelemetry.NewService(fsys, phtelemetry.Options{
+			Analytics: analytics,
+			IsTTY:     true,
+		})
+		require.NoError(t, err)
+		require.NoError(t, service.StitchLogin("user-123"))
+		ctx := phtelemetry.WithService(context.Background(), service)
+
+		require.NoError(t, Run(ctx, os.Stdout, fsys))
+
+		state, err := phtelemetry.LoadState(fsys)
+		require.NoError(t, err)
+		assert.Empty(t, state.DistinctID)
+
+		require.NoError(t, service.Capture(ctx, phtelemetry.EventCommandExecuted, nil, nil))
+		require.NotEmpty(t, analytics.captures)
+		assert.Equal(t, state.DeviceID, analytics.captures[len(analytics.captures)-1].distinctID)
 	})
 
 	t.Run("skips logout by default", func(t *testing.T) {

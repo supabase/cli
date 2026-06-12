@@ -37,6 +37,7 @@ type Service struct {
 	analytics  Analytics
 	now        func() time.Time
 	state      State
+	userID     string
 	isFirstRun bool
 	isTTY      bool
 	isCI       bool
@@ -129,8 +130,17 @@ func (s *Service) Capture(ctx context.Context, event string, properties map[stri
 	return s.analytics.Capture(s.distinctID(), event, mergedProperties, mergeGroups(linkedProjectGroups(s.fsys), mergeGroups(command.Groups, groups)))
 }
 
+// StitchLogin records the authenticated user as the identity for all
+// subsequent captures in this process. In persistent runtimes it also merges
+// the device's pre-login history via $create_alias and persists the identity
+// for future runs; ephemeral runtimes get the in-memory stamp only.
+// See docs/adr/0013-hybrid-stitch-stamp-identity-attribution.md.
 func (s *Service) StitchLogin(distinctID string) error {
 	if s == nil {
+		return nil
+	}
+	s.userID = distinctID
+	if s.isEphemeralIdentityRuntime() {
 		return nil
 	}
 	if s.canSend() {
@@ -146,12 +156,13 @@ func (s *Service) ClearDistinctID() error {
 	if s == nil {
 		return nil
 	}
+	s.userID = ""
 	s.state.DistinctID = ""
 	return SaveState(s.state, s.fsys)
 }
 
 func (s *Service) NeedsIdentityStitch() bool {
-	return s != nil && s.state.DistinctID == "" && s.canSend() && !s.isEphemeralIdentityRuntime()
+	return s != nil && s.userID == "" && s.state.DistinctID == "" && s.canSend()
 }
 
 func (s *Service) isEphemeralIdentityRuntime() bool {
@@ -201,6 +212,9 @@ func (s *Service) basePropertiesWith(properties map[string]any) map[string]any {
 }
 
 func (s *Service) distinctID() string {
+	if s.userID != "" {
+		return s.userID
+	}
 	if s.state.DistinctID != "" {
 		return s.state.DistinctID
 	}

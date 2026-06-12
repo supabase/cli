@@ -3,10 +3,12 @@ import { Credentials } from "../../auth/credentials.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { clearDistinctId } from "../../../shared/telemetry/identity.ts";
 import { getConfigDir } from "../../../shared/telemetry/consent.ts";
+import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 
 export const logout = Effect.fnUntraced(function* (yes: boolean) {
   const output = yield* Output;
   const credentials = yield* Credentials;
+  const telemetryRuntime = yield* TelemetryRuntime;
   const configDir = yield* getConfigDir;
 
   yield* output.intro("Log out of Supabase");
@@ -19,6 +21,7 @@ export const logout = Effect.fnUntraced(function* (yes: boolean) {
   }
 
   const wasLoggedIn = yield* credentials.deleteAccessToken;
+  telemetryRuntime.identity.clear();
   yield* clearDistinctId(configDir);
 
   if (!wasLoggedIn) {
