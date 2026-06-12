@@ -107,6 +107,21 @@ public = true`
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("does not call storage API when no buckets are configured", func(t *testing.T) {
+		t.Cleanup(func() {
+			utils.Config.Storage.VectorBuckets.Enabled = false
+			clear(utils.Config.Storage.VectorBuckets.Buckets)
+			gock.OffAll()
+		})
+		utils.Config.Storage.VectorBuckets.Enabled = true
+		utils.Config.Storage.VectorBuckets.Buckets = map[string]struct{}{}
+
+		err := Run(context.Background(), "", false, afero.NewMemMapFs())
+
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("seeds vector buckets locally", func(t *testing.T) {
 		t.Cleanup(func() {
 			utils.Config.Storage.VectorBuckets.Enabled = false
@@ -184,6 +199,79 @@ public = true`
 
 		assert.Contains(t, stderr, "WARNING:")
 		assert.Contains(t, stderr, "Vector buckets are not available in this project's region yet")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("warns and continues when local vector storage is not configured", func(t *testing.T) {
+		t.Cleanup(func() {
+			utils.Config.Storage.VectorBuckets.Enabled = false
+			clear(utils.Config.Storage.VectorBuckets.Buckets)
+			gock.OffAll()
+		})
+		utils.Config.Storage.VectorBuckets.Enabled = true
+		utils.Config.Storage.VectorBuckets.Buckets = map[string]struct{}{
+			"documents-openai": {},
+		}
+
+		gock.New(utils.Config.Api.ExternalUrl).
+			Get("/storage/v1/bucket").
+			Reply(http.StatusOK).
+			JSON([]storage.BucketResponse{})
+		gock.New(utils.Config.Api.ExternalUrl).
+			Post("/storage/v1/vector/ListVectorBuckets").
+			Reply(http.StatusConflict).
+			JSON(map[string]any{
+				"statusCode": http.StatusConflict,
+				"code":       "InvalidRequest",
+				"error":      "InvalidRequest",
+				"message":    "The feature Vector service not configured is not enabled for this resource",
+			})
+
+		stderr := captureStderr(t, func() {
+			err := Run(context.Background(), "", false, afero.NewMemMapFs())
+			assert.NoError(t, err)
+		})
+
+		assert.Contains(t, stderr, "WARNING:")
+		assert.Contains(t, stderr, "Vector buckets are not available in the local storage service")
+		assert.Contains(t, stderr, "supabase link")
+		assert.Contains(t, stderr, "restart the local stack")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("warns and continues when local vector routes are not registered", func(t *testing.T) {
+		t.Cleanup(func() {
+			utils.Config.Storage.VectorBuckets.Enabled = false
+			clear(utils.Config.Storage.VectorBuckets.Buckets)
+			gock.OffAll()
+		})
+		utils.Config.Storage.VectorBuckets.Enabled = true
+		utils.Config.Storage.VectorBuckets.Buckets = map[string]struct{}{
+			"documents-openai": {},
+		}
+
+		gock.New(utils.Config.Api.ExternalUrl).
+			Get("/storage/v1/bucket").
+			Reply(http.StatusOK).
+			JSON([]storage.BucketResponse{})
+		gock.New(utils.Config.Api.ExternalUrl).
+			Post("/storage/v1/vector/ListVectorBuckets").
+			Reply(http.StatusNotFound).
+			JSON(map[string]any{
+				"statusCode": http.StatusNotFound,
+				"error":      "Not Found",
+				"message":    "Route POST:/vector/ListVectorBuckets not found",
+			})
+
+		stderr := captureStderr(t, func() {
+			err := Run(context.Background(), "", false, afero.NewMemMapFs())
+			assert.NoError(t, err)
+		})
+
+		assert.Contains(t, stderr, "WARNING:")
+		assert.Contains(t, stderr, "Vector buckets are not available in the local storage service")
+		assert.Contains(t, stderr, "supabase link")
+		assert.Contains(t, stderr, "restart the local stack")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

@@ -375,6 +375,7 @@ jobs:
 
       - name: Configure git for tap push
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           gh auth setup-git
@@ -384,6 +385,7 @@ jobs:
       - name: Update Homebrew formula
         run: pnpm exec bun apps/cli/scripts/update-homebrew.ts --version "${VERSION}" --name "${BREW_NAME}"
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   publish-scoop:
@@ -420,6 +422,7 @@ jobs:
 
       - name: Configure git for bucket push
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           gh auth setup-git
@@ -429,6 +432,7 @@ jobs:
       - name: Update Scoop manifest
         run: pnpm exec bun apps/cli/scripts/update-scoop.ts --version "${VERSION}" --name "${SCOOP_NAME}"
         env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
   # Post-publish smoke test for the `supabase/setup-cli` GitHub Action against

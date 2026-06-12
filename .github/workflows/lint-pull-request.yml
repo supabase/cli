@@ -14,7 +14,7 @@ on:
     types:
       - checks_requested
     branches:
-      - main
+      - develop
 
 permissions:
   pull-requests: read

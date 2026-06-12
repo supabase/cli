@@ -11,6 +11,16 @@
   },
   {
     "op": "test",
+    "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/properties/ssl/required",
+    "value": ["status", "validation_records"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/properties/ssl/required",
+    "value": ["status"]
+  },
+  {
+    "op": "test",
     "path": "/components/schemas/AuthConfigResponse/required",
     "value": [
       "api_max_request_duration",

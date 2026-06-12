@@ -1,10 +1,10 @@
 import { createServer, type Server, type Socket } from "node:net";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
+import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import {
   buildPostgresUrl,
   defaultSchemas,
-  getServicesHostname,
   legacyRootCaBundle,
   localDbContainerId,
   localDbPassword,
@@ -209,10 +209,12 @@ describe("schema and id helpers", () => {
   });
 
   it("reads the services hostname and db password from the environment", () => {
-    expect(withEnv("SUPABASE_SERVICES_HOSTNAME", undefined, () => getServicesHostname())).toBe(
-      "127.0.0.1",
-    );
-    expect(withEnv("SUPABASE_SERVICES_HOSTNAME", "db.internal", () => getServicesHostname())).toBe(
+    expect(
+      withEnv("DOCKER_HOST", undefined, () =>
+        withEnv("SUPABASE_SERVICES_HOSTNAME", undefined, () => legacyGetHostname()),
+      ),
+    ).toBe("127.0.0.1");
+    expect(withEnv("SUPABASE_SERVICES_HOSTNAME", "db.internal", () => legacyGetHostname())).toBe(
       "db.internal",
     );
     expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");

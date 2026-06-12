@@ -5,7 +5,7 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { makeApiClient } from "./effect.ts";
+import { makeApiClient, operationDefinitions } from "./effect.ts";
 
 const textDecoder = new TextDecoder();
 
@@ -50,6 +50,34 @@ const config = {
 } as const;
 
 describe("makeApiClient", () => {
+  test("allows raw operations to override generated request headers", async () => {
+    let accept: string | undefined;
+
+    const client = await Effect.runPromise(
+      makeApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            accept = request.headers.accept;
+            return Effect.succeed(jsonResponse(request, 200, {}));
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      client.executeRaw(
+        operationDefinitions.v1GetAFunctionBody,
+        {
+          ref: "abcdefghijklmnopqrst",
+          function_slug: "hello-world",
+        },
+        { Accept: "multipart/form-data" },
+      ),
+    );
+
+    expect(accept).toBe("multipart/form-data");
+  });
+
   test("uses the default API URL when baseUrl is omitted", async () => {
     const seenRequests: Array<{ method: string; url: string }> = [];
 

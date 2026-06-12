@@ -58,6 +58,10 @@ func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs
 				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Vector buckets are not available in this project's region yet. Skipping vector bucket seeding.")
 				return api.UpsertObjects(ctx, utils.Config.Storage.Buckets, utils.NewRootFS(fsys))
 			}
+			if isLocalVectorBucketsUnavailable(err) {
+				fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "Vector buckets are not available in the local storage service. If this project is linked, run `supabase link` to update service versions, then restart the local stack. Skipping vector bucket seeding.")
+				return api.UpsertObjects(ctx, utils.Config.Storage.Buckets, utils.NewRootFS(fsys))
+			}
 			return err
 		}
 	}
@@ -66,4 +70,15 @@ func Run(ctx context.Context, projectRef string, interactive bool, fsys afero.Fs
 
 func isVectorBucketsFeatureNotEnabled(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "FeatureNotEnabled")
+}
+
+func isLocalVectorBucketsUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "Vector service not configured") ||
+		(strings.Contains(message, "Error status 404:") &&
+			strings.Contains(message, "Route POST:") &&
+			strings.Contains(message, "ListVectorBuckets"))
 }

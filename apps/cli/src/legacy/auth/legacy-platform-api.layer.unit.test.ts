@@ -32,6 +32,7 @@ function mockCliConfig(opts: {
     profile: opts.profile ?? "supabase",
     apiUrl: opts.apiUrl ?? "https://api.supabase.com",
     projectHost: opts.projectHost ?? "supabase.co",
+    poolerHost: "supabase.com",
     accessToken:
       opts.accessToken === undefined ? Option.none() : Option.some(Redacted.make(opts.accessToken)),
     projectId: Option.none(),

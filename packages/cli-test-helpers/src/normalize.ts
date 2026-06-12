@@ -31,6 +31,7 @@ export function sortTableRows(output: string): string {
 
 export interface NormalizeOptions {
   readonly versions?: boolean;
+  readonly stripPatterns?: readonly RegExp[];
 }
 
 /**
@@ -53,9 +54,13 @@ export function normalize(output: string, options: NormalizeOptions = {}): strin
         "<VERSION>",
       )
     : withoutAnsi;
+  const withoutStrippedPatterns = (options.stripPatterns ?? []).reduce(
+    (acc, pattern) => acc.replace(pattern, ""),
+    withoutVersions,
+  );
 
   return (
-    withoutVersions
+    withoutStrippedPatterns
       // 3. ISO-8601 timestamps (2026-04-15T10:46:15Z or with milliseconds)
       .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, "<TIMESTAMP>")
       // 4. Display timestamps (2026-04-15 10:46:15 — space-separated, no T)

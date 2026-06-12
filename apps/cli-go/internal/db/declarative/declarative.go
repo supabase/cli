@@ -691,12 +691,13 @@ func setupInputsToken(fsys afero.Fs) (string, error) {
 	// initSchema conditionally provisions these service schemas.
 	fmt.Fprintf(h, "auth=%t storage=%t realtime=%t\n",
 		utils.Config.Auth.Enabled, utils.Config.Storage.Enabled, utils.Config.Realtime.Enabled)
-	// api.auto_expose_new_tables drives ApplyApiPrivileges (default ACLs).
-	if v := utils.Config.Api.AutoExposeNewTables; v != nil {
-		fmt.Fprintf(h, "auto_expose_new_tables=%t\n", *v)
-	} else {
-		fmt.Fprintln(h, "auto_expose_new_tables=unset")
-	}
+	// api.auto_expose_new_tables drives ApplyApiPrivileges (default ACLs). Key on the
+	// effective value, not the raw tri-state: as of the 2026-05-30 flip an unset flag
+	// resolves to the same revoke-by-default baseline as explicit false (see
+	// start.ApplyApiPrivileges). Folding the effective bool in self-invalidates caches
+	// built before the flip (when unset meant auto-expose, keyed as "unset").
+	autoExpose := utils.Config.Api.AutoExposeNewTables != nil && *utils.Config.Api.AutoExposeNewTables
+	fmt.Fprintf(h, "auto_expose_new_tables=%t\n", autoExpose)
 	// Vault secrets are created during setup; key on their names.
 	names := make([]string, 0, len(utils.Config.Db.Vault))
 	for name := range utils.Config.Db.Vault {

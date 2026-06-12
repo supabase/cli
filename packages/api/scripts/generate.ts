@@ -311,7 +311,7 @@ function normalizeJsonSchemaValue(value: unknown): unknown {
   return isRecord(value) ? normalizeNullableJsonSchema(value) : value;
 }
 
-function normalizeNullableJsonSchema(schema: JsonSchema.JsonSchema): JsonSchema.JsonSchema {
+export function normalizeNullableJsonSchema(schema: JsonSchema.JsonSchema): JsonSchema.JsonSchema {
   const normalized: JsonSchema.JsonSchema = {};
   for (const [key, value] of Object.entries(schema)) {
     normalized[key] = normalizeJsonSchemaValue(value);
@@ -330,10 +330,6 @@ function normalizeNullableJsonSchema(schema: JsonSchema.JsonSchema): JsonSchema.
   if (nonNullTypes.length === 0) {
     return { type: "null" };
   }
-  if (!nonNullTypes.includes("object") && !nonNullTypes.includes("array")) {
-    return normalized;
-  }
-
   const nonNullSchema = { ...normalized };
   delete nonNullSchema.type;
   return {
@@ -900,4 +896,6 @@ function main() {
   console.log(`Generated ${operations.length} API operations in ${generatedDir}`);
 }
 
-main();
+if (import.meta.main) {
+  main();
+}

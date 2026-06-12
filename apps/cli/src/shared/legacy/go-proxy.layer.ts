@@ -159,7 +159,7 @@ export function makeGoProxyLayer(opts?: {
       const globalArgs = opts?.globalArgs ?? [];
 
       return LegacyGoProxy.of({
-        exec: (args) =>
+        exec: (args, execOpts) =>
           Effect.scoped(
             Effect.gen(function* () {
               if (!("found" in resolved)) {
@@ -197,9 +197,13 @@ export function makeGoProxyLayer(opts?: {
               // Scoped via `Effect.scoped` so listeners are always removed on
               // normal completion, failure, or fiber interruption.
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
+              // Per-call env (execOpts.env) overlays the construction-time env;
+              // `extendEnv: true` keeps both on top of the inherited process env.
+              const env =
+                opts?.env || execOpts?.env ? { ...opts?.env, ...execOpts?.env } : undefined;
               const command = ChildProcess.make(binary, [...globalArgs, ...args], {
-                cwd: opts?.cwd,
-                env: opts?.env,
+                cwd: execOpts?.cwd ?? opts?.cwd,
+                env,
                 extendEnv: true,
                 stdin: "inherit",
                 stdout: "inherit",
