@@ -16,7 +16,7 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
-import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
 import {
   buildPostgresUrl,
   defaultSchemas,

@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
-import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { legacyTempPaths } from "../shared/legacy-temp-paths.ts";

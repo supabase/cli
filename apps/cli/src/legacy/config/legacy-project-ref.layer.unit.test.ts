@@ -8,10 +8,8 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, Layer, Option } from "effect";
 import { afterEach, beforeEach } from "vitest";
 
-import {
-  LegacyPlatformApi,
-  LegacyPlatformApiFactory,
-} from "../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
+import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "./legacy-project-ref.service.ts";

@@ -20,10 +20,8 @@ import {
   LegacyInvalidAccessTokenError,
   LegacyNotLoggedInError,
 } from "../../src/legacy/auth/legacy-errors.ts";
-import {
-  LegacyPlatformApi,
-  LegacyPlatformApiFactory,
-} from "../../src/legacy/auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../../src/legacy/auth/legacy-platform-api-factory.service.ts";
+import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
 import {
   LegacyLoginApi,
   type LegacyLoginSessionResponse,

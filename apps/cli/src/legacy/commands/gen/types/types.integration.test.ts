@@ -13,10 +13,8 @@ import {
   LegacyNetworkIdFlag,
   LegacyOutputFlag,
 } from "../../../../shared/legacy/global-flags.ts";
-import {
-  LegacyPlatformApi,
-  LegacyPlatformApiFactory,
-} from "../../../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
+import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import {
   mockAnalytics,
   mockOutput,
