@@ -98,8 +98,9 @@ describe("createStack e2e", () => {
 
   test("enforces hybrid JWT verification on Edge Functions", { timeout: 20_000 }, async () => {
     writeFunction(projectDir, "secure", "secure");
-    // verify_jwt defaults to true, so this turns verification back on.
-    await stack.reloadFunctions();
+    // The stack was created with noVerifyJwt; re-enable verification explicitly
+    // (reloadFunctions() with no opts would keep the original config).
+    await stack.reloadFunctions({ noVerifyJwt: false });
     const url = `${stack.url}/functions/v1/secure`;
 
     // Missing credentials are rejected before reaching the function.

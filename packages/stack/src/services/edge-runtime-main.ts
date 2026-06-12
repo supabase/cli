@@ -1,14 +1,26 @@
 declare const Deno: any;
 declare const EdgeRuntime: any;
 
-type Jose = typeof import("jsr:@panva/jose@6");
+// Surface of the Deno-only `jsr:@panva/jose@6` module used by this script.
+// We hand-type it (rather than importing its types) because the bun workspace
+// type-checker cannot resolve the `jsr:` specifier.
+type JwksResolver = (...args: ReadonlyArray<unknown>) => Promise<CryptoKey>;
+type JwtVerifyKey = Uint8Array | JwksResolver;
+interface Jose {
+  decodeProtectedHeader(token: string): { readonly alg?: string };
+  jwtVerify(jwt: string, key: JwtVerifyKey): Promise<unknown>;
+  createLocalJWKSet(jwks: { readonly keys: ReadonlyArray<unknown> }): JwksResolver;
+  createRemoteJWKSet(url: URL): JwksResolver;
+}
 
-// jose is loaded lazily via dynamic import so the workspace test toolchain
-// (which transforms this text-embedded file) never has to resolve the
-// Deno-only `jsr:` specifier. The import only runs inside the edge runtime.
+// jose is loaded lazily via dynamic import so it only resolves inside the edge
+// runtime. The specifier is typed as `string` so the workspace type-checker
+// (which also compiles this text-embedded file) does not try to resolve the
+// Deno-only `jsr:` module.
 let josePromise: Promise<Jose> | null = null;
-function loadJose() {
-  return (josePromise ??= import("jsr:@panva/jose@6"));
+function loadJose(): Promise<Jose> {
+  const specifier: string = "jsr:@panva/jose@6";
+  return (josePromise ??= import(specifier));
 }
 
 const placeholder = {
@@ -41,7 +53,7 @@ async function isValidLegacyJwt(jose: Jose, jwtSecret: string, jwt: string) {
   }
 }
 
-function createLocalJwks(jose: Jose, jwks: string) {
+function createLocalJwks(jose: Jose, jwks: string): JwksResolver | null {
   try {
     return jose.createLocalJWKSet(JSON.parse(jwks));
   } catch {
@@ -50,11 +62,20 @@ function createLocalJwks(jose: Jose, jwks: string) {
 }
 
 async function isValidAsymmetricJwt(jose: Jose, jwks: string, jwksUrl: string, jwt: string) {
+  // Prefer the JWKS injected by the CLI. If it has no key matching the token
+  // (e.g. an asymmetric key minted elsewhere is absent from the local set),
+  // fall back to the auth service's well-known JWKS endpoint.
+  const localJwks = createLocalJwks(jose, jwks);
+  if (localJwks) {
+    try {
+      await jose.jwtVerify(jwt, localJwks);
+      return true;
+    } catch {
+      // No matching/valid local key — try the remote JWKS below.
+    }
+  }
   try {
-    // Prefer the JWKS injected by the CLI; fall back to fetching it from the
-    // local auth service's well-known endpoint for keys minted elsewhere.
-    const keySet = createLocalJwks(jose, jwks) ?? jose.createRemoteJWKSet(new URL(jwksUrl));
-    await jose.jwtVerify(jwt, keySet);
+    await jose.jwtVerify(jwt, jose.createRemoteJWKSet(new URL(jwksUrl)));
     return true;
   } catch (error) {
     console.error("Asymmetric JWT verification failed", error);
