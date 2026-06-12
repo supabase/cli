@@ -122,6 +122,10 @@ describe("createStack e2e", () => {
     const apiKeyRes = await fetch(url, { headers: { apikey: stack.publishableKey } });
     expect(apiKeyRes.status).toBe(200);
     expect(await apiKeyRes.text()).toBe("secure");
+
+    // Restore the shared stack's open-functions default so later tests don't
+    // inherit JWT enforcement from this one.
+    await stack.reloadFunctions({ noVerifyJwt: true });
   });
 
   test(

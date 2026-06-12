@@ -69,7 +69,7 @@ async function verifyLegacyHs256(secret: string, signingInput: string, signature
   );
 }
 
-async function verifyWithJwks(
+export async function verifyWithJwks(
   alg: AsymmetricAlgorithm,
   kid: string | undefined,
   signingInput: string,
@@ -79,15 +79,20 @@ async function verifyWithJwks(
   const spec = ASYMMETRIC_ALGORITHMS[alg];
   const data = new TextEncoder().encode(signingInput);
   const sig = base64UrlToBytes(signature);
+  // Match by key type, and by `kid` when both the token and the key carry one.
+  // Keys without a `kid` stay eligible so single-key sets that omit it (some
+  // issuers do) still verify — mirroring the more lenient Go-side behavior.
   const candidates = jwks.keys.filter(
-    (key) => key.kty === spec.kty && (kid === undefined || key.kid === kid),
+    (key) =>
+      key.kty === spec.kty && (kid === undefined || key.kid === undefined || key.kid === kid),
   );
   for (const jwk of candidates) {
     try {
       const key = await crypto.subtle.importKey("jwk", jwk, spec.importParams, false, ["verify"]);
       if (await crypto.subtle.verify(spec.verifyParams, key, sig, data)) return true;
-    } catch (error) {
-      console.error("Asymmetric JWK verification failed", error);
+    } catch {
+      // Not a usable/matching key (bad import or wrong signature) — try the next
+      // candidate. Logging here fires per key per request, so stay quiet.
     }
   }
   return false;
@@ -116,18 +121,47 @@ function fetchRemoteJwks(jwksUrl: string): Promise<Jwks> {
   const cached = remoteJwksCache.get(jwksUrl);
   if (cached) return cached;
   const pending = fetch(jwksUrl)
-    .then((res) => res.json())
-    .then(toJwks);
+    .then((res) => {
+      // Without this, a non-2xx response with a JSON body (e.g. a 502/404 from
+      // the gateway during startup) would parse into an empty key set and be
+      // cached permanently, rejecting every asymmetric token until restart.
+      if (!res.ok) throw new Error(`JWKS fetch failed: ${res.status}`);
+      return res.json();
+    })
+    .then(toJwks)
+    .then((jwks) => {
+      // Don't cache an empty key set: the auth service may not have published
+      // its keys yet, so allow a refetch on the next request instead.
+      if (jwks.keys.length === 0) remoteJwksCache.delete(jwksUrl);
+      return jwks;
+    });
   pending.catch(() => remoteJwksCache.delete(jwksUrl));
   remoteJwksCache.set(jwksUrl, pending);
   return pending;
+}
+
+// Reject expired (`exp`) or not-yet-valid (`nbf`) tokens regardless of
+// signature, matching the Go/Docker runtime (jose / golang-jwt validate these
+// by default). A small clock-skew window avoids spurious failures locally.
+export function areClaimsValid(payload: string): boolean {
+  let claims: { exp?: unknown; nbf?: unknown };
+  try {
+    claims = JSON.parse(new TextDecoder().decode(base64UrlToBytes(payload)));
+  } catch {
+    return false;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const skew = 60;
+  if (typeof claims.exp === "number" && claims.exp + skew < now) return false;
+  if (typeof claims.nbf === "number" && claims.nbf - skew > now) return false;
+  return true;
 }
 
 // Hybrid JWT verification: asymmetric (ES256 | RS256) tokens are verified
 // against the JWKS, with the legacy symmetric secret (HS256) as a fallback.
 // Mirrors the Go CLI runtime (supabase/cli#4721, #4985) during the migration
 // to the new asymmetric JWT keys.
-async function verifyHybridJwt(config: any, jwt: string) {
+export async function verifyHybridJwt(config: any, jwt: string) {
   const parts = jwt.split(".");
   if (parts.length !== 3) return false;
   const [header, payload, signature] = parts;
@@ -141,14 +175,19 @@ async function verifyHybridJwt(config: any, jwt: string) {
     return false;
   }
 
+  if (!areClaimsValid(payload!)) return false;
+
   try {
     if (decodedHeader.alg === "HS256") {
       return await verifyLegacyHs256(config.jwtSecret, signingInput, signature!);
     }
     if (decodedHeader.alg === "ES256" || decodedHeader.alg === "RS256") {
       const { alg, kid } = decodedHeader;
-      // Prefer the JWKS injected by the CLI; fall back to the auth service's
-      // well-known endpoint for keys minted elsewhere.
+      // The CLI-injected `config.jwks` is currently symmetric-only (an `oct`
+      // key derived from jwtSecret), so it never matches an ES256/RS256 token
+      // today — this local check is future-proofing for when the stack config
+      // grows asymmetric signing keys. Real asymmetric verification currently
+      // resolves through the auth service's well-known endpoint below.
       const localJwks = parseLocalJwks(config.jwks);
       if (await verifyWithJwks(alg, kid, signingInput, signature!, localJwks)) {
         return true;
