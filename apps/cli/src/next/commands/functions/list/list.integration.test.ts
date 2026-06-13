@@ -295,6 +295,44 @@ describe("functions list", () => {
     );
   });
 
+  it.live("accepts null import_map_path values from the management API", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      const { out, layer } = setup({
+        cwd: tempDir,
+        linked: true,
+        accessToken: "test-token",
+        format: "json",
+        remoteFunctions: [makeFunction({ import_map_path: null })],
+      });
+
+      yield* functionsList().pipe(Effect.provide(layer));
+
+      const success = out.messages.find((message) => message.type === "success");
+      const data = success?.data as {
+        functions: Array<{
+          slug: string;
+          local: unknown | null;
+          remote: { slug: string; import_map_path?: string | null } | null;
+        }>;
+        sources: { remote: { checked: boolean; project_ref?: string; reason?: string } };
+      };
+
+      expect(data.sources.remote).toEqual({ checked: true, project_ref: PROJECT_REF });
+      expect(data.functions).toHaveLength(1);
+      expect(data.functions[0]).toMatchObject({
+        slug: "hello-world",
+        local: expect.objectContaining({ entrypoint: "./functions/hello-world/index.ts" }),
+        remote: expect.objectContaining({ slug: "hello-world" }),
+      });
+      expect(data.functions[0]?.remote?.import_map_path).toBeNull();
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
   it.live("keeps local-only functions when remote enrichment succeeds", () => {
     const tempDir = makeTempDir();
 
