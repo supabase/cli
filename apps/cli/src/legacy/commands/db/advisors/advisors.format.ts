@@ -80,14 +80,29 @@ export function scanLegacyAdvisorLintRow(row: Record<string, unknown>): LegacyAd
   };
 }
 
-/** The six metadata fields Go's typed struct keeps, in struct-declaration order. */
+/**
+ * The six metadata fields Go's typed struct keeps, in struct-declaration order.
+ *
+ * Go's `metadata` is a `*struct{...}`: a JSON `null`/absent value decodes to a
+ * nil pointer (omitted), an object is decoded (unknown fields ignored), and any
+ * other JSON type — including a `fkey_columns` that isn't an array — is an
+ * `UnmarshalTypeError`. Throw on those so a malformed body fails rather than
+ * silently dropping the metadata.
+ */
 function projectApiMetadata(value: unknown): Record<string, unknown> | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("cannot unmarshal advisor metadata");
+  }
   const record = value as Record<string, unknown>;
   const out: Record<string, unknown> = {};
   if (typeof record["entity"] === "string") out["entity"] = record["entity"];
-  if (Array.isArray(record["fkey_columns"])) {
-    out["fkey_columns"] = record["fkey_columns"].filter((n) => typeof n === "number");
+  const fkeyColumns = record["fkey_columns"];
+  if (fkeyColumns !== undefined && fkeyColumns !== null && !Array.isArray(fkeyColumns)) {
+    throw new TypeError("cannot unmarshal advisor metadata.fkey_columns into []float32");
+  }
+  if (Array.isArray(fkeyColumns)) {
+    out["fkey_columns"] = fkeyColumns.filter((n) => typeof n === "number");
   }
   if (typeof record["fkey_name"] === "string") out["fkey_name"] = record["fkey_name"];
   if (typeof record["name"] === "string") out["name"] = record["name"];
@@ -97,20 +112,41 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
 }
 
 /**
- * Tolerant port of Go's `apiResponseToLints` (`advisors.go:184-210`). Reads the
- * advisors API response with plain string narrowing instead of the generated
- * closed-enum schema (which would reject advisor names / metadata types the API
- * can add). `name` / `level` / `facing` / category values pass through as raw
- * strings, exactly like Go's `type X string` aliases.
+ * Port of Go's `apiResponseToLints` (`advisors.go:184-210`). Reads the advisors
+ * API response with plain string narrowing instead of the generated closed-enum
+ * schema (which would reject advisor names / metadata types the API can add):
+ * `name` / `level` / `facing` / category values pass through as raw strings,
+ * exactly like Go's `type X string` aliases.
+ *
+ * Structurally strict, though — Go decodes the 200 body via `json.Unmarshal`
+ * into a typed `V1ProjectAdvisorsResponse`, so a top-level non-object, a `lints`
+ * / `categories` / `metadata` / `fkey_columns` of the wrong JSON container type,
+ * or a non-object lint entry is an `UnmarshalTypeError` that surfaces as a
+ * non-zero failure. **Throws** on those so a malformed 200 body fails instead of
+ * being reported as "No issues found"; the caller maps the throw to the same
+ * `failed to fetch … advisors` error Go produces. A top-level `null` decodes to
+ * the zero value (no lints), matching Go.
  */
 export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<LegacyAdvisorLint> {
-  if (typeof parsed !== "object" || parsed === null) return [];
+  if (parsed === null) return [];
+  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new TypeError("cannot unmarshal advisors response");
+  }
   const lintsRaw = (parsed as { lints?: unknown }).lints;
-  if (!Array.isArray(lintsRaw)) return [];
+  if (lintsRaw === undefined || lintsRaw === null) return [];
+  if (!Array.isArray(lintsRaw)) {
+    throw new TypeError("cannot unmarshal lints into []Lint");
+  }
   const lints: Array<LegacyAdvisorLint> = [];
   for (const entry of lintsRaw) {
-    if (typeof entry !== "object" || entry === null) continue;
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new TypeError("cannot unmarshal lint entry into Lint");
+    }
     const record = entry as Record<string, unknown>;
+    const categoriesRaw = record["categories"];
+    if (categoriesRaw !== undefined && categoriesRaw !== null && !Array.isArray(categoriesRaw)) {
+      throw new TypeError("cannot unmarshal categories into []string");
+    }
     const metadata = projectApiMetadata(record["metadata"]);
     lints.push({
       name: asString(record["name"]),

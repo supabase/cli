@@ -3,8 +3,9 @@ import { Effect, Layer, Option, Stdio } from "effect";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { CurrentAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
+import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
 import { withLegacyCommandInstrumentation } from "./legacy-command-instrumentation.ts";
-import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
 
 function mockContextualAnalytics() {
   const captured: Array<{
@@ -47,6 +48,7 @@ describe("withLegacyCommandInstrumentation", () => {
     }).pipe(
       withLegacyCommandInstrumentation(),
       Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
@@ -74,6 +76,7 @@ describe("withLegacyCommandInstrumentation", () => {
     return Effect.void.pipe(
       withLegacyCommandInstrumentation(),
       Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
@@ -95,6 +98,7 @@ describe("withLegacyCommandInstrumentation", () => {
     return Effect.void.pipe(
       withLegacyCommandInstrumentation(),
       Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "json" }).layer),
       Effect.provide(
         Stdio.layerTest({
@@ -125,6 +129,7 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { projectRef: Option.some("abcdefghijklmnopqrst") },
       }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
@@ -152,6 +157,7 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { envFile: Option.some("/path/to/.env") },
       }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
@@ -179,6 +185,7 @@ describe("withLegacyCommandInstrumentation", () => {
         },
       }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
@@ -212,6 +219,7 @@ describe("withLegacyCommandInstrumentation", () => {
         safeFlags: ["project-ref"],
       }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
@@ -236,6 +244,7 @@ describe("withLegacyCommandInstrumentation", () => {
     return Effect.void.pipe(
       withLegacyCommandInstrumentation({ flags: {} }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
       Effect.provide(commandRuntimeLayer(["backups", "list"])),
@@ -253,6 +262,7 @@ describe("withLegacyCommandInstrumentation", () => {
 
     return withLegacyCommandInstrumentation()(Effect.fail(new Error("boom"))).pipe(
       Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
       Effect.provide(commandRuntimeLayer(["backups", "list"])),
@@ -267,12 +277,41 @@ describe("withLegacyCommandInstrumentation", () => {
     );
   });
 
+  it.live("records exit_code=1 when a handler set a non-zero exit code without failing", () => {
+    // Go records the telemetry exit code from the real process exit code
+    // (`cmd/root.go:177` -> `exitCode(err)` = 1). `db lint`/`db advisors` set
+    // ProcessControl's exit code in json/stream-json mode after a --fail-on
+    // trigger and return success (to keep the machine payload on stdout intact),
+    // so the instrumentation must report 1, not the Effect's success.
+    const analytics = mockContextualAnalytics();
+    const processControl = mockProcessControl();
+
+    return Effect.gen(function* () {
+      const pc = yield* ProcessControl;
+      yield* pc.setExitCode(1);
+    }).pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.provide(analytics.layer),
+      Effect.provide(processControl.layer),
+      Effect.provide(mockOutput({ format: "json" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "lint"]) })),
+      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured).toHaveLength(1);
+          expect(analytics.captured[0]?.properties.exit_code).toBe(1);
+        }),
+      ),
+    );
+  });
+
   it.live("skips analytics capture when analytics are disabled", () => {
     const analytics = mockContextualAnalytics();
 
     return Effect.sync(() => "ok").pipe(
       withLegacyCommandInstrumentation({ analytics: false }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(Stdio.layerTest({ args: Effect.succeed(["telemetry", "enable"]) })),
       Effect.provide(commandRuntimeLayer(["telemetry", "enable"])),
@@ -295,6 +334,7 @@ describe("withLegacyCommandInstrumentation", () => {
         },
       }),
       Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({

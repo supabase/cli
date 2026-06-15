@@ -43,6 +43,31 @@ describe("parseLegacyLintResult", () => {
   it("throws on malformed json (Go's failed to marshal json path)", () => {
     expect(() => parseLegacyLintResult("malformed", "public.f")).toThrow();
   });
+
+  it("throws on Go-rejected shapes (top-level array/scalar, non-array issues, scalar entry)", () => {
+    // Go's json.Unmarshal into lint.Result returns an UnmarshalTypeError for these
+    // shapes; the handler maps the throw to LegacyDbLintMalformedJsonError. The old
+    // parser silently coerced them to an empty result (false "no lint errors").
+    expect(() => parseLegacyLintResult("[]", "public.f")).toThrow();
+    expect(() => parseLegacyLintResult("42", "public.f")).toThrow();
+    expect(() => parseLegacyLintResult(`{"issues":"nope"}`, "public.f")).toThrow();
+    expect(() => parseLegacyLintResult(`{"issues":{}}`, "public.f")).toThrow();
+    expect(() => parseLegacyLintResult(`{"issues":["not-an-object"]}`, "public.f")).toThrow();
+  });
+
+  it("tolerates Go-accepted shapes (null, missing issues, unknown fields)", () => {
+    // Go leaves the struct at zero on a top-level null and has no DisallowUnknownFields.
+    expect(parseLegacyLintResult("null", "public.f")).toEqual({ function: "public.f", issues: [] });
+    expect(parseLegacyLintResult("{}", "public.f")).toEqual({ function: "public.f", issues: [] });
+    expect(parseLegacyLintResult(`{"issues":null}`, "public.f")).toEqual({
+      function: "public.f",
+      issues: [],
+    });
+    expect(parseLegacyLintResult(`{"unknown":1,"issues":[]}`, "public.f")).toEqual({
+      function: "public.f",
+      issues: [],
+    });
+  });
 });
 
 describe("filterLegacyLintResult", () => {

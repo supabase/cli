@@ -1,17 +1,19 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
 
 import { mockOutput, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
+  LEGACY_VALID_TOKEN,
   legacyJsonResponse,
   mockLegacyCliConfig,
-  mockLegacyCredentialsLayer,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
+import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
+import { LegacyInvalidAccessTokenError } from "../../../auth/legacy-errors.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
@@ -25,6 +27,7 @@ import {
 } from "../../../shared/legacy-db-connection.service.ts";
 import {
   LegacyDbAdvisorsFailOnError,
+  LegacyDbAdvisorsInvalidTokenError,
   LegacyDbAdvisorsNotLoggedInError,
 } from "./advisors.errors.ts";
 import { encodeLegacyAdvisorLints, scanLegacyAdvisorLintRow } from "./advisors.format.ts";
@@ -128,12 +131,39 @@ function mockProjectRef() {
   };
 }
 
+/** Validating credentials mock — the advisors `--linked` token gate calls
+ *  `LegacyCredentials.getAccessToken` (Go's `LoadAccessTokenFS`), which fails
+ *  hard on a malformed token and returns None when no token is present. */
+function mockCredentials(opts: { token?: "valid" | "none" | "invalid" } = {}) {
+  const state = opts.token ?? "valid";
+  const getAccessToken =
+    state === "invalid"
+      ? Effect.fail(
+          new LegacyInvalidAccessTokenError({
+            message: "Invalid access token format. Must be like `sbp_0102...1920`.",
+          }),
+        )
+      : state === "none"
+        ? Effect.sync(() => Option.none<Redacted.Redacted<string>>())
+        : Effect.sync(() => Option.some(Redacted.make(LEGACY_VALID_TOKEN)));
+  const layer = Layer.succeed(LegacyCredentials, {
+    getAccessToken,
+    saveAccessToken: () => Effect.die("unexpected credentials write in advisors test"),
+    deleteAccessToken: Effect.die("unexpected credentials delete in advisors test"),
+    deleteAllProjectCredentials: Effect.die("unexpected project-credential sweep in advisors test"),
+    deleteProjectCredential: () =>
+      Effect.die("unexpected project-credential delete in advisors test"),
+  });
+  return { layer };
+}
+
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   rows?: ReadonlyArray<Record<string, unknown>>;
   setupFails?: boolean;
   queryFails?: boolean;
   loggedIn?: boolean;
+  invalidToken?: boolean;
   securityStatus?: number;
   securityLints?: ReadonlyArray<Record<string, unknown>>;
   performanceLints?: ReadonlyArray<Record<string, unknown>>;
@@ -177,6 +207,9 @@ function setup(opts: SetupOpts = {}) {
     workdir: "/tmp/advisors-int",
     accessToken: opts.loggedIn === false ? Option.none() : undefined,
   });
+  const credentials = mockCredentials({
+    token: opts.invalidToken === true ? "invalid" : opts.loggedIn === false ? "none" : "valid",
+  });
 
   const layer = Layer.mergeAll(
     out.layer,
@@ -187,7 +220,7 @@ function setup(opts: SetupOpts = {}) {
     projectRef.layer,
     cache.layer,
     cliConfig,
-    mockLegacyCredentialsLayer,
+    credentials.layer,
     api.httpClientLayer,
     Layer.succeed(LegacyDnsResolverFlag, "native"),
   );
@@ -429,6 +462,25 @@ describe("legacy db advisors — linked", () => {
           expect(error.suggestion).toContain("supabase login");
         }
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails with the invalid-token message before any API call (Go LoadAccessTokenFS)", () => {
+    const { layer, api } = setup({ invalidToken: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbAdvisors(flags({ linked: true })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        if (Option.isSome(failure)) {
+          expect(failure.value).toBeInstanceOf(LegacyDbAdvisorsInvalidTokenError);
+          const error = failure.value as LegacyDbAdvisorsInvalidTokenError;
+          expect(error.message).toContain("Invalid access token format");
+          expect(error.suggestion).toContain("supabase login");
+        }
+      }
+      // The token gate fails before any advisors request is made.
+      expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

@@ -5,6 +5,7 @@ import {
   getCommandRuntimeSpanName,
 } from "../../shared/runtime/command-runtime.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
+import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
 import { withAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import {
@@ -154,6 +155,7 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
 
         const analytics = yield* Analytics;
         const output = yield* Output;
+        const processControl = yield* ProcessControl;
         const stdio = yield* Stdio.Stdio;
         const args = yield* stdio.args;
         const startedAt = yield* Clock.currentTimeMillis;
@@ -168,9 +170,20 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
         const exit = yield* self.pipe(withAnalyticsContext(analyticsContext), Effect.exit);
         const finishedAt = yield* Clock.currentTimeMillis;
 
+        // Go records the telemetry exit code from the real process exit code
+        // (`cmd/root.go:177` -> `exitCode(err)`), which is 1 whenever the command
+        // exits non-zero. A handler can signal a non-zero exit WITHOUT failing the
+        // Effect — `db lint`/`db advisors` set `ProcessControl`'s exit code in
+        // json/stream-json mode after a `--fail-on` trigger so the machine payload
+        // on stdout stays intact. Treat a non-zero process exit code as 1 even when
+        // the Effect succeeded, matching Go; otherwise fall back to the Effect exit.
+        const processExitCode = yield* processControl.getExitCode;
+        const recordedExitCode =
+          Exit.isFailure(exit) || (processExitCode !== undefined && processExitCode !== 0) ? 1 : 0;
+
         yield* analytics
           .capture(EventCommandExecuted, {
-            [PropExitCode]: Exit.isSuccess(exit) ? 0 : 1,
+            [PropExitCode]: recordedExitCode,
             [PropDurationMs]: finishedAt - startedAt,
             [PropOutputFormat]: resolveOutputFormatForTelemetry(args, output.format),
           })
@@ -186,12 +199,12 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
 
 export function withLegacyCommandInstrumentation(): <A, E, R>(
   self: Effect.Effect<A, E, R>,
-) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio | Output>;
+) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio | Output | ProcessControl>;
 export function withLegacyCommandInstrumentation<Flags extends Record<string, unknown>>(
   options: LegacyCommandInstrumentationOptions<Flags>,
 ): <A, E, R>(
   self: Effect.Effect<A, E, R>,
-) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio | Output>;
+) => Effect.Effect<A, E, R | Analytics | CommandRuntime | Stdio.Stdio | Output | ProcessControl>;
 export function withLegacyCommandInstrumentation<Flags extends Record<string, unknown>>(
   options?: LegacyCommandInstrumentationOptions<Flags>,
 ) {

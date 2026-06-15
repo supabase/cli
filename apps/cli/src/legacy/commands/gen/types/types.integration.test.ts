@@ -33,6 +33,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
+import { processControlLayer } from "../../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
 import { legacyGenCommand } from "../gen.command.ts";
 import type { LegacyGenTypesFlags } from "./types.command.ts";
@@ -343,6 +344,7 @@ describe("legacy gen types", () => {
             CliOutput.layer(textCliOutputFormatter()),
             out.layer,
             analytics.layer,
+            processControlLayer,
             processEnvLayer({ SUPABASE_HOME: workdir }),
             mockRuntimeInfo({ cwd: workdir, homeDir: workdir }),
             mockTty({ stdinIsTty: false, stdoutIsTty: false }),

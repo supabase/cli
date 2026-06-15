@@ -144,10 +144,34 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
     expect(lints[0]?.name).toBe("some_brand_new_advisor");
   });
 
-  it("returns an empty array for a malformed response", () => {
+  it("returns an empty array for Go zero-value shapes (null, missing/null lints)", () => {
+    // Go's json.Unmarshal leaves the struct at zero on a top-level null or an
+    // absent/null `lints`, yielding no lints (No issues found).
     expect(apiResponseToLegacyAdvisorLints(null)).toEqual([]);
     expect(apiResponseToLegacyAdvisorLints({})).toEqual([]);
-    expect(apiResponseToLegacyAdvisorLints({ lints: "nope" })).toEqual([]);
+    expect(apiResponseToLegacyAdvisorLints({ lints: null })).toEqual([]);
+  });
+
+  it("throws on structural shapes Go's typed decode rejects", () => {
+    // Go decodes into V1ProjectAdvisorsResponse; a type mismatch on a container
+    // field is an UnmarshalTypeError → non-zero failure (not "No issues found").
+    // The previous tolerant parser wrongly coerced these to []. Keep the
+    // string-enum tolerance (above), but reject wrong-typed containers.
+    expect(() => apiResponseToLegacyAdvisorLints("nope")).toThrow();
+    expect(() => apiResponseToLegacyAdvisorLints([])).toThrow();
+    expect(() => apiResponseToLegacyAdvisorLints({ lints: "nope" })).toThrow();
+    expect(() => apiResponseToLegacyAdvisorLints({ lints: ["not-an-object"] })).toThrow();
+    expect(() =>
+      apiResponseToLegacyAdvisorLints({ lints: [{ name: "x", categories: "SECURITY" }] }),
+    ).toThrow();
+    expect(() =>
+      apiResponseToLegacyAdvisorLints({ lints: [{ name: "x", metadata: "nope" }] }),
+    ).toThrow();
+    expect(() =>
+      apiResponseToLegacyAdvisorLints({
+        lints: [{ name: "x", metadata: { fkey_columns: "nope" } }],
+      }),
+    ).toThrow();
   });
 });
 

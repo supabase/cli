@@ -100,14 +100,42 @@ function normalizeIssue(value: unknown): LegacyLintIssue {
  * `json.Unmarshal` + `r.Function = s + "." + name` (`lint.go:149-154`).
  *
  * Throws on malformed JSON; the handler maps that to `LegacyDbLintMalformedJsonError`.
+ *
+ * Validates the decoded shape against what Go's `json.Unmarshal` into a
+ * `lint.Result` struct would accept: a top-level `null` decodes to the zero
+ * value, but any other non-object (array / string / number), a present-but-not-
+ * array `issues`, or a non-object issue entry is an `UnmarshalTypeError` in Go
+ * and must fail here too — rather than be silently coerced to an empty result,
+ * which would report a malformed payload as "no lint errors". Go has no
+ * `DisallowUnknownFields` here, so missing/unknown fields stay tolerated.
  */
 export function parseLegacyLintResult(jsonText: string, functionName: string): LegacyLintResult {
   const parsed: unknown = JSON.parse(jsonText);
-  const record = (typeof parsed === "object" && parsed !== null ? parsed : {}) as Record<
-    string,
-    unknown
-  >;
-  const issuesRaw = Array.isArray(record["issues"]) ? record["issues"] : [];
+  // Go: a top-level `null` leaves the struct at its zero value (no error).
+  if (parsed === null) {
+    return { function: functionName, issues: [] };
+  }
+  // Go: a top-level array / string / number is an UnmarshalTypeError.
+  if (typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new TypeError("cannot unmarshal payload into lint.Result");
+  }
+  const record = parsed as Record<string, unknown>;
+  // Go: `issues` ([]lint.Issue) missing/null → zero value; present-but-not-array → error.
+  const issuesField = record["issues"];
+  let issuesRaw: ReadonlyArray<unknown>;
+  if (issuesField === undefined || issuesField === null) {
+    issuesRaw = [];
+  } else if (Array.isArray(issuesField)) {
+    issuesRaw = issuesField;
+  } else {
+    throw new TypeError("cannot unmarshal issues into []lint.Issue");
+  }
+  // Go: each entry decodes into a `lint.Issue` struct; a scalar/array entry fails.
+  for (const entry of issuesRaw) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new TypeError("cannot unmarshal issue into lint.Issue");
+    }
+  }
   return { function: functionName, issues: issuesRaw.map(normalizeIssue) };
 }
 

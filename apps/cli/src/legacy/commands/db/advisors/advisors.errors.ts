@@ -24,6 +24,17 @@ export class LegacyDbAdvisorsNotLoggedInError extends Data.TaggedError(
   "LegacyDbAdvisorsNotLoggedInError",
 )<{ readonly message: string; readonly suggestion: string }> {}
 
+/**
+ * `--linked` PreRunE: the resolved access token is malformed. Message is Go's
+ * `utils.ErrInvalidToken` ("Invalid access token format. Must be like
+ * `sbp_0102...1920`."); `suggestion` is Go's `utils.CmdSuggestion`. Go's
+ * `LoadAccessTokenFS` validates the token (env/keyring/file) before any project
+ * resolution or API call (`internal/utils/access_token.go:17,24-33`).
+ */
+export class LegacyDbAdvisorsInvalidTokenError extends Data.TaggedError(
+  "LegacyDbAdvisorsInvalidTokenError",
+)<{ readonly message: string; readonly suggestion: string }> {}
+
 /** `failed to begin transaction: %w` (`advisors.go:105`). */
 export class LegacyDbAdvisorsBeginTxError extends Data.TaggedError("LegacyDbAdvisorsBeginTxError")<{
   readonly message: string;

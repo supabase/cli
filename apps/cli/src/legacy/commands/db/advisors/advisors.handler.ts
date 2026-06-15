@@ -3,19 +3,20 @@ import { Effect, Option } from "effect";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
+import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua } from "../../../shared/legacy-colors.ts";
 import { legacyFailsOn } from "../../../shared/legacy-fail-on.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
-import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import type { LegacyDbAdvisorsFlags } from "./advisors.command.ts";
 import {
   LegacyDbAdvisorsBeginTxError,
   LegacyDbAdvisorsFailOnError,
+  LegacyDbAdvisorsInvalidTokenError,
   LegacyDbAdvisorsMutuallyExclusiveFlagsError,
   LegacyDbAdvisorsNotLoggedInError,
   LegacyDbAdvisorsQueryError,
@@ -108,11 +109,27 @@ const runLocal = Effect.fnUntraced(function* (
 
 /** Go's advisors PreRunE + `RunLinked` (`cmd/db.go`, `advisors.go:79-100`). */
 const runLinked = Effect.fnUntraced(function* (advisorType: string, level: string) {
+  const credentials = yield* LegacyCredentials;
   const projectRefResolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
 
-  // PreRunE: require an access token before resolving the project ref.
-  const tokenOpt = yield* resolveLegacyAccessToken;
+  // PreRunE: Go calls `utils.LoadAccessTokenFS` (`cmd/db.go:358`), which VALIDATES
+  // the token (env/keyring/file) against the `sbp_` pattern and fails with
+  // `ErrInvalidToken` before resolving the project ref or calling the API
+  // (`internal/utils/access_token.go:24-33`). `LegacyCredentials.getAccessToken`
+  // is the validating equivalent (the raw-HTTP `resolveLegacyAccessToken` skips
+  // validation and is the wrong gate here): map a malformed token to the
+  // invalid-token error and an absent token to the missing-token error.
+  const tokenOpt = yield* credentials.getAccessToken.pipe(
+    Effect.catchTag("LegacyInvalidAccessTokenError", (cause) =>
+      Effect.fail(
+        new LegacyDbAdvisorsInvalidTokenError({
+          message: cause.message,
+          suggestion: loginSuggestion(),
+        }),
+      ),
+    ),
+  );
   if (Option.isNone(tokenOpt)) {
     return yield* Effect.fail(
       new LegacyDbAdvisorsNotLoggedInError({

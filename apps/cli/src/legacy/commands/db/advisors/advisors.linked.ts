@@ -63,11 +63,13 @@ const fetchAdvisors = Effect.fnUntraced(function* (ref: string, endpoint: Adviso
   }
 
   const rawBody = yield* response.text;
-  const parsed = yield* Effect.try({
-    try: () => JSON.parse(rawBody) as unknown,
+  // Go folds a decode error into the same `failed to fetch … advisors: %w` path,
+  // so map both JSON syntax errors and structural-shape rejections (thrown by
+  // `apiResponseToLegacyAdvisorLints`) to the endpoint's network error.
+  return yield* Effect.try({
+    try: () => apiResponseToLegacyAdvisorLints(JSON.parse(rawBody) as unknown),
     catch: (cause) => endpoint.network(String(cause)),
   });
-  return apiResponseToLegacyAdvisorLints(parsed);
 });
 
 export const legacyFetchSecurityAdvisors = (ref: string) =>
