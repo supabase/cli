@@ -54,8 +54,8 @@ on:
       ANTHROPIC_API_KEY:
         required: false
 jobs:
-  build:
-    name: Build CLI artifacts
+  build-blacksmith:
+    name: Build CLI artifacts (Blacksmith)
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
       version: ${{ inputs.version }}
@@ -65,17 +65,30 @@ jobs:
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
       POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
 
+  build-github:
+    name: Build CLI artifacts (GitHub hosted)
+    if: ${{ !inputs.dry_run }}
+    uses: ./.github/workflows/build-cli-artifacts.yml
+    with:
+      version: ${{ inputs.version }}
+      shell: ${{ inputs.shell }}
+      runner: ubuntu-latest
+      cache_key_suffix: -github
+    secrets:
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
+
   smoke-test:
-    needs: build
+    needs:
+      - build-blacksmith
     strategy:
       fail-fast: false
       matrix:
         runner:
           - blacksmith-8vcpu-ubuntu-2404
           - blacksmith-6vcpu-macos-latest
-          - macos-15-intel
           - blacksmith-8vcpu-windows-2025
-          - windows-11-arm
     runs-on: ${{ matrix.runner }}
     env:
       NPM_TAG: ${{ inputs.npm_tag }}
@@ -89,10 +102,15 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Restore build artifacts cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
 
       # Docker's classic image store keeps a single platform manifest per
       # tag, so pulling `alpine:3.21` for amd64 and again for arm64 leaves
@@ -172,7 +190,9 @@ jobs:
         working-directory: apps/cli
 
   publish:
-    needs: smoke-test
+    needs:
+      - build-github
+      - smoke-test
     if: ${{ !inputs.dry_run }}
     # npm provenance verification rejects non-GitHub-hosted runners with
     # E422 ("Unsupported GitHub Actions runner environment: self-hosted").
@@ -206,10 +226,15 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Restore build artifacts cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
 
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
@@ -344,7 +369,7 @@ jobs:
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     env:
       BREW_NAME: ${{ inputs.brew_name }}
       VERSION: ${{ inputs.version }}
@@ -357,10 +382,15 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Restore build artifacts cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
 
       - name: Generate Homebrew tap token
         id: app-token
@@ -391,7 +421,7 @@ jobs:
   publish-scoop:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     env:
       SCOOP_NAME: ${{ inputs.scoop_name }}
       VERSION: ${{ inputs.version }}
@@ -404,10 +434,15 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Restore build artifacts cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
 
       - name: Generate Scoop bucket token
         id: app-token

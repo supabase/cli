@@ -5,8 +5,6 @@ on:
     paths:
       - apps/cli-go/**
   merge_group:
-    paths:
-      - apps/cli-go/**
   push:
     branches:
       - develop
@@ -37,20 +35,36 @@ jobs:
           go tool gotestsum -- -race -v -count=1 ./... \
           -coverpkg="./cmd/...,./internal/...,${pkgs}" -coverprofile=coverage.out
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Check existing coverage cache
+        id: coverage-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          name: code-coverage-report
           path: apps/cli-go/coverage.out
+          key: cli-go-coverage-${{ github.run_id }}-v1
+          lookup-only: true
+
+      - name: Save coverage cache
+        if: steps.coverage-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: apps/cli-go/coverage.out
+          key: cli-go-coverage-${{ github.run_id }}-v1
 
   coverage:
     name: Coverage
     needs:
       - test
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Restore coverage cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          name: code-coverage-report
+          path: apps/cli-go/coverage.out
+          key: cli-go-coverage-${{ github.run_id }}-v1
+          fail-on-cache-miss: true
+      - name: Move coverage report
+        run: cp apps/cli-go/coverage.out coverage.out
+        working-directory: .
       - uses: coverallsapp/github-action@5cbfd81b66ca5d10c19b062c04de0199c215fb6e # v2.3.7
         with:
           file: coverage.out

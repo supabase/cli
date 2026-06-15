@@ -38,7 +38,7 @@ jobs:
       github.event.pull_request.draft == false &&
       needs.build.result == 'success'
     name: Publish preview package
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     env:
       PREVIEW_VERSION: 0.0.0-pr.${{ github.event.pull_request.number }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -51,10 +51,15 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      - name: Download preview build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Restore preview build artifacts cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          name: cli-build-legacy-${{ env.PREVIEW_VERSION }}
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-legacy-${{ env.PREVIEW_VERSION }}-v1
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
 
       - name: Prepare package files
         run: |
