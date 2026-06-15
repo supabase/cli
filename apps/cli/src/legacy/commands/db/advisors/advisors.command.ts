@@ -46,6 +46,10 @@ export const legacyDbAdvisorsCommand = Command.make("advisors", config).pipe(
           level: flags.level,
           "fail-on": flags.failOn,
         },
+        // Go's changedFlagValues records every utils.EnumFlag verbatim
+        // (cmd/root_analytics.go:88-116). --db-url stays redacted (plain string,
+        // may carry secrets); --linked/--local are booleans (passed through).
+        safeFlags: ["type", "level", "fail-on"],
       }),
       withJsonErrorHandling,
     ),

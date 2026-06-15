@@ -49,6 +49,9 @@ export const legacyDbLintCommand = Command.make("lint", config).pipe(
           level: flags.level,
           "fail-on": flags.failOn,
         },
+        // Go records utils.EnumFlag values verbatim (cmd/root_analytics.go:88-116).
+        // --schema stays redacted: it's a []string slice flag in Go, not an EnumFlag.
+        safeFlags: ["level", "fail-on"],
       }),
       withJsonErrorHandling,
     ),
