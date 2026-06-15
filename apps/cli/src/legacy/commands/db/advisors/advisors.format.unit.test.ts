@@ -173,6 +173,38 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
       }),
     ).toThrow();
   });
+
+  it("throws on scalar fields with the wrong JSON type (Go UnmarshalTypeError)", () => {
+    // Go's typed decode rejects a non-string for a string/`type X string` field
+    // and a non-string `[]string` element — even though it tolerates any string
+    // VALUE. The previous parser coerced 123 -> "123" via String().
+    expect(() => apiResponseToLegacyAdvisorLints({ lints: [{ name: 123 }] })).toThrow();
+    expect(() =>
+      apiResponseToLegacyAdvisorLints({ lints: [{ name: "x", level: true }] }),
+    ).toThrow();
+    expect(() =>
+      apiResponseToLegacyAdvisorLints({ lints: [{ name: "x", categories: [1] }] }),
+    ).toThrow();
+    expect(() =>
+      apiResponseToLegacyAdvisorLints({ lints: [{ name: "x", metadata: { schema: 5 } }] }),
+    ).toThrow();
+  });
+
+  it("treats absent scalar fields as the empty-string zero value (Go json)", () => {
+    // A missing field decodes to "" with no error; only present-but-wrong-type fails.
+    const lints = apiResponseToLegacyAdvisorLints({ lints: [{ name: "only_name" }] });
+    expect(lints[0]).toEqual({
+      name: "only_name",
+      title: "",
+      level: "",
+      facing: "",
+      categories: [],
+      description: "",
+      detail: "",
+      remediation: "",
+      cacheKey: "",
+    });
+  });
 });
 
 describe("encodeLegacyAdvisorLints (Go outputAndCheck byte parity)", () => {

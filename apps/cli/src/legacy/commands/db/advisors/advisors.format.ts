@@ -40,6 +40,38 @@ const asStringArray = (value: unknown): ReadonlyArray<string> =>
   Array.isArray(value) ? value.map(asString) : [];
 
 /**
+ * Decodes a JSON value into a Go `string` / `type X string` field. Mirrors
+ * `encoding/json`: an absent or `null` value is the zero value `""`; a present
+ * non-string (number/bool/object/array) is an `UnmarshalTypeError` → throw. Any
+ * string value is accepted (the deliberate unknown-enum tolerance). Used only on
+ * the typed-API path (`json.Unmarshal`), not the local `rows.Scan` path.
+ */
+function requireApiString(value: unknown, field: string): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value !== "string") {
+    throw new TypeError(`cannot unmarshal advisor ${field} into string`);
+  }
+  return value;
+}
+
+/**
+ * Decodes a JSON value into Go's `[]string`-alias `categories`. Absent/`null` ⇒
+ * `[]`; a non-array, or a non-string element, is an `UnmarshalTypeError` → throw.
+ */
+function requireApiStringArray(value: unknown): ReadonlyArray<string> {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new TypeError("cannot unmarshal advisor categories into []string");
+  }
+  return value.map((element) => {
+    if (typeof element !== "string") {
+      throw new TypeError("cannot unmarshal advisor categories element into string");
+    }
+    return element;
+  });
+}
+
+/**
  * Normalises a local-query `metadata` (jsonb) cell: the `@effect/sql-pg` driver
  * returns jsonb already parsed (object), but tolerate a raw JSON string too.
  * `null` / absent ⇒ omitted, matching Go's `len(metadata) > 0` guard
@@ -96,18 +128,36 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
   }
   const record = value as Record<string, unknown>;
   const out: Record<string, unknown> = {};
-  if (typeof record["entity"] === "string") out["entity"] = record["entity"];
+  // Go's metadata is a typed struct: each `*string` subfield decodes absent/null
+  // to a nil pointer (omitted) and a present non-string to an UnmarshalTypeError.
+  // Add in Go struct-declaration order: entity, fkey_columns, fkey_name, name,
+  // schema, type.
+  const optString = (key: string) => {
+    const field = record[key];
+    if (field === undefined || field === null) return;
+    if (typeof field !== "string") {
+      throw new TypeError(`cannot unmarshal advisor metadata.${key} into string`);
+    }
+    out[key] = field;
+  };
+
+  optString("entity");
   const fkeyColumns = record["fkey_columns"];
-  if (fkeyColumns !== undefined && fkeyColumns !== null && !Array.isArray(fkeyColumns)) {
-    throw new TypeError("cannot unmarshal advisor metadata.fkey_columns into []float32");
+  if (fkeyColumns !== undefined && fkeyColumns !== null) {
+    if (!Array.isArray(fkeyColumns)) {
+      throw new TypeError("cannot unmarshal advisor metadata.fkey_columns into []float32");
+    }
+    for (const element of fkeyColumns) {
+      if (typeof element !== "number") {
+        throw new TypeError("cannot unmarshal advisor metadata.fkey_columns element into float32");
+      }
+    }
+    out["fkey_columns"] = fkeyColumns;
   }
-  if (Array.isArray(fkeyColumns)) {
-    out["fkey_columns"] = fkeyColumns.filter((n) => typeof n === "number");
-  }
-  if (typeof record["fkey_name"] === "string") out["fkey_name"] = record["fkey_name"];
-  if (typeof record["name"] === "string") out["name"] = record["name"];
-  if (typeof record["schema"] === "string") out["schema"] = record["schema"];
-  if (typeof record["type"] === "string") out["type"] = record["type"];
+  optString("fkey_name");
+  optString("name");
+  optString("schema");
+  optString("type");
   return out;
 }
 
@@ -143,22 +193,18 @@ export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<
       throw new TypeError("cannot unmarshal lint entry into Lint");
     }
     const record = entry as Record<string, unknown>;
-    const categoriesRaw = record["categories"];
-    if (categoriesRaw !== undefined && categoriesRaw !== null && !Array.isArray(categoriesRaw)) {
-      throw new TypeError("cannot unmarshal categories into []string");
-    }
     const metadata = projectApiMetadata(record["metadata"]);
     lints.push({
-      name: asString(record["name"]),
-      title: asString(record["title"]),
-      level: asString(record["level"]),
-      facing: asString(record["facing"]),
-      categories: asStringArray(record["categories"]),
-      description: asString(record["description"]),
-      detail: asString(record["detail"]),
-      remediation: asString(record["remediation"]),
+      name: requireApiString(record["name"], "name"),
+      title: requireApiString(record["title"], "title"),
+      level: requireApiString(record["level"], "level"),
+      facing: requireApiString(record["facing"], "facing"),
+      categories: requireApiStringArray(record["categories"]),
+      description: requireApiString(record["description"], "description"),
+      detail: requireApiString(record["detail"], "detail"),
+      remediation: requireApiString(record["remediation"], "remediation"),
       ...(metadata !== undefined ? { metadata } : {}),
-      cacheKey: asString(record["cache_key"]),
+      cacheKey: requireApiString(record["cache_key"], "cache_key"),
     });
   }
   return lints;
