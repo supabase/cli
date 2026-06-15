@@ -16,6 +16,7 @@ import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
 import { LegacyInvalidAccessTokenError } from "../../../auth/legacy-errors.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import { LegacyIdentityStitch } from "../../../shared/legacy-identity-stitch.ts";
 import type {
   LegacyDbConfigFlags,
   LegacyResolvedDbConfig,
@@ -157,6 +158,23 @@ function mockCredentials(opts: { token?: "valid" | "none" | "invalid" } = {}) {
   return { layer };
 }
 
+/** Tracks the raw-HTTP advisor path running Go's identityTransport stitch. */
+function mockIdentityStitch() {
+  let calls = 0;
+  const layer = Layer.succeed(LegacyIdentityStitch, {
+    stitch: () =>
+      Effect.sync(() => {
+        calls += 1;
+      }),
+  });
+  return {
+    layer,
+    get calls() {
+      return calls;
+    },
+  };
+}
+
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   rows?: ReadonlyArray<Record<string, unknown>>;
@@ -210,6 +228,7 @@ function setup(opts: SetupOpts = {}) {
   const credentials = mockCredentials({
     token: opts.invalidToken === true ? "invalid" : opts.loggedIn === false ? "none" : "valid",
   });
+  const identityStitch = mockIdentityStitch();
 
   const layer = Layer.mergeAll(
     out.layer,
@@ -221,10 +240,21 @@ function setup(opts: SetupOpts = {}) {
     cache.layer,
     cliConfig,
     credentials.layer,
+    identityStitch.layer,
     api.httpClientLayer,
     Layer.succeed(LegacyDnsResolverFlag, "native"),
   );
-  return { layer, out, connection, telemetry, processControl, cache, api, projectRef };
+  return {
+    layer,
+    out,
+    connection,
+    telemetry,
+    processControl,
+    cache,
+    api,
+    projectRef,
+    identityStitch,
+  };
 }
 
 const flags = (over: Partial<LegacyDbAdvisorsFlags> = {}): LegacyDbAdvisorsFlags => ({
@@ -413,6 +443,20 @@ describe("legacy db advisors — linked", () => {
       expect(out.stdoutText).toContain("unindexed_foreign_keys");
       // Linked runs write the linked-project cache (Go PersistentPostRun).
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("runs the identity stitch on each advisor response (Go identityTransport)", () => {
+    // Go wraps every Management API response in identityTransport → OnGotrueID →
+    // StitchLogin. The raw-HTTP advisor path must run the same stitch (once per
+    // response) rather than silently skipping session-identity stitching.
+    const { layer, identityStitch } = setup({
+      securityLints: [securityLint],
+      performanceLints: [performanceLint],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags({ linked: true, level: Option.some("info") }));
+      expect(identityStitch.calls).toBe(2);
     }).pipe(Effect.provide(layer));
   });
 

@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
@@ -35,6 +36,10 @@ const describeHttpError = (cause: unknown): string =>
     ? (cause.reason.description ?? cause.reason._tag)
     : String(cause);
 
+/** Identity stitcher: Go wraps every Management API response in identityTransport
+ *  (`OnGotrueID` → `StitchLogin`); the raw-HTTP advisor path runs it explicitly. */
+type LegacyStitchFn = (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<void>;
+
 /**
  * Shared GET for an advisors endpoint. Uses raw HTTP + a tolerant parse rather
  * than the typed client, mirroring Go's permissive `type X string` structs (the
@@ -42,7 +47,11 @@ const describeHttpError = (cause: unknown): string =>
  * values the API can add). Models Go's `fetchSecurityAdvisors` /
  * `fetchPerformanceAdvisors` (`advisors.go:162-182`).
  */
-const fetchAdvisors = Effect.fnUntraced(function* (ref: string, endpoint: AdvisorEndpoint) {
+const fetchAdvisors = Effect.fnUntraced(function* (
+  ref: string,
+  endpoint: AdvisorEndpoint,
+  stitch: LegacyStitchFn,
+) {
   const httpClient = yield* HttpClient.HttpClient;
   const cliConfig = yield* LegacyCliConfig;
   const tokenOpt = yield* resolveLegacyAccessToken;
@@ -56,6 +65,10 @@ const fetchAdvisors = Effect.fnUntraced(function* (ref: string, endpoint: Adviso
   const response = yield* httpClient
     .execute(request)
     .pipe(Effect.mapError((cause) => endpoint.network(describeHttpError(cause))));
+
+  // Stitch the session identity from the X-Gotrue-Id header, matching Go's
+  // identityTransport which runs on every Management API response (`api.go:128`).
+  yield* stitch(response);
 
   if (response.status !== 200) {
     const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
@@ -72,32 +85,40 @@ const fetchAdvisors = Effect.fnUntraced(function* (ref: string, endpoint: Adviso
   });
 });
 
-export const legacyFetchSecurityAdvisors = (ref: string) =>
-  fetchAdvisors(ref, {
-    path: "security",
-    network: (message) =>
-      new LegacyDbAdvisorsSecurityNetworkError({
-        message: `failed to fetch security advisors: ${message}`,
-      }),
-    status: (status, body) =>
-      new LegacyDbAdvisorsSecurityStatusError({
-        status,
-        body,
-        message: `unexpected security advisors status ${status}: ${body}`,
-      }),
-  });
+export const legacyFetchSecurityAdvisors = (ref: string, stitch: LegacyStitchFn) =>
+  fetchAdvisors(
+    ref,
+    {
+      path: "security",
+      network: (message) =>
+        new LegacyDbAdvisorsSecurityNetworkError({
+          message: `failed to fetch security advisors: ${message}`,
+        }),
+      status: (status, body) =>
+        new LegacyDbAdvisorsSecurityStatusError({
+          status,
+          body,
+          message: `unexpected security advisors status ${status}: ${body}`,
+        }),
+    },
+    stitch,
+  );
 
-export const legacyFetchPerformanceAdvisors = (ref: string) =>
-  fetchAdvisors(ref, {
-    path: "performance",
-    network: (message) =>
-      new LegacyDbAdvisorsPerformanceNetworkError({
-        message: `failed to fetch performance advisors: ${message}`,
-      }),
-    status: (status, body) =>
-      new LegacyDbAdvisorsPerformanceStatusError({
-        status,
-        body,
-        message: `unexpected performance advisors status ${status}: ${body}`,
-      }),
-  });
+export const legacyFetchPerformanceAdvisors = (ref: string, stitch: LegacyStitchFn) =>
+  fetchAdvisors(
+    ref,
+    {
+      path: "performance",
+      network: (message) =>
+        new LegacyDbAdvisorsPerformanceNetworkError({
+          message: `failed to fetch performance advisors: ${message}`,
+        }),
+      status: (status, body) =>
+        new LegacyDbAdvisorsPerformanceStatusError({
+          status,
+          body,
+          message: `unexpected performance advisors status ${status}: ${body}`,
+        }),
+    },
+    stitch,
+  );

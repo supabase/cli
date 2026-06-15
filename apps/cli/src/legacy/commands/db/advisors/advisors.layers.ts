@@ -9,6 +9,7 @@ import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
+import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
 import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 
@@ -74,6 +75,9 @@ export const legacyDbAdvisorsRuntimeLayer = Layer.mergeAll(
   credentials,
   projectRef,
   linkedProjectCache,
+  // Identity stitching for the raw-HTTP advisor GETs (Go's identityTransport).
+  // Its Analytics / TelemetryRuntime / FileSystem / Path deps are ambient (root runtime).
+  legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["db", "advisors"]),
 );

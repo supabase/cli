@@ -7,6 +7,7 @@ import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua } from "../../../shared/legacy-colors.ts";
 import { legacyFailsOn } from "../../../shared/legacy-fail-on.ts";
+import { LegacyIdentityStitch } from "../../../shared/legacy-identity-stitch.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
@@ -112,6 +113,11 @@ const runLinked = Effect.fnUntraced(function* (advisorType: string, level: strin
   const credentials = yield* LegacyCredentials;
   const projectRefResolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  // Go wraps every Management API response in identityTransport for session
+  // identity stitching (`internal/utils/api.go:128`); the raw-HTTP advisor GETs
+  // run the same stitch. One stitcher shared across both endpoint calls so it
+  // fires at most once per session, matching Go's NeedsIdentityStitch gate.
+  const { stitch } = yield* LegacyIdentityStitch;
 
   // PreRunE: Go calls `utils.LoadAccessTokenFS` (`cmd/db.go:358`), which VALIDATES
   // the token (env/keyring/file) against the `sbp_` pattern and fails with
@@ -148,10 +154,10 @@ const runLinked = Effect.fnUntraced(function* (advisorType: string, level: strin
   return yield* Effect.gen(function* () {
     const lints: Array<LegacyAdvisorLint> = [];
     if (advisorType === "all" || advisorType === "security") {
-      lints.push(...(yield* legacyFetchSecurityAdvisors(ref)));
+      lints.push(...(yield* legacyFetchSecurityAdvisors(ref, stitch)));
     }
     if (advisorType === "all" || advisorType === "performance") {
-      lints.push(...(yield* legacyFetchPerformanceAdvisors(ref)));
+      lints.push(...(yield* legacyFetchPerformanceAdvisors(ref, stitch)));
     }
     // The endpoint selection already applied the type filter, so filter by "all".
     return filterLegacyAdvisorLints(lints, "all", level);
