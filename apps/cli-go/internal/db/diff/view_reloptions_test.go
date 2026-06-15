@@ -41,6 +41,21 @@ func TestBuildViewReloptionDiff(t *testing.T) {
 `, out)
 	})
 
+	t.Run("emits RESET when all reloptions are removed", func(t *testing.T) {
+		key := viewReloptionKey{schema: "public", name: "user_details", relkind: "v"}
+		out := buildViewReloptionDiff(
+			map[viewReloptionKey][]string{
+				key: {"security_invoker=true", "check_option=local"},
+			},
+			map[viewReloptionKey][]string{
+				key: {},
+			},
+			[]string{"public"},
+		)
+		assert.Equal(t, `ALTER VIEW "public"."user_details" RESET (check_option, security_invoker);
+`, out)
+	})
+
 	t.Run("emits SET and RESET in stable order", func(t *testing.T) {
 		key := viewReloptionKey{schema: "public", name: "user_details", relkind: "v"}
 		out := buildViewReloptionDiff(
@@ -54,6 +69,21 @@ func TestBuildViewReloptionDiff(t *testing.T) {
 		)
 		assert.Equal(t, `ALTER VIEW "public"."user_details" SET (security_barrier=true, security_invoker=false);
 ALTER VIEW "public"."user_details" RESET (check_option);
+`, out)
+	})
+
+	t.Run("batches multiple changed reloptions into one SET", func(t *testing.T) {
+		key := viewReloptionKey{schema: "public", name: "user_details", relkind: "v"}
+		out := buildViewReloptionDiff(
+			map[viewReloptionKey][]string{
+				key: {"security_invoker=true", "check_option=local"},
+			},
+			map[viewReloptionKey][]string{
+				key: {"security_invoker=false", "check_option=cascaded"},
+			},
+			[]string{"public"},
+		)
+		assert.Equal(t, `ALTER VIEW "public"."user_details" SET (check_option=cascaded, security_invoker=false);
 `, out)
 	})
 
@@ -82,6 +112,37 @@ ALTER VIEW "public"."user_details" RESET (check_option);
 			[]string{"public"},
 		)
 		assert.Empty(t, out)
+	})
+
+	t.Run("skips no-op diff when neither side has reloptions", func(t *testing.T) {
+		key := viewReloptionKey{schema: "public", name: "user_details", relkind: "v"}
+		out := buildViewReloptionDiff(
+			map[viewReloptionKey][]string{
+				key: {},
+			},
+			map[viewReloptionKey][]string{
+				key: {},
+			},
+			[]string{"public"},
+		)
+		assert.Empty(t, out)
+	})
+
+	t.Run("skips source-only dropped views", func(t *testing.T) {
+		dropped := viewReloptionKey{schema: "public", name: "dropped_view", relkind: "v"}
+		kept := viewReloptionKey{schema: "public", name: "kept_view", relkind: "v"}
+		out := buildViewReloptionDiff(
+			map[viewReloptionKey][]string{
+				dropped: {"security_invoker=true"},
+				kept:    {"security_invoker=true"},
+			},
+			map[viewReloptionKey][]string{
+				kept: {"security_invoker=false"},
+			},
+			[]string{"public"},
+		)
+		assert.Equal(t, `ALTER VIEW "public"."kept_view" SET (security_invoker=false);
+`, out)
 	})
 
 	t.Run("respects requested schema filter", func(t *testing.T) {
