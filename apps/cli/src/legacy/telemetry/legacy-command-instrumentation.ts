@@ -22,6 +22,12 @@ interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unkno
   // Go's `markFlagTelemetrySafe` annotation in cmd/root_analytics.go. Boolean
   // flag values are always passed through, matching Go's isBooleanFlag branch.
   readonly safeFlags?: ReadonlyArray<string>;
+  // Short-flag → canonical-flag-name map (e.g. `{ s: "schema" }`). Go's
+  // `changedFlags()` uses pflag's `Visit`, which reports the CANONICAL flag name
+  // whether the user typed the long form (`--schema`) or the registered shorthand
+  // (`-s`). Pass a command's shorthands here so a `-s public` invocation records
+  // the `schema` flag in telemetry, matching Go (cmd/root_analytics.go:53-76).
+  readonly aliases?: Readonly<Record<string, string>>;
 }
 
 const REDACTED_VALUE = "<redacted>";
@@ -67,18 +73,33 @@ function resolveOutputFormatForTelemetry(args: ReadonlyArray<string>, outputForm
   return outputFormat;
 }
 
-function extractChangedFlagNames(args: ReadonlyArray<string>): ReadonlyArray<string> {
+function extractChangedFlagNames(
+  args: ReadonlyArray<string>,
+  aliases: Readonly<Record<string, string>> = {},
+): ReadonlyArray<string> {
   const used = new Set<string>();
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    if (arg === undefined || !arg.startsWith("--")) continue;
+    if (arg === undefined) continue;
 
-    const raw = arg.slice(2);
-    const [flagName] = raw.split("=", 2);
-    if (flagName === undefined || flagName.length === 0) continue;
+    if (arg.startsWith("--")) {
+      const raw = arg.slice(2);
+      const [flagName] = raw.split("=", 2);
+      if (flagName === undefined || flagName.length === 0) continue;
+      used.add(flagName);
+      continue;
+    }
 
-    used.add(flagName);
+    // pflag shorthand: `-s`, `-s=value`, and `-svalue` all key off the first
+    // character after the single dash. Map it to the canonical flag name (Go's
+    // `flag.Visit` reports the canonical name regardless of long/short form).
+    // Only declared aliases are resolved; unknown shorthands are ignored.
+    if (arg.startsWith("-") && arg.length > 1) {
+      const short = arg[1];
+      const canonical = short === undefined ? undefined : aliases[short];
+      if (canonical !== undefined) used.add(canonical);
+    }
   }
 
   // Match Go's sort.Slice(...flag.Name < flag.Name) in changedFlags().
@@ -159,7 +180,7 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
         const stdio = yield* Stdio.Stdio;
         const args = yield* stdio.args;
         const startedAt = yield* Clock.currentTimeMillis;
-        const changedFlagNames = extractChangedFlagNames(args);
+        const changedFlagNames = extractChangedFlagNames(args, options?.aliases);
         const flags = buildFlagsMap(options?.flags, safeFlagSet, changedFlagNames);
         const analyticsContext = {
           command_run_id: commandRuntime.commandRunId,

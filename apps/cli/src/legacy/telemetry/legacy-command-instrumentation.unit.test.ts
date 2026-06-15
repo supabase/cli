@@ -174,6 +174,36 @@ describe("withLegacyCommandInstrumentation", () => {
     );
   });
 
+  it.live("records a flag set via its shorthand under the canonical name", () => {
+    // Go's changedFlags() uses pflag Visit, which reports the canonical `schema`
+    // name even when the user typed the `-s` shorthand (cmd/db.go:506). The alias
+    // map lets the TS instrumentation match the single-dash form.
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { schema: Option.some(["public"]) },
+        aliases: { s: "schema" },
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["db", "lint", "-s", "public"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          // Slice flag stays redacted (not an EnumFlag/bool), but it IS recorded.
+          expect(event?.properties.flags).toEqual({ schema: "<redacted>" });
+        }),
+      ),
+    );
+  });
+
   it.live("passes boolean flag values through verbatim", () => {
     const analytics = mockContextualAnalytics();
 

@@ -52,6 +52,10 @@ export const legacyDbLintCommand = Command.make("lint", config).pipe(
         // Go records utils.EnumFlag values verbatim (cmd/root_analytics.go:88-116).
         // --schema stays redacted: it's a []string slice flag in Go, not an EnumFlag.
         safeFlags: ["level", "fail-on"],
+        // Go's changedFlags() uses pflag Visit, which reports the canonical
+        // `schema` name even for the `-s` shorthand (cmd/db.go:506); map it so
+        // `db lint -s public` records the schema flag in telemetry.
+        aliases: { s: "schema" },
       }),
       withJsonErrorHandling,
     ),
