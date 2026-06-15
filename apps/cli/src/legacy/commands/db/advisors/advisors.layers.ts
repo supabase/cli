@@ -48,6 +48,7 @@ const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
   Layer.provide(credentials),
   Layer.provide(cliConfig),
   Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(legacyIdentityStitchLayer),
 );
 
 const projectRef = legacyProjectRefLayer.pipe(
@@ -59,12 +60,14 @@ const linkedProjectCache = legacyLinkedProjectCacheLayer.pipe(
   Layer.provide(credentials),
   Layer.provide(cliConfig),
   Layer.provide(httpClient),
+  Layer.provide(legacyIdentityStitchLayer),
 );
 
 const dbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(legacyIdentityStitchLayer),
 );
 
 export const legacyDbAdvisorsRuntimeLayer = Layer.mergeAll(
@@ -75,8 +78,13 @@ export const legacyDbAdvisorsRuntimeLayer = Layer.mergeAll(
   credentials,
   projectRef,
   linkedProjectCache,
-  // Identity stitching for the raw-HTTP advisor GETs (Go's identityTransport).
-  // Its Analytics / TelemetryRuntime / FileSystem / Path deps are ambient (root runtime).
+  // The one per-command identity stitcher (Go's single root-context `sync.Once`),
+  // exposed at top level so the raw-HTTP advisor GETs can yield it. The SAME
+  // reference is provided to platformApiFactory / linkedProjectCache / dbConfig
+  // above, so memoisation makes the typed temp-role mint, the advisor GETs, the
+  // cache GET, and the linked DB-config stack all share one `stitchAttempted`
+  // guard — aliasing/persisting at most once. Its Analytics / TelemetryRuntime /
+  // FileSystem / Path deps are ambient (root runtime).
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["db", "advisors"]),

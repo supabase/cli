@@ -8,6 +8,7 @@ import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { LegacyDebugLogger } from "../../shared/legacy-debug-logger.service.ts";
+import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
 import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-project-cache.layer.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
@@ -39,6 +40,9 @@ export const legacyServicesRuntimeLayer = (() => {
       Layer.provide(credentials),
       Layer.provide(cliConfig),
       Layer.provide(httpClient),
+      // The cache GET stitches session identity via the one per-command
+      // `LegacyIdentityStitch` (Go's single root-context `sync.Once`).
+      Layer.provide(legacyIdentityStitchLayer),
     ),
     legacyTelemetryStateLayer,
     commandRuntimeLayer(["services"]),

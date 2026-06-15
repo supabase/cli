@@ -21,6 +21,7 @@ import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
+import { LegacyIdentityStitch } from "./legacy-identity-stitch.ts";
 import { LegacyDbConnection, type LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 import type { LegacyManagementApiRuntimeError } from "./legacy-management-api-runtime.layer.ts";
 import { legacyDebugLoggerLayer } from "./legacy-debug-logger.layer.ts";
@@ -153,6 +154,11 @@ export const legacyDbConfigLayer = Layer.effect(
       Layer.succeed(TelemetryRuntime, yield* TelemetryRuntime),
       Layer.succeed(Tty, yield* Tty),
       Layer.succeed(Output, output),
+      // Snapshot the one per-command identity stitcher so the lazily-built linked
+      // platform-API factory shares the SAME `stitchAttempted` guard as the typed
+      // client / advisor GETs / cache (Go's single root-context `sync.Once`).
+      // Provided to `legacyDbConfigLayer` by each command runtime (lint/advisors).
+      Layer.succeed(LegacyIdentityStitch, yield* LegacyIdentityStitch),
       BunServices.layer,
     );
     // Compile-time guard: if `lazyLinkedManagementStack`'s requirements ever grow

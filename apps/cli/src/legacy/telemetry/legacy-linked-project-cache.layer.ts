@@ -4,7 +4,7 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { LegacyCredentials } from "../auth/legacy-credentials.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
-import { makeLegacyIdentityStitcher } from "../shared/legacy-identity-stitch.ts";
+import { LegacyIdentityStitch } from "../shared/legacy-identity-stitch.ts";
 import { legacyTempPaths } from "../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "./legacy-linked-project-cache.service.ts";
 
@@ -44,8 +44,11 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
     // `GetSupabase()`'s identityTransport (`cmd/root.go:226`, `api.go:128-134`),
     // so the X-Gotrue-Id on that response stitches the session identity. For a
     // password-only `db lint`/`db advisors --linked` run this cache GET can be the
-    // ONLY Management API response, so it must stitch too.
-    const stitch = yield* makeLegacyIdentityStitcher;
+    // ONLY Management API response, so it must stitch too. Consume the single
+    // per-command stitcher service (shared with the typed client + advisor GETs)
+    // so the alias + persist fire at most once per command, matching Go's one
+    // root-context `sync.Once`.
+    const { stitch } = yield* LegacyIdentityStitch;
 
     return LegacyLinkedProjectCache.of({
       cache: (ref: string, workdir?: string) =>

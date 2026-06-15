@@ -13,6 +13,7 @@ import {
   mockLegacyCredentialsLayer,
   mockLegacyPlatformApi,
 } from "../../../tests/helpers/legacy-mocks.ts";
+import { legacyIdentityStitchLayer } from "../shared/legacy-identity-stitch.ts";
 import { legacyLinkedProjectCacheLayer } from "./legacy-linked-project-cache.layer.ts";
 import { LegacyLinkedProjectCache } from "./legacy-linked-project-cache.service.ts";
 
@@ -45,10 +46,10 @@ describe("legacyLinkedProjectCacheLayer", () => {
             ),
           ),
       });
-      const layer = legacyLinkedProjectCacheLayer.pipe(
-        Layer.provide(api.httpClientLayer),
-        Layer.provide(mockLegacyCliConfig({ workdir })),
-        Layer.provide(mockLegacyCredentialsLayer),
+      // The cache GET stitches identity via the single `LegacyIdentityStitch`
+      // service; build it from this test's Analytics / TelemetryRuntime fakes so
+      // the alias assertion below exercises the real stitch path.
+      const identityStitch = legacyIdentityStitchLayer.pipe(
         Layer.provide(analytics.layer),
         Layer.provide(
           mockTelemetryRuntime({
@@ -60,6 +61,13 @@ describe("legacyLinkedProjectCacheLayer", () => {
             isTty: true,
           }),
         ),
+        Layer.provide(BunServices.layer),
+      );
+      const layer = legacyLinkedProjectCacheLayer.pipe(
+        Layer.provide(api.httpClientLayer),
+        Layer.provide(mockLegacyCliConfig({ workdir })),
+        Layer.provide(mockLegacyCredentialsLayer),
+        Layer.provide(identityStitch),
         Layer.provide(BunServices.layer),
       );
       return Effect.gen(function* () {

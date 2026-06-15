@@ -13,6 +13,7 @@ import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
 import { LegacyProjectRefResolver } from "../config/legacy-project-ref.service.ts";
 import { legacyProjectRefLayer } from "../config/legacy-project-ref.layer.ts";
 import { legacyDebugLoggerLayer } from "./legacy-debug-logger.layer.ts";
+import { legacyIdentityStitchLayer } from "./legacy-identity-stitch.ts";
 import { LegacyLinkedProjectCache } from "../telemetry/legacy-linked-project-cache.service.ts";
 import { legacyLinkedProjectCacheLayer } from "../telemetry/legacy-linked-project-cache.layer.ts";
 import { LegacyTelemetryState } from "../telemetry/legacy-telemetry-state.service.ts";
@@ -60,11 +61,16 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
   );
   // `legacyPlatformApiLayer` applies typed API debug logging after generated
   // requests have been prefixed with the active profile's API URL.
+  // `legacyIdentityStitchLayer` is the one per-command identity stitcher; the
+  // SAME reference is provided to the cache below so (by layer memoisation) the
+  // typed client and the cache GET share a single `stitchAttempted` guard — Go's
+  // one root-context `sync.Once`, not one per transport.
   const platformApiStack = legacyPlatformApiLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliConfig),
     Layer.provide(FetchHttpClient.layer),
     Layer.provide(legacyDebugLoggerLayer),
+    Layer.provide(legacyIdentityStitchLayer),
   );
   const platformApiFactory = legacyPlatformApiFactoryFromApiLayer.pipe(
     Layer.provide(platformApiStack),
@@ -80,6 +86,7 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
       Layer.provide(credentials),
       Layer.provide(cliConfig),
       Layer.provide(httpClient),
+      Layer.provide(legacyIdentityStitchLayer),
     ),
     legacyTelemetryStateLayer,
     commandRuntimeLayer([...subcommand]),

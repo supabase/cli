@@ -9,6 +9,7 @@ import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
+import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
 import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 
@@ -32,6 +33,12 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * `legacyCliConfigLayer` is provided to each consumer that needs it (item 5:
  * `Layer.provide` does not share to merge siblings); layers are memoised by
  * reference so the config / credentials / HTTP instances are reused.
+ *
+ * `legacyIdentityStitchLayer` (the one per-command identity stitcher) is provided
+ * by the SAME reference to the platform-API factory, the linked-project cache, and
+ * the db-config resolver, so memoisation gives all three a single `stitchAttempted`
+ * guard — Go's one root-context `sync.Once`. The db-config resolver snapshots that
+ * instance into its lazy linked stack's ambient layer.
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
@@ -44,6 +51,7 @@ const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
   Layer.provide(credentials),
   Layer.provide(cliConfig),
   Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(legacyIdentityStitchLayer),
 );
 
 const projectRef = legacyProjectRefLayer.pipe(
@@ -55,12 +63,14 @@ const linkedProjectCache = legacyLinkedProjectCacheLayer.pipe(
   Layer.provide(credentials),
   Layer.provide(cliConfig),
   Layer.provide(httpClient),
+  Layer.provide(legacyIdentityStitchLayer),
 );
 
 const dbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(legacyIdentityStitchLayer),
 );
 
 export const legacyDbLintRuntimeLayer = Layer.mergeAll(

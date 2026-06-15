@@ -20,6 +20,7 @@ import {
   LegacyWorkdirFlag,
 } from "../../shared/legacy/global-flags.ts";
 import { LegacyDebugLogger } from "./legacy-debug-logger.service.ts";
+import { legacyIdentityStitchLayer } from "./legacy-identity-stitch.ts";
 import { legacyDbConfigLayer } from "./legacy-db-config.layer.ts";
 import { LegacyDbConfigResolver } from "./legacy-db-config.service.ts";
 import type { LegacyDbConfigFlags } from "./legacy-db-config.types.ts";
@@ -52,6 +53,13 @@ function buildResolver(workdir: string) {
     Layer.succeed(LegacyWorkdirFlag, Option.some(workdir)),
     Layer.succeed(LegacyOutputFlag, Option.none()),
     Layer.succeed(LegacyDebugFlag, false),
+    // The resolver snapshots the one `LegacyIdentityStitch` for its lazy linked
+    // stack; `--local`/`--db-url` never force it, but the layer reads it at build.
+    legacyIdentityStitchLayer.pipe(
+      Layer.provide(mockAnalytics().layer),
+      Layer.provide(mockTelemetryRuntime()),
+      Layer.provide(BunServices.layer),
+    ),
     BunServices.layer,
   );
   return legacyDbConfigLayer.pipe(Layer.provide(deps));

@@ -5,7 +5,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
-import { makeLegacyIdentityStitcher } from "../shared/legacy-identity-stitch.ts";
+import { LegacyIdentityStitch } from "../shared/legacy-identity-stitch.ts";
 import { validateLegacyAccessToken } from "./legacy-access-token.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import { LegacyPlatformAuthRequiredError } from "./legacy-errors.ts";
@@ -19,8 +19,11 @@ export const legacyMakePlatformApi = Effect.gen(function* () {
   const credentials = yield* LegacyCredentials;
   const debugLogger = yield* LegacyDebugLogger;
   // Go wraps every Management API response in identityTransport for session
-  // identity stitching; build the shared stitcher once for this client's transport.
-  const stitchIdentityFromResponse = yield* makeLegacyIdentityStitcher;
+  // identity stitching. Consume the single per-command stitcher service rather
+  // than building one here, so the typed client shares the one `stitchAttempted`
+  // guard with the raw advisor GETs and the linked-project cache (Go's single
+  // root-context `sync.Once`); otherwise each transport would re-alias/re-persist.
+  const { stitch: stitchIdentityFromResponse } = yield* LegacyIdentityStitch;
 
   const transformClient = (client: HttpClient.HttpClient) => {
     const debugClient = HttpClient.mapRequestEffect(client, (request) =>

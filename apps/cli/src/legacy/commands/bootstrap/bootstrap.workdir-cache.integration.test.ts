@@ -34,6 +34,7 @@ import {
 } from "../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
+import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-project-cache.layer.ts";
 import { LegacyTemplateService } from "./bootstrap.templates.ts";
@@ -128,11 +129,16 @@ describe("legacy bootstrap linked-project cache location", () => {
         Layer.provide(configLayer),
         Layer.provide(credentials.layer),
         Layer.provide(api.httpClientLayer),
-        // The cache GET now stitches identity from X-Gotrue-Id (Go's
-        // identityTransport); provide its Analytics/TelemetryRuntime deps. Consent
-        // "denied" makes the stitch a no-op so this workdir-caching test is unchanged.
-        Layer.provide(mockAnalytics().layer),
-        Layer.provide(mockTelemetryRuntime({ consent: "denied" })),
+        // The cache GET stitches identity from X-Gotrue-Id (Go's identityTransport)
+        // via the single `LegacyIdentityStitch` service. Consent "denied" makes the
+        // stitch a no-op so this workdir-caching test's assertions are unchanged.
+        Layer.provide(
+          legacyIdentityStitchLayer.pipe(
+            Layer.provide(mockAnalytics().layer),
+            Layer.provide(mockTelemetryRuntime({ consent: "denied" })),
+            Layer.provide(BunServices.layer),
+          ),
+        ),
         Layer.provide(BunServices.layer),
       );
 

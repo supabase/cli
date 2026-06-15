@@ -11,9 +11,17 @@ import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
  *
  * In Go the transport wraps EVERY Management API response, so the first response
  * of a session that carries `X-Gotrue-Id` aliases the device id to the gotrue id
- * and persists `distinct_id` to `telemetry.json`. Both the typed
- * `LegacyPlatformApi` client and the raw-HTTP advisor path must run this, or a
- * command whose first API call is `db advisors --linked` silently skips it.
+ * and persists `distinct_id` to `telemetry.json`. Crucially Go installs ONE
+ * `sync.Once` in the root command context (`cmd/root.go:145-154`) shared across
+ * every transport, so the alias + persist happen at most once per command no
+ * matter how many Management API responses (typed client, raw advisor GETs,
+ * linked-project cache) flow through it.
+ *
+ * The TS port models that single guard with the {@link LegacyIdentityStitch}
+ * service: it owns the one `stitchAttempted` flag and every transport consumes
+ * the same service instance, so a command that touches several transports (e.g.
+ * `db advisors --linked` mints a temp role via the typed client AND issues raw
+ * advisor GETs) aliases/persists exactly once, matching Go.
  */
 
 const HEADER_GOTRUE_ID = "x-gotrue-id";
@@ -68,8 +76,13 @@ function isEphemeralIdentityRuntime(runtime: {
  * API response's `X-Gotrue-Id` header and, when the session still needs stitching,
  * aliases + persists `distinct_id` at most once. Never fails (telemetry is
  * best-effort, matching the typed client's `Effect.exit` swallow).
+ *
+ * Internal: this is the implementation behind {@link legacyIdentityStitchLayer}.
+ * Transports must NOT build their own stitcher (each would get a separate
+ * `stitchAttempted` flag and re-alias/re-persist); they consume the single
+ * {@link LegacyIdentityStitch} service instead.
  */
-export const makeLegacyIdentityStitcher: Effect.Effect<
+const makeLegacyIdentityStitcher: Effect.Effect<
   (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<void>,
   never,
   Analytics | TelemetryRuntime | FileSystem.FileSystem | Path.Path
@@ -135,10 +148,13 @@ interface LegacyIdentityStitchShape {
 }
 
 /**
- * Service wrapper over {@link makeLegacyIdentityStitcher} for the raw-HTTP advisor
- * path, which builds its own `HttpClient` rather than the typed `LegacyPlatformApi`
- * (so it can't reuse that client's transport-level stitch). Lets the advisors
- * runtime provide one shared stitcher and lets tests mock it directly.
+ * The single per-command identity stitcher (Go's one root-context `sync.Once`).
+ * Every Management API transport in a command — the typed `LegacyPlatformApi`
+ * client, the raw-HTTP advisor GETs, and the linked-project cache GET — consumes
+ * THIS one service so they share a single `stitchAttempted` flag and alias/persist
+ * at most once. Provided once per command runtime via {@link legacyIdentityStitchLayer}
+ * (memoised by reference, so all consumers in a runtime get the same instance);
+ * tests can mock it directly.
  */
 export class LegacyIdentityStitch extends Context.Service<
   LegacyIdentityStitch,
