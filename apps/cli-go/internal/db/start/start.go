@@ -398,19 +398,6 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 	return err
 }
 
-// RevokeDefaultDataApiPrivilegesSql matches the SQL that Studio runs at cloud project creation
-// when the "Default privileges for new entities" toggle is off. It removes the default GRANTs
-// applied by the initial schema so newly-created entities in `public` owned by `postgres` are
-// not exposed through the Data API roles until explicit GRANTs are issued.
-const RevokeDefaultDataApiPrivilegesSql = `
-alter default privileges for role postgres in schema public
-  revoke select, insert, update, delete on tables from anon, authenticated, service_role;
-alter default privileges for role postgres in schema public
-  revoke usage, select on sequences from anon, authenticated, service_role;
-alter default privileges for role postgres in schema public
-  revoke execute on functions from anon, authenticated, service_role;
-`
-
 // ApplyApiPrivileges adjusts the default privileges on the `public` schema to match the
 // `[api].auto_expose_new_tables` flag in config.toml. The flag is tri-state to give users a
 // safe migration window:
@@ -427,9 +414,5 @@ func ApplyApiPrivileges(ctx context.Context, conn *pgx.Conn) error {
 	if utils.Config.Api.AutoExposeNewTables != nil && *utils.Config.Api.AutoExposeNewTables {
 		return nil
 	}
-	file, err := migration.NewMigrationFromReader(strings.NewReader(RevokeDefaultDataApiPrivilegesSql))
-	if err != nil {
-		return err
-	}
-	return file.ExecBatch(ctx, conn)
+	return migration.RevokeDefaultDataApiPrivileges(ctx, conn)
 }
