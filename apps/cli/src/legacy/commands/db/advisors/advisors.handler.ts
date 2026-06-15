@@ -125,49 +125,48 @@ const runLinked = Effect.fnUntraced(function* (
   // fires at most once per session, matching Go's NeedsIdentityStitch gate.
   const { stitch } = yield* LegacyIdentityStitch;
 
-  // Go's root PersistentPreRunE resolves the linked DB config for EVERY db
-  // subcommand — including advisors — via `flags.ParseDatabaseConfig` (`cmd/root.go:118`,
-  // `internal/utils/flags/db_url.go:87-97`), BEFORE the advisors PreRunE/RunE. On
-  // `--linked` that does a TCP probe of the direct DB host, mints a temporary login
-  // role ("Initialising login role..."), or falls back to the pooler / fails with the
-  // "IPv6 is not supported" error. `RunLinked` then ignores the resolved config and
-  // only calls the Management API (`advisors.go:79-100`), so we resolve-and-discard
-  // here purely to reproduce those side effects and the early-failure ordering.
-  yield* resolver.resolve({ dbUrl: Option.none(), linked: true, local: false, dnsResolver });
-
-  // PreRunE: Go calls `utils.LoadAccessTokenFS` (`cmd/db.go:358`), which VALIDATES
-  // the token (env/keyring/file) against the `sbp_` pattern and fails with
-  // `ErrInvalidToken` before resolving the project ref or calling the API
-  // (`internal/utils/access_token.go:24-33`). `LegacyCredentials.getAccessToken`
-  // is the validating equivalent (the raw-HTTP `resolveLegacyAccessToken` skips
-  // validation and is the wrong gate here): map a malformed token to the
-  // invalid-token error and an absent token to the missing-token error.
-  const tokenOpt = yield* credentials.getAccessToken.pipe(
-    Effect.catchTag("LegacyInvalidAccessTokenError", (cause) =>
-      Effect.fail(
-        new LegacyDbAdvisorsInvalidTokenError({
-          message: cause.message,
-          suggestion: loginSuggestion(),
-        }),
-      ),
-    ),
-  );
-  if (Option.isNone(tokenOpt)) {
-    return yield* Effect.fail(
-      new LegacyDbAdvisorsNotLoggedInError({
-        message: missingTokenMessage(),
-        suggestion: loginSuggestion(),
-      }),
-    );
-  }
-  // Go's advisors PreRunE uses `flags.LoadProjectRef` (`cmd/db.go:362`), which
-  // fails fast with ErrNotLinked and never prompts — not the prompting
-  // `ParseProjectRef`. Use the non-prompting load so `--linked` with a token but
-  // no linked-project file fails fast instead of opening a project picker.
+  // Go's `ParseDatabaseConfig` linked branch loads the project ref
+  // (`internal/utils/flags/db_url.go:88`) BEFORE the host probe (`:95`), and
+  // `Execute` runs `ensureProjectGroupsCached` after the command — INCLUDING the
+  // error path (`cmd/root.go:176`, before the `err != nil` panic at `:185`) — so
+  // the linked-project cache is written whenever `flags.ProjectRef` was set, even
+  // when the DB-config resolve below fails (e.g. the IPv6 error). Load the ref
+  // first (non-prompting `LoadProjectRef`; ErrNotLinked → empty ref → nothing to
+  // cache, matching Go) and wrap everything after it in the cache finalizer.
   const ref = yield* projectRefResolver.loadProjectRef(Option.none());
 
-  // Write the linked-project cache on success and failure (Go PersistentPostRun).
   return yield* Effect.gen(function* () {
+    // Root PersistentPreRunE's `ParseDatabaseConfig` host probe / login-role mint
+    // ("Initialising login role...") / pooler / IPv6 fallback. `RunLinked` ignores
+    // the resolved config (`advisors.go:79-100`), so resolve-and-discard — purely
+    // for the side effects and early-failure ordering (before the token gate,
+    // matching root PersistentPreRunE → advisors PreRunE).
+    yield* resolver.resolve({ dbUrl: Option.none(), linked: true, local: false, dnsResolver });
+
+    // PreRunE: Go calls `utils.LoadAccessTokenFS` (`cmd/db.go:358`), which VALIDATES
+    // the token (env/keyring/file) against the `sbp_` pattern and fails with
+    // `ErrInvalidToken` before calling the API (`internal/utils/access_token.go:24-33`).
+    // `LegacyCredentials.getAccessToken` is the validating equivalent: map a
+    // malformed token to the invalid-token error and an absent token to missing.
+    const tokenOpt = yield* credentials.getAccessToken.pipe(
+      Effect.catchTag("LegacyInvalidAccessTokenError", (cause) =>
+        Effect.fail(
+          new LegacyDbAdvisorsInvalidTokenError({
+            message: cause.message,
+            suggestion: loginSuggestion(),
+          }),
+        ),
+      ),
+    );
+    if (Option.isNone(tokenOpt)) {
+      return yield* Effect.fail(
+        new LegacyDbAdvisorsNotLoggedInError({
+          message: missingTokenMessage(),
+          suggestion: loginSuggestion(),
+        }),
+      );
+    }
+
     const lints: Array<LegacyAdvisorLint> = [];
     if (advisorType === "all" || advisorType === "security") {
       lints.push(...(yield* legacyFetchSecurityAdvisors(ref, stitch)));
