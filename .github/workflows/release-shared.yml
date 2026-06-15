@@ -54,8 +54,8 @@ on:
       ANTHROPIC_API_KEY:
         required: false
 jobs:
-  build:
-    name: Build CLI artifacts
+  build-blacksmith:
+    name: Build CLI artifacts (Blacksmith)
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
       version: ${{ inputs.version }}
@@ -65,8 +65,22 @@ jobs:
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
       POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
 
+  build-github:
+    name: Build CLI artifacts (GitHub hosted)
+    uses: ./.github/workflows/build-cli-artifacts.yml
+    with:
+      version: ${{ inputs.version }}
+      shell: ${{ inputs.shell }}
+      runner: ubuntu-latest
+    secrets:
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
+
   smoke-test:
-    needs: build
+    needs:
+      - build-blacksmith
+      - build-github
     strategy:
       fail-fast: false
       matrix:

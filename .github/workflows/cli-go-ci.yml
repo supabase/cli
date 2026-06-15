@@ -54,7 +54,7 @@ jobs:
     name: Coverage
     needs:
       - test
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - name: Restore coverage cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
