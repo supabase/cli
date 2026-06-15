@@ -73,6 +73,7 @@ jobs:
       version: ${{ inputs.version }}
       shell: ${{ inputs.shell }}
       runner: ubuntu-latest
+      cache_key_suffix: -github
     secrets:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
@@ -231,7 +232,7 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 

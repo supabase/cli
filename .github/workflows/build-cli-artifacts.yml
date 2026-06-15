@@ -21,6 +21,11 @@ on:
         required: false
         type: string
         default: blacksmith-32vcpu-ubuntu-2404
+      cache_key_suffix:
+        description: Suffix to distinguish build artifact cache producers
+        required: false
+        type: string
+        default: ""
     secrets:
       SENTRY_DSN:
         required: false
@@ -91,7 +96,7 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}${{ inputs.cache_key_suffix }}-v1
           enableCrossOsArchive: true
           lookup-only: true
 
@@ -102,5 +107,5 @@ jobs:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}${{ inputs.cache_key_suffix }}-v1
           enableCrossOsArchive: true
