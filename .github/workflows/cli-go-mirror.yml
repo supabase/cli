@@ -15,8 +15,6 @@ on:
   #
   # TODO: Make the cli start test run *after* we mirror images (if needed).
   workflow_dispatch:
-    paths:
-      - apps/cli-go/**
 permissions:
   contents: read
 

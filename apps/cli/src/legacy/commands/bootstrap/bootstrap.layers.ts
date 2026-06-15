@@ -2,6 +2,7 @@ import { Layer } from "effect";
 
 import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
 import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
+import { legacyPlatformApiFactoryFromApiLayer } from "../../auth/legacy-platform-api-factory.layer.ts";
 import { legacyPlatformApiLayer } from "../../auth/legacy-platform-api.layer.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyProjectRefLayer } from "../../config/legacy-project-ref.layer.ts";
@@ -42,13 +43,15 @@ const platformApi = legacyPlatformApiLayer.pipe(
   Layer.provide(httpClient),
   Layer.provide(debugLogger),
 );
+const platformApiFactory = legacyPlatformApiFactoryFromApiLayer.pipe(Layer.provide(platformApi));
 
 export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
   platformApi,
+  platformApiFactory,
   httpClient,
   credentials,
   cliConfig,
-  legacyProjectRefLayer.pipe(Layer.provide(platformApi), Layer.provide(cliConfig)),
+  legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
   legacyLinkedProjectCacheLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliConfig),

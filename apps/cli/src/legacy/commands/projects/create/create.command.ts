@@ -69,6 +69,10 @@ const config = {
     Flag.withDescription("Select a desired instance size for your project."),
     Flag.optional,
   ),
+  highAvailability: Flag.boolean("high-availability").pipe(
+    Flag.withDescription("Enable high availability for the project."),
+    Flag.optional,
+  ),
   interactive: Flag.boolean("interactive").pipe(
     Flag.withDescription("Enables interactive mode."),
     Flag.withAlias("i"),
@@ -95,7 +99,7 @@ export const legacyProjectsCreateCommand = Command.make("create", config).pipe(
   ]),
   Command.withHandler((flags) =>
     legacyProjectsCreate(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["org-id"] }),
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["org-id", "high-availability"] }),
       withJsonErrorHandling,
     ),
   ),

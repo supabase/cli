@@ -52,5 +52,5 @@ Not applicable.
 - Optional positional argument sets the migration name (defaults to `remote_schema`).
 - `--schema` / `-s` restricts pull to specific schemas.
 - `--db-url`, `--linked` (default true), and `--local` are mutually exclusive.
-- `--use-pg-delta` activates declarative pull output through pg-delta.
-- `--diff-engine migra|pg-delta` selects the diff engine for migration-style pull; mutually exclusive with `--use-pg-delta`.
+- `--declarative` activates declarative pull output through pg-delta (writes `./database` files instead of a migration). `--use-pg-delta` is a deprecated alias.
+- `--diff-engine migra|pg-delta` selects the diff engine for migration-style pull; mutually exclusive with `--declarative` / `--use-pg-delta`. When the flag is omitted, the engine defaults to pg-delta if `[experimental.pgdelta] enabled = true` in `config.toml` (or `EXPERIMENTAL_PG_DELTA`), otherwise migra. An explicit `--diff-engine migra` always forces migra. Enabling pg-delta in config does not switch `db pull` to declarative output.

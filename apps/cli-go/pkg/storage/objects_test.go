@@ -1,14 +1,20 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"mime"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	fs "testing/fstest"
 
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/fetcher"
 )
 
@@ -89,4 +95,84 @@ func TestParseFileOptionsContentTypeDetection(t *testing.T) {
 			assert.Empty(t, gock.GetUnmatchedRequests())
 		})
 	}
+}
+
+func TestUpsertObjects(t *testing.T) {
+	t.Run("uploads regular files", func(t *testing.T) {
+		defer gock.OffAll()
+		gock.New("http://127.0.0.1").
+			Post("/storage/v1/object/uploads/pizza.jpg").
+			Reply(http.StatusOK)
+		fsys := fs.MapFS{
+			"seeds/pizza.jpg": &fs.MapFile{Data: []byte("image")},
+		}
+		err := mockApi.UpsertObjects(context.Background(), config.BucketConfig{
+			"uploads": {ObjectsPath: "seeds"},
+		}, fsys)
+		assert.NoError(t, err)
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
+	})
+
+	t.Run("uploads symlinked files", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		fixturesDir := filepath.Join(tmpDir, "fixtures")
+		seedsDir := filepath.Join(tmpDir, "seeds")
+		require.NoError(t, os.MkdirAll(fixturesDir, 0o755))
+		require.NoError(t, os.MkdirAll(seedsDir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(fixturesDir, "pizza.jpg"), []byte("image"), 0o600))
+		require.NoError(t, os.Symlink(filepath.Join(fixturesDir, "pizza.jpg"), filepath.Join(seedsDir, "pizza.jpg")))
+
+		defer gock.OffAll()
+		gock.New("http://127.0.0.1").
+			Post("/storage/v1/object/uploads/pizza.jpg").
+			Reply(http.StatusOK)
+		err := mockApi.UpsertObjects(context.Background(), config.BucketConfig{
+			"uploads": {ObjectsPath: "seeds"},
+		}, os.DirFS(tmpDir))
+		assert.NoError(t, err)
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
+	})
+
+	t.Run("skips broken symlinks with warning", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		seedsDir := filepath.Join(tmpDir, "seeds")
+		require.NoError(t, os.MkdirAll(seedsDir, 0o755))
+		require.NoError(t, os.Symlink(filepath.Join(tmpDir, "missing.jpg"), filepath.Join(seedsDir, "pizza.jpg")))
+
+		stderr := captureStderr(t, func() {
+			err := mockApi.UpsertObjects(context.Background(), config.BucketConfig{
+				"uploads": {ObjectsPath: "seeds"},
+			}, os.DirFS(tmpDir))
+			assert.NoError(t, err)
+		})
+		assert.Contains(t, stderr, "Skipping non-regular file:")
+		assert.Contains(t, stderr, "seeds/pizza.jpg")
+	})
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+	original := os.Stderr
+	os.Stderr = writer
+	t.Cleanup(func() {
+		os.Stderr = original
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+	done := make(chan struct{})
+	var buf bytes.Buffer
+	go func() {
+		_, _ = io.Copy(&buf, reader)
+		close(done)
+	}()
+	fn()
+	closeErr := writer.Close()
+	os.Stderr = original
+	<-done
+	require.NoError(t, closeErr)
+	return buf.String()
 }

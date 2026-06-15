@@ -30,6 +30,7 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
     const region = Option.getOrUndefined(flags.region);
     const dbPassword = Option.getOrElse(flags.dbPassword, () => "");
     const size = Option.getOrUndefined(flags.size);
+    const highAvailability = Option.getOrUndefined(flags.highAvailability);
 
     // Non-interactive: Go's PreRunE marks `--org-id`, `--db-password`,
     // `--region` required and the project name positional `ExactArgs(1)`.
@@ -52,6 +53,7 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
       dbPassword,
       region,
       size,
+      highAvailability,
       templateUrl: undefined,
       emitStructuredResult: true,
     });

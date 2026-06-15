@@ -54,6 +54,41 @@ const WORKSPACE_ROOT = new URL("../../../", import.meta.url).pathname.replace(/\
 const BINARY_EXT = osPlatform() === "win32" ? ".exe" : "";
 const TS_CLI_SHIM = join(WORKSPACE_ROOT, "apps/cli/dist/supabase.js");
 
+// E2E subprocesses should only enter agent output mode when a test explicitly
+// opts in via `opts.env`. Keep this list aligned with @vercel/detect-agent env
+// probes so a developer's shell cannot accidentally change CLI rendering.
+const AGENT_DETECTION_ENV_KEYS: readonly string[] = [
+  "AI_AGENT",
+  "CURSOR_TRACE_ID",
+  "CURSOR_AGENT",
+  "CURSOR_EXTENSION_HOST_ROLE",
+  "GEMINI_CLI",
+  "CODEX_SANDBOX",
+  "CODEX_CI",
+  "CODEX_THREAD_ID",
+  "ANTIGRAVITY_AGENT",
+  "AUGMENT_AGENT",
+  "OPENCODE_CLIENT",
+  "CLAUDECODE",
+  "CLAUDE_CODE",
+  "CLAUDE_CODE_IS_COWORK",
+  "REPL_ID",
+  "COPILOT_MODEL",
+  "COPILOT_ALLOW_ALL",
+  "COPILOT_GITHUB_TOKEN",
+];
+
+export function createSubprocessBaseEnv(
+  source: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined) env[key] = value;
+  }
+  for (const key of AGENT_DETECTION_ENV_KEYS) delete env[key];
+  return env;
+}
+
 function tsCliBinary(shell: "next" | "legacy"): string {
   return join(WORKSPACE_ROOT, `apps/cli/dist/supabase-${shell}${BINARY_EXT}`);
 }
@@ -103,7 +138,7 @@ export async function exec(
   const built = buildCommand(harness.target);
 
   const env: Record<string, string> = {
-    ...(process.env as Record<string, string>),
+    ...createSubprocessBaseEnv(),
     SUPABASE_ACCESS_TOKEN: harness.options.accessToken,
     SUPABASE_NO_KEYRING: "true",
     SUPABASE_TELEMETRY_DISABLED: "1",

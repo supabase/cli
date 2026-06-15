@@ -31,6 +31,7 @@ export interface LegacyProjectCreateInput {
   readonly dbPassword: string;
   readonly region: CreateInput["region"];
   readonly size: CreateInput["desired_instance_size"];
+  readonly highAvailability: CreateInput["high_availability"];
   readonly templateUrl: string | undefined;
   /**
    * Standalone `projects create` emits a `--output-format` json/stream-json
@@ -68,6 +69,7 @@ export const legacyProjectCreateCore = Effect.fnUntraced(function* (
   let region: CreateInput["region"] = input.region;
   let dbPassword = input.dbPassword;
   const size = input.size;
+  const highAvailability = input.highAvailability;
 
   // promptMissingParams (`create.go:58-85`): prompt for each empty value and
   // echo the resolved value to stderr in text mode.
@@ -99,6 +101,7 @@ export const legacyProjectCreateCore = Effect.fnUntraced(function* (
     db_pass: dbPassword,
     ...(region !== undefined ? { region } : {}),
     ...(size !== undefined ? { desired_instance_size: size } : {}),
+    ...(highAvailability !== undefined ? { high_availability: highAvailability } : {}),
     ...(input.templateUrl !== undefined ? { template_url: input.templateUrl } : {}),
   };
 

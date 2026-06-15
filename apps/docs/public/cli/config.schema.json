@@ -3475,6 +3475,31 @@
           },
           "additionalProperties": false
         },
+        "pgdelta": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit. Set false to fall back to the legacy migra engine.",
+              "default": false
+            },
+            "declarative_schema_path": {
+              "type": "string",
+              "description": "Directory under supabase/ where declarative schema files are written.",
+              "examples": [
+                "./database"
+              ]
+            },
+            "format_options": {
+              "type": "string",
+              "description": "JSON string passed through to pg-delta SQL formatting.",
+              "examples": [
+                "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
         "inspect": {
           "type": "object",
           "properties": {
@@ -6991,6 +7016,31 @@
                             "type": "boolean",
                             "description": "Enable experimental webhooks.",
                             "default": false
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "pgdelta": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean",
+                            "description": "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit. Set false to fall back to the legacy migra engine.",
+                            "default": false
+                          },
+                          "declarative_schema_path": {
+                            "type": "string",
+                            "description": "Directory under supabase/ where declarative schema files are written.",
+                            "examples": [
+                              "./database"
+                            ]
+                          },
+                          "format_options": {
+                            "type": "string",
+                            "description": "JSON string passed through to pg-delta SQL formatting.",
+                            "examples": [
+                              "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+                            ]
                           }
                         },
                         "additionalProperties": false

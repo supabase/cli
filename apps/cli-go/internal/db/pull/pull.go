@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -48,10 +49,12 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 	}
 	if viper.GetBool("EXPERIMENTAL") {
 		var buf bytes.Buffer
-		if err := migration.DumpRole(ctx, config, &buf, dump.DockerExec); err != nil {
-			return err
-		}
-		if err := migration.DumpSchema(ctx, config, &buf, dump.DockerExec); err != nil {
+		if err := dump.RunWithPoolerFallback(ctx, config, &buf, false, func(ctx context.Context, config pgconn.Config, out io.Writer, exec migration.ExecFunc) error {
+			if err := migration.DumpRole(ctx, config, out, exec); err != nil {
+				return err
+			}
+			return migration.DumpSchema(ctx, config, out, exec)
+		}); err != nil {
 			return err
 		}
 		// TODO: handle managed schemas
@@ -104,7 +107,15 @@ func pullDeclarativePgDelta(ctx context.Context, schema []string, config pgconn.
 	}
 	exported, err := diff.DeclarativeExportPgDelta(ctx, shadowConfig, config, schema, formatOptions, options...)
 	if err != nil {
-		return err
+		// The pg-delta container connects to the remote (target) host; if that
+		// fails over IPv6, retry through the IPv4 pooler like the dump path does.
+		poolerConfig, ok := dump.PoolerFallbackConfig(ctx, config, err)
+		if !ok {
+			return err
+		}
+		if exported, err = diff.DeclarativeExportPgDelta(ctx, shadowConfig, poolerConfig, schema, formatOptions, options...); err != nil {
+			return err
+		}
 	}
 	if err := declarative.WriteDeclarativeSchemas(exported, fsys); err != nil {
 		return err
@@ -151,14 +162,25 @@ func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fs
 		return errors.Errorf("failed to open dump file: %w", err)
 	}
 	defer f.Close()
-	return migration.DumpSchema(ctx, config, f, dump.DockerExec)
+	return dump.RunWithPoolerFallback(ctx, config, f, false, func(ctx context.Context, config pgconn.Config, out io.Writer, exec migration.ExecFunc) error {
+		return migration.DumpSchema(ctx, config, out, exec)
+	})
 }
 
 func diffRemoteSchema(ctx context.Context, schema []string, path string, config pgconn.Config, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
 	result, err := diff.DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDeltaDiff, options...)
 	if err != nil {
-		return err
+		// The diff runs the remote (source) host inside a container; if that
+		// fails over IPv6, retry through the IPv4 pooler like the dump path does
+		// so the whole db pull workflow is self-healing, not just the dump pass.
+		poolerConfig, ok := dump.PoolerFallbackConfig(ctx, config, err)
+		if !ok {
+			return err
+		}
+		if result, err = diff.DiffDatabase(ctx, schema, poolerConfig, os.Stderr, fsys, differ, usePgDeltaDiff, options...); err != nil {
+			return err
+		}
 	}
 	output := result.SQL
 	if trimmed := strings.TrimSpace(output); len(trimmed) == 0 {
