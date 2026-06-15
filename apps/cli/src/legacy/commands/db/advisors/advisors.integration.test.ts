@@ -15,6 +15,7 @@ import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts
 import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
 import { LegacyInvalidAccessTokenError } from "../../../auth/legacy-errors.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyDbConfigIpv6Error } from "../../../shared/legacy-db-config.errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyIdentityStitch } from "../../../shared/legacy-identity-stitch.ts";
 import type {
@@ -63,12 +64,29 @@ function lintRow(over: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function mockResolver() {
+function mockResolver(opts: { ipv6Error?: boolean } = {}) {
+  const resolveFlags: Array<LegacyDbConfigFlags> = [];
   const layer = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (_flags: LegacyDbConfigFlags) =>
-      Effect.succeed({ conn: LOCAL_CONN, isLocal: true } satisfies LegacyResolvedDbConfig),
+    resolve: (flags: LegacyDbConfigFlags) =>
+      Effect.gen(function* () {
+        resolveFlags.push(flags);
+        if (opts.ipv6Error === true) {
+          return yield* Effect.fail(
+            new LegacyDbConfigIpv6Error({
+              message: "IPv6 is not supported on your current network",
+              suggestion: "Run supabase link --project-ref abc to setup IPv4 connection.",
+            }),
+          );
+        }
+        return { conn: LOCAL_CONN, isLocal: !flags.linked } satisfies LegacyResolvedDbConfig;
+      }),
   });
-  return { layer };
+  return {
+    layer,
+    get resolveFlags() {
+      return resolveFlags;
+    },
+  };
 }
 
 function mockConnection(opts: {
@@ -182,6 +200,7 @@ interface SetupOpts {
   queryFails?: boolean;
   loggedIn?: boolean;
   invalidToken?: boolean;
+  ipv6Error?: boolean;
   securityStatus?: number;
   securityLints?: ReadonlyArray<Record<string, unknown>>;
   performanceLints?: ReadonlyArray<Record<string, unknown>>;
@@ -189,7 +208,7 @@ interface SetupOpts {
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const resolver = mockResolver();
+  const resolver = mockResolver({ ipv6Error: opts.ipv6Error });
   const connection = mockConnection({
     rows: opts.rows,
     setupFails: opts.setupFails,
@@ -254,6 +273,7 @@ function setup(opts: SetupOpts = {}) {
     api,
     projectRef,
     identityStitch,
+    resolver,
   };
 }
 
@@ -443,6 +463,36 @@ describe("legacy db advisors — linked", () => {
       expect(out.stdoutText).toContain("unindexed_foreign_keys");
       // Linked runs write the linked-project cache (Go PersistentPostRun).
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "resolves the linked DB config before fetching advisors (Go root PersistentPreRunE)",
+    () => {
+      // Go's root PersistentPreRunE runs ParseDatabaseConfig for db advisors too,
+      // resolving (and on failure aborting) the linked DB config before RunLinked
+      // hits the Management API — even though RunLinked discards the connection.
+      const { layer, resolver, api } = setup({ securityLints: [securityLint] });
+      return Effect.gen(function* () {
+        yield* legacyDbAdvisors(flags({ linked: true, type: Option.some("security") }));
+        expect(resolver.resolveFlags.some((f) => f.linked === true)).toBe(true);
+        // The fetch still ran after a successful resolve.
+        expect(api.requests.some((r) => r.url.includes("/advisors/security"))).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("fails on the linked DB-config error before any advisor API call", () => {
+    // Unreachable direct host + no pooler: Go's ParseDatabaseConfig fails with the
+    // IPv6 error before RunLinked, so the advisors API is never reached.
+    const { layer, api } = setup({ ipv6Error: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbAdvisors(flags({ linked: true })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("IPv6 is not supported");
+      }
+      expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

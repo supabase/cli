@@ -108,8 +108,14 @@ const runLocal = Effect.fnUntraced(function* (
   return filterLegacyAdvisorLints(lints, advisorType, level);
 });
 
-/** Go's advisors PreRunE + `RunLinked` (`cmd/db.go`, `advisors.go:79-100`). */
-const runLinked = Effect.fnUntraced(function* (advisorType: string, level: string) {
+/** Go's root `PersistentPreRunE` (`cmd/root.go:118`) + advisors `PreRunE` +
+ *  `RunLinked` (`cmd/db.go:355-371`, `advisors.go:79-100`). */
+const runLinked = Effect.fnUntraced(function* (
+  dnsResolver: "native" | "https",
+  advisorType: string,
+  level: string,
+) {
+  const resolver = yield* LegacyDbConfigResolver;
   const credentials = yield* LegacyCredentials;
   const projectRefResolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
@@ -118,6 +124,16 @@ const runLinked = Effect.fnUntraced(function* (advisorType: string, level: strin
   // run the same stitch. One stitcher shared across both endpoint calls so it
   // fires at most once per session, matching Go's NeedsIdentityStitch gate.
   const { stitch } = yield* LegacyIdentityStitch;
+
+  // Go's root PersistentPreRunE resolves the linked DB config for EVERY db
+  // subcommand — including advisors — via `flags.ParseDatabaseConfig` (`cmd/root.go:118`,
+  // `internal/utils/flags/db_url.go:87-97`), BEFORE the advisors PreRunE/RunE. On
+  // `--linked` that does a TCP probe of the direct DB host, mints a temporary login
+  // role ("Initialising login role..."), or falls back to the pooler / fails with the
+  // "IPv6 is not supported" error. `RunLinked` then ignores the resolved config and
+  // only calls the Management API (`advisors.go:79-100`), so we resolve-and-discard
+  // here purely to reproduce those side effects and the early-failure ordering.
+  yield* resolver.resolve({ dbUrl: Option.none(), linked: true, local: false, dnsResolver });
 
   // PreRunE: Go calls `utils.LoadAccessTokenFS` (`cmd/db.go:358`), which VALIDATES
   // the token (env/keyring/file) against the `sbp_` pattern and fails with
@@ -224,7 +240,7 @@ const runAdvisors = Effect.fnUntraced(function* (
   // Go branches on whether `--linked` was explicitly set (`cmd/db.go` RunE):
   // linked → Management API; otherwise local / `--db-url`.
   const filtered = flags.linked
-    ? yield* runLinked(advisorType, level)
+    ? yield* runLinked(dnsResolver, advisorType, level)
     : yield* runLocal(flags, dnsResolver, advisorType, level);
 
   yield* outputAndCheck(filtered, failOn);
