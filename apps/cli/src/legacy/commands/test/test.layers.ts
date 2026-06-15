@@ -4,6 +4,7 @@ import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyDbConfigLayer } from "../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
+import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -25,6 +26,9 @@ const dbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
+  // The resolver's lazy `--linked` stack snapshots the one per-command
+  // `LegacyIdentityStitch` (Go's single root-context `sync.Once`).
+  Layer.provide(legacyIdentityStitchLayer),
 );
 
 export const legacyTestDbRuntimeLayer = Layer.mergeAll(
