@@ -1,6 +1,9 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyDbLint } from "./lint.handler.ts";
+import { legacyDbLintRuntimeLayer } from "./lint.layers.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -35,5 +38,20 @@ export type LegacyDbLintFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const legacyDbLintCommand = Command.make("lint", config).pipe(
   Command.withDescription("Checks local database for typing error."),
   Command.withShortDescription("Checks local database for typing error"),
-  Command.withHandler((flags) => legacyDbLint(flags)),
+  Command.withHandler((flags) =>
+    legacyDbLint(flags).pipe(
+      withLegacyCommandInstrumentation({
+        flags: {
+          "db-url": flags.dbUrl,
+          linked: flags.linked,
+          local: flags.local,
+          schema: flags.schema,
+          level: flags.level,
+          "fail-on": flags.failOn,
+        },
+      }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyDbLintRuntimeLayer),
 );

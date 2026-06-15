@@ -1,0 +1,430 @@
+import { describe, expect, it } from "@effect/vitest";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
+
+import { mockOutput, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
+import {
+  LEGACY_VALID_REF,
+  legacyJsonResponse,
+  mockLegacyCliConfig,
+  mockLegacyCredentialsLayer,
+  mockLegacyLinkedProjectCacheTracked,
+  mockLegacyPlatformApi,
+  mockLegacyTelemetryStateTracked,
+} from "../../../../../tests/helpers/legacy-mocks.ts";
+import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import type {
+  LegacyDbConfigFlags,
+  LegacyResolvedDbConfig,
+} from "../../../shared/legacy-db-config.types.ts";
+import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
+import {
+  LegacyDbConnection,
+  type LegacyPgConnInput,
+} from "../../../shared/legacy-db-connection.service.ts";
+import {
+  LegacyDbAdvisorsFailOnError,
+  LegacyDbAdvisorsNotLoggedInError,
+} from "./advisors.errors.ts";
+import { encodeAdvisorLints, scanAdvisorLintRow } from "./advisors.format.ts";
+import { legacyDbAdvisors } from "./advisors.handler.ts";
+import { splitLegacyLintsSql } from "./advisors.lints-sql.ts";
+import type { LegacyDbAdvisorsFlags } from "./advisors.command.ts";
+
+const LOCAL_CONN: LegacyPgConnInput = {
+  host: "127.0.0.1",
+  port: 54322,
+  user: "postgres",
+  password: "postgres",
+  database: "postgres",
+};
+
+const [SETUP_SQL, QUERY_SQL] = splitLegacyLintsSql();
+
+/** A local lint row keyed by the column names the `lints.sql` query aliases. */
+function lintRow(over: Partial<Record<string, unknown>> = {}) {
+  return {
+    name: "rls_disabled_in_public",
+    title: "RLS disabled in public",
+    level: "ERROR",
+    facing: "EXTERNAL",
+    categories: ["SECURITY"],
+    description: "Detects tables without RLS.",
+    detail: "Table public.users has RLS disabled",
+    remediation: "https://supabase.com/docs",
+    metadata: { schema: "public", name: "users", type: "table" },
+    cache_key: "rls_disabled_in_public_public_users",
+    ...over,
+  };
+}
+
+function mockResolver() {
+  const layer = Layer.succeed(LegacyDbConfigResolver, {
+    resolve: (_flags: LegacyDbConfigFlags) =>
+      Effect.succeed({ conn: LOCAL_CONN, isLocal: true } satisfies LegacyResolvedDbConfig),
+  });
+  return { layer };
+}
+
+function mockConnection(opts: {
+  rows?: ReadonlyArray<Record<string, unknown>>;
+  setupFails?: boolean;
+  queryFails?: boolean;
+}) {
+  const execs: Array<string> = [];
+  const layer = Layer.succeed(LegacyDbConnection, {
+    connect: () =>
+      Effect.succeed({
+        extensionExists: () => Effect.succeed(false),
+        copyToCsv: () => Effect.succeed(new Uint8Array()),
+        exec: (sql: string) =>
+          Effect.suspend(() => {
+            execs.push(sql);
+            if (sql === SETUP_SQL && opts.setupFails === true) {
+              return Effect.fail(new LegacyDbExecError({ message: "syntax error at set" }));
+            }
+            return Effect.void;
+          }),
+        query: (sql: string) =>
+          Effect.suspend(() => {
+            if (sql === QUERY_SQL && opts.queryFails === true) {
+              return Effect.fail(new LegacyDbExecError({ message: "syntax error" }));
+            }
+            return Effect.succeed(opts.rows ?? []);
+          }),
+      }),
+  });
+  return {
+    layer,
+    get execs() {
+      return execs;
+    },
+  };
+}
+
+function mockProjectRef() {
+  const layer = Layer.succeed(LegacyProjectRefResolver, {
+    resolve: () => Effect.succeed(LEGACY_VALID_REF),
+    resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
+    promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
+  });
+  return { layer };
+}
+
+interface SetupOpts {
+  format?: "text" | "json" | "stream-json";
+  rows?: ReadonlyArray<Record<string, unknown>>;
+  setupFails?: boolean;
+  queryFails?: boolean;
+  loggedIn?: boolean;
+  securityStatus?: number;
+  securityLints?: ReadonlyArray<Record<string, unknown>>;
+  performanceLints?: ReadonlyArray<Record<string, unknown>>;
+}
+
+function setup(opts: SetupOpts = {}) {
+  const out = mockOutput({ format: opts.format ?? "text" });
+  const resolver = mockResolver();
+  const connection = mockConnection({
+    rows: opts.rows,
+    setupFails: opts.setupFails,
+    queryFails: opts.queryFails,
+  });
+  const telemetry = mockLegacyTelemetryStateTracked();
+  const processControl = mockProcessControl();
+  const projectRef = mockProjectRef();
+  const cache = mockLegacyLinkedProjectCacheTracked();
+
+  const api = mockLegacyPlatformApi({
+    handler: (request) => {
+      const url = request.url;
+      if (url.includes("/advisors/security")) {
+        const status = opts.securityStatus ?? 200;
+        if (status !== 200) {
+          return Effect.succeed(legacyJsonResponse(request, status, { message: "boom" }));
+        }
+        return Effect.succeed(
+          legacyJsonResponse(request, 200, { lints: opts.securityLints ?? [] }),
+        );
+      }
+      if (url.includes("/advisors/performance")) {
+        return Effect.succeed(
+          legacyJsonResponse(request, 200, { lints: opts.performanceLints ?? [] }),
+        );
+      }
+      return Effect.succeed(legacyJsonResponse(request, 404, {}));
+    },
+  });
+
+  const cliConfig = mockLegacyCliConfig({
+    workdir: "/tmp/advisors-int",
+    accessToken: opts.loggedIn === false ? Option.none() : undefined,
+  });
+
+  const layer = Layer.mergeAll(
+    out.layer,
+    resolver.layer,
+    connection.layer,
+    telemetry.layer,
+    processControl.layer,
+    projectRef.layer,
+    cache.layer,
+    cliConfig,
+    mockLegacyCredentialsLayer,
+    api.httpClientLayer,
+    Layer.succeed(LegacyDnsResolverFlag, "native"),
+  );
+  return { layer, out, connection, telemetry, processControl, cache, api };
+}
+
+const flags = (over: Partial<LegacyDbAdvisorsFlags> = {}): LegacyDbAdvisorsFlags => ({
+  dbUrl: over.dbUrl ?? Option.none<string>(),
+  linked: over.linked ?? false,
+  local: over.local ?? false,
+  type: over.type ?? Option.none<"all" | "security" | "performance">(),
+  level: over.level ?? Option.none<"info" | "warn" | "error">(),
+  failOn: over.failOn ?? Option.none<"none" | "info" | "warn" | "error">(),
+});
+
+describe("legacy db advisors — local", () => {
+  it.live("queries the local database and prints the Go pretty JSON array", () => {
+    const { layer, out, connection } = setup({ rows: [lintRow()] });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags());
+      const expected = encodeAdvisorLints([scanAdvisorLintRow(lintRow())]);
+      expect(out.stdoutText).toBe(expected);
+      expect(out.stderrText).toContain("Connecting to local database...");
+      expect(connection.execs).toEqual(["begin", SETUP_SQL, "rollback"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("prints 'No issues found' to stderr and nothing to stdout when empty", () => {
+    const { layer, out } = setup({ rows: [] });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags());
+      expect(out.stdoutText).toBe("");
+      expect(out.stderrText).toContain("No issues found");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("filters by --type security locally", () => {
+    const { layer, out } = setup({
+      rows: [
+        lintRow({ name: "sec", categories: ["SECURITY"] }),
+        lintRow({ name: "perf", categories: ["PERFORMANCE"], level: "INFO" }),
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags({ type: Option.some("security"), level: Option.some("info") }));
+      expect(out.stdoutText).toContain("sec");
+      expect(out.stdoutText).not.toContain('"name": "perf"');
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails with 'failed to prepare lint session' on a setup error", () => {
+    const { layer } = setup({ setupFails: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("failed to prepare lint session");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails with 'failed to query lints' on a query error", () => {
+    const { layer } = setup({ queryFails: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("failed to query lints");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("exits non-zero when --fail-on error and an error-level lint exists", () => {
+    const { layer } = setup({ rows: [lintRow({ level: "ERROR" })] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbAdvisors(flags({ failOn: Option.some("error"), level: Option.some("info") })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        if (Option.isSome(failure)) {
+          expect(failure.value).toBeInstanceOf(LegacyDbAdvisorsFailOnError);
+          expect((failure.value as LegacyDbAdvisorsFailOnError).message).toBe(
+            "fail-on is set to error, non-zero exit",
+          );
+        }
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("echoes the raw --fail-on value in the message (warn, not warning)", () => {
+    // advisors uses the raw flag value (advisors.go:257), unlike lint which uses
+    // the canonical level name — guard that asymmetry.
+    const { layer } = setup({ rows: [lintRow({ level: "WARN" })] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbAdvisors(flags({ failOn: Option.some("warn"), level: Option.some("info") })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        if (Option.isSome(failure)) {
+          expect((failure.value as LegacyDbAdvisorsFailOnError).message).toBe(
+            "fail-on is set to warn, non-zero exit",
+          );
+        }
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --db-url together with --local", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbAdvisors(flags({ dbUrl: Option.some("postgres://x"), local: true })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "if any flags in the group [db-url linked local] are set none of the others can be",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("emits a success envelope in json mode and writes nothing raw to stdout", () => {
+    const { layer, out } = setup({ format: "json", rows: [lintRow()] });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags());
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({ type: "success", message: "db advisors" }),
+      );
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("sets exit code 1 without failing the effect on fail-on in json mode", () => {
+    const { layer, processControl } = setup({
+      format: "json",
+      rows: [lintRow({ level: "ERROR" })],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbAdvisors(flags({ failOn: Option.some("error"), level: Option.some("info") })),
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(processControl.exitCode).toBe(1);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("flushes telemetry on completion", () => {
+    const { layer, telemetry } = setup({ rows: [] });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags());
+      expect(telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("legacy db advisors — linked", () => {
+  const securityLint = {
+    name: "rls_disabled_in_public",
+    title: "RLS disabled",
+    level: "ERROR",
+    facing: "EXTERNAL",
+    categories: ["SECURITY"],
+    cache_key: "sec",
+  };
+  const performanceLint = {
+    name: "unindexed_foreign_keys",
+    title: "Unindexed FK",
+    level: "INFO",
+    facing: "EXTERNAL",
+    categories: ["PERFORMANCE"],
+    cache_key: "perf",
+  };
+
+  it.live("fetches both security and performance advisors for --type all", () => {
+    const { layer, out, api, cache } = setup({
+      securityLints: [securityLint],
+      performanceLints: [performanceLint],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags({ linked: true, level: Option.some("info") }));
+      const urls = api.requests.map((r) => r.url);
+      expect(urls.some((u) => u.includes("/advisors/security"))).toBe(true);
+      expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
+      expect(out.stdoutText).toContain("rls_disabled_in_public");
+      expect(out.stdoutText).toContain("unindexed_foreign_keys");
+      // Linked runs write the linked-project cache (Go PersistentPostRun).
+      expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fetches only the security endpoint for --type security", () => {
+    const { layer, api } = setup({ securityLints: [securityLint] });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags({ linked: true, type: Option.some("security") }));
+      const urls = api.requests.map((r) => r.url);
+      expect(urls.some((u) => u.includes("/advisors/security"))).toBe(true);
+      expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fetches only the performance endpoint for --type performance", () => {
+    const { layer, api } = setup({ performanceLints: [performanceLint] });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags({ linked: true, type: Option.some("performance") }));
+      const urls = api.requests.map((r) => r.url);
+      expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
+      expect(urls.some((u) => u.includes("/advisors/security"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails with a login suggestion when no access token is available", () => {
+    const { layer } = setup({ loggedIn: false });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbAdvisors(flags({ linked: true })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        if (Option.isSome(failure)) {
+          expect(failure.value).toBeInstanceOf(LegacyDbAdvisorsNotLoggedInError);
+          const error = failure.value as LegacyDbAdvisorsNotLoggedInError;
+          expect(error.message).toContain("Access token not provided");
+          expect(error.suggestion).toContain("supabase login");
+        }
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails when the advisors API returns a non-200 status", () => {
+    const { layer } = setup({ securityStatus: 500 });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbAdvisors(flags({ linked: true, type: Option.some("security") })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("unexpected security advisors status 500");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("emits a result event in stream-json mode", () => {
+    const { layer, out } = setup({ format: "stream-json", securityLints: [securityLint] });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags({ linked: true, type: Option.some("security") }));
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({ type: "success", message: "db advisors" }),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+});
