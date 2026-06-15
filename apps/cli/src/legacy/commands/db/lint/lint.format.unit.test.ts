@@ -55,6 +55,30 @@ describe("parseLegacyLintResult", () => {
     expect(() => parseLegacyLintResult(`{"issues":["not-an-object"]}`, "public.f")).toThrow();
   });
 
+  it("throws on issue fields with the wrong JSON type (Go UnmarshalTypeError)", () => {
+    // Go's lint.Issue / lint.Statement / lint.Query string fields reject a
+    // non-string; a present non-object statement/query is also a type error.
+    // The old parser coerced these via String(...).
+    expect(() =>
+      parseLegacyLintResult(`{"issues":[{"level":123,"message":"m"}]}`, "public.f"),
+    ).toThrow();
+    expect(() =>
+      parseLegacyLintResult(`{"issues":[{"level":"warning","message":true}]}`, "public.f"),
+    ).toThrow();
+    expect(() =>
+      parseLegacyLintResult(
+        `{"issues":[{"level":"warning","message":"m","statement":{"lineNumber":6}}]}`,
+        "public.f",
+      ),
+    ).toThrow();
+    expect(() =>
+      parseLegacyLintResult(
+        `{"issues":[{"level":"warning","message":"m","statement":"nope"}]}`,
+        "public.f",
+      ),
+    ).toThrow();
+  });
+
   it("tolerates Go-accepted shapes (null, missing issues, unknown fields)", () => {
     // Go leaves the struct at zero on a top-level null and has no DisallowUnknownFields.
     expect(parseLegacyLintResult("null", "public.f")).toEqual({ function: "public.f", issues: [] });

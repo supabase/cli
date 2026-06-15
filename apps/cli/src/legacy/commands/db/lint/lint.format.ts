@@ -46,19 +46,44 @@ export interface LegacyLintResult {
   readonly issues: ReadonlyArray<LegacyLintIssue>;
 }
 
-const asString = (value: unknown): string =>
-  value === null || value === undefined ? "" : String(value);
+/**
+ * Decodes a JSON value into a Go `string` field of `lint.Issue`/`lint.Statement`/
+ * `lint.Query`. Mirrors `encoding/json`: absent or `null` is the zero value `""`;
+ * a present non-string (number/bool/object/array) is an `UnmarshalTypeError` →
+ * throw (the handler maps it to `LegacyDbLintMalformedJsonError`).
+ */
+function requireLintString(value: unknown, field: string): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value !== "string") {
+    throw new TypeError(`cannot unmarshal lint ${field} into string`);
+  }
+  return value;
+}
 
 function normalizeStatement(value: unknown): LegacyLintStatement | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
+  // Go's `Statement` is a `*Statement`: absent/null → omitted; present non-object
+  // (string/number/array) → UnmarshalTypeError.
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("cannot unmarshal lint statement into lint.Statement");
+  }
   const record = value as Record<string, unknown>;
-  return { lineNumber: asString(record["lineNumber"]), text: asString(record["text"]) };
+  return {
+    lineNumber: requireLintString(record["lineNumber"], "statement.lineNumber"),
+    text: requireLintString(record["text"], "statement.text"),
+  };
 }
 
 function normalizeQuery(value: unknown): LegacyLintQuery | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("cannot unmarshal lint query into lint.Query");
+  }
   const record = value as Record<string, unknown>;
-  return { position: asString(record["position"]), text: asString(record["text"]) };
+  return {
+    position: requireLintString(record["position"], "query.position"),
+    text: requireLintString(record["text"], "query.text"),
+  };
 }
 
 /** Builds an `Issue` in Go struct order, dropping empty `omitempty` fields. */
@@ -76,19 +101,22 @@ function normalizeIssue(value: unknown): LegacyLintIssue {
     detail?: string;
     context?: string;
     sqlState?: string;
-  } = { level: asString(record["level"]), message: asString(record["message"]) };
+  } = {
+    level: requireLintString(record["level"], "level"),
+    message: requireLintString(record["message"], "message"),
+  };
 
   const statement = normalizeStatement(record["statement"]);
   if (statement !== undefined) issue.statement = statement;
   const query = normalizeQuery(record["query"]);
   if (query !== undefined) issue.query = query;
-  const hint = asString(record["hint"]);
+  const hint = requireLintString(record["hint"], "hint");
   if (hint !== "") issue.hint = hint;
-  const detail = asString(record["detail"]);
+  const detail = requireLintString(record["detail"], "detail");
   if (detail !== "") issue.detail = detail;
-  const context = asString(record["context"]);
+  const context = requireLintString(record["context"], "context");
   if (context !== "") issue.context = context;
-  const sqlState = asString(record["sqlState"]);
+  const sqlState = requireLintString(record["sqlState"], "sqlState");
   if (sqlState !== "") issue.sqlState = sqlState;
 
   return issue;
