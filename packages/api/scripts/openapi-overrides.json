@@ -536,21 +536,32 @@
     "op": "replace",
     "path": "/components/schemas/FunctionResponse/properties/import_map_path",
     "value": {
-      "type": ["string", "null"]
+      "type": "string",
+      "nullable": true
     }
   },
   {
     "op": "replace",
     "path": "/components/schemas/BulkUpdateFunctionResponse/properties/functions/items/properties/import_map_path",
     "value": {
-      "type": ["string", "null"]
+      "type": "string",
+      "nullable": true
     }
   },
   {
     "op": "replace",
     "path": "/components/schemas/DeployFunctionResponse/properties/import_map_path",
     "value": {
-      "type": ["string", "null"]
+      "type": "string",
+      "nullable": true
+    }
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/FunctionSlugResponse/properties/import_map_path",
+    "value": {
+      "type": "string",
+      "nullable": true
     }
   }
 ]
