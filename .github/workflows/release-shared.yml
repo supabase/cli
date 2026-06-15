@@ -67,6 +67,7 @@ jobs:
 
   build-github:
     name: Build CLI artifacts (GitHub hosted)
+    if: ${{ !inputs.dry_run }}
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
       version: ${{ inputs.version }}
@@ -80,16 +81,13 @@ jobs:
   smoke-test:
     needs:
       - build-blacksmith
-      - build-github
     strategy:
       fail-fast: false
       matrix:
         runner:
           - blacksmith-8vcpu-ubuntu-2404
           - blacksmith-6vcpu-macos-latest
-          - macos-15-intel
           - blacksmith-8vcpu-windows-2025
-          - windows-11-arm
     runs-on: ${{ matrix.runner }}
     env:
       NPM_TAG: ${{ inputs.npm_tag }}
@@ -191,7 +189,9 @@ jobs:
         working-directory: apps/cli
 
   publish:
-    needs: smoke-test
+    needs:
+      - build-github
+      - smoke-test
     if: ${{ !inputs.dry_run }}
     # npm provenance verification rejects non-GitHub-hosted runners with
     # E422 ("Unsupported GitHub Actions runner environment: self-hosted").
@@ -368,7 +368,7 @@ jobs:
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     env:
       BREW_NAME: ${{ inputs.brew_name }}
       VERSION: ${{ inputs.version }}
@@ -420,7 +420,7 @@ jobs:
   publish-scoop:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     env:
       SCOOP_NAME: ${{ inputs.scoop_name }}
       VERSION: ${{ inputs.version }}
