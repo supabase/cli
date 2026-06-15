@@ -67,7 +67,6 @@ jobs:
 
   build-github:
     name: Build CLI artifacts (GitHub hosted)
-    if: ${{ !inputs.dry_run }}
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
       version: ${{ inputs.version }}
@@ -87,7 +86,6 @@ jobs:
       matrix:
         runner:
           - blacksmith-8vcpu-ubuntu-2404
-          - blacksmith-6vcpu-macos-latest
           - blacksmith-8vcpu-windows-2025
     runs-on: ${{ matrix.runner }}
     env:
@@ -189,10 +187,45 @@ jobs:
         run: pnpm run test:smoke -- --version "${VERSION}" --tag "${NPM_TAG}"
         working-directory: apps/cli
 
+  smoke-test-macos:
+    needs:
+      - build-github
+    runs-on: macos-latest
+    env:
+      NPM_TAG: ${{ inputs.npm_tag }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Restore build artifacts cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+
+      - name: Fix binary permissions
+        run: chmod +x packages/cli-*/bin/supabase || true
+
+      - name: Run smoke tests
+        shell: bash
+        run: pnpm run test:smoke -- --version "${VERSION}" --tag "${NPM_TAG}"
+        working-directory: apps/cli
+
   publish:
     needs:
       - build-github
       - smoke-test
+      - smoke-test-macos
     if: ${{ !inputs.dry_run }}
     # npm provenance verification rejects non-GitHub-hosted runners with
     # E422 ("Unsupported GitHub Actions runner environment: self-hosted").
