@@ -16,6 +16,16 @@ on:
         required: false
         type: string
         default: ""
+      runner:
+        description: Runner to use for building artifacts
+        required: false
+        type: string
+        default: blacksmith-32vcpu-ubuntu-2404
+      cache_key_suffix:
+        description: Suffix to distinguish build artifact cache producers
+        required: false
+        type: string
+        default: ""
     secrets:
       SENTRY_DSN:
         required: false
@@ -30,7 +40,7 @@ permissions:
 jobs:
   build:
     name: Build CLI artifacts
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    runs-on: ${{ inputs.runner }}
     env:
       BUN_SHELL: ${{ inputs.shell }}
       VERSION: ${{ inputs.version }}
@@ -79,10 +89,23 @@ jobs:
           echo "Checking dist/..."
           ls -la dist/
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - name: Check existing build artifacts cache
+        id: build-artifacts-cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
           path: |
             packages/cli-*/bin/
             dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}${{ inputs.cache_key_suffix }}-v1
+          enableCrossOsArchive: true
+          lookup-only: true
+
+      - name: Save build artifacts cache
+        if: steps.build-artifacts-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}${{ inputs.cache_key_suffix }}-v1
+          enableCrossOsArchive: true

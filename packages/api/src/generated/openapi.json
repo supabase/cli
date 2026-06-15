@@ -17533,7 +17533,8 @@
             "type": "string"
           },
           "import_map_path": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "ezbr_sha256": {
             "type": "string"
@@ -17664,7 +17665,8 @@
                   "type": "string"
                 },
                 "import_map_path": {
-                  "type": "string"
+                  "type": "string",
+                  "nullable": true
                 },
                 "ezbr_sha256": {
                   "type": "string"
@@ -17758,7 +17760,8 @@
             "type": "string"
           },
           "import_map_path": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "ezbr_sha256": {
             "type": "string"
@@ -17803,7 +17806,8 @@
             "type": "string"
           },
           "import_map_path": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "ezbr_sha256": {
             "type": "string"
