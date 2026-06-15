@@ -39,6 +39,8 @@ jobs:
       needs.build.result == 'success'
     name: Publish preview package
     runs-on: blacksmith-8vcpu-ubuntu-2404
+    outputs:
+      preview_url: ${{ steps.preview-metadata.outputs.preview_url }}
     env:
       PREVIEW_VERSION: 0.0.0-pr.${{ github.event.pull_request.number }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -86,12 +88,30 @@ jobs:
             './packages/cli-windows-x64' \
             './apps/cli'
 
-      - name: Smoke test preview command
+      - name: Read preview package metadata
+        id: preview-metadata
         run: |
           set -euo pipefail
-          preview_url="https://pkg.pr.new/supabase@${PR_NUMBER}"
-          echo "Preview command: npx ${preview_url}"
-          npx --yes "${preview_url}" --version
+          preview_url="$(
+            node -e "
+              const fs = require('node:fs');
+              const metadata = JSON.parse(fs.readFileSync('pkg-pr-new.json', 'utf8'));
+              const pkg = metadata.packages.find((entry) => entry.name === 'supabase');
+              if (!pkg?.url) {
+                throw new Error('pkg-pr-new.json did not include a supabase package URL');
+              }
+              console.log(pkg.url);
+            "
+          )"
+          echo "Preview command: npx --yes ${preview_url}"
+          echo "preview_url=${preview_url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Smoke test preview command
+        env:
+          PREVIEW_URL: ${{ steps.preview-metadata.outputs.preview_url }}
+        run: |
+          set -euo pipefail
+          npx --yes "${PREVIEW_URL}" --version
 
   comment:
     needs: publish
@@ -107,13 +127,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
+      PREVIEW_URL: ${{ needs.publish.outputs.preview_url }}
     steps:
       - name: Post preview command comment
         run: |
           set -euo pipefail
 
           marker="<!-- supabase-cli-preview-package -->"
-          preview_url="https://pkg.pr.new/supabase@${PR_NUMBER}"
           short_sha="${HEAD_SHA:0:7}"
           comment_file="$(mktemp)"
 
@@ -122,7 +142,7 @@ jobs:
           ## Supabase CLI preview
 
           \`\`\`sh
-          npx --yes ${preview_url}
+          npx --yes ${PREVIEW_URL}
           \`\`\`
 
           _Preview package for commit [\`${short_sha}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${HEAD_SHA})._
