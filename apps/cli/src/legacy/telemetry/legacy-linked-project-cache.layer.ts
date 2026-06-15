@@ -4,6 +4,7 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { LegacyCredentials } from "../auth/legacy-credentials.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { makeLegacyIdentityStitcher } from "../shared/legacy-identity-stitch.ts";
 import { legacyTempPaths } from "../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "./legacy-linked-project-cache.service.ts";
 
@@ -39,6 +40,12 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
     const credentials = yield* LegacyCredentials;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    // Go's `ensureProjectGroupsCached` GETs `/v1/projects/{ref}` through
+    // `GetSupabase()`'s identityTransport (`cmd/root.go:226`, `api.go:128-134`),
+    // so the X-Gotrue-Id on that response stitches the session identity. For a
+    // password-only `db lint`/`db advisors --linked` run this cache GET can be the
+    // ONLY Management API response, so it must stitch too.
+    const stitch = yield* makeLegacyIdentityStitcher;
 
     return LegacyLinkedProjectCache.of({
       cache: (ref: string, workdir?: string) =>
@@ -59,6 +66,9 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
             HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
           );
           const response = yield* httpClient.execute(request);
+          // Stitch identity from the response (Go's identityTransport fires on
+          // every response regardless of status), before the status gate.
+          yield* stitch(response);
           if (response.status !== 200) return;
           const body = yield* response.json;
 

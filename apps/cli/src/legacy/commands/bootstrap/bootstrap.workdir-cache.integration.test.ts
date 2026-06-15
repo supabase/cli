@@ -12,6 +12,7 @@ import {
   mockOutput,
   mockRuntimeInfo,
   mockStdin,
+  mockTelemetryRuntime,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -127,6 +128,11 @@ describe("legacy bootstrap linked-project cache location", () => {
         Layer.provide(configLayer),
         Layer.provide(credentials.layer),
         Layer.provide(api.httpClientLayer),
+        // The cache GET now stitches identity from X-Gotrue-Id (Go's
+        // identityTransport); provide its Analytics/TelemetryRuntime deps. Consent
+        // "denied" makes the stitch a no-op so this workdir-caching test is unchanged.
+        Layer.provide(mockAnalytics().layer),
+        Layer.provide(mockTelemetryRuntime({ consent: "denied" })),
         Layer.provide(BunServices.layer),
       );
 
