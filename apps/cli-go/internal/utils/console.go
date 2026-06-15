@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/viper"
-	"github.com/supabase/cli/pkg/cast"
+	"github.com/supabase/cli/apps/cli-go/pkg/cast"
 	"golang.org/x/term"
 )
 

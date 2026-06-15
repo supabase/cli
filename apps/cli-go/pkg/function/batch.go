@@ -15,8 +15,8 @@ import (
 	"github.com/cenkalti/backoff/v4"
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/config"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/config"
 )
 
 const (

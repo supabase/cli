@@ -5,10 +5,10 @@ import (
 	"strings"
 
 	"github.com/go-errors/errors"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/cast"
+	"github.com/supabase/cli/apps/cli-go/pkg/fetcher"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/cast"
-	"github.com/supabase/cli/pkg/fetcher"
 )
 
 var (

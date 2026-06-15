@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/apps/cli-go/pkg/config"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/config"
 )
 
 type CustomName struct {

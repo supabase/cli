@@ -15,8 +15,8 @@ import (
 	mg "github.com/multigres/multigres/go/parser"
 	"github.com/multigres/multigres/go/parser/ast"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/apps/cli-go/pkg/parser"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/parser"
 )
 
 var (

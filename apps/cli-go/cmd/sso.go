@@ -4,6 +4,7 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/cobra"
 
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
 	"github.com/supabase/cli/internal/sso/create"
 	"github.com/supabase/cli/internal/sso/get"
 	"github.com/supabase/cli/internal/sso/info"
@@ -12,7 +13,6 @@ import (
 	"github.com/supabase/cli/internal/sso/update"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/api"
 )
 
 var (

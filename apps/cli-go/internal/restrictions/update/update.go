@@ -6,8 +6,8 @@ import (
 	"net"
 
 	"github.com/go-errors/errors"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
 )
 
 // Run updates the network restriction lists using the provided CIDRs.

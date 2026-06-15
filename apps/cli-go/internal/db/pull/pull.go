@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/apps/cli-go/pkg/migration"
 	"github.com/supabase/cli/internal/db/declarative"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
@@ -26,7 +27,6 @@ import (
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/migration"
 )
 
 var (

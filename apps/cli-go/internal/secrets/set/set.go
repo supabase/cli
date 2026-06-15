@@ -12,9 +12,9 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/api"
 )
 
 func Run(ctx context.Context, projectRef, envFilePath string, args []string, fsys afero.Fs) error {

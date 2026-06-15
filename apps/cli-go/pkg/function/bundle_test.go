@@ -11,7 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/pkg/cast"
+	"github.com/supabase/cli/apps/cli-go/pkg/cast"
 )
 
 func TestMain(m *testing.M) {

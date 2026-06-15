@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
-	"github.com/supabase/cli/pkg/config"
+	"github.com/supabase/cli/apps/cli-go/pkg/config"
 )
 
 func getRemoteSeeds(ctx context.Context, conn *pgx.Conn) (map[string]string, error) {

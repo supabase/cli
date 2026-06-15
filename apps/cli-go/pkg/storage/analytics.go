@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/supabase/cli/pkg/fetcher"
+	"github.com/supabase/cli/apps/cli-go/pkg/fetcher"
 )
 
 type AnalyticsBucketResponse struct {

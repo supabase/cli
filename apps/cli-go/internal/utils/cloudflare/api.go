@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/supabase/cli/pkg/fetcher"
+	"github.com/supabase/cli/apps/cli-go/pkg/fetcher"
 )
 
 type CloudflareAPI struct {

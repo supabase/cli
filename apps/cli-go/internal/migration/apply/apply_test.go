@@ -9,11 +9,11 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/apps/cli-go/pkg/migration"
+	"github.com/supabase/cli/apps/cli-go/pkg/pgtest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/migration"
-	"github.com/supabase/cli/pkg/pgtest"
 )
 
 func TestMigrateDatabase(t *testing.T) {

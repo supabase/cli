@@ -6,9 +6,9 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
 	"github.com/supabase/cli/internal/hostnames"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
 )
 
 func Run(ctx context.Context, projectRef string, customHostname string, fsys afero.Fs) error {

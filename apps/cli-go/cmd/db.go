@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/apps/cli-go/pkg/migration"
 	"github.com/supabase/cli/internal/db/advisors"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
@@ -24,7 +25,6 @@ import (
 	"github.com/supabase/cli/legacy/branch/delete"
 	"github.com/supabase/cli/legacy/branch/list"
 	"github.com/supabase/cli/legacy/branch/switch_"
-	"github.com/supabase/cli/pkg/migration"
 )
 
 var (

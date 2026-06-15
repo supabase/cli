@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
 )
 
 func response(providerId string, domains []string) map[string]any {

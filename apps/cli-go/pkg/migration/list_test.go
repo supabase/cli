@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgerrcode"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/pkg/pgtest"
+	"github.com/supabase/cli/apps/cli-go/pkg/pgtest"
 )
 
 func TestRemoteMigrations(t *testing.T) {

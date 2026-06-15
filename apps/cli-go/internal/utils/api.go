@@ -11,9 +11,9 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
+	supabase "github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/cast"
 	"github.com/supabase/cli/internal/utils/cloudflare"
-	supabase "github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/cast"
 )
 
 const (

@@ -14,8 +14,8 @@ import (
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/fetcher"
+	"github.com/supabase/cli/apps/cli-go/pkg/config"
+	"github.com/supabase/cli/apps/cli-go/pkg/fetcher"
 )
 
 var mockApi = StorageAPI{Fetcher: fetcher.NewFetcher(

@@ -17,8 +17,8 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
 	"golang.org/x/term"
 )
 

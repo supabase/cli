@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"github.com/go-errors/errors"
-	v1API "github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/cast"
-	"github.com/supabase/cli/pkg/diff"
+	v1API "github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/cast"
+	"github.com/supabase/cli/apps/cli-go/pkg/diff"
 )
 
 type PoolMode string
@@ -92,7 +92,7 @@ type (
 		Seed                seed                `toml:"seed" json:"seed"`
 		Settings            settings            `toml:"settings" json:"settings"`
 		NetworkRestrictions networkRestrictions `toml:"network_restrictions" json:"network_restrictions"`
-    SslEnforcement      *sslEnforcement     `toml:"ssl_enforcement" json:"ssl_enforcement"`
+		SslEnforcement      *sslEnforcement     `toml:"ssl_enforcement" json:"ssl_enforcement"`
 		Vault               map[string]Secret   `toml:"vault" json:"vault"`
 	}
 

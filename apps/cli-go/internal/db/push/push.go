@@ -10,12 +10,12 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/apps/cli-go/pkg/migration"
+	"github.com/supabase/cli/apps/cli-go/pkg/vault"
 	"github.com/supabase/cli/internal/db/pgcache"
 	"github.com/supabase/cli/internal/migration/up"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/migration"
-	"github.com/supabase/cli/pkg/vault"
 )
 
 func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, includeSeed bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

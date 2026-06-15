@@ -6,7 +6,7 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgx/v4"
-	"github.com/supabase/cli/pkg/pgxv5"
+	"github.com/supabase/cli/apps/cli-go/pkg/pgxv5"
 )
 
 var (

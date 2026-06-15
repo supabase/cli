@@ -13,14 +13,14 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/apps/cli-go/pkg/config"
+	"github.com/supabase/cli/apps/cli-go/pkg/migration"
 	"github.com/supabase/cli/internal/db/declarative"
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/migration"
 	"golang.org/x/term"
 )
 

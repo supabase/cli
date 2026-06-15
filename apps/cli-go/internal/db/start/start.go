@@ -20,14 +20,14 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/apps/cli-go/pkg/config"
+	"github.com/supabase/cli/apps/cli-go/pkg/migration"
+	"github.com/supabase/cli/apps/cli-go/pkg/vault"
 	"github.com/supabase/cli/internal/db/pgcache"
 	"github.com/supabase/cli/internal/migration/apply"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/migration"
-	"github.com/supabase/cli/pkg/vault"
 )
 
 var (

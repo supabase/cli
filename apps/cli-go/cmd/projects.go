@@ -6,14 +6,14 @@ import (
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/cast"
 	"github.com/supabase/cli/internal/projects/apiKeys"
 	"github.com/supabase/cli/internal/projects/create"
 	"github.com/supabase/cli/internal/projects/delete"
 	"github.com/supabase/cli/internal/projects/list"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/cast"
 	"golang.org/x/term"
 )
 

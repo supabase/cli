@@ -1,6 +1,6 @@
 package helper
 
-import "github.com/supabase/cli/pkg/pgtest"
+import "github.com/supabase/cli/apps/cli-go/pkg/pgtest"
 
 // MockApiPrivilegesRevoke queues the per-statement responses for the default Data API privilege
 // revoke that start.ApplyApiPrivileges runs when [api].auto_expose_new_tables is unset or false.

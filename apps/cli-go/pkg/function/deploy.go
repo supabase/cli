@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/go-errors/errors"
-	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/cast"
-	"github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/queue"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/cast"
+	"github.com/supabase/cli/apps/cli-go/pkg/config"
+	"github.com/supabase/cli/apps/cli-go/pkg/queue"
 )
 
 var ErrNoDeploy = errors.New("All Functions are up to date.")

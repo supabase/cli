@@ -8,7 +8,7 @@ import (
 
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
-	"github.com/supabase/cli/pkg/fetcher"
+	"github.com/supabase/cli/apps/cli-go/pkg/fetcher"
 )
 
 var mockApi = TenantAPI{Fetcher: fetcher.NewFetcher(

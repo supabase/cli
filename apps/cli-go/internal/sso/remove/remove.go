@@ -7,10 +7,10 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/google/uuid"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
 	"github.com/supabase/cli/internal/sso/internal/render"
 	"github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
 )
 
 func Run(ctx context.Context, ref, providerId, format string) error {

@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/apps/cli-go/pkg/pgxv5"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/pgxv5"
 )
 
 //go:embed blocking.sql

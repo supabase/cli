@@ -3,9 +3,9 @@ package config
 import (
 	"strings"
 
-	v1API "github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/cast"
-	"github.com/supabase/cli/pkg/diff"
+	v1API "github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/cast"
+	"github.com/supabase/cli/apps/cli-go/pkg/diff"
 )
 
 type (

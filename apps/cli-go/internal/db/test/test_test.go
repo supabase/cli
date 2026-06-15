@@ -11,10 +11,10 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/apps/cli-go/pkg/config"
+	"github.com/supabase/cli/apps/cli-go/pkg/pgtest"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/pgtest"
 )
 
 var dbConfig = pgconn.Config{

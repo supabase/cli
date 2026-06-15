@@ -21,9 +21,9 @@ import (
 	"github.com/olekukonko/tablewriter"
 	"github.com/olekukonko/tablewriter/tw"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/apps/cli-go/pkg/fetcher"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/fetcher"
 )
 
 type CustomName struct {

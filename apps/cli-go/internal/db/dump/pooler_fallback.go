@@ -7,9 +7,9 @@ import (
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgconn"
+	"github.com/supabase/cli/apps/cli-go/pkg/migration"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/migration"
 )
 
 // resolvePoolerFallback resolves IPv4 transaction pooler credentials for a direct

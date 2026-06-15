@@ -7,7 +7,7 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/pkg/pgtest"
+	"github.com/supabase/cli/apps/cli-go/pkg/pgtest"
 )
 
 func TestPostgresProxy(t *testing.T) {

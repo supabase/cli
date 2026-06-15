@@ -20,14 +20,14 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	supabaseapi "github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/config"
+	"github.com/supabase/cli/apps/cli-go/pkg/pgtest"
+	"github.com/supabase/cli/apps/cli-go/pkg/storage"
 	phtelemetry "github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
-	supabaseapi "github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/pgtest"
-	"github.com/supabase/cli/pkg/storage"
 )
 
 type fakeAnalytics struct {

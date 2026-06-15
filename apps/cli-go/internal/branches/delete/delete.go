@@ -7,9 +7,9 @@ import (
 	"os"
 
 	"github.com/go-errors/errors"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
 	"github.com/supabase/cli/internal/branches/pause"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
 )
 
 func Run(ctx context.Context, branchId string, force *bool) error {

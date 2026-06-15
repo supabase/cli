@@ -8,6 +8,8 @@ import (
 	"github.com/go-errors/errors"
 	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/cast"
 	"github.com/supabase/cli/internal/branches/create"
 	"github.com/supabase/cli/internal/branches/delete"
 	"github.com/supabase/cli/internal/branches/disable"
@@ -18,8 +20,6 @@ import (
 	"github.com/supabase/cli/internal/branches/update"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/cast"
 )
 
 var (

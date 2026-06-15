@@ -15,10 +15,10 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/apps/cli-go/pkg/config"
 	"github.com/supabase/cli/internal/gen/signingkeys"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/config"
 )
 
 func TestGenerateToken(t *testing.T) {

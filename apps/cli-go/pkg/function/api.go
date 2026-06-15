@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
 )
 
 type EdgeRuntimeAPI struct {

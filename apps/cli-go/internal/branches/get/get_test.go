@@ -10,12 +10,12 @@ import (
 	"github.com/h2non/gock"
 	"github.com/oapi-codegen/nullable"
 	"github.com/stretchr/testify/assert"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/cast"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
-	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/cast"
 )
 
 func TestGetBranch(t *testing.T) {

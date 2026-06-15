@@ -1,8 +1,8 @@
 package helper
 
 import (
-	"github.com/supabase/cli/pkg/migration"
-	"github.com/supabase/cli/pkg/pgtest"
+	"github.com/supabase/cli/apps/cli-go/pkg/migration"
+	"github.com/supabase/cli/apps/cli-go/pkg/pgtest"
 )
 
 func MockMigrationHistory(conn *pgtest.MockConn) *pgtest.MockConn {

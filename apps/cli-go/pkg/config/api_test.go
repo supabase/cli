@@ -9,7 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	v1API "github.com/supabase/cli/pkg/api"
+	v1API "github.com/supabase/cli/apps/cli-go/pkg/api"
 )
 
 func TestApiToUpdatePostgrestConfigBody(t *testing.T) {

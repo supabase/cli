@@ -1,4 +1,4 @@
-module github.com/supabase/cli/pkg
+module github.com/supabase/cli/apps/cli-go/pkg
 
 go 1.25.0
 

@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
 )
 
 var testProject = api.V1ProjectWithDatabaseResponse{

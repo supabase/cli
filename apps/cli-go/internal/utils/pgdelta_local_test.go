@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/supabase/cli/pkg/config"
+	"github.com/supabase/cli/apps/cli-go/pkg/config"
 )
 
 func TestPgDeltaNpmRegistryOption(t *testing.T) {

@@ -8,8 +8,8 @@ import (
 
 	"github.com/h2non/gock"
 	"github.com/stretchr/testify/assert"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/api"
 )
 
 func TestVerifyCNAME(t *testing.T) {

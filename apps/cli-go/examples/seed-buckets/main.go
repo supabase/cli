@@ -8,9 +8,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/fetcher"
-	"github.com/supabase/cli/pkg/storage"
+	"github.com/supabase/cli/apps/cli-go/pkg/config"
+	"github.com/supabase/cli/apps/cli-go/pkg/fetcher"
+	"github.com/supabase/cli/apps/cli-go/pkg/storage"
 )
 
 func main() {

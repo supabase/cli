@@ -10,8 +10,8 @@ import (
 	"github.com/oapi-codegen/nullable"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 	"github.com/stretchr/testify/assert"
-	v1API "github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/cast"
+	v1API "github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/cast"
 )
 
 func newWithDefaults() auth {

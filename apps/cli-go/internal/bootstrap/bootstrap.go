@@ -18,6 +18,9 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/fetcher"
+	"github.com/supabase/cli/apps/cli-go/pkg/queue"
 	"github.com/supabase/cli/internal/db/push"
 	initBlank "github.com/supabase/cli/internal/init"
 	"github.com/supabase/cli/internal/link"
@@ -27,9 +30,6 @@ import (
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/internal/utils/tenant"
-	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/fetcher"
-	"github.com/supabase/cli/pkg/queue"
 	"golang.org/x/term"
 )
 

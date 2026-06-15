@@ -18,13 +18,13 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/apps/cli-go/pkg/migration"
+	"github.com/supabase/cli/apps/cli-go/pkg/parser"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/pgcache"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/pgdelta"
 	"github.com/supabase/cli/internal/utils"
-	"github.com/supabase/cli/pkg/migration"
-	"github.com/supabase/cli/pkg/parser"
 )
 
 const (

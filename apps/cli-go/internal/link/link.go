@@ -12,13 +12,13 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
+	"github.com/supabase/cli/apps/cli-go/pkg/api"
+	"github.com/supabase/cli/apps/cli-go/pkg/cast"
+	cliConfig "github.com/supabase/cli/apps/cli-go/pkg/config"
+	"github.com/supabase/cli/apps/cli-go/pkg/queue"
 	phtelemetry "github.com/supabase/cli/internal/telemetry"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/tenant"
-	"github.com/supabase/cli/pkg/api"
-	"github.com/supabase/cli/pkg/cast"
-	cliConfig "github.com/supabase/cli/pkg/config"
-	"github.com/supabase/cli/pkg/queue"
 )
 
 func Run(ctx context.Context, projectRef string, skipPooler bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {

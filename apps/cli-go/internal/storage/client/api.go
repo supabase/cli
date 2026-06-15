@@ -5,11 +5,11 @@ import (
 	"net/http"
 
 	"github.com/spf13/viper"
+	"github.com/supabase/cli/apps/cli-go/pkg/fetcher"
+	"github.com/supabase/cli/apps/cli-go/pkg/storage"
 	"github.com/supabase/cli/internal/status"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/tenant"
-	"github.com/supabase/cli/pkg/fetcher"
-	"github.com/supabase/cli/pkg/storage"
 )
 
 func NewStorageAPI(ctx context.Context, projectRef string) (storage.StorageAPI, error) {

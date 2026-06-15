@@ -16,8 +16,8 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
+	cliConfig "github.com/supabase/cli/apps/cli-go/pkg/config"
 	"github.com/supabase/cli/internal/utils"
-	cliConfig "github.com/supabase/cli/pkg/config"
 )
 
 const (
