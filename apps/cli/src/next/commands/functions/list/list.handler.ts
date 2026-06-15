@@ -22,7 +22,7 @@ interface RemoteFunction {
   readonly verify_jwt?: boolean;
   readonly import_map?: boolean;
   readonly entrypoint_path?: string;
-  readonly import_map_path?: string;
+  readonly import_map_path?: string | null;
   readonly ezbr_sha256?: string;
 }
 

@@ -17533,7 +17533,7 @@
             "type": "string"
           },
           "import_map_path": {
-            "type": "string"
+            "type": ["string", "null"]
           },
           "ezbr_sha256": {
             "type": "string"
@@ -17664,7 +17664,7 @@
                   "type": "string"
                 },
                 "import_map_path": {
-                  "type": "string"
+                  "type": ["string", "null"]
                 },
                 "ezbr_sha256": {
                   "type": "string"
@@ -17758,7 +17758,7 @@
             "type": "string"
           },
           "import_map_path": {
-            "type": "string"
+            "type": ["string", "null"]
           },
           "ezbr_sha256": {
             "type": "string"

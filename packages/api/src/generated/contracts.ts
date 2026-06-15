@@ -410,7 +410,7 @@ export const V1BulkUpdateFunctionsInput = Schema.Struct({
       verify_jwt: Schema.optionalKey(Schema.Boolean),
       import_map: Schema.optionalKey(Schema.Boolean),
       entrypoint_path: Schema.optionalKey(Schema.String),
-      import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+      import_map_path: Schema.optionalKey(Schema.String),
       ezbr_sha256: Schema.optionalKey(Schema.String),
     }),
   ),
@@ -571,7 +571,7 @@ export const V1CreateAFunctionInput = Schema.Struct({
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  import_map_path: Schema.optionalKey(Schema.String),
   ezbr_sha256: Schema.optionalKey(Schema.String),
   body: BinaryInput,
 });
@@ -1310,7 +1310,7 @@ export const V1DeployAFunctionInput = Schema.Struct({
     file: Schema.optionalKey(Schema.Array(BinaryInput)),
     metadata: Schema.Struct({
       entrypoint_path: Schema.String,
-      import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+      import_map_path: Schema.optionalKey(Schema.String),
       static_patterns: Schema.optionalKey(Schema.Array(Schema.String)),
       verify_jwt: Schema.optionalKey(Schema.Boolean),
       name: Schema.optionalKey(Schema.String),
@@ -4305,7 +4305,7 @@ export const V1UpdateAFunctionInput = Schema.Struct({
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  import_map_path: Schema.optionalKey(Schema.String),
   ezbr_sha256: Schema.optionalKey(Schema.String),
   body: BinaryInput,
 });

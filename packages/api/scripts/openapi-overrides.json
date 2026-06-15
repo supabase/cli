@@ -531,5 +531,26 @@
       "type": "boolean",
       "description": "Whether to enable high availability for the project."
     }
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/FunctionResponse/properties/import_map_path",
+    "value": {
+      "type": ["string", "null"]
+    }
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/BulkUpdateFunctionResponse/properties/functions/items/properties/import_map_path",
+    "value": {
+      "type": ["string", "null"]
+    }
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/DeployFunctionResponse/properties/import_map_path",
+    "value": {
+      "type": ["string", "null"]
+    }
   }
 ]
