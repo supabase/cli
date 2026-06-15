@@ -75,6 +75,17 @@ const fetchAdvisors = Effect.fnUntraced(function* (
     return yield* Effect.fail(endpoint.status(response.status, sanitizeLegacyErrorBody(rawBody)));
   }
 
+  // Go's generated parser only decodes the 200 body when the Content-Type header
+  // contains "json" (`pkg/api/client.gen.go` `strings.Contains(..., "json")`);
+  // otherwise `JSON200` stays nil and the fetcher returns the status-200 error
+  // (`internal/db/advisors/advisors.go:167-169,178-180`). Match that so a header
+  // regression returning JSON text isn't accepted as a valid advisor result.
+  const contentType = response.headers["content-type"] ?? "";
+  if (!contentType.toLowerCase().includes("json")) {
+    const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+    return yield* Effect.fail(endpoint.status(200, sanitizeLegacyErrorBody(rawBody)));
+  }
+
   const rawBody = yield* response.text;
   // Go folds a decode error into the same `failed to fetch … advisors: %w` path,
   // so map both JSON syntax errors and structural-shape rejections (thrown by

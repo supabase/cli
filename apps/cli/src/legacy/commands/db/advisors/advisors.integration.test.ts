@@ -11,6 +11,8 @@ import {
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
 import { LegacyInvalidAccessTokenError } from "../../../auth/legacy-errors.ts";
@@ -202,6 +204,7 @@ interface SetupOpts {
   invalidToken?: boolean;
   ipv6Error?: boolean;
   securityStatus?: number;
+  securityNonJson?: boolean;
   securityLints?: ReadonlyArray<Record<string, unknown>>;
   performanceLints?: ReadonlyArray<Record<string, unknown>>;
 }
@@ -226,6 +229,18 @@ function setup(opts: SetupOpts = {}) {
         const status = opts.securityStatus ?? 200;
         if (status !== 200) {
           return Effect.succeed(legacyJsonResponse(request, status, { message: "boom" }));
+        }
+        if (opts.securityNonJson === true) {
+          // 200 with a non-JSON content-type (proxy/header regression).
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(JSON.stringify({ lints: [] }), {
+                status: 200,
+                headers: { "content-type": "text/plain" },
+              }),
+            ),
+          );
         }
         return Effect.succeed(
           legacyJsonResponse(request, 200, { lints: opts.securityLints ?? [] }),
@@ -484,8 +499,10 @@ describe("legacy db advisors — linked", () => {
 
   it.live("fails on the linked DB-config error before any advisor API call", () => {
     // Unreachable direct host + no pooler: Go's ParseDatabaseConfig fails with the
-    // IPv6 error before RunLinked, so the advisors API is never reached.
-    const { layer, api } = setup({ ipv6Error: true });
+    // IPv6 error before RunLinked, so the advisors API is never reached. But the
+    // ref was already loaded, and Go's Execute runs ensureProjectGroupsCached on
+    // the error path — so the linked-project cache is still written.
+    const { layer, api, cache } = setup({ ipv6Error: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyDbAdvisors(flags({ linked: true })));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -493,6 +510,8 @@ describe("legacy db advisors — linked", () => {
         expect(JSON.stringify(exit.cause)).toContain("IPv6 is not supported");
       }
       expect(api.requests).toHaveLength(0);
+      // Cache written despite the DB-config failure (ref was loaded first).
+      expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
@@ -575,6 +594,21 @@ describe("legacy db advisors — linked", () => {
       }
       // The token gate fails before any advisors request is made.
       expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails on a 200 with a non-JSON content type (Go requires json header)", () => {
+    // Go's generated parser only decodes when Content-Type contains "json";
+    // otherwise JSON200 is nil and the fetcher returns the status-200 error.
+    const { layer } = setup({ securityNonJson: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbAdvisors(flags({ linked: true, type: Option.some("security") })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("unexpected security advisors status 200");
+      }
     }).pipe(Effect.provide(layer));
   });
 
