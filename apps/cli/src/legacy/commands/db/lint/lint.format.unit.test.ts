@@ -79,6 +79,20 @@ describe("parseLegacyLintResult", () => {
     ).toThrow();
   });
 
+  it("throws on a present non-string top-level function field, accepts string/absent", () => {
+    // Go's Result.Function is a string; json.Unmarshal rejects a non-string
+    // before `r.Function` is overridden with <schema>.<name> (lint.go:150-154).
+    expect(() => parseLegacyLintResult(`{"function":123,"issues":[]}`, "public.f")).toThrow();
+    expect(parseLegacyLintResult(`{"function":"x","issues":[]}`, "public.f")).toEqual({
+      function: "public.f",
+      issues: [],
+    });
+    expect(parseLegacyLintResult(`{"issues":[]}`, "public.f")).toEqual({
+      function: "public.f",
+      issues: [],
+    });
+  });
+
   it("tolerates Go-accepted shapes (null, missing issues, unknown fields)", () => {
     // Go leaves the struct at zero on a top-level null and has no DisallowUnknownFields.
     expect(parseLegacyLintResult("null", "public.f")).toEqual({ function: "public.f", issues: [] });

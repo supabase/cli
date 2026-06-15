@@ -164,6 +164,10 @@ export function parseLegacyLintResult(jsonText: string, functionName: string): L
       throw new TypeError("cannot unmarshal issue into lint.Issue");
     }
   }
+  // Go: `Result.Function` is a string, so `json.Unmarshal` rejects a present
+  // non-string `function` BEFORE the code overrides it with `<schema>.<name>`
+  // (`lint.go:150-154`). Validate the type, then discard it for the override.
+  requireLintString(record["function"], "function");
   return { function: functionName, issues: issuesRaw.map(normalizeIssue) };
 }
 
