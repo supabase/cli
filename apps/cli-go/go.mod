@@ -49,7 +49,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
 	github.com/stripe/pg-schema-diff v1.0.5
-	github.com/supabase/cli/apps/cli-go/pkg v1.0.0
+	github.com/supabase/cli/apps/cli-go/pkg v1.2.4
 	github.com/tidwall/jsonc v0.3.3
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
 	github.com/zalando/go-keyring v0.2.8
@@ -476,7 +476,7 @@ require (
 	tags.cncf.io/container-device-interface v1.1.0 // indirect
 )
 
-replace github.com/supabase/cli/apps/cli-go/pkg v1.0.0 => ./pkg
+replace github.com/supabase/cli/apps/cli-go/pkg v1.2.4 => ./pkg
 
 replace github.com/fsnotify/fsevents v0.2.0 => ./fsevents
 
