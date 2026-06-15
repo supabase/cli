@@ -21,6 +21,26 @@
   },
   {
     "op": "test",
+    "path": "/components/schemas/UpdateCustomHostnameResponse/required",
+    "value": ["status", "custom_hostname", "data"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/UpdateCustomHostnameResponse/required",
+    "value": ["data"]
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/required",
+    "value": ["id", "hostname", "ssl", "ownership_verification", "custom_origin_server", "status"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/required",
+    "value": ["id", "hostname", "ssl", "custom_origin_server", "status"]
+  },
+  {
+    "op": "test",
     "path": "/components/schemas/AuthConfigResponse/required",
     "value": [
       "api_max_request_duration",
@@ -503,5 +523,13 @@
       "custom_oauth_enabled",
       "custom_oauth_max_providers"
     ]
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V1CreateProjectBody/properties/high_availability",
+    "value": {
+      "type": "boolean",
+      "description": "Whether to enable high availability for the project."
+    }
   }
 ]

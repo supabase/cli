@@ -37,6 +37,7 @@ const BASE_FLAGS: LegacyProjectsCreateFlags = {
   dbPassword: Option.none(),
   region: Option.none(),
   size: Option.none(),
+  highAvailability: Option.none(),
   interactive: Option.none(),
   plan: Option.none(),
 };
@@ -130,6 +131,36 @@ describe("legacy projects create integration", () => {
         size: Option.some("medium"),
       });
       expect(postBody(api)?.desired_instance_size).toBe("medium");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("includes high_availability only when --high-availability is set", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacyProjectsCreate({
+        ...BASE_FLAGS,
+        name: Option.some("alpha"),
+        orgId: Option.some("acme"),
+        dbPassword: Option.some("s3cret-pass"),
+        region: Option.some("us-east-1"),
+        highAvailability: Option.some(true),
+      });
+      expect(postBody(api)?.high_availability).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("forwards --high-availability=false when explicitly set", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacyProjectsCreate({
+        ...BASE_FLAGS,
+        name: Option.some("alpha"),
+        orgId: Option.some("acme"),
+        dbPassword: Option.some("s3cret-pass"),
+        region: Option.some("us-east-1"),
+        highAvailability: Option.some(false),
+      });
+      expect(postBody(api)?.high_availability).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

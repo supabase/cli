@@ -429,6 +429,88 @@ describe("makeSupabaseApiClient", () => {
     expect(result.data.result.ssl.validation_records).toBeUndefined();
   });
 
+  test("accepts missing custom-hostname ownership verification", async () => {
+    const result = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1GetHostnameConfig">(operationDefinitions.v1GetHostnameConfig, {
+            ref: "abcdefghijklmnopqrst",
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) =>
+            Effect.succeed(
+              jsonResponse(request, 200, {
+                status: "4_origin_setup_completed",
+                custom_hostname: "shop.acme.dev",
+                data: {
+                  success: true,
+                  errors: [],
+                  messages: [],
+                  result: {
+                    id: "hostname-id",
+                    hostname: "shop.acme.dev",
+                    ssl: {
+                      status: "active",
+                    },
+                    custom_origin_server: "abcdefghijklmnopqrst.supabase.co",
+                    status: "active",
+                  },
+                },
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(result.data.result.ownership_verification).toBeUndefined();
+    expect(result.data.result.ssl.validation_records).toBeUndefined();
+  });
+
+  test("accepts processing custom-hostname responses without top-level status or hostname", async () => {
+    const result = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1GetHostnameConfig">(operationDefinitions.v1GetHostnameConfig, {
+            ref: "abcdefghijklmnopqrst",
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) =>
+            Effect.succeed(
+              jsonResponse(request, 200, {
+                data: {
+                  success: true,
+                  errors: [],
+                  messages: [],
+                  result: {
+                    id: "hostname-id",
+                    hostname: "shop.acme.dev",
+                    ssl: {
+                      status: "initializing",
+                    },
+                    ownership_verification: {
+                      type: "txt",
+                      name: "_cf-custom-hostname.shop.acme.dev",
+                      value: "verification-token",
+                    },
+                    custom_origin_server: "abcdefghijklmnopqrst.supabase.co",
+                    status: "pending",
+                  },
+                },
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(result.status).toBeUndefined();
+    expect(result.custom_hostname).toBeUndefined();
+    expect(result.data.result.ssl.validation_records).toBeUndefined();
+  });
+
   test("does not retry 5xx responses for POST requests", async () => {
     let attempts = 0;
 

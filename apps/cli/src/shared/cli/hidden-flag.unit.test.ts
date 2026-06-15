@@ -111,6 +111,7 @@ describe("native hidden flags", () => {
       "db-password",
       "region",
       "size",
+      "high-availability",
     ]);
   });
 

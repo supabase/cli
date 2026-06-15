@@ -253,6 +253,11 @@ type (
 		Webhooks        *webhooks      `toml:"webhooks" json:"webhooks"`
 		PgDelta         *PgDeltaConfig `toml:"pgdelta" json:"pgdelta"`
 		Inspect         inspect        `toml:"inspect" json:"inspect"`
+		// PgDeltaInitEnabled drives the [experimental.pgdelta] enabled value rendered
+		// by Eject. It is true only for the supabase init scaffold so freshly generated
+		// projects opt into pg-delta, and false when Eject feeds mergeDefaultValues so
+		// existing configs without the section keep resolving to migra (non-breaking).
+		PgDeltaInitEnabled bool `toml:"-" json:"-"`
 	}
 )
 

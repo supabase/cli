@@ -1,22 +1,14 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command } from "effect/unstable/cli";
 import { legacyInspectDbLocks } from "./locks.handler.ts";
+import {
+  LEGACY_INSPECT_DB_FLAGS,
+  legacyInspectDbCommandHandler,
+} from "../legacy-inspect-db-command.ts";
+import { legacyInspectDbRuntimeLayer } from "../db.layers.ts";
 
-const config = {
-  dbUrl: Flag.string("db-url").pipe(
-    Flag.withDescription(
-      "Inspect the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.boolean("linked").pipe(Flag.withDescription("Inspect the linked project.")),
-  local: Flag.boolean("local").pipe(Flag.withDescription("Inspect the local database.")),
-} as const;
-
-export type LegacyInspectDbLocksFlags = CliCommand.Command.Config.Infer<typeof config>;
-
-export const legacyInspectDbLocksCommand = Command.make("locks", config).pipe(
+export const legacyInspectDbLocksCommand = Command.make("locks", LEGACY_INSPECT_DB_FLAGS).pipe(
   Command.withDescription("Show queries which have taken out an exclusive lock on a relation."),
   Command.withShortDescription("Show exclusive locks"),
-  Command.withHandler((flags) => legacyInspectDbLocks(flags)),
+  Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbLocks)),
+  Command.provide(legacyInspectDbRuntimeLayer("locks")),
 );
