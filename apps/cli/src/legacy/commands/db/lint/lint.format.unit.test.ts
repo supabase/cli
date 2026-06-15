@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  encodeLintResults,
-  filterLintResult,
+  encodeLegacyLintResults,
+  filterLegacyLintResult,
   LEGACY_LINT_LEVEL_ENUM,
   type LegacyLintResult,
-  parseLintResult,
+  parseLegacyLintResult,
 } from "./lint.format.ts";
 
 describe("LEGACY_LINT_LEVEL_ENUM (Go toEnum, prefix match)", () => {
@@ -17,9 +17,9 @@ describe("LEGACY_LINT_LEVEL_ENUM (Go toEnum, prefix match)", () => {
   });
 });
 
-describe("parseLintResult", () => {
+describe("parseLegacyLintResult", () => {
   it("parses the plpgsql_check payload and overrides function with <schema>.<proname>", () => {
-    const result = parseLintResult(
+    const result = parseLegacyLintResult(
       `{"function":"22751","issues":[{"level":"error","message":"boom"}]}`,
       "public.f1",
     );
@@ -28,7 +28,7 @@ describe("parseLintResult", () => {
   });
 
   it("drops empty omitempty fields and keeps nested statement/query", () => {
-    const result = parseLintResult(
+    const result = parseLegacyLintResult(
       `{"issues":[{"level":"warning","message":"m","statement":{"lineNumber":"6","text":"RAISE"},"hint":"","context":"ctx"}]}`,
       "public.f",
     );
@@ -41,11 +41,11 @@ describe("parseLintResult", () => {
   });
 
   it("throws on malformed json (Go's failed to marshal json path)", () => {
-    expect(() => parseLintResult("malformed", "public.f")).toThrow();
+    expect(() => parseLegacyLintResult("malformed", "public.f")).toThrow();
   });
 });
 
-describe("filterLintResult", () => {
+describe("filterLegacyLintResult", () => {
   const result: ReadonlyArray<LegacyLintResult> = [
     {
       function: "public.f1",
@@ -58,17 +58,19 @@ describe("filterLintResult", () => {
   ];
 
   it("keeps every result at the warning threshold", () => {
-    expect(filterLintResult(result, LEGACY_LINT_LEVEL_ENUM.toEnum("warning"))).toEqual(result);
+    expect(filterLegacyLintResult(result, LEGACY_LINT_LEVEL_ENUM.toEnum("warning"))).toEqual(
+      result,
+    );
   });
 
   it("drops warning-only results at the error threshold", () => {
-    expect(filterLintResult(result, LEGACY_LINT_LEVEL_ENUM.toEnum("error"))).toEqual([
+    expect(filterLegacyLintResult(result, LEGACY_LINT_LEVEL_ENUM.toEnum("error"))).toEqual([
       { function: "public.f1", issues: [{ level: "error", message: "test 1b" }] },
     ]);
   });
 });
 
-describe("encodeLintResults (Go printResultJSON byte parity)", () => {
+describe("encodeLegacyLintResults (Go printResultJSON byte parity)", () => {
   it("emits struct-order keys, drops empty omitempty fields, trailing newline", () => {
     const results: ReadonlyArray<LegacyLintResult> = [
       {
@@ -84,7 +86,7 @@ describe("encodeLintResults (Go printResultJSON byte parity)", () => {
         ],
       },
     ];
-    expect(encodeLintResults(results)).toBe(
+    expect(encodeLegacyLintResults(results)).toBe(
       [
         "[",
         "  {",

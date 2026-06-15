@@ -22,13 +22,13 @@ import {
   LegacyDbAdvisorsSetupError,
 } from "./advisors.errors.ts";
 import {
-  encodeAdvisorLints,
-  filterAdvisorLints,
+  encodeLegacyAdvisorLints,
+  filterLegacyAdvisorLints,
   LEGACY_ADVISORS_LEVEL_ENUM,
   type LegacyAdvisorLint,
-  scanAdvisorLintRow,
+  scanLegacyAdvisorLintRow,
 } from "./advisors.format.ts";
-import { fetchPerformanceAdvisors, fetchSecurityAdvisors } from "./advisors.linked.ts";
+import { legacyFetchPerformanceAdvisors, legacyFetchSecurityAdvisors } from "./advisors.linked.ts";
 import { splitLegacyLintsSql } from "./advisors.lints-sql.ts";
 
 /** Go's `utils.ErrMissingToken` (`internal/utils/access_token.go:18`). */
@@ -57,7 +57,7 @@ const queryLints = Effect.fnUntraced(function* (session: LegacyDbSession) {
           new LegacyDbAdvisorsQueryError({ message: `failed to query lints: ${cause.message}` }),
       ),
     );
-  return rows.map(scanAdvisorLintRow);
+  return rows.map(scanLegacyAdvisorLintRow);
 });
 
 /** Go's `RunLocal` lint gathering (`advisors.go:63-77`). */
@@ -103,7 +103,7 @@ const runLocal = Effect.fnUntraced(function* (
     }),
   );
 
-  return filterAdvisorLints(lints, advisorType, level);
+  return filterLegacyAdvisorLints(lints, advisorType, level);
 });
 
 /** Go's advisors PreRunE + `RunLinked` (`cmd/db.go`, `advisors.go:79-100`). */
@@ -121,19 +121,23 @@ const runLinked = Effect.fnUntraced(function* (advisorType: string, level: strin
       }),
     );
   }
-  const ref = yield* projectRefResolver.resolve(Option.none());
+  // Go's advisors PreRunE uses `flags.LoadProjectRef` (`cmd/db.go:362`), which
+  // fails fast with ErrNotLinked and never prompts — not the prompting
+  // `ParseProjectRef`. Use the non-prompting load so `--linked` with a token but
+  // no linked-project file fails fast instead of opening a project picker.
+  const ref = yield* projectRefResolver.loadProjectRef(Option.none());
 
   // Write the linked-project cache on success and failure (Go PersistentPostRun).
   return yield* Effect.gen(function* () {
     const lints: Array<LegacyAdvisorLint> = [];
     if (advisorType === "all" || advisorType === "security") {
-      lints.push(...(yield* fetchSecurityAdvisors(ref)));
+      lints.push(...(yield* legacyFetchSecurityAdvisors(ref)));
     }
     if (advisorType === "all" || advisorType === "performance") {
-      lints.push(...(yield* fetchPerformanceAdvisors(ref)));
+      lints.push(...(yield* legacyFetchPerformanceAdvisors(ref)));
     }
     // The endpoint selection already applied the type filter, so filter by "all".
-    return filterAdvisorLints(lints, "all", level);
+    return filterLegacyAdvisorLints(lints, "all", level);
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
 });
 
@@ -156,7 +160,7 @@ const outputAndCheck = Effect.fnUntraced(function* (
   }
 
   if (output.format === "text") {
-    yield* output.raw(encodeAdvisorLints(lints));
+    yield* output.raw(encodeLegacyAdvisorLints(lints));
   } else {
     yield* output.success("db advisors", { results: lints });
   }

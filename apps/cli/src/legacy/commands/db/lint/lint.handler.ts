@@ -3,10 +3,13 @@ import { Effect, Option } from "effect";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyFailsOn } from "../../../shared/legacy-fail-on.ts";
+import { legacyNormalizeSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import type { LegacyDbLintFlags } from "./lint.command.ts";
 import {
@@ -19,12 +22,12 @@ import {
   LegacyDbLintQueryError,
 } from "./lint.errors.ts";
 import {
-  encodeLintResults,
-  filterLintResult,
+  encodeLegacyLintResults,
+  filterLegacyLintResult,
   LEGACY_LINT_ALLOWED_LEVELS,
   LEGACY_LINT_LEVEL_ENUM,
   type LegacyLintResult,
-  parseLintResult,
+  parseLegacyLintResult,
 } from "./lint.format.ts";
 import {
   LEGACY_CHECK_SCHEMA_SCRIPT,
@@ -81,7 +84,7 @@ const lintDatabase = Effect.fnUntraced(function* (
       const name = asString(row["proname"]);
       const data = asString(row["plpgsql_check_function"]);
       const result = yield* Effect.try({
-        try: () => parseLintResult(data, `${schema}.${name}`),
+        try: () => parseLegacyLintResult(data, `${schema}.${name}`),
         catch: (cause) =>
           new LegacyDbLintMalformedJsonError({
             message: `failed to marshal json: ${String(cause)}`,
@@ -119,80 +122,102 @@ const runLint = Effect.fnUntraced(function* (
   const level = Option.getOrElse(flags.level, () => "warning");
   const failOn = Option.getOrElse(flags.failOn, () => "none");
 
-  // The resolver applies Go's `ParseDatabaseConfig` precedence (db-url > linked >
-  // local-default), so the flags pass straight through — `--local` defaulting to
-  // true in Go is handled by the resolver's fall-through to the local branch.
-  const cfg = yield* resolver.resolve({
-    dbUrl: flags.dbUrl,
-    linked: flags.linked,
-    local: flags.local,
-    dnsResolver,
+  // Go's `--schema` is a Cobra `StringSliceVarP` (`cmd/db.go:506`), which splits
+  // comma-separated values, so `--schema public,private` must lint both schemas
+  // (not query a single schema literally named "public,private").
+  const schemaFlags = legacyNormalizeSchemaFlags(flags.schema);
+
+  const lintBody = Effect.gen(function* () {
+    // The resolver applies Go's `ParseDatabaseConfig` precedence (db-url > linked >
+    // local-default), so the flags pass straight through — `--local` defaulting to
+    // true in Go is handled by the resolver's fall-through to the local branch.
+    const cfg = yield* resolver.resolve({
+      dbUrl: flags.dbUrl,
+      linked: flags.linked,
+      local: flags.local,
+      dnsResolver,
+    });
+
+    const results = yield* Effect.scoped(
+      Effect.gen(function* () {
+        yield* output.raw(
+          `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
+          "stderr",
+        );
+        const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
+        yield* session.exec("begin").pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyDbLintBeginTxError({
+                message: `failed to begin transaction: ${cause.message}`,
+              }),
+          ),
+        );
+        // Lint never commits — always roll back, matching Go's deferred rollback
+        // (`lint.go:120-124`). A rollback failure is printed to stderr, not fatal.
+        return yield* lintDatabase(session, schemaFlags).pipe(
+          Effect.ensuring(
+            session
+              .exec("rollback")
+              .pipe(Effect.catch((cause) => output.raw(`${cause.message}\n`, "stderr"))),
+          ),
+        );
+      }),
+    );
+
+    // Go prints "\nNo schema errors found" to stderr when the RAW result is empty
+    // (before level filtering), and emits nothing on stdout (`lint.go:54-57`). The
+    // diagnostic goes to stderr in every mode (stdout stays payload-only); machine
+    // modes additionally emit the empty result envelope.
+    if (results.length === 0) {
+      yield* output.raw("\nNo schema errors found\n", "stderr");
+      if (output.format !== "text") {
+        yield* output.success("db lint", { results: [] });
+      }
+      return;
+    }
+
+    const filtered = filterLegacyLintResult(results, LEGACY_LINT_LEVEL_ENUM.toEnum(level));
+
+    if (output.format === "text") {
+      // Go's `printResultJSON` no-ops on an empty slice (`lint.go:96-98`).
+      if (filtered.length > 0) yield* output.raw(encodeLegacyLintResults(filtered));
+    } else {
+      yield* output.success("db lint", { results: filtered });
+    }
+
+    const failOnLevel = LEGACY_LINT_LEVEL_ENUM.toEnum(failOn);
+    const failed = legacyFailsOn(
+      filtered.flatMap((result) => result.issues),
+      (issue) => issue.level,
+      failOnLevel,
+      LEGACY_LINT_LEVEL_ENUM,
+    );
+    if (failed) {
+      const message = `fail-on is set to ${LEGACY_LINT_ALLOWED_LEVELS[failOnLevel]}, non-zero exit`;
+      if (output.format === "text") {
+        return yield* Effect.fail(new LegacyDbLintFailOnError({ message }));
+      }
+      // json / stream-json already emitted the result payload above; signal the
+      // non-zero exit without a second stdout write that would corrupt it.
+      yield* processControl.setExitCode(1);
+    }
   });
 
-  const results = yield* Effect.scoped(
-    Effect.gen(function* () {
-      yield* output.raw(
-        `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
-        "stderr",
-      );
-      const session = yield* dbConn.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
-      yield* session.exec("begin").pipe(
-        Effect.mapError(
-          (cause) =>
-            new LegacyDbLintBeginTxError({
-              message: `failed to begin transaction: ${cause.message}`,
-            }),
-        ),
-      );
-      // Lint never commits — always roll back, matching Go's deferred rollback
-      // (`lint.go:120-124`). A rollback failure is printed to stderr, not fatal.
-      return yield* lintDatabase(session, flags.schema).pipe(
-        Effect.ensuring(
-          session
-            .exec("rollback")
-            .pipe(Effect.catch((cause) => output.raw(`${cause.message}\n`, "stderr"))),
-        ),
-      );
-    }),
-  );
-
-  // Go prints "\nNo schema errors found" to stderr when the RAW result is empty
-  // (before level filtering), and emits nothing on stdout (`lint.go:54-57`). The
-  // diagnostic goes to stderr in every mode (stdout stays payload-only); machine
-  // modes additionally emit the empty result envelope.
-  if (results.length === 0) {
-    yield* output.raw("\nNo schema errors found\n", "stderr");
-    if (output.format !== "text") {
-      yield* output.success("db lint", { results: [] });
-    }
-    return;
+  // For `--linked`, Go resolves the project ref in `ParseDatabaseConfig` and the
+  // root PersistentPostRun then runs `ensureProjectGroupsCached` (`cmd/root.go:176`,
+  // `214-235`), writing supabase/.temp/linked-project.json so telemetry carries the
+  // project/org grouping. Resolve the ref up front (non-prompting, like Go's
+  // `LoadProjectRef`) and write the cache on success and failure. `--local` /
+  // `--db-url` leave Go's `flags.ProjectRef` empty, so its cache write no-ops — we
+  // match that by caching only on the linked branch.
+  if (flags.linked) {
+    const projectRef = yield* LegacyProjectRefResolver;
+    const linkedProjectCache = yield* LegacyLinkedProjectCache;
+    const ref = yield* projectRef.loadProjectRef(Option.none());
+    return yield* lintBody.pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }
-
-  const filtered = filterLintResult(results, LEGACY_LINT_LEVEL_ENUM.toEnum(level));
-
-  if (output.format === "text") {
-    // Go's `printResultJSON` no-ops on an empty slice (`lint.go:96-98`).
-    if (filtered.length > 0) yield* output.raw(encodeLintResults(filtered));
-  } else {
-    yield* output.success("db lint", { results: filtered });
-  }
-
-  const failOnLevel = LEGACY_LINT_LEVEL_ENUM.toEnum(failOn);
-  const failed = legacyFailsOn(
-    filtered.flatMap((result) => result.issues),
-    (issue) => issue.level,
-    failOnLevel,
-    LEGACY_LINT_LEVEL_ENUM,
-  );
-  if (failed) {
-    const message = `fail-on is set to ${LEGACY_LINT_ALLOWED_LEVELS[failOnLevel]}, non-zero exit`;
-    if (output.format === "text") {
-      return yield* Effect.fail(new LegacyDbLintFailOnError({ message }));
-    }
-    // json / stream-json already emitted the result payload above; signal the
-    // non-zero exit without a second stdout write that would corrupt it.
-    yield* processControl.setExitCode(1);
-  }
+  return yield* lintBody;
 });
 
 export const legacyDbLint = Effect.fn("legacy.db.lint")(function* (flags: LegacyDbLintFlags) {

@@ -2,8 +2,13 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
-import { mockLegacyTelemetryStateTracked } from "../../../../../tests/helpers/legacy-mocks.ts";
+import {
+  LEGACY_VALID_REF,
+  mockLegacyLinkedProjectCacheTracked,
+  mockLegacyTelemetryStateTracked,
+} from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
   LegacyDbConfigFlags,
@@ -15,7 +20,7 @@ import {
   type LegacyPgConnInput,
 } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDbLintFailOnError } from "./lint.errors.ts";
-import { encodeLintResults, parseLintResult } from "./lint.format.ts";
+import { encodeLegacyLintResults, parseLegacyLintResult } from "./lint.format.ts";
 import { legacyDbLint } from "./lint.handler.ts";
 import {
   LEGACY_CHECK_SCHEMA_SCRIPT,
@@ -130,6 +135,30 @@ function mockConnection(opts: {
   };
 }
 
+/** Project-ref resolver mock. `db lint --linked` resolves the ref via the
+ *  non-prompting `loadProjectRef` (Go's `flags.LoadProjectRef`) to write the
+ *  linked-project cache; the other methods are unused by lint. */
+function mockProjectRef() {
+  const calls: Array<string> = [];
+  const layer = Layer.succeed(LegacyProjectRefResolver, {
+    resolve: () => Effect.succeed(LEGACY_VALID_REF),
+    resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
+    loadProjectRef: () =>
+      Effect.sync(() => {
+        calls.push("loadProjectRef");
+        return LEGACY_VALID_REF;
+      }),
+    promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
+  });
+  return {
+    layer,
+    get calls() {
+      return calls;
+    },
+  };
+}
+
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   isLocal?: boolean;
@@ -154,15 +183,19 @@ function setup(opts: SetupOpts = {}) {
   });
   const telemetry = mockLegacyTelemetryStateTracked();
   const processControl = mockProcessControl();
+  const projectRef = mockProjectRef();
+  const cache = mockLegacyLinkedProjectCacheTracked();
   const layer = Layer.mergeAll(
     out.layer,
     resolver.layer,
     connection.layer,
     telemetry.layer,
     processControl.layer,
+    projectRef.layer,
+    cache.layer,
     Layer.succeed(LegacyDnsResolverFlag, "native"),
   );
-  return { layer, out, resolver, connection, telemetry, processControl };
+  return { layer, out, resolver, connection, telemetry, processControl, projectRef, cache };
 }
 
 const flags = (over: Partial<LegacyDbLintFlags> = {}): LegacyDbLintFlags => ({
@@ -182,8 +215,8 @@ describe("legacy db lint", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbLint(flags({ schema: ["public"] }));
-      const expected = encodeLintResults([
-        parseLintResult(JSON.stringify({ issues: [ERROR_ISSUE] }), "public.f1"),
+      const expected = encodeLegacyLintResults([
+        parseLegacyLintResult(JSON.stringify({ issues: [ERROR_ISSUE] }), "public.f1"),
       ]);
       expect(out.stdoutText).toBe(expected);
       expect(out.stderrText).toContain("Connecting to local database...");
@@ -406,6 +439,36 @@ describe("legacy db lint", () => {
     return Effect.gen(function* () {
       yield* legacyDbLint(flags({ schema: ["public"], dbUrl: Option.some("postgres://x") }));
       expect(out.stderrText).toContain("Connecting to remote database...");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("splits a comma-separated --schema into multiple schemas (Go StringSlice parity)", () => {
+    const { layer, connection } = setup({
+      checkRows: { public: [], private: [] },
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbLint(flags({ schema: ["public,private"] }));
+      // Both schemas linted, not a single literal "public,private".
+      expect(connection.linted).toEqual(["public", "private"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("writes the linked-project cache for --linked (Go PersistentPostRun)", () => {
+    const { layer, projectRef, cache } = setup({ isLocal: false, checkRows: { public: [] } });
+    return Effect.gen(function* () {
+      yield* legacyDbLint(flags({ schema: ["public"], linked: true }));
+      // Resolved via the non-prompting load and cached for telemetry grouping.
+      expect(projectRef.calls).toContain("loadProjectRef");
+      expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("does not write the linked-project cache for a local run", () => {
+    const { layer, cache } = setup({ checkRows: { public: [] } });
+    return Effect.gen(function* () {
+      yield* legacyDbLint(flags({ schema: ["public"] }));
+      // Go's ensureProjectGroupsCached no-ops when flags.ProjectRef is empty.
+      expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

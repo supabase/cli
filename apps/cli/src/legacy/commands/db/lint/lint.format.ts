@@ -101,7 +101,7 @@ function normalizeIssue(value: unknown): LegacyLintIssue {
  *
  * Throws on malformed JSON; the handler maps that to `LegacyDbLintMalformedJsonError`.
  */
-export function parseLintResult(jsonText: string, functionName: string): LegacyLintResult {
+export function parseLegacyLintResult(jsonText: string, functionName: string): LegacyLintResult {
   const parsed: unknown = JSON.parse(jsonText);
   const record = (typeof parsed === "object" && parsed !== null ? parsed : {}) as Record<
     string,
@@ -115,7 +115,7 @@ export function parseLintResult(jsonText: string, functionName: string): LegacyL
  * Drops issues below `minLevel` and results left without any issue, porting
  * `filterResult` (`lint.go:80-93`).
  */
-export function filterLintResult(
+export function filterLegacyLintResult(
   results: ReadonlyArray<LegacyLintResult>,
   minLevel: number,
 ): ReadonlyArray<LegacyLintResult> {
@@ -134,10 +134,10 @@ export function filterLintResult(
  * pretty 2-space JSON array, struct-order keys, trailing newline. An empty slice
  * produces no output (Go's early return), so the caller skips emission instead.
  *
- * `normalizeIssue` / `parseLintResult` already build their objects in Go struct
+ * `normalizeIssue` / `parseLegacyLintResult` already build their objects in Go struct
  * order with `omitempty` fields dropped, so the values feed straight to the
  * order-preserving encoder.
  */
-export function encodeLintResults(results: ReadonlyArray<LegacyLintResult>): string {
+export function encodeLegacyLintResults(results: ReadonlyArray<LegacyLintResult>): string {
   return encodeGoJsonIndented(results);
 }

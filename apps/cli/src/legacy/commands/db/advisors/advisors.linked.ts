@@ -13,7 +13,7 @@ import {
   LegacyDbAdvisorsSecurityNetworkError,
   LegacyDbAdvisorsSecurityStatusError,
 } from "./advisors.errors.ts";
-import { apiResponseToLints } from "./advisors.format.ts";
+import { apiResponseToLegacyAdvisorLints } from "./advisors.format.ts";
 
 interface AdvisorEndpoint {
   readonly path: "security" | "performance";
@@ -67,10 +67,10 @@ const fetchAdvisors = Effect.fnUntraced(function* (ref: string, endpoint: Adviso
     try: () => JSON.parse(rawBody) as unknown,
     catch: (cause) => endpoint.network(String(cause)),
   });
-  return apiResponseToLints(parsed);
+  return apiResponseToLegacyAdvisorLints(parsed);
 });
 
-export const fetchSecurityAdvisors = (ref: string) =>
+export const legacyFetchSecurityAdvisors = (ref: string) =>
   fetchAdvisors(ref, {
     path: "security",
     network: (message) =>
@@ -85,7 +85,7 @@ export const fetchSecurityAdvisors = (ref: string) =>
       }),
   });
 
-export const fetchPerformanceAdvisors = (ref: string) =>
+export const legacyFetchPerformanceAdvisors = (ref: string) =>
   fetchAdvisors(ref, {
     path: "performance",
     network: (message) =>

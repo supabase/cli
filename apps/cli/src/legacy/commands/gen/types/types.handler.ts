@@ -17,13 +17,13 @@ import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
+import { legacyNormalizeSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import {
   buildPostgresUrl,
   defaultSchemas,
   localDbContainerId,
   localDbPassword,
   localNetworkId,
-  normalizeSchemaFlags,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
   probeTlsSupport,
@@ -220,7 +220,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
   }
 
-  const schemas = normalizeSchemaFlags(flags.schema);
+  const schemas = legacyNormalizeSchemaFlags(flags.schema);
   const queryTimeoutSeconds = yield* parseQueryTimeoutSeconds(flags.queryTimeout);
   const lang = flags.lang;
   const swiftAccessControl = flags.swiftAccessControl;

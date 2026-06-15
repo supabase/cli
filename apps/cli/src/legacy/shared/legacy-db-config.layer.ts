@@ -391,7 +391,12 @@ export const legacyDbConfigLayer = Layer.effect(
         if (flags.linked) {
           const conn = yield* Effect.gen(function* () {
             const projectRef = yield* LegacyProjectRefResolver;
-            const ref = yield* projectRef.resolve(Option.none());
+            // Go's `ParseDatabaseConfig` linked branch uses `flags.LoadProjectRef`
+            // (`internal/utils/flags/db_url.go:88`) — non-prompting, hard-failing
+            // with ErrNotLinked. Match it so the whole db family (`lint`, `dump`,
+            // `push`, `pull`, `reset`, `query`) fails fast on `--linked` without a
+            // linked-project file instead of opening an interactive picker.
+            const ref = yield* projectRef.loadProjectRef(Option.none());
             return yield* resolveLinked(ref, flags.dnsResolver);
           }).pipe(
             Effect.provide(

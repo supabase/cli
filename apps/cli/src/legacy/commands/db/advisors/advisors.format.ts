@@ -64,7 +64,7 @@ function normalizeLocalMetadata(value: unknown): unknown {
  * keys rows by column name; the `lints.sql` query aliases the ten columns
  * exactly as referenced here.
  */
-export function scanAdvisorLintRow(row: Record<string, unknown>): LegacyAdvisorLint {
+export function scanLegacyAdvisorLintRow(row: Record<string, unknown>): LegacyAdvisorLint {
   const metadata = normalizeLocalMetadata(row["metadata"]);
   return {
     name: asString(row["name"]),
@@ -103,7 +103,7 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
  * can add). `name` / `level` / `facing` / category values pass through as raw
  * strings, exactly like Go's `type X string` aliases.
  */
-export function apiResponseToLints(parsed: unknown): ReadonlyArray<LegacyAdvisorLint> {
+export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<LegacyAdvisorLint> {
   if (typeof parsed !== "object" || parsed === null) return [];
   const lintsRaw = (parsed as { lints?: unknown }).lints;
   if (!Array.isArray(lintsRaw)) return [];
@@ -129,7 +129,7 @@ export function apiResponseToLints(parsed: unknown): ReadonlyArray<LegacyAdvisor
 }
 
 /** Go's `matchesType` (`advisors.go:226-239`). */
-export function matchesAdvisorType(lint: LegacyAdvisorLint, advisorType: string): boolean {
+export function matchesLegacyAdvisorType(lint: LegacyAdvisorLint, advisorType: string): boolean {
   if (advisorType === "all") return true;
   for (const category of lint.categories) {
     if (advisorType === "security" && category === "SECURITY") return true;
@@ -139,7 +139,7 @@ export function matchesAdvisorType(lint: LegacyAdvisorLint, advisorType: string)
 }
 
 /** Go's `filterLints` (`advisors.go:212-224`): type + minimum-level filter. */
-export function filterAdvisorLints(
+export function filterLegacyAdvisorLints(
   lints: ReadonlyArray<LegacyAdvisorLint>,
   advisorType: string,
   level: string,
@@ -147,7 +147,7 @@ export function filterAdvisorLints(
   const minLevel = LEGACY_ADVISORS_LEVEL_ENUM.toEnum(level);
   return lints.filter(
     (lint) =>
-      matchesAdvisorType(lint, advisorType) &&
+      matchesLegacyAdvisorType(lint, advisorType) &&
       LEGACY_ADVISORS_LEVEL_ENUM.toEnum(lint.level) >= minLevel,
   );
 }
@@ -175,6 +175,6 @@ function toEncodableLint(lint: LegacyAdvisorLint): Record<string, unknown> {
  * produces no output (Go writes a stderr message instead), so the caller skips
  * emission.
  */
-export function encodeAdvisorLints(lints: ReadonlyArray<LegacyAdvisorLint>): string {
+export function encodeLegacyAdvisorLints(lints: ReadonlyArray<LegacyAdvisorLint>): string {
   return encodeGoJsonIndented(lints.map(toEncodableLint));
 }

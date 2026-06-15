@@ -1,26 +1,61 @@
 import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { legacyCredentialsLayer } from "../../../auth/legacy-credentials.layer.ts";
+import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
+import { legacyPlatformApiFactoryLayer } from "../../../auth/legacy-platform-api-factory.layer.ts";
 import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
+import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
+import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 
 /**
- * Runtime layer for `supabase db lint`.
+ * Runtime layer for `supabase db lint`, which spans local and linked DB access:
  *
- * `db lint` is local / `--db-url` / `--linked`-direct-DB only — it never calls
- * the Management API — so this mirrors `legacyInspectBaseLayer`: the DB-config
- * resolver, the Postgres connection, the CLI config, and telemetry state, plus
- * the `["db", "lint"]` command-runtime identity for telemetry.
+ *   - **`--local` / `--db-url`** — the Postgres connection + db-config resolver.
+ *   - **`--linked`** — direct DB connection via the db-config resolver's linked
+ *     branch, plus project-ref resolution and the linked-project cache so the
+ *     `--linked` run writes supabase/.temp/linked-project.json for telemetry
+ *     grouping (Go's PersistentPostRun `ensureProjectGroupsCached`).
  *
- * `legacyCliConfigLayer` is provided to the resolver AND exposed at the top
- * level because `Layer.provide` does not share to merge siblings (legacy
- * CLAUDE.md item 5). The `--linked` branch of the resolver builds its own
- * Management API stack lazily, so no API stack is merged here.
+ * Mirrors `advisors.layers.ts`. Deliberately does NOT use
+ * `legacyManagementApiRuntimeLayer`: that layer exposes an *eagerly* built
+ * `LegacyPlatformApi`, which resolves an access token at layer construction, so
+ * merging it would make the auth-free `--local` path fail before the handler
+ * runs (legacy CLAUDE.md item 5 / 7). The project-ref resolver is instead given
+ * the **lazy** `legacyPlatformApiFactoryLayer`; the linked lint path resolves the
+ * ref via the non-prompting `loadProjectRef`, which never forces the factory.
+ *
+ * `legacyCliConfigLayer` is provided to each consumer that needs it (item 5:
+ * `Layer.provide` does not share to merge siblings); layers are memoised by
+ * reference so the config / credentials / HTTP instances are reused.
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const credentials = legacyCredentialsLayer.pipe(
+  Layer.provide(cliConfig),
+  Layer.provide(legacyDebugLoggerLayer),
+);
+
+const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
+  Layer.provide(credentials),
+  Layer.provide(cliConfig),
+  Layer.provide(legacyDebugLoggerLayer),
+);
+
+const projectRef = legacyProjectRefLayer.pipe(
+  Layer.provide(platformApiFactory),
+  Layer.provide(cliConfig),
+);
+
+const linkedProjectCache = legacyLinkedProjectCacheLayer.pipe(
+  Layer.provide(credentials),
+  Layer.provide(cliConfig),
+  Layer.provide(httpClient),
+);
 
 const dbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(cliConfig),
@@ -32,6 +67,10 @@ export const legacyDbLintRuntimeLayer = Layer.mergeAll(
   dbConfig,
   legacyDbConnectionLayer,
   cliConfig,
+  httpClient,
+  credentials,
+  projectRef,
+  linkedProjectCache,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["db", "lint"]),
 );

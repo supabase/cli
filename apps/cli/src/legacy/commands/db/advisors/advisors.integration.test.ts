@@ -27,7 +27,7 @@ import {
   LegacyDbAdvisorsFailOnError,
   LegacyDbAdvisorsNotLoggedInError,
 } from "./advisors.errors.ts";
-import { encodeAdvisorLints, scanAdvisorLintRow } from "./advisors.format.ts";
+import { encodeLegacyAdvisorLints, scanLegacyAdvisorLintRow } from "./advisors.format.ts";
 import { legacyDbAdvisors } from "./advisors.handler.ts";
 import { splitLegacyLintsSql } from "./advisors.lints-sql.ts";
 import type { LegacyDbAdvisorsFlags } from "./advisors.command.ts";
@@ -104,13 +104,28 @@ function mockConnection(opts: {
 }
 
 function mockProjectRef() {
+  const calls: Array<string> = [];
   const layer = Layer.succeed(LegacyProjectRefResolver, {
-    resolve: () => Effect.succeed(LEGACY_VALID_REF),
+    resolve: () =>
+      Effect.sync(() => {
+        calls.push("resolve");
+        return LEGACY_VALID_REF;
+      }),
     resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
+    loadProjectRef: () =>
+      Effect.sync(() => {
+        calls.push("loadProjectRef");
+        return LEGACY_VALID_REF;
+      }),
     promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
   });
-  return { layer };
+  return {
+    layer,
+    get calls() {
+      return calls;
+    },
+  };
 }
 
 interface SetupOpts {
@@ -176,7 +191,7 @@ function setup(opts: SetupOpts = {}) {
     api.httpClientLayer,
     Layer.succeed(LegacyDnsResolverFlag, "native"),
   );
-  return { layer, out, connection, telemetry, processControl, cache, api };
+  return { layer, out, connection, telemetry, processControl, cache, api, projectRef };
 }
 
 const flags = (over: Partial<LegacyDbAdvisorsFlags> = {}): LegacyDbAdvisorsFlags => ({
@@ -193,7 +208,7 @@ describe("legacy db advisors — local", () => {
     const { layer, out, connection } = setup({ rows: [lintRow()] });
     return Effect.gen(function* () {
       yield* legacyDbAdvisors(flags());
-      const expected = encodeAdvisorLints([scanAdvisorLintRow(lintRow())]);
+      const expected = encodeLegacyAdvisorLints([scanLegacyAdvisorLintRow(lintRow())]);
       expect(out.stdoutText).toBe(expected);
       expect(out.stderrText).toContain("Connecting to local database...");
       expect(connection.execs).toEqual(["begin", SETUP_SQL, "rollback"]);
@@ -365,6 +380,18 @@ describe("legacy db advisors — linked", () => {
       expect(out.stdoutText).toContain("unindexed_foreign_keys");
       // Linked runs write the linked-project cache (Go PersistentPostRun).
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("resolves the linked ref via the non-prompting load (Go LoadProjectRef)", () => {
+    // Go's advisors PreRunE uses `flags.LoadProjectRef`, not the prompting
+    // `ParseProjectRef`, so `--linked` must take the fail-fast/non-interactive
+    // path rather than `resolve` (which opens a project picker on a TTY).
+    const { layer, projectRef } = setup({ securityLints: [securityLint] });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags({ linked: true, type: Option.some("security") }));
+      expect(projectRef.calls).toContain("loadProjectRef");
+      expect(projectRef.calls).not.toContain("resolve");
     }).pipe(Effect.provide(layer));
   });
 
