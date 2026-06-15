@@ -139,6 +139,9 @@ describe("legacy bootstrap linked-project cache location", () => {
             Layer.provide(BunServices.layer),
           ),
         ),
+        // The cache also fires org/project groupIdentify (Go parity), reading
+        // Analytics directly.
+        Layer.provide(mockAnalytics().layer),
         Layer.provide(BunServices.layer),
       );
 
