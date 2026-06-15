@@ -22,6 +22,7 @@ import { Tty } from "../../shared/runtime/tty.service.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { LegacyDbConnection, type LegacyPgConnInput } from "./legacy-db-connection.service.ts";
+import type { LegacyManagementApiRuntimeError } from "./legacy-management-api-runtime.layer.ts";
 import { legacyDebugLoggerLayer } from "./legacy-debug-logger.layer.ts";
 import * as Errors from "./legacy-db-config.errors.ts";
 import {
@@ -64,23 +65,6 @@ const unbanErrorMapper = mapLegacyHttpError({
   networkMessage: (cause) => `failed to remove network bans: ${cause}`,
   statusMessage: (status, body) => `unexpected remove bans status ${status}: ${body}`,
 });
-
-const describeError = (cause: unknown): string =>
-  typeof cause === "object" &&
-  cause !== null &&
-  "message" in cause &&
-  typeof cause.message === "string"
-    ? cause.message
-    : String(cause);
-
-// `factory.make` resolves the access token lazily on the temp-role path; if it
-// can't (no/invalid token or config error), surface it as the login-role
-// acquisition failure. Go reaches `createLoginRole` with whatever token
-// `GetSupabase()` resolved, so a missing token there is also a login-role error.
-const platformApiFactoryErrorMapper = (cause: unknown) =>
-  new Errors.LegacyDbConfigLoginRoleNetworkError({
-    message: `failed to initialise login role: ${describeError(cause)}`,
-  });
 
 /** `utils.IsLocalDatabase` (`connect.go:230`). Compares against the resolved local
  * services hostname (`utils.Config.Hostname`), not a hard-coded loopback. */
@@ -192,7 +176,11 @@ export const legacyDbConfigLayer = Layer.effect(
         // Go writes this to stderr unconditionally (not gated on --debug):
         // `apps/cli-go/internal/utils/flags/db_url.go` initLoginRole.
         yield* output.raw("Initialising login role...\n", "stderr");
-        const api = yield* factory.make.pipe(Effect.mapError(platformApiFactoryErrorMapper));
+        // Let token-resolution failures propagate raw (Go's `GetSupabase()` →
+        // `LoadAccessTokenFS` exits with the raw missing/invalid-token message,
+        // `internal/utils/api.go:121-123`). Only the createLoginRole HTTP call is
+        // wrapped as "failed to initialise login role" (`db_url.go:206-208`).
+        const api = yield* factory.make;
         const role = yield* api.v1
           .createLoginRole({ ref, read_only: false })
           .pipe(Effect.catch(loginRoleErrorMapper));
@@ -202,7 +190,7 @@ export const legacyDbConfigLayer = Layer.effect(
     const listAndUnban = (ref: string) =>
       Effect.gen(function* () {
         const factory = yield* LegacyPlatformApiFactory;
-        const api = yield* factory.make.pipe(Effect.mapError(platformApiFactoryErrorMapper));
+        const api = yield* factory.make;
         const bans = yield* api.v1
           .listAllNetworkBans({ ref })
           .pipe(Effect.catch(listBansErrorMapper));
@@ -220,10 +208,18 @@ export const legacyDbConfigLayer = Layer.effect(
       ref: string,
       conn: LegacyPgConnInput,
       dnsResolver: "native" | "https",
-    ): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApiFactory> => {
+    ): Effect.Effect<
+      void,
+      LegacyDbConfigError | LegacyManagementApiRuntimeError,
+      LegacyPlatformApiFactory
+    > => {
       const attempt = (
         n: number,
-      ): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApiFactory> =>
+      ): Effect.Effect<
+        void,
+        LegacyDbConfigError | LegacyManagementApiRuntimeError,
+        LegacyPlatformApiFactory
+      > =>
         // The temp-role probe always targets the remote Supavisor pooler, so it
         // connects with TLS (Go's pooler path goes through `ConnectByUrl`) and
         // honors `--dns-resolver` (Go's `ConnectByConfigStream` installs the DoH
@@ -329,7 +325,11 @@ export const legacyDbConfigLayer = Layer.effect(
     const resolveLinked = (
       ref: string,
       dnsResolver: "native" | "https",
-    ): Effect.Effect<LegacyPgConnInput, LegacyDbConfigError, LegacyPlatformApiFactory> =>
+    ): Effect.Effect<
+      LegacyPgConnInput,
+      LegacyDbConfigError | LegacyManagementApiRuntimeError,
+      LegacyPlatformApiFactory
+    > =>
       Effect.gen(function* () {
         // Read lazily (per invocation) rather than at layer build, so tests and
         // env-substitution see the current value. Go reads viper `DB_PASSWORD`
