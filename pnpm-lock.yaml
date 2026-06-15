@@ -8580,12 +8580,12 @@ snapshots:
 
   '@types/pg-copy-streams@1.2.5':
     dependencies:
-      '@types/node': 25.9.1
+      '@types/node': 25.9.3
       '@types/pg': 8.20.0
 
   '@types/pg@8.20.0':
     dependencies:
-      '@types/node': 25.9.1
+      '@types/node': 25.9.3
       pg-protocol: 1.14.0
       pg-types: 2.2.0
 
