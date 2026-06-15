@@ -10,6 +10,15 @@ describe("legacyLikeEscapeSchema", () => {
     expect(legacyLikeEscapeSchema(["supabase_functions"])).toEqual(["supabase\\_functions"]);
   });
 
+  it("escapes backslashes before LIKE metacharacters", () => {
+    expect(legacyLikeEscapeSchema([String.raw`custom\schema`])).toEqual([
+      String.raw`custom\\schema`,
+    ]);
+    expect(legacyLikeEscapeSchema([String.raw`custom\_schema`])).toEqual([
+      String.raw`custom\\\_schema`,
+    ]);
+  });
+
   it("leaves a plain schema name untouched", () => {
     expect(legacyLikeEscapeSchema(["auth"])).toEqual(["auth"]);
   });

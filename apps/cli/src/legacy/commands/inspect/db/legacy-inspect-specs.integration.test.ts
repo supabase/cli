@@ -50,6 +50,7 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
         Effect.succeed({
           exec: () => Effect.void,
           extensionExists: () => Effect.succeed(false),
+          copyToCsv: () => Effect.succeed(new Uint8Array()),
           query: (sql: string, params?: ReadonlyArray<unknown>) => {
             querySql = sql;
             queryParams = params;

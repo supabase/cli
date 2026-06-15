@@ -4,7 +4,17 @@ import type { ConnectionOptions } from "node:tls";
 import { PgClient } from "@effect/sql-pg";
 import { Duration, Effect, Layer, Redacted, type Scope } from "effect";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
-import { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
+// `pg` is also `@effect/sql-pg`'s transitive driver; we depend on it directly only
+// for the COPY protocol (which `@effect/sql-pg` does not expose). Keep the direct
+// `pg` version constraint in package.json aligned with the one `@effect/sql-pg`
+// resolves, so the COPY path and the pooled path use the same driver.
+import * as Pg from "pg";
+import { to as pgCopyTo } from "pg-copy-streams";
+import {
+  LegacyDbConnectError,
+  LegacyDbCopyError,
+  LegacyDbExecError,
+} from "./legacy-db-connection.errors.ts";
 import {
   type LegacyDbConnectOptions,
   LegacyDbConnection,
@@ -258,6 +268,11 @@ const connect = (
       }
     }
     const hasOptions = cfg.options !== undefined && cfg.options.length > 0;
+    // Connect timeout parity: Go's `ToPostgresURL` always sets `connect_timeout`,
+    // defaulting to 10s (`connect.go:24-28`); `ConnectLocalPostgres` uses 2s for
+    // local (`connect.go:143-145`). A DSN/`PGCONNECT_TIMEOUT` value (>0) overrides
+    // both. Without this a black-holed host would hang to the OS/driver default.
+    const connectTimeoutSeconds = cfg.connectTimeoutSeconds ?? (isLocal ? 2 : 10);
     const makeClient = (
       dialHost: string,
       port: number,
@@ -278,13 +293,25 @@ const connect = (
             }),
         // TLS parity with Go (`internal/utils/connect.go`): see `legacySslOptionFor`.
         ...(sslOption === undefined ? {} : { ssl: sslOption }),
-        // Connect timeout parity: Go's `ToPostgresURL` always sets `connect_timeout`,
-        // defaulting to 10s (`connect.go:24-28`); `ConnectLocalPostgres` uses 2s for
-        // local (`connect.go:143-145`). A DSN/`PGCONNECT_TIMEOUT` value (>0) overrides
-        // both. Without this a black-holed host would hang to the OS/driver default.
-        connectTimeout: Duration.seconds(cfg.connectTimeoutSeconds ?? (isLocal ? 2 : 10)),
+        connectTimeout: Duration.seconds(connectTimeoutSeconds),
         maxConnections: 1,
       }).pipe(Effect.provide(Reactivity.layer));
+
+    // The raw `pg.ClientConfig` for the same dial target, mirroring `makeClient`'s
+    // discrete-vs-url choice. `copyToCsv` uses it to open a dedicated node-postgres
+    // connection for the COPY protocol (which `@effect/sql-pg` does not expose),
+    // against whichever target the primary connection won.
+    const buildRawPgConfig = (
+      dialHost: string,
+      port: number,
+      sslOption: boolean | ConnectionOptions | undefined,
+    ): Pg.ClientConfig => ({
+      ...(hasOptions
+        ? { connectionString: legacyBuildConnectionUrl(cfg, dialHost, port) }
+        : { host: dialHost, port, user: cfg.user, password: cfg.password, database: cfg.database }),
+      ...(sslOption === undefined ? {} : { ssl: sslOption }),
+      connectionTimeoutMillis: connectTimeoutSeconds * 1000,
+    });
 
     const toConnectError = (error: unknown) =>
       new LegacyDbConnectError({ message: `failed to connect to postgres: ${error}` });
@@ -320,6 +347,7 @@ const connect = (
         // failed attempt used TLS (`pgconn.go:182`, gated on `fc.TLSConfig != nil`);
         // a TLS config is any non-plaintext `ssl` value.
         usedTls: ssl !== undefined && ssl !== false,
+        rawConfig: buildRawPgConfig(dialHost, port, ssl),
       })),
     );
 
@@ -332,22 +360,24 @@ const connect = (
     // left lazy): Go always dials eagerly — the main path via `pgx.ConnectConfig` and
     // the temp-role wait via `pgconn.ConnectConfig` (`db_url.go:192`) — so `connect`
     // must return a live session for callers like `waitForTempRole` that don't run a
-    // follow-up query.
+    // follow-up query. The winning attempt's `rawConfig` is carried out so `copyToCsv`
+    // can reuse the exact dial target the primary connection succeeded against.
+    const probe = (attempt: (typeof attempts)[number]) =>
+      attempt.client.pipe(
+        Effect.tap((candidate) => candidate`select 1`),
+        Effect.map((candidate) => ({ candidate, rawConfig: attempt.rawConfig })),
+      );
     const lastIndex = attempts.length - 1;
-    const lastProbed = attempts[lastIndex]!.client.pipe(
-      Effect.tap((candidate) => candidate`select 1`),
-    );
-    const client = yield* attempts
+    const { candidate: client, rawConfig: winningRawConfig } = yield* attempts
       .slice(0, lastIndex)
       .reduceRight(
-        (next, { client: attempt, usedTls }) =>
-          attempt.pipe(
-            Effect.tap((candidate) => candidate`select 1`),
+        (next, attempt) =>
+          probe(attempt).pipe(
             Effect.catch((error) =>
-              legacyIsTerminalConnectError(error, usedTls) ? Effect.fail(error) : next,
+              legacyIsTerminalConnectError(error, attempt.usedTls) ? Effect.fail(error) : next,
             ),
           ),
-        lastProbed,
+        probe(attempts[lastIndex]!),
       )
       .pipe(Effect.mapError(toConnectError));
 
@@ -365,6 +395,38 @@ const connect = (
       );
     }
 
+    // `inspect report` runs ~14 `COPY (...) TO STDOUT` statements. node-postgres'
+    // COPY protocol needs the raw client (which `@effect/sql-pg` does not surface),
+    // so the session opens ONE dedicated raw connection against the winning dial
+    // target and reuses it for every copy — matching Go, which runs all copies on a
+    // single `pgconn` (`report.go:35-59`). It is created lazily on first copy (so
+    // `test db` / `inspect db`, which never copy, never open it) and closed by a
+    // scope finalizer when the session's scope closes. The step-down runs once, here,
+    // so every COPY executes with the same privileges as the primary session.
+    let copyClient: Pg.Client | undefined;
+    yield* Effect.addFinalizer(() =>
+      copyClient === undefined
+        ? Effect.void
+        : Effect.promise(() => copyClient!.end().catch(() => {})),
+    );
+    const acquireCopyClient = Effect.gen(function* () {
+      if (copyClient !== undefined) return copyClient;
+      const fresh = new Pg.Client(winningRawConfig);
+      yield* Effect.tryPromise({
+        try: () => fresh.connect(),
+        catch: (error) => new LegacyDbCopyError({ message: `failed to copy output: ${error}` }),
+      });
+      if (!isLocal && needsRoleStepDown(cfg.user)) {
+        yield* Effect.tryPromise({
+          try: () => fresh.query(SET_SESSION_ROLE),
+          catch: (error) =>
+            new LegacyDbCopyError({ message: `failed to set session role: ${error}` }),
+        });
+      }
+      copyClient = fresh;
+      return fresh;
+    });
+
     const session: LegacyDbSession = {
       exec: (sql) =>
         client.unsafe(sql).pipe(
@@ -380,6 +442,21 @@ const connect = (
           Effect.map((rows) => rows.length > 0),
           Effect.mapError((error) => new LegacyDbExecError({ message: String(error) })),
         ),
+      copyToCsv: (sql) =>
+        Effect.gen(function* () {
+          const activeClient = yield* acquireCopyClient;
+          return yield* Effect.callback<Uint8Array, LegacyDbCopyError>((resume) => {
+            const stream = activeClient.query(pgCopyTo(sql));
+            const chunks: Array<Buffer> = [];
+            stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+            stream.on("error", (error: Error) =>
+              resume(
+                Effect.fail(new LegacyDbCopyError({ message: `failed to copy output: ${error}` })),
+              ),
+            );
+            stream.on("end", () => resume(Effect.succeed(new Uint8Array(Buffer.concat(chunks)))));
+          });
+        }),
     };
     return session;
   });

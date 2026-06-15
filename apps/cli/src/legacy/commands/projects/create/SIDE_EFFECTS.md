@@ -14,10 +14,10 @@
 
 ## API Routes
 
-| Method | Path                | Auth         | Request body                                                                 | Response (used fields)                                           |
-| ------ | ------------------- | ------------ | ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `GET`  | `/v1/organizations` | Bearer token | —                                                                            | `[{id, slug, name}]` — interactive org prompt only               |
-| `POST` | `/v1/projects`      | Bearer token | `{name, organization_slug, db_pass, region?, desired_instance_size?}` (JSON) | `{id, ref, name, organization_slug, region, created_at, status}` |
+| Method | Path                | Auth         | Request body                                                                                     | Response (used fields)                                           |
+| ------ | ------------------- | ------------ | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| `GET`  | `/v1/organizations` | Bearer token | —                                                                                                | `[{id, slug, name}]` — interactive org prompt only               |
+| `POST` | `/v1/projects`      | Bearer token | `{name, organization_slug, db_pass, region?, desired_instance_size?, high_availability?}` (JSON) | `{id, ref, name, organization_slug, region, created_at, status}` |
 
 ## Environment Variables
 
@@ -40,21 +40,22 @@
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                        |
-| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------ |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--org-id` is telemetry-safe) |
+| Event                  | When                                       | Notable properties / groups                                                                |
+| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--org-id`, `--high-availability` are telemetry-safe) |
 
 ## Flags
 
-| Flag             | Type   | Required (non-interactive) | Description                                     |
-| ---------------- | ------ | -------------------------- | ----------------------------------------------- |
-| `[project name]` | arg    | yes (non-interactive)      | Name of the project (positional argument)       |
-| `--org-id`       | string | yes (non-interactive)      | Organization ID (slug) to create the project in |
-| `--db-password`  | string | yes (non-interactive)      | Database password for the project               |
-| `--region`       | enum   | yes (non-interactive)      | AWS region for the project                      |
-| `--size`         | enum   | no                         | Desired instance size                           |
-| `--interactive`  | bool   | no (default: true)         | Enable interactive mode (hidden flag)           |
-| `--plan`         | string | no                         | Plan selection (hidden flag)                    |
+| Flag                  | Type   | Required (non-interactive) | Description                                     |
+| --------------------- | ------ | -------------------------- | ----------------------------------------------- |
+| `[project name]`      | arg    | yes (non-interactive)      | Name of the project (positional argument)       |
+| `--org-id`            | string | yes (non-interactive)      | Organization ID (slug) to create the project in |
+| `--db-password`       | string | yes (non-interactive)      | Database password for the project               |
+| `--region`            | enum   | yes (non-interactive)      | AWS region for the project                      |
+| `--size`              | enum   | no                         | Desired instance size                           |
+| `--high-availability` | bool   | no                         | Enable high availability for the project        |
+| `--interactive`       | bool   | no (default: true)         | Enable interactive mode (hidden flag)           |
+| `--plan`              | string | no                         | Plan selection (hidden flag)                    |
 
 ## Output
 
@@ -91,4 +92,5 @@ One `result` event on success.
 - In non-interactive mode (when stdin is not a TTY or `--interactive=false`), all three
   flags and the positional project name argument are required.
 - The `--size` flag, when provided, sets the `desired_instance_size` field in the request body.
+- The `--high-availability` flag, when provided, sets the `high_availability` field in the request body.
 - The `--plan` flag is hidden and reserved.

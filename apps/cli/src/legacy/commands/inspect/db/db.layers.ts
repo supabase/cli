@@ -1,40 +1,7 @@
 import { Layer } from "effect";
 
-import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
-import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
-import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
-import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
-import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
-
-/**
- * `legacyCliConfigLayer` is provided to the resolver AND exposed at the top level
- * because `Layer.provide` does not share to merge siblings (legacy CLAUDE.md item
- * 5); the resolver requires it internally and so it is provided to `dbConfig`,
- * while the merge keeps it available alongside.
- */
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
-
-const dbConfig = legacyDbConfigLayer.pipe(
-  Layer.provide(cliConfig),
-  Layer.provide(legacyDbConnectionLayer),
-  Layer.provide(legacyDebugLoggerLayer),
-);
-
-/**
- * The services every `inspect db` subcommand shares, minus the command-runtime
- * identity. Mirrors `test/test.layers.ts` minus the docker layer: the DB-config
- * resolver, the Postgres connection, the CLI config, and telemetry state. The
- * Management API stack is NOT merged here — it resolves an access token eagerly,
- * which would break the auth-free `--local` / `--db-url` paths. The `--linked`
- * path provides it lazily inside the resolver (`legacy-db-config.layer.ts`).
- */
-const baseLayer = Layer.mergeAll(
-  dbConfig,
-  legacyDbConnectionLayer,
-  cliConfig,
-  legacyTelemetryStateLayer,
-);
+import { legacyInspectBaseLayer } from "../inspect.layers.ts";
 
 /**
  * The command-runtime path for a single `inspect db <leaf>` subcommand.
@@ -57,4 +24,4 @@ export const legacyInspectDbCommandPath = (leaf: string): ReadonlyArray<string> 
 
 /** Runtime layer for a single `supabase inspect db <leaf>` subcommand. */
 export const legacyInspectDbRuntimeLayer = (leaf: string) =>
-  Layer.merge(baseLayer, commandRuntimeLayer(legacyInspectDbCommandPath(leaf)));
+  Layer.merge(legacyInspectBaseLayer, commandRuntimeLayer(legacyInspectDbCommandPath(leaf)));

@@ -14,7 +14,7 @@ type OpenApiDocument = {
 };
 
 type JsonPatchOperation = {
-  readonly op: "test" | "replace";
+  readonly op: "add" | "test" | "replace";
   readonly path: string;
   readonly value: unknown;
 };
@@ -82,12 +82,39 @@ function replaceJsonPointerValue(document: unknown, pointer: string, value: unkn
   parent[key] = value;
 }
 
+function addJsonPointerValue(document: unknown, pointer: string, value: unknown): void {
+  const segments = jsonPointerSegments(pointer);
+  if (segments.length === 0) {
+    throw new Error("Adding the document root is not supported.");
+  }
+
+  let parent = document;
+  for (const segment of segments.slice(0, -1)) {
+    parent = getJsonPointerValue(parent, `/${segment.replace(/~/g, "~0").replace(/\//g, "~1")}`);
+  }
+
+  const key = segments[segments.length - 1]!;
+  if (Array.isArray(parent)) {
+    const index = key === "-" ? parent.length : Number(key);
+    if (!Number.isInteger(index) || index < 0 || index > parent.length) {
+      throw new Error(`JSON pointer ${JSON.stringify(pointer)} cannot be added.`);
+    }
+    parent.splice(index, 0, value);
+    return;
+  }
+
+  if (!isRecord(parent) || key in parent) {
+    throw new Error(`JSON pointer ${JSON.stringify(pointer)} cannot be added.`);
+  }
+  parent[key] = value;
+}
+
 function assertJsonPatchOperation(value: unknown): asserts value is JsonPatchOperation {
   if (!isRecord(value)) {
     throw new Error("OpenAPI override entry must be an object.");
   }
-  if (value.op !== "test" && value.op !== "replace") {
-    throw new Error("OpenAPI overrides only support test and replace operations.");
+  if (value.op !== "add" && value.op !== "test" && value.op !== "replace") {
+    throw new Error("OpenAPI overrides only support add, test and replace operations.");
   }
   if (typeof value.path !== "string") {
     throw new Error("OpenAPI override path must be a string.");
@@ -114,6 +141,10 @@ export function applyOpenApiOverrides(
           `OpenAPI override test failed at ${override.path}: expected ${JSON.stringify(override.value)}, got ${JSON.stringify(actual)}.`,
         );
       }
+      continue;
+    }
+    if (override.op === "add") {
+      addJsonPointerValue(document, override.path, override.value);
       continue;
     }
     replaceJsonPointerValue(document, override.path, override.value);

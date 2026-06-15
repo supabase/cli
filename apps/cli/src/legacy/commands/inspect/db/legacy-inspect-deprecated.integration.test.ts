@@ -59,6 +59,7 @@ function setup() {
         Effect.succeed({
           exec: () => Effect.void,
           extensionExists: () => Effect.succeed(false),
+          copyToCsv: () => Effect.succeed(new Uint8Array()),
           query: (sql: string) => {
             querySql = sql;
             return Effect.succeed([]);

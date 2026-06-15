@@ -523,5 +523,13 @@
       "custom_oauth_enabled",
       "custom_oauth_max_providers"
     ]
+  },
+  {
+    "op": "add",
+    "path": "/components/schemas/V1CreateProjectBody/properties/high_availability",
+    "value": {
+      "type": "boolean",
+      "description": "Whether to enable high availability for the project."
+    }
   }
 ]

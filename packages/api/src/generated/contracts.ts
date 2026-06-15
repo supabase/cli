@@ -709,6 +709,11 @@ export const V1CreateAProjectInput = Schema.Struct({
       format: "uri",
     }),
   ),
+  high_availability: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description: "Whether to enable high availability for the project.",
+    }),
+  ),
 });
 export const V1CreateAProjectOutput = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
@@ -6341,6 +6346,7 @@ export const operationDefinitions = {
         "kps_enabled",
         "desired_instance_size",
         "template_url",
+        "high_availability",
       ],
     },
     response: { kind: "json" },
