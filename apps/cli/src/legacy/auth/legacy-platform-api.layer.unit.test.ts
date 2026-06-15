@@ -262,6 +262,38 @@ describe("legacyPlatformApiLayer", () => {
     });
   });
 
+  it.effect(
+    "fails with the invalid-token error when the env token is malformed (Go parity)",
+    () => {
+      // Go's GetSupabase() → LoadAccessTokenFS validates the env token against the
+      // sbp_ pattern before any API call; a malformed SUPABASE_ACCESS_TOKEN must
+      // fail with ErrInvalidToken, not be sent to the API.
+      const http = captureRequests();
+      const layer = legacyPlatformApiLayer.pipe(
+        Layer.provide(mockCliConfig({ accessToken: "sbp_not_a_valid_token" })),
+        Layer.provide(mockCredentials(Option.none())),
+        Layer.provide(http.layer),
+        withBaseDeps(),
+      );
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          Effect.gen(function* () {
+            const api = yield* LegacyPlatformApi;
+            return yield* api.v1.listAllProjects();
+          }).pipe(Effect.provide(layer)),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const errorJson = JSON.stringify(exit.cause);
+          expect(errorJson).toContain("LegacyInvalidAccessTokenError");
+          expect(errorJson).toContain("Invalid access token format");
+        }
+        // The bad token was never sent to the API.
+        expect(http.requests).toHaveLength(0);
+      });
+    },
+  );
+
   it.effect("sends Go-style User-Agent and no X-Supabase-Command headers", () => {
     const http = captureRequests();
     const layer = legacyPlatformApiLayer.pipe(

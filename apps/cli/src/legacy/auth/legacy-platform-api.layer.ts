@@ -1,11 +1,12 @@
 import { makeApiClient } from "@supabase/api/effect";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
 import { makeLegacyIdentityStitcher } from "../shared/legacy-identity-stitch.ts";
+import { validateLegacyAccessToken } from "./legacy-access-token.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import { LegacyPlatformAuthRequiredError } from "./legacy-errors.ts";
 import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
@@ -37,6 +38,13 @@ export const legacyMakePlatformApi = Effect.gen(function* () {
   const resolveAccessToken = Effect.gen(function* () {
     if (Option.isSome(configuredToken)) {
       yield* debugLogger.debug("Using access token from env var...");
+      // Go's GetSupabase() → LoadAccessTokenFS validates the token — including the
+      // env value — against the sbp_ pattern before any API call
+      // (internal/utils/api.go:121, access_token.go:24-41). credentials.getAccessToken
+      // already validates the keyring/file paths; validate the env token here too so
+      // a malformed SUPABASE_ACCESS_TOKEN fails with the invalid-token error rather
+      // than being sent to the API.
+      yield* validateLegacyAccessToken(Redacted.value(configuredToken.value));
       return configuredToken;
     }
     return yield* credentials.getAccessToken;
