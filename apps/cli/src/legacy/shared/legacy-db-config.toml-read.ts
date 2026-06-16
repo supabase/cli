@@ -145,6 +145,31 @@ function applyRemoteOverride(doc: RawDoc | undefined, ref: string): RawDoc | und
   return doc;
 }
 
+/**
+ * Go's `config.Load` aborts when two `[remotes.*]` blocks declare the same
+ * `project_id` (`pkg/config/config.go:506-511`), regardless of which command runs.
+ * Returns the conflicting pair (current + prior block name) or `undefined`.
+ */
+function findDuplicateRemoteProjectId(
+  doc: RawDoc | undefined,
+): { readonly name: string; readonly other: string } | undefined {
+  const remotes = asRecord(doc?.["remotes"]);
+  if (remotes === undefined) return undefined;
+  const seen = new Map<string, string>();
+  for (const name of Object.keys(remotes)) {
+    const block = asRecord(remotes[name]);
+    const projectId =
+      block !== undefined && typeof block["project_id"] === "string"
+        ? block["project_id"]
+        : undefined;
+    if (projectId === undefined) continue;
+    const prior = seen.get(projectId);
+    if (prior !== undefined) return { name, other: prior };
+    seen.set(projectId, name);
+  }
+  return undefined;
+}
+
 const ENV_PATTERN = /^env\((.*)\)$/;
 
 /**
@@ -347,6 +372,16 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
         }),
       );
     }
+    // Go aborts config load when two `[remotes.*]` blocks share a `project_id`,
+    // regardless of which command runs (config.go:506-511) — check before merging.
+    const duplicateRemote = findDuplicateRemoteProjectId(doc);
+    if (duplicateRemote !== undefined) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: `duplicate project_id for [remotes.${duplicateRemote.name}] and [remotes.${duplicateRemote.other}]`,
+        }),
+      );
+    }
     // Apply a matching `[remotes.<name>]` override (Go merges the block whose
     // `project_id` equals the resolved ref over the base, config.go:503-562).
     const effectiveDoc = ref === undefined ? doc : applyRemoteOverride(doc, ref);
@@ -478,28 +513,40 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // `[experimental.pgdelta]`. `enabled` is a TOML bool (Go decodes weakly, so an
   // `env(VAR)`/string "true" also counts); `declarative_schema_path` is resolved
   // to a `supabase/`-prefixed path when relative (Go's `config.resolve`).
+  // Go's viper `AutomaticEnv` lets `SUPABASE_EXPERIMENTAL_PGDELTA_*` override the
+  // TOML before validation (`config.go` `SetEnvPrefix("SUPABASE")` + `.`→`_`), so a
+  // CI env override decides the gate / paths. `envOverride` is the shell→project-.env
+  // lookup that ignores empty values, matching viper.
   const enabledRaw = pgDeltaRaw?.["enabled"];
+  const enabledEnv = envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED");
   const enabled =
-    typeof enabledRaw === "boolean"
-      ? enabledRaw
-      : typeof enabledRaw === "string"
-        ? legacyExpandEnv(enabledRaw, lookup) === "true"
-        : false;
+    enabledEnv !== undefined
+      ? enabledEnv === "true"
+      : typeof enabledRaw === "boolean"
+        ? enabledRaw
+        : typeof enabledRaw === "string"
+          ? legacyExpandEnv(enabledRaw, lookup) === "true"
+          : false;
 
   const declarativeSchemaPathRaw = pgDeltaRaw?.["declarative_schema_path"];
+  const declarativeSchemaPathValue =
+    envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH") ??
+    (typeof declarativeSchemaPathRaw === "string"
+      ? legacyExpandEnv(declarativeSchemaPathRaw, lookup)
+      : "");
   let declarativeSchemaPath = Option.none<string>();
-  if (typeof declarativeSchemaPathRaw === "string") {
-    const expanded = legacyExpandEnv(declarativeSchemaPathRaw, lookup);
-    if (expanded.length > 0) {
-      declarativeSchemaPath = Option.some(
-        path.isAbsolute(expanded) ? expanded : path.join("supabase", expanded),
-      );
-    }
+  if (declarativeSchemaPathValue.length > 0) {
+    declarativeSchemaPath = Option.some(
+      path.isAbsolute(declarativeSchemaPathValue)
+        ? declarativeSchemaPathValue
+        : path.join("supabase", declarativeSchemaPathValue),
+    );
   }
 
   const formatOptionsRaw = pgDeltaRaw?.["format_options"];
   const formatOptionsExpanded =
-    typeof formatOptionsRaw === "string" ? legacyExpandEnv(formatOptionsRaw, lookup) : "";
+    envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS") ??
+    (typeof formatOptionsRaw === "string" ? legacyExpandEnv(formatOptionsRaw, lookup) : "");
   // Go's config.Validate aborts config load when a non-empty format_options is not
   // valid JSON (`apps/cli-go/pkg/config/config.go:1685-1686`), before any shadow /
   // catalog container runs. Fail here with Go's exact message so the user gets the

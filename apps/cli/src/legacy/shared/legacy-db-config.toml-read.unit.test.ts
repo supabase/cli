@@ -155,6 +155,31 @@ describe("legacyReadDbToml", () => {
         ),
       );
     });
+
+    it.effect("rejects two remote blocks with the same project_id (any command)", () => {
+      // Go's config.Load aborts on duplicate project_id regardless of ref (config.go:506).
+      const dir = withConfig(
+        [
+          "[remotes.a]",
+          'project_id = "dupdupdupdupdupdupdup0"',
+          "[remotes.b]",
+          'project_id = "dupdupdupdupdupdupdup0"',
+          "",
+        ].join("\n"),
+      );
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain("duplicate project_id for [remotes.b]");
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    });
   });
 
   it.effect("rejects an invalid [edge_runtime] deno_version", () => {
@@ -235,6 +260,34 @@ describe("legacyReadDbToml", () => {
     );
     return read(dir).pipe(
       Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("honors SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED / _DECLARATIVE_SCHEMA_PATH env", () => {
+    // Go's viper AutomaticEnv overrides TOML for experimental.pgdelta.* before validation.
+    const dir = withConfig(undefined);
+    const savedEnabled = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+    const savedPath = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"];
+    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "true";
+    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"] = "from_env";
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.pgDelta.enabled).toBe(true);
+          expect(Option.getOrNull(v.pgDelta.declarativeSchemaPath)).toBe("supabase/from_env");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (savedEnabled === undefined)
+            delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = savedEnabled;
+          if (savedPath === undefined)
+            delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"];
+          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"] = savedPath;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
     );
   });
 
