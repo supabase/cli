@@ -122,10 +122,16 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     const db = isLocal ? "local" : "remote";
 
     // 4. Pick the mode-specific script + env (pure builders, `dump.env.ts`).
+    //    Go declares --schema/-s and --exclude/-x as cobra StringSlice
+    //    (`apps/cli-go/cmd/db.go:432,444`), which comma-splits each value before it
+    //    reaches the pg_dump env builder. The Effect CLI flags are repeatable but do
+    //    not split on comma, so split here to match (e.g. `--schema public,auth`).
+    const splitCsv = (values: ReadonlyArray<string>): ReadonlyArray<string> =>
+      values.flatMap((value) => value.split(","));
     const opt = {
-      schema: flags.schema,
+      schema: splitCsv(flags.schema),
       keepComments: flags.keepComments,
-      excludeTable: flags.exclude,
+      excludeTable: splitCsv(flags.exclude),
       columnInsert: !flags.useCopy,
     };
     const mode = flags.dataOnly
@@ -154,11 +160,17 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       return;
     }
 
+    // Resolve a relative `--file` against the workdir: Go chdir's into the workdir
+    // in PersistentPreRunE before opening the file (`cmd/root.go:104` →
+    // `internal/utils/misc.go`), so `--workdir /repo db dump -f out.sql` writes
+    // `/repo/out.sql`. `path.resolve` leaves absolute paths unchanged.
+    const resolvedFile = Option.map(flags.file, (file) => path.resolve(cliConfig.workdir, file));
+
     // Open (create + truncate) the output file up front so an unwritable `--file`
     // path fails before the dump runs, matching Go's `OpenFile(O_WRONLY|O_CREATE|
     // O_TRUNC, 0644)` ordering (`internal/db/dump/dump.go:24-31`).
-    if (Option.isSome(flags.file)) {
-      yield* fs.writeFile(flags.file.value, new Uint8Array(0), { mode: DUMP_FILE_MODE }).pipe(
+    if (Option.isSome(resolvedFile)) {
+      yield* fs.writeFile(resolvedFile.value, new Uint8Array(0), { mode: DUMP_FILE_MODE }).pipe(
         Effect.mapError(
           (cause) =>
             new LegacyDbDumpOpenFileError({
@@ -198,8 +210,8 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // 8. Persist the captured SQL — to `--file` (truncating) or stdout. Go streams
     //    this live, so partial output on a failed run is also written; do the same
     //    by writing the captured bytes before classifying the exit code.
-    if (Option.isSome(flags.file)) {
-      yield* fs.writeFile(flags.file.value, result.stdout, { mode: DUMP_FILE_MODE }).pipe(
+    if (Option.isSome(resolvedFile)) {
+      yield* fs.writeFile(resolvedFile.value, result.stdout, { mode: DUMP_FILE_MODE }).pipe(
         Effect.mapError(
           (cause) =>
             new LegacyDbDumpOpenFileError({
@@ -219,9 +231,8 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     }
 
     // PostRun: report the absolute output path on stderr (`cmd/db.go:149-157`).
-    if (Option.isSome(flags.file)) {
-      const abs = path.resolve(flags.file.value);
-      yield* output.raw(`Dumped schema to ${legacyBold(abs)}.\n`, "stderr");
+    if (Option.isSome(resolvedFile)) {
+      yield* output.raw(`Dumped schema to ${legacyBold(resolvedFile.value)}.\n`, "stderr");
     }
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

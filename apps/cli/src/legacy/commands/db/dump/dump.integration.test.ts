@@ -276,6 +276,29 @@ describe("legacy db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("splits comma-separated --schema values like cobra StringSlice", () => {
+    // Go declares --schema as a cobra StringSlice, which comma-splits each value.
+    const { layer, docker } = setup({ isLocal: true });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ schema: ["public,auth"], local: true }));
+      expect(docker.lastOpts?.env["EXTRA_FLAGS"]).toBe("--schema=public|auth");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("resolves a relative --file against the workdir", () => {
+    // Go chdir's into the workdir before opening --file, so a relative path is
+    // written under the workdir, not the original cwd.
+    const { layer } = setup({
+      isLocal: true,
+      stdout: "CREATE SCHEMA public;\n",
+      workdir: tmp.current,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ local: true, file: Option.some("out.sql") }));
+      expect(readFileSync(join(tmp.current, "out.sql"), "utf8")).toBe("CREATE SCHEMA public;\n");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("honors --network-id over host networking", () => {
     const { layer, docker } = setup({ isLocal: true, networkId: "custom_net" });
     return Effect.gen(function* () {
