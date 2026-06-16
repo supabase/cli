@@ -13,6 +13,7 @@ import {
 import {
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
+  LegacyNetworkIdFlag,
   LegacyYesFlag,
 } from "../../../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../../../shared/legacy/go-proxy.service.ts";
@@ -47,6 +48,7 @@ interface SetupOpts {
   promptTextResponses?: ReadonlyArray<string>;
   exportJson?: string;
   resetExitCode?: number;
+  networkId?: Option.Option<string>;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -57,12 +59,16 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
   const telemetry = mockLegacyTelemetryStateTracked();
   const seamCalls: LegacyCatalogMode[] = [];
+  const execInheritCalls: ReadonlyArray<string>[] = [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode }) => {
       seamCalls.push(mode);
       return Effect.succeed("supabase/.temp/pgdelta/base.json");
     },
-    execInherit: () => Effect.succeed(opts.resetExitCode ?? 0),
+    execInherit: (args) => {
+      execInheritCalls.push(args);
+      return Effect.succeed(opts.resetExitCode ?? 0);
+    },
   });
   const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
@@ -102,10 +108,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     BunServices.layer,
   );
-  return { layer, out, seamCalls, edgeCalls, resolverCalls, proxyCalls };
+  return { layer, out, seamCalls, execInheritCalls, edgeCalls, resolverCalls, proxyCalls };
 }
 
 const flags = (
@@ -251,6 +258,42 @@ describe("legacy db schema declarative generate integration", () => {
       const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags({ reset: true })));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({ message: "database reset failed (exit 1)" });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("smart mode: --yes auto-resets the local database without prompting", () => {
+    // Go's Console.PromptYesNo auto-returns true under the global --yes flag, so the
+    // "Reset local database to match migrations first?" prompt must be skipped and the
+    // reset must run. No promptConfirmResponses are supplied, so a prompt would throw.
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      yes: true,
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags());
+      expect(s.execInheritCalls).toEqual([["db", "reset", "--local"]]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("smart mode: forwards --network-id to the local reset", () => {
+    // Go's in-process reset.Run honors the root viper network-id, so the spawned
+    // reset must carry `--network-id` to stay on a custom Docker network.
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      yes: true,
+      networkId: Option.some("my-net"),
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags());
+      expect(s.execInheritCalls).toEqual([["db", "reset", "--local", "--network-id", "my-net"]]);
     }).pipe(Effect.provide(s.layer));
   });
 

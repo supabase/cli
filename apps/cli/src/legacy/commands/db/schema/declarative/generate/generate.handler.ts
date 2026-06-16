@@ -3,6 +3,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import {
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
+  LegacyNetworkIdFlag,
   LegacyYesFlag,
 } from "../../../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
@@ -217,6 +218,8 @@ const resolveSmartTargetUrl = Effect.fnUntraced(function* (
   if (!hasMigrations) return localUrl(local);
 
   const output = yield* Output;
+  const yes = yield* LegacyYesFlag;
+  const networkId = yield* LegacyNetworkIdFlag;
   const choice = yield* output.promptSelect("Generate declarative schema from:", [
     { value: "local", label: "Local database", hint: "generate from local Postgres" },
     { value: "custom", label: "Custom database URL", hint: "enter a connection string" },
@@ -251,10 +254,15 @@ const resolveSmartTargetUrl = Effect.fnUntraced(function* (
 
   let shouldReset = flags.reset;
   if (!shouldReset) {
-    shouldReset = yield* output.promptConfirm(
-      "Reset local database to match migrations first? (local data will be lost)",
-      { defaultValue: false },
-    );
+    // Go asks via Console.PromptYesNo (db_schema_declarative.go:257, default false),
+    // which auto-returns true under the global --yes flag (console.go:74-77), so
+    // `--yes` auto-resets here instead of prompting (mirrors the sync handler).
+    shouldReset = yes
+      ? true
+      : yield* output.promptConfirm(
+          "Reset local database to match migrations first? (local data will be lost)",
+          { defaultValue: false },
+        );
   }
   if (shouldReset) {
     // Go runs reset in-process and returns the error (`cmd/db_schema_declarative.go:262-267`).
@@ -262,7 +270,15 @@ const resolveSmartTargetUrl = Effect.fnUntraced(function* (
     // non-zero child and would skip the handler's telemetry flush / error handling),
     // and propagate a failure on a non-zero reset exit, mirroring the sync handler.
     const seam = yield* LegacyDeclarativeSeam;
-    const code = yield* seam.execInherit(["db", "reset", "--local"]);
+    // Forward --network-id: Go's in-process reset.Run honors the root viper
+    // network-id (`apps/cli-go/internal/utils/docker.go:267-271`), so the
+    // seam-spawned reset must carry it to stay on a custom Docker network.
+    const code = yield* seam.execInherit([
+      "db",
+      "reset",
+      "--local",
+      ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
+    ]);
     if (code !== 0) {
       return yield* Effect.fail(
         new LegacyDeclarativeApplyError({ message: `database reset failed (exit ${code})` }),
