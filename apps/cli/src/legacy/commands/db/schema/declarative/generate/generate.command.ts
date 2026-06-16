@@ -50,11 +50,20 @@ export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate",
   Command.withShortDescription("Generate declarative schema from a database"),
   Command.withHandler((flags) =>
     legacyDbSchemaDeclarativeGenerate(flags).pipe(
-      // Go's PostRun prints this on success (`cmd/db_schema_declarative.go:93`).
+      // Go's PostRun prints this on success via `fmt.Println` → stdout
+      // (`cmd/db_schema_declarative.go:93`), so keep it on stdout in text mode. In
+      // json / stream-json the bare human line would corrupt the payload, so emit a
+      // structured result instead (machine stdout is payload-only — CLI-1546).
       Effect.tap(() =>
         Effect.gen(function* () {
           const output = yield* Output;
-          yield* output.raw(`Finished ${legacyAqua("supabase db schema declarative generate")}.\n`);
+          if (output.format === "text") {
+            yield* output.raw(
+              `Finished ${legacyAqua("supabase db schema declarative generate")}.\n`,
+            );
+            return;
+          }
+          yield* output.success("Finished supabase db schema declarative generate.");
         }),
       ),
       withLegacyCommandInstrumentation({
