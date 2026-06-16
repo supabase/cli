@@ -612,6 +612,74 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("rejects a non-integer db.major_version string instead of truncating it", () => {
+    // Go decodes major_version into a uint after LoadEnvHook; `17foo` fails the parse
+    // rather than being truncated to 17 by a parseInt-style read.
+    const dir = withConfig(["[db]", 'major_version = "17foo"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Failed reading config: Invalid db.major_version: 17foo.",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("expands env(VAR) for db.major_version like Go's LoadEnvHook", () => {
+    process.env["LEGACY_PG_MAJOR"] = "15";
+    const dir = withConfig(["[db]", 'major_version = "env(LEGACY_PG_MAJOR)"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.majorVersion).toBe(15);
+          delete process.env["LEGACY_PG_MAJOR"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("honors SUPABASE_DB_MAJOR_VERSION over the TOML value", () => {
+    const prev = process.env["SUPABASE_DB_MAJOR_VERSION"];
+    process.env["SUPABASE_DB_MAJOR_VERSION"] = "15";
+    const dir = withConfig(["[db]", "major_version = 17", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.majorVersion).toBe(15);
+          if (prev === undefined) delete process.env["SUPABASE_DB_MAJOR_VERSION"];
+          else process.env["SUPABASE_DB_MAJOR_VERSION"] = prev;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("honors SUPABASE_EDGE_RUNTIME_DENO_VERSION over the TOML value", () => {
+    // Go binds this via viper AutomaticEnv before Validate, so an env override of 1
+    // selects the deno1 edge-runtime image even when the TOML omits/sets a different value.
+    const prev = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+    process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
+    const dir = withConfig(["[edge_runtime]", "deno_version = 2", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.denoVersion).toBe(1);
+          if (prev === undefined) delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+          else process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = prev;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("ignores an empty SUPABASE_DB_PORT override (viper AllowEmptyEnv=false)", () => {
     const prev = process.env["SUPABASE_DB_PORT"];
     process.env["SUPABASE_DB_PORT"] = "";

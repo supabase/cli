@@ -225,6 +225,25 @@ function resolvePort(value: unknown, fallback: number, lookup: EnvLookup): numbe
   return undefined;
 }
 
+/**
+ * Resolve an optional integer config field (e.g. `db.major_version`) the way Go's
+ * config load does: a quoted `env(VAR)` reference is expanded by `LoadEnvHook` and
+ * the result is then decoded into a `uint`, which strictly rejects a non-integer
+ * string like `17foo` rather than truncating it (Go sets no `WeaklyTypedInput`).
+ * Returns the parsed integer, `"absent"` when the field is omitted (caller uses the
+ * default), or `"invalid"` when present but not a whole non-negative integer (caller
+ * fails the load rather than silently defaulting and hiding a broken config).
+ */
+function resolveConfigInt(value: unknown, lookup: EnvLookup): number | "absent" | "invalid" {
+  if (value === undefined) return "absent";
+  if (typeof value === "number") return Number.isInteger(value) ? value : "invalid";
+  if (typeof value === "string") {
+    const expanded = legacyExpandEnv(value, lookup);
+    if (/^\d+$/.test(expanded)) return Number(expanded);
+  }
+  return "invalid";
+}
+
 /** `[db]` ports default through the development env unless `SUPABASE_ENV` overrides. */
 const DEFAULT_SUPABASE_ENV = "development";
 
@@ -453,36 +472,53 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // it or `db query --local` etc. would authenticate with a remote secret.
   const passwordRaw = typeof db?.["password"] === "string" ? db["password"] : undefined;
 
+  // Go expands a quoted `env(VAR)` reference for `major_version` and then decodes
+  // it into a `uint`, strictly rejecting a non-integer string (`17foo` is NOT
+  // truncated to 17) and resolving `env(PG_MAJOR)` before validation
+  // (`apps/cli-go/pkg/config/config.go` viper + mapstructure). `resolveConfigInt`
+  // mirrors that; `SUPABASE_DB_MAJOR_VERSION` overrides the TOML via AutomaticEnv.
   const majorVersionRaw = envOverride("SUPABASE_DB_MAJOR_VERSION") ?? db?.["major_version"];
-  const majorVersionNum =
-    typeof majorVersionRaw === "number"
-      ? majorVersionRaw
-      : typeof majorVersionRaw === "string"
-        ? Number.parseInt(majorVersionRaw, 10)
-        : Number.NaN;
+  const majorVersionResolved = resolveConfigInt(majorVersionRaw, lookup);
+  if (majorVersionResolved === "invalid") {
+    // Present but not a whole integer (`17foo`, or an `env(VAR)` that does not
+    // resolve to digits): Go fails the config parse rather than defaulting.
+    const shown =
+      typeof majorVersionRaw === "string"
+        ? legacyExpandEnv(majorVersionRaw, lookup)
+        : String(majorVersionRaw);
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({
+        message: `Failed reading config: Invalid db.major_version: ${shown}.`,
+      }),
+    );
+  }
   // Reject unsupported major versions like Go's config.Validate ({13,14,15,17};
   // `apps/cli-go/pkg/config/config.go:869-897`) before any image/container runs. An
-  // absent/unparseable value falls through to the default (Go's zero-then-default).
+  // absent value falls through to the default (Go's zero-then-default).
   if (
-    majorVersionRaw !== undefined &&
-    Number.isInteger(majorVersionNum) &&
-    ![13, 14, 15, 17].includes(majorVersionNum)
+    typeof majorVersionResolved === "number" &&
+    ![13, 14, 15, 17].includes(majorVersionResolved)
   ) {
     return yield* Effect.fail(
       new LegacyDbConfigLoadError({
         message:
-          majorVersionNum === 12
+          majorVersionResolved === 12
             ? "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects."
-            : `Failed reading config: Invalid db.major_version: ${majorVersionNum}.`,
+            : `Failed reading config: Invalid db.major_version: ${majorVersionResolved}.`,
       }),
     );
   }
-  const majorVersion = Number.isInteger(majorVersionNum) ? majorVersionNum : DEFAULT_MAJOR_VERSION;
+  const majorVersion =
+    typeof majorVersionResolved === "number" ? majorVersionResolved : DEFAULT_MAJOR_VERSION;
 
   // `[edge_runtime] deno_version` (default 2). Go switches the edge-runtime image
   // to the `deno1` tag when this is 1 (`apps/cli-go/pkg/config/config.go:999-1008`);
-  // the declarative pg-delta runner needs it to pick the matching image.
-  const denoVersionRaw = edgeRuntimeRaw?.["deno_version"];
+  // the declarative pg-delta runner needs it to pick the matching image. Go's viper
+  // `AutomaticEnv` lets `SUPABASE_EDGE_RUNTIME_DENO_VERSION` override the TOML before
+  // validation (same generic prefix+replacer binding as the pg-delta env vars below),
+  // so a CI env override decides which edge-runtime image pg-delta runs under.
+  const denoVersionRaw =
+    envOverride("SUPABASE_EDGE_RUNTIME_DENO_VERSION") ?? edgeRuntimeRaw?.["deno_version"];
   const denoVersionNum =
     typeof denoVersionRaw === "number"
       ? denoVersionRaw
