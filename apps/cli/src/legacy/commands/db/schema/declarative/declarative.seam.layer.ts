@@ -199,12 +199,15 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                 }),
               );
             }
-            // Start the stack via the bundled Go binary (Go's in-process `start.Run`).
+            // Start ONLY the database via `supabase-go db start` — Go's
+            // `ensureLocalDatabaseStarted` calls the DB-only `internal/db/start.Run`
+            // (`cmd/db_schema_declarative.go:191`), the same path `supabase db start`
+            // uses (`cmd/db.go:267-273`), not the full `supabase start` stack. This
+            // avoids failing on unavailable auth/storage/etc. ports or images.
             // Forward --network-id: Go's `DockerStart` reads the root viper network-id
-            // (`apps/cli-go/internal/utils/docker.go:267-271`), so the spawned start must
-            // carry it or the stack lands on the default network while pg-delta containers
-            // use the custom one.
+            // (`internal/utils/docker.go:267-271`), so the spawned start must carry it.
             const startArgs = [
+              "db",
               "start",
               ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
             ];
