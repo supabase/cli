@@ -4,8 +4,21 @@ import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.
 import { CurrentAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
+import { LegacyIdentityStitch } from "../shared/legacy-identity-stitch.ts";
 import { withLegacyCommandInstrumentation } from "./legacy-command-instrumentation.ts";
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
+
+function mockLegacyIdentityStitch(opts: { stitchedDistinctId?: string }) {
+  return {
+    layer: Layer.succeed(
+      LegacyIdentityStitch,
+      LegacyIdentityStitch.of({
+        stitch: () => Effect.void,
+        stitchedDistinctId: () => opts.stitchedDistinctId,
+      }),
+    ),
+  };
+}
 
 function mockContextualAnalytics() {
   const captured: Array<{
@@ -388,4 +401,75 @@ describe("withLegacyCommandInstrumentation", () => {
       ),
     );
   });
+
+  // Identity stitching parity: Go's Execute() reads s.distinctID() after the
+  // command handler runs (cmd/root.go:177) and the post-run cli_command_executed
+  // capture uses the stitched id. Mirror that with Effect.serviceOption.
+
+  it.live("attributes cli_command_executed to the stitched gotrue id", () => {
+    const analytics = mockContextualAnalytics();
+    const stitch = mockLegacyIdentityStitch({ stitchedDistinctId: "gotrue-user-123" });
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["link"]) })),
+      Effect.provide(commandRuntimeLayer(["link"])),
+      Effect.provide(stitch.layer),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured).toHaveLength(1);
+          expect(analytics.captured[0]?.properties.distinct_id).toBe("gotrue-user-123");
+        }),
+      ),
+    );
+  });
+
+  it.live("does not set distinct_id when no stitch occurred", () => {
+    const analytics = mockContextualAnalytics();
+    const stitch = mockLegacyIdentityStitch({ stitchedDistinctId: undefined });
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation(),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["link"]) })),
+      Effect.provide(commandRuntimeLayer(["link"])),
+      Effect.provide(stitch.layer),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured).toHaveLength(1);
+          expect(analytics.captured[0]?.properties.distinct_id).toBeUndefined();
+        }),
+      ),
+    );
+  });
+
+  it.live(
+    "does not require LegacyIdentityStitch — capture fires and distinct_id is absent when service is not provided",
+    () => {
+      // Proves Effect.serviceOption adds no hard R requirement: the stitch layer is
+      // intentionally absent and the instrumentation must still fire the event.
+      const analytics = mockContextualAnalytics();
+
+      return Effect.void.pipe(
+        withLegacyCommandInstrumentation(),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
+        Effect.provide(commandRuntimeLayer(["backups", "list"])),
+        // Note: no stitch layer provided — serviceOption must default to None
+        Effect.tap(() =>
+          Effect.sync(() => {
+            expect(analytics.captured).toHaveLength(1);
+            expect(analytics.captured[0]?.properties.distinct_id).toBeUndefined();
+          }),
+        ),
+      );
+    },
+  );
 });

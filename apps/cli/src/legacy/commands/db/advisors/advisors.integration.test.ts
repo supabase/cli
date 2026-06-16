@@ -190,6 +190,7 @@ function mockIdentityStitch() {
       Effect.sync(() => {
         calls += 1;
       }),
+    stitchedDistinctId: () => undefined,
   });
   return {
     layer,

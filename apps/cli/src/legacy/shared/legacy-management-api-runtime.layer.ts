@@ -13,7 +13,7 @@ import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
 import { LegacyProjectRefResolver } from "../config/legacy-project-ref.service.ts";
 import { legacyProjectRefLayer } from "../config/legacy-project-ref.layer.ts";
 import { legacyDebugLoggerLayer } from "./legacy-debug-logger.layer.ts";
-import { legacyIdentityStitchLayer } from "./legacy-identity-stitch.ts";
+import { LegacyIdentityStitch, legacyIdentityStitchLayer } from "./legacy-identity-stitch.ts";
 import { LegacyLinkedProjectCache } from "../telemetry/legacy-linked-project-cache.service.ts";
 import { legacyLinkedProjectCacheLayer } from "../telemetry/legacy-linked-project-cache.layer.ts";
 import { LegacyTelemetryState } from "../telemetry/legacy-telemetry-state.service.ts";
@@ -90,6 +90,12 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
     ),
     legacyTelemetryStateLayer,
     commandRuntimeLayer([...subcommand]),
+    // Expose the single per-command identity stitcher at the top level so the
+    // post-run instrumentation can read stitchedDistinctId() via serviceOption.
+    // The same reference is provided into platformApiStack and the cache, so by
+    // layer memoisation all three share one stitchAttempted guard — Go's one
+    // root-context sync.Once.
+    legacyIdentityStitchLayer,
   );
 
   // Compile-time guarantee that the merged layer exposes every service a
@@ -133,7 +139,8 @@ type LegacyManagementApiServices =
   | LegacyProjectRefResolver
   | LegacyLinkedProjectCache
   | LegacyTelemetryState
-  | CommandRuntime;
+  | CommandRuntime
+  | LegacyIdentityStitch;
 
 /**
  * The error this runtime layer can fail with at build (access-token resolution).

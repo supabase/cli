@@ -14,6 +14,7 @@ import {
   PropExitCode,
   PropOutputFormat,
 } from "../../shared/telemetry/event-catalog.ts";
+import { LegacyIdentityStitch } from "../shared/legacy-identity-stitch.ts";
 
 interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unknown> = never> {
   readonly analytics?: boolean;
@@ -202,13 +203,30 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
         const recordedExitCode =
           Exit.isFailure(exit) || (processExitCode !== undefined && processExitCode !== 0) ? 1 : 0;
 
+        // Go's Execute() reads s.distinctID() AFTER the command handler runs
+        // (cmd/root.go:177), which returns the just-stitched gotrue id when
+        // StitchLogin mutated the live telemetry service during the command.
+        // Mirror that: read LegacyIdentityStitch optionally (serviceOption adds no
+        // R requirement) and override distinct_id only for the post-run capture,
+        // leaving the analyticsContext that wrapped the handler's in-flight events
+        // unchanged.
+        const stitchService = yield* Effect.serviceOption(LegacyIdentityStitch);
+        const stitchedDistinctId: Option.Option<string> = Option.flatMap(stitchService, (svc) => {
+          const id = svc.stitchedDistinctId();
+          return id === undefined ? Option.none() : Option.some(id);
+        });
+        const captureContext = Option.match(stitchedDistinctId, {
+          onNone: () => analyticsContext,
+          onSome: (distinct_id) => ({ ...analyticsContext, distinct_id }),
+        });
+
         yield* analytics
           .capture(EventCommandExecuted, {
             [PropExitCode]: recordedExitCode,
             [PropDurationMs]: finishedAt - startedAt,
             [PropOutputFormat]: resolveOutputFormatForTelemetry(args, output.format),
           })
-          .pipe(withAnalyticsContext(analyticsContext));
+          .pipe(withAnalyticsContext(captureContext));
 
         if (Exit.isFailure(exit)) {
           return yield* Effect.failCause(exit.cause);

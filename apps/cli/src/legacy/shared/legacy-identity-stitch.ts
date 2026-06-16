@@ -83,7 +83,10 @@ function isEphemeralIdentityRuntime(runtime: {
  * {@link LegacyIdentityStitch} service instead.
  */
 const makeLegacyIdentityStitcher: Effect.Effect<
-  (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<void>,
+  {
+    readonly stitch: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<void>;
+    readonly stitchedDistinctId: () => string | undefined;
+  },
   never,
   Analytics | TelemetryRuntime | FileSystem.FileSystem | Path.Path
 > = Effect.gen(function* () {
@@ -97,6 +100,8 @@ const makeLegacyIdentityStitcher: Effect.Effect<
     runtime.consent === "granted" &&
     !isEphemeralIdentityRuntime(runtime) &&
     (runtime.distinctId === undefined || runtime.distinctId.length === 0);
+
+  let stitchedDistinctId: string | undefined = undefined;
 
   const stitchIdentity = (gotrueId: string) =>
     Effect.gen(function* () {
@@ -121,6 +126,7 @@ const makeLegacyIdentityStitcher: Effect.Effect<
       stitchAttempted = true;
 
       yield* analytics.alias(gotrueId, runtime.deviceId);
+      stitchedDistinctId = gotrueId;
 
       const state: LegacyTelemetryState = {
         enabled,
@@ -135,16 +141,26 @@ const makeLegacyIdentityStitcher: Effect.Effect<
       yield* fs.writeFileString(telemetryPath, JSON.stringify(state));
     });
 
-  return (response: HttpClientResponse.HttpClientResponse) => {
+  const stitch = (response: HttpClientResponse.HttpClientResponse) => {
     const gotrueId = gotrueIdFromResponse(response);
     if (gotrueId === undefined) return Effect.void;
     return stitchIdentity(gotrueId).pipe(Effect.exit, Effect.asVoid);
   };
+
+  return { stitch, stitchedDistinctId: () => stitchedDistinctId };
 });
 
 interface LegacyIdentityStitchShape {
   /** Stitch the session identity from a Management API response, at most once. */
   readonly stitch: (response: HttpClientResponse.HttpClientResponse) => Effect.Effect<void>;
+  /**
+   * Returns the gotrue distinct_id that was stitched during this session, or
+   * `undefined` if no stitch has occurred yet. Read AFTER the command runs so
+   * the stitching transport has had a chance to populate the cell (Go's
+   * `s.distinctID()` in `internal/telemetry/service.go:203-207`, read by
+   * Execute() post-run in `cmd/root.go:177`).
+   */
+  readonly stitchedDistinctId: () => string | undefined;
 }
 
 /**
@@ -164,7 +180,7 @@ export class LegacyIdentityStitch extends Context.Service<
 export const legacyIdentityStitchLayer = Layer.effect(
   LegacyIdentityStitch,
   Effect.gen(function* () {
-    const stitch = yield* makeLegacyIdentityStitcher;
-    return LegacyIdentityStitch.of({ stitch });
+    const { stitch, stitchedDistinctId } = yield* makeLegacyIdentityStitcher;
+    return LegacyIdentityStitch.of({ stitch, stitchedDistinctId });
   }),
 );
