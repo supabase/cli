@@ -6,6 +6,25 @@
  * whether the local stack is running.
  */
 
+import { basename } from "node:path";
+
+/**
+ * Resolve the project id Go feeds into `utils.DbId`/`utils.NetId`. viper sets
+ * `Config.ProjectId` from config.toml's `project_id`, then `AutomaticEnv` overrides it
+ * with `SUPABASE_PROJECT_ID`; when both are absent Go falls back to the working
+ * directory basename (`utils.Config.ProjectId` default). So the precedence is
+ * `SUPABASE_PROJECT_ID` → config.toml `project_id` → workdir basename.
+ */
+export function legacyResolveLocalProjectId(
+  envProjectId: string | undefined,
+  tomlProjectId: string | undefined,
+  workdir: string,
+): string {
+  if (envProjectId !== undefined && envProjectId.length > 0) return envProjectId;
+  if (tomlProjectId !== undefined && tomlProjectId.length > 0) return tomlProjectId;
+  return basename(workdir);
+}
+
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
 const MAX_PROJECT_ID_LENGTH = 40;
 
