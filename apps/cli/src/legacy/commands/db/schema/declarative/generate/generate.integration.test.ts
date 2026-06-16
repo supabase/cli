@@ -275,6 +275,34 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect(
+    "explicit --linked gates pg-delta on base config, not a remote enabled override",
+    () => {
+      // Go gates pg-delta on the base LoadConfig (declarative PersistentPreRunE) before the
+      // root ParseDatabaseConfig reloads the remote block, so a remote enabled=true must NOT
+      // enable a base-disabled command without --experimental.
+      const ref = "abcdefghijklmnopqrst";
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        [
+          'project_id = "base"',
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+      const s = setup(tmp.current, { experimental: false, projectId: Option.some(ref) });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags({ linked: true })));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeNotEnabledError");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("smart mode: non-TTY without --yes fails with the target hint", () => {
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: false });
     return Effect.gen(function* () {
