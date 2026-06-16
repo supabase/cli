@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +52,32 @@ func promptLogin(fsys afero.Fs) error {
 	} else {
 		return err
 	}
+}
+
+func shouldPromptLogin(cmd *cobra.Command) bool {
+	return IsManagementAPI(cmd) && !isLocalStorageCommand(cmd)
+}
+
+func isLocalStorageCommand(cmd *cobra.Command) bool {
+	if !isCommandOrChild(cmd, storageCmd) {
+		return false
+	}
+	flag := cmd.Flag("local")
+	if flag == nil {
+		return false
+	}
+	local, err := strconv.ParseBool(flag.Value.String())
+	return err == nil && local
+}
+
+func isCommandOrChild(cmd, parent *cobra.Command) bool {
+	for cmd != nil && cmd != cmd.Root() {
+		if cmd == parent {
+			return true
+		}
+		cmd = cmd.Parent()
+	}
+	return false
 }
 
 var experimental = []*cobra.Command{
@@ -105,7 +132,7 @@ var (
 				return err
 			}
 			// Add common flags
-			if IsManagementAPI(cmd) {
+			if shouldPromptLogin(cmd) {
 				if err := promptLogin(fsys); err != nil {
 					return err
 				}

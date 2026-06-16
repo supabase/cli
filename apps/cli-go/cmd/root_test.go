@@ -72,6 +72,40 @@ func TestCommandName(t *testing.T) {
 	assert.Equal(t, "supabase", commandName(root))
 }
 
+func TestShouldPromptLogin(t *testing.T) {
+	t.Run("requires login for linked storage", func(t *testing.T) {
+		setStorageLocalFlag(t, "false", false)
+
+		assert.True(t, shouldPromptLogin(lsCmd))
+	})
+
+	t.Run("skips login for local storage", func(t *testing.T) {
+		setStorageLocalFlag(t, "true", true)
+
+		assert.False(t, shouldPromptLogin(lsCmd))
+	})
+
+	t.Run("does not require login for local dev commands", func(t *testing.T) {
+		assert.False(t, shouldPromptLogin(startCmd))
+	})
+}
+
+func setStorageLocalFlag(t *testing.T, value string, changed bool) {
+	t.Helper()
+
+	flag := storageCmd.PersistentFlags().Lookup("local")
+	require.NotNil(t, flag)
+	prevValue := flag.Value.String()
+	prevChanged := flag.Changed
+	require.NoError(t, flag.Value.Set(value))
+	flag.Changed = changed
+
+	t.Cleanup(func() {
+		require.NoError(t, flag.Value.Set(prevValue))
+		flag.Changed = prevChanged
+	})
+}
+
 func TestTelemetryIsAgent(t *testing.T) {
 	t.Run("returns true for agent env", func(t *testing.T) {
 		clearTelemetryEnv(t)
