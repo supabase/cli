@@ -32,6 +32,29 @@ const SUPERUSER_ROLE = "supabase_admin";
 const CLI_LOGIN_PREFIX = "cli_login_";
 const SET_SESSION_ROLE = "SET SESSION ROLE postgres";
 
+// Postgres date / timestamp / timestamptz type OIDs. node-postgres' default parsers
+// decode these into a JS `Date`, which is millisecond-resolution and applies the
+// local timezone — losing the microseconds that Go's pgx `time.Time` keeps (and
+// risking a date shift for `date`). For `db query` we keep the raw Postgres text so
+// the formatter can render Go's `time.Time` layout faithfully (microseconds intact).
+const PG_DATE_OID = 1082;
+const PG_TIMESTAMP_OID = 1114;
+const PG_TIMESTAMPTZ_OID = 1184;
+const legacyKeepRawText = (value: string): string => value;
+/**
+ * Per-query node-postgres type config: return the raw text for date/timestamp/
+ * timestamptz, delegating every other OID to pg's default (text-mode) parser. Scoped
+ * to `queryRaw` (only `db query` uses it), so other code paths keep native `Date`s.
+ */
+const legacyQueryRawTypes = {
+  getTypeParser: (oid: number, format?: "text" | "binary") =>
+    oid === PG_DATE_OID || oid === PG_TIMESTAMP_OID || oid === PG_TIMESTAMPTZ_OID
+      ? legacyKeepRawText
+      : format === undefined
+        ? Pg.types.getTypeParser(oid)
+        : Pg.types.getTypeParser(oid, format),
+};
+
 /**
  * Whether the connecting user requires the `SET SESSION ROLE postgres` step-down.
  * Go strips any Supavisor `.{ref}` tenant suffix first (`strings.Split(user, ".")[0]`)
@@ -469,8 +492,14 @@ const connect = (
           activeClient.connection.on("commandComplete", onComplete);
           const result = yield* Effect.tryPromise({
             // `rowMode: "array"` returns rows positionally so duplicate column
-            // names survive (Go reads pgx values by index).
-            try: () => activeClient.query<Array<unknown>>({ text: sql, rowMode: "array" }),
+            // names survive (Go reads pgx values by index). `types` keeps date/
+            // timestamp/timestamptz cells as raw text to preserve microseconds.
+            try: () =>
+              activeClient.query<Array<unknown>>({
+                text: sql,
+                rowMode: "array",
+                types: legacyQueryRawTypes,
+              }),
             catch: (error) =>
               new LegacyDbExecError({ message: `failed to execute query: ${error}` }),
           }).pipe(

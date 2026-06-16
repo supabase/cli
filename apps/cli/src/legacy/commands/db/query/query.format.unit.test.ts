@@ -100,6 +100,32 @@ describe("legacyMakeLocalCellFormatter", () => {
       "2024-01-02 15:04:05.123 +0000 UTC",
     );
   });
+
+  it("preserves microseconds for raw timestamp text (OID 1114), trimming zeros", () => {
+    // node-postgres' Date is millisecond-only; the raw-text override keeps the µs that
+    // Go's pgx time.Time prints via `%v`.
+    const fmt = legacyMakeLocalCellFormatter([1114]);
+    expect(fmt("2026-01-01 00:00:00.123456", 0)).toBe("2026-01-01 00:00:00.123456 +0000 UTC");
+    expect(fmt("2026-01-01 00:00:00.12", 0)).toBe("2026-01-01 00:00:00.12 +0000 UTC");
+    expect(fmt("2026-01-01 00:00:00", 0)).toBe("2026-01-01 00:00:00 +0000 UTC");
+  });
+
+  it("shifts a timestamptz (OID 1184) to UTC while keeping microseconds", () => {
+    const fmt = legacyMakeLocalCellFormatter([1184]);
+    expect(fmt("2026-01-01 00:00:00.123456+00", 0)).toBe("2026-01-01 00:00:00.123456 +0000 UTC");
+    // -07:00 zone → add 7h to reach UTC; the sub-second fraction is untouched.
+    expect(fmt("2026-01-01 05:30:00.5-07", 0)).toBe("2026-01-01 12:30:00.5 +0000 UTC");
+  });
+
+  it("renders a date (OID 1082) as Go's midnight-UTC time.Time", () => {
+    const fmt = legacyMakeLocalCellFormatter([1082]);
+    expect(fmt("2026-01-01", 0)).toBe("2026-01-01 00:00:00 +0000 UTC");
+  });
+
+  it("falls back to the raw text for an unrecognized timestamp value", () => {
+    const fmt = legacyMakeLocalCellFormatter([1114]);
+    expect(fmt("infinity", 0)).toBe("infinity");
+  });
 });
 
 describe("legacyCoerceLocalJsonRows", () => {
@@ -120,6 +146,19 @@ describe("legacyCoerceLocalJsonRows", () => {
     // OID 17 = bytea. Go encodes []byte as a base64 string in JSON output.
     const out = legacyCoerceLocalJsonRows([[new Uint8Array([222, 173, 190, 239])]], [17]);
     expect(out[0]?.[0]).toBe("3q2+7w==");
+  });
+
+  it("coerces timestamp/timestamptz/date cells to Go's RFC3339Nano (UTC, microseconds)", () => {
+    // Go marshals a time.Time as RFC3339Nano; node-postgres' Date would lose the µs.
+    expect(legacyCoerceLocalJsonRows([["2026-01-01 00:00:00.123456"]], [1114])[0]?.[0]).toBe(
+      "2026-01-01T00:00:00.123456Z",
+    );
+    expect(legacyCoerceLocalJsonRows([["2026-01-01 05:30:00.5-07"]], [1184])[0]?.[0]).toBe(
+      "2026-01-01T12:30:00.5Z",
+    );
+    expect(legacyCoerceLocalJsonRows([["2026-01-01"]], [1082])[0]?.[0]).toBe(
+      "2026-01-01T00:00:00Z",
+    );
   });
 });
 

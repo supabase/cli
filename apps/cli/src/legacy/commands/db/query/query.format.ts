@@ -89,39 +89,134 @@ export function legacyFormatLinkedValue(value: unknown): string {
 const PG_FLOAT4_OID = 700;
 const PG_FLOAT8_OID = 701;
 
+// Postgres `date` / `timestamp` / `timestamptz` type OIDs. The legacy `queryRaw`
+// type-parser override keeps these as raw Postgres text (not a JS `Date`), so the
+// microseconds Go's pgx `time.Time` preserves survive — a JS `Date` is millisecond
+// resolution and applies the local timezone.
+const PG_DATE_OID = 1082;
+const PG_TIMESTAMP_OID = 1114;
+const PG_TIMESTAMPTZ_OID = 1184;
+
+const isPgTimestampOid = (oid: number | undefined): boolean =>
+  oid === PG_DATE_OID || oid === PG_TIMESTAMP_OID || oid === PG_TIMESTAMPTZ_OID;
+
+interface PgUtcInstant {
+  readonly year: number;
+  readonly month: number;
+  readonly day: number;
+  readonly hour: number;
+  readonly minute: number;
+  readonly second: number;
+  /** Sub-second digits, trailing zeros trimmed; `""` when none. */
+  readonly fraction: string;
+}
+
+// `YYYY-MM-DD`, optional `[ T]HH:MM:SS[.ffffff]`, optional `±HH[:MM[:SS]]` zone.
+const PG_TIMESTAMP_PATTERN =
+  /^(\d{4,})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?)?(?:([+-])(\d{2})(?::?(\d{2}))?(?::?(\d{2}))?)?$/;
+
 /**
- * Format a JS `Date` the way Go renders a pgx `time.Time` via `fmt.Sprintf("%v")`
- * (`time.Time.String()`: `2006-01-02 15:04:05.999999999 -0700 MST`, trailing
- * fractional zeros trimmed). node-postgres returns `Date` for `date` / `timestamp`
- * / `timestamptz` columns; without this they hit the object branch and render as
- * `map[]`. Rendered in UTC (`+0000 UTC`), which matches Go's `timestamp` exactly
- * (Go decodes it as UTC). NOTE: Go renders `timestamptz` in the process's LOCAL
- * timezone with its zone name, which is environment-dependent and not faithfully
- * reconstructable from a JS `Date`; UTC is the closest stable rendering.
+ * Parse a Postgres date/timestamp/timestamptz text value into its UTC wall-clock
+ * components plus the trimmed sub-second fraction. A `timestamptz` carries a zone
+ * offset (`+00`, `-07`, `+05:30`) which is shifted to UTC; a `timestamp` has no
+ * offset and is taken as UTC (matching Go's pgx decode); a `date` has neither time
+ * nor offset (midnight UTC). Returns `undefined` for anything unrecognized (e.g.
+ * `infinity`), so the caller falls back to the raw text. Whole-minute/second zone
+ * offsets never touch the sub-second fraction, so the offset shift uses millisecond
+ * `Date` math while `fraction` carries over verbatim.
  */
-function formatGoTime(d: Date): string {
-  const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
-  const date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-  const time = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
-  const ms = d.getUTCMilliseconds();
-  const frac = ms > 0 ? `.${pad(ms, 3).replace(/0+$/, "")}` : "";
-  return `${date} ${time}${frac} +0000 UTC`;
+function parsePgUtcInstant(raw: string): PgUtcInstant | undefined {
+  const m = PG_TIMESTAMP_PATTERN.exec(raw);
+  if (m === null) return undefined;
+  const [, y, mo, d, hh, mi, ss, frac, sign, oh, om, os] = m;
+  const baseMs = Date.UTC(
+    Number(y),
+    Number(mo) - 1,
+    Number(d),
+    Number(hh ?? "0"),
+    Number(mi ?? "0"),
+    Number(ss ?? "0"),
+  );
+  let utcMs = baseMs;
+  if (sign !== undefined) {
+    // The text offset is the zone's offset from UTC; subtract it to reach UTC.
+    const offsetSeconds = Number(oh) * 3600 + Number(om ?? "0") * 60 + Number(os ?? "0");
+    utcMs = baseMs - (sign === "-" ? -offsetSeconds : offsetSeconds) * 1000;
+  }
+  const u = new Date(utcMs);
+  return {
+    year: u.getUTCFullYear(),
+    month: u.getUTCMonth() + 1,
+    day: u.getUTCDate(),
+    hour: u.getUTCHours(),
+    minute: u.getUTCMinutes(),
+    second: u.getUTCSeconds(),
+    fraction: (frac ?? "").replace(/0+$/, ""),
+  };
+}
+
+const pad2 = (n: number): string => String(n).padStart(2, "0");
+const pad4 = (n: number): string => String(n).padStart(4, "0");
+
+/**
+ * Render a parsed instant as Go's `time.Time.String()` (`fmt.Sprintf("%v")`):
+ * `2006-01-02 15:04:05.999999999 -0700 MST`, in UTC, fractional zeros trimmed. This
+ * matches Go's `timestamp` exactly (Go decodes it as UTC). NOTE: Go renders
+ * `timestamptz` in the process's LOCAL timezone with its zone name, which depends on
+ * the host's `TZ` (not the data) and is not reconstructable; UTC is the stable,
+ * correct-instant rendering — the same accepted divergence noted on the JSON path.
+ */
+function legacyFormatGoTimestamp(i: PgUtcInstant): string {
+  const frac = i.fraction.length > 0 ? `.${i.fraction}` : "";
+  return `${pad4(i.year)}-${pad2(i.month)}-${pad2(i.day)} ${pad2(i.hour)}:${pad2(i.minute)}:${pad2(i.second)}${frac} +0000 UTC`;
+}
+
+/** Render a parsed instant as Go's `time.Time` JSON marshal (RFC3339Nano, UTC). */
+function legacyTimestampToRfc3339(i: PgUtcInstant): string {
+  const frac = i.fraction.length > 0 ? `.${i.fraction}` : "";
+  return `${pad4(i.year)}-${pad2(i.month)}-${pad2(i.day)}T${pad2(i.hour)}:${pad2(i.minute)}:${pad2(i.second)}${frac}Z`;
 }
 
 /**
- * Per-column cell formatter for the local / `--db-url` path. Renders `float4`/`float8`
- * columns with Go's `%g` (`select 1000000::float8` → `1e+06`) while every other
- * column keeps the plain `legacyFormatValue` form (so integer columns are not turned
- * into `1e+06`). `fieldTypeIds` is the per-column OID list from `queryRaw`.
+ * Format a JS `Date` the way Go renders a pgx `time.Time` via `fmt.Sprintf("%v")`.
+ * Defensive fallback only: with the `queryRaw` raw-text override, date/timestamp
+ * columns arrive as strings (see {@link parsePgUtcInstant}), so a `Date` reaches here
+ * only if a caller supplies native rows — and then only millisecond precision is
+ * available.
+ */
+function formatGoTime(d: Date): string {
+  const ms = d.getUTCMilliseconds();
+  return legacyFormatGoTimestamp({
+    year: d.getUTCFullYear(),
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate(),
+    hour: d.getUTCHours(),
+    minute: d.getUTCMinutes(),
+    second: d.getUTCSeconds(),
+    fraction: ms > 0 ? String(ms).padStart(3, "0").replace(/0+$/, "") : "",
+  });
+}
+
+/**
+ * Per-column cell formatter for the local / `--db-url` path. Renders `date`/
+ * `timestamp`/`timestamptz` columns via Go's `time.Time.String()` (microseconds
+ * preserved from the raw Postgres text) and `float4`/`float8` columns with Go's `%g`
+ * (`select 1000000::float8` → `1e+06`), while every other column keeps the plain
+ * `legacyFormatValue` form (so integer columns are not turned into `1e+06`).
+ * `fieldTypeIds` is the per-column OID list from `queryRaw`.
  */
 export function legacyMakeLocalCellFormatter(
   fieldTypeIds: ReadonlyArray<number>,
 ): (value: unknown, columnIndex: number) => string {
   return (value, columnIndex) => {
-    // node-postgres returns `Date` for date/timestamp/timestamptz columns; Go renders
-    // the pgx `time.Time` via `%v`, not as a `map[]`.
-    if (value instanceof Date) return formatGoTime(value);
     const oid = fieldTypeIds[columnIndex];
+    if (typeof value === "string" && isPgTimestampOid(oid)) {
+      const instant = parsePgUtcInstant(value);
+      if (instant !== undefined) return legacyFormatGoTimestamp(instant);
+      // Unrecognized (e.g. `infinity`): fall through to the raw-text default.
+    }
+    // Defensive: native rows may still carry a `Date`; render it like Go's `%v`.
+    if (value instanceof Date) return formatGoTime(value);
     if (typeof value === "number" && (oid === PG_FLOAT4_OID || oid === PG_FLOAT8_OID)) {
       return goFormatFloat(value);
     }
@@ -147,8 +242,10 @@ function bytesToBase64(bytes: Uint8Array): string {
  * `|n| > 2^53` exactly, so those stay strings (preserving correctness rather than
  * silently corrupting the value). `bytea` columns arrive as a `Buffer`; Go encodes a
  * `[]byte` as a standard base64 string, so coerce those rather than letting
- * `JSON.stringify` emit `{"type":"Buffer","data":[...]}`. Other column types pass
- * through unchanged; JSON re-marshals them as-is.
+ * `JSON.stringify` emit `{"type":"Buffer","data":[...]}`. `date`/`timestamp`/
+ * `timestamptz` columns arrive as raw text; Go marshals a `time.Time` as RFC3339Nano
+ * (microseconds preserved), so coerce them to that form rather than emitting the raw
+ * Postgres text. Other column types pass through unchanged; JSON re-marshals them.
  */
 export function legacyCoerceLocalJsonRows(
   data: ReadonlyArray<ReadonlyArray<unknown>>,
@@ -157,7 +254,12 @@ export function legacyCoerceLocalJsonRows(
   return data.map((row) =>
     row.map((cell, columnIndex) => {
       if (cell instanceof Uint8Array) return bytesToBase64(cell);
-      if (fieldTypeIds[columnIndex] === PG_INT8_OID && typeof cell === "string") {
+      const oid = fieldTypeIds[columnIndex];
+      if (typeof cell === "string" && isPgTimestampOid(oid)) {
+        const instant = parsePgUtcInstant(cell);
+        return instant !== undefined ? legacyTimestampToRfc3339(instant) : cell;
+      }
+      if (oid === PG_INT8_OID && typeof cell === "string") {
         const asNumber = Number(cell);
         if (Number.isSafeInteger(asNumber) && String(asNumber) === cell) return asNumber;
       }
