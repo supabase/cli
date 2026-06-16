@@ -98,6 +98,38 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("rejects invalid [experimental.pgdelta] format_options JSON during load", () => {
+    // Go's config.Validate aborts with this exact message when format_options is
+    // non-empty but not valid JSON (`apps/cli-go/pkg/config/config.go:1685-1686`),
+    // before any shadow/catalog container runs.
+    const dir = withConfig('[experimental.pgdelta]\nformat_options = "not-json"\n');
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const json = JSON.stringify(exit.cause);
+            expect(json).toContain("LegacyDbConfigLoadError");
+            expect(json).toContain(
+              "Invalid config for experimental.pgdelta.format_options: must be valid JSON",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("accepts valid [experimental.pgdelta] format_options JSON", () => {
+    const dir = withConfig(
+      '[experimental.pgdelta]\nformat_options = "{\\"keywordCase\\":\\"upper\\"}"\n',
+    );
+    return read(dir).pipe(
+      Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
   it.effect("fails with LegacyDbConfigLoadError when config.toml is present but unreadable", () => {
     // Go's mergeFileConfig swallows only os.ErrNotExist; every other read error aborts
     // rather than silently running against the default local database (Codex P2 parity).

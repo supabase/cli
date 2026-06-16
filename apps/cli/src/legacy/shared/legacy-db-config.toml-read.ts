@@ -233,6 +233,16 @@ function nonEmptyString(value: unknown): Option.Option<string> {
   return typeof value === "string" && value.length > 0 ? Option.some(value) : Option.none();
 }
 
+/** Go's `json.Valid` (`encoding/json`): reports whether the string is well-formed JSON. */
+function legacyIsValidJson(value: string): boolean {
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Resolve a `[section] enabled` style bool. Go decodes weakly (a string `"true"`
  * via `env(VAR)` also counts) and applies the schema default when the key is
@@ -426,10 +436,20 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   }
 
   const formatOptionsRaw = pgDeltaRaw?.["format_options"];
-  const formatOptions =
-    typeof formatOptionsRaw === "string"
-      ? nonEmptyString(legacyExpandEnv(formatOptionsRaw, lookup))
-      : Option.none<string>();
+  const formatOptionsExpanded =
+    typeof formatOptionsRaw === "string" ? legacyExpandEnv(formatOptionsRaw, lookup) : "";
+  // Go's config.Validate aborts config load when a non-empty format_options is not
+  // valid JSON (`apps/cli-go/pkg/config/config.go:1685-1686`), before any shadow /
+  // catalog container runs. Fail here with Go's exact message so the user gets the
+  // actionable error up front rather than a later `JSON.parse` failure in the script.
+  if (formatOptionsExpanded.length > 0 && !legacyIsValidJson(formatOptionsExpanded)) {
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({
+        message: "Invalid config for experimental.pgdelta.format_options: must be valid JSON",
+      }),
+    );
+  }
+  const formatOptions = nonEmptyString(formatOptionsExpanded);
 
   // `[db.vault]` secret names, sorted (Go's `setupInputsToken` sorts before hashing).
   const vaultRaw = asRecord(db?.["vault"]);
