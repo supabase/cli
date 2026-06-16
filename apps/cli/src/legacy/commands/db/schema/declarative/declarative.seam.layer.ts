@@ -1,11 +1,12 @@
 import { basename } from "node:path";
-import { Effect, Layer, Option, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { LegacyNetworkIdFlag } from "../../../../../shared/legacy/global-flags.ts";
 import { resolveBinary } from "../../../../../shared/legacy/go-proxy.layer.ts";
 import { LegacyCliConfig } from "../../../../config/legacy-cli-config.service.ts";
+import { legacyReadDbToml } from "../../../../shared/legacy-db-config.toml-read.ts";
 import { localDbContainerId } from "../../../../shared/legacy-docker-ids.ts";
 import { LegacyDeclarativeShadowDbError } from "./declarative.errors.ts";
 import { LegacyDeclarativeSeam } from "./declarative.seam.service.ts";
@@ -22,6 +23,8 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
     const cliConfig = yield* LegacyCliConfig;
     const networkId = yield* LegacyNetworkIdFlag;
     const spawner = yield* ChildProcessSpawner;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const resolved = resolveBinary();
 
     return LegacyDeclarativeSeam.of({
@@ -116,11 +119,16 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
       ensureLocalDatabaseStarted: () =>
         Effect.scoped(
           Effect.gen(function* () {
-            // Go's DbId derives from config project_id, falling back to the workdir
-            // basename (matches `gen types` resolution).
-            const projectId = Option.getOrElse(cliConfig.projectId, () =>
-              basename(cliConfig.workdir),
+            // Go's `utils.DbId` derives from the loaded config's `project_id`, falling
+            // back to the workdir basename (matches `gen types`). `cliConfig.projectId`
+            // is only `SUPABASE_PROJECT_ID`, so read config.toml's `project_id` here
+            // (best-effort: the handler already validated config, so a re-read error
+            // falls back to the basename rather than masking anything).
+            const tomlProjectId = yield* legacyReadDbToml(fs, path, cliConfig.workdir).pipe(
+              Effect.map((toml) => toml.projectId),
+              Effect.orElseSucceed(() => Option.none<string>()),
             );
+            const projectId = Option.getOrElse(tomlProjectId, () => basename(cliConfig.workdir));
             const containerId = localDbContainerId(projectId);
             // Go's AssertSupabaseDbIsRunning = ContainerInspect → NotFound ⇒ not
             // running. Discard stdout (the inspect JSON) so the unconsumed pipe can
