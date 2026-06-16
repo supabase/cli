@@ -595,4 +595,31 @@ describe("withLegacyCommandInstrumentation", () => {
       ),
     );
   });
+
+  it.live("stops recording flags at the -- end-of-options sentinel", () => {
+    // `test db -- --linked`: pflag stops parsing flags at `--`, so `--linked`
+    // is a positional arg, not a changed flag. changedFlags() never sees it.
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({ flags: {} }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["test", "db", "--", "--linked"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["test", "db"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          // No changed flags → the flags map is omitted entirely; `--linked`
+          // after `--` must never be recorded.
+          const flags = analytics.captured[0]?.properties.flags;
+          expect(flags).toBeUndefined();
+        }),
+      ),
+    );
+  });
 });

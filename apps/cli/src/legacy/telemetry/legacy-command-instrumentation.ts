@@ -89,11 +89,18 @@ function extractChangedFlagNames(
     const arg = args[index];
     if (arg === undefined) continue;
 
-    // Skip a token that was consumed as the value of the previous flag.
+    // Skip a token that was consumed as the value of the previous flag — even
+    // when that token is `--` (pflag lets a value-taking flag consume `--`).
     if (skipNext) {
       skipNext = false;
       continue;
     }
+
+    // End-of-options sentinel: pflag stops parsing flags at a bare `--`, so
+    // everything after it is positional (e.g. `test db -- --linked` makes
+    // `--linked` a path arg). changedFlags() never sees those, so stop scanning.
+    // Mirrors resolveLegacyDbTargetFlags's `--` handling.
+    if (arg === "--") break;
 
     if (arg.startsWith("--")) {
       const raw = arg.slice(2);
