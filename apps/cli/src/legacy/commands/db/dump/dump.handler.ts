@@ -273,7 +273,9 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
         ),
       );
     } else {
-      yield* output.raw(new TextDecoder().decode(result.stdout));
+      // Write the captured bytes verbatim — Go streams pg_dump stdout byte-for-byte,
+      // so a non-UTF-8 dump (SQL_ASCII/LATIN1) must not be decoded/re-encoded.
+      yield* output.rawBytes(result.stdout);
     }
 
     // 9. Non-zero container exit → exit 1 (PostRun is skipped, matching cobra).

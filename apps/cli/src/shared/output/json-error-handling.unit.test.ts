@@ -76,6 +76,7 @@ function mockOutput(format: "text" | "json" | "stream-json" = "text") {
       promptMultiSelect: (_message, options) =>
         Effect.succeed(options.map((option) => option.value)),
       raw: (_text: string, _stream?: "stdout" | "stderr") => Effect.void,
+      rawBytes: (_bytes: Uint8Array, _stream?: "stdout" | "stderr") => Effect.void,
     }),
     get failCalls() {
       return failCalls;

@@ -415,6 +415,10 @@ export function mockOutput(
         Effect.sync(() => {
           rawChunks.push({ text, stream });
         }),
+      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
+        Effect.sync(() => {
+          rawChunks.push({ text: new TextDecoder().decode(bytes), stream });
+        }),
     }),
     messages,
     progressEvents,
