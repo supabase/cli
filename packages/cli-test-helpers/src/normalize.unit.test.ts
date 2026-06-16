@@ -110,6 +110,15 @@ describe("normalize", () => {
     expect(normalize(`token: ${jwt}\nother: text`)).toBe("token: <JWT>\nother: text");
   });
 
+  it("normalizes a JWT whose signature contains a duration-shaped substring", () => {
+    // A random base64url signature can contain e.g. "-60s-" bounded by `-`/`_`/`.`,
+    // which the duration regex would otherwise inject `<DURATION>` into mid-token.
+    // JWT masking must run before duration normalization.
+    const jwt =
+      "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.abc-60s-p40RpiywLZIDZQCZa8BHCbfG3oErCaVtUcb9w";
+    expect(normalize(jwt)).toBe("<JWT>");
+  });
+
   it("normalizes JWK key material fields", () => {
     const jwk = `{"kty":"EC","kid":"b81269f1-21d8-4f2e-b719-c2240a840d90","use":"sig","key_ops":["sign","verify"],"alg":"ES256","ext":true,"crv":"P-256","x":"M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4","y":"P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ","d":"dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU"}`;
     const normalized = normalize(jwk);
