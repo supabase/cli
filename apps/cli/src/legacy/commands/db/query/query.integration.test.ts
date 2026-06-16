@@ -570,4 +570,17 @@ describe("legacy db query integration", () => {
       expect(failMessage(exit)).toContain("Access token not provided");
     }).pipe(Effect.provide(layer));
   });
+
+  it.live("runs the --linked login preflight before reading --file (Go PreRun order)", () => {
+    // `db query --linked -f missing.sql` without a token must surface the login error,
+    // not a file-read failure — Go checks the token in PreRun, before RunE's ResolveSQL.
+    const { layer } = setup({ accessToken: Option.none() });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbQuery(
+        flags({ linked: true, file: Option.some("/no/such/file.sql") }),
+      ).pipe(Effect.exit);
+      expect(failMessage(exit)).toContain("Access token not provided");
+      expect(failMessage(exit)).not.toContain("failed to read SQL file");
+    }).pipe(Effect.provide(layer));
+  });
 });

@@ -218,6 +218,42 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       );
     }
 
+    // PreRun parity: for --linked, Go checks the access token and loads the project
+    // ref BEFORE RunE's ResolveSQL (`cmd/db.go`), so a missing `--file` or a blocking
+    // stdin pipe must not mask the expected login / not-linked error. Run that
+    // preflight here, before resolving SQL.
+    let linkedAuth: { readonly token: Redacted.Redacted<string>; readonly ref: string } | undefined;
+    if (flags.linked) {
+      const credentials = yield* LegacyCredentials;
+      const projectRef = yield* LegacyProjectRefResolver;
+      const tokenOpt = Option.isSome(cliConfig.accessToken)
+        ? cliConfig.accessToken
+        : yield* credentials.getAccessToken;
+      if (Option.isNone(tokenOpt)) {
+        return yield* Effect.fail(
+          new LegacyDbQueryLoginRequiredError({
+            message: MISSING_TOKEN_MESSAGE,
+            suggestion: "Run supabase login first.",
+          }),
+        );
+      }
+      // Go's `LoadProjectRef` (flag → env → ref file) fails with ErrNotLinked and
+      // never prompts; use the non-prompting `resolveOptional` + `AssertProjectRefIsValid`.
+      const refOpt = yield* projectRef.resolveOptional(Option.none());
+      if (Option.isNone(refOpt)) {
+        return yield* Effect.fail(
+          new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
+        );
+      }
+      const ref = refOpt.value;
+      if (!PROJECT_REF_PATTERN.test(ref)) {
+        return yield* Effect.fail(
+          new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }),
+        );
+      }
+      linkedAuth = { token: tokenOpt.value, ref };
+    }
+
     // 1. Resolve SQL: --file > positional arg > piped stdin.
     const sql = yield* Effect.gen(function* () {
       if (Option.isSome(flags.file)) {
@@ -278,52 +314,17 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     yield* telemetryOutputFormat.set(format);
 
     // 3. Linked → Management API (raw HTTP); local / --db-url → direct connection.
-    if (flags.linked) {
-      const cliConfig = yield* LegacyCliConfig;
-      const credentials = yield* LegacyCredentials;
-      const projectRef = yield* LegacyProjectRefResolver;
-
-      // PreRunE: require a token (login) before resolving the project ref.
-      const tokenOpt = Option.isSome(cliConfig.accessToken)
-        ? cliConfig.accessToken
-        : yield* credentials.getAccessToken;
-      if (Option.isNone(tokenOpt)) {
-        return yield* Effect.fail(
-          new LegacyDbQueryLoginRequiredError({
-            message: MISSING_TOKEN_MESSAGE,
-            suggestion: "Run supabase login first.",
-          }),
-        );
-      }
-      // PreRun parity: Go's `db query --linked` calls `flags.LoadProjectRef`
-      // (`apps/cli-go/cmd/db.go`), which loads flag → env → ref file and fails with
-      // ErrNotLinked — it never opens the project-selection prompt. Use the
-      // non-prompting `resolveOptional` so an unlinked workdir fails instead of
-      // running the query against an interactively-selected project. Validate the
-      // resolved ref like Go's `AssertProjectRefIsValid`.
-      const refOpt = yield* projectRef.resolveOptional(Option.none());
-      if (Option.isNone(refOpt)) {
-        return yield* Effect.fail(
-          new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
-        );
-      }
-      const ref = refOpt.value;
-      if (!PROJECT_REF_PATTERN.test(ref)) {
-        return yield* Effect.fail(
-          new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }),
-        );
-      }
-
+    // The --linked token/ref preflight already ran above (Go's PreRun order).
+    if (linkedAuth !== undefined) {
       // Mirror Go's `ensureProjectGroupsCached` PersistentPostRun
       // (`apps/cli-go/cmd/root.go:176,214-234`): once a project ref is resolved,
       // write the linked-project cache (`GET /v1/projects/{ref}` →
       // `supabase/.temp/linked-project.json`) whether the query succeeds or fails.
       // The cache layer no-ops when the file already exists, the token is missing,
-      // or the GET is non-200 — so a 401 still fires the GET but writes nothing,
-      // matching Go. Only the linked path resolves a ref, so `--local` / `--db-url`
-      // never trigger this write (Go gates on `flags.ProjectRef != ""`).
-      return yield* runLinked(sql, format, agentMode, ref, tokenOpt.value).pipe(
-        Effect.ensuring(linkedProjectCache.cache(ref)),
+      // or the GET is non-200. Only the linked path resolves a ref, so `--local` /
+      // `--db-url` never trigger this write (Go gates on `flags.ProjectRef != ""`).
+      return yield* runLinked(sql, format, agentMode, linkedAuth.ref, linkedAuth.token).pipe(
+        Effect.ensuring(linkedProjectCache.cache(linkedAuth.ref)),
       );
     }
     return yield* runLocal(sql, format, agentMode);
