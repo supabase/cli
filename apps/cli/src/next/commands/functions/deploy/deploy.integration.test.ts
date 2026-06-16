@@ -486,6 +486,50 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
+  it.live("deploys config-declared custom entrypoints when deploying all functions", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(
+          tempDir,
+          [
+            'project_id = "test-project"',
+            '[functions."custom-entry"]',
+            'entrypoint = "./functions/custom-entry/handler.ts"',
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        mkdir(join(tempDir, "supabase", "functions", "custom-entry"), { recursive: true }),
+      );
+      yield* Effect.promise(() =>
+        writeFile(
+          join(tempDir, "supabase", "functions", "custom-entry", "handler.ts"),
+          'Deno.serve(() => new Response("custom"))\n',
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFile(
+          join(tempDir, "supabase", "functions", "custom-entry", "deno.json"),
+          '{"imports":{}}\n',
+        ),
+      );
+
+      const { out, api, layer } = setup(tempDir, {
+        rawArgs: ["functions", "deploy"],
+      });
+
+      yield* functionsDeploy(BASE_FLAGS).pipe(Effect.provide(layer));
+
+      expect(api.requests[0]?.urlParams).toContain("slug=custom-entry");
+      expect(out.stdoutText).toContain(
+        `Deployed Functions on project ${PROJECT_REF}: custom-entry\n`,
+      );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
   it.live("retries API deploy and bulk update rate limits", () => {
     const tempDir = makeTempDir();
 
@@ -1012,10 +1056,14 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned).toHaveLength(2);
+      expect(child.spawned).toHaveLength(3);
       expect(child.spawned[0]).toEqual({
         command: "docker",
         args: ["info"],
+      });
+      expect(child.spawned[1]).toEqual({
+        command: "docker",
+        args: ["network", "inspect", "supabase_network_abcdefghijklmnopqrst"],
       });
       expect(api.requests[0]).toMatchObject({
         method: "GET",
@@ -1027,8 +1075,8 @@ describe("functions deploy", () => {
       });
       expect(api.requests[1]?.urlParams).toContain("slug=hello-world");
       expect(api.requests[1]?.urlParams).toContain("verify_jwt=false");
-      expect(child.spawned[1]?.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.68.4");
-      expect(child.spawned[1]?.args).toContain(
+      expect(child.spawned[2]?.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.68.4");
+      expect(child.spawned[2]?.args).toContain(
         `${join(tempDir, "supabase", "custom_import_map.json")}:${join(
           tempDir,
           "supabase",
@@ -1158,7 +1206,7 @@ describe("functions deploy", () => {
           method: "PATCH",
           path: `/v1/projects/${PROJECT_REF}/functions/hello-world`,
         });
-        expect(child.spawned).toHaveLength(2);
+        expect(child.spawned).toHaveLength(3);
       }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
@@ -1196,7 +1244,7 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned[1]?.args).toContain("public.ecr.aws/supabase/edge-runtime:v9.9.9");
+      expect(child.spawned[2]?.args).toContain("public.ecr.aws/supabase/edge-runtime:v9.9.9");
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
@@ -1242,8 +1290,8 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned).toHaveLength(2);
-      expect(child.spawned[1]?.args).toContain(
+      expect(child.spawned).toHaveLength(3);
+      expect(child.spawned[2]?.args).toContain(
         `${staticFile}:${staticFile.replaceAll("\\", "/").replace(/^[A-Za-z]:/, "")}:ro`,
       );
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));

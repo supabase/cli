@@ -216,6 +216,19 @@ function explicitBooleanFlag(
   return hasExplicitLongFlag(rawArgs, commandPath, flagName) ? Option.some(value) : Option.none();
 }
 
+function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const token = rawArgs[index];
+    if (token === `--${flagName}`) {
+      return rawArgs[index + 1];
+    }
+    if (token?.startsWith(`--${flagName}=`)) {
+      return token.slice(flagName.length + 3);
+    }
+  }
+  return undefined;
+}
+
 function isDenoConfigFile(pathname: string) {
   const name = basename(pathname).toLowerCase();
   return name === "deno.json" || name === "deno.jsonc";
@@ -771,6 +784,19 @@ async function forEachLocalImportMapTarget(
   }
 }
 
+async function walkLocalImportMapTargetImports(
+  importMap: ImportMapFile,
+  pathname: string,
+  projectRoot: string,
+  onFile: (pathname: string, contents: Uint8Array) => Promise<void>,
+  onWarning: (message: string) => Promise<void>,
+) {
+  if ((await stat(pathname)).isDirectory()) {
+    return;
+  }
+  await walkImportPaths(importMap, pathname, projectRoot, onFile, onWarning);
+}
+
 async function isFile(pathname: string): Promise<boolean> {
   try {
     return (await stat(pathname)).isFile();
@@ -816,6 +842,15 @@ async function writeSourceDeployForm(
     const pathInfo = await stat(pathname);
     if (!pathInfo.isDirectory()) {
       await uploadAsset(pathname, await readFile(pathname));
+      await walkLocalImportMapTargetImports(
+        importMap,
+        pathname,
+        projectRoot,
+        uploadAsset,
+        async (message) => {
+          await Effect.runPromise(outputRaw(message));
+        },
+      );
       return;
     }
     const nestedPaths = await listPathsRecursive(pathname);
@@ -995,6 +1030,38 @@ function shouldUseDenoJsonDiscovery(entrypoint: string, importMap: string) {
   return isDenoConfigFile(importMap) && dirname(importMap) === dirname(entrypoint);
 }
 
+function isUserDefinedDockerNetwork(networkMode: string) {
+  return (
+    networkMode.length > 0 &&
+    networkMode !== "default" &&
+    networkMode !== "bridge" &&
+    networkMode !== "host" &&
+    networkMode !== "none"
+  );
+}
+
+const ensureDockerNetwork = Effect.fnUntraced(function* (networkMode: string) {
+  if (!isUserDefinedDockerNetwork(networkMode)) {
+    return;
+  }
+
+  const inspect = yield* runChildProcess("docker", ["network", "inspect", networkMode], {
+    stdout: "ignore",
+    stderr: "ignore",
+  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
+  if (inspect.exitCode === 0) {
+    return;
+  }
+
+  const create = yield* runChildProcess("docker", ["network", "create", networkMode], {
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
+    return yield* Effect.fail(new Error(`failed to create docker network: ${networkMode}`));
+  }
+});
+
 async function shouldUsePackageJsonDiscovery(entrypoint: string, importMap: string) {
   if (importMap.length > 0) {
     return false;
@@ -1050,6 +1117,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
   edgeRuntimeVersion: string,
   functionsDir: string,
   config: ResolvedDeployFunctionConfig,
+  dockerNetworkId?: string,
 ) {
   const output = yield* Output;
   yield* output.raw(`Bundling Function: ${config.slug}\n`, "stderr");
@@ -1063,7 +1131,10 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     const binds = yield* Effect.promise(() =>
       buildDockerBinds(projectId, functionsDir, outputDir, config),
     );
+    const networkMode = dockerNetworkId ?? localDockerId("network", projectId);
+    yield* ensureDockerNetwork(networkMode);
     const command = ["run", "--rm", ...binds.flatMap((bind) => ["-v", bind])];
+    command.push("--network", networkMode);
     if (process.platform === "linux") {
       command.push("--add-host", "host.docker.internal:host-gateway");
     }
@@ -1465,15 +1536,11 @@ const discoverFunctionSlugs = Effect.fnUntraced(function* (
       if (validateFunctionSlugMessage(slug) !== undefined) {
         continue;
       }
-      try {
-        const entrypointInfo = yield* Effect.tryPromise(() =>
-          stat(join(functionsDir, slug, "index.ts")),
-        );
-        if (entrypointInfo.isFile()) {
-          slugs.push(slug);
-        }
-      } catch {
-        // Ignore directories without an entrypoint.
+      const hasDefaultEntrypoint = yield* Effect.promise(() =>
+        isFile(defaultFunctionEntrypoint(functionsDir, slug)),
+      );
+      if (hasDefaultEntrypoint) {
+        slugs.push(slug);
       }
     }
   } catch {
@@ -1669,6 +1736,7 @@ const deployViaDocker = Effect.fnUntraced(function* (
   functionsDir: string,
   configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
   api: ApiClient,
+  dockerNetworkId?: string,
 ) {
   const output = yield* Output;
   const remoteFunctions = yield* listRemoteFunctions(api, projectRef);
@@ -1686,6 +1754,7 @@ const deployViaDocker = Effect.fnUntraced(function* (
       edgeRuntimeVersion,
       functionsDir,
       config,
+      dockerNetworkId,
     );
     const current = remoteBySlug.get(config.slug);
     if (
@@ -1877,10 +1946,10 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     const projectRef =
       preResolvedProjectRef ?? (yield* dependencies.resolveProjectRef(flags.projectRef));
     const loadedConfig = yield* loadProjectConfig(dependencies.projectRoot);
-    const deployConfig =
-      loadedConfig === null
-        ? undefined
-        : yield* Effect.promise(() => configForProjectRef(loadedConfig, projectRef));
+    if (loadedConfig === null) {
+      return yield* Effect.fail(new Error("failed to load config: supabase/config.toml not found"));
+    }
+    const deployConfig = yield* Effect.promise(() => configForProjectRef(loadedConfig, projectRef));
     const configFunctions = yield* inferFunctionsManifest({
       cwd: dependencies.projectRoot,
       config: deployConfig,
@@ -1953,6 +2022,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
             join(dependencies.projectRoot, SUPABASE_FUNCTIONS_DIR),
             configs,
             dependencies.api,
+            explicitStringFlag(dependencies.rawArgs, "network-id"),
           );
           return true;
         })

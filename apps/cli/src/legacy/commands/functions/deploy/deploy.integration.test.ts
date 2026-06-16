@@ -302,6 +302,87 @@ describe("legacy functions deploy", () => {
     );
   });
 
+  it.live("deploys config-declared custom entrypoints when deploying all functions", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) =>
+        Effect.succeed(
+          legacyJsonResponse(request, 201, {
+            id: "function-id",
+            slug: "custom-entry",
+            name: "custom-entry",
+            status: "ACTIVE",
+            version: 2,
+            created_at: 1_687_423_025_152,
+            updated_at: 1_687_423_025_152,
+            verify_jwt: true,
+            import_map: true,
+            entrypoint_path: "functions/custom-entry/handler.ts",
+            import_map_path: "functions/custom-entry/deno.json",
+          }),
+        ),
+    });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      Layer.succeed(LegacyYesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeProjectConfig(
+          tempRoot.current,
+          [
+            'project_id = "test-project"',
+            '[functions."custom-entry"]',
+            'entrypoint = "./functions/custom-entry/handler.ts"',
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.tryPromise(() =>
+        mkdir(join(tempRoot.current, "supabase", "functions", "custom-entry"), {
+          recursive: true,
+        }),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(tempRoot.current, "supabase", "functions", "custom-entry", "handler.ts"),
+          'Deno.serve(() => new Response("custom"))\n',
+        ),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(tempRoot.current, "supabase", "functions", "custom-entry", "deno.json"),
+          '{"imports":{}}\n',
+        ),
+      );
+
+      yield* legacyFunctionsDeploy({
+        ...baseFlags,
+        functionNames: [],
+      });
+
+      expect(api.requests).toHaveLength(1);
+      expect(api.requests[0]?.urlParams).toContain("slug=custom-entry");
+      expect(out.stdoutText).toContain(
+        "Deployed Functions on project abcdefghijklmnopqrst: custom-entry\n",
+      );
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+      ),
+    );
+  });
+
   it.live("honors global --yes when pruning remote functions", () => {
     const out = mockOutput({ format: "text", promptConfirmFail: true });
     const api = mockLegacyPlatformApi({
