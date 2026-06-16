@@ -49,4 +49,25 @@ describe("legacyToPostgresURL", () => {
   it("omits sslmode (TLS is layered on separately for pg-delta)", () => {
     expect(legacyToPostgresURL(base)).not.toContain("sslmode");
   });
+
+  it("appends the pooler `options` runtime param after connect_timeout", () => {
+    // Go's ToPostgresURL appends RuntimeParams; the Supavisor tenant routing
+    // `options=reference=<ref>` must reach pg-delta (`=` escaped to %3D).
+    expect(legacyToPostgresURL({ ...base, options: "reference=abcdefghijklmnop" })).toBe(
+      "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10&options=reference%3Dabcdefghijklmnop",
+    );
+  });
+
+  it("matches Go's url.QueryEscape for options (space → +)", () => {
+    expect(legacyToPostgresURL({ ...base, options: "-c search_path=public" })).toContain(
+      "&options=-c+search_path%3Dpublic",
+    );
+  });
+
+  it("omits the options param entirely when absent or empty", () => {
+    expect(legacyToPostgresURL(base)).not.toContain("options=");
+    expect(legacyToPostgresURL({ ...base, options: "" })).toBe(
+      "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10",
+    );
+  });
 });

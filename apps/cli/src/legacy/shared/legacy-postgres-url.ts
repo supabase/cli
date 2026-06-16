@@ -14,6 +14,28 @@ function isIPv6Host(host: string): boolean {
   return host.includes(":");
 }
 
+/**
+ * Mirrors Go's `url.QueryEscape`: every byte outside the unreserved set
+ * `A-Za-z0-9-_.~` is percent-encoded from its UTF-8 bytes, and space becomes `+`.
+ * Used for `RuntimeParams` values so the serialized query string is byte-identical
+ * to Go's `ToPostgresURL` (`encodeURIComponent` differs on space and `!*'()`).
+ */
+function goQueryEscape(value: string): string {
+  let out = "";
+  for (const ch of value) {
+    if (/[A-Za-z0-9\-_.~]/.test(ch)) {
+      out += ch;
+    } else if (ch === " ") {
+      out += "+";
+    } else {
+      for (const byte of new TextEncoder().encode(ch)) {
+        out += `%${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+      }
+    }
+  }
+  return out;
+}
+
 export interface LegacyPostgresUrlInput {
   readonly host: string;
   readonly port: number;
@@ -22,6 +44,13 @@ export interface LegacyPostgresUrlInput {
   readonly database: string;
   /** `pgconn.Config.ConnectTimeout` in seconds; defaults to 10 when 0/absent. */
   readonly connectTimeoutSeconds?: number;
+  /**
+   * libpq `options` startup parameter (Go's `pgconn.Config.RuntimeParams["options"]`,
+   * e.g. `reference=<ref>` for Supavisor pooler tenant routing). Go's `ToPostgresURL`
+   * appends every `RuntimeParams` entry to the query string; the resolver only ever
+   * populates `options`, so it is the one runtime param serialized here.
+   */
+  readonly options?: string;
 }
 
 export function legacyToPostgresURL(conn: LegacyPostgresUrlInput): string {
@@ -34,7 +63,14 @@ export function legacyToPostgresURL(conn: LegacyPostgresUrlInput): string {
   // encodeURIComponent is a strict superset of those escape sets, so the decoded
   // value pg-delta sees is identical for any input.
   const userinfo = `${encodeURIComponent(conn.user)}:${encodeURIComponent(conn.password)}`;
+  // Mirror Go's `connect_timeout` + `RuntimeParams` loop (`connect.go:30-33`): the
+  // pooler tenant-routing `options` must reach pg-delta or the connection misses
+  // the tenant on pooler fallback.
+  const runtimeParams =
+    conn.options !== undefined && conn.options.length > 0
+      ? `&options=${goQueryEscape(conn.options)}`
+      : "";
   return `postgresql://${userinfo}@${host}:${conn.port}/${encodeURIComponent(
     conn.database,
-  )}?connect_timeout=${timeout}`;
+  )}?connect_timeout=${timeout}${runtimeParams}`;
 }
