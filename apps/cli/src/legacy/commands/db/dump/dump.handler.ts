@@ -211,16 +211,21 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
 
     const runContainer = (env: Readonly<Record<string, string>>) =>
-      docker.runCapture({
-        image: legacyGetRegistryImageUrl(image),
-        cmd: ["bash", "-c", mode.script, "--"],
-        env,
-        binds: [],
-        workingDir: Option.none(),
-        securityOpt: [],
-        extraHosts,
-        network,
-      });
+      docker.runCapture(
+        {
+          image: legacyGetRegistryImageUrl(image),
+          cmd: ["bash", "-c", mode.script, "--"],
+          env,
+          binds: [],
+          workingDir: Option.none(),
+          securityOpt: [],
+          extraHosts,
+          network,
+        },
+        // Go's dump tees container stderr to os.Stderr live (`io.MultiWriter`),
+        // so pg_dump progress/warnings reach the user as they happen.
+        { teeStderr: true },
+      );
 
     let result = yield* runContainer(modeEnv);
 

@@ -38,9 +38,10 @@ export const legacyDockerRunLayer: Layer.Layer<
     };
 
     return LegacyDockerRun.of({
-      runCapture: (opts) =>
+      runCapture: (opts, captureOpts) =>
         Effect.scoped(
           Effect.gen(function* () {
+            const teeStderr = captureOpts?.teeStderr ?? false;
             yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
             const args = buildLegacyDockerArgs(opts);
             // Pipe stdout/stderr (rather than inherit) so the SQL dump can be
@@ -71,9 +72,12 @@ export const legacyDockerRunLayer: Layer.Layer<
                 Stream.runForEach(handle.stderr, (chunk) =>
                   Effect.sync(() => {
                     stderrChunks.push(chunk);
-                    // Tee container stderr to the parent terminal in real time,
-                    // matching Go's `io.MultiWriter(os.Stderr, errBuf)`.
-                    globalThis.process.stderr.write(chunk);
+                    // Tee container stderr to the parent terminal in real time only
+                    // when the caller opts in — `db dump` mirrors Go's
+                    // `io.MultiWriter(os.Stderr, errBuf)`, while the edge-runtime /
+                    // pg-delta path keeps stderr buffered (Go passes a bare
+                    // `bytes.Buffer`) and surfaces it only on failure.
+                    if (teeStderr) globalThis.process.stderr.write(chunk);
                   }),
                 ),
               ],

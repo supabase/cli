@@ -49,12 +49,19 @@ interface LegacyDockerRunShape {
   readonly run: (opts: LegacyDockerRunOpts) => Effect.Effect<number, LegacyDockerRunError>;
   /**
    * Runs `docker run --rm ...` capturing stdout into a buffer (instead of
-   * inheriting it) while teeing stderr to the parent process and collecting it
-   * for classification. Used by `db dump` (which must redirect the SQL stream to
-   * `--file` or post-process it) and the declarative edge-runtime export.
+   * inheriting it) and collecting stderr for classification. Used by `db dump`
+   * (which must redirect the SQL stream to `--file` or post-process it) and the
+   * declarative edge-runtime export.
+   *
+   * `teeStderr` controls whether container stderr is also written to the parent
+   * terminal in real time. `db dump` opts in (Go's `io.MultiWriter(os.Stderr,
+   * errBuf)`, `apps/cli-go/internal/db/dump/dump.go:50-90`); the edge-runtime /
+   * pg-delta path leaves it off (Go passes a plain `bytes.Buffer`, surfacing
+   * stderr only on failure — `apps/cli-go/internal/utils/edgeruntime.go:79-113`).
    */
   readonly runCapture: (
     opts: LegacyDockerRunOpts,
+    captureOpts?: { readonly teeStderr?: boolean },
   ) => Effect.Effect<LegacyDockerRunCaptureResult, LegacyDockerRunError>;
 }
 
