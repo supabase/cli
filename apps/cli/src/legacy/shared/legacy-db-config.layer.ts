@@ -5,7 +5,16 @@ import { getDomain } from "tldts";
 
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
-import { LegacyProjectRefResolver } from "../config/legacy-project-ref.service.ts";
+import {
+  INVALID_PROJECT_REF_MESSAGE,
+  LegacyProjectRefResolver,
+  PROJECT_NOT_LINKED_MESSAGE,
+  PROJECT_REF_PATTERN,
+} from "../config/legacy-project-ref.service.ts";
+import {
+  LegacyInvalidProjectRefError,
+  LegacyProjectNotLinkedError,
+} from "../config/legacy-project-ref.errors.ts";
 import {
   LegacyDebugFlag,
   LegacyOutputFlag,
@@ -397,7 +406,23 @@ export const legacyDbConfigLayer = Layer.effect(
         if (flags.linked) {
           const conn = yield* Effect.gen(function* () {
             const projectRef = yield* LegacyProjectRefResolver;
-            const ref = yield* projectRef.resolve(Option.none());
+            // Go's ParseDatabaseConfig resolves the linked ref via LoadProjectRef
+            // (`apps/cli-go/internal/utils/flags/db_url.go:88`) — load-or-fail with no
+            // prompt. Use the non-prompting resolveOptional so an unlinked workdir fails
+            // with ErrNotLinked rather than letting a TTY user pick an arbitrary project
+            // to dump/generate from. Validate like Go's AssertProjectRefIsValid.
+            const refOpt = yield* projectRef.resolveOptional(Option.none());
+            if (Option.isNone(refOpt)) {
+              return yield* Effect.fail(
+                new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
+              );
+            }
+            const ref = refOpt.value;
+            if (!PROJECT_REF_PATTERN.test(ref)) {
+              return yield* Effect.fail(
+                new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }),
+              );
+            }
             return yield* resolveLinked(ref, flags.dnsResolver, flags.password ?? Option.none());
           }).pipe(
             Effect.provide(
