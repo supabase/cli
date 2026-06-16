@@ -35,6 +35,11 @@ interface LegacyDbTomlValues {
   /** `[db] major_version`, default 17 (`apps/cli-go/pkg/config/templates/config.toml:42`). */
   readonly majorVersion: number;
   /**
+   * `[edge_runtime] deno_version`, default 2. Selects the edge-runtime image tag:
+   * `1` → the `deno1` image, otherwise the default (Go's `config.go:999-1008`).
+   */
+  readonly denoVersion: number;
+  /**
    * `[experimental.pgdelta]` config, consumed by the declarative-schema commands
    * (`db schema declarative generate` / `sync`). Mirrors Go's `PgDeltaConfig`
    * (`apps/cli-go/pkg/config/config.go:228-234`).
@@ -92,6 +97,8 @@ const DEFAULT_PORT = 54322;
 const DEFAULT_SHADOW_PORT = 54320;
 const DEFAULT_MAJOR_VERSION = 17;
 const DEFAULT_PASSWORD = "postgres";
+/** `[edge_runtime] deno_version` default (`config.toml` template). 2 → v1.74.1. */
+const DEFAULT_DENO_VERSION = 2;
 
 /** Default declarative schema dir (`utils.DeclarativeDir`, `misc.go:102`). */
 const DEFAULT_DECLARATIVE_DIR_SEGMENTS = ["supabase", "database"] as const;
@@ -277,6 +284,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   let storageRaw: RawDoc | undefined;
   let realtimeRaw: RawDoc | undefined;
   let apiRaw: RawDoc | undefined;
+  let edgeRuntimeRaw: RawDoc | undefined;
   let projectId = Option.none<string>();
   if (Option.isSome(maybeContent)) {
     let doc: RawDoc | undefined;
@@ -295,6 +303,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     storageRaw = asRecord(doc?.["storage"]);
     realtimeRaw = asRecord(doc?.["realtime"]);
     apiRaw = asRecord(doc?.["api"]);
+    edgeRuntimeRaw = asRecord(doc?.["edge_runtime"]);
     projectId = nonEmptyString(doc?.["project_id"]);
   }
 
@@ -362,6 +371,18 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
         : Number.NaN;
   const majorVersion = Number.isInteger(majorVersionNum) ? majorVersionNum : DEFAULT_MAJOR_VERSION;
 
+  // `[edge_runtime] deno_version` (default 2). Go switches the edge-runtime image
+  // to the `deno1` tag when this is 1 (`apps/cli-go/pkg/config/config.go:999-1008`);
+  // the declarative pg-delta runner needs it to pick the matching image.
+  const denoVersionRaw = edgeRuntimeRaw?.["deno_version"];
+  const denoVersionNum =
+    typeof denoVersionRaw === "number"
+      ? denoVersionRaw
+      : typeof denoVersionRaw === "string"
+        ? Number.parseInt(legacyExpandEnv(denoVersionRaw, lookup), 10)
+        : Number.NaN;
+  const denoVersion = Number.isInteger(denoVersionNum) ? denoVersionNum : DEFAULT_DENO_VERSION;
+
   // `[experimental.pgdelta]`. `enabled` is a TOML bool (Go decodes weakly, so an
   // `env(VAR)`/string "true" also counts); `declarative_schema_path` is resolved
   // to a `supabase/`-prefixed path when relative (Go's `config.resolve`).
@@ -410,6 +431,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     poolerConnectionString,
     projectId,
     majorVersion,
+    denoVersion,
     pgDelta: {
       enabled,
       declarativeSchemaPath,

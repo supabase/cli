@@ -1,8 +1,9 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import * as Net from "node:net";
 
-import { LegacyDebugFlag } from "../../shared/legacy/global-flags.ts";
+import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
 import { legacyGetRegistryImageUrl } from "./legacy-docker-registry.ts";
 import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
 import { legacyResolveEdgeRuntimeImage } from "./legacy-edge-runtime-image.ts";
@@ -12,9 +13,6 @@ import {
   legacyBuildEdgeRuntimeEntrypoint,
   legacyBuildEdgeRuntimeStartCmd,
 } from "./legacy-edge-runtime-script.service.ts";
-
-/** `[edge_runtime].deno_version` default (`config.toml` template). 2 → v1.74.1. */
-const DEFAULT_DENO_VERSION = 2;
 
 /**
  * Asks the OS for an unused TCP port on 127.0.0.1, like Go's `getFreeHostPort`.
@@ -37,10 +35,8 @@ const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => 
  * with `sh -c <heredoc>` (Go's `RunEdgeRuntimeScript`). The image is resolved
  * once at construction; a fresh free port is allocated per run.
  *
- * NOTE: `deno_version` is assumed default (2). Reading `[edge_runtime]
- * .deno_version` from config is a follow-up if a non-default project ever runs
- * declarative commands. The non-zero-exit message string is approximated from
- * the docker exit code and should be golden-verified against the Go binary.
+ * NOTE: the non-zero-exit message string is approximated from the docker exit
+ * code and should be golden-verified against the Go binary.
  */
 export const legacyEdgeRuntimeScriptLayer = Layer.effect(
   LegacyEdgeRuntimeScript,
@@ -50,13 +46,29 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const debug = yield* LegacyDebugFlag;
+    const networkIdFlag = yield* LegacyNetworkIdFlag;
+    // Read `[edge_runtime] deno_version` so a `deno_version = 1` project runs the
+    // `deno1` image, matching Go's config-driven image switch (the resolver applies
+    // the version pin first, then the deno1 override).
+    const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
     const image = yield* legacyResolveEdgeRuntimeImage(
       fs,
       path,
       cliConfig.workdir,
-      DEFAULT_DENO_VERSION,
+      toml.denoVersion,
     );
     const registryImage = legacyGetRegistryImageUrl(image);
+
+    // Go requests host networking for the edge-runtime container, but `DockerStart`
+    // overrides any network mode (host included) with `--network-id` when set
+    // (`apps/cli-go/internal/utils/docker.go:267-271`). Mirror the sibling pattern in
+    // `db dump` / `gen types` / `test db` so declarative pg-delta runs reach the
+    // local stack on custom networks.
+    const networkId = Option.getOrUndefined(networkIdFlag);
+    const network =
+      networkId !== undefined && networkId.length > 0
+        ? ({ _tag: "named" as const, name: networkId } as const)
+        : ({ _tag: "host" as const } as const);
 
     return LegacyEdgeRuntimeScript.of({
       run: (opts) =>
@@ -77,7 +89,7 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
               workingDir: Option.none(),
               securityOpt: [],
               extraHosts: [],
-              network: { _tag: "host" },
+              network,
             })
             // A spawn failure (e.g. Docker not installed) carries no container
             // stderr; wrap it with the caller's prefix like Go's `%s: %w`.

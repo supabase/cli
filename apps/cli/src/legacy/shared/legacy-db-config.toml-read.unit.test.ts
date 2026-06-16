@@ -49,6 +49,31 @@ describe("legacyReadDbToml", () => {
           expect(v.password).toBe("postgres");
           expect(Option.isNone(v.poolerConnectionString)).toBe(true);
           expect(Option.isNone(v.projectId)).toBe(true);
+          expect(v.denoVersion).toBe(2);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reads [edge_runtime] deno_version = 1 (selects the deno1 image)", () => {
+    const dir = withConfig(["[edge_runtime]", "deno_version = 1", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.denoVersion).toBe(1);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("defaults deno_version to 2 when [edge_runtime] omits it", () => {
+    const dir = withConfig(["[edge_runtime]", 'policy = "per_worker"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.denoVersion).toBe(2);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
