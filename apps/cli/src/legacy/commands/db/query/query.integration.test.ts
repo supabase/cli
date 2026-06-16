@@ -147,6 +147,7 @@ interface SetupOpts {
   linkedBody?: string;
   networkFail?: boolean;
   accessToken?: Option.Option<Redacted.Redacted<string>>;
+  workdir?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -171,7 +172,10 @@ function setup(opts: SetupOpts = {}) {
       opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
     ),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
-    mockLegacyCliConfig({ workdir: "/work/project", accessToken: opts.accessToken }),
+    mockLegacyCliConfig({
+      workdir: opts.workdir ?? "/work/project",
+      accessToken: opts.accessToken,
+    }),
     mockLegacyCredentialsLayer,
     mockHttpClient({
       status: opts.linkedStatus,
@@ -251,6 +255,21 @@ describe("legacy db query integration", () => {
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(Effect.sync(() => rmSync(filePath, { force: true }))),
+    );
+  });
+
+  it.live("resolves a relative --file against the workdir", () => {
+    // Go chdir's into the workdir before ResolveSQL reads --file, so a relative
+    // path resolves against the workdir, not the original process cwd.
+    const dir = mkdtempSync(join(tmpdir(), "supabase-query-wd-"));
+    writeFileSync(join(dir, "q.sql"), "select * from users");
+    const { layer, out } = setup({ result: SELECT_RESULT, workdir: dir });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(flags({ local: true, file: Option.some("q.sql") }));
+      expect(out.stdoutText).toContain("alice");
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 

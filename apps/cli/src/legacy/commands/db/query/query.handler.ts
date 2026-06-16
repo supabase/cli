@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Redacted } from "effect";
+import { Effect, FileSystem, Option, Path, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -53,6 +53,8 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const stdin = yield* Stdin;
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const cliConfig = yield* LegacyCliConfig;
   const random = yield* Random;
   const agentFlag = yield* LegacyAgentFlag;
   const outputFlag = yield* LegacyOutputFlag;
@@ -203,7 +205,11 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     // 1. Resolve SQL: --file > positional arg > piped stdin.
     const sql = yield* Effect.gen(function* () {
       if (Option.isSome(flags.file)) {
-        return yield* fs.readFileString(flags.file.value).pipe(
+        // Go chdir's into the workdir before ResolveSQL reads --file
+        // (`cmd/root.go:104`), so a relative path resolves against the workdir, not
+        // the original cwd. `path.resolve` leaves absolute paths unchanged.
+        const filePath = path.resolve(cliConfig.workdir, flags.file.value);
+        return yield* fs.readFileString(filePath).pipe(
           Effect.mapError(
             (cause) =>
               new LegacyDbQueryReadFileError({
