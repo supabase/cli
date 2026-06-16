@@ -24,7 +24,14 @@ export interface LegacyAdvisorLint {
   readonly title: string;
   readonly level: string;
   readonly facing: string;
-  readonly categories: ReadonlyArray<string>;
+  /**
+   * `null` on the API path when Go's `apiResponseToLints` appends onto a nil
+   * slice with zero iterations (`advisors.go:197-199`): `append(nil, …zero…)`
+   * leaves the slice nil, which `encoding/json` encodes as `"categories":null`.
+   * The local path (`rows.Scan`) always populates the slice, so it is never
+   * null there.
+   */
+  readonly categories: ReadonlyArray<string> | null;
   readonly description: string;
   readonly detail: string;
   readonly remediation: string;
@@ -55,14 +62,32 @@ function requireApiString(value: unknown, field: string): string {
 }
 
 /**
- * Decodes a JSON value into Go's `[]string`-alias `categories`. Absent/`null` ⇒
- * `[]`; a non-array, or a non-string element, is an `UnmarshalTypeError` → throw.
+ * Decodes a JSON value into Go's `[]string`-alias `categories`, mirroring the
+ * append-onto-nil collapse in `apiResponseToLints` (`advisors.go:197-199`):
+ *
+ *   ```go
+ *   for _, c := range l.Categories {
+ *     lint.Categories = append(lint.Categories, string(c))
+ *   }
+ *   ```
+ *
+ * `append` onto a nil slice with zero iterations leaves the slice nil.
+ * `encoding/json` encodes a nil `[]string` as `null` (no `omitempty` on
+ * `Categories`), so the key is always present.
+ *
+ * Mapping:
+ *   - absent / `null`           → `null`  (nil slice, encodes as `"categories":null`)
+ *   - present `[]`              → `null`  (zero iterations, same nil collapse)
+ *   - present `["SECURITY",…]`  → the string array
+ *   - present non-array         → `UnmarshalTypeError` → throw
+ *   - non-string element        → `UnmarshalTypeError` → throw
  */
-function requireApiStringArray(value: unknown): ReadonlyArray<string> {
-  if (value === undefined || value === null) return [];
+function requireApiStringArray(value: unknown): ReadonlyArray<string> | null {
+  if (value === undefined || value === null) return null;
   if (!Array.isArray(value)) {
     throw new TypeError("cannot unmarshal advisor categories into []string");
   }
+  if (value.length === 0) return null;
   return value.map((element) => {
     if (typeof element !== "string") {
       throw new TypeError("cannot unmarshal advisor categories element into string");
@@ -213,7 +238,7 @@ export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<
 /** Go's `matchesType` (`advisors.go:226-239`). */
 export function matchesLegacyAdvisorType(lint: LegacyAdvisorLint, advisorType: string): boolean {
   if (advisorType === "all") return true;
-  for (const category of lint.categories) {
+  for (const category of lint.categories ?? []) {
     if (advisorType === "security" && category === "SECURITY") return true;
     if (advisorType === "performance" && category === "PERFORMANCE") return true;
   }

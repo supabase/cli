@@ -192,18 +192,38 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
 
   it("treats absent scalar fields as the empty-string zero value (Go json)", () => {
     // A missing field decodes to "" with no error; only present-but-wrong-type fails.
+    // `categories` absent → nil slice → encoded as `null` (advisors.go:197-199
+    // append-onto-nil with zero iterations; no omitempty on the field).
     const lints = apiResponseToLegacyAdvisorLints({ lints: [{ name: "only_name" }] });
     expect(lints[0]).toEqual({
       name: "only_name",
       title: "",
       level: "",
       facing: "",
-      categories: [],
+      categories: null,
       description: "",
       detail: "",
       remediation: "",
       cacheKey: "",
     });
+  });
+
+  it("collapses null and empty categories to null (Go nil-slice parity)", () => {
+    // null categories → nil slice → "categories": null
+    const fromNull = apiResponseToLegacyAdvisorLints({
+      lints: [{ name: "x", categories: null }],
+    });
+    expect(fromNull[0]?.categories).toBeNull();
+    // empty [] → zero append iterations → nil slice → "categories": null
+    const fromEmpty = apiResponseToLegacyAdvisorLints({
+      lints: [{ name: "x", categories: [] }],
+    });
+    expect(fromEmpty[0]?.categories).toBeNull();
+    // populated → array preserved
+    const fromPopulated = apiResponseToLegacyAdvisorLints({
+      lints: [{ name: "x", categories: ["SECURITY"] }],
+    });
+    expect(fromPopulated[0]?.categories).toEqual(["SECURITY"]);
   });
 });
 
@@ -254,6 +274,26 @@ describe("encodeLegacyAdvisorLints (Go outputAndCheck byte parity)", () => {
     const out = encodeLegacyAdvisorLints([lint({ name: "n", categories: ["SECURITY"] })]);
     expect(out).not.toContain("metadata");
     expect(out).toContain('"cache_key": ""');
+  });
+
+  it("emits categories:null (key present, null value) when categories is null — Go nil []string parity", () => {
+    // Go has no omitempty on Lint.Categories; a nil slice encodes as
+    // `"categories": null`, not omitted. Verify the key is present AND the
+    // value is the literal `null` (not `[]` or absent).
+    const lintWithNullCategories: LegacyAdvisorLint = {
+      name: "n",
+      title: "",
+      level: "",
+      facing: "",
+      categories: null,
+      description: "",
+      detail: "",
+      remediation: "",
+      cacheKey: "",
+    };
+    const out = encodeLegacyAdvisorLints([lintWithNullCategories]);
+    expect(out).toContain('"categories": null');
+    expect(out).not.toContain('"categories": []');
   });
 });
 
