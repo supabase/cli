@@ -52,9 +52,19 @@ export async function setup({
   const name = `cli-e2e-live-${TARGET}-${runId}-${randomUUID().slice(0, 8)}`;
 
   const projectRef = await createTestProject(TARGET_API_URL, orgId, name);
-  await waitForProjectReady(TARGET_API_URL, projectRef);
-  const anonKey = await getPublishableKey(TARGET_API_URL, projectRef);
-  const functionsUrl = `https://${projectRef}.${PROJECT_HOST}/functions/v1`;
+
+  // Once the project exists, any later setup failure must still delete it —
+  // setup returns before the teardown closure, so Vitest cannot clean up.
+  let anonKey: string;
+  let functionsUrl: string;
+  try {
+    await waitForProjectReady(TARGET_API_URL, projectRef);
+    anonKey = await getPublishableKey(TARGET_API_URL, projectRef);
+    functionsUrl = `https://${projectRef}.${PROJECT_HOST}/functions/v1`;
+  } catch (err) {
+    if (!KEEP_PROJECT) await deleteTestProject(TARGET_API_URL, projectRef);
+    throw err;
+  }
 
   provide("projectRef", projectRef);
   provide("anonKey", anonKey);

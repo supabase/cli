@@ -37,7 +37,12 @@ permissions:
 
 jobs:
   live-e2e:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    # Skip fork PRs: repository secrets (the staging token) are not available to
+    # them, so the live job would call staging with an empty token and fail.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.draft == false &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     name: Live e2e (${{ matrix.target }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
     # Serialize a target against itself across runs; go and ts-legacy run in
