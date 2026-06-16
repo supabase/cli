@@ -85,6 +85,14 @@ describe("legacyMakeLocalCellFormatter", () => {
     expect(fmt("hi", 1)).toBe("hi");
     expect(fmt(42, 99)).toBe("42"); // no OID for the column → plain
   });
+
+  it("renders Date (timestamp) cells like Go's time.Time %v instead of map[]", () => {
+    const fmt = legacyMakeLocalCellFormatter([1114]);
+    expect(fmt(new Date(Date.UTC(2024, 0, 2, 15, 4, 5)), 0)).toBe("2024-01-02 15:04:05 +0000 UTC");
+    expect(fmt(new Date(Date.UTC(2024, 0, 2, 15, 4, 5, 123)), 0)).toBe(
+      "2024-01-02 15:04:05.123 +0000 UTC",
+    );
+  });
 });
 
 describe("legacyRenderTablewriter", () => {
@@ -93,6 +101,28 @@ describe("legacyRenderTablewriter", () => {
     expect(out).toContain("1e+06");
     // Default (local) formatter keeps it plain.
     expect(legacyRenderTablewriter(["n"], [[1000000]])).toContain("1000000");
+  });
+
+  it("splits a multiline cell across stacked rows like tablewriter (borders intact)", () => {
+    const out = legacyRenderTablewriter(
+      ["id", "body"],
+      [
+        [1, "line one\nline two"],
+        [2, "single"],
+      ],
+    );
+    expect(out).toBe(
+      [
+        "┌────┬──────────┐",
+        "│ id │ body     │",
+        "├────┼──────────┤",
+        "│ 1  │ line one │",
+        "│    │ line two │",
+        "│ 2  │ single   │",
+        "└────┴──────────┘",
+        "",
+      ].join("\n"),
+    );
   });
 
   it("matches the olekukonko/tablewriter v1 box layout (AutoFormat off, NULL cells)", () => {

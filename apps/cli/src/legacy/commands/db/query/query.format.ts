@@ -85,6 +85,25 @@ const PG_FLOAT4_OID = 700;
 const PG_FLOAT8_OID = 701;
 
 /**
+ * Format a JS `Date` the way Go renders a pgx `time.Time` via `fmt.Sprintf("%v")`
+ * (`time.Time.String()`: `2006-01-02 15:04:05.999999999 -0700 MST`, trailing
+ * fractional zeros trimmed). node-postgres returns `Date` for `date` / `timestamp`
+ * / `timestamptz` columns; without this they hit the object branch and render as
+ * `map[]`. Rendered in UTC (`+0000 UTC`), which matches Go's `timestamp` exactly
+ * (Go decodes it as UTC). NOTE: Go renders `timestamptz` in the process's LOCAL
+ * timezone with its zone name, which is environment-dependent and not faithfully
+ * reconstructable from a JS `Date`; UTC is the closest stable rendering.
+ */
+function formatGoTime(d: Date): string {
+  const pad = (n: number, width = 2): string => String(n).padStart(width, "0");
+  const date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  const time = `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+  const ms = d.getUTCMilliseconds();
+  const frac = ms > 0 ? `.${pad(ms, 3).replace(/0+$/, "")}` : "";
+  return `${date} ${time}${frac} +0000 UTC`;
+}
+
+/**
  * Per-column cell formatter for the local / `--db-url` path. Renders `float4`/`float8`
  * columns with Go's `%g` (`select 1000000::float8` → `1e+06`) while every other
  * column keeps the plain `legacyFormatValue` form (so integer columns are not turned
@@ -94,6 +113,9 @@ export function legacyMakeLocalCellFormatter(
   fieldTypeIds: ReadonlyArray<number>,
 ): (value: unknown, columnIndex: number) => string {
   return (value, columnIndex) => {
+    // node-postgres returns `Date` for date/timestamp/timestamptz columns; Go renders
+    // the pgx `time.Time` via `%v`, not as a `map[]`.
+    if (value instanceof Date) return formatGoTime(value);
     const oid = fieldTypeIds[columnIndex];
     if (typeof value === "number" && (oid === PG_FLOAT4_OID || oid === PG_FLOAT8_OID)) {
       return goFormatFloat(value);
@@ -117,10 +139,12 @@ export function legacyRenderTablewriter(
 ): string {
   if (cols.length === 0) return "";
   const rows = data.map((row) => row.map((cell, columnIndex) => formatCell(cell, columnIndex)));
+  // Column width is the widest visual line: a cell may contain newlines, which Go's
+  // tablewriter splits across stacked lines, so measure each line, not the raw string.
   const widths = cols.map((col, i) => {
     let width = displayWidth(col);
     for (const row of rows) {
-      width = Math.max(width, displayWidth(row[i] ?? ""));
+      for (const line of (row[i] ?? "").split("\n")) width = Math.max(width, displayWidth(line));
     }
     return width;
   });
@@ -129,10 +153,21 @@ export function legacyRenderTablewriter(
   const top = `┌${widths.map((_, i) => segment(i)).join("┬")}┐`;
   const sep = `├${widths.map((_, i) => segment(i)).join("┼")}┤`;
   const bottom = `└${widths.map((_, i) => segment(i)).join("┴")}┘`;
-  const renderRow = (cells: ReadonlyArray<string>) =>
+  const renderLine = (cells: ReadonlyArray<string>) =>
     `│${cells.map((cell, i) => ` ${cell}${" ".repeat(widths[i]! - displayWidth(cell))} `).join("│")}│`;
+  // Go's tablewriter splits a multiline cell across stacked bordered lines within the
+  // same logical row (other columns blank on continuation lines), no per-row separator.
+  const renderRow = (cells: ReadonlyArray<string>): string => {
+    const split = cells.map((cell) => cell.split("\n"));
+    const lineCount = Math.max(1, ...split.map((s) => s.length));
+    const visual: string[] = [];
+    for (let j = 0; j < lineCount; j++) {
+      visual.push(renderLine(split.map((s) => s[j] ?? "")));
+    }
+    return visual.join("\n");
+  };
 
-  const lines = [top, renderRow(cols), sep, ...rows.map(renderRow), bottom];
+  const lines = [top, renderLine(cols), sep, ...rows.map(renderRow), bottom];
   return `${lines.join("\n")}\n`;
 }
 
