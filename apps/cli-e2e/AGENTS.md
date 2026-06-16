@@ -152,6 +152,17 @@ In **record mode**: global setup resolves the org, deletes any orphaned test pro
 
 The pre-recording cleanup deletes projects named `cli-e2e-test`, `my-project`, and `to-delete` so re-recording never hits a 409 name-conflict. Do not add tests that rely on pre-existing named projects existing on staging.
 
+## Live mode (ADR-0013)
+
+`live` is a third mode (`CLI_E2E_MODE=live`) that, unlike replay/record, **does not use the replay server**. The harness is wired straight at the real Management API (`CLI_E2E_API_URL`) and the real Docker socket; tests assert on **real outcomes**.
+
+- Live tests are `src/tests/live/**/*.live.e2e.test.ts`, run only via `vitest.live.config.ts` (the default config excludes them). They `skipIf(!isLive)`, so they are inert on replay/PR runs.
+- Global setup (`tests/live-setup.ts`) provisions **one ephemeral project per run** (`cli-e2e-live-{target}-{runId}-{short}`), waits for `ACTIVE_HEALTHY`, fetches the publishable/anon key, and exposes `projectRef` / `anonKey` / `functionsUrl` via `inject()`. It deletes the project on teardown (even on failure). Setup is intentionally **dumb** — no provisioning retry; the CI job re-runs the step on flake.
+- Use `testLive` from `src/tests/live/live-context.ts`: `run(cmd)` (direct-wired CLI), `invoke(slug)` (direct HTTP call to the deployed function, sending the publishable key in both `Authorization: Bearer` and `apikey`), plus `workspace` (seeded from `fixtures/live/functions-project`), `projectRef`, `anonKey`, `functionsUrl`, and `state`/`captureField` for ordered flows.
+- **Assertion style:** outcome-based — assert `exitCode`/`stdout` substrings and the function's HTTP status + JSON body. This is ID-agnostic, so **no normalization/snapshots by default**. If the CLI's own diagnostic output is ever the assertion target, add a scoped normalizer for that one test — do not make normalization the default.
+- **Authoring target is `go`** (source of truth for the port); `ts-legacy` runs the same tests to prove the shim matches. Both run as separate CI jobs.
+- Retargeting to another env (e.g. `supabox`) is an env swap only: `CLI_E2E_TARGET_ENV` + `CLI_E2E_API_URL` + `CLI_E2E_PROJECT_HOST` + token. Tests assert on function output, not hostnames.
+
 ## Running the suite
 
 ```sh
@@ -162,6 +173,10 @@ pnpm nx run @supabase/cli-e2e:test:go       # go binary target
 # Record (requires staging access)
 SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
   pnpm nx run @supabase/cli-e2e:record
+
+# Live (requires staging access; creates + deletes a real project; needs Docker)
+CLI_HARNESS_TARGET=go SUPABASE_ACCESS_TOKEN=sbp_... \
+  pnpm --filter @supabase/cli-e2e test:e2e:live
 ```
 
 After recording, replay must pass with no changes between the two commands.

@@ -1,0 +1,139 @@
+name: Live E2E
+
+# Live e2e suite (ADR-0013). Runs the real CLI against the real staging
+# Management API + Docker bundler, then invokes the deployed functions over HTTP.
+#
+# Non-blocking by construction: this is a standalone workflow, NOT part of the
+# required-checks set, and it never runs on the default PR path of test.yml.
+#
+# Bootstrap note: while this workflow does not yet exist on the default branch,
+# `workflow_dispatch` is not selectable, so we also trigger on `pull_request`
+# (path-filtered to cli-e2e changes) so it can be exercised on the introducing
+# PR. Once merged, the `pull_request` trigger can be dropped in favour of
+# `workflow_dispatch` + a nightly `schedule`.
+#
+# Secrets: uses `pull_request` (same-repo branches), never `pull_request_target`,
+# so the staging token is never exposed to fork PRs.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or PR ref to run the live suite against"
+        required: false
+        type: string
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    paths:
+      - "apps/cli-e2e/**"
+      - "packages/cli-test-helpers/**"
+      - ".github/workflows/live-e2e.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  live-e2e:
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.draft == false
+    name: Live e2e (${{ matrix.target }})
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # Serialize a target against itself across runs; go and ts-legacy run in
+    # parallel. Per-job-scoped project names mean this is mostly belt-and-braces.
+    concurrency:
+      group: live-e2e-${{ matrix.target }}-${{ github.event.inputs.ref || github.head_ref || github.ref }}
+      cancel-in-progress: true
+    strategy:
+      # Each target is an independent green/red signal.
+      fail-fast: false
+      matrix:
+        # go = source-of-truth Go binary; ts-legacy = the TS rewrite (shells out
+        # to Go for most commands). Authoring target is go; ts-legacy proves the
+        # shim matches. ts-next is a later axis.
+        target:
+          - go
+          - ts-legacy
+    env:
+      CLI_E2E_MODE: live
+      CLI_E2E_TARGET_ENV: staging
+      CLI_E2E_API_URL: https://api.supabase.green
+      CLI_E2E_PROJECT_HOST: supabase.red
+      CLI_HARNESS_TARGET: ${{ matrix.target }}
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: apps/cli-go/go.mod
+          cache-dependency-path: apps/cli-go/go.sum
+
+      # Build the Go binary for every target: `go` runs it directly and
+      # `ts-legacy` shells out to it for most commands.
+      - name: Build Go CLI
+        working-directory: apps/cli-go
+        run: go build -o supabase-go .
+
+      - name: Export Go binary path
+        run: echo "SUPABASE_GO_BINARY=${{ github.workspace }}/apps/cli-go/supabase-go" >> "$GITHUB_ENV"
+
+      # The ts-legacy harness runs the compiled supabase binary from apps/cli/dist.
+      - name: Build CLI
+        if: matrix.target == 'ts-legacy'
+        run: pnpm exec nx run supabase:build
+
+      # Docker is a hard requirement for the --use-docker bundler cell.
+      - name: Docker preflight
+        run: docker info
+
+      - name: Run live e2e (retry up to 3x)
+        run: |
+          set -o pipefail
+          PREFIX="cli-e2e-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
+          sweep() {
+            curl -fsS -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+              "${CLI_E2E_API_URL}/v1/projects" \
+              | jq -r --arg p "$PREFIX" '.[] | select(.name|startswith($p)) | .ref // .id' \
+              | while read -r ref; do
+                  [ -n "$ref" ] || continue
+                  echo "sweeping leftover project $ref"
+                  curl -fsS -X DELETE -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+                    "${CLI_E2E_API_URL}/v1/projects/${ref}" >/dev/null || true
+                done
+          }
+          code=1
+          for attempt in 1 2 3; do
+            echo "::group::live e2e attempt ${attempt}"
+            if [ "$attempt" -gt 1 ]; then sweep; fi
+            pnpm --filter @supabase/cli-e2e test:e2e:live
+            code=$?
+            echo "::endgroup::"
+            if [ "$code" -eq 0 ]; then break; fi
+            echo "attempt ${attempt} failed (exit ${code})"
+          done
+          exit "$code"
+
+      # Backstop: delete any project this job created that survived a crash.
+      - name: Cleanup leftover projects
+        if: always()
+        run: |
+          PREFIX="cli-e2e-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
+          curl -fsS -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            "${CLI_E2E_API_URL}/v1/projects" \
+            | jq -r --arg p "$PREFIX" '.[] | select(.name|startswith($p)) | .ref // .id' \
+            | while read -r ref; do
+                [ -n "$ref" ] || continue
+                echo "cleaning up project $ref"
+                curl -fsS -X DELETE -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+                  "${CLI_E2E_API_URL}/v1/projects/${ref}" >/dev/null || true
+              done
