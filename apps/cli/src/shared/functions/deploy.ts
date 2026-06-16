@@ -3,7 +3,6 @@ import { chmod, mkdtemp, readFile, readdir, realpath, rm, stat } from "node:fs/p
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { URL } from "node:url";
-import { dockerImageForService, type ServiceName } from "@supabase/stack/effect";
 import { FunctionResponse, operationDefinitions, type ApiClient } from "@supabase/api/effect";
 import {
   inferFunctionsManifest,
@@ -17,6 +16,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as SmolToml from "smol-toml";
 import { Output } from "../output/output.service.ts";
+import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import { invalidFunctionSlugDetail, validateFunctionSlugMessage } from "./functions.shared.ts";
 import {
   ConflictingFunctionDeployFlagsError,
@@ -1057,7 +1057,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     }
 
     command.push(
-      dockerImageForService("edge-runtime" satisfies ServiceName, edgeRuntimeVersion),
+      legacyGetRegistryImageUrl(`supabase/edge-runtime:v${edgeRuntimeVersion}`),
       "bundle",
       "--entrypoint",
       toDockerPath(config.entrypoint),
@@ -1451,6 +1451,9 @@ const discoverFunctionSlugs = Effect.fnUntraced(function* (
   }
 
   const configSlugs = Object.keys(configFunctions).sort((left, right) => left.localeCompare(right));
+  for (const slug of configSlugs) {
+    yield* validateDeploySlug(slug);
+  }
   return [...new Set([...slugs, ...configSlugs])];
 });
 
@@ -1717,12 +1720,18 @@ async function configForProjectRef(
   loadedConfig: LoadedProjectConfig,
   projectRef: string,
 ): Promise<ProjectConfig> {
-  const matchedRemoteName = Object.entries(loadedConfig.config.remotes).find(
-    ([, candidate]) => candidate.project_id === projectRef,
-  )?.[0];
-  if (matchedRemoteName === undefined) {
+  const matchedRemoteNames = Object.entries(loadedConfig.config.remotes)
+    .filter(([, candidate]) => candidate.project_id === projectRef)
+    .map(([name]) => name);
+  if (matchedRemoteNames.length === 0) {
     return { ...loadedConfig.config, project_id: projectRef };
   }
+  if (matchedRemoteNames.length > 1) {
+    throw new Error(
+      `duplicate project_id for [remotes.${matchedRemoteNames[1]}] and ${matchedRemoteNames[0]}`,
+    );
+  }
+  const matchedRemoteName = matchedRemoteNames[0]!;
 
   const rawDocument = parseProjectConfigDocument(
     loadedConfig.path,

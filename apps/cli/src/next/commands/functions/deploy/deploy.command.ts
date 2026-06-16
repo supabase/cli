@@ -50,11 +50,16 @@ const config = {
 
 export type FunctionsDeployFlags = CliCommand.Command.Config.Infer<typeof config>;
 
+const functionsDeployCommandRuntimeLayer = commandRuntimeLayer(["functions", "deploy"]);
+const functionsDeployPlatformApiLayer = platformApiLayer.pipe(
+  Layer.provide(Layer.mergeAll(credentialsLayer, functionsDeployCommandRuntimeLayer)),
+);
+
 const functionsDeployRuntimeLayer = Layer.mergeAll(
   BunServices.layer,
-  platformApiLayer.pipe(Layer.provide(credentialsLayer)),
+  functionsDeployPlatformApiLayer,
   projectLinkStateLayer,
-  commandRuntimeLayer(["functions", "deploy"]),
+  functionsDeployCommandRuntimeLayer,
 );
 
 export const functionsDeployCommand = Command.make("deploy", config).pipe(
