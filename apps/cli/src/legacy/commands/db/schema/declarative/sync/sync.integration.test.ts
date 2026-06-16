@@ -13,6 +13,7 @@ import {
 import {
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
+  LegacyNetworkIdFlag,
   LegacyYesFlag,
 } from "../../../../../../shared/legacy/global-flags.ts";
 import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
@@ -33,6 +34,7 @@ interface SetupOpts {
   resetExitCode?: number;
   promptConfirmResponses?: ReadonlyArray<boolean>;
   promptTextResponses?: ReadonlyArray<string>;
+  networkId?: string;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -84,6 +86,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    Layer.succeed(
+      LegacyNetworkIdFlag,
+      opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
+    ),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     BunServices.layer,
   );
@@ -148,6 +154,18 @@ describe("legacy db schema declarative sync integration", () => {
         "no declarative schema found",
       );
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("--yes bypasses the bootstrap prompt when no declarative files exist", () => {
+    // Without --yes + non-TTY this fails at the "no declarative schema found" gate
+    // (prior test). With --yes, Go's PromptYesNo auto-confirms, so the bootstrap is
+    // attempted instead — it must NOT fail at that gate. No promptConfirm is queued,
+    // so reaching the prompt would also error.
+    const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: true, diffSql: "" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags({ noApply: true })));
+      expect(JSON.stringify(exit)).not.toContain("no declarative schema found");
+    }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("empty diff prints 'No schema changes found' and writes nothing", () => {
@@ -265,6 +283,31 @@ describe("legacy db schema declarative sync integration", () => {
           c.text.includes("Database reset also failed: database reset failed (exit 1)"),
         ),
       ).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("forwards --network-id to the recovery reset", () => {
+    // Go's in-process reset.Run honors the root viper network-id, so the
+    // seam-spawned reset must carry --network-id to stay on a custom network.
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+      applyFails: true,
+      stdinIsTty: true,
+      promptConfirmResponses: [true], // accept the reset offer
+      resetExitCode: 0,
+      networkId: "my_net",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ apply: true }));
+      expect(s.execInheritCalls).toContainEqual([
+        "db",
+        "reset",
+        "--local",
+        "--network-id",
+        "my_net",
+      ]);
     }).pipe(Effect.provide(s.layer));
   });
 });

@@ -3,6 +3,7 @@ import { Cause, Clock, Effect, Exit, FileSystem, Option, Path } from "effect";
 import {
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
+  LegacyNetworkIdFlag,
   LegacyYesFlag,
 } from "../../../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
@@ -67,6 +68,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     const telemetryState = yield* LegacyTelemetryState;
     const experimental = yield* LegacyExperimentalFlag;
     const yes = yield* LegacyYesFlag;
+    const networkId = yield* LegacyNetworkIdFlag;
     const dnsResolver = yield* LegacyDnsResolverFlag;
     const seam = yield* LegacyDeclarativeSeam;
 
@@ -117,12 +119,14 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           message: "no declarative schema found. Run supabase db schema declarative generate first",
         });
         if (!tty.stdinIsTty && !yes) return yield* Effect.fail(noFiles);
-        const ok = yield* output.promptConfirm(
-          "No declarative schema found. Generate a new one ?",
-          {
-            defaultValue: true,
-          },
-        );
+        // Go's Console.PromptYesNo auto-returns true when the global YES flag is set
+        // (`apps/cli-go/internal/utils/console.go:70-73`), so --yes must skip this
+        // prompt rather than block/fail.
+        const ok = yes
+          ? true
+          : yield* output.promptConfirm("No declarative schema found. Generate a new one ?", {
+              defaultValue: true,
+            });
         if (!ok) return yield* Effect.fail(noFiles);
         // Generate from the local database (sync always targets local). Go derives
         // the host from `utils.Config.Hostname` (SUPABASE_SERVICES_HOSTNAME → tcp
@@ -250,7 +254,15 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           { defaultValue: false },
         );
         if (shouldReset) {
-          const code = yield* seam.execInherit(["db", "reset", "--local"]);
+          // Forward --network-id: Go's in-process reset.Run honors the root viper
+          // network-id (`apps/cli-go/internal/utils/docker.go:267-271`), so the
+          // seam-spawned reset must carry it to stay on a custom network.
+          const code = yield* seam.execInherit([
+            "db",
+            "reset",
+            "--local",
+            ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
+          ]);
           if (code !== 0) {
             // Go returns `resetErr` here (`apps/cli-go/cmd/db_schema_declarative.go:414-423`),
             // surfacing the failure that actually blocked recovery — not the original
