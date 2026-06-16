@@ -104,9 +104,13 @@ interface ApiKey {
   api_key?: string;
 }
 
-/** Fetch the project's anon/publishable key for invoking deployed functions.
- *  Even after ACTIVE_HEALTHY the api-keys endpoint can briefly 4xx, so retry. */
-export async function getPublishableKey(
+/** Resolve a key for invoking the project's deployed functions over HTTP.
+ *  Prefers the legacy `anon` JWT: Edge Functions default to verify_jwt=true and
+ *  a publishable (sb_publishable_) key is NOT a JWT, so it fails the platform
+ *  JWT check on a verified function. Falls back to the publishable key for
+ *  projects that only issue new-style keys. Even after ACTIVE_HEALTHY the
+ *  api-keys endpoint can briefly 4xx, so retry. */
+export async function getAnonKey(
   apiBaseUrl: string,
   projectRef: string,
   attempts = 12,
@@ -117,15 +121,14 @@ export async function getPublishableKey(
     });
     if (res.ok) {
       const keys = (await res.json()) as ApiKey[];
-      // Prefer the new publishable key (sb_publishable_…); fall back to legacy anon.
-      const publishable =
-        keys.find((k) => k.api_key?.startsWith("sb_publishable_"))?.api_key ??
-        keys.find((k) => k.name === "anon")?.api_key;
-      if (publishable) return publishable;
+      const anon =
+        keys.find((k) => k.name === "anon" && k.api_key)?.api_key ??
+        keys.find((k) => k.api_key?.startsWith("sb_publishable_"))?.api_key;
+      if (anon) return anon;
     }
     if (attempt === attempts) {
       throw new Error(
-        `Failed to resolve publishable/anon key for ${projectRef} after ${attempts} attempts: ${await res
+        `Failed to resolve anon key for ${projectRef} after ${attempts} attempts: ${await res
           .text()
           .catch(() => res.status)}`,
       );
@@ -133,5 +136,5 @@ export async function getPublishableKey(
     await new Promise((r) => setTimeout(r, 10_000));
   }
   // Unreachable — the loop either returns a key or throws on the last attempt.
-  throw new Error(`Failed to resolve publishable/anon key for ${projectRef}`);
+  throw new Error(`Failed to resolve anon key for ${projectRef}`);
 }

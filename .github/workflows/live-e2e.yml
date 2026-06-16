@@ -132,6 +132,7 @@ jobs:
       - name: Cleanup leftover projects
         if: always()
         run: |
+          set -o pipefail
           PREFIX="cli-e2e-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
           curl -fsS -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
             "${CLI_E2E_API_URL}/v1/projects" \

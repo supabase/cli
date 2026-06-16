@@ -11,7 +11,7 @@ import {
 import {
   createTestProject,
   deleteTestProject,
-  getPublishableKey,
+  getAnonKey,
   resolveOrgId,
   waitForProjectReady,
 } from "./staging-project.ts";
@@ -59,7 +59,7 @@ export async function setup({
   let functionsUrl: string;
   try {
     await waitForProjectReady(TARGET_API_URL, projectRef);
-    anonKey = await getPublishableKey(TARGET_API_URL, projectRef);
+    anonKey = await getAnonKey(TARGET_API_URL, projectRef);
     functionsUrl = `https://${projectRef}.${PROJECT_HOST}/functions/v1`;
   } catch (err) {
     if (!KEEP_PROJECT) await deleteTestProject(TARGET_API_URL, projectRef);
