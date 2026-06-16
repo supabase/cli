@@ -32,13 +32,15 @@ pg-delta catalog (source) against the target database's catalog (target).
 
 ## Environment Variables
 
-| Variable                | Purpose                                       | Required? |
-| ----------------------- | --------------------------------------------- | --------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked`                     | no        |
-| `DB_PASSWORD`           | password for `--linked` / `--db-url`          | no        |
-| `PGDELTA_NPM_REGISTRY`  | private `@supabase` npm registry for pg-delta | no        |
-| `PGDELTA_DEBUG`         | verbose pg-delta diagnostics                  | no        |
-| `SUPABASE_GO_BINARY`    | override the `supabase-go` seam binary        | no        |
+| Variable                     | Purpose                                            | Required? |
+| ---------------------------- | -------------------------------------------------- | --------- |
+| `SUPABASE_ACCESS_TOKEN`      | auth token for `--linked`                          | no        |
+| `DB_PASSWORD`                | password for `--linked` / `--db-url`               | no        |
+| `PGDELTA_NPM_REGISTRY`       | private `@supabase` npm registry for pg-delta      | no        |
+| `PGDELTA_DEBUG`              | verbose pg-delta diagnostics                       | no        |
+| `SUPABASE_GO_BINARY`         | override the `supabase-go` seam binary             | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local` (Go `GetHostname`)     | no        |
+| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback | no        |
 
 ## Exit Codes
 

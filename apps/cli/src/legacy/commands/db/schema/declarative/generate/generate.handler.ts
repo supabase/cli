@@ -11,6 +11,7 @@ import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
 import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service.ts";
 import { legacyBold } from "../../../../../shared/legacy-colors.ts";
 import { LegacyDbConfigResolver } from "../../../../../shared/legacy-db-config.service.ts";
+import { legacyGetHostname } from "../../../../../shared/legacy-hostname.ts";
 import {
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
@@ -31,8 +32,6 @@ import {
 import { legacyWriteDeclarativeSchemas } from "../declarative.write.ts";
 import type { LegacyDbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 
-const LOCAL_HOST = "127.0.0.1";
-
 interface LocalConn {
   readonly port: number;
   readonly password: string;
@@ -40,7 +39,10 @@ interface LocalConn {
 
 const localUrl = (local: LocalConn): string =>
   legacyToPostgresURL({
-    host: LOCAL_HOST,
+    // Go derives the local host from `utils.Config.Hostname` (`GetHostname()`:
+    // SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1), not a hardcoded
+    // loopback (`apps/cli-go/internal/utils/misc.go:298-312`).
+    host: legacyGetHostname(),
     port: local.port,
     user: "postgres",
     password: local.password,

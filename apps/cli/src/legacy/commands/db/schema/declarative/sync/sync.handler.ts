@@ -10,6 +10,7 @@ import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
 import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service.ts";
 import { legacyBold, legacyRed, legacyYellow } from "../../../../../shared/legacy-colors.ts";
 import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
+import { legacyGetHostname } from "../../../../../shared/legacy-hostname.ts";
 import {
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
@@ -123,9 +124,11 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           },
         );
         if (!ok) return yield* Effect.fail(noFiles);
-        // Generate from the local database (sync always targets local).
+        // Generate from the local database (sync always targets local). Go derives
+        // the host from `utils.Config.Hostname` (SUPABASE_SERVICES_HOSTNAME → tcp
+        // DOCKER_HOST → 127.0.0.1), not a hardcoded loopback.
         const localUrl = legacyToPostgresURL({
-          host: "127.0.0.1",
+          host: legacyGetHostname(),
           port: toml.port,
           user: "postgres",
           password: toml.password,
