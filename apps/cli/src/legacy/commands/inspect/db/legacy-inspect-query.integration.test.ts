@@ -262,7 +262,7 @@ describe("legacy inspect db query runner", () => {
     return Effect.gen(function* () {
       yield* legacyInspectDbDbStats(flags({ dbUrl: Option.some("postgres://x") }));
       expect(Option.isSome(resolver.resolveInput?.dbUrl ?? Option.none())).toBe(true);
-      expect(resolver.resolveInput?.linked).toBe(false);
+      expect(resolver.resolveInput?.connType).toBe("db-url");
       expect(connection.connectCalls[0]?.isLocal).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -271,8 +271,7 @@ describe("legacy inspect db query runner", () => {
     const { layer, resolver, out } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* legacyInspectDbDbStats(flags({ local: true }));
-      expect(resolver.resolveInput?.local).toBe(true);
-      expect(resolver.resolveInput?.linked).toBe(false);
+      expect(resolver.resolveInput?.connType).toBe("local");
       expect(out.stderrText).toContain("Connecting to local database...");
     }).pipe(Effect.provide(layer));
   });
@@ -281,9 +280,8 @@ describe("legacy inspect db query runner", () => {
     const { layer, resolver } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* legacyInspectDbDbStats(flags());
-      // Go's `--linked` defaults to true; the runner derives it from absence.
-      expect(resolver.resolveInput?.linked).toBe(true);
-      expect(resolver.resolveInput?.local).toBe(false);
+      // Go's `--linked` defaults to true; the runner derives connType="linked" from absence.
+      expect(resolver.resolveInput?.connType).toBe("linked");
       expect(Option.isNone(resolver.resolveInput?.dbUrl ?? Option.some("x"))).toBe(true);
     }).pipe(Effect.provide(layer));
   });

@@ -7,6 +7,7 @@ import {
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -168,6 +169,8 @@ interface SetupOpts {
   enableFails?: boolean;
   queryFails?: boolean;
   listFails?: boolean;
+  /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
+  args?: ReadonlyArray<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -194,6 +197,7 @@ function setup(opts: SetupOpts = {}) {
     projectRef.layer,
     cache.layer,
     Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
   );
   return { layer, out, resolver, connection, telemetry, processControl, projectRef, cache };
 }
@@ -364,12 +368,11 @@ describe("legacy db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --db-url together with --linked", () => {
-    const { layer } = setup();
+  it.live("rejects --db-url together with --linked (via args Changed detection)", () => {
+    // Both flags present in args → mutual exclusion error (sorted set [db-url linked]).
+    const { layer } = setup({ args: ["--db-url=postgres://x", "--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacyDbLint(flags({ dbUrl: Option.some("postgres://x"), linked: true })),
-      );
+      const exit = yield* Effect.exit(legacyDbLint(flags({ dbUrl: Option.some("postgres://x") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain(
@@ -435,7 +438,11 @@ describe("legacy db lint", () => {
   });
 
   it.live("labels the diagnostic 'remote' for a non-local connection", () => {
-    const { layer, out } = setup({ isLocal: false, checkRows: { public: [] } });
+    const { layer, out } = setup({
+      isLocal: false,
+      checkRows: { public: [] },
+      args: ["--db-url=postgres://x"],
+    });
     return Effect.gen(function* () {
       yield* legacyDbLint(flags({ schema: ["public"], dbUrl: Option.some("postgres://x") }));
       expect(out.stderrText).toContain("Connecting to remote database...");
@@ -454,9 +461,15 @@ describe("legacy db lint", () => {
   });
 
   it.live("writes the linked-project cache for --linked (Go PersistentPostRun)", () => {
-    const { layer, projectRef, cache } = setup({ isLocal: false, checkRows: { public: [] } });
+    // --linked via args (Changed-based detection) routes to the linked branch and
+    // writes the linked-project cache.
+    const { layer, projectRef, cache } = setup({
+      isLocal: false,
+      checkRows: { public: [] },
+      args: ["--linked"],
+    });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public"], linked: true }));
+      yield* legacyDbLint(flags({ schema: ["public"] }));
       // Resolved via the non-prompting load and cached for telemetry grouping.
       expect(projectRef.calls).toContain("loadProjectRef");
       expect(cache.cached).toBe(true);
@@ -483,5 +496,61 @@ describe("legacy db lint", () => {
       );
       expect(failure.telemetry.flushed).toBe(true);
     });
+  });
+
+  // ── Changed-based routing parity (Go pflag.Changed semantics) ────────────
+
+  it.live("--linked=false routes to the linked branch (Changed, not value)", () => {
+    // cobra's Changed fires when the flag appears on the command line regardless
+    // of its value: `--linked=false` is still "explicitly set" → linked branch.
+    const { layer, projectRef, cache } = setup({
+      isLocal: false,
+      checkRows: { public: [] },
+      args: ["db", "lint", "--linked=false"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbLint(flags({ schema: ["public"] }));
+      expect(projectRef.calls).toContain("loadProjectRef");
+      expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--no-linked routes to the linked branch (boolean negation is still Changed)", () => {
+    const { layer, projectRef, cache } = setup({
+      isLocal: false,
+      checkRows: { public: [] },
+      args: ["--no-linked"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbLint(flags({ schema: ["public"] }));
+      expect(projectRef.calls).toContain("loadProjectRef");
+      expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--local=false --linked fails with mutual-exclusion (sorted set [linked local])", () => {
+    // Both flags are Changed → mutual exclusion fires with cobra's sorted set.
+    const { layer } = setup({ args: ["--local=false", "--linked"] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbLint(flags({ schema: ["public"] })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--local=false alone routes to the local branch (Changed local, connType=local)", () => {
+    // `--local=false` is Changed for `local` → connType="local" (Changed-first: local).
+    const { layer, out, cache } = setup({ checkRows: { public: [] }, args: ["--local=false"] });
+    return Effect.gen(function* () {
+      yield* legacyDbLint(flags({ schema: ["public"] }));
+      // Routes to local → "Connecting to local database..."
+      expect(out.stderrText).toContain("Connecting to local database...");
+      // No linked-project cache for local runs.
+      expect(cache.cached).toBe(false);
+    }).pipe(Effect.provide(layer));
   });
 });

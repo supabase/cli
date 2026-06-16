@@ -93,11 +93,17 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
   const configRules = yield* legacyReadInspectRules(fs, path, cliConfig.workdir);
 
   // Go's `--linked` defaults to true, so absence of the others resolves to linked.
-  const linked = flags.linked || (Option.isNone(flags.dbUrl) && !flags.local);
+  let connType: "db-url" | "linked" | "local";
+  if (Option.isSome(flags.dbUrl)) {
+    connType = "db-url";
+  } else if (flags.local) {
+    connType = "local";
+  } else {
+    connType = "linked";
+  }
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
-    linked,
-    local: flags.local,
+    connType,
     dnsResolver,
   });
 

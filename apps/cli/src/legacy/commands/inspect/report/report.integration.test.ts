@@ -210,8 +210,7 @@ describe("legacy inspect report", () => {
     const { layer, resolver } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
       yield* legacyInspectReport(flags({ outputDir: base, local: true }));
-      expect((resolver.resolveInput as { local: boolean }).local).toBe(true);
-      expect((resolver.resolveInput as { linked: boolean }).linked).toBe(false);
+      expect((resolver.resolveInput as { connType: string }).connType).toBe("local");
     }).pipe(Effect.provide(layer));
   });
 
@@ -233,7 +232,7 @@ describe("legacy inspect report", () => {
     const { layer, resolver } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
       yield* legacyInspectReport(flags({ outputDir: base }));
-      expect((resolver.resolveInput as { linked: boolean }).linked).toBe(true);
+      expect((resolver.resolveInput as { connType: string }).connType).toBe("linked");
     }).pipe(Effect.provide(layer));
   });
 

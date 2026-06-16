@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect";
 
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
@@ -13,6 +14,8 @@ import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
+import type { LegacyDbTargetSelection } from "../../../shared/legacy-db-target-flags.ts";
 import type { LegacyDbAdvisorsFlags } from "./advisors.command.ts";
 import {
   LegacyDbAdvisorsBeginTxError,
@@ -68,6 +71,7 @@ const runLocal = Effect.fnUntraced(function* (
   dnsResolver: "native" | "https",
   advisorType: string,
   level: string,
+  target: LegacyDbTargetSelection,
 ) {
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
@@ -75,8 +79,7 @@ const runLocal = Effect.fnUntraced(function* (
 
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
-    linked: false,
-    local: flags.local,
+    connType: target.connType === "db-url" ? "db-url" : "local",
     dnsResolver,
   });
 
@@ -141,7 +144,7 @@ const runLinked = Effect.fnUntraced(function* (
     // the resolved config (`advisors.go:79-100`), so resolve-and-discard — purely
     // for the side effects and early-failure ordering (before the token gate,
     // matching root PersistentPreRunE → advisors PreRunE).
-    yield* resolver.resolve({ dbUrl: Option.none(), linked: true, local: false, dnsResolver });
+    yield* resolver.resolve({ dbUrl: Option.none(), connType: "linked", dnsResolver });
 
     // PreRunE: Go calls `utils.LoadAccessTokenFS` (`cmd/db.go:358`), which VALIDATES
     // the token (env/keyring/file) against the `sbp_` pattern and fails with
@@ -217,13 +220,11 @@ const outputAndCheck = Effect.fnUntraced(function* (
 const runAdvisors = Effect.fnUntraced(function* (
   flags: LegacyDbAdvisorsFlags,
   dnsResolver: "native" | "https",
+  target: LegacyDbTargetSelection,
 ) {
   // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local"), keyed off the
   // explicitly-set flags (cobra's `Changed`), not the `--local` default value.
-  const setFlags: Array<string> = [];
-  if (Option.isSome(flags.dbUrl)) setFlags.push("db-url");
-  if (flags.linked) setFlags.push("linked");
-  if (flags.local) setFlags.push("local");
+  const setFlags = target.setFlags;
   if (setFlags.length > 1) {
     return yield* Effect.fail(
       new LegacyDbAdvisorsMutuallyExclusiveFlagsError({
@@ -238,9 +239,10 @@ const runAdvisors = Effect.fnUntraced(function* (
 
   // Go branches on whether `--linked` was explicitly set (`cmd/db.go` RunE):
   // linked → Management API; otherwise local / `--db-url`.
-  const filtered = flags.linked
-    ? yield* runLinked(dnsResolver, advisorType, level)
-    : yield* runLocal(flags, dnsResolver, advisorType, level);
+  const filtered =
+    target.connType === "linked"
+      ? yield* runLinked(dnsResolver, advisorType, level)
+      : yield* runLocal(flags, dnsResolver, advisorType, level, target);
 
   yield* outputAndCheck(filtered, failOn);
 });
@@ -250,7 +252,9 @@ export const legacyDbAdvisors = Effect.fn("legacy.db.advisors")(function* (
 ) {
   const dnsResolver = yield* LegacyDnsResolverFlag;
   const telemetryState = yield* LegacyTelemetryState;
+  const cliArgs = yield* CliArgs;
+  const target = resolveLegacyDbTargetFlags(cliArgs.args);
   // Flush telemetry on success and failure (Go PersistentPostRun). Command-level
   // instrumentation / JSON error handling are applied by `advisors.command.ts`.
-  yield* runAdvisors(flags, dnsResolver).pipe(Effect.ensuring(telemetryState.flush));
+  yield* runAdvisors(flags, dnsResolver, target).pipe(Effect.ensuring(telemetryState.flush));
 });

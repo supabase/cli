@@ -82,14 +82,12 @@ const resolve = (workdir: string, flags: LegacyDbConfigFlags) =>
 
 const localFlags: LegacyDbConfigFlags = {
   dbUrl: Option.none(),
-  linked: false,
-  local: true,
+  connType: "local",
   dnsResolver: "native",
 };
 const dbUrlFlags = (url: string): LegacyDbConfigFlags => ({
   dbUrl: Option.some(url),
-  linked: false,
-  local: false,
+  connType: "db-url",
   dnsResolver: "native",
 });
 

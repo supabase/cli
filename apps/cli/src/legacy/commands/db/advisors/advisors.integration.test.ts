@@ -13,6 +13,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
 import { LegacyInvalidAccessTokenError } from "../../../auth/legacy-errors.ts";
@@ -80,7 +81,10 @@ function mockResolver(opts: { ipv6Error?: boolean } = {}) {
             }),
           );
         }
-        return { conn: LOCAL_CONN, isLocal: !flags.linked } satisfies LegacyResolvedDbConfig;
+        return {
+          conn: LOCAL_CONN,
+          isLocal: flags.connType !== "linked",
+        } satisfies LegacyResolvedDbConfig;
       }),
   });
   return {
@@ -207,6 +211,8 @@ interface SetupOpts {
   securityNonJson?: boolean;
   securityLints?: ReadonlyArray<Record<string, unknown>>;
   performanceLints?: ReadonlyArray<Record<string, unknown>>;
+  /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
+  args?: ReadonlyArray<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -277,6 +283,7 @@ function setup(opts: SetupOpts = {}) {
     identityStitch.layer,
     api.httpClientLayer,
     Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
   );
   return {
     layer,
@@ -397,11 +404,11 @@ describe("legacy db advisors — local", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects --db-url together with --local", () => {
-    const { layer } = setup();
+  it.live("rejects --db-url together with --local (via args Changed detection)", () => {
+    const { layer } = setup({ args: ["--db-url=postgres://x", "--local"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbAdvisors(flags({ dbUrl: Option.some("postgres://x"), local: true })),
+        legacyDbAdvisors(flags({ dbUrl: Option.some("postgres://x") })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
@@ -444,6 +451,60 @@ describe("legacy db advisors — local", () => {
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+
+  // ── Changed-based routing parity (Go pflag.Changed semantics) ────────────
+
+  it.live("--linked=false routes to the linked branch (Changed, not value)", () => {
+    // cobra's Changed fires when the flag appears on the command line regardless
+    // of its value: `--linked=false` is still "explicitly set" → linked branch.
+    const { layer, projectRef, cache } = setup({
+      args: ["--linked=false"],
+      securityLints: [],
+      performanceLints: [],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags());
+      expect(projectRef.calls).toContain("loadProjectRef");
+      expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--no-linked routes to the linked branch (boolean negation is still Changed)", () => {
+    const { layer, projectRef, cache } = setup({
+      args: ["--no-linked"],
+      securityLints: [],
+      performanceLints: [],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags());
+      expect(projectRef.calls).toContain("loadProjectRef");
+      expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--local=false --linked fails with mutual-exclusion (sorted set [linked local])", () => {
+    // Both flags are Changed → mutual exclusion fires with cobra's sorted set.
+    const { layer } = setup({ args: ["--local=false", "--linked"] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--local=false alone routes to the local branch (Changed local, connType=local)", () => {
+    // `--local=false` is Changed for `local` → connType="local".
+    const { layer, out, cache } = setup({ rows: [], args: ["--local=false"] });
+    return Effect.gen(function* () {
+      yield* legacyDbAdvisors(flags());
+      expect(out.stderrText).toContain("Connecting to local database...");
+      expect(cache.cached).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
 });
 
 describe("legacy db advisors — linked", () => {
@@ -468,9 +529,10 @@ describe("legacy db advisors — linked", () => {
     const { layer, out, api, cache } = setup({
       securityLints: [securityLint],
       performanceLints: [performanceLint],
+      args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ linked: true, level: Option.some("info") }));
+      yield* legacyDbAdvisors(flags({ level: Option.some("info") }));
       const urls = api.requests.map((r) => r.url);
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(true);
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
@@ -487,10 +549,13 @@ describe("legacy db advisors — linked", () => {
       // Go's root PersistentPreRunE runs ParseDatabaseConfig for db advisors too,
       // resolving (and on failure aborting) the linked DB config before RunLinked
       // hits the Management API — even though RunLinked discards the connection.
-      const { layer, resolver, api } = setup({ securityLints: [securityLint] });
+      const { layer, resolver, api } = setup({
+        securityLints: [securityLint],
+        args: ["--linked"],
+      });
       return Effect.gen(function* () {
-        yield* legacyDbAdvisors(flags({ linked: true, type: Option.some("security") }));
-        expect(resolver.resolveFlags.some((f) => f.linked === true)).toBe(true);
+        yield* legacyDbAdvisors(flags({ type: Option.some("security") }));
+        expect(resolver.resolveFlags.some((f) => f.connType === "linked")).toBe(true);
         // The fetch still ran after a successful resolve.
         expect(api.requests.some((r) => r.url.includes("/advisors/security"))).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -502,9 +567,9 @@ describe("legacy db advisors — linked", () => {
     // IPv6 error before RunLinked, so the advisors API is never reached. But the
     // ref was already loaded, and Go's Execute runs ensureProjectGroupsCached on
     // the error path — so the linked-project cache is still written.
-    const { layer, api, cache } = setup({ ipv6Error: true });
+    const { layer, api, cache } = setup({ ipv6Error: true, args: ["--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbAdvisors(flags({ linked: true })));
+      const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("IPv6 is not supported");
@@ -522,9 +587,10 @@ describe("legacy db advisors — linked", () => {
     const { layer, identityStitch } = setup({
       securityLints: [securityLint],
       performanceLints: [performanceLint],
+      args: ["--linked"],
     });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ linked: true, level: Option.some("info") }));
+      yield* legacyDbAdvisors(flags({ level: Option.some("info") }));
       expect(identityStitch.calls).toBe(2);
     }).pipe(Effect.provide(layer));
   });
@@ -533,18 +599,21 @@ describe("legacy db advisors — linked", () => {
     // Go's advisors PreRunE uses `flags.LoadProjectRef`, not the prompting
     // `ParseProjectRef`, so `--linked` must take the fail-fast/non-interactive
     // path rather than `resolve` (which opens a project picker on a TTY).
-    const { layer, projectRef } = setup({ securityLints: [securityLint] });
+    const { layer, projectRef } = setup({
+      securityLints: [securityLint],
+      args: ["--linked"],
+    });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ linked: true, type: Option.some("security") }));
+      yield* legacyDbAdvisors(flags({ type: Option.some("security") }));
       expect(projectRef.calls).toContain("loadProjectRef");
       expect(projectRef.calls).not.toContain("resolve");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("fetches only the security endpoint for --type security", () => {
-    const { layer, api } = setup({ securityLints: [securityLint] });
+    const { layer, api } = setup({ securityLints: [securityLint], args: ["--linked"] });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ linked: true, type: Option.some("security") }));
+      yield* legacyDbAdvisors(flags({ type: Option.some("security") }));
       const urls = api.requests.map((r) => r.url);
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(true);
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(false);
@@ -552,9 +621,9 @@ describe("legacy db advisors — linked", () => {
   });
 
   it.live("fetches only the performance endpoint for --type performance", () => {
-    const { layer, api } = setup({ performanceLints: [performanceLint] });
+    const { layer, api } = setup({ performanceLints: [performanceLint], args: ["--linked"] });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ linked: true, type: Option.some("performance") }));
+      yield* legacyDbAdvisors(flags({ type: Option.some("performance") }));
       const urls = api.requests.map((r) => r.url);
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
       expect(urls.some((u) => u.includes("/advisors/security"))).toBe(false);
@@ -562,9 +631,9 @@ describe("legacy db advisors — linked", () => {
   });
 
   it.live("fails with a login suggestion when no access token is available", () => {
-    const { layer } = setup({ loggedIn: false });
+    const { layer } = setup({ loggedIn: false, args: ["--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbAdvisors(flags({ linked: true })));
+      const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
@@ -579,9 +648,9 @@ describe("legacy db advisors — linked", () => {
   });
 
   it.live("fails with the invalid-token message before any API call (Go LoadAccessTokenFS)", () => {
-    const { layer, api } = setup({ invalidToken: true });
+    const { layer, api } = setup({ invalidToken: true, args: ["--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbAdvisors(flags({ linked: true })));
+      const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
@@ -600,11 +669,9 @@ describe("legacy db advisors — linked", () => {
   it.live("fails on a 200 with a non-JSON content type (Go requires json header)", () => {
     // Go's generated parser only decodes when Content-Type contains "json";
     // otherwise JSON200 is nil and the fetcher returns the status-200 error.
-    const { layer } = setup({ securityNonJson: true });
+    const { layer } = setup({ securityNonJson: true, args: ["--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacyDbAdvisors(flags({ linked: true, type: Option.some("security") })),
-      );
+      const exit = yield* Effect.exit(legacyDbAdvisors(flags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("unexpected security advisors status 200");
@@ -613,11 +680,9 @@ describe("legacy db advisors — linked", () => {
   });
 
   it.live("fails when the advisors API returns a non-200 status", () => {
-    const { layer } = setup({ securityStatus: 500 });
+    const { layer } = setup({ securityStatus: 500, args: ["--linked"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacyDbAdvisors(flags({ linked: true, type: Option.some("security") })),
-      );
+      const exit = yield* Effect.exit(legacyDbAdvisors(flags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("unexpected security advisors status 500");
@@ -626,9 +691,13 @@ describe("legacy db advisors — linked", () => {
   });
 
   it.live("emits a result event in stream-json mode", () => {
-    const { layer, out } = setup({ format: "stream-json", securityLints: [securityLint] });
+    const { layer, out } = setup({
+      format: "stream-json",
+      securityLints: [securityLint],
+      args: ["--linked"],
+    });
     return Effect.gen(function* () {
-      yield* legacyDbAdvisors(flags({ linked: true, type: Option.some("security") }));
+      yield* legacyDbAdvisors(flags({ type: Option.some("security") }));
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "db advisors" }),
       );

@@ -408,7 +408,7 @@ export const legacyDbConfigLayer = Layer.effect(
         const localHost = legacyGetHostname();
 
         // --db-url (direct) takes precedence.
-        if (Option.isSome(flags.dbUrl)) {
+        if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {
           // Go's direct path runs `LoadConfig` before `pgconn.ParseConfig`
           // (`internal/utils/flags/db_url.go:59-68`), so the project `.env*` files
           // populate the environment that the libpq `PG*` fallbacks read. Layer the
@@ -453,7 +453,7 @@ export const legacyDbConfigLayer = Layer.effect(
         // access token is resolved only when `resolveLinked` forces the factory
         // (temp-role mint / unban), so a password-only linked connection works
         // without a token, matching Go's `NewDbConfigWithPassword`.
-        if (flags.linked) {
+        if (flags.connType === "linked") {
           const conn = yield* Effect.gen(function* () {
             const projectRef = yield* LegacyProjectRefResolver;
             // Go's `ParseDatabaseConfig` linked branch uses `flags.LoadProjectRef`

@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect";
 
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
@@ -11,6 +12,8 @@ import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
+import type { LegacyDbTargetSelection } from "../../../shared/legacy-db-target-flags.ts";
 import type { LegacyDbLintFlags } from "./lint.command.ts";
 import {
   LegacyDbLintBeginTxError,
@@ -99,6 +102,7 @@ const lintDatabase = Effect.fnUntraced(function* (
 const runLint = Effect.fnUntraced(function* (
   flags: LegacyDbLintFlags,
   dnsResolver: "native" | "https",
+  target: LegacyDbTargetSelection,
 ) {
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
@@ -107,10 +111,7 @@ const runLint = Effect.fnUntraced(function* (
 
   // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local"), keyed off the
   // explicitly-set flags (cobra's `Changed`), not the `--local` default value.
-  const setFlags: Array<string> = [];
-  if (Option.isSome(flags.dbUrl)) setFlags.push("db-url");
-  if (flags.linked) setFlags.push("linked");
-  if (flags.local) setFlags.push("local");
+  const setFlags = target.setFlags;
   if (setFlags.length > 1) {
     return yield* Effect.fail(
       new LegacyDbLintMutuallyExclusiveFlagsError({
@@ -129,12 +130,11 @@ const runLint = Effect.fnUntraced(function* (
 
   const lintBody = Effect.gen(function* () {
     // The resolver applies Go's `ParseDatabaseConfig` precedence (db-url > linked >
-    // local-default), so the flags pass straight through — `--local` defaulting to
+    // local-default), so the connType pass straight through — `--local` defaulting to
     // true in Go is handled by the resolver's fall-through to the local branch.
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
-      linked: flags.linked,
-      local: flags.local,
+      connType: target.connType ?? "local",
       dnsResolver,
     });
 
@@ -211,7 +211,7 @@ const runLint = Effect.fnUntraced(function* (
   // `LoadProjectRef`) and write the cache on success and failure. `--local` /
   // `--db-url` leave Go's `flags.ProjectRef` empty, so its cache write no-ops — we
   // match that by caching only on the linked branch.
-  if (flags.linked) {
+  if (target.connType === "linked") {
     const projectRef = yield* LegacyProjectRefResolver;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
     const ref = yield* projectRef.loadProjectRef(Option.none());
@@ -223,8 +223,10 @@ const runLint = Effect.fnUntraced(function* (
 export const legacyDbLint = Effect.fn("legacy.db.lint")(function* (flags: LegacyDbLintFlags) {
   const dnsResolver = yield* LegacyDnsResolverFlag;
   const telemetryState = yield* LegacyTelemetryState;
+  const cliArgs = yield* CliArgs;
+  const target = resolveLegacyDbTargetFlags(cliArgs.args);
   // Mirror Go's PersistentPostRun (`apps/cli-go/cmd/root.go:176`): flush telemetry
   // on success and failure. Command-level instrumentation / JSON error handling
   // are applied by `lint.command.ts` (the codebase convention).
-  yield* runLint(flags, dnsResolver).pipe(Effect.ensuring(telemetryState.flush));
+  yield* runLint(flags, dnsResolver, target).pipe(Effect.ensuring(telemetryState.flush));
 });

@@ -189,13 +189,20 @@ export const legacyRunInspectQuery = Effect.fnUntraced(function* (
 
   // Go's `--linked` defaults to true, so absence of `--db-url`/`--local` resolves
   // to the linked project. Exclusivity above is already keyed off the raw flags,
-  // so deriving the default here does not re-trigger it.
-  const linked = flags.linked || (Option.isNone(flags.dbUrl) && !flags.local);
+  // so deriving the connType here does not re-trigger it.
+  let connType: "db-url" | "linked" | "local";
+  if (Option.isSome(flags.dbUrl)) {
+    connType = "db-url";
+  } else if (flags.local) {
+    connType = "local";
+  } else {
+    // `--linked` (explicit or default) → linked branch.
+    connType = "linked";
+  }
 
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
-    linked,
-    local: flags.local,
+    connType,
     dnsResolver,
   });
 
