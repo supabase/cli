@@ -5,7 +5,6 @@ import {
   LegacyExperimentalFlag,
   LegacyYesFlag,
 } from "../../../../../../shared/legacy/global-flags.ts";
-import { LegacyGoProxy } from "../../../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
 import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service.ts";
@@ -25,10 +24,12 @@ import { legacyToPostgresURL } from "../../../../../shared/legacy-postgres-url.t
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyListLocalMigrations } from "../declarative.cache.ts";
 import {
+  LegacyDeclarativeApplyError,
   LegacyDeclarativeInvalidDbUrlError,
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNonInteractiveError,
 } from "../declarative.errors.ts";
+import { LegacyDeclarativeSeam } from "../declarative.seam.service.ts";
 import { legacyRequirePgDelta } from "../declarative.gate.ts";
 import {
   type LegacyDeclarativeRunContext,
@@ -256,9 +257,17 @@ const resolveSmartTargetUrl = Effect.fnUntraced(function* (
     );
   }
   if (shouldReset) {
-    // `db reset` is not yet ported natively; delegate to the bundled Go binary.
-    const proxy = yield* LegacyGoProxy;
-    yield* proxy.exec(["db", "reset", "--local"]);
+    // Go runs reset in-process and returns the error (`cmd/db_schema_declarative.go:262-267`).
+    // Use the non-exiting seam (not LegacyGoProxy.exec, which process.exits on a
+    // non-zero child and would skip the handler's telemetry flush / error handling),
+    // and propagate a failure on a non-zero reset exit, mirroring the sync handler.
+    const seam = yield* LegacyDeclarativeSeam;
+    const code = yield* seam.execInherit(["db", "reset", "--local"]);
+    if (code !== 0) {
+      return yield* Effect.fail(
+        new LegacyDeclarativeApplyError({ message: `database reset failed (exit ${code})` }),
+      );
+    }
   }
   return localUrl(local);
 });

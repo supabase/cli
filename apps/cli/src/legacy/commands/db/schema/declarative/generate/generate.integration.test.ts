@@ -46,6 +46,7 @@ interface SetupOpts {
   promptSelectResponses?: ReadonlyArray<string>;
   promptTextResponses?: ReadonlyArray<string>;
   exportJson?: string;
+  resetExitCode?: number;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -61,7 +62,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       seamCalls.push(mode);
       return Effect.succeed("supabase/.temp/pgdelta/base.json");
     },
-    execInherit: () => Effect.succeed(0),
+    execInherit: () => Effect.succeed(opts.resetExitCode ?? 0),
   });
   const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
@@ -231,6 +232,25 @@ describe("legacy db schema declarative generate integration", () => {
       expect(
         s.out.rawChunks.some((c) => c.text.includes("Skipped generating declarative schema")),
       ).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("smart mode: propagates a reset failure instead of exiting the process", () => {
+    // Go runs reset in-process and returns the error; using the non-exiting seam,
+    // a non-zero reset must fail the effect (so telemetry flush / error handling run)
+    // rather than process.exit via LegacyGoProxy.
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      promptSelectResponses: ["local"],
+      resetExitCode: 1,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags({ reset: true })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({ message: "database reset failed (exit 1)" });
     }).pipe(Effect.provide(s.layer));
   });
 
