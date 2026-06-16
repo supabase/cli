@@ -42,6 +42,7 @@ import {
 import {
   type LegacyAdvisory,
   legacyCoerceLocalJsonRows,
+  legacyFindNonFiniteJsonValue,
   legacyFormatLinkedValue,
   legacyMakeLocalCellFormatter,
   legacyOrderedKeys,
@@ -102,6 +103,16 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       }
       if (format === "csv") {
         return yield* output.raw(legacyToCsv(cols, data, formatCell));
+      }
+      // Go's `json.Encoder` fails on NaN/±Inf (empty stdout, exit 1); mirror that
+      // instead of letting `JSON.stringify` emit `null`. Checked before any output.
+      const nonFinite = legacyFindNonFiniteJsonValue(data);
+      if (nonFinite !== undefined) {
+        return yield* Effect.fail(
+          new LegacyDbQueryExecError({
+            message: `failed to encode JSON: json: unsupported value: ${nonFinite}`,
+          }),
+        );
       }
       const jsonData =
         fieldTypeIds === undefined ? data : legacyCoerceLocalJsonRows(data, fieldTypeIds);

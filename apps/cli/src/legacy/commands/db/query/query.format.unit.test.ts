@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { legacyBuildRlsAdvisory } from "./query.advisory.ts";
 import {
   legacyCoerceLocalJsonRows,
+  legacyFindNonFiniteJsonValue,
   legacyFormatLinkedValue,
   legacyFormatValue,
   legacyMakeLocalCellFormatter,
@@ -136,10 +137,14 @@ describe("legacyCoerceLocalJsonRows", () => {
     expect(out[0]?.[1]).toBe("hi"); // text → unchanged
   });
 
-  it("keeps out-of-safe-range int8 as a string to preserve precision", () => {
+  it("emits out-of-safe-range int8 as an exact bare JSON number (not a string)", () => {
+    // Go scans int8 as int64 and json.Marshal emits the full integer; JS numbers lose
+    // precision past 2^53, so we coerce to a raw JSON number token instead.
     const huge = "9223372036854775807"; // > Number.MAX_SAFE_INTEGER
-    const out = legacyCoerceLocalJsonRows([[huge]], [20]);
-    expect(out[0]?.[0]).toBe(huge); // not coerced (would lose precision)
+    const coerced = legacyCoerceLocalJsonRows([[huge]], [20]);
+    const out = legacyRenderJson(["n"], coerced, false, "", Option.none());
+    expect(out).toContain(`"n": ${huge}`); // bare number token, unquoted, exact
+    expect(out).not.toContain(`"${huge}"`); // not a quoted string
   });
 
   it("coerces bytea (Buffer/Uint8Array) cells to standard base64 like Go's json.Marshal", () => {
@@ -276,10 +281,32 @@ describe("legacyOrderedKeys", () => {
     expect(legacyOrderedKeys('[{"name":"a","id":1}]')).toEqual(["name", "id"]);
   });
 
+  it("preserves integer-like alias order (Object.keys would reorder them numerically)", () => {
+    // `select 1 as "10", 2 as "2"` → Go keeps source order; JS Object.keys → ["2","10"].
+    expect(legacyOrderedKeys('[{"10":1,"2":2,"name":3}]')).toEqual(["10", "2", "name"]);
+  });
+
+  it("ignores keys nested inside object/array values", () => {
+    expect(legacyOrderedKeys('[{"a":{"z":1},"b":[{"y":2}],"c":3}]')).toEqual(["a", "b", "c"]);
+  });
+
+  it("handles escaped quotes in keys and string values", () => {
+    expect(legacyOrderedKeys('[{"a\\"b":"x:y","c":1}]')).toEqual(['a"b', "c"]);
+  });
+
   it("returns [] for a non-array or empty body", () => {
     expect(legacyOrderedKeys("not json")).toEqual([]);
     expect(legacyOrderedKeys("[]")).toEqual([]);
     expect(legacyOrderedKeys('{"a":1}')).toEqual([]);
+  });
+});
+
+describe("legacyFindNonFiniteJsonValue", () => {
+  it("returns Go's token for the first non-finite float, else undefined", () => {
+    expect(legacyFindNonFiniteJsonValue([[1, "x", 2.5]])).toBeUndefined();
+    expect(legacyFindNonFiniteJsonValue([[Number.NaN]])).toBe("NaN");
+    expect(legacyFindNonFiniteJsonValue([[Number.POSITIVE_INFINITY]])).toBe("+Inf");
+    expect(legacyFindNonFiniteJsonValue([[1], [Number.NEGATIVE_INFINITY]])).toBe("-Inf");
   });
 });
 

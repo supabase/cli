@@ -1,5 +1,14 @@
 import { Option } from "effect";
 
+// `JSON.rawJSON` (ES2025, present in Bun) wraps a string so `JSON.stringify` emits it
+// verbatim as a number/literal token — used to serialize int8/bigint exactly, beyond
+// JS number precision. tsgo's bundled lib does not yet declare it.
+declare global {
+  interface JSON {
+    rawJSON(text: string): unknown;
+  }
+}
+
 /**
  * Pure output formatters for `db query`, ported 1:1 from Go's
  * `internal/db/query/query.go`. No Effect or service dependencies, so the
@@ -259,13 +268,38 @@ export function legacyCoerceLocalJsonRows(
         const instant = parsePgUtcInstant(cell);
         return instant !== undefined ? legacyTimestampToRfc3339(instant) : cell;
       }
-      if (oid === PG_INT8_OID && typeof cell === "string") {
+      if (oid === PG_INT8_OID && typeof cell === "string" && /^-?\d+$/.test(cell)) {
+        // Go scans int8 as int64 and `json.Marshal` emits a bare number for ANY
+        // magnitude. A JS number loses precision past 2^53, so emit the exact digits
+        // as a raw JSON number token (`JSON.rawJSON`) rather than a quoted string.
         const asNumber = Number(cell);
-        if (Number.isSafeInteger(asNumber) && String(asNumber) === cell) return asNumber;
+        return Number.isSafeInteger(asNumber) && String(asNumber) === cell
+          ? asNumber
+          : JSON.rawJSON(cell);
       }
       return cell;
     }),
   );
+}
+
+/**
+ * Go's `json.Encoder` rejects non-finite floats with an `UnsupportedValueError`
+ * (`db query -o json` then fails with empty stdout and exit 1), whereas
+ * `JSON.stringify` silently coerces `NaN`/`Infinity` to `null`. Returns Go's token
+ * (`NaN` / `+Inf` / `-Inf`) for the first non-finite number cell so the caller can
+ * fail the command the way Go does; `undefined` when every value is encodable.
+ */
+export function legacyFindNonFiniteJsonValue(
+  data: ReadonlyArray<ReadonlyArray<unknown>>,
+): string | undefined {
+  for (const row of data) {
+    for (const cell of row) {
+      if (typeof cell === "number" && !Number.isFinite(cell)) {
+        return Number.isNaN(cell) ? "NaN" : cell > 0 ? "+Inf" : "-Inf";
+      }
+    }
+  }
+  return undefined;
 }
 
 const displayWidth = (text: string): number => Array.from(text).length;
@@ -424,7 +458,42 @@ export function legacyRenderJson(
   return `${escapeGoJsonHtml(JSON.stringify(envelope, null, 2))}\n`;
 }
 
-/** Extract column names from the first object of a JSON array, in source order. */
+// Read a JSON string token starting at `s[start] === '"'`; returns the decoded value
+// and the index just past the closing quote (handles `\"`, `\\`, and unicode escapes).
+function readJsonStringToken(
+  s: string,
+  start: number,
+): { readonly value: string; readonly end: number } {
+  let i = start + 1;
+  while (i < s.length) {
+    const ch = s[i];
+    if (ch === "\\") {
+      i += 2;
+      continue;
+    }
+    if (ch === '"') {
+      i++;
+      break;
+    }
+    i++;
+  }
+  const token = s.slice(start, i);
+  try {
+    const decoded: unknown = JSON.parse(token);
+    return { value: typeof decoded === "string" ? decoded : token.slice(1, -1), end: i };
+  } catch {
+    return { value: token.slice(1, -1), end: i };
+  }
+}
+
+/**
+ * Extract column names from the first object of a JSON array, in source order. JS
+ * `Object.keys` reorders integer-like keys numerically (`{"10":..,"2":..}` →
+ * `["2","10"]`), which would swap columns for a linked query like
+ * `select 1 as "10", 2 as "2"`. Go's `orderedKeys` walks `json.Decoder` tokens to keep
+ * the raw source order (`apps/cli-go/internal/db/query/query.go:128-159`), so scan the
+ * first object's top-level keys textually rather than via `Object.keys`.
+ */
 export function legacyOrderedKeys(body: string): ReadonlyArray<string> {
   let parsed: unknown;
   try {
@@ -434,8 +503,28 @@ export function legacyOrderedKeys(body: string): ReadonlyArray<string> {
   }
   if (!Array.isArray(parsed) || parsed.length === 0) return [];
   const first = parsed[0];
-  if (typeof first !== "object" || first === null) return [];
-  return Object.keys(first);
+  if (typeof first !== "object" || first === null || Array.isArray(first)) return [];
+
+  const keys: string[] = [];
+  const open = body.indexOf("{");
+  if (open < 0) return keys;
+  let i = open + 1;
+  let depth = 1;
+  while (i < body.length && depth > 0) {
+    const ch = body[i]!;
+    if (ch === '"') {
+      const { value, end } = readJsonStringToken(body, i);
+      i = end;
+      while (i < body.length && /\s/.test(body[i]!)) i++;
+      // A string immediately followed by `:` at the first object's top level is a key.
+      if (depth === 1 && body[i] === ":") keys.push(value);
+      continue;
+    }
+    if (ch === "{" || ch === "[") depth++;
+    else if (ch === "}" || ch === "]") depth--;
+    i++;
+  }
+  return keys;
 }
 
 /** Go's `utils.IsAgentMode`: `yes`→true, `no`→false, `auto`→agent detected. */

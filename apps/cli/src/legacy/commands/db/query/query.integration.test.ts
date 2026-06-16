@@ -371,6 +371,24 @@ describe("legacy db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("fails JSON output on a non-finite float (Go's json.Encoder error), no stdout", () => {
+    // select 'NaN'::float8 -o json — Go fails to encode and exits non-zero with empty
+    // stdout, rather than emitting `null` like JSON.stringify.
+    const { layer, out } = setup({
+      result: { fields: ["f"], fieldTypeIds: [701], rows: [[Number.NaN]], commandTag: "SELECT 1" },
+      agent: "no",
+      goOutput: "json",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbQuery(
+        flags({ sql: Option.some("select 'NaN'::float8"), local: true }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toContain("json: unsupported value: NaN");
+      expect(out.stdoutText).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("records the resolved -o as the telemetry output_format (Go parity)", () => {
     // Go mirrors db query's resolved local -o onto the telemetry global: table for
     // humans, json for agents, and the explicit -o otherwise.
