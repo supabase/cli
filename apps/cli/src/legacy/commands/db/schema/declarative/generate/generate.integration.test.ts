@@ -244,6 +244,24 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("smart mode: --yes regenerates over existing files without prompting", () => {
+    // Go's overwrite question goes through Console.PromptYesNo, which auto-accepts
+    // under --yes, so existing declarative files are regenerated (not skipped) and
+    // no prompt is shown. No migrations → the smart target resolves to local without
+    // a further prompt. No promptConfirmResponses are queued, so a prompt would throw.
+    const declDir = join(tmp.current, "supabase", "database");
+    mkdirSync(declDir, { recursive: true });
+    writeFileSync(join(declDir, "existing.sql"), "-- existing");
+    const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: true });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags());
+      expect(s.seamCalls).toEqual(["baseline"]);
+      expect(
+        s.out.rawChunks.some((c) => c.text.includes("Skipped generating declarative schema")),
+      ).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("smart mode: propagates a reset failure instead of exiting the process", () => {
     // Go runs reset in-process and returns the error; using the non-exiting seam,
     // a non-zero reset must fail the effect (so telemetry flush / error handling run)

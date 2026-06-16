@@ -128,12 +128,17 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           );
         }
         if ((yield* hasDeclarativeFiles(fs, declarativeDir)) && !flags.overwrite) {
-          const ok = yield* output.promptConfirm(
-            `Declarative schema already exists at ${legacyBold(
-              declarativeDir,
-            )}. Regenerate from database? This will overwrite existing files.`,
-            { defaultValue: false },
-          );
+          // Go asks via Console.PromptYesNo (db_schema_declarative.go:208, default
+          // false), which auto-returns true under the global --yes flag, so --yes
+          // regenerates without prompting instead of blocking in non-interactive mode.
+          const ok = yes
+            ? true
+            : yield* output.promptConfirm(
+                `Declarative schema already exists at ${legacyBold(
+                  declarativeDir,
+                )}. Regenerate from database? This will overwrite existing files.`,
+                { defaultValue: false },
+              );
           if (!ok) {
             yield* output.raw("Skipped generating declarative schema.\n", "stderr");
             return;
