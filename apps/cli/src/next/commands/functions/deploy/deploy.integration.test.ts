@@ -603,6 +603,42 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
+  it.live("uploads an explicit import map outside the project root", () => {
+    const tempDir = makeTempDir();
+    const projectDir = join(tempDir, "project");
+    const sharedDir = join(tempDir, "shared");
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig(projectDir));
+      yield* Effect.promise(() => writeLocalFunction(projectDir, "hello-world"));
+      yield* Effect.promise(() => mkdir(sharedDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        writeFile(join(sharedDir, "import_map.json"), '{"imports":{}}\n'),
+      );
+
+      const { api, layer } = setup(projectDir, {
+        rawArgs: [
+          "functions",
+          "deploy",
+          "hello-world",
+          "--import-map",
+          "../shared/import_map.json",
+        ],
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+        importMap: Option.some("../shared/import_map.json"),
+      }).pipe(Effect.provide(layer));
+
+      expect(api.multiparts[0]?.metadata).toContain(
+        '"import_map_path":"../shared/import_map.json"',
+      );
+      expect(api.multiparts[0]?.fileNames).toContain("../shared/import_map.json");
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
   it.live("sends an empty import_map_path when a function has no local import map", () => {
     const tempDir = makeTempDir();
 
@@ -777,6 +813,36 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer));
 
       expect(api.multiparts[0]?.fileNames).toContain("supabase/functions/hello-world/lib.ts");
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
+  it.live("fails on malformed import map entries", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* Effect.promise(() =>
+        writeFile(
+          join(tempDir, "supabase", "functions", "hello-world", "deno.json"),
+          '{"imports":{"lib":{"path":"./lib.ts"}}}\n',
+        ),
+      );
+
+      const { layer } = setup(tempDir, {
+        rawArgs: ["functions", "deploy", "hello-world"],
+      });
+
+      const error = yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+      }).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain("failed to parse import map");
+        expect(error.message).toContain("imports.lib");
+      }
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
@@ -1206,10 +1272,44 @@ describe("functions deploy", () => {
           method: "PATCH",
           path: `/v1/projects/${PROJECT_REF}/functions/hello-world`,
         });
+        expect(api.requests[1]?.urlParams).not.toContain("name=");
         expect(child.spawned).toHaveLength(3);
       }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
+
+  it.live("passes --verbose to the Docker bundler when --debug is set", () => {
+    const tempDir = makeTempDir();
+    const child = mockChildProcessSpawner({
+      exitCode: 0,
+      onSpawn: (record) => {
+        if (record.command !== "docker" || record.args[0] !== "run") {
+          return;
+        }
+        const outputPath = resolveDockerOutputPath(record.args);
+        mkdirSync(dirname(outputPath), { recursive: true });
+        writeFileSync(outputPath, "eszip-test-output");
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+      const { layer } = setup(tempDir, {
+        rawArgs: ["--debug", "functions", "deploy", "hello-world", "--use-docker"],
+        childLayer: child.layer,
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+        useDocker: true,
+      }).pipe(Effect.provide(layer));
+
+      expect(child.spawned[2]?.args).toContain("--verbose");
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
 
   it.live("uses the pinned edge runtime version from .temp for Docker bundling", () => {
     const tempDir = makeTempDir();

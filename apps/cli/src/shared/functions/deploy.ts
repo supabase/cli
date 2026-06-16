@@ -229,6 +229,10 @@ function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
   return undefined;
 }
 
+function hasGlobalLongFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
+  return rawArgs.some((token) => token === `--${flagName}` || token.startsWith(`--${flagName}=`));
+}
+
 function isDenoConfigFile(pathname: string) {
   const name = basename(pathname).toLowerCase();
   return name === "deno.json" || name === "deno.jsonc";
@@ -411,16 +415,20 @@ function getObjectProperty(input: object, key: string): unknown {
   return Reflect.get(input, key);
 }
 
-function readStringMap(input: unknown): Record<string, string> {
-  if (typeof input !== "object" || input === null) {
+function readStringMap(input: unknown, fieldName: string): Record<string, string> {
+  if (input === undefined) {
     return {};
+  }
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    throw new Error(`failed to parse import map: expected ${fieldName} to be an object`);
   }
 
   const values: Record<string, string> = {};
   for (const [key, value] of Object.entries(input)) {
-    if (typeof value === "string") {
-      values[key] = value;
+    if (typeof value !== "string") {
+      throw new Error(`failed to parse import map: expected ${fieldName}.${key} to be a string`);
     }
+    values[key] = value;
   }
   return values;
 }
@@ -451,13 +459,17 @@ class ImportMapFile {
         importMapReference = importMap;
       }
 
-      Object.assign(imports, readStringMap(getObjectProperty(input, "imports")));
+      Object.assign(imports, readStringMap(getObjectProperty(input, "imports"), "imports"));
 
       const rawScopes = getObjectProperty(input, "scopes");
-      if (typeof rawScopes === "object" && rawScopes !== null) {
-        for (const [scopeName, scopeValue] of Object.entries(rawScopes)) {
-          scopes[scopeName] = readStringMap(scopeValue);
-        }
+      if (rawScopes === undefined) {
+        return new ImportMapFile(imports, scopes, importMapReference);
+      }
+      if (typeof rawScopes !== "object" || rawScopes === null || Array.isArray(rawScopes)) {
+        throw new Error("failed to parse import map: expected scopes to be an object");
+      }
+      for (const [scopeName, scopeValue] of Object.entries(rawScopes)) {
+        scopes[scopeName] = readStringMap(scopeValue, `scopes.${scopeName}`);
       }
     }
 
@@ -816,11 +828,7 @@ async function writeSourceDeployForm(
   const realProjectRoot = await realpath(projectRoot);
   const uploadedAssets = new Set<string>();
 
-  const uploadAsset = async (pathname: string, contents: Uint8Array) => {
-    const realPathname = await realpath(pathname);
-    if (!isContainedPath(realProjectRoot, realPathname)) {
-      throw new Error(`refusing to upload asset outside project root: ${pathname}`);
-    }
+  const appendAsset = async (pathname: string, contents: Uint8Array, realPathname: string) => {
     if (uploadedAssets.has(realPathname)) {
       return;
     }
@@ -828,6 +836,19 @@ async function writeSourceDeployForm(
     const relativePath = toApiRelativePath(cwd, pathname);
     await Effect.runPromise(outputRaw(`Uploading asset (${config.slug}): ${relativePath}\n`));
     form.append("file", new File([contents], relativePath));
+  };
+
+  const uploadAsset = async (pathname: string, contents: Uint8Array) => {
+    const realPathname = await realpath(pathname);
+    if (!isContainedPath(realProjectRoot, realPathname)) {
+      throw new Error(`refusing to upload asset outside project root: ${pathname}`);
+    }
+    await appendAsset(pathname, contents, realPathname);
+  };
+
+  const uploadImportMapAsset = async (pathname: string, contents: Uint8Array) => {
+    const realPathname = await realpath(pathname);
+    await appendAsset(pathname, contents, realPathname);
   };
 
   const uploadScopeTarget = async (pathname: string) => {
@@ -869,7 +890,7 @@ async function writeSourceDeployForm(
   };
 
   if (metadata.import_map_path !== undefined && metadata.import_map_path.length > 0) {
-    await loadImportMapFile(config.importMap, uploadAsset);
+    await loadImportMapFile(config.importMap, uploadImportMapAsset);
   }
 
   for (const pattern of config.staticFiles) {
@@ -1117,6 +1138,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
   functionsDir: string,
   config: ResolvedDeployFunctionConfig,
   dockerNetworkId?: string,
+  verbose = false,
 ) {
   const output = yield* Output;
   yield* output.raw(`Bundling Function: ${config.slug}\n`, "stderr");
@@ -1166,7 +1188,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     for (const staticFile of config.staticFiles) {
       command.push("--static", toDockerPath(staticFile));
     }
-    if (process.env["DEBUG"] === "true") {
+    if (verbose || process.env["DEBUG"] === "true") {
       command.push("--verbose");
     }
 
@@ -1443,22 +1465,25 @@ const upsertBundledFunction = Effect.fnUntraced(function* (
 
   for (let attempt = 0; attempt <= 3; attempt += 1) {
     const action = shouldUpdate ? "update" : "create";
-    const input = {
+    const updateInput = {
       ref: projectRef,
-      slug: bundled.slug,
-      name: bundled.slug,
       verify_jwt: bundled.metadata.verify_jwt,
       entrypoint_path: bundled.metadata.entrypoint_path,
       import_map_path: bundled.metadata.import_map_path,
       ezbr_sha256: bundled.metadata.sha256,
       body: bundled.body,
     };
+    const createInput = {
+      ...updateInput,
+      slug: bundled.slug,
+      name: bundled.slug,
+    };
     const request = shouldUpdate
       ? api.executeRaw(operationDefinitions.v1UpdateAFunction, {
-          ...input,
+          ...updateInput,
           function_slug: bundled.slug,
         })
-      : api.executeRaw(operationDefinitions.v1CreateAFunction, input);
+      : api.executeRaw(operationDefinitions.v1CreateAFunction, createInput);
     const response = yield* request.pipe(
       Effect.map((value) => ({ success: true as const, value })),
       Effect.catch((error) =>
@@ -1525,8 +1550,16 @@ const discoverFunctionSlugs = Effect.fnUntraced(function* (
   const functionsDir = join(projectRoot, SUPABASE_FUNCTIONS_DIR);
   const slugs: string[] = [];
 
-  try {
-    const entries = yield* Effect.tryPromise(() => readdir(functionsDir, { withFileTypes: true }));
+  const entries = yield* Effect.tryPromise(() =>
+    readdir(functionsDir, { withFileTypes: true }),
+  ).pipe(
+    Effect.catchIf(
+      (error): error is NodeJS.ErrnoException =>
+        error instanceof Error && "code" in error && error.code === "ENOENT",
+      () => Effect.succeed(undefined),
+    ),
+  );
+  if (entries !== undefined) {
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
       if (!entry.isDirectory()) {
         continue;
@@ -1542,8 +1575,6 @@ const discoverFunctionSlugs = Effect.fnUntraced(function* (
         slugs.push(slug);
       }
     }
-  } catch {
-    // Ignore a missing functions directory and fall back to config-only slugs.
   }
 
   const configSlugs = Object.keys(configFunctions).sort((left, right) => left.localeCompare(right));
@@ -1736,6 +1767,7 @@ const deployViaDocker = Effect.fnUntraced(function* (
   configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
   api: ApiClient,
   dockerNetworkId?: string,
+  verbose = false,
 ) {
   const output = yield* Output;
   const remoteFunctions = yield* listRemoteFunctions(api, projectRef);
@@ -1754,6 +1786,7 @@ const deployViaDocker = Effect.fnUntraced(function* (
       functionsDir,
       config,
       dockerNetworkId,
+      verbose,
     );
     const current = remoteBySlug.get(config.slug);
     if (
@@ -1943,6 +1976,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       "no-verify-jwt",
       flags.noVerifyJwt,
     );
+    const debugEnabled = hasGlobalLongFlag(dependencies.rawArgs, "debug");
     const projectRef =
       preResolvedProjectRef ?? (yield* dependencies.resolveProjectRef(flags.projectRef));
     const loadedConfig = yield* loadProjectConfig(dependencies.projectRoot);
@@ -2024,6 +2058,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
             configs,
             dependencies.api,
             explicitStringFlag(dependencies.rawArgs, "network-id"),
+            debugEnabled,
           );
           return true;
         })
