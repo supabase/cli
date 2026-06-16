@@ -195,7 +195,20 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // the generated schema to the shadow DB and caches the catalog under the
       // `local` key a subsequent `sync` reuses; a schema that cannot be applied makes
       // `generate` fail here rather than succeeding and forcing `sync` to reprovision.
-      if (!flags.noCache) {
+      //
+      // The warm runs through the `__catalog` seam, which loads the BASE config (the
+      // seam subprocess has no channel to receive the linked ref — `--project-ref` is
+      // not registered on it), so it targets the BASE declarative dir. Only warm when
+      // that matches the dir we wrote to — i.e. when a `[remotes.<ref>]` override did
+      // NOT change `declarative_schema_path`. Otherwise (a linked path override) skip
+      // the warm rather than apply/hash the wrong (or absent) base dir, which would
+      // fail or warm the wrong cache. Go warms correctly there via its in-process
+      // merged config; the seam structurally cannot, so a missed warm in that rare
+      // case is the safe divergence.
+      const warmTargetsWrittenDir =
+        legacyResolveDeclarativeDir(path, baseToml.pgDelta) ===
+        legacyResolveDeclarativeDir(path, toml.pgDelta);
+      if (!flags.noCache && warmTargetsWrittenDir) {
         yield* (yield* LegacyDeclarativeSeam).exportCatalog({
           mode: "declarative",
           noCache: flags.noCache,

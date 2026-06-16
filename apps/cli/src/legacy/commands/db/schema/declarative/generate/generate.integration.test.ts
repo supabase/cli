@@ -277,6 +277,11 @@ describe("legacy db schema declarative generate integration", () => {
         ),
       );
       expect(written).toBe("create table players ();");
+      // The post-write cache warm is SKIPPED here: the __catalog seam loads base config
+      // (base declarative dir), which differs from the remote-overridden written dir, so
+      // warming would apply/hash the wrong (absent) base dir. Go warms via its in-process
+      // merged config; the seam can't, so we skip rather than regress.
+      expect(s.seamCalls).not.toContain("declarative");
     }).pipe(Effect.provide(s.layer));
   });
 
