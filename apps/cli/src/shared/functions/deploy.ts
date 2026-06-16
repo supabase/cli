@@ -1946,10 +1946,10 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     const projectRef =
       preResolvedProjectRef ?? (yield* dependencies.resolveProjectRef(flags.projectRef));
     const loadedConfig = yield* loadProjectConfig(dependencies.projectRoot);
-    if (loadedConfig === null) {
-      return yield* Effect.fail(new Error("failed to load config: supabase/config.toml not found"));
-    }
-    const deployConfig = yield* Effect.promise(() => configForProjectRef(loadedConfig, projectRef));
+    const deployConfig =
+      loadedConfig === null
+        ? undefined
+        : yield* Effect.promise(() => configForProjectRef(loadedConfig, projectRef));
     const configFunctions = yield* inferFunctionsManifest({
       cwd: dependencies.projectRoot,
       config: deployConfig,
