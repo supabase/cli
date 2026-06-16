@@ -106,6 +106,25 @@ describe("parseLegacyLintResult", () => {
       issues: [],
     });
   });
+
+  it("decodes a null array element to the zero-value Issue{} (Go encoding/json behavior)", () => {
+    // Go's json.Unmarshal decodes a null element in []lint.Issue as the zero-value
+    // Issue{} (level: "", message: ""). It is included in the slice and later
+    // filtered out by filterLegacyLintResult since toEnum("") returns -1.
+    const result = parseLegacyLintResult(`{"issues":[null]}`, "public.f");
+    expect(result.issues).toEqual([{ level: "", message: "" }]);
+  });
+
+  it("null element alongside real issues normalizes to zero-value without throwing", () => {
+    const result = parseLegacyLintResult(
+      `{"issues":[null,{"level":"error","message":"boom"}]}`,
+      "public.f",
+    );
+    expect(result.issues).toEqual([
+      { level: "", message: "" },
+      { level: "error", message: "boom" },
+    ]);
+  });
 });
 
 describe("filterLegacyLintResult", () => {

@@ -159,8 +159,10 @@ export function parseLegacyLintResult(jsonText: string, functionName: string): L
     throw new TypeError("cannot unmarshal issues into []lint.Issue");
   }
   // Go: each entry decodes into a `lint.Issue` struct; a scalar/array entry fails.
+  // A null entry decodes to the zero-value Issue{} (all fields empty strings) and
+  // is included in the slice — normalizeIssue handles null via its record fallback.
   for (const entry of issuesRaw) {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    if (entry !== null && (typeof entry !== "object" || Array.isArray(entry))) {
       throw new TypeError("cannot unmarshal issue into lint.Issue");
     }
   }
