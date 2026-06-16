@@ -680,6 +680,60 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("rejects a non-integer edge_runtime.deno_version string instead of defaulting", () => {
+    // Go decodes deno_version into a uint before Validate; `2foo` fails the parse rather
+    // than being read as 2 / falling through to the default Deno 2 image.
+    const dir = withConfig(["[edge_runtime]", 'deno_version = "2foo"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Failed reading config: Invalid edge_runtime.deno_version: 2foo.",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects a malformed [remotes.*] project_id on every load (Go Validate)", () => {
+    // Go's Validate requires every remote project_id to match ^[a-z]{20}$, failing even
+    // local/direct commands (config.go:832-836).
+    const dir = withConfig(["[remotes.staging]", 'project_id = "staging"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Invalid config for remotes.staging.project_id. Must be like: abcdefghijklmnopqrst",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("accepts a valid 20-char [remotes.*] project_id", () => {
+    const dir = withConfig(
+      ["[remotes.staging]", 'project_id = "abcdefghijklmnopqrst"', ""].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.majorVersion).toBe(17); // loads successfully (no remote selected)
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("ignores an empty SUPABASE_DB_PORT override (viper AllowEmptyEnv=false)", () => {
     const prev = process.env["SUPABASE_DB_PORT"];
     process.env["SUPABASE_DB_PORT"] = "";

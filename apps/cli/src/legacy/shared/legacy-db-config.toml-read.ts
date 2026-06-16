@@ -170,6 +170,29 @@ function findDuplicateRemoteProjectId(
   return undefined;
 }
 
+// Go's project-ref pattern (`apps/cli-go/pkg/config/config.go:470`): exactly 20
+// lowercase ASCII letters.
+const LEGACY_PROJECT_REF_PATTERN = /^[a-z]{20}$/;
+
+/**
+ * Go's `config.Validate` rejects any `[remotes.<name>]` whose `project_id` is not a
+ * valid project ref (`config.go:832-836`), on every config load — so a malformed or
+ * missing remote `project_id` fails even local/direct commands before touching the
+ * database. Returns the first offending block name (object order) or `undefined`.
+ */
+function findInvalidRemoteProjectId(doc: RawDoc | undefined): string | undefined {
+  const remotes = asRecord(doc?.["remotes"]);
+  if (remotes === undefined) return undefined;
+  for (const name of Object.keys(remotes)) {
+    const block = asRecord(remotes[name]);
+    const projectId = block !== undefined ? block["project_id"] : undefined;
+    if (typeof projectId !== "string" || !LEGACY_PROJECT_REF_PATTERN.test(projectId)) {
+      return name;
+    }
+  }
+  return undefined;
+}
+
 const ENV_PATTERN = /^env\((.*)\)$/;
 
 /**
@@ -401,6 +424,17 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
         }),
       );
     }
+    // Go's Validate rejects any remote whose `project_id` is not a valid 20-char ref,
+    // on every load (config.go:832-836), after the duplicate check. So a malformed
+    // remote fails even local/direct commands before any DB connection.
+    const invalidRemote = findInvalidRemoteProjectId(doc);
+    if (invalidRemote !== undefined) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: `Invalid config for remotes.${invalidRemote}.project_id. Must be like: abcdefghijklmnopqrst`,
+        }),
+      );
+    }
     // Apply a matching `[remotes.<name>]` override (Go merges the block whose
     // `project_id` equals the resolved ref over the base, config.go:503-562).
     const effectiveDoc = ref === undefined ? doc : applyRemoteOverride(doc, ref);
@@ -519,32 +553,43 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // so a CI env override decides which edge-runtime image pg-delta runs under.
   const denoVersionRaw =
     envOverride("SUPABASE_EDGE_RUNTIME_DENO_VERSION") ?? edgeRuntimeRaw?.["deno_version"];
-  const denoVersionNum =
-    typeof denoVersionRaw === "number"
-      ? denoVersionRaw
-      : typeof denoVersionRaw === "string"
-        ? Number.parseInt(legacyExpandEnv(denoVersionRaw, lookup), 10)
-        : Number.NaN;
+  // Go decodes `deno_version` into a `uint` before validation, so a present non-integer
+  // string (`2foo`) or an unresolved `env(MISSING)` aborts the load rather than falling
+  // through to the default Deno 2 image. `resolveConfigInt` expands `env()` then requires
+  // a whole integer; the validation switch (`config.go:999-1008`) handles the rest.
+  const denoVersionResolved = resolveConfigInt(denoVersionRaw, lookup);
+  if (denoVersionResolved === "invalid") {
+    const shown =
+      typeof denoVersionRaw === "string"
+        ? legacyExpandEnv(denoVersionRaw, lookup)
+        : String(denoVersionRaw);
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({
+        message: `Failed reading config: Invalid edge_runtime.deno_version: ${shown}.`,
+      }),
+    );
+  }
   // Go's config.Validate rejects a present-but-invalid deno_version before pg-delta
   // runs (`config.go:999-1008`): 0 → missing-required, anything other than 1/2 →
   // invalid. An absent key falls through to the default (Go merges deno_version=2).
-  if (denoVersionRaw !== undefined && Number.isInteger(denoVersionNum)) {
-    if (denoVersionNum === 0) {
+  if (typeof denoVersionResolved === "number") {
+    if (denoVersionResolved === 0) {
       return yield* Effect.fail(
         new LegacyDbConfigLoadError({
           message: "Missing required field in config: edge_runtime.deno_version",
         }),
       );
     }
-    if (denoVersionNum !== 1 && denoVersionNum !== 2) {
+    if (denoVersionResolved !== 1 && denoVersionResolved !== 2) {
       return yield* Effect.fail(
         new LegacyDbConfigLoadError({
-          message: `Failed reading config: Invalid edge_runtime.deno_version: ${denoVersionNum}.`,
+          message: `Failed reading config: Invalid edge_runtime.deno_version: ${denoVersionResolved}.`,
         }),
       );
     }
   }
-  const denoVersion = Number.isInteger(denoVersionNum) ? denoVersionNum : DEFAULT_DENO_VERSION;
+  const denoVersion =
+    typeof denoVersionResolved === "number" ? denoVersionResolved : DEFAULT_DENO_VERSION;
 
   // `[experimental.pgdelta]`. `enabled` is a TOML bool (Go decodes weakly, so an
   // `env(VAR)`/string "true" also counts); `declarative_schema_path` is resolved
