@@ -84,4 +84,45 @@ describe("resolveLegacyDbTargetFlags", () => {
     const linkedOnly = resolveLegacyDbTargetFlags(["--linked"]);
     expect(linkedOnly.connType).toBe("linked");
   });
+
+  it("skips value token after bare --schema so --linked is not a false positive", () => {
+    // `--schema --linked` in space form: --linked is the VALUE of --schema, not a flag.
+    const result = resolveLegacyDbTargetFlags(["db", "lint", "--schema", "--linked"]);
+    expect(result.connType).toBeUndefined();
+    expect(result.setFlags).toEqual([]);
+  });
+
+  it("skips value token after bare --level so following flags are not false positives", () => {
+    const result = resolveLegacyDbTargetFlags(["--level", "error", "--local"]);
+    expect(result.connType).toBe("local");
+    expect(result.setFlags).toEqual(["local"]);
+  });
+
+  it("--schema=value (attached form) does NOT skip the next token", () => {
+    // `--schema=public --linked`: --linked is a real flag here.
+    const result = resolveLegacyDbTargetFlags(["--schema=public", "--linked"]);
+    expect(result.connType).toBe("linked");
+    expect(result.setFlags).toEqual(["linked"]);
+  });
+
+  it("skips value token after bare -s (short for --schema)", () => {
+    // `-s --linked`: --linked is the VALUE of -s, not a flag.
+    const result = resolveLegacyDbTargetFlags(["-s", "--linked"]);
+    expect(result.connType).toBeUndefined();
+    expect(result.setFlags).toEqual([]);
+  });
+
+  it("-svalue (attached short form) does NOT skip the next token", () => {
+    // `-spublic --linked`: --linked is a real flag.
+    const result = resolveLegacyDbTargetFlags(["-spublic", "--linked"]);
+    expect(result.connType).toBe("linked");
+    expect(result.setFlags).toEqual(["linked"]);
+  });
+
+  it("skips value token after bare --output so following flags are not false positives", () => {
+    // --output is a value-consuming global flag.
+    const result = resolveLegacyDbTargetFlags(["--output", "json", "--local"]);
+    expect(result.connType).toBe("local");
+    expect(result.setFlags).toEqual(["local"]);
+  });
 });

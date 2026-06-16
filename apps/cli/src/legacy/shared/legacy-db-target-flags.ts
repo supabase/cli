@@ -11,6 +11,11 @@
  * building the error string (`apps/cli-go/.../flag_groups.go:204`), hence the
  * FIXED insertion order ["db-url","linked","local"] — alphabetical — for the
  * `setFlags` array.
+ *
+ * pflag accepts `--flag value` (space form) for non-boolean flags: the token
+ * after a value-consuming flag is its value, not a separate flag. The scan
+ * skips those value tokens to avoid false positives (e.g. `--schema --linked`
+ * must not detect `--linked` as a changed selector).
  */
 
 export type LegacyDbConnType = "db-url" | "linked" | "local";
@@ -28,27 +33,47 @@ export interface LegacyDbTargetSelection {
 }
 
 /**
- * Checks whether `name` appears as an explicitly-set flag in `args`.
+ * Long-form flags (without `--` prefix) that consume the next token as their
+ * value when given in space-separated form (`--flag value`). Flags in this set
+ * cause the immediately following token to be skipped during the target-selector
+ * scan.
  *
- * Matches:
- *   - `--<name>`           (boolean flag set true)
- *   - `--<name>=<value>`   (value-style, e.g. `--db-url=postgres://x`)
- *   - `--no-<name>`        (boolean negation, e.g. `--no-linked`)
- *
- * Stops scanning at a bare `--` end-of-options token.
+ * Sources: all legacy command files that call `resolveLegacyDbTargetFlags`
+ * (`db lint`, `db advisors`, `test db`) plus the shared global flags
+ * (`src/shared/legacy/global-flags.ts`, `src/shared/cli/global-flags.ts`).
+ * `Flag.string` / `Flag.choice` → value-consuming; `Flag.boolean` → not.
  */
-function isFlagChanged(args: ReadonlyArray<string>, name: string): boolean {
-  for (const token of args) {
-    if (token === "--") break;
-    if (token === `--${name}`) return true;
-    if (token.startsWith(`--${name}=`)) return true;
-    if (token === `--no-${name}`) return true;
-  }
-  return false;
-}
+const VALUE_CONSUMING_LONG_FLAGS = new Set([
+  // db-family command flags
+  "db-url",
+  "schema",
+  "level",
+  "fail-on",
+  "type",
+  // legacy global flags (Flag.string / Flag.choice)
+  "output",
+  "output-format",
+  "profile",
+  "workdir",
+  "network-id",
+  "dns-resolver",
+  "agent",
+]);
+
+/**
+ * Short flags (without `-` prefix) that consume the next token as their value.
+ * Only single-character short flags need to be listed here.
+ */
+const VALUE_CONSUMING_SHORT_FLAGS = new Set([
+  "s", // --schema / -s
+  "o", // --output / -o
+]);
 
 /**
  * Resolves the DB target selection from raw CLI args.
+ *
+ * Performs a single left-to-right pass, skipping value tokens that follow
+ * space-separated value-consuming flags to avoid false-positive detection.
  *
  * `setFlags` is built in the fixed order ["db-url","linked","local"] so the
  * rendered conflict string (`[db-url linked]`, `[linked local]`, …) matches
@@ -61,9 +86,57 @@ function isFlagChanged(args: ReadonlyArray<string>, name: string): boolean {
  *   4. none changed → `undefined` (callers default to "local")
  */
 export function resolveLegacyDbTargetFlags(args: ReadonlyArray<string>): LegacyDbTargetSelection {
-  const dbUrlChanged = isFlagChanged(args, "db-url");
-  const linkedChanged = isFlagChanged(args, "linked");
-  const localChanged = isFlagChanged(args, "local");
+  let dbUrlChanged = false;
+  let linkedChanged = false;
+  let localChanged = false;
+
+  let skipNext = false;
+  for (const token of args) {
+    if (token === "--") break;
+
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+
+    if (token.startsWith("--")) {
+      const eqIdx = token.indexOf("=");
+      const name = eqIdx === -1 ? token.slice(2) : token.slice(2, eqIdx);
+      const isBare = eqIdx === -1;
+
+      // Check target selectors.
+      if (name === "db-url") {
+        dbUrlChanged = true;
+        // --db-url is a string flag: in space form the next token is the value.
+        if (isBare) skipNext = true;
+        continue;
+      }
+      if (name === "linked" || name === "no-linked") {
+        linkedChanged = true;
+        continue;
+      }
+      if (name === "local" || name === "no-local") {
+        localChanged = true;
+        continue;
+      }
+
+      // Non-target long flag: skip its value token if value-consuming and bare.
+      if (isBare && VALUE_CONSUMING_LONG_FLAGS.has(name)) {
+        skipNext = true;
+      }
+      continue;
+    }
+
+    // Short flags: `-s`, `-o`, etc.
+    if (token.startsWith("-") && token.length >= 2 && token.charAt(1) !== "-") {
+      const shortName = token.charAt(1);
+      // `-s` bare (length === 2): next token is the value.
+      // `-svalue` (length > 2): value is attached, no skip needed.
+      if (token.length === 2 && VALUE_CONSUMING_SHORT_FLAGS.has(shortName)) {
+        skipNext = true;
+      }
+    }
+  }
 
   const setFlags: Array<string> = [];
   if (dbUrlChanged) setFlags.push("db-url");
