@@ -19,6 +19,7 @@ import {
   LegacyInvalidOutputFormatError,
   legacyInvalidOutputFormatMessage,
 } from "../shared/legacy-go-output-flag.ts";
+import { LegacyTelemetryOutputFormat } from "./legacy-telemetry-output-format.service.ts";
 
 interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unknown> = never> {
   readonly analytics?: boolean;
@@ -57,11 +58,11 @@ const validateLegacyOutputFormat = (allowed: ReadonlyArray<string>) =>
   });
 
 const REDACTED_VALUE = "<redacted>";
-// `csv` (a `db query` machine format) joins the resource-command machine formats
-// so an explicit `-o csv` is reported verbatim as the telemetry `output_format`,
-// matching Go (which mirrors `db query`'s resolved local `-o` onto the global the
-// event reads, `cmd/db.go:326-328`). `table` (db query's human default) is not a
-// machine format, so — like `pretty` — it collapses to the resolved text format.
+// Fallback `-o` → telemetry derivation for commands that don't record a resolved
+// format in `LegacyTelemetryOutputFormat`. `db query` records its resolved
+// `json|table|csv` in that cell (so `table` / the human default report correctly);
+// this set only governs the fallback, where a non-machine `-o` (`table`/`pretty`)
+// collapses to the resolved text format.
 const LEGACY_GO_MACHINE_OUTPUT_FORMATS = new Set(["env", "json", "toml", "yaml", "csv"]);
 const LEGACY_GO_OUTPUT_FORMATS = new Set([...LEGACY_GO_MACHINE_OUTPUT_FORMATS, "pretty"]);
 
@@ -206,11 +207,22 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
         const exit = yield* self.pipe(withAnalyticsContext(analyticsContext), Effect.exit);
         const finishedAt = yield* Clock.currentTimeMillis;
 
+        // A command that resolves its own `--output` (e.g. `db query`, default
+        // `table`/`json` by agent mode) records it in this cell; Go mirrors that
+        // resolved value onto the global the event reads. Read optionally so
+        // commands that don't provide the cell keep the default derivation.
+        const outputFormatCell = yield* Effect.serviceOption(LegacyTelemetryOutputFormat);
+        const resolvedOutputFormat = Option.isSome(outputFormatCell)
+          ? yield* outputFormatCell.value.get
+          : Option.none<string>();
+
         yield* analytics
           .capture(EventCommandExecuted, {
             [PropExitCode]: Exit.isSuccess(exit) ? 0 : 1,
             [PropDurationMs]: finishedAt - startedAt,
-            [PropOutputFormat]: resolveOutputFormatForTelemetry(args, output.format),
+            [PropOutputFormat]: Option.isSome(resolvedOutputFormat)
+              ? resolvedOutputFormat.value
+              : resolveOutputFormatForTelemetry(args, output.format),
           })
           .pipe(withAnalyticsContext(analyticsContext));
 

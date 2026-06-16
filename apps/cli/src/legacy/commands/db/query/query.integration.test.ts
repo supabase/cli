@@ -24,6 +24,7 @@ import { Random } from "../../../../shared/runtime/random.service.ts";
 import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../../shared/telemetry/ai-tool.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyTelemetryOutputFormat } from "../../../telemetry/legacy-telemetry-output-format.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import {
@@ -83,6 +84,22 @@ function mockDbConnection(opts: {
         },
       }),
   });
+}
+
+function mockTelemetryOutputFormat() {
+  let format: string | undefined;
+  return {
+    layer: Layer.succeed(LegacyTelemetryOutputFormat, {
+      set: (f: string) =>
+        Effect.sync(() => {
+          format = f;
+        }),
+      get: Effect.sync(() => (format === undefined ? Option.none() : Option.some(format))),
+    }),
+    get format() {
+      return format;
+    },
+  };
 }
 
 function mockProjectRef(unlinked = false) {
@@ -155,10 +172,12 @@ function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
+  const telemetryOutputFormat = mockTelemetryOutputFormat();
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
     cache.layer,
+    telemetryOutputFormat.layer,
     mockResolver(opts.isLocal),
     mockDbConnection(opts),
     mockProjectRef(opts.unlinked),
@@ -185,7 +204,7 @@ function setup(opts: SetupOpts = {}) {
     }),
     BunServices.layer,
   );
-  return { layer, out, telemetry, cache };
+  return { layer, out, telemetry, cache, telemetryOutputFormat };
 }
 
 const flags = (over: Partial<LegacyDbQueryFlags> = {}): LegacyDbQueryFlags => ({
@@ -333,6 +352,28 @@ describe("legacy db query integration", () => {
         { id: 2, name: "bob" },
       ]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("records the resolved -o as the telemetry output_format (Go parity)", () => {
+    // Go mirrors db query's resolved local -o onto the telemetry global: table for
+    // humans, json for agents, and the explicit -o otherwise.
+    const human = setup({ result: SELECT_RESULT, agent: "no" });
+    const agent = setup({ result: SELECT_RESULT, agent: "yes" });
+    const csv = setup({ result: SELECT_RESULT, agent: "no", goOutput: "csv" });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: true })).pipe(
+        Effect.provide(human.layer),
+      );
+      expect(human.telemetryOutputFormat.format).toBe("table");
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: true })).pipe(
+        Effect.provide(agent.layer),
+      );
+      expect(agent.telemetryOutputFormat.format).toBe("json");
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: true })).pipe(
+        Effect.provide(csv.layer),
+      );
+      expect(csv.telemetryOutputFormat.format).toBe("csv");
+    });
   });
 
   it.live("renders CSV with -o csv", () => {

@@ -5,6 +5,7 @@ import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { legacyTelemetryOutputFormatLayer } from "../../../telemetry/legacy-telemetry-output-format.layer.ts";
 import { aiToolLayer } from "../../../../shared/telemetry/ai-tool.layer.ts";
 import { randomLayer } from "../../../../shared/runtime/random.layer.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
@@ -34,5 +35,6 @@ export const legacyDbQueryRuntimeLayer = Layer.mergeAll(
   randomLayer,
   aiToolLayer,
   stdinLayer,
+  legacyTelemetryOutputFormatLayer,
   legacyManagementApiRuntimeLayer(["db", "query"]),
 );

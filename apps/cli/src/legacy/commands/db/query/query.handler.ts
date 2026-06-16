@@ -16,6 +16,7 @@ import {
 } from "../../../config/legacy-project-ref.errors.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { LegacyTelemetryOutputFormat } from "../../../telemetry/legacy-telemetry-output-format.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import {
@@ -59,6 +60,7 @@ const BOUNDARY_BYTES = 16;
 export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: LegacyDbQueryFlags) {
   const output = yield* Output;
   const telemetryState = yield* LegacyTelemetryState;
+  const telemetryOutputFormat = yield* LegacyTelemetryOutputFormat;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const stdin = yield* Stdin;
   const fs = yield* FileSystem.FileSystem;
@@ -264,6 +266,11 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
             : agentMode
               ? "json"
               : "table";
+
+    // Mirror Go's `db query`, which mirrors the resolved local `-o` (json|table|csv)
+    // onto the global the telemetry event reads (`cmd/db.go:316-328`). Without this
+    // the instrumentation reports `table`/human-default as `text`.
+    yield* telemetryOutputFormat.set(format);
 
     // 3. Linked → Management API (raw HTTP); local / --db-url → direct connection.
     if (flags.linked) {
