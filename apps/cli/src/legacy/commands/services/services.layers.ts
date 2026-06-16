@@ -8,7 +8,10 @@ import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { LegacyDebugLogger } from "../../shared/legacy-debug-logger.service.ts";
-import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
+import {
+  LegacyIdentityStitch,
+  legacyIdentityStitchLayer,
+} from "../../shared/legacy-identity-stitch.ts";
 import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-project-cache.layer.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
@@ -45,6 +48,15 @@ export const legacyServicesRuntimeLayer = (() => {
       Layer.provide(legacyIdentityStitchLayer),
     ),
     legacyTelemetryStateLayer,
+    // The one per-command identity stitcher (Go's single root-context `sync.Once`),
+    // exposed at top level so `withLegacyCommandInstrumentation` can read
+    // `stitchedDistinctId()` and attribute the cli_command_executed event to the
+    // gotrue id. The SAME reference is provided to linkedProjectCache above, so
+    // memoisation gives the cache GET and the instrumentation hook one
+    // `stitchAttempted` guard — aliasing/persisting at most once. Its
+    // Analytics / TelemetryRuntime / FileSystem / Path deps are ambient (root
+    // runtime). Mirrors advisors.layers.ts / lint.layers.ts.
+    legacyIdentityStitchLayer,
     commandRuntimeLayer(["services"]),
   ).pipe(Layer.provide(FetchHttpClient.layer));
 
@@ -61,4 +73,5 @@ type LegacyServicesServices =
   | LegacyDebugLogger
   | LegacyLinkedProjectCache
   | LegacyTelemetryState
+  | LegacyIdentityStitch
   | CommandRuntime;

@@ -42,5 +42,14 @@ export const legacyInspectBaseLayer = Layer.mergeAll(
   dbConfig,
   legacyDbConnectionLayer,
   cliConfig,
+  // The one per-command identity stitcher (Go's single root-context `sync.Once`),
+  // exposed at top level so `withLegacyCommandInstrumentation` can read
+  // `stitchedDistinctId()` and attribute the cli_command_executed event to the
+  // gotrue id. The SAME reference is provided to dbConfig above, so memoisation
+  // gives the lazy linked stack and the instrumentation hook the same
+  // `stitchAttempted` guard — aliasing/persisting at most once. Its
+  // Analytics / TelemetryRuntime / FileSystem / Path deps are ambient (root
+  // runtime). Mirrors advisors.layers.ts / lint.layers.ts.
+  legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
 );

@@ -61,6 +61,14 @@ export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
     Layer.provide(legacyIdentityStitchLayer),
   ),
   legacyTelemetryStateLayer,
+  // The one per-command identity stitcher (Go's single root-context `sync.Once`),
+  // exposed at top level so `withLegacyCommandInstrumentation` can read
+  // `stitchedDistinctId()` and attribute the cli_command_executed event to the
+  // gotrue id. The SAME reference is provided to platformApi / linkedProjectCache
+  // above, so memoisation gives all transports one `stitchAttempted` guard —
+  // aliasing/persisting at most once. Its Analytics / TelemetryRuntime /
+  // FileSystem / Path deps are ambient (root runtime). Mirrors advisors.layers.ts.
+  legacyIdentityStitchLayer,
   legacyLoginApiLayer.pipe(Layer.provide(httpClient), Layer.provide(cliConfig)),
   legacyLoginCryptoLayer,
   legacyTemplateServiceLayer.pipe(Layer.provide(httpClient)),
