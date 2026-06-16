@@ -267,6 +267,46 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
     });
     expect(fromPopulated[0]?.categories).toEqual(["SECURITY"]);
   });
+
+  it("normalizes null fkey_columns elements to 0 (Go encoding/json float32 zero value)", () => {
+    // Go's encoding/json decodes a JSON null array element into the zero value
+    // for float32 (0), not an UnmarshalTypeError. Mirror that parity.
+    const result = apiResponseToLegacyAdvisorLints({
+      lints: [{ name: "x", metadata: { fkey_columns: [null, 2] } }],
+    });
+    const meta = result[0]?.metadata as Record<string, unknown>;
+    expect(meta?.["fkey_columns"]).toEqual([0, 2]);
+  });
+
+  it("normalizes a fully-null fkey_columns array to all zeros", () => {
+    const result = apiResponseToLegacyAdvisorLints({
+      lints: [{ name: "x", metadata: { fkey_columns: [null, null] } }],
+    });
+    const meta = result[0]?.metadata as Record<string, unknown>;
+    expect(meta?.["fkey_columns"]).toEqual([0, 0]);
+  });
+
+  it("still throws on non-number, non-null fkey_columns elements (Go UnmarshalTypeError)", () => {
+    expect(() =>
+      apiResponseToLegacyAdvisorLints({
+        lints: [{ name: "x", metadata: { fkey_columns: [1, "x"] } }],
+      }),
+    ).toThrow("cannot unmarshal advisor metadata.fkey_columns element into float32");
+
+    expect(() =>
+      apiResponseToLegacyAdvisorLints({
+        lints: [{ name: "x", metadata: { fkey_columns: [1, true] } }],
+      }),
+    ).toThrow();
+  });
+
+  it("still throws on a non-array fkey_columns (Go UnmarshalTypeError)", () => {
+    expect(() =>
+      apiResponseToLegacyAdvisorLints({
+        lints: [{ name: "x", metadata: { fkey_columns: "nope" } }],
+      }),
+    ).toThrow("cannot unmarshal advisor metadata.fkey_columns into []float32");
+  });
 });
 
 describe("encodeLegacyAdvisorLints (Go outputAndCheck byte parity)", () => {

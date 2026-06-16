@@ -174,12 +174,20 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
     if (!Array.isArray(fkeyColumns)) {
       throw new TypeError("cannot unmarshal advisor metadata.fkey_columns into []float32");
     }
+    const normalized: Array<number> = [];
     for (const element of fkeyColumns) {
+      // Go's encoding/json decodes a JSON null array element into the zero value
+      // (0) for float32, not an UnmarshalTypeError. Mirror that here.
+      if (element === null || element === undefined) {
+        normalized.push(0);
+        continue;
+      }
       if (typeof element !== "number") {
         throw new TypeError("cannot unmarshal advisor metadata.fkey_columns element into float32");
       }
+      normalized.push(element);
     }
-    out["fkey_columns"] = fkeyColumns;
+    out["fkey_columns"] = normalized;
   }
   optString("fkey_name");
   optString("name");
