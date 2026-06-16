@@ -39,6 +39,7 @@ const copyBestEffort = (fs: FileSystem.FileSystem, from: string, to: string): Ef
 export const legacySaveDebugBundle = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
+  workdir: string,
   tempDir: string,
   migrationsDir: string,
   bundle: LegacyDeclarativeDebugBundle,
@@ -46,11 +47,23 @@ export const legacySaveDebugBundle = Effect.fnUntraced(function* (
   const debugDir = path.join(tempDir, "debug", bundle.id);
   yield* fs.makeDirectory(debugDir, { recursive: true }).pipe(Effect.ignore);
 
+  // The catalog refs come back from the Go seam as workdir-relative paths
+  // (`supabase/.temp/pgdelta/...`); Go chdir's into the workdir before reading them,
+  // so resolve against `workdir` rather than the process cwd (`path.resolve` leaves
+  // absolute refs unchanged).
   if (bundle.sourceRef !== undefined && bundle.sourceRef.length > 0) {
-    yield* copyBestEffort(fs, bundle.sourceRef, path.join(debugDir, "source-catalog.json"));
+    yield* copyBestEffort(
+      fs,
+      path.resolve(workdir, bundle.sourceRef),
+      path.join(debugDir, "source-catalog.json"),
+    );
   }
   if (bundle.targetRef !== undefined && bundle.targetRef.length > 0) {
-    yield* copyBestEffort(fs, bundle.targetRef, path.join(debugDir, "target-catalog.json"));
+    yield* copyBestEffort(
+      fs,
+      path.resolve(workdir, bundle.targetRef),
+      path.join(debugDir, "target-catalog.json"),
+    );
   }
   if (bundle.migrationSql !== undefined && bundle.migrationSql.length > 0) {
     yield* writeBestEffort(fs, path.join(debugDir, "generated-migration.sql"), bundle.migrationSql);

@@ -167,11 +167,18 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         Effect.tapError((error) =>
           Effect.gen(function* () {
             const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
-            const debugDir = yield* legacySaveDebugBundle(fs, path, tempDir, migrationsDir, {
-              id: formatDebugId(yield* Clock.currentTimeMillis),
-              error: error.message,
-              migrations,
-            });
+            const debugDir = yield* legacySaveDebugBundle(
+              fs,
+              path,
+              cliConfig.workdir,
+              tempDir,
+              migrationsDir,
+              {
+                id: formatDebugId(yield* Clock.currentTimeMillis),
+                error: error.message,
+                migrations,
+              },
+            );
             yield* output.raw(legacyDebugBundleMessage(debugDir), "stderr");
           }),
         ),
@@ -250,14 +257,21 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       );
       const ts = formatDebugId(yield* Clock.currentTimeMillis);
       const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
-      const debugDir = yield* legacySaveDebugBundle(fs, path, tempDir, migrationsDir, {
-        id: `${ts}-apply-error`,
-        sourceRef: result.sourceRef,
-        targetRef: result.targetRef,
-        migrationSql: result.diffSQL,
-        error: applyError.message,
-        migrations,
-      });
+      const debugDir = yield* legacySaveDebugBundle(
+        fs,
+        path,
+        cliConfig.workdir,
+        tempDir,
+        migrationsDir,
+        {
+          id: `${ts}-apply-error`,
+          sourceRef: result.sourceRef,
+          targetRef: result.targetRef,
+          migrationSql: result.diffSQL,
+          error: applyError.message,
+          migrations,
+        },
+      );
 
       if (tty.stdinIsTty && !yes) {
         const shouldReset = yield* output.promptConfirm(
@@ -286,14 +300,21 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
               `${legacyRed(`Database reset also failed: ${resetError.message}`)}\n`,
               "stderr",
             );
-            const resetDebugDir = yield* legacySaveDebugBundle(fs, path, tempDir, migrationsDir, {
-              id: `${ts}-after-reset`,
-              sourceRef: result.sourceRef,
-              targetRef: result.targetRef,
-              migrationSql: result.diffSQL,
-              error: resetError.message,
-              migrations,
-            });
+            const resetDebugDir = yield* legacySaveDebugBundle(
+              fs,
+              path,
+              cliConfig.workdir,
+              tempDir,
+              migrationsDir,
+              {
+                id: `${ts}-after-reset`,
+                sourceRef: result.sourceRef,
+                targetRef: result.targetRef,
+                migrationSql: result.diffSQL,
+                error: resetError.message,
+                migrations,
+              },
+            );
             yield* output.raw(`Debug information saved to ${legacyBold(debugDir)}\n`, "stderr");
             yield* output.raw(
               `Debug information saved to ${legacyBold(resetDebugDir)}\n`,
