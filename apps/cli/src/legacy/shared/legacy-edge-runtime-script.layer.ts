@@ -2,6 +2,7 @@ import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import * as Net from "node:net";
 
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
+import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
 import { legacyGetRegistryImageUrl } from "./legacy-docker-registry.ts";
@@ -47,6 +48,15 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
     const path = yield* Path.Path;
     const debug = yield* LegacyDebugFlag;
     const networkIdFlag = yield* LegacyNetworkIdFlag;
+    const runtimeInfo = yield* RuntimeInfo;
+    // Go's `DockerStart` appends `host.docker.internal:host-gateway` to every
+    // container's ExtraHosts on Linux only (build-tag `extraHosts` in
+    // `apps/cli-go/internal/utils/docker_linux.go:8`; the append at `docker.go:266`
+    // is unconditional but the slice is empty on macOS/Windows). The pg-delta
+    // container needs it so a `host.docker.internal` local DB host (from
+    // SUPABASE_SERVICES_HOSTNAME) resolves inside the container on Linux/dev-container.
+    const extraHosts =
+      runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
     // Read `[edge_runtime] deno_version` so a `deno_version = 1` project runs the
     // `deno1` image, matching Go's config-driven image switch (the resolver applies
     // the version pin first, then the deno1 override).
@@ -88,7 +98,7 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
               binds: opts.binds,
               workingDir: Option.none(),
               securityOpt: [],
-              extraHosts: [],
+              extraHosts,
               network,
             })
             // A spawn failure (e.g. Docker not installed) carries no container
