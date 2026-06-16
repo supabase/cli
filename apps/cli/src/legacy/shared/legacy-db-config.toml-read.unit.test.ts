@@ -157,6 +157,55 @@ describe("legacyReadDbToml", () => {
     });
   });
 
+  it.effect("rejects an invalid [edge_runtime] deno_version", () => {
+    // Go's config.Validate aborts on deno_version other than 1/2 (config.go:999-1008).
+    const dir = withConfig(["[edge_runtime]", "deno_version = 3", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Failed reading config: Invalid edge_runtime.deno_version: 3.",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects deno_version = 0 with Go's missing-required message", () => {
+    const dir = withConfig(["[edge_runtime]", "deno_version = 0", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Missing required field in config: edge_runtime.deno_version",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("accepts deno_version = 1", () => {
+    const dir = withConfig(["[edge_runtime]", "deno_version = 1", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.denoVersion).toBe(1);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("rejects invalid [experimental.pgdelta] format_options JSON during load", () => {
     // Go's config.Validate aborts with this exact message when format_options is
     // non-empty but not valid JSON (`apps/cli-go/pkg/config/config.go:1685-1686`),

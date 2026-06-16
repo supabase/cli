@@ -454,6 +454,25 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
       : typeof denoVersionRaw === "string"
         ? Number.parseInt(legacyExpandEnv(denoVersionRaw, lookup), 10)
         : Number.NaN;
+  // Go's config.Validate rejects a present-but-invalid deno_version before pg-delta
+  // runs (`config.go:999-1008`): 0 → missing-required, anything other than 1/2 →
+  // invalid. An absent key falls through to the default (Go merges deno_version=2).
+  if (denoVersionRaw !== undefined && Number.isInteger(denoVersionNum)) {
+    if (denoVersionNum === 0) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: "Missing required field in config: edge_runtime.deno_version",
+        }),
+      );
+    }
+    if (denoVersionNum !== 1 && denoVersionNum !== 2) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: `Failed reading config: Invalid edge_runtime.deno_version: ${denoVersionNum}.`,
+        }),
+      );
+    }
+  }
   const denoVersion = Number.isInteger(denoVersionNum) ? denoVersionNum : DEFAULT_DENO_VERSION;
 
   // `[experimental.pgdelta]`. `enabled` is a TOML bool (Go decodes weakly, so an
