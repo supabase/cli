@@ -43,7 +43,7 @@ export interface LegacyDbTargetSelection {
  * (`src/shared/legacy/global-flags.ts`, `src/shared/cli/global-flags.ts`).
  * `Flag.string` / `Flag.choice` → value-consuming; `Flag.boolean` → not.
  */
-const VALUE_CONSUMING_LONG_FLAGS = new Set([
+export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   // db-family command flags
   "db-url",
   "schema",
@@ -66,7 +66,7 @@ const VALUE_CONSUMING_LONG_FLAGS = new Set([
  * Short flags (without `-` prefix) that consume the next token as their value.
  * Only single-character short flags need to be listed here.
  */
-const VALUE_CONSUMING_SHORT_FLAGS = new Set([
+export const VALUE_CONSUMING_SHORT_FLAGS = new Set([
   "s", // --schema / -s
   "o", // --output / -o
 ]);

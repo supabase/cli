@@ -15,6 +15,10 @@ import {
   PropOutputFormat,
 } from "../../shared/telemetry/event-catalog.ts";
 import { LegacyIdentityStitch } from "../shared/legacy-identity-stitch.ts";
+import {
+  VALUE_CONSUMING_LONG_FLAGS,
+  VALUE_CONSUMING_SHORT_FLAGS,
+} from "../shared/legacy-db-target-flags.ts";
 
 interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unknown> = never> {
   readonly analytics?: boolean;
@@ -79,16 +83,32 @@ function extractChangedFlagNames(
   aliases: Readonly<Record<string, string>> = {},
 ): ReadonlyArray<string> {
   const used = new Set<string>();
+  let skipNext = false;
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (arg === undefined) continue;
 
+    // Skip a token that was consumed as the value of the previous flag.
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+
     if (arg.startsWith("--")) {
       const raw = arg.slice(2);
-      const [flagName] = raw.split("=", 2);
-      if (flagName === undefined || flagName.length === 0) continue;
+      const eqIdx = raw.indexOf("=");
+      const flagName = eqIdx === -1 ? raw : raw.slice(0, eqIdx);
+      const isBare = eqIdx === -1;
+      if (flagName.length === 0) continue;
       used.add(flagName);
+      // If this is a bare value-consuming flag, the next token is its value
+      // (Go's pflag space-separated form). Skip it so it is not recorded as a
+      // changed flag. This mirrors Go's pflag.Changed — only the flag name
+      // itself is recorded, not the value token that follows it.
+      if (isBare && VALUE_CONSUMING_LONG_FLAGS.has(flagName)) {
+        skipNext = true;
+      }
       continue;
     }
 
@@ -98,8 +118,15 @@ function extractChangedFlagNames(
     // Only declared aliases are resolved; unknown shorthands are ignored.
     if (arg.startsWith("-") && arg.length > 1) {
       const short = arg[1];
-      const canonical = short === undefined ? undefined : aliases[short];
+      if (short === undefined) continue;
+      const canonical = aliases[short];
       if (canonical !== undefined) used.add(canonical);
+      // Bare short value-consuming flag (`-s` alone, length === 2): next token
+      // is the value. Skip it. Attached forms (`-svalue`, `-s=value`, length > 2)
+      // carry the value inline — no skip needed.
+      if (arg.length === 2 && VALUE_CONSUMING_SHORT_FLAGS.has(short)) {
+        skipNext = true;
+      }
     }
   }
 

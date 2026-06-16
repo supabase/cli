@@ -472,4 +472,127 @@ describe("withLegacyCommandInstrumentation", () => {
       );
     },
   );
+
+  // Value-consuming flag skip parity: Go's pflag.Changed records only the flag
+  // name, not the value token that follows it in space-separated form.
+  // `--schema --linked` must record only `schema` (--linked is the value for
+  // --schema, consumed by pflag, so pflag.Changed("linked") is false).
+
+  it.live("does not record a flag token that was consumed as another flag's value", () => {
+    // `db lint --schema --linked`: Go pflag consumes `--linked` as the value
+    // for `--schema`. changedFlags() sees only `schema`.
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { schema: Option.some(["--linked"]) },
+        aliases: { s: "schema" },
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["db", "lint", "--schema", "--linked"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
+          // Only `schema` should be recorded; `linked` was consumed as the value.
+          expect(flags).toEqual({ schema: "<redacted>" });
+          expect(Object.keys(flags)).not.toContain("linked");
+        }),
+      ),
+    );
+  });
+
+  it.live("records both flags when the value is attached via = (--schema=public --linked)", () => {
+    // `--schema=public` carries the value inline; `--linked` is a separate flag.
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { schema: Option.some(["public"]), linked: true },
+        aliases: { s: "schema" },
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["db", "lint", "--schema=public", "--linked"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
+          // Both flags recorded: `schema` (= form, no skip) and `linked` (boolean).
+          expect(Object.keys(flags).sort()).toEqual(["linked", "schema"]);
+        }),
+      ),
+    );
+  });
+
+  it.live("skips value token for bare short value-consuming flag (-s public --linked)", () => {
+    // `-s public` bare short form: `public` is consumed as the schema value.
+    // `--linked` is a separate boolean flag and IS recorded.
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { schema: Option.some(["public"]), linked: true },
+        aliases: { s: "schema" },
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["db", "lint", "-s", "public", "--linked"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
+          // `schema` (via -s alias) and `linked` (separate boolean flag) recorded.
+          expect(Object.keys(flags).sort()).toEqual(["linked", "schema"]);
+          // `public` was consumed as the -s value, not treated as a flag name.
+          expect(Object.keys(flags)).not.toContain("public");
+        }),
+      ),
+    );
+  });
+
+  it.live("skips value token after bare --db-url and records only db-url", () => {
+    // `--db-url x --local`: `x` is consumed as the db-url value; `--local` is
+    // a separate boolean flag and is recorded. This mirrors Go's pflag.Changed.
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { dbUrl: Option.some("x"), local: true },
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["db", "lint", "--db-url", "x", "--local"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
+          expect(Object.keys(flags).sort()).toEqual(["db-url", "local"]);
+          // "x" must not appear as a recorded flag name.
+          expect(Object.keys(flags)).not.toContain("x");
+        }),
+      ),
+    );
+  });
 });
