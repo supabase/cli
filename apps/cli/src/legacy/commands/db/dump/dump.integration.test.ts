@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -262,6 +262,25 @@ describe("legacy db dump integration", () => {
       // The script must have $PGHOST expanded from the resolved local connection.
       expect(out.stdoutText).toContain('export PGHOST="127.0.0.1"');
       expect(docker.lastOpts).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("validates the merged config before the --dry-run print (Go root PreRun order)", () => {
+    // Go runs ParseDatabaseConfig (→ config.Load → Validate) in the root PreRunE
+    // before dump.Run, even for --dry-run, so an invalid config fails without printing.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      ["[remotes.staging]", 'project_id = "staging"', ""].join("\n"),
+    );
+    const { layer, out } = setup({ isLocal: true, workdir: tmp.current });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDump(flags({ dryRun: true, local: true })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toContain(
+        "Invalid config for remotes.staging.project_id. Must be like: abcdefghijklmnopqrst",
+      );
+      expect(out.stdoutText).toBe(""); // no script printed
     }).pipe(Effect.provide(layer));
   });
 

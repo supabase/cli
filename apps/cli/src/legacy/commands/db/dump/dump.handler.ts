@@ -130,6 +130,13 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // mirroring Go's remote-merged `utils.Config` for `db dump --linked`.
     const linkedRef = Option.getOrUndefined(resolvedRef ?? Option.none());
 
+    // Read config (with any `[remotes.<ref>]` override applied) BEFORE the dry-run
+    // print. Go validates the merged config in the root `ParseDatabaseConfig`
+    // (`cmd/root.go:118`) before `dump.Run`, even for `--dry-run`, so an invalid
+    // merged config (e.g. an unsupported remote `db.major_version` or a malformed
+    // remote `project_id`) fails rather than silently printing a script.
+    const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
+
     // 4. Pick the mode-specific script + env (pure builders, `dump.env.ts`).
     //    Go declares --schema/-s and --exclude/-x as cobra StringSlice
     //    (`apps/cli-go/cmd/db.go:432,444`), which comma-splits each value before it
@@ -168,12 +175,10 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       return;
     }
 
-    // Read config (with any `[remotes.<ref>]` override applied) and resolve the image
-    // BEFORE opening `--file`. Go applies the remote override during
-    // `ParseDatabaseConfig` (before `dump.Run` opens the file), so an invalid merged
-    // config (e.g. an unsupported remote `db.major_version`) fails without
-    // creating/truncating the destination file.
-    const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
+    // Resolve the pg_dump image BEFORE opening `--file` (only needed for the real
+    // container path; the dry-run script above is image-independent). Go skips the
+    // file OpenFile on dry-run (`internal/db/dump/dump.go:23-32`), so the file is
+    // created/truncated only here, after the dry-run early return.
     const image = yield* legacyResolveDbImage(fs, path, cliConfig.workdir, tomlValues.majorVersion);
 
     // Resolve a relative `--file` against the workdir: Go chdir's into the workdir
