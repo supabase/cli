@@ -31,6 +31,16 @@ interface LegacyDeclarativeSeamShape {
   readonly execInherit: (
     args: ReadonlyArray<string>,
   ) => Effect.Effect<number, LegacyDeclarativeShadowDbError>;
+  /**
+   * Go's `ensureLocalDatabaseStarted` for the `--local` declarative paths
+   * (`apps/cli-go/cmd/db_schema_declarative.go:190,249,291`): inspects the local
+   * Postgres container and, when it is not running, starts the stack via the
+   * bundled `supabase-go start` (the stack-start subsystem is not yet ported).
+   * A no-op when the container is already running, so
+   * `db schema declarative generate --local` bootstraps a stopped stack instead
+   * of failing to connect, matching Go.
+   */
+  readonly ensureLocalDatabaseStarted: () => Effect.Effect<void, LegacyDeclarativeShadowDbError>;
 }
 
 export class LegacyDeclarativeSeam extends Context.Service<

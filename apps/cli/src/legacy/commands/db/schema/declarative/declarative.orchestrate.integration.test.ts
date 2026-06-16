@@ -24,6 +24,7 @@ function mockSeam(paths: Record<LegacyCatalogMode, string>) {
       return Effect.succeed(paths[mode]);
     },
     execInherit: () => Effect.succeed(0),
+    ensureLocalDatabaseStarted: () => Effect.void,
   });
   return { layer, calls };
 }

@@ -61,6 +61,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const seamCalls: LegacyCatalogMode[] = [];
   const execInheritCalls: ReadonlyArray<string>[] = [];
+  let ensureStartedCalls = 0;
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode }) => {
       seamCalls.push(mode);
@@ -70,6 +71,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       execInheritCalls.push(args);
       return Effect.succeed(opts.resetExitCode ?? 0);
     },
+    ensureLocalDatabaseStarted: () =>
+      Effect.sync(() => {
+        ensureStartedCalls += 1;
+      }),
   });
   const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
@@ -114,7 +119,18 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     BunServices.layer,
   );
-  return { layer, out, seamCalls, execInheritCalls, edgeCalls, resolverCalls, proxyCalls };
+  return {
+    layer,
+    out,
+    seamCalls,
+    execInheritCalls,
+    edgeCalls,
+    resolverCalls,
+    proxyCalls,
+    get ensureStartedCalls() {
+      return ensureStartedCalls;
+    },
+  };
 }
 
 const flags = (
@@ -181,6 +197,8 @@ describe("legacy db schema declarative generate integration", () => {
       expect(s.out.rawChunks.some((c) => c.text.includes("Declarative schema written to"))).toBe(
         true,
       );
+      // Go runs ensureLocalDatabaseStarted before generating from local.
+      expect(s.ensureStartedCalls).toBe(1);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -212,6 +230,8 @@ describe("legacy db schema declarative generate integration", () => {
       );
       expect(s.resolverCalls.length).toBe(1);
       expect(s.edgeCalls[0]!.env["TARGET"]).toContain("@db.remote:5432");
+      // Remote target → the local stack is never started.
+      expect(s.ensureStartedCalls).toBe(0);
     }).pipe(Effect.provide(s.layer));
   });
 

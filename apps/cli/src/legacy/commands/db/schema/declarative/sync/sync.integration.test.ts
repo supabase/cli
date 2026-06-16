@@ -51,6 +51,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         execInheritCalls.push(args);
         return opts.resetExitCode ?? 0;
       }),
+    ensureLocalDatabaseStarted: () => Effect.void,
   });
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (_opts: LegacyEdgeRuntimeRunOpts) =>

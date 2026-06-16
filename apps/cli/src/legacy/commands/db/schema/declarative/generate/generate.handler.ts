@@ -117,7 +117,15 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       let targetUrl: string;
       let overwrite: boolean;
       if (hasExplicitTarget) {
-        targetUrl = flags.local ? localUrl(local) : yield* resolveRemoteUrl(flags);
+        if (flags.local) {
+          // Go runs ensureLocalDatabaseStarted before generating from local
+          // (db_schema_declarative.go:190) — start a stopped stack instead of
+          // failing to connect.
+          yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
+          targetUrl = localUrl(local);
+        } else {
+          targetUrl = yield* resolveRemoteUrl(flags);
+        }
         overwrite = flags.overwrite;
       } else {
         if (!tty.stdinIsTty && !yes) {
@@ -232,7 +240,12 @@ const resolveSmartTargetUrl = Effect.fnUntraced(function* (
   workdir: string,
   linkedRef: Option.Option<string>,
 ) {
-  if (!hasMigrations) return localUrl(local);
+  if (!hasMigrations) {
+    // No migrations → generate from local. Go runs ensureLocalDatabaseStarted first
+    // (db_schema_declarative.go:291), starting a stopped stack.
+    yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
+    return localUrl(local);
+  }
 
   const output = yield* Output;
   const yes = yield* LegacyYesFlag;
@@ -288,6 +301,10 @@ const resolveSmartTargetUrl = Effect.fnUntraced(function* (
     }
     return legacyToPostgresURL(conn);
   }
+
+  // "Local database" choice: Go runs ensureLocalDatabaseStarted before the reset
+  // prompt (db_schema_declarative.go:249), starting a stopped stack.
+  yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
 
   let shouldReset = flags.reset;
   if (!shouldReset) {

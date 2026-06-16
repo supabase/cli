@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { Effect, Layer, Option, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
@@ -5,6 +6,7 @@ import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner
 import { LegacyNetworkIdFlag } from "../../../../../shared/legacy/global-flags.ts";
 import { resolveBinary } from "../../../../../shared/legacy/go-proxy.layer.ts";
 import { LegacyCliConfig } from "../../../../config/legacy-cli-config.service.ts";
+import { localDbContainerId } from "../../../../shared/legacy-docker-ids.ts";
 import { LegacyDeclarativeShadowDbError } from "./declarative.errors.ts";
 import { LegacyDeclarativeSeam } from "./declarative.seam.service.ts";
 
@@ -111,6 +113,110 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               ),
             );
         }),
+      ensureLocalDatabaseStarted: () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            // Go's DbId derives from config project_id, falling back to the workdir
+            // basename (matches `gen types` resolution).
+            const projectId = Option.getOrElse(cliConfig.projectId, () =>
+              basename(cliConfig.workdir),
+            );
+            const containerId = localDbContainerId(projectId);
+            // Go's AssertSupabaseDbIsRunning = ContainerInspect → NotFound ⇒ not
+            // running. Discard stdout (the inspect JSON) so the unconsumed pipe can
+            // never deadlock; only the exit code + stderr matter.
+            const inspect = ChildProcess.make("docker", ["container", "inspect", containerId], {
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "pipe",
+              extendEnv: true,
+            });
+            const child = yield* spawner
+              .spawn(inspect)
+              .pipe(
+                Effect.mapError(
+                  () =>
+                    new LegacyDeclarativeShadowDbError({ message: "failed to inspect service" }),
+                ),
+              );
+            const stderrChunks: Array<Uint8Array> = [];
+            yield* Stream.runForEach(child.stderr, (chunk) =>
+              Effect.sync(() => {
+                stderrChunks.push(chunk);
+              }),
+            ).pipe(
+              Effect.mapError(
+                () => new LegacyDeclarativeShadowDbError({ message: "failed to inspect service" }),
+              ),
+            );
+            const inspectExit = yield* child.exitCode.pipe(
+              Effect.map(Number),
+              Effect.mapError(
+                () => new LegacyDeclarativeShadowDbError({ message: "failed to inspect service" }),
+              ),
+            );
+            if (inspectExit === 0) return; // already running
+
+            const stderr = new TextDecoder()
+              .decode(
+                (() => {
+                  const total = stderrChunks.reduce((s, c) => s + c.length, 0);
+                  const bytes = new Uint8Array(total);
+                  let offset = 0;
+                  for (const c of stderrChunks) {
+                    bytes.set(c, offset);
+                    offset += c.length;
+                  }
+                  return bytes;
+                })(),
+              )
+              .trim();
+            // Only a missing container means "not running" → start it. Any other
+            // inspect failure (e.g. Docker daemon down) propagates, matching Go.
+            if (!stderr.includes("No such container")) {
+              return yield* Effect.fail(
+                new LegacyDeclarativeShadowDbError({
+                  message:
+                    stderr.length > 0
+                      ? `failed to inspect service: ${stderr}`
+                      : "failed to inspect service",
+                }),
+              );
+            }
+            if (!("found" in resolved)) {
+              return yield* Effect.fail(
+                new LegacyDeclarativeShadowDbError({
+                  message:
+                    "Could not find the supabase-go binary required to start the local stack.",
+                }),
+              );
+            }
+            // Start the stack via the bundled Go binary (Go's `start.Run`).
+            const startCmd = ChildProcess.make(resolved.found, ["start"], {
+              cwd: cliConfig.workdir,
+              stdin: "inherit",
+              stdout: "inherit",
+              stderr: "inherit",
+              extendEnv: true,
+              detached: false,
+            });
+            const startExit = yield* spawner.exitCode(startCmd).pipe(
+              Effect.mapError(
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: "failed to start local database.",
+                  }),
+              ),
+            );
+            if (startExit !== 0) {
+              return yield* Effect.fail(
+                new LegacyDeclarativeShadowDbError({
+                  message: `failed to start local database: exit ${startExit}`,
+                }),
+              );
+            }
+          }),
+        ),
     });
   }),
 );
