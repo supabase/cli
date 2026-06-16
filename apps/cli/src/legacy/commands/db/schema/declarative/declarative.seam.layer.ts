@@ -1,7 +1,8 @@
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Option, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
+import { LegacyNetworkIdFlag } from "../../../../../shared/legacy/global-flags.ts";
 import { resolveBinary } from "../../../../../shared/legacy/go-proxy.layer.ts";
 import { LegacyCliConfig } from "../../../../config/legacy-cli-config.service.ts";
 import { LegacyDeclarativeShadowDbError } from "./declarative.errors.ts";
@@ -17,6 +18,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
   LegacyDeclarativeSeam,
   Effect.gen(function* () {
     const cliConfig = yield* LegacyCliConfig;
+    const networkId = yield* LegacyNetworkIdFlag;
     const spawner = yield* ChildProcessSpawner;
     const resolved = resolveBinary();
 
@@ -41,6 +43,12 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               mode,
               "--experimental",
               ...(noCache ? ["--no-cache"] : []),
+              // The shadow DB is provisioned via DockerStart, which reads the root
+              // --network-id from viper (`apps/cli-go/internal/utils/docker.go:267-271`).
+              // Forward it on the seam argv so catalog/shadow containers land on the
+              // same custom network as the pg-delta containers (LegacyGoProxy forwards
+              // it the same way).
+              ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
             ];
             const command = ChildProcess.make(resolved.found, args, {
               cwd: cliConfig.workdir,
