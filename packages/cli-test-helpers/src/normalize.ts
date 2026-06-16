@@ -128,6 +128,22 @@ export function normalize(output: string, options: NormalizeOptions = {}): strin
       //      strip it from both sides. (Same class of divergence that defers the
       //      login/logout parity tests in auth.e2e.test.ts.)
       .replace(/^Keyring is not supported on WSL\n?/gm, "")
+      // 17c. Docker image-pull progress streamed to stderr. The Go CLI pre-pulls
+      //      via the Docker API and renders progress with jsonmessage
+      //      (`apps/cli-go/internal/utils/docker.go:206-214`), while the ts-legacy
+      //      `LegacyDockerRun` shells out to `docker run`, whose auto-pull progress
+      //      has a different shape. Either way the layer IDs, ordering, and timing
+      //      are non-deterministic and only appear on a cache miss — Go's own dump
+      //      tests mock Docker and never assert on it. Strip both formats so a cold
+      //      image pull doesn't produce false parity failures (e.g. `db dump`).
+      .replace(/^Unable to find image '[^']+' locally\n?/gm, "")
+      .replace(/^[^\n]*: Pulling from \S+\n?/gm, "")
+      .replace(
+        /^[0-9a-f]{12}: (?:Pulling fs layer|Waiting|Downloading|Download complete|Verifying Checksum|Extracting|Pull complete|Already exists|Retrying)[^\n]*\n?/gm,
+        "",
+      )
+      .replace(/^Digest: sha256:[0-9a-f]+\n?/gm, "")
+      .replace(/^Status: (?:Downloaded newer image for|Image is up to date for)[^\n]*\n?/gm, "")
       // 18. Trailing whitespace on each line
       .replace(/[ \t]+$/gm, "")
       // 19. Collapse 3+ consecutive blank lines to two newlines
