@@ -89,6 +89,8 @@ function requireApiStringArray(value: unknown): ReadonlyArray<string> | null {
   }
   if (value.length === 0) return null;
   return value.map((element) => {
+    // Go's encoding/json decodes a null array element to the zero string "".
+    if (element === null || element === undefined) return "";
     if (typeof element !== "string") {
       throw new TypeError("cannot unmarshal advisor categories element into string");
     }
@@ -214,7 +216,24 @@ export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<
   }
   const lints: Array<LegacyAdvisorLint> = [];
   for (const entry of lintsRaw) {
-    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    // Go's encoding/json decodes a null slice element to the zero-value struct
+    // (all fields at their zero values), not an UnmarshalTypeError. Normalise
+    // null/undefined to an empty record so the field decoders produce zero values.
+    if (entry === null || entry === undefined) {
+      lints.push({
+        name: "",
+        title: "",
+        level: "",
+        facing: "",
+        categories: null,
+        description: "",
+        detail: "",
+        remediation: "",
+        cacheKey: "",
+      });
+      continue;
+    }
+    if (typeof entry !== "object" || Array.isArray(entry)) {
       throw new TypeError("cannot unmarshal lint entry into Lint");
     }
     const record = entry as Record<string, unknown>;

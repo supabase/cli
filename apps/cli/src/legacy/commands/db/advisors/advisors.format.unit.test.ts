@@ -152,6 +152,48 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
     expect(apiResponseToLegacyAdvisorLints({ lints: null })).toEqual([]);
   });
 
+  it("null lints element becomes zero-value lint (Go encoding/json nil-slice decode parity)", () => {
+    // Go's encoding/json decodes a null slice element to the zero-value struct,
+    // not an UnmarshalTypeError. The zero lint has empty strings and nil categories.
+    const result = apiResponseToLegacyAdvisorLints({
+      lints: [
+        null,
+        {
+          name: "rls_disabled",
+          level: "ERROR",
+          facing: "EXTERNAL",
+          categories: ["SECURITY"],
+          cache_key: "ck",
+        },
+      ],
+    });
+    // null → zero-value lint (not an error)
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({
+      name: "",
+      title: "",
+      level: "",
+      facing: "",
+      categories: null,
+      description: "",
+      detail: "",
+      remediation: "",
+      cacheKey: "",
+    });
+    // valid sibling is preserved
+    expect(result[1]?.name).toBe("rls_disabled");
+    expect(result[1]?.level).toBe("ERROR");
+  });
+
+  it("null categories element becomes empty string (Go encoding/json []string null-element parity)", () => {
+    // Go's encoding/json decodes a null element inside a []string to the zero
+    // string "", not an UnmarshalTypeError.
+    const result = apiResponseToLegacyAdvisorLints({
+      lints: [{ name: "x", categories: [null, "SECURITY"] }],
+    });
+    expect(result[0]?.categories).toEqual(["", "SECURITY"]);
+  });
+
   it("throws on structural shapes Go's typed decode rejects", () => {
     // Go decodes into V1ProjectAdvisorsResponse; a type mismatch on a container
     // field is an UnmarshalTypeError → non-zero failure (not "No issues found").
