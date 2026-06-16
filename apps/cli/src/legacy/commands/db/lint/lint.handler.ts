@@ -6,7 +6,6 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyFailsOn } from "../../../shared/legacy-fail-on.ts";
-import { legacyNormalizeSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
@@ -124,9 +123,10 @@ const runLint = Effect.fnUntraced(function* (
   const failOn = Option.getOrElse(flags.failOn, () => "none");
 
   // Go's `--schema` is a Cobra `StringSliceVarP` (`cmd/db.go:506`), which splits
-  // comma-separated values, so `--schema public,private` must lint both schemas
-  // (not query a single schema literally named "public,private").
-  const schemaFlags = legacyNormalizeSchemaFlags(flags.schema);
+  // comma-separated values via encoding/csv at parse time. The TS command def
+  // applies `Flag.mapTryCatch(legacyParseSchemaFlags)` so `flags.schema` is already
+  // the fully CSV-parsed and validated schema list.
+  const schemaFlags = flags.schema;
 
   const lintBody = Effect.gen(function* () {
     // The resolver applies Go's `ParseDatabaseConfig` precedence (db-url > linked >

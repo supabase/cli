@@ -14,14 +14,32 @@
  * Shared by `gen types` and `db lint` (two command families).
  */
 
+/** Thrown by `legacyParseSchemaFlags` when a `--schema` value is not valid CSV. */
+export class LegacySchemaFlagParseError extends Error {
+  readonly value: string;
+  readonly detail: string;
+  constructor(value: string, detail: string) {
+    super(`parse error on line 1, column 0: ${detail}`);
+    this.name = "LegacySchemaFlagParseError";
+    this.value = value;
+    this.detail = detail;
+  }
+}
+
 /**
  * Parses one CSV record from `val`, matching Go's `encoding/csv` defaults used by
  * pflag's `StringSlice.Set` (`readAsCSV` → `csv.NewReader`).
  *
  * Rules: comma delimiter, double-quote quoting, `""` escapes a literal quote.
  * Whitespace is preserved (Go does not trim). An empty string returns `[]`.
+ *
+ * **Throws `LegacySchemaFlagParseError`** on any of the three malformed-CSV conditions
+ * that Go's `csv.Reader` rejects:
+ *   - Quoted field with no closing quote (`"tenant`) → "extraneous or missing \" in quoted-field"
+ *   - Extra non-comma bytes after a closing quote (`"a"b`) → "extraneous or missing \" in quoted-field"
+ *   - A bare `"` inside an unquoted field (`a"b`) → "bare \" in non-quoted-field"
  */
-function readAsCSV(val: string): string[] {
+function readAsCSVStrict(val: string): string[] {
   if (val === "") return [];
   const fields: string[] = [];
   let i = 0;
@@ -30,6 +48,7 @@ function readAsCSV(val: string): string[] {
       // Quoted field: accumulate until the closing (unescaped) quote.
       i++; // skip opening quote
       let field = "";
+      let closed = false;
       while (i < val.length) {
         if (val[i] === '"') {
           if (i + 1 < val.length && val[i + 1] === '"') {
@@ -37,17 +56,31 @@ function readAsCSV(val: string): string[] {
             i += 2; // "" → single "
           } else {
             i++; // skip closing quote
+            closed = true;
             break;
           }
         } else {
           field += val[i++];
         }
       }
+      if (!closed) {
+        // Ran off the end without finding a closing quote.
+        throw new LegacySchemaFlagParseError(val, `extraneous or missing " in quoted-field`);
+      }
+      // After the closing quote only a comma or end-of-string is allowed.
+      if (i < val.length && val[i] !== ",") {
+        throw new LegacySchemaFlagParseError(val, `extraneous or missing " in quoted-field`);
+      }
       fields.push(field);
     } else {
-      // Unquoted field: read until next comma.
+      // Unquoted field: a bare `"` anywhere inside is illegal.
       const start = i;
-      while (i < val.length && val[i] !== ",") i++;
+      while (i < val.length && val[i] !== ",") {
+        if (val[i] === '"') {
+          throw new LegacySchemaFlagParseError(val, `bare " in non-quoted-field`);
+        }
+        i++;
+      }
       fields.push(val.slice(start, i));
     }
     // Consume the delimiter; a trailing comma produces one more empty field.
@@ -61,10 +94,23 @@ function readAsCSV(val: string): string[] {
   return fields;
 }
 
-export function legacyNormalizeSchemaFlags(raw: ReadonlyArray<string>): ReadonlyArray<string> {
+/**
+ * CSV-parses and flattens all raw `--schema` occurrences.
+ *
+ * **Throws `LegacySchemaFlagParseError`** on the first malformed value, matching
+ * Go's pflag parse-time behaviour where a bad `--schema` value fails the command
+ * before it runs (Go: `invalid argument "..." for "-s, --schema" flag: parse error ...`).
+ *
+ * Valid behaviour:
+ *   - `"tenant,one"` → `["tenant,one"]` (quoted comma stays one field)
+ *   - `public,private` → `["public", "private"]`
+ *   - no trimming, `""` escapes a literal quote inside a quoted field
+ *   - empty string → no field
+ */
+export function legacyParseSchemaFlags(rawValues: ReadonlyArray<string>): ReadonlyArray<string> {
   const schemas: string[] = [];
-  for (const value of raw) {
-    for (const field of readAsCSV(value)) {
+  for (const value of rawValues) {
+    for (const field of readAsCSVStrict(value)) {
       schemas.push(field);
     }
   }

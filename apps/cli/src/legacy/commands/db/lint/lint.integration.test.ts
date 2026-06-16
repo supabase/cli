@@ -449,13 +449,16 @@ describe("legacy db lint", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("splits a comma-separated --schema into multiple schemas (Go StringSlice parity)", () => {
+  it.live("lints multiple pre-parsed schemas from a comma-separated --schema value", () => {
+    // CSV parsing of `public,private` into ["public", "private"] now happens at
+    // Flag.mapTryCatch parse time (before the handler). The handler receives the
+    // already-split list and uses it directly.
     const { layer, connection } = setup({
       checkRows: { public: [], private: [] },
     });
     return Effect.gen(function* () {
-      yield* legacyDbLint(flags({ schema: ["public,private"] }));
-      // Both schemas linted, not a single literal "public,private".
+      yield* legacyDbLint(flags({ schema: ["public", "private"] }));
+      // Both schemas linted — the handler no longer does CSV splitting itself.
       expect(connection.linted).toEqual(["public", "private"]);
     }).pipe(Effect.provide(layer));
   });

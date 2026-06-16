@@ -2,6 +2,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import { legacyDbLint } from "./lint.handler.ts";
 import { legacyDbLintRuntimeLayer } from "./lint.layers.ts";
 
@@ -22,6 +23,10 @@ const config = {
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
+    Flag.mapTryCatch(
+      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (err) => (err instanceof Error ? err.message : String(err)),
+    ),
   ),
   level: Flag.choice("level", ["warning", "error"] as const).pipe(
     Flag.withDescription("Error level to emit."),
