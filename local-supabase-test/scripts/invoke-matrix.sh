@@ -22,6 +22,14 @@ if [[ -f "$ROOT_DIR/.env.local" ]]; then
   SUPABASE_ANON_KEY="${SUPABASE_ANON_KEY//$'\r'/}"
 fi
 
+normalize_slug() {
+  local value="$1"
+  value="${value//$'\r'/}"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
 if [[ -z "${SUPABASE_URL:-}" || -z "${SUPABASE_ANON_KEY:-}" ]]; then
   echo "SUPABASE_URL and SUPABASE_ANON_KEY must be set" >&2
   exit 1
@@ -30,14 +38,20 @@ fi
 if [[ "$#" -gt 0 ]]; then
   SLUGS=("$@")
 else
-  mapfile -t SLUGS < "$MANIFEST"
+  SLUGS=()
+  while IFS= read -r slug || [[ -n "$slug" ]]; do
+    slug="$(normalize_slug "$slug")"
+    [[ -z "$slug" ]] && continue
+    SLUGS+=("$slug")
+  done < "$MANIFEST"
 fi
 
 PASS=0
 FAIL=0
 
 invoke_slug() {
-  local slug="$1"
+  local slug
+  slug="$(normalize_slug "$1")"
   local url="${SUPABASE_URL%/}/functions/v1/${slug}"
   local expect_status expect_auth
 
@@ -92,6 +106,7 @@ invoke_slug() {
 }
 
 for slug in "${SLUGS[@]}"; do
+  slug="$(normalize_slug "$slug")"
   [[ -z "$slug" ]] && continue
   invoke_slug "$slug"
 done
