@@ -5,7 +5,11 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
 
-import { legacyLoadProjectEnv, legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
+import {
+  legacyLoadProjectEnv,
+  legacyReadDbToml,
+  legacyResolveDeclarativeDir,
+} from "./legacy-db-config.toml-read.ts";
 
 function withConfig(content: string | undefined, poolerUrl?: string) {
   const dir = mkdtempSync(join(tmpdir(), "legacy-db-toml-"));
@@ -392,4 +396,120 @@ describe("legacyReadDbToml", () => {
       ),
     );
   });
+});
+
+describe("legacyReadDbToml [experimental.pgdelta]", () => {
+  it.effect("defaults pg-delta to disabled with no config", () => {
+    const dir = withConfig(undefined);
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.pgDelta.enabled).toBe(false);
+          expect(Option.isNone(v.pgDelta.declarativeSchemaPath)).toBe(true);
+          expect(Option.isNone(v.pgDelta.formatOptions)).toBe(true);
+          expect(Option.isNone(v.pgDelta.npmVersion)).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reads enabled / format_options and prefixes a relative schema path", () => {
+    const dir = withConfig(
+      [
+        "[experimental.pgdelta]",
+        "enabled = true",
+        'declarative_schema_path = "./db/decl"',
+        'format_options = "{\\"keywordCase\\":\\"upper\\",\\"indent\\":2}"',
+        "",
+      ].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.pgDelta.enabled).toBe(true);
+          // Go's config.resolve prefixes a relative path with SupabaseDirPath.
+          expect(Option.getOrNull(v.pgDelta.declarativeSchemaPath)).toBe(
+            join("supabase", "db", "decl"),
+          );
+          expect(Option.getOrNull(v.pgDelta.formatOptions)).toBe(
+            '{"keywordCase":"upper","indent":2}',
+          );
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps an absolute declarative_schema_path unchanged", () => {
+    const dir = withConfig(
+      ["[experimental.pgdelta]", 'declarative_schema_path = "/abs/decl"', ""].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.pgDelta.declarativeSchemaPath)).toBe("/abs/decl");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reads the npm version from .temp/pgdelta-version (trimmed)", () => {
+    const dir = withConfig(["[experimental.pgdelta]", "enabled = true", ""].join("\n"));
+    mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
+    writeFileSync(join(dir, "supabase", ".temp", "pgdelta-version"), "  9.9.9-test  \n");
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.pgDelta.npmVersion)).toBe("9.9.9-test");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("leaves npm version None for an empty .temp/pgdelta-version", () => {
+    const dir = withConfig(["[experimental.pgdelta]", "enabled = true", ""].join("\n"));
+    mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
+    writeFileSync(join(dir, "supabase", ".temp", "pgdelta-version"), "   \n");
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.isNone(v.pgDelta.npmVersion)).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+});
+
+describe("legacyResolveDeclarativeDir", () => {
+  it.effect("uses the default supabase/database when no path is configured", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      expect(
+        legacyResolveDeclarativeDir(path, {
+          enabled: false,
+          declarativeSchemaPath: Option.none(),
+          formatOptions: Option.none(),
+          npmVersion: Option.none(),
+        }),
+      ).toBe(join("supabase", "database"));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect("uses the configured declarative_schema_path when set", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      expect(
+        legacyResolveDeclarativeDir(path, {
+          enabled: true,
+          declarativeSchemaPath: Option.some(join("supabase", "db", "decl")),
+          formatOptions: Option.none(),
+          npmVersion: Option.none(),
+        }),
+      ).toBe(join("supabase", "db", "decl"));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

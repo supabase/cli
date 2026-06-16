@@ -8,6 +8,7 @@ import type { LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
  */
 export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<string> {
   const { network, binds, env, securityOpt, extraHosts, workingDir, image, cmd } = opts;
+  const entrypoint = opts.entrypoint ?? Option.none<string>();
   const networkArgs: ReadonlyArray<string> =
     network._tag === "host"
       ? ["--network", "host"]
@@ -30,6 +31,10 @@ export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<
     ...Object.keys(env).flatMap((k) => ["-e", k]),
     ...securityOpt.flatMap((s) => ["--security-opt", s]),
     ...(Option.isSome(workingDir) ? ["-w", workingDir.value] : []),
+    // `--entrypoint` must precede the image (it is a `docker run` flag); the
+    // remaining `cmd` tokens become the entrypoint's args, mirroring Go's
+    // `Entrypoint: [value, ...cmd]`.
+    ...(Option.isSome(entrypoint) ? ["--entrypoint", entrypoint.value] : []),
     image,
     ...cmd,
   ];

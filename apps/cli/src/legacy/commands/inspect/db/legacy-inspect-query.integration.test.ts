@@ -109,6 +109,7 @@ function mockDbConnection(opts: {
       return Effect.succeed({
         exec: () => Effect.void,
         extensionExists: () => Effect.succeed(false),
+        queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         query: (sql: string, params?: ReadonlyArray<unknown>) => {
           querySql = sql;

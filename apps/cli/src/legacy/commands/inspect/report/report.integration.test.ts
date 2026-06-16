@@ -91,6 +91,7 @@ function mockReportConnection(opts: {
         exec: () => Effect.void,
         extensionExists: () => Effect.succeed(false),
         query: () => Effect.succeed([]),
+        queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
         copyToCsv: (sql: string) => {
           copiedSql.push(sql);
           if (opts.copyFails === true) {

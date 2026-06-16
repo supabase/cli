@@ -1,9 +1,14 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stdio } from "effect";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
+import { LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
 import { CurrentAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { withLegacyCommandInstrumentation } from "./legacy-command-instrumentation.ts";
+import {
+  LEGACY_QUERY_OUTPUT_FORMATS,
+  LegacyInvalidOutputFormatError,
+} from "../shared/legacy-go-output-flag.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 
 function mockContextualAnalytics() {
@@ -168,6 +173,28 @@ describe("withLegacyCommandInstrumentation", () => {
     );
   });
 
+  it.live("redacts the --password credential (never safe-listed)", () => {
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { password: Option.some("super-secret") },
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--password", "super-secret"]) }),
+      ),
+      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ password: "<redacted>" });
+        }),
+      ),
+    );
+  });
+
   it.live("passes boolean flag values through verbatim", () => {
     const analytics = mockContextualAnalytics();
 
@@ -314,6 +341,71 @@ describe("withLegacyCommandInstrumentation", () => {
           const flags = event?.properties.flags as Record<string, unknown>;
           // Keys should be insertion-ordered alphabetically.
           expect(Object.keys(flags)).toEqual(["project-ref", "timestamp"]);
+        }),
+      ),
+    );
+  });
+
+  it.live("rejects an -o value outside the command's enum, before running it", () => {
+    const analytics = mockContextualAnalytics();
+
+    return Effect.sync(() => "must not run").pipe(
+      withLegacyCommandInstrumentation({ flags: {} }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "table"]) })),
+      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      // `table` is valid on the shared global union but not for a resource command.
+      Effect.provide(Layer.succeed(LegacyOutputFlag, Option.some("table" as const))),
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error).toBeInstanceOf(LegacyInvalidOutputFormatError);
+          expect((error as LegacyInvalidOutputFormatError).message).toBe(
+            'invalid argument "table" for "-o, --output" flag: must be one of [ env | pretty | json | toml | yaml ]',
+          );
+          // Go rejects at parse time, before telemetry — so no event is emitted.
+          expect(analytics.captured).toEqual([]);
+        }),
+      ),
+    );
+  });
+
+  it.live("accepts a command-specific -o value declared via outputFormats", () => {
+    const analytics = mockContextualAnalytics();
+
+    return Effect.sync(() => "ok").pipe(
+      withLegacyCommandInstrumentation({ flags: {}, outputFormats: LEGACY_QUERY_OUTPUT_FORMATS }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "csv"]) })),
+      Effect.provide(commandRuntimeLayer(["db", "query"])),
+      Effect.provide(Layer.succeed(LegacyOutputFlag, Option.some("csv" as const))),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(analytics.captured).toHaveLength(1);
+          expect(analytics.captured[0]?.properties.exit_code).toBe(0);
+        }),
+      ),
+    );
+  });
+
+  it.live("rejects a resource-only -o value for db query's narrower enum", () => {
+    const analytics = mockContextualAnalytics();
+
+    return Effect.sync(() => "must not run").pipe(
+      withLegacyCommandInstrumentation({ flags: {}, outputFormats: LEGACY_QUERY_OUTPUT_FORMATS }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "yaml"]) })),
+      Effect.provide(commandRuntimeLayer(["db", "query"])),
+      Effect.provide(Layer.succeed(LegacyOutputFlag, Option.some("yaml" as const))),
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect((error as LegacyInvalidOutputFormatError).message).toBe(
+            'invalid argument "yaml" for "-o, --output" flag: must be one of [ json | table | csv ]',
+          );
         }),
       ),
     );

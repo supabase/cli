@@ -1,6 +1,32 @@
+import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { Output } from "../../../../shared/output/output.service.ts";
+import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { LegacyDbDumpRunError } from "./dump.errors.ts";
 import { legacyDbDump } from "./dump.handler.ts";
+import { legacyDbDumpRuntimeLayer } from "./dump.layers.ts";
+
+/**
+ * `db dump` streams the pg_dump SQL to stdout (or `--file`) in every output
+ * format — Go has no `--output-format` for it, so there is no machine envelope.
+ * A *run* failure (non-zero container exit) would otherwise let
+ * `withJsonErrorHandling` append a JSON error object to stdout after the SQL has
+ * already been written, corrupting machine consumers. In json/stream-json mode
+ * send the diagnostic to stderr and exit 1 instead, matching Go's
+ * `recoverAndExit`; text mode keeps normal error rendering.
+ */
+const onRunFailure = (error: LegacyDbDumpRunError) =>
+  Effect.gen(function* () {
+    const output = yield* Output;
+    if (output.format === "text") return yield* Effect.fail(error);
+    const processControl = yield* ProcessControl;
+    yield* output.raw(`${error.message}\n`, "stderr");
+    yield* processControl.setExitCode(1);
+  });
 
 const config = {
   dryRun: Flag.boolean("dry-run").pipe(
@@ -49,5 +75,30 @@ export type LegacyDbDumpFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const legacyDbDumpCommand = Command.make("dump", config).pipe(
   Command.withDescription("Dumps data or schemas from the remote database."),
   Command.withShortDescription("Dumps data or schemas from the remote database"),
-  Command.withHandler((flags) => legacyDbDump(flags)),
+  Command.withHandler((flags) =>
+    legacyDbDump(flags).pipe(
+      withLegacyCommandInstrumentation({
+        flags: {
+          "dry-run": flags.dryRun,
+          "data-only": flags.dataOnly,
+          "use-copy": flags.useCopy,
+          exclude: flags.exclude,
+          "role-only": flags.roleOnly,
+          "keep-comments": flags.keepComments,
+          file: flags.file,
+          "db-url": flags.dbUrl,
+          linked: flags.linked,
+          local: flags.local,
+          // `password` must never be added to `safeFlags` — it is a credential and
+          // must always reach telemetry as `<redacted>` (matches Go, which never
+          // marks `--password` telemetry-safe).
+          password: flags.password,
+          schema: flags.schema,
+        },
+      }),
+      Effect.catchTag("LegacyDbDumpRunError", onRunFailure),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyDbDumpRuntimeLayer),
 );

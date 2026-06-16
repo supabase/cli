@@ -1,6 +1,10 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../../../shared/output/json-error-handling.ts";
+import { withLegacyCommandInstrumentation } from "../../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyDbSchemaDeclarativeSync } from "./sync.handler.ts";
+import { legacyDbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
 
 const config = {
   noCache: Flag.boolean("no-cache").pipe(
@@ -35,5 +39,20 @@ export type LegacyDbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer
 export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   Command.withDescription("Generate a new migration from declarative schema."),
   Command.withShortDescription("Generate a new migration from declarative schema"),
-  Command.withHandler((flags) => legacyDbSchemaDeclarativeSync(flags)),
+  Command.withHandler((flags) =>
+    legacyDbSchemaDeclarativeSync(flags).pipe(
+      withLegacyCommandInstrumentation({
+        flags: {
+          "no-cache": flags.noCache,
+          schema: flags.schema,
+          file: flags.file,
+          name: flags.name,
+          apply: flags.apply,
+          "no-apply": flags.noApply,
+        },
+      }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyDbSchemaDeclarativeSyncRuntimeLayer),
 );

@@ -32,11 +32,69 @@ interface LegacyDbTomlValues {
   readonly poolerConnectionString: Option.Option<string>;
   /** top-level `project_id`, used to name the local docker network. */
   readonly projectId: Option.Option<string>;
+  /** `[db] major_version`, default 17 (`apps/cli-go/pkg/config/templates/config.toml:42`). */
+  readonly majorVersion: number;
+  /**
+   * `[experimental.pgdelta]` config, consumed by the declarative-schema commands
+   * (`db schema declarative generate` / `sync`). Mirrors Go's `PgDeltaConfig`
+   * (`apps/cli-go/pkg/config/config.go:228-234`).
+   */
+  readonly pgDelta: LegacyPgDeltaTomlConfig;
+  /**
+   * The subset of config that shapes the shadow-database platform baseline and
+   * therefore the declarative catalog-cache key (Go's `setupInputsToken`,
+   * `apps/cli-go/internal/db/declarative/declarative.go:688`). Drift in any of
+   * these must self-invalidate cached catalogs.
+   */
+  readonly baseline: LegacyBaselineTomlConfig;
+}
+
+/** Cache-key inputs from `[auth]`/`[storage]`/`[realtime]`/`[api]`/`[db.vault]`. */
+interface LegacyBaselineTomlConfig {
+  /** `[auth] enabled`, default true. Gates `initSchema`'s auth service migration. */
+  readonly authEnabled: boolean;
+  /** `[storage] enabled`, default true. */
+  readonly storageEnabled: boolean;
+  /** `[realtime] enabled`, default true. */
+  readonly realtimeEnabled: boolean;
+  /**
+   * `[api] auto_expose_new_tables` (tri-state `*bool`). `None` when unset. Drives
+   * `ApplyApiPrivileges`; the cache key folds in the *effective* bool (unset and
+   * `false` both mean revoke-by-default since the 2026-05-30 flip).
+   */
+  readonly apiAutoExposeNewTables: Option.Option<boolean>;
+  /** `[db.vault]` secret names (sorted), created during setup by `UpsertVaultSecrets`. */
+  readonly vaultNames: ReadonlyArray<string>;
+}
+
+/**
+ * The `[experimental.pgdelta]` subtree. `npmVersion` is sourced from
+ * `supabase/.temp/pgdelta-version` (not the TOML), matching Go's `config.Load`
+ * (`config.go:700-709`).
+ */
+export interface LegacyPgDeltaTomlConfig {
+  /** `[experimental.pgdelta] enabled`, default false. Go's `IsPgDeltaEnabled`. */
+  readonly enabled: boolean;
+  /**
+   * `[experimental.pgdelta] declarative_schema_path`, resolved to a
+   * `supabase/`-prefixed path when relative (Go's `config.resolve`,
+   * `config.go:816-819`). `None` → callers use the default `supabase/database`
+   * (`legacyResolveDeclarativeDir`).
+   */
+  readonly declarativeSchemaPath: Option.Option<string>;
+  /** `[experimental.pgdelta] format_options`, a JSON string passed to pg-delta. */
+  readonly formatOptions: Option.Option<string>;
+  /** `@supabase/pg-delta` npm version from `.temp/pgdelta-version`. */
+  readonly npmVersion: Option.Option<string>;
 }
 
 const DEFAULT_PORT = 54322;
 const DEFAULT_SHADOW_PORT = 54320;
+const DEFAULT_MAJOR_VERSION = 17;
 const DEFAULT_PASSWORD = "postgres";
+
+/** Default declarative schema dir (`utils.DeclarativeDir`, `misc.go:102`). */
+const DEFAULT_DECLARATIVE_DIR_SEGMENTS = ["supabase", "database"] as const;
 
 type RawDoc = { readonly [key: string]: unknown };
 
@@ -169,6 +227,17 @@ function nonEmptyString(value: unknown): Option.Option<string> {
 }
 
 /**
+ * Resolve a `[section] enabled` style bool. Go decodes weakly (a string `"true"`
+ * via `env(VAR)` also counts) and applies the schema default when the key is
+ * absent. `auth`/`storage`/`realtime` all default `true`.
+ */
+function resolveBool(value: unknown, fallback: boolean, lookup: EnvLookup): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return legacyExpandEnv(value, lookup) === "true";
+  return fallback;
+}
+
+/**
  * Reads `<workdir>/supabase/config.toml` (db subtree + project id) and the linked
  * `<workdir>/supabase/.temp/pooler-url`. `fs`/`path` are passed in so the resolver
  * can capture them once and keep its own `R` at `never`.
@@ -203,6 +272,11 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   );
 
   let db: RawDoc | undefined;
+  let pgDeltaRaw: RawDoc | undefined;
+  let authRaw: RawDoc | undefined;
+  let storageRaw: RawDoc | undefined;
+  let realtimeRaw: RawDoc | undefined;
+  let apiRaw: RawDoc | undefined;
   let projectId = Option.none<string>();
   if (Option.isSome(maybeContent)) {
     let doc: RawDoc | undefined;
@@ -216,6 +290,11 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
       );
     }
     db = asRecord(doc?.["db"]);
+    pgDeltaRaw = asRecord(asRecord(doc?.["experimental"])?.["pgdelta"]);
+    authRaw = asRecord(doc?.["auth"]);
+    storageRaw = asRecord(doc?.["storage"]);
+    realtimeRaw = asRecord(doc?.["realtime"]);
+    apiRaw = asRecord(doc?.["api"]);
     projectId = nonEmptyString(doc?.["project_id"]);
   }
 
@@ -225,6 +304,16 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   const poolerConnectionString = yield* fs
     .readFileString(poolerUrlPath)
     .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
+
+  // Go: `config.go:700-709` — the pg-delta npm version is read from
+  // `.temp/pgdelta-version` (trimmed, non-empty) during Load, never from the
+  // TOML. An absent/empty file leaves it `None` (callers fall back to the
+  // default via `legacyEffectivePgDeltaNpmVersion`).
+  const pgDeltaVersionPath = path.join(supabaseDir, ".temp", "pgdelta-version");
+  const pgDeltaNpmVersion = yield* fs.readFileString(pgDeltaVersionPath).pipe(
+    Effect.map((content) => nonEmptyString(content.trim())),
+    Effect.orElseSucceed(Option.none<string>),
+  );
 
   // Resolve `env(VAR)` against the shell env first, then the project `.env` files
   // (Go's `loadNestedEnv` populates the process env before `LoadEnvHook`).
@@ -264,12 +353,92 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     envOverride("SUPABASE_DB_PASSWORD") ??
     (typeof db?.["password"] === "string" ? db["password"] : undefined);
 
+  const majorVersionRaw = envOverride("SUPABASE_DB_MAJOR_VERSION") ?? db?.["major_version"];
+  const majorVersionNum =
+    typeof majorVersionRaw === "number"
+      ? majorVersionRaw
+      : typeof majorVersionRaw === "string"
+        ? Number.parseInt(majorVersionRaw, 10)
+        : Number.NaN;
+  const majorVersion = Number.isInteger(majorVersionNum) ? majorVersionNum : DEFAULT_MAJOR_VERSION;
+
+  // `[experimental.pgdelta]`. `enabled` is a TOML bool (Go decodes weakly, so an
+  // `env(VAR)`/string "true" also counts); `declarative_schema_path` is resolved
+  // to a `supabase/`-prefixed path when relative (Go's `config.resolve`).
+  const enabledRaw = pgDeltaRaw?.["enabled"];
+  const enabled =
+    typeof enabledRaw === "boolean"
+      ? enabledRaw
+      : typeof enabledRaw === "string"
+        ? legacyExpandEnv(enabledRaw, lookup) === "true"
+        : false;
+
+  const declarativeSchemaPathRaw = pgDeltaRaw?.["declarative_schema_path"];
+  let declarativeSchemaPath = Option.none<string>();
+  if (typeof declarativeSchemaPathRaw === "string") {
+    const expanded = legacyExpandEnv(declarativeSchemaPathRaw, lookup);
+    if (expanded.length > 0) {
+      declarativeSchemaPath = Option.some(
+        path.isAbsolute(expanded) ? expanded : path.join("supabase", expanded),
+      );
+    }
+  }
+
+  const formatOptionsRaw = pgDeltaRaw?.["format_options"];
+  const formatOptions =
+    typeof formatOptionsRaw === "string"
+      ? nonEmptyString(legacyExpandEnv(formatOptionsRaw, lookup))
+      : Option.none<string>();
+
+  // `[db.vault]` secret names, sorted (Go's `setupInputsToken` sorts before hashing).
+  const vaultRaw = asRecord(db?.["vault"]);
+  const vaultNames = vaultRaw === undefined ? [] : Object.keys(vaultRaw).sort();
+
+  // `[api] auto_expose_new_tables` is a tri-state `*bool`: present → Some(bool).
+  const autoExposeRaw = apiRaw?.["auto_expose_new_tables"];
+  const apiAutoExposeNewTables =
+    typeof autoExposeRaw === "boolean"
+      ? Option.some(autoExposeRaw)
+      : typeof autoExposeRaw === "string"
+        ? Option.some(legacyExpandEnv(autoExposeRaw, lookup) === "true")
+        : Option.none<boolean>();
+
   const values: LegacyDbTomlValues = {
     port,
     shadowPort,
     password: passwordRaw !== undefined ? legacyExpandEnv(passwordRaw, lookup) : DEFAULT_PASSWORD,
     poolerConnectionString,
     projectId,
+    majorVersion,
+    pgDelta: {
+      enabled,
+      declarativeSchemaPath,
+      formatOptions,
+      npmVersion: pgDeltaNpmVersion,
+    },
+    baseline: {
+      authEnabled: resolveBool(authRaw?.["enabled"], true, lookup),
+      storageEnabled: resolveBool(storageRaw?.["enabled"], true, lookup),
+      realtimeEnabled: resolveBool(realtimeRaw?.["enabled"], true, lookup),
+      apiAutoExposeNewTables,
+      vaultNames,
+    },
   };
   return values;
 });
+
+/**
+ * The effective declarative schema directory: the configured
+ * `declarative_schema_path` (already `supabase/`-prefixed when relative) or the
+ * default `supabase/database`. Mirrors Go's `utils.GetDeclarativeDir`
+ * (`apps/cli-go/internal/utils/misc.go:119-124`). `path` joins the segments so
+ * the separator matches the host platform, as Go's `filepath.Join` does.
+ */
+export function legacyResolveDeclarativeDir(
+  path: Path.Path,
+  pgDelta: LegacyPgDeltaTomlConfig,
+): string {
+  return Option.getOrElse(pgDelta.declarativeSchemaPath, () =>
+    path.join(...DEFAULT_DECLARATIVE_DIR_SEGMENTS),
+  );
+}

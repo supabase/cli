@@ -1,6 +1,13 @@
+import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../../../shared/output/json-error-handling.ts";
+import { Output } from "../../../../../../shared/output/output.service.ts";
+import { legacyAqua } from "../../../../../shared/legacy-colors.ts";
+import { withLegacyCommandInstrumentation } from "../../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyDbSchemaDeclarativeGenerate } from "./generate.handler.ts";
+import { legacyDbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
 
 const config = {
   noCache: Flag.boolean("no-cache").pipe(
@@ -41,5 +48,32 @@ export type LegacyDbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.I
 export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate", config).pipe(
   Command.withDescription("Generate declarative schema from a database."),
   Command.withShortDescription("Generate declarative schema from a database"),
-  Command.withHandler((flags) => legacyDbSchemaDeclarativeGenerate(flags)),
+  Command.withHandler((flags) =>
+    legacyDbSchemaDeclarativeGenerate(flags).pipe(
+      // Go's PostRun prints this on success (`cmd/db_schema_declarative.go:93`).
+      Effect.tap(() =>
+        Effect.gen(function* () {
+          const output = yield* Output;
+          yield* output.raw(`Finished ${legacyAqua("supabase db schema declarative generate")}.\n`);
+        }),
+      ),
+      withLegacyCommandInstrumentation({
+        flags: {
+          "no-cache": flags.noCache,
+          overwrite: flags.overwrite,
+          reset: flags.reset,
+          schema: flags.schema,
+          "db-url": flags.dbUrl,
+          linked: flags.linked,
+          local: flags.local,
+          // `password` must never be added to `safeFlags` — it is a credential and
+          // must always reach telemetry as `<redacted>` (matches Go, which never
+          // marks `--password` telemetry-safe).
+          password: flags.password,
+        },
+      }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyDbSchemaDeclarativeGenerateRuntimeLayer),
 );

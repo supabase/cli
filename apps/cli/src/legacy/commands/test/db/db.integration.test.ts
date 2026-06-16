@@ -73,6 +73,7 @@ function mockDbConnection(opts: {
         }
       }),
     extensionExists: () => Effect.succeed(opts.existed ?? false),
+    queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
     copyToCsv: () => Effect.succeed(new Uint8Array()),
     query: () => Effect.succeed([]),
   };
@@ -110,6 +111,12 @@ function mockDockerRun(opts: { exitCode?: number; runFails?: boolean }) {
       return opts.runFails === true
         ? Effect.fail(new LegacyDockerRunError({ message: "failed to run docker: not found" }))
         : Effect.succeed(opts.exitCode ?? 0);
+    },
+    runCapture: (runOpts) => {
+      lastOpts = runOpts;
+      return opts.runFails === true
+        ? Effect.fail(new LegacyDockerRunError({ message: "failed to run docker: not found" }))
+        : Effect.succeed({ exitCode: opts.exitCode ?? 0, stdout: new Uint8Array(0), stderr: "" });
     },
   });
   return {

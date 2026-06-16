@@ -143,13 +143,14 @@ export const legacyRoot = Command.make("supabase").pipe(
         if (createTicket) globalArgs.push("--create-ticket");
         if (agent !== "auto") globalArgs.push("--agent", agent);
 
-        // Go's `-o {json,yaml,toml,env}` selects a machine encoder the handler
-        // writes via `output.raw`. Keep the text layer (so errors still render
-        // as red text on stderr, matching Go), but suppress its progress spinner
-        // — otherwise clack writes ANSI to stdout and corrupts the payload
-        // (CLI-1546). `-o pretty` / no `-o` keep the normal text/json layers.
+        // Go's `-o {json,yaml,toml,env,csv}` selects a machine encoder the
+        // handler writes via `output.raw`. Keep the text layer (so errors still
+        // render as red text on stderr, matching Go), but suppress its progress
+        // spinner — otherwise clack writes ANSI to stdout and corrupts the
+        // payload (CLI-1546). `-o pretty` / `-o table` (`db query`'s human
+        // default) / no `-o` keep the normal text/json layers.
         const goFmt = Option.getOrUndefined(goOutput);
-        const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty";
+        const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty" && goFmt !== "table";
         const outputLayer = isGoMachineFormat
           ? legacyQuietProgressTextOutputLayer
           : outputLayerFor(outputFormat);

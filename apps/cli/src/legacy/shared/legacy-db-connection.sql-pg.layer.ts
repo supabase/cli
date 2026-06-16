@@ -403,27 +403,38 @@ const connect = (
     // `test db` / `inspect db`, which never copy, never open it) and closed by a
     // scope finalizer when the session's scope closes. The step-down runs once, here,
     // so every COPY executes with the same privileges as the primary session.
-    let copyClient: Pg.Client | undefined;
+    let rawClient: Pg.Client | undefined;
     yield* Effect.addFinalizer(() =>
-      copyClient === undefined
+      rawClient === undefined
         ? Effect.void
-        : Effect.promise(() => copyClient!.end().catch(() => {})),
+        : Effect.promise(() => rawClient!.end().catch(() => {})),
     );
-    const acquireCopyClient = Effect.gen(function* () {
-      if (copyClient !== undefined) return copyClient;
+    // A dedicated raw node-postgres client, reused by `copyToCsv` (COPY protocol)
+    // and `queryRaw` (full result metadata) — neither is surfaced by
+    // `@effect/sql-pg`. Opened lazily against the winning dial target so TLS /
+    // fallback / DoH parity is preserved, with the same role step-down as the
+    // primary session. Establishing this connection (and its step-down) is a
+    // connection-setup concern, so it fails with `LegacyDbConnectError` using the
+    // same message shape as the primary `connect` — not a copy/exec error. Only
+    // the COPY stream itself (in `copyToCsv`) raises `LegacyDbCopyError`; this
+    // keeps `queryRaw` failures from surfacing a misleading "failed to copy
+    // output" message when the shared client cannot be established.
+    const acquireRawClient = Effect.gen(function* () {
+      if (rawClient !== undefined) return rawClient;
       const fresh = new Pg.Client(winningRawConfig);
       yield* Effect.tryPromise({
         try: () => fresh.connect(),
-        catch: (error) => new LegacyDbCopyError({ message: `failed to copy output: ${error}` }),
+        catch: (error) =>
+          new LegacyDbConnectError({ message: `failed to connect to postgres: ${error}` }),
       });
       if (!isLocal && needsRoleStepDown(cfg.user)) {
         yield* Effect.tryPromise({
           try: () => fresh.query(SET_SESSION_ROLE),
           catch: (error) =>
-            new LegacyDbCopyError({ message: `failed to set session role: ${error}` }),
+            new LegacyDbConnectError({ message: `failed to set session role: ${error}` }),
         });
       }
-      copyClient = fresh;
+      rawClient = fresh;
       return fresh;
     });
 
@@ -442,9 +453,42 @@ const connect = (
           Effect.map((rows) => rows.length > 0),
           Effect.mapError((error) => new LegacyDbExecError({ message: String(error) })),
         ),
+      queryRaw: (sql) =>
+        Effect.gen(function* () {
+          // `acquireRawClient` fails with `LegacyDbConnectError`; surface it
+          // verbatim (the public `queryRaw` type allows it) rather than masking a
+          // connection failure as "failed to execute query".
+          const activeClient = yield* acquireRawClient;
+          // Capture the raw command tag from the protocol message: node-postgres'
+          // parsed `Result.command` keeps only the first tag word (e.g. "CREATE"
+          // for "CREATE TABLE"), but Go prints the full `pgconn` tag.
+          let commandTag = "";
+          const onComplete = (msg: { readonly text?: string }) => {
+            if (typeof msg.text === "string") commandTag = msg.text;
+          };
+          activeClient.connection.on("commandComplete", onComplete);
+          const result = yield* Effect.tryPromise({
+            // `rowMode: "array"` returns rows positionally so duplicate column
+            // names survive (Go reads pgx values by index).
+            try: () => activeClient.query<Array<unknown>>({ text: sql, rowMode: "array" }),
+            catch: (error) =>
+              new LegacyDbExecError({ message: `failed to execute query: ${error}` }),
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() =>
+                activeClient.connection.removeListener("commandComplete", onComplete),
+              ),
+            ),
+          );
+          return {
+            fields: result.fields.map((field) => field.name),
+            rows: result.rows,
+            commandTag,
+          };
+        }),
       copyToCsv: (sql) =>
         Effect.gen(function* () {
-          const activeClient = yield* acquireCopyClient;
+          const activeClient = yield* acquireRawClient;
           return yield* Effect.callback<Uint8Array, LegacyDbCopyError>((resume) => {
             const stream = activeClient.query(pgCopyTo(sql));
             const chunks: Array<Buffer> = [];

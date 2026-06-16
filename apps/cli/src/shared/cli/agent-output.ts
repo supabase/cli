@@ -1,7 +1,12 @@
 import { Option } from "effect";
 import type { OutputFormat } from "../output/types.ts";
 
-type LegacyOutputFormat = "env" | "pretty" | "json" | "toml" | "yaml";
+// The union of every legacy command's `--output` values (see
+// `shared/legacy/global-flags.ts`): resource commands use `env|pretty|json|toml|yaml`,
+// `db query` adds `table|csv`. An explicit legacy `-o` of any of these suppresses the
+// coding-agent JSON auto-default below. (`next/` never sets `-o`, so this stays inert
+// there.)
+type LegacyOutputFormat = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
 type AgentOverride = "auto" | "yes" | "no";
 
 interface AgentOutputOptions {
@@ -67,6 +72,8 @@ function legacyOutputFormatFromArg(value: string | undefined): Option.Option<Leg
     case "json":
     case "toml":
     case "yaml":
+    case "table":
+    case "csv":
       return Option.some(value);
     default:
       return Option.none();

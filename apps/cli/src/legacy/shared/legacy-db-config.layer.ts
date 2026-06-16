@@ -273,6 +273,7 @@ export const legacyDbConfigLayer = Layer.effect(
     const resolveLinked = (
       ref: string,
       dnsResolver: "native" | "https",
+      passwordFlag: Option.Option<string>,
     ): Effect.Effect<LegacyPgConnInput, LegacyDbConfigError, LegacyPlatformApi> =>
       Effect.gen(function* () {
         // Read lazily (per invocation) rather than at layer build, so tests and
@@ -280,9 +281,14 @@ export const legacyDbConfigLayer = Layer.effect(
         // after `loadNestedEnv` has populated the environment from the project
         // `.env*` files, so honor those too — `legacyLoadProjectEnv`'s map already
         // excludes keys present in the shell env, so the shell value still wins.
+        // The `--password` flag (bound to viper `DB_PASSWORD`) takes precedence
+        // over the env var when set, matching viper's flag-over-env order.
         const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
         const dbPassword =
-          process.env["SUPABASE_DB_PASSWORD"] ?? projectEnv["SUPABASE_DB_PASSWORD"] ?? "";
+          Option.getOrUndefined(passwordFlag) ??
+          process.env["SUPABASE_DB_PASSWORD"] ??
+          projectEnv["SUPABASE_DB_PASSWORD"] ??
+          "";
         const host = `db.${ref}.${cliConfig.projectHost}`;
         const base: LegacyPgConnInput = {
           host,
@@ -392,7 +398,7 @@ export const legacyDbConfigLayer = Layer.effect(
           const conn = yield* Effect.gen(function* () {
             const projectRef = yield* LegacyProjectRefResolver;
             const ref = yield* projectRef.resolve(Option.none());
-            return yield* resolveLinked(ref, flags.dnsResolver);
+            return yield* resolveLinked(ref, flags.dnsResolver, flags.password ?? Option.none());
           }).pipe(
             Effect.provide(
               legacyManagementApiRuntimeLayer(["test", "db"]).pipe(Layer.provide(ambientLayer)),

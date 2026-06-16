@@ -15,6 +15,14 @@ export interface LegacyDbConfigFlags {
   readonly linked: boolean;
   readonly local: boolean;
   readonly dnsResolver: "native" | "https";
+  /**
+   * The `--password` / `-p` flag value (Go's `viper.GetString("DB_PASSWORD")`,
+   * bound via `viper.BindPFlag` in `apps/cli-go/cmd/db.go`). When `Some`, it
+   * takes precedence over the `SUPABASE_DB_PASSWORD` env var on the linked path,
+   * matching viper's flag-over-env precedence. Commands without a `--password`
+   * flag (e.g. `test db`) omit it; the resolver then falls back to env only.
+   */
+  readonly password?: Option.Option<string>;
 }
 
 /**

@@ -103,9 +103,42 @@ export interface LegacyDbSession {
    * resolved dial target the primary connection won — so TLS / fallback / DoH
    * parity is preserved — and reuses it for every copy, matching Go's single
    * `pgconn` for all report queries. The connection is opened lazily on the first
-   * copy and closed when the owning session's scope closes.
+   * copy and closed when the owning session's scope closes. Failing to establish
+   * that connection raises `LegacyDbConnectError` (a connection-setup failure,
+   * matching Go); only the COPY stream itself raises `LegacyDbCopyError`.
    */
-  readonly copyToCsv: (sql: string) => Effect.Effect<Uint8Array, LegacyDbCopyError>;
+  readonly copyToCsv: (
+    sql: string,
+  ) => Effect.Effect<Uint8Array, LegacyDbCopyError | LegacyDbConnectError>;
+  /**
+   * Run a SQL statement and return its full result metadata, mirroring Go's
+   * `pgx.Rows` surface used by `db query` (`apps/cli-go/internal/db/query/query.go`):
+   * the ordered column names (`fields`), the row values **positionally** (so
+   * duplicate column names survive — node-postgres `rowMode: "array"`), and the
+   * raw command tag (`rows.CommandTag()`, e.g. `INSERT 0 1`, `CREATE TABLE`).
+   *
+   * A statement with no result columns (DDL/DML) returns `fields: []`; the caller
+   * prints `commandTag`. `@effect/sql-pg` exposes none of this (it returns row
+   * objects only), so the driver runs the query on a dedicated raw `pg` client —
+   * the same one `copyToCsv` uses — and captures the command tag from the
+   * `commandComplete` protocol message (node-postgres otherwise keeps only the
+   * first tag word, losing e.g. the `TABLE` in `CREATE TABLE`).
+   *
+   * Failing to establish that shared raw connection raises `LegacyDbConnectError`
+   * (a connection-setup failure, surfaced verbatim — not masked as an exec
+   * error), consistent with {@link copyToCsv}; the query itself raises
+   * `LegacyDbExecError`.
+   */
+  readonly queryRaw: (
+    sql: string,
+  ) => Effect.Effect<LegacyQueryResult, LegacyDbExecError | LegacyDbConnectError>;
+}
+
+/** Full result metadata for `db query` (see {@link LegacyDbSession.queryRaw}). */
+export interface LegacyQueryResult {
+  readonly fields: ReadonlyArray<string>;
+  readonly rows: ReadonlyArray<ReadonlyArray<unknown>>;
+  readonly commandTag: string;
 }
 
 /** Per-connection options the driver layer cannot infer from `cfg` alone. */

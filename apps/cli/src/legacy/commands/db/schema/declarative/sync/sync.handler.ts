@@ -1,19 +1,303 @@
-import { Effect, Option } from "effect";
-import { LegacyGoProxy } from "../../../../../../shared/legacy/go-proxy.service.ts";
+import { Cause, Clock, Effect, Exit, FileSystem, Option, Path } from "effect";
+
+import {
+  LegacyDnsResolverFlag,
+  LegacyExperimentalFlag,
+  LegacyYesFlag,
+} from "../../../../../../shared/legacy/global-flags.ts";
+import { Output } from "../../../../../../shared/output/output.service.ts";
+import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
+import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service.ts";
+import { legacyBold, legacyRed, legacyYellow } from "../../../../../shared/legacy-colors.ts";
+import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
+import {
+  legacyReadDbToml,
+  legacyResolveDeclarativeDir,
+} from "../../../../../shared/legacy-db-config.toml-read.ts";
+import { legacyApplyMigrationFile } from "../../../../../shared/legacy-migration-apply.ts";
+import { legacyToPostgresURL } from "../../../../../shared/legacy-postgres-url.ts";
+import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
+import { legacyPgDeltaTempPath } from "../declarative.cache.ts";
+import {
+  legacyCollectMigrationsList,
+  legacyDebugBundleMessage,
+  legacySaveDebugBundle,
+} from "../declarative.debug-bundle.ts";
+import {
+  LegacyDeclarativeApplyError,
+  LegacyDeclarativeNoFilesGeneratedError,
+  LegacyDeclarativeNonInteractiveError,
+} from "../declarative.errors.ts";
+import {
+  legacyResolveDeclarativeMigrationName,
+  legacyResolveDeclarativeSyncApplyDecision,
+} from "../declarative.flow.ts";
+import { legacyRequirePgDelta } from "../declarative.gate.ts";
+import {
+  type LegacyDeclarativeRunContext,
+  type LegacyDeclarativeSyncResult,
+  legacyDiffDeclarativeToMigrations,
+  legacyGenerateDeclarativeOutput,
+} from "../declarative.orchestrate.ts";
+import { LegacyDeclarativeSeam } from "../declarative.seam.service.ts";
+import { legacyWriteDeclarativeSchemas } from "../declarative.write.ts";
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
+
+const DEFAULT_SYNC_NAME = "declarative_sync";
+
+/** Go's `GetCurrentTimestamp`: UTC `YYYYMMDDHHmmss`. */
+const formatTimestamp = (millis: number): string =>
+  new Date(millis).toISOString().replace(/\D/g, "").slice(0, 14);
+
+/** Go's debug-bundle id layout `20060102-150405` (UTC). */
+const formatDebugId = (millis: number): string => {
+  const digits = new Date(millis).toISOString().replace(/\D/g, "").slice(0, 14);
+  return `${digits.slice(0, 8)}-${digits.slice(8)}`;
+};
 
 export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declarative.sync")(
   function* (flags: LegacyDbSchemaDeclarativeSyncFlags) {
-    const proxy = yield* LegacyGoProxy;
-    const args: string[] = ["db", "schema", "declarative", "sync"];
-    if (flags.noCache) args.push("--no-cache");
-    for (const s of flags.schema) {
-      args.push("--schema", s);
-    }
-    if (Option.isSome(flags.file)) args.push("--file", flags.file.value);
-    if (Option.isSome(flags.name)) args.push("--name", flags.name.value);
-    if (flags.apply) args.push("--apply");
-    if (flags.noApply) args.push("--no-apply");
-    yield* proxy.exec(args);
+    const output = yield* Output;
+    const tty = yield* Tty;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cliConfig = yield* LegacyCliConfig;
+    const telemetryState = yield* LegacyTelemetryState;
+    const experimental = yield* LegacyExperimentalFlag;
+    const yes = yield* LegacyYesFlag;
+    const dnsResolver = yield* LegacyDnsResolverFlag;
+    const seam = yield* LegacyDeclarativeSeam;
+
+    yield* Effect.gen(function* () {
+      const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      yield* legacyRequirePgDelta({
+        experimental,
+        pgDeltaEnabled: toml.pgDelta.enabled,
+        configPath: path.join("supabase", "config.toml"),
+      });
+
+      const declarativeDir = path.join(
+        cliConfig.workdir,
+        legacyResolveDeclarativeDir(path, toml.pgDelta),
+      );
+      const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
+      const tempDir = legacyPgDeltaTempPath(path, cliConfig.workdir);
+      const run: LegacyDeclarativeRunContext = {
+        pgDelta: {
+          projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+          cwd: cliConfig.workdir,
+          npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
+        },
+        formatOptions: Option.getOrElse(toml.pgDelta.formatOptions, () => ""),
+        declarativeDir,
+        schema: flags.schema,
+        noCache: flags.noCache,
+      };
+
+      // Step 1: declarative files must exist; in a TTY, offer to generate them.
+      if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
+        const noFiles = new LegacyDeclarativeNonInteractiveError({
+          message: "no declarative schema found. Run supabase db schema declarative generate first",
+        });
+        if (!tty.stdinIsTty && !yes) return yield* Effect.fail(noFiles);
+        const ok = yield* output.promptConfirm(
+          "No declarative schema found. Generate a new one ?",
+          {
+            defaultValue: true,
+          },
+        );
+        if (!ok) return yield* Effect.fail(noFiles);
+        // Generate from the local database (sync always targets local).
+        const localUrl = legacyToPostgresURL({
+          host: "127.0.0.1",
+          port: toml.port,
+          user: "postgres",
+          password: toml.password,
+          database: "postgres",
+        });
+        const generated = yield* legacyGenerateDeclarativeOutput(run, localUrl);
+        yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, generated);
+        if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
+          return yield* Effect.fail(
+            new LegacyDeclarativeNoFilesGeneratedError({
+              message: "declarative schema generation did not produce any files",
+            }),
+          );
+        }
+      }
+
+      // Step 2: diff migrations state vs declarative; on error, save a debug bundle.
+      const result: LegacyDeclarativeSyncResult = yield* legacyDiffDeclarativeToMigrations(
+        run,
+      ).pipe(
+        Effect.tapError((error) =>
+          Effect.gen(function* () {
+            const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
+            const debugDir = yield* legacySaveDebugBundle(fs, path, tempDir, migrationsDir, {
+              id: formatDebugId(yield* Clock.currentTimeMillis),
+              error: error.message,
+              migrations,
+            });
+            yield* output.raw(legacyDebugBundleMessage(debugDir), "stderr");
+          }),
+        ),
+      );
+
+      // Step 3: empty diff.
+      if (result.diffSQL.trim().length < 2) {
+        yield* output.raw("No schema changes found\n", "stderr");
+        return;
+      }
+      yield* output.raw("Generated migration SQL:\n", "stderr");
+      yield* output.raw(`${result.diffSQL}\n`, "stderr");
+
+      // Step 4: resolve migration name (prompt in TTY when --name unset).
+      const file = Option.getOrElse(flags.file, () => DEFAULT_SYNC_NAME);
+      const explicitName = Option.getOrElse(flags.name, () => "");
+      let migrationName = legacyResolveDeclarativeMigrationName(explicitName, file);
+      if (explicitName.length === 0 && tty.stdinIsTty && !yes) {
+        const input = yield* output.promptText(
+          `Enter a name for this migration (press Enter to keep '${migrationName}'): `,
+        );
+        if (input.trim().length > 0) migrationName = input.trim();
+      }
+
+      // Step 5: write the timestamped migration file.
+      const timestamp = formatTimestamp(yield* Clock.currentTimeMillis);
+      const migrationPath = path.join(migrationsDir, `${timestamp}_${migrationName}.sql`);
+      yield* fs.makeDirectory(migrationsDir, { recursive: true });
+      yield* fs.writeFileString(migrationPath, result.diffSQL);
+      yield* output.raw(`Created new migration at ${legacyBold(migrationPath)}\n`, "stderr");
+
+      // Step 6: drop warnings.
+      if (result.dropWarnings.length > 0) {
+        yield* output.raw(
+          `${legacyYellow("Found drop statements in schema diff. Please double check if these are expected:")}\n`,
+          "stderr",
+        );
+        yield* output.raw(`${legacyYellow(result.dropWarnings.join("\n"))}\n`, "stderr");
+      }
+
+      // Step 7: apply decision.
+      const decision = legacyResolveDeclarativeSyncApplyDecision({
+        apply: flags.apply,
+        noApply: flags.noApply,
+        yes,
+        tty: tty.stdinIsTty,
+      });
+      const shouldApply =
+        decision === "apply"
+          ? true
+          : decision === "skip"
+            ? false
+            : yield* output.promptConfirm("Apply this migration to local database?", {
+                defaultValue: true,
+              });
+      if (!shouldApply) return;
+
+      // Step 8: apply the migration to the local database (native).
+      const applyExit = yield* applyMigrationToLocal(
+        { port: toml.port, password: toml.password, dnsResolver },
+        migrationPath,
+      ).pipe(Effect.exit);
+
+      if (Exit.isSuccess(applyExit)) {
+        yield* output.raw("Migration applied successfully.\n", "stderr");
+        return;
+      }
+
+      // Apply failed: print, save a debug bundle, and (in a TTY) offer reset+reapply.
+      const applyError =
+        applyExit.cause.reasons.find(Cause.isFailReason)?.error ??
+        new LegacyDeclarativeApplyError({ message: "failed to apply migration" });
+      yield* output.raw(
+        `${legacyRed(`Migration failed to apply: ${applyError.message}`)}\n`,
+        "stderr",
+      );
+      const ts = formatDebugId(yield* Clock.currentTimeMillis);
+      const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
+      const debugDir = yield* legacySaveDebugBundle(fs, path, tempDir, migrationsDir, {
+        id: `${ts}-apply-error`,
+        sourceRef: result.sourceRef,
+        targetRef: result.targetRef,
+        migrationSql: result.diffSQL,
+        error: applyError.message,
+        migrations,
+      });
+
+      if (tty.stdinIsTty && !yes) {
+        const shouldReset = yield* output.promptConfirm(
+          "Would you like to reset the local database and reapply all migrations? (local data will be lost)",
+          { defaultValue: false },
+        );
+        if (shouldReset) {
+          const code = yield* seam.execInherit(["db", "reset", "--local"]);
+          if (code !== 0) {
+            yield* output.raw(`${legacyRed("Database reset also failed.")}\n`, "stderr");
+            const resetDebugDir = yield* legacySaveDebugBundle(fs, path, tempDir, migrationsDir, {
+              id: `${ts}-after-reset`,
+              sourceRef: result.sourceRef,
+              targetRef: result.targetRef,
+              migrationSql: result.diffSQL,
+              error: `database reset failed (exit ${code})`,
+              migrations,
+            });
+            yield* output.raw(`Debug information saved to ${legacyBold(debugDir)}\n`, "stderr");
+            yield* output.raw(
+              `Debug information saved to ${legacyBold(resetDebugDir)}\n`,
+              "stderr",
+            );
+            yield* output.raw(legacyDebugBundleMessage(""), "stderr");
+            return yield* Effect.fail(applyError);
+          }
+          yield* output.raw("Database reset and all migrations applied successfully.\n", "stderr");
+          return;
+        }
+      }
+      yield* output.raw(legacyDebugBundleMessage(debugDir), "stderr");
+      return yield* Effect.fail(applyError);
+    }).pipe(Effect.ensuring(telemetryState.flush));
   },
 );
+
+const declarativeDirHasFiles = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  dir: string,
+) {
+  const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false));
+  if (!exists) return false;
+  const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]));
+  return entries.length > 0;
+});
+
+/** Connects to the local database and applies the single migration file (Go's `applyMigrationToLocal`). */
+const applyMigrationToLocal = (
+  local: { port: number; password: string; dnsResolver: "native" | "https" },
+  migrationPath: string,
+) =>
+  Effect.gen(function* () {
+    const dbConnection = yield* LegacyDbConnection;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const session = yield* dbConnection
+      .connect(
+        {
+          host: "127.0.0.1",
+          port: local.port,
+          user: "postgres",
+          password: local.password,
+          database: "postgres",
+        },
+        { isLocal: true, dnsResolver: local.dnsResolver },
+      )
+      .pipe(
+        Effect.mapError((error) => new LegacyDeclarativeApplyError({ message: error.message })),
+      );
+    yield* legacyApplyMigrationFile(
+      session,
+      fs,
+      path,
+      migrationPath,
+      (message) => new LegacyDeclarativeApplyError({ message }),
+    );
+  }).pipe(Effect.scoped);

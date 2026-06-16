@@ -1,7 +1,24 @@
 import { Flag, GlobalFlag } from "effect/unstable/cli";
 
+// The Effect CLI hoists global flags out of the token stream before the leaf
+// parse and builds ONE tree-wide registry, so a command cannot redeclare an
+// `output` global to vary its allowed values (the registry throws on duplicate
+// names). Go instead registers `--output` per command: resource commands accept
+// `env|pretty|json|toml|yaml`, while `db query` accepts `json|table|csv`. We
+// model that single global as the UNION of those value sets; each handler honors
+// only the values its Go counterpart does (e.g. `db query` reads `table`/`csv`,
+// resource commands ignore them and fall through to text). `table`/`csv` are
+// only meaningful to `db query`.
 export const LegacyOutputFlag = GlobalFlag.setting("output")({
-  flag: Flag.choice("output", ["env", "pretty", "json", "toml", "yaml"] as const).pipe(
+  flag: Flag.choice("output", [
+    "env",
+    "pretty",
+    "json",
+    "toml",
+    "yaml",
+    "table",
+    "csv",
+  ] as const).pipe(
     Flag.withAlias("o"),
     Flag.withDescription("Output format of status variables."),
     Flag.optional,

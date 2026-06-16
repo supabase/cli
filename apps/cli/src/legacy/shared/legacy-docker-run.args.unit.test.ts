@@ -69,6 +69,30 @@ describe("buildLegacyDockerArgs", () => {
     expect(args).not.toContain("-w");
   });
 
+  test("emits --entrypoint before the image, with cmd as its args (edge-runtime sh -c)", () => {
+    const args = buildLegacyDockerArgs({
+      ...base,
+      network: { _tag: "host" },
+      workingDir: Option.none(),
+      securityOpt: [],
+      entrypoint: Option.some("sh"),
+      cmd: ["-c", "echo hi"],
+    });
+    const entrypointIdx = args.indexOf("--entrypoint");
+    const imageIdx = args.indexOf("supabase/pg_prove:3.36");
+    expect(entrypointIdx).toBeGreaterThanOrEqual(0);
+    expect(args[entrypointIdx + 1]).toBe("sh");
+    expect(entrypointIdx).toBeLessThan(imageIdx);
+    expect(args.slice(imageIdx)).toEqual(["supabase/pg_prove:3.36", "-c", "echo hi"]);
+  });
+
+  test("omits --entrypoint when none/absent (pg_dump / pg_prove keep their entrypoint)", () => {
+    expect(buildLegacyDockerArgs(base)).not.toContain("--entrypoint");
+    expect(buildLegacyDockerArgs({ ...base, entrypoint: Option.none() })).not.toContain(
+      "--entrypoint",
+    );
+  });
+
   test("never serializes env values into argv (CWE-214: PGPASSWORD must not leak to ps)", () => {
     const args = buildLegacyDockerArgs({
       ...base,
