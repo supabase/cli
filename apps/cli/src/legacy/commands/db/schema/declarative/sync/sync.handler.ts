@@ -97,7 +97,10 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         configPath: path.join("supabase", "config.toml"),
       });
 
-      const declarativeDir = path.join(
+      // `path.resolve` (not `path.join`) so an absolute `declarative_schema_path` is
+      // used as-is, matching Go's `config.resolve` (which only prefixes the workdir onto
+      // a relative path). `path.join(workdir, abs)` would mangle the absolute path.
+      const declarativeDir = path.resolve(
         cliConfig.workdir,
         legacyResolveDeclarativeDir(path, toml.pgDelta),
       );

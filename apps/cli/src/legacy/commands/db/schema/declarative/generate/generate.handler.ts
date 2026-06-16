@@ -88,7 +88,11 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         }
       }
 
-      const declarativeDir = path.join(
+      // `path.resolve` (not `path.join`) so an absolute `declarative_schema_path` is
+      // used as-is: Go's config resolver only prefixes the workdir onto a RELATIVE path
+      // (`config.resolve`), leaving an absolute path unchanged. `path.join(workdir, abs)`
+      // would mangle `/repo` + `/abs` into `/repo/abs`.
+      const declarativeDir = path.resolve(
         cliConfig.workdir,
         legacyResolveDeclarativeDir(path, toml.pgDelta),
       );

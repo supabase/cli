@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -237,6 +238,32 @@ describe("legacy db schema declarative generate integration", () => {
       expect(s.edgeCalls[0]!.env["TARGET"]).toContain("@db.remote:5432");
       // Remote target → the local stack is never started.
       expect(s.ensureStartedCalls).toBe(0);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("writes to an absolute declarative_schema_path as-is (no workdir prefix)", () => {
+    // Go's config resolver leaves an absolute declarative_schema_path unchanged; path.join
+    // would mangle /repo + /abs into /repo/abs.
+    const absSchema = mkdtempSync(join(tmpdir(), "legacy-decl-abs-"));
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[experimental.pgdelta]",
+        "enabled = true",
+        `declarative_schema_path = "${absSchema}"`,
+        "",
+      ].join("\n"),
+    );
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: true }));
+      // File lands under the absolute path, NOT tmp.current/<absSchema>.
+      expect(existsSync(join(absSchema, "schemas", "public", "tables", "players.sql"))).toBe(true);
+      expect(
+        readFileSync(join(absSchema, "schemas", "public", "tables", "players.sql"), "utf8"),
+      ).toBe("create table players ();");
+      rmSync(absSchema, { recursive: true, force: true });
     }).pipe(Effect.provide(s.layer));
   });
 
