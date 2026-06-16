@@ -44,6 +44,11 @@ function goFormatValue(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return goFormatFloat(value);
+  // `bytea` columns: pgx scans them into a Go `[]byte`, so `fmt.Sprintf("%v")`
+  // prints the decimal byte values space-separated in brackets (`[222 173]`).
+  // node-postgres returns a `Buffer` (a `Uint8Array`), which would otherwise hit
+  // the object branch below and render as `map[0:222 1:173 ...]`.
+  if (value instanceof Uint8Array) return `[${Array.from(value).join(" ")}]`;
   if (Array.isArray(value)) return `[${value.map(goFormatValue).join(" ")}]`;
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
@@ -127,13 +132,23 @@ export function legacyMakeLocalCellFormatter(
 // Postgres `int8` / `bigint` type OID. node-postgres returns these as strings.
 const PG_INT8_OID = 20;
 
+/** Standard padded base64, matching Go's `json.Marshal([]byte)`. */
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 /**
- * Coerce local/`--db-url` `int8`/`bigint` cells to JS numbers for JSON output. Go's
- * pgx scan yields `int64`, so `db query -o json` emits a bare number; node-postgres
- * returns the column as a string, which would emit a quoted string. Only coerces when
- * the value round-trips losslessly — JS cannot represent `|n| > 2^53` exactly, so
- * those stay strings (preserving correctness rather than silently corrupting the
- * value). Other column types pass through unchanged; JSON re-marshals them as-is.
+ * Coerce local/`--db-url` cells to the JSON shape Go's `json.Marshal` produces. Go's
+ * pgx scan yields `int64` for `int8`/`bigint`, so `db query -o json` emits a bare
+ * number; node-postgres returns the column as a string, which would emit a quoted
+ * string. Only coerces when the value round-trips losslessly — JS cannot represent
+ * `|n| > 2^53` exactly, so those stay strings (preserving correctness rather than
+ * silently corrupting the value). `bytea` columns arrive as a `Buffer`; Go encodes a
+ * `[]byte` as a standard base64 string, so coerce those rather than letting
+ * `JSON.stringify` emit `{"type":"Buffer","data":[...]}`. Other column types pass
+ * through unchanged; JSON re-marshals them as-is.
  */
 export function legacyCoerceLocalJsonRows(
   data: ReadonlyArray<ReadonlyArray<unknown>>,
@@ -141,6 +156,7 @@ export function legacyCoerceLocalJsonRows(
 ): ReadonlyArray<ReadonlyArray<unknown>> {
   return data.map((row) =>
     row.map((cell, columnIndex) => {
+      if (cell instanceof Uint8Array) return bytesToBase64(cell);
       if (fieldTypeIds[columnIndex] === PG_INT8_OID && typeof cell === "string") {
         const asNumber = Number(cell);
         if (Number.isSafeInteger(asNumber) && String(asNumber) === cell) return asNumber;

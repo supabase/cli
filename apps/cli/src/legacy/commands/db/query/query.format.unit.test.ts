@@ -44,6 +44,12 @@ describe("legacyFormatValue", () => {
       "[1e-05 1.5e+08 1.2345678901234e+13]",
     );
   });
+
+  it("renders bytea (Buffer/Uint8Array) as Go's []byte %v decimal array, not map[]", () => {
+    // Go scans bytea into []byte; `fmt.Sprintf("%v", []byte{222,173,190,239})` → "[222 173 190 239]".
+    expect(legacyFormatValue(new Uint8Array([222, 173, 190, 239]))).toBe("[222 173 190 239]");
+    expect(legacyFormatValue(new Uint8Array([]))).toBe("[]");
+  });
 });
 
 describe("legacyFormatLinkedValue", () => {
@@ -108,6 +114,12 @@ describe("legacyCoerceLocalJsonRows", () => {
     const huge = "9223372036854775807"; // > Number.MAX_SAFE_INTEGER
     const out = legacyCoerceLocalJsonRows([[huge]], [20]);
     expect(out[0]?.[0]).toBe(huge); // not coerced (would lose precision)
+  });
+
+  it("coerces bytea (Buffer/Uint8Array) cells to standard base64 like Go's json.Marshal", () => {
+    // OID 17 = bytea. Go encodes []byte as a base64 string in JSON output.
+    const out = legacyCoerceLocalJsonRows([[new Uint8Array([222, 173, 190, 239])]], [17]);
+    expect(out[0]?.[0]).toBe("3q2+7w==");
   });
 });
 
