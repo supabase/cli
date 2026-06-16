@@ -36,6 +36,13 @@ export const legacyTestDbRuntimeLayer = Layer.mergeAll(
   legacyDbConnectionLayer,
   legacyDockerRunLayer,
   cliConfig,
+  // The one per-command identity stitcher (Go's single root-context `sync.Once`),
+  // exposed at top level so `withLegacyCommandInstrumentation` can read
+  // `stitchedDistinctId()` and attribute the cli_command_executed event to the
+  // gotrue id. The SAME reference is provided to dbConfig above, so memoisation
+  // gives the lazy linked stack a single `stitchAttempted` guard — aliasing/
+  // persisting at most once. Mirrors lint.layers.ts / advisors.layers.ts.
+  legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["test", "db"]),
 );
