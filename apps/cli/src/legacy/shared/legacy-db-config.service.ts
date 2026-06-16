@@ -1,9 +1,9 @@
 import { Context, type Effect } from "effect";
+import type { LegacyPlatformApiFactoryError } from "../auth/legacy-platform-api-factory.service.ts";
 import type {
   LegacyInvalidProjectRefError,
   LegacyProjectNotLinkedError,
 } from "../config/legacy-project-ref.errors.ts";
-import type { LegacyManagementApiRuntimeError } from "./legacy-management-api-runtime.layer.ts";
 import type { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
 import type {
   LegacyDbConfigConnectTempRoleError,
@@ -35,19 +35,24 @@ export type LegacyDbConfigError =
   | LegacyDbConfigIpv6Error
   | LegacyDbConfigConnectTempRoleError
   | LegacyDbConfigPoolerLoginError
-  | LegacyDbConnectError;
+  | LegacyDbConnectError
+  // The `--linked` path resolves the access token lazily via
+  // `LegacyPlatformApiFactory.make` (only when minting a temp login role), so the
+  // auth-required / invalid-token / api-config errors surface from the resolver
+  // effect — not a layer-build channel. `--linked --password` skips `make`
+  // entirely and never raises these (Go's `NewDbConfigWithPassword`).
+  | LegacyPlatformApiFactoryError;
 
-// The `--linked` path builds the Management API stack lazily (so `--local` /
+// The `--linked` path builds a lazy Management API runtime (so `--local` /
 // `--db-url` never resolve an access token) and provides ALL of its own
 // requirements from the resolver's captured context, so `resolve`'s R stays
-// `never`. The stack's build error (access-token resolution) does surface here —
-// `test db --linked` without a token fails with that error, matching Go. We
-// reference the runtime layer's own named error type rather than re-deriving it
-// structurally, keeping this contract decoupled from the layer's internals.
+// `never`. Access-token resolution is deferred to first API use, so its
+// auth-required error surfaces through the resolver effect (folded into
+// `LegacyDbConfigError`) rather than a layer-build error channel.
 interface LegacyDbConfigResolverShape {
   readonly resolve: (
     flags: LegacyDbConfigFlags,
-  ) => Effect.Effect<LegacyResolvedDbConfig, LegacyDbConfigError | LegacyManagementApiRuntimeError>;
+  ) => Effect.Effect<LegacyResolvedDbConfig, LegacyDbConfigError>;
 }
 
 /**

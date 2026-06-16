@@ -3,7 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { getDomain } from "tldts";
 
-import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import {
   INVALID_PROJECT_REF_MESSAGE,
@@ -29,8 +29,8 @@ import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { LegacyDbConnection, type LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 import {
-  legacyManagementApiRuntimeLayer,
-  type LegacyManagementApiRuntimeRequirements,
+  legacyLinkedDbResolverRuntimeLayer,
+  type LegacyLinkedDbResolverRuntimeRequirements,
 } from "./legacy-management-api-runtime.layer.ts";
 import * as Errors from "./legacy-db-config.errors.ts";
 import {
@@ -131,22 +131,27 @@ export const legacyDbConfigLayer = Layer.effect(
       Layer.succeed(Output, output),
       BunServices.layer,
     );
-    // Compile-time guard: if `legacyManagementApiRuntimeLayer`'s requirements ever
+    // Compile-time guard: if `legacyLinkedDbResolverRuntimeLayer`'s requirements ever
     // grow a service not captured above, this assignment fails to type-check (the
     // lazy `Effect.provide` in the `--linked` branch would otherwise leak that
     // service into `resolve`'s R and only surface as a runtime panic). Mirrors the
     // `_serviceCoverageCheck` pattern in `legacy-management-api-runtime.layer.ts`.
-    const _ambientCoverageCheck: Layer.Layer<LegacyManagementApiRuntimeRequirements, never, never> =
-      ambientLayer;
+    const _ambientCoverageCheck: Layer.Layer<
+      LegacyLinkedDbResolverRuntimeRequirements,
+      never,
+      never
+    > = ambientLayer;
     void _ambientCoverageCheck;
 
     // POST /v1/projects/{ref}/cli/login-role → mint a temporary postgres role.
-    // `LegacyPlatformApi` is yielded here (not at layer build) so that the
-    // platform stack — and its eager access-token resolution — is only forced on
-    // the `--linked` path; `--local` / `--db-url` stay auth-free.
+    // The Management API client is built lazily via `LegacyPlatformApiFactory.make`
+    // (not the eager `LegacyPlatformApi` stack), so the access token is resolved
+    // only here — when a temp role is actually minted. `--linked --password` returns
+    // before reaching this, so it stays auth-free (Go's `NewDbConfigWithPassword`);
+    // `--local` / `--db-url` never build this layer at all.
     const initLoginRole = (ref: string, conn: LegacyPgConnInput) =>
       Effect.gen(function* () {
-        const api = yield* LegacyPlatformApi;
+        const api = yield* (yield* LegacyPlatformApiFactory).make;
         // Go writes this to stderr unconditionally (not gated on --debug):
         // `apps/cli-go/internal/utils/flags/db_url.go` initLoginRole.
         yield* output.raw("Initialising login role...\n", "stderr");
@@ -158,7 +163,7 @@ export const legacyDbConfigLayer = Layer.effect(
 
     const listAndUnban = (ref: string) =>
       Effect.gen(function* () {
-        const api = yield* LegacyPlatformApi;
+        const api = yield* (yield* LegacyPlatformApiFactory).make;
         const bans = yield* api.v1
           .listAllNetworkBans({ ref })
           .pipe(Effect.catch(listBansErrorMapper));
@@ -176,8 +181,10 @@ export const legacyDbConfigLayer = Layer.effect(
       ref: string,
       conn: LegacyPgConnInput,
       dnsResolver: "native" | "https",
-    ): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApi> => {
-      const attempt = (n: number): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApi> =>
+    ): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApiFactory> => {
+      const attempt = (
+        n: number,
+      ): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApiFactory> =>
         // The temp-role probe always targets the remote Supavisor pooler, so it
         // connects with TLS (Go's pooler path goes through `ConnectByUrl`) and
         // honors `--dns-resolver` (Go's `ConnectByConfigStream` installs the DoH
@@ -284,7 +291,7 @@ export const legacyDbConfigLayer = Layer.effect(
       ref: string,
       dnsResolver: "native" | "https",
       passwordFlag: Option.Option<string>,
-    ): Effect.Effect<LegacyPgConnInput, LegacyDbConfigError, LegacyPlatformApi> =>
+    ): Effect.Effect<LegacyPgConnInput, LegacyDbConfigError, LegacyPlatformApiFactory> =>
       Effect.gen(function* () {
         // Read lazily (per invocation) rather than at layer build, so tests and
         // env-substitution see the current value. Go reads viper `DB_PASSWORD`
@@ -401,9 +408,11 @@ export const legacyDbConfigLayer = Layer.effect(
           };
         }
 
-        // --linked. The Management API stack (project-ref resolver + platform API,
-        // with its eager token resolution) is provided here at runtime so it is
-        // only built on this branch — `--local` and `--db-url` never touch it.
+        // --linked. The lazy Management API runtime (project-ref resolver + lazy
+        // platform API factory) is provided here at runtime so it is only built on
+        // this branch — `--local` and `--db-url` never touch it. The factory resolves
+        // the access token only on first use (minting a temp role), so a
+        // `--linked --password` invocation stays auth-free, matching Go.
         if (flags.linked) {
           const conn = yield* Effect.gen(function* () {
             const projectRef = yield* LegacyProjectRefResolver;
@@ -439,7 +448,7 @@ export const legacyDbConfigLayer = Layer.effect(
             return resolved;
           }).pipe(
             Effect.provide(
-              legacyManagementApiRuntimeLayer(["test", "db"]).pipe(Layer.provide(ambientLayer)),
+              legacyLinkedDbResolverRuntimeLayer(["test", "db"]).pipe(Layer.provide(ambientLayer)),
             ),
           );
           return { conn, isLocal: false };

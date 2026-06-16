@@ -5,7 +5,10 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { LegacyCredentials } from "../auth/legacy-credentials.service.ts";
 import { legacyCredentialsLayer } from "../auth/legacy-credentials.layer.ts";
 import { legacyHttpClientLayer } from "../auth/legacy-http-debug.layer.ts";
-import { legacyPlatformApiFactoryFromApiLayer } from "../auth/legacy-platform-api-factory.layer.ts";
+import {
+  legacyPlatformApiFactoryFromApiLayer,
+  legacyPlatformApiFactoryLayer,
+} from "../auth/legacy-platform-api-factory.layer.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { legacyPlatformApiLayer } from "../auth/legacy-platform-api.layer.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
@@ -129,15 +132,53 @@ type LegacyManagementApiServices =
   | CommandRuntime;
 
 /**
- * The ambient services this runtime layer itself requires (global flags, root
- * services, etc.) and the error it can fail with at build (access-token
- * resolution). Exported as named types so consumers that provide this layer
- * lazily (e.g. `legacy-db-config.layer.ts`'s `--linked` branch) can express
- * their own requirement/error channels without re-deriving the structural
- * inference at each call site.
+ * Runtime layer for the `--linked` db-config resolver path (`db dump`, `db query`,
+ * `db schema declarative generate/sync`). Identical to `legacyManagementApiRuntimeLayer`
+ * except it exposes the access token **lazily** via `LegacyPlatformApiFactory`
+ * (`legacyPlatformApiFactoryLayer`) instead of the eager `LegacyPlatformApi` stack.
+ *
+ * Building this layer resolves NO access token — `legacyPlatformApiFactoryLayer`
+ * captures context and wraps `legacyMakePlatformApi` in `Effect.cached`, deferring
+ * token resolution to the first `factory.make` (i.e. when `initLoginRole` /
+ * `listAndUnban` actually call the Management API). This mirrors Go's lazy
+ * `GetSupabase` (`apps/cli-go/internal/utils/api.go`) and `NewDbConfigWithPassword`
+ * (`internal/utils/flags/db_url.go`), which never load a token when a DB password
+ * is supplied — so `db dump --linked --password …` / `… generate --linked --password`
+ * succeed without a login. Management API commands that legitimately require a token
+ * keep using `legacyManagementApiRuntimeLayer`, where the eager stack fails up front.
  */
-type LegacyManagementApiRuntime = ReturnType<typeof legacyManagementApiRuntimeLayer>;
-export type LegacyManagementApiRuntimeRequirements =
-  LegacyManagementApiRuntime extends Layer.Layer<infer _A, infer _E, infer R> ? R : never;
-export type LegacyManagementApiRuntimeError =
-  LegacyManagementApiRuntime extends Layer.Layer<infer _A, infer E, infer _R> ? E : never;
+export function legacyLinkedDbResolverRuntimeLayer(subcommand: ReadonlyArray<string>) {
+  const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+  const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+  const credentials = legacyCredentialsLayer.pipe(
+    Layer.provide(cliConfig),
+    Layer.provide(legacyDebugLoggerLayer),
+  );
+  // Lazy factory: its build does NOT resolve a token (see doc above). The factory
+  // shares the same underlying deps as the eager platform API stack, so the
+  // ambient requirements match `legacyManagementApiRuntimeLayer` exactly.
+  const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
+    Layer.provide(credentials),
+    Layer.provide(cliConfig),
+    Layer.provide(legacyDebugLoggerLayer),
+  );
+  const built = Layer.mergeAll(
+    platformApiFactory,
+    httpClient,
+    credentials,
+    cliConfig,
+    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
+    legacyLinkedProjectCacheLayer.pipe(
+      Layer.provide(credentials),
+      Layer.provide(cliConfig),
+      Layer.provide(httpClient),
+    ),
+    legacyTelemetryStateLayer,
+    commandRuntimeLayer([...subcommand]),
+  );
+  return built;
+}
+
+type LegacyLinkedDbResolverRuntime = ReturnType<typeof legacyLinkedDbResolverRuntimeLayer>;
+export type LegacyLinkedDbResolverRuntimeRequirements =
+  LegacyLinkedDbResolverRuntime extends Layer.Layer<infer _A, infer _E, infer R> ? R : never;
