@@ -1,0 +1,15 @@
+deploy-e2e-basic
+deploy-e2e-local-imports
+deploy-e2e-scoped-map
+deploy-e2e-root-map
+deploy-e2e-deprecated-map
+deploy-e2e-deno-jsonc
+deploy-e2e-custom-entry
+deploy-e2e-static-in-fn
+deploy-e2e-static-asset
+deploy-e2e-npm
+deploy-e2e-jsr
+deploy-e2e-dynamic-import
+deploy-e2e-package-json
+deploy-e2e-no-jwt
+deploy-e2e-jwt-required

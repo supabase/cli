@@ -1,0 +1,6 @@
+{
+  // scoped alias with comments
+  "imports": {
+    "@shared/": "../_shared/"
+  }
+}
