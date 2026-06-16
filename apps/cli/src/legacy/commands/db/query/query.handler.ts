@@ -41,6 +41,7 @@ import {
 } from "./query.errors.ts";
 import {
   type LegacyAdvisory,
+  legacyCoerceLocalJsonRows,
   legacyFormatLinkedValue,
   legacyMakeLocalCellFormatter,
   legacyOrderedKeys,
@@ -91,6 +92,9 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     // → Go's `%v`/`%g`); the local path passes an OID-aware formatter (`float4`/`float8`
     // → `%g`, ints plain). JSON output re-marshals the raw values either way.
     formatCell?: (value: unknown, columnIndex: number) => string,
+    // Local-path column OIDs: lets JSON output coerce int8/bigint string cells to
+    // bare numbers (Go's pgx int64 scan). Omitted on the linked path (raw JSON values).
+    fieldTypeIds?: ReadonlyArray<number>,
   ) =>
     Effect.gen(function* () {
       if (format === "table") {
@@ -99,8 +103,10 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       if (format === "csv") {
         return yield* output.raw(legacyToCsv(cols, data, formatCell));
       }
+      const jsonData =
+        fieldTypeIds === undefined ? data : legacyCoerceLocalJsonRows(data, fieldTypeIds);
       const boundary = agentMode ? yield* random.randomHex(BOUNDARY_BYTES) : "";
-      yield* output.raw(legacyRenderJson(cols, data, agentMode, boundary, advisory));
+      yield* output.raw(legacyRenderJson(cols, jsonData, agentMode, boundary, advisory));
     });
 
   const runLocal = (sql: string, format: LegacyResolvedFormat, agentMode: boolean) => {
@@ -142,6 +148,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
           agentMode,
           advisory,
           legacyMakeLocalCellFormatter(result.fieldTypeIds ?? []),
+          result.fieldTypeIds ?? [],
         );
       }),
     );

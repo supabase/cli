@@ -124,6 +124,32 @@ export function legacyMakeLocalCellFormatter(
   };
 }
 
+// Postgres `int8` / `bigint` type OID. node-postgres returns these as strings.
+const PG_INT8_OID = 20;
+
+/**
+ * Coerce local/`--db-url` `int8`/`bigint` cells to JS numbers for JSON output. Go's
+ * pgx scan yields `int64`, so `db query -o json` emits a bare number; node-postgres
+ * returns the column as a string, which would emit a quoted string. Only coerces when
+ * the value round-trips losslessly — JS cannot represent `|n| > 2^53` exactly, so
+ * those stay strings (preserving correctness rather than silently corrupting the
+ * value). Other column types pass through unchanged; JSON re-marshals them as-is.
+ */
+export function legacyCoerceLocalJsonRows(
+  data: ReadonlyArray<ReadonlyArray<unknown>>,
+  fieldTypeIds: ReadonlyArray<number>,
+): ReadonlyArray<ReadonlyArray<unknown>> {
+  return data.map((row) =>
+    row.map((cell, columnIndex) => {
+      if (fieldTypeIds[columnIndex] === PG_INT8_OID && typeof cell === "string") {
+        const asNumber = Number(cell);
+        if (Number.isSafeInteger(asNumber) && String(asNumber) === cell) return asNumber;
+      }
+      return cell;
+    }),
+  );
+}
+
 const displayWidth = (text: string): number => Array.from(text).length;
 
 /**

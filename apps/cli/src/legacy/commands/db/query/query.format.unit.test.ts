@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { legacyBuildRlsAdvisory } from "./query.advisory.ts";
 import {
+  legacyCoerceLocalJsonRows,
   legacyFormatLinkedValue,
   legacyFormatValue,
   legacyMakeLocalCellFormatter,
@@ -92,6 +93,21 @@ describe("legacyMakeLocalCellFormatter", () => {
     expect(fmt(new Date(Date.UTC(2024, 0, 2, 15, 4, 5, 123)), 0)).toBe(
       "2024-01-02 15:04:05.123 +0000 UTC",
     );
+  });
+});
+
+describe("legacyCoerceLocalJsonRows", () => {
+  // OIDs: int8=20, text=25.
+  it("coerces in-range int8 string cells to JSON numbers, leaves others alone", () => {
+    const out = legacyCoerceLocalJsonRows([["42", "hi"]], [20, 25]);
+    expect(out[0]?.[0]).toBe(42); // int8 within safe range → number
+    expect(out[0]?.[1]).toBe("hi"); // text → unchanged
+  });
+
+  it("keeps out-of-safe-range int8 as a string to preserve precision", () => {
+    const huge = "9223372036854775807"; // > Number.MAX_SAFE_INTEGER
+    const out = legacyCoerceLocalJsonRows([[huge]], [20]);
+    expect(out[0]?.[0]).toBe(huge); // not coerced (would lose precision)
   });
 });
 
