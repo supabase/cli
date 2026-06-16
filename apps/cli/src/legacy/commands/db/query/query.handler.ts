@@ -22,6 +22,7 @@ import {
   LegacyDbConnection,
   type LegacyPgConnInput,
 } from "../../../shared/legacy-db-connection.service.ts";
+import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import {
   LegacyAgentFlag,
   LegacyDnsResolverFlag,
@@ -279,6 +280,13 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
           new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }),
         );
       }
+      // Go's root `ParseDatabaseConfig` loads + validates the remote-merged config on
+      // the linked path too (after `LoadProjectRef`), before `ResolveSQL` / the
+      // Management API call (`cmd/root.go:118`, `flags/db_url.go` linked branch). So a
+      // malformed `config.toml` or an invalid matching `[remotes.<ref>]` (e.g.
+      // `db.major_version`) must fail before reading SQL or hitting the API. The linked
+      // query itself uses the API, so the values are discarded — this is validation only.
+      yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref);
       linkedAuth = { token: tokenOpt.value, ref };
     }
 

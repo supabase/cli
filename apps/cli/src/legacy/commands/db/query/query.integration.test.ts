@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -529,6 +529,29 @@ describe("legacy db query integration", () => {
       expect(out.stdoutText).toContain("│ name  │ id │");
       // Go's PersistentPostRun caches the linked project after a --linked run.
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("validates the linked config before the API call (Go root PreRun order)", () => {
+    // Go's ParseDatabaseConfig loads + validates the remote-merged config for --linked
+    // too, before the Management API call. A malformed config must fail before the query.
+    const wd = mkdtempSync(join(tmpdir(), "supabase-query-linked-"));
+    mkdirSync(join(wd, "supabase"), { recursive: true });
+    writeFileSync(
+      join(wd, "supabase", "config.toml"),
+      ["[remotes.bad]", 'project_id = "bad"', ""].join("\n"),
+    );
+    const { layer, out } = setup({ workdir: wd, linkedStatus: 201, linkedBody: '[{"id":1}]' });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toContain(
+        "Invalid config for remotes.bad.project_id. Must be like: abcdefghijklmnopqrst",
+      );
+      expect(out.stdoutText).toBe(""); // failed before emitting any query result
+      rmSync(wd, { recursive: true, force: true });
     }).pipe(Effect.provide(layer));
   });
 
