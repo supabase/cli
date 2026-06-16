@@ -18,7 +18,10 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyTelemetryOutputFormat } from "../../../telemetry/legacy-telemetry-output-format.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
-import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
+import {
+  LegacyDbConnection,
+  type LegacyPgConnInput,
+} from "../../../shared/legacy-db-connection.service.ts";
 import {
   LegacyAgentFlag,
   LegacyDnsResolverFlag,
@@ -120,16 +123,15 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       yield* output.raw(legacyRenderJson(cols, jsonData, agentMode, boundary, advisory));
     });
 
-  const runLocal = (sql: string, format: LegacyResolvedFormat, agentMode: boolean) => {
-    const useLocal = Option.isNone(flags.dbUrl) && !flags.linked;
+  const runLocal = (
+    target: { readonly conn: LegacyPgConnInput; readonly isLocal: boolean },
+    sql: string,
+    format: LegacyResolvedFormat,
+    agentMode: boolean,
+  ) => {
+    const { conn, isLocal } = target;
     return Effect.scoped(
       Effect.gen(function* () {
-        const { conn, isLocal } = yield* resolver.resolve({
-          dbUrl: flags.dbUrl,
-          linked: false,
-          local: useLocal,
-          dnsResolver,
-        });
         yield* output.raw(`Connecting to ${isLocal ? "local" : "remote"} database...\n`, "stderr");
         const session = yield* dbConn.connect(conn, { isLocal, dnsResolver });
 
@@ -280,6 +282,22 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       linkedAuth = { token: tokenOpt.value, ref };
     }
 
+    // PreRun parity (non-linked): Go's root `ParseDatabaseConfig` parses the `--db-url`
+    // connection string and loads local config (`cmd/root.go:118`, `flags/db_url.go`)
+    // BEFORE the query `RunE` calls `ResolveSQL`. So resolve the direct connection
+    // target here — before reading `--file`/stdin — so a bad `--db-url` or config error
+    // surfaces ahead of a missing-file error or a blocking stdin read. The actual socket
+    // connect still happens later in `runLocal` (Go connects in `RunLocal`).
+    const localTarget =
+      linkedAuth === undefined
+        ? yield* resolver.resolve({
+            dbUrl: flags.dbUrl,
+            linked: false,
+            local: Option.isNone(flags.dbUrl) && !flags.linked,
+            dnsResolver,
+          })
+        : undefined;
+
     // 1. Resolve SQL: --file > positional arg > piped stdin.
     const sql = yield* Effect.gen(function* () {
       if (Option.isSome(flags.file)) {
@@ -353,6 +371,10 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
         Effect.ensuring(linkedProjectCache.cache(linkedAuth.ref)),
       );
     }
-    return yield* runLocal(sql, format, agentMode);
+    if (localTarget === undefined) {
+      // Unreachable: the non-linked branch always resolves a target above.
+      return yield* Effect.die(new Error("db query: connection target was not resolved"));
+    }
+    return yield* runLocal(localTarget, sql, format, agentMode);
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

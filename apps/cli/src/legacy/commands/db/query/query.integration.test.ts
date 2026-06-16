@@ -25,6 +25,7 @@ import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../../shared/telemetry/ai-tool.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyTelemetryOutputFormat } from "../../../telemetry/legacy-telemetry-output-format.service.ts";
+import { LegacyDbConfigParseUrlError } from "../../../shared/legacy-db-config.errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import {
@@ -49,9 +50,16 @@ const BOUNDARY = "00112233445566778899aabbccddeeff";
 const failMessage = (exit: Exit.Exit<unknown, { readonly message: string }>): string | undefined =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.message : undefined;
 
-function mockResolver(isLocal = true) {
+function mockResolver(isLocal = true, resolveFails = false) {
   return Layer.succeed(LegacyDbConfigResolver, {
-    resolve: () => Effect.succeed({ conn: LOCAL_CONN, isLocal }),
+    resolve: () =>
+      resolveFails
+        ? Effect.fail(
+            new LegacyDbConfigParseUrlError({
+              message: "failed to parse connection string: invalid dsn",
+            }),
+          )
+        : Effect.succeed({ conn: LOCAL_CONN, isLocal }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 }
@@ -167,6 +175,7 @@ interface SetupOpts {
   accessToken?: Option.Option<Redacted.Redacted<string>>;
   workdir?: string;
   unlinked?: boolean;
+  resolveFails?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -179,7 +188,7 @@ function setup(opts: SetupOpts = {}) {
     telemetry.layer,
     cache.layer,
     telemetryOutputFormat.layer,
-    mockResolver(opts.isLocal),
+    mockResolver(opts.isLocal, opts.resolveFails),
     mockDbConnection(opts),
     mockProjectRef(opts.unlinked),
     mockStdin({ isTTY: opts.stdinTTY, piped: opts.piped }),
@@ -453,6 +462,20 @@ describe("legacy db query integration", () => {
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: true }));
       expect(JSON.parse(out.stdoutText).advisory).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("resolves the --db-url/config before reading SQL (Go root PreRun order)", () => {
+    // db query --db-url 'bad' -f missing.sql: Go's ParseDatabaseConfig parses the
+    // connection string in PreRunE before ResolveSQL, so the connection-string error
+    // wins over the missing-file error.
+    const { layer } = setup({ resolveFails: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbQuery(
+        flags({ dbUrl: Option.some("bad"), file: Option.some("/nope/missing.sql") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toContain("failed to parse connection string");
     }).pipe(Effect.provide(layer));
   });
 
