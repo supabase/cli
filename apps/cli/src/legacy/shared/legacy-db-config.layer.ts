@@ -15,6 +15,7 @@ import {
   LegacyInvalidProjectRefError,
   LegacyProjectNotLinkedError,
 } from "../config/legacy-project-ref.errors.ts";
+import { LegacyLinkedProjectCache } from "../telemetry/legacy-linked-project-cache.service.ts";
 import {
   LegacyDebugFlag,
   LegacyOutputFlag,
@@ -423,7 +424,19 @@ export const legacyDbConfigLayer = Layer.effect(
                 new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }),
               );
             }
-            return yield* resolveLinked(ref, flags.dnsResolver, flags.password ?? Option.none());
+            const resolved = yield* resolveLinked(
+              ref,
+              flags.dnsResolver,
+              flags.password ?? Option.none(),
+            );
+            // Mirror Go's ensureProjectGroupsCached post-run (cmd/root.go:214-234): once
+            // a linked ref resolves, cache the project (GET /v1/projects/{ref} →
+            // supabase/.temp/linked-project.json) so linked db dump / declarative
+            // generate attach project/org telemetry groups. Best-effort: the layer
+            // no-ops when the file exists, the token is missing, or the GET is non-200.
+            const linkedProjectCache = yield* LegacyLinkedProjectCache;
+            yield* linkedProjectCache.cache(ref);
+            return resolved;
           }).pipe(
             Effect.provide(
               legacyManagementApiRuntimeLayer(["test", "db"]).pipe(Layer.provide(ambientLayer)),
