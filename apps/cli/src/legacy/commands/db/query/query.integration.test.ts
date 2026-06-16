@@ -11,6 +11,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import {
   mockLegacyCliConfig,
   mockLegacyCredentialsLayer,
+  mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -151,9 +152,11 @@ interface SetupOpts {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
+  const cache = mockLegacyLinkedProjectCacheTracked();
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
+    cache.layer,
     mockResolver(opts.isLocal),
     mockDbConnection(opts),
     mockProjectRef(),
@@ -177,7 +180,7 @@ function setup(opts: SetupOpts = {}) {
     }),
     BunServices.layer,
   );
-  return { layer, out, telemetry };
+  return { layer, out, telemetry, cache };
 }
 
 const flags = (over: Partial<LegacyDbQueryFlags> = {}): LegacyDbQueryFlags => ({
@@ -199,12 +202,14 @@ const SELECT_RESULT: LegacyQueryResult = {
 
 describe("legacy db query integration", () => {
   it.live("runs SQL passed as a positional argument and renders a table for humans", () => {
-    const { layer, out } = setup({ result: SELECT_RESULT });
+    const { layer, out, cache } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select * from users"), local: true }));
       expect(out.stderrText).toContain("Connecting to local database...");
       expect(out.stdoutText).toContain("│ id │ name  │");
       expect(out.stdoutText).toContain("│ 1  │ alice │");
+      // The local path never resolves a project ref, so no linked-project cache write.
+      expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -367,23 +372,36 @@ describe("legacy db query integration", () => {
 
   // ---- linked path -------------------------------------------------------
 
-  it.live("queries the linked project over HTTP and preserves column order", () => {
-    const { layer, out } = setup({ linkedStatus: 201, linkedBody: '[{"name":"alice","id":1}]' });
+  it.live("queries the linked project over HTTP and writes the linked-project cache", () => {
+    const { layer, out, cache } = setup({
+      linkedStatus: 201,
+      linkedBody: '[{"name":"alice","id":1}]',
+    });
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: true }));
       expect(out.stdoutText).toContain("│ name  │ id │");
+      // Go's PersistentPostRun caches the linked project after a --linked run.
+      expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("errors when the linked API returns a non-201", () => {
-    const { layer } = setup({ linkedStatus: 400, linkedBody: '{"message":"syntax error"}' });
-    return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ sql: Option.some("bad"), linked: true })).pipe(
-        Effect.exit,
-      );
-      expect(failMessage(exit)).toContain("unexpected status 400");
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "errors when the linked API returns a non-201 but still caches the linked project",
+    () => {
+      const { layer, cache } = setup({
+        linkedStatus: 400,
+        linkedBody: '{"message":"syntax error"}',
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbQuery(flags({ sql: Option.some("bad"), linked: true })).pipe(
+          Effect.exit,
+        );
+        expect(failMessage(exit)).toContain("unexpected status 400");
+        // Go runs the cache write in PersistentPostRun, so it fires on failure too.
+        expect(cache.cached).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("handles an empty linked result array", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[]" });

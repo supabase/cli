@@ -6,22 +6,26 @@ the result as a table or JSON.
 
 ## Files Read
 
-| Path                       | Format     | When                                                          |
-| -------------------------- | ---------- | ------------------------------------------------------------- |
-| `<path>` (from `--file`)   | SQL        | when `--file` / `-f` is set (takes precedence over arg/stdin) |
-| stdin                      | SQL        | when piped (not a TTY) and no `--file`/positional SQL         |
-| `supabase/config.toml`     | TOML       | local / `--db-url` connection resolution                      |
-| `~/.supabase/access-token` | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                 |
+| Path                                 | Format     | When                                                          |
+| ------------------------------------ | ---------- | ------------------------------------------------------------- |
+| `<path>` (from `--file`)             | SQL        | when `--file` / `-f` is set (takes precedence over arg/stdin) |
+| stdin                                | SQL        | when piped (not a TTY) and no `--file`/positional SQL         |
+| `supabase/config.toml`               | TOML       | local / `--db-url` connection resolution                      |
+| `~/.supabase/access-token`           | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                 |
+| `supabase/.temp/linked-project.json` | JSON       | `--linked` existence check before the cache write (see below) |
 
 ## Files Written
 
-None.
+| Path                                 | Format | When                                                                                                            |
+| ------------------------------------ | ------ | --------------------------------------------------------------------------------------------------------------- |
+| `supabase/.temp/linked-project.json` | JSON   | `--linked`, after the query runs, when the file does not already exist and `GET /v1/projects/{ref}` returns 200 |
 
 ## API Routes
 
-| Method | Path                                | Auth   | Request body        | Response                                                                                                  |
-| ------ | ----------------------------------- | ------ | ------------------- | --------------------------------------------------------------------------------------------------------- |
-| POST   | `/v1/projects/{ref}/database/query` | Bearer | `{"query":"<sql>"}` | 201, JSON array of row objects (raw — the typed client voids the body, so the linked path uses raw HTTP). |
+| Method | Path                                | Auth   | Request body        | Response                                                                                                     |
+| ------ | ----------------------------------- | ------ | ------------------- | ------------------------------------------------------------------------------------------------------------ |
+| POST   | `/v1/projects/{ref}/database/query` | Bearer | `{"query":"<sql>"}` | 201, JSON array of row objects (raw — the typed client voids the body, so the linked path uses raw HTTP).    |
+| GET    | `/v1/projects/{ref}`                | Bearer | —                   | 200 → linked-project cache write; any other status → no write. Fired after the query on the `--linked` path. |
 
 ## Environment Variables
 
@@ -76,3 +80,12 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
     matching Go's per-command enum validation. See `legacy-go-output-flag.ts`.
 - **Local DDL command tags** use the raw `commandComplete` protocol tag (so
   `CREATE TABLE` etc. survive node-postgres' first-word-only parse of the tag).
+- **Linked-project cache (`PersistentPostRun` parity).** On the `--linked` path,
+  after the query runs — whether it succeeds or fails — the handler mirrors Go's
+  `ensureProjectGroupsCached` (`apps/cli-go/cmd/root.go:176,214-234`): it issues
+  `GET /v1/projects/{ref}` and writes `supabase/.temp/linked-project.json`. The
+  write is skipped when the file already exists (`supabase link` is authoritative),
+  the access token is missing, or the GET is non-200 — so an auth-failing query
+  still fires the GET but writes nothing. `--local` / `--db-url` never resolve a
+  project ref and so never trigger this request or write (Go gates on
+  `flags.ProjectRef != ""`). Shared with `backups` via `LegacyLinkedProjectCache`.

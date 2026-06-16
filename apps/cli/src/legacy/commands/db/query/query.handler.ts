@@ -5,6 +5,7 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
@@ -48,6 +49,7 @@ const BOUNDARY_BYTES = 16;
 export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: LegacyDbQueryFlags) {
   const output = yield* Output;
   const telemetryState = yield* LegacyTelemetryState;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const stdin = yield* Stdin;
   const fs = yield* FileSystem.FileSystem;
   const random = yield* Random;
@@ -118,31 +120,21 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     );
   };
 
-  const runLinked = (sql: string, format: LegacyResolvedFormat, agentMode: boolean) =>
+  const runLinked = (
+    sql: string,
+    format: LegacyResolvedFormat,
+    agentMode: boolean,
+    ref: string,
+    token: Redacted.Redacted<string>,
+  ) =>
     Effect.gen(function* () {
       const cliConfig = yield* LegacyCliConfig;
-      const credentials = yield* LegacyCredentials;
       const httpClient = yield* HttpClient.HttpClient;
-      const projectRef = yield* LegacyProjectRefResolver;
-
-      // PreRunE: require a token (login) before resolving the project ref.
-      const tokenOpt = Option.isSome(cliConfig.accessToken)
-        ? cliConfig.accessToken
-        : yield* credentials.getAccessToken;
-      if (Option.isNone(tokenOpt)) {
-        return yield* Effect.fail(
-          new LegacyDbQueryLoginRequiredError({
-            message: MISSING_TOKEN_MESSAGE,
-            suggestion: "Run supabase login first.",
-          }),
-        );
-      }
-      const ref = yield* projectRef.resolve(Option.none());
 
       const request = HttpClientRequest.post(
         `${cliConfig.apiUrl}/v1/projects/${ref}/database/query`,
       ).pipe(
-        HttpClientRequest.setHeader("Authorization", `Bearer ${Redacted.value(tokenOpt.value)}`),
+        HttpClientRequest.setHeader("Authorization", `Bearer ${Redacted.value(token)}`),
         HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
         HttpClientRequest.bodyJsonUnsafe({ query: sql }),
       );
@@ -243,7 +235,35 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
 
     // 3. Linked → Management API (raw HTTP); local / --db-url → direct connection.
     if (flags.linked) {
-      return yield* runLinked(sql, format, agentMode);
+      const cliConfig = yield* LegacyCliConfig;
+      const credentials = yield* LegacyCredentials;
+      const projectRef = yield* LegacyProjectRefResolver;
+
+      // PreRunE: require a token (login) before resolving the project ref.
+      const tokenOpt = Option.isSome(cliConfig.accessToken)
+        ? cliConfig.accessToken
+        : yield* credentials.getAccessToken;
+      if (Option.isNone(tokenOpt)) {
+        return yield* Effect.fail(
+          new LegacyDbQueryLoginRequiredError({
+            message: MISSING_TOKEN_MESSAGE,
+            suggestion: "Run supabase login first.",
+          }),
+        );
+      }
+      const ref = yield* projectRef.resolve(Option.none());
+
+      // Mirror Go's `ensureProjectGroupsCached` PersistentPostRun
+      // (`apps/cli-go/cmd/root.go:176,214-234`): once a project ref is resolved,
+      // write the linked-project cache (`GET /v1/projects/{ref}` →
+      // `supabase/.temp/linked-project.json`) whether the query succeeds or fails.
+      // The cache layer no-ops when the file already exists, the token is missing,
+      // or the GET is non-200 — so a 401 still fires the GET but writes nothing,
+      // matching Go. Only the linked path resolves a ref, so `--local` / `--db-url`
+      // never trigger this write (Go gates on `flags.ProjectRef != ""`).
+      return yield* runLinked(sql, format, agentMode, ref, tokenOpt.value).pipe(
+        Effect.ensuring(linkedProjectCache.cache(ref)),
+      );
     }
     return yield* runLocal(sql, format, agentMode);
   }).pipe(Effect.ensuring(telemetryState.flush));
