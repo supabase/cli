@@ -16,6 +16,7 @@ import {
   LegacyNetworkIdFlag,
   LegacyYesFlag,
 } from "../../../../../../shared/legacy/global-flags.ts";
+import { LegacyDbConfigResolver } from "../../../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
 import {
   type LegacyEdgeRuntimeRunOpts,
@@ -33,6 +34,7 @@ interface SetupOpts {
   applyFails?: boolean;
   resetExitCode?: number;
   promptConfirmResponses?: ReadonlyArray<boolean>;
+  promptSelectResponses?: ReadonlyArray<string>;
   promptTextResponses?: ReadonlyArray<string>;
   networkId?: string;
 }
@@ -40,6 +42,7 @@ interface SetupOpts {
 function setup(workdir: string, opts: SetupOpts = {}) {
   const out = mockOutput({
     promptConfirmResponses: opts.promptConfirmResponses,
+    promptSelectResponses: opts.promptSelectResponses,
     promptTextResponses: opts.promptTextResponses,
   });
   const telemetry = mockLegacyTelemetryStateTracked();
@@ -77,12 +80,29 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
       }),
   });
+  // The no-files bootstrap delegates to the shared smart-target resolver; its
+  // local path never calls `resolve`, but the linked/custom branches would.
+  const resolver = Layer.succeed(LegacyDbConfigResolver, {
+    resolve: () =>
+      Effect.succeed({
+        conn: {
+          host: "db.remote",
+          port: 5432,
+          user: "postgres",
+          password: "x",
+          database: "postgres",
+        },
+        isLocal: false,
+      }),
+    resolvePoolerFallback: () => Effect.succeed(Option.none()),
+  });
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
     seam,
     edge,
     dbConn,
+    resolver,
     mockLegacyCliConfig({ workdir, projectId: Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
@@ -166,6 +186,26 @@ describe("legacy db schema declarative sync integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags({ noApply: true })));
       expect(JSON.stringify(exit)).not.toContain("no declarative schema found");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("bootstrap with migrations offers the smart target choice (not local-only)", () => {
+    // Go delegates the no-files bootstrap to runDeclarativeGenerate; with migrations
+    // present it offers local/linked/custom rather than silently generating from
+    // local. projectId "test" is an invalid ref so the linked choice is hidden.
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      diffSql: "",
+      promptConfirmResponses: [true, false], // [generate a new one? yes][reset? no]
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags({ noApply: true })));
+      const options = s.out.promptSelectCalls[0]?.options ?? [];
+      expect(options.map((o) => o.value)).toEqual(["local", "custom"]);
     }).pipe(Effect.provide(s.layer));
   });
 

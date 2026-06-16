@@ -17,9 +17,10 @@ import {
   legacyResolveDeclarativeDir,
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
 import { legacyApplyMigrationFile } from "../../../../../shared/legacy-migration-apply.ts";
-import { legacyToPostgresURL } from "../../../../../shared/legacy-postgres-url.ts";
+import { legacyReadProjectRefFile } from "../../../../../shared/legacy-temp-paths.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyPgDeltaTempPath } from "../declarative.cache.ts";
+import { legacyListLocalMigrations, legacyPgDeltaTempPath } from "../declarative.cache.ts";
+import { legacyResolveSmartTargetUrl } from "../declarative.smart-target.ts";
 import {
   legacyCollectMigrationsList,
   legacyDebugBundleMessage,
@@ -128,17 +129,27 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
               defaultValue: true,
             });
         if (!ok) return yield* Effect.fail(noFiles);
-        // Generate from the local database (sync always targets local). Go derives
-        // the host from `utils.Config.Hostname` (SUPABASE_SERVICES_HOSTNAME → tcp
-        // DOCKER_HOST → 127.0.0.1), not a hardcoded loopback.
-        const localUrl = legacyToPostgresURL({
-          host: legacyGetHostname(),
-          port: toml.port,
-          user: "postgres",
-          password: toml.password,
-          database: "postgres",
-        });
-        const generated = yield* legacyGenerateDeclarativeOutput(run, localUrl);
+        // Go delegates to the full smart-generate flow (`runDeclarativeGenerate`,
+        // db_schema_declarative.go:321): with migrations present it offers the
+        // local / linked / custom target choice + local-reset prompt, so a linked
+        // workdir can bootstrap from the remote rather than silently using local.
+        const hasMigrations =
+          (yield* legacyListLocalMigrations(fs, path, migrationsDir)).length > 0;
+        const linkedRef = Option.isSome(cliConfig.projectId)
+          ? cliConfig.projectId
+          : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+        // sync has no target flags (Go passes its target-less `cmd` into generate),
+        // so reset stays interactive (the prompt fires under the local choice).
+        const targetUrl = yield* legacyResolveSmartTargetUrl(
+          { dbUrl: Option.none(), linked: false, password: Option.none(), reset: false },
+          { port: toml.port, password: toml.password },
+          hasMigrations,
+          fs,
+          path,
+          cliConfig.workdir,
+          linkedRef,
+        );
+        const generated = yield* legacyGenerateDeclarativeOutput(run, targetUrl);
         yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, generated);
         if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
           return yield* Effect.fail(
