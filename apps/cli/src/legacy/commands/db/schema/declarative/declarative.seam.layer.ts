@@ -191,8 +191,16 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                 }),
               );
             }
-            // Start the stack via the bundled Go binary (Go's `start.Run`).
-            const startCmd = ChildProcess.make(resolved.found, ["start"], {
+            // Start the stack via the bundled Go binary (Go's in-process `start.Run`).
+            // Forward --network-id: Go's `DockerStart` reads the root viper network-id
+            // (`apps/cli-go/internal/utils/docker.go:267-271`), so the spawned start must
+            // carry it or the stack lands on the default network while pg-delta containers
+            // use the custom one.
+            const startArgs = [
+              "start",
+              ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
+            ];
+            const startCmd = ChildProcess.make(resolved.found, startArgs, {
               cwd: cliConfig.workdir,
               stdin: "inherit",
               stdout: "inherit",
