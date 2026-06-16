@@ -1063,7 +1063,7 @@ describe("functions deploy", () => {
       });
       expect(child.spawned[1]).toEqual({
         command: "docker",
-        args: ["network", "inspect", "supabase_network_abcdefghijklmnopqrst"],
+        args: ["network", "inspect", "supabase_network_test-project"],
       });
       expect(api.requests[0]).toMatchObject({
         method: "GET",

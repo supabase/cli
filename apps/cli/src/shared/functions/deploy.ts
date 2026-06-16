@@ -602,12 +602,11 @@ async function walkImportPaths(
       contents = await readFile(resolvedCurrent);
     } catch (error) {
       if (error instanceof Error) {
-        const message =
-          "code" in error && error.code === "ENOENT"
-            ? `failed to read file: open ${toApiRelativePath(projectRoot, current)}: no such file or directory`
-            : error.message;
-        await onWarning(`WARN: ${message}\n`);
-        continue;
+        if ("code" in error && error.code === "ENOENT") {
+          const message = `failed to read file: open ${toApiRelativePath(projectRoot, current)}: no such file or directory`;
+          await onWarning(`WARN: ${message}\n`);
+          continue;
+        }
       }
       throw error;
     }
@@ -1823,7 +1822,7 @@ async function configForProjectRef(
     .filter(([, candidate]) => candidate.project_id === projectRef)
     .map(([name]) => name);
   if (matchedRemoteNames.length === 0) {
-    return { ...loadedConfig.config, project_id: projectRef };
+    return loadedConfig.config;
   }
   if (matchedRemoteNames.length > 1) {
     throw new Error(
@@ -1921,7 +1920,11 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     }
 
     const useLocalBundler = flags.useDocker || flags.legacyBundle;
-    const jobs = Option.getOrElse(flags.jobs, () => 1);
+    const configuredJobs = Option.getOrElse(flags.jobs, () => 1);
+    if (configuredJobs < 0) {
+      return yield* Effect.fail(new Error("Invalid value for --jobs: must be greater than or equal to 0."));
+    }
+    const jobs = configuredJobs === 0 ? 1 : configuredJobs;
     if (useLocalBundler && jobs > 1) {
       return yield* Effect.fail(new Error("--jobs cannot be used with local bundling"));
     }
@@ -1950,6 +1953,10 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       loadedConfig === null
         ? undefined
         : yield* Effect.promise(() => configForProjectRef(loadedConfig, projectRef));
+    const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
+      deployConfig?.edge_runtime.deno_version,
+      dependencies.edgeRuntimeVersion,
+    );
     const configFunctions = yield* inferFunctionsManifest({
       cwd: dependencies.projectRoot,
       config: deployConfig,
@@ -2015,10 +2022,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
           yield* deployViaDocker(
             projectId,
             projectRef,
-            yield* resolveEdgeRuntimeVersion(
-              deployConfig?.edge_runtime.deno_version,
-              dependencies.edgeRuntimeVersion,
-            ),
+            edgeRuntimeVersion,
             join(dependencies.projectRoot, SUPABASE_FUNCTIONS_DIR),
             configs,
             dependencies.api,
