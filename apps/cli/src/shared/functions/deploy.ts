@@ -1,4 +1,4 @@
-import { brotliCompressSync } from "node:zlib";
+import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
 import { chmod, mkdtemp, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
@@ -751,10 +751,16 @@ async function expandStaticPattern(pattern: string): Promise<ReadonlyArray<strin
   return matches;
 }
 
-async function forEachLocalImportMapScopeTarget(
+async function forEachLocalImportMapTarget(
   importMap: ImportMapFile,
   onTarget: (pathname: string) => Promise<void>,
 ) {
+  for (const target of Object.values(importMap.imports)) {
+    if (isRemoteImportTarget(target)) {
+      continue;
+    }
+    await onTarget(target);
+  }
   for (const scope of Object.values(importMap.scopes)) {
     for (const target of Object.values(scope)) {
       if (isRemoteImportTarget(target)) {
@@ -843,7 +849,7 @@ async function writeSourceDeployForm(
   await walkImportPaths(importMap, config.entrypoint, projectRoot, uploadAsset, async (message) => {
     await Effect.runPromise(outputRaw(message));
   });
-  await forEachLocalImportMapScopeTarget(importMap, uploadScopeTarget);
+  await forEachLocalImportMapTarget(importMap, uploadScopeTarget);
 
   return form;
 }
@@ -946,7 +952,7 @@ async function buildDockerBinds(
       ? await loadImportMapFile(config.importMap, appendBind)
       : new ImportMapFile();
   await walkImportPaths(importMap, config.entrypoint, projectRoot, appendBind, async () => {});
-  await forEachLocalImportMapScopeTarget(importMap, async (target) => {
+  await forEachLocalImportMapTarget(importMap, async (target) => {
     const hostPath = await realpath(target);
     if (!isContainedPath(realProjectRoot, hostPath)) {
       return;
@@ -1044,6 +1050,9 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       buildDockerBinds(projectId, functionsDir, outputDir, config),
     );
     const command = ["run", "--rm", ...binds.flatMap((bind) => ["-v", bind])];
+    if (process.platform === "linux") {
+      command.push("--add-host", "host.docker.internal:host-gateway");
+    }
 
     if (
       !(yield* Effect.promise(() =>
@@ -1090,7 +1099,14 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
 
     const eszip = yield* Effect.tryPromise(() => readFile(outputPath));
     const compressed = new Uint8Array(
-      Buffer.concat([Buffer.from(COMPRESSED_ESZIP_MAGIC), brotliCompressSync(eszip)]),
+      Buffer.concat([
+        Buffer.from(COMPRESSED_ESZIP_MAGIC),
+        brotliCompressSync(eszip, {
+          params: {
+            [zlibConstants.BROTLI_PARAM_QUALITY]: 6,
+          },
+        }),
+      ]),
     );
     const sha256 = yield* Effect.promise(() => crypto.subtle.digest("SHA-256", compressed));
     const hash = Buffer.from(sha256).toString("hex");
