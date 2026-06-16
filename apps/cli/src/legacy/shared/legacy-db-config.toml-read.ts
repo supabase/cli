@@ -344,16 +344,54 @@ function legacyIsValidJson(value: string): boolean {
   }
 }
 
+// Go's `strconv.ParseBool` accepted forms (`go-viper/mapstructure` `decodeBool` under
+// viper's forced `WeaklyTypedInput`): a string decodes to bool via ParseBool, an empty
+// string is `false`, and any other value is a parse error.
+const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
+
 /**
- * Resolve a `[section] enabled` style bool. Go decodes weakly (a string `"true"`
- * via `env(VAR)` also counts) and applies the schema default when the key is
- * absent. `auth`/`storage`/`realtime` all default `true`.
+ * Parse a config bool the way Go does (`strconv.ParseBool` via mapstructure's weakly
+ * typed decode). Returns the bool, or `undefined` for a malformed value (which Go
+ * surfaces as a `failed to parse config` error).
  */
-function resolveBool(value: unknown, fallback: boolean, lookup: EnvLookup): boolean {
+function legacyParseGoBool(value: string): boolean | undefined {
+  if (GO_BOOL_TRUE.has(value)) return true;
+  if (GO_BOOL_FALSE.has(value)) return false;
+  return undefined;
+}
+
+/**
+ * Resolve a `[section] enabled` style bool. Go decodes a TOML bool natively and a
+ * string (incl. an `env(VAR)` reference) via `strconv.ParseBool` — so `"1"`/`"t"`/etc.
+ * count as true and a malformed value aborts the load. Returns `"invalid"` for a
+ * malformed string so the caller can fail with Go's config error; applies the schema
+ * default (`auth`/`storage`/`realtime` default `true`) when the key is absent.
+ */
+function resolveBool(value: unknown, fallback: boolean, lookup: EnvLookup): boolean | "invalid" {
   if (typeof value === "boolean") return value;
-  if (typeof value === "string") return legacyExpandEnv(value, lookup) === "true";
+  if (typeof value === "string") {
+    const parsed = legacyParseGoBool(legacyExpandEnv(value, lookup));
+    return parsed ?? "invalid";
+  }
   return fallback;
 }
+
+/** `resolveBool` that fails the config load on a malformed bool (Go's parse error). */
+const resolveBoolOrFail = Effect.fnUntraced(function* (
+  field: string,
+  value: unknown,
+  fallback: boolean,
+  lookup: EnvLookup,
+) {
+  const resolved = resolveBool(value, fallback, lookup);
+  if (resolved === "invalid") {
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
+    );
+  }
+  return resolved;
+});
 
 /**
  * Reads `<workdir>/supabase/config.toml` (db subtree + project id) and the linked
@@ -600,14 +638,36 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // lookup that ignores empty values, matching viper.
   const enabledRaw = pgDeltaRaw?.["enabled"];
   const enabledEnv = envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED");
-  const enabled =
-    enabledEnv !== undefined
-      ? enabledEnv === "true"
-      : typeof enabledRaw === "boolean"
-        ? enabledRaw
-        : typeof enabledRaw === "string"
-          ? legacyExpandEnv(enabledRaw, lookup) === "true"
-          : false;
+  // Go decodes this bool via `strconv.ParseBool` (mapstructure weakly typed), so `"1"`
+  // counts as true and a malformed value (`SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=maybe`)
+  // aborts the load. The env override wins (viper AutomaticEnv), then the TOML bool, then
+  // an `env(VAR)` string, defaulting to false when absent.
+  let enabled: boolean;
+  if (enabledEnv !== undefined) {
+    const parsed = legacyParseGoBool(enabledEnv);
+    if (parsed === undefined) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: `failed to parse config: invalid experimental.pgdelta.enabled: ${enabledEnv}.`,
+        }),
+      );
+    }
+    enabled = parsed;
+  } else if (typeof enabledRaw === "boolean") {
+    enabled = enabledRaw;
+  } else if (typeof enabledRaw === "string") {
+    const parsed = legacyParseGoBool(legacyExpandEnv(enabledRaw, lookup));
+    if (parsed === undefined) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: `failed to parse config: invalid experimental.pgdelta.enabled: ${legacyExpandEnv(enabledRaw, lookup)}.`,
+        }),
+      );
+    }
+    enabled = parsed;
+  } else {
+    enabled = false;
+  }
 
   const declarativeSchemaPathRaw = pgDeltaRaw?.["declarative_schema_path"];
   const declarativeSchemaPathValue =
@@ -669,9 +729,19 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
       npmVersion: pgDeltaNpmVersion,
     },
     baseline: {
-      authEnabled: resolveBool(authRaw?.["enabled"], true, lookup),
-      storageEnabled: resolveBool(storageRaw?.["enabled"], true, lookup),
-      realtimeEnabled: resolveBool(realtimeRaw?.["enabled"], true, lookup),
+      authEnabled: yield* resolveBoolOrFail("auth.enabled", authRaw?.["enabled"], true, lookup),
+      storageEnabled: yield* resolveBoolOrFail(
+        "storage.enabled",
+        storageRaw?.["enabled"],
+        true,
+        lookup,
+      ),
+      realtimeEnabled: yield* resolveBoolOrFail(
+        "realtime.enabled",
+        realtimeRaw?.["enabled"],
+        true,
+        lookup,
+      ),
       apiAutoExposeNewTables,
       vaultNames,
     },

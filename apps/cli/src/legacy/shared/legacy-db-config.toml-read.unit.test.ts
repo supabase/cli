@@ -291,6 +291,66 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("treats SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=1 as true (Go strconv.ParseBool)", () => {
+    const dir = withConfig(undefined);
+    const saved = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "1";
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.pgDelta.enabled).toBe(true);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (saved === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = saved;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("fails on a malformed SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED (Go config error)", () => {
+    const dir = withConfig(undefined);
+    const saved = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "maybe";
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "failed to parse config: invalid experimental.pgdelta.enabled: maybe.",
+            );
+          }
+          if (saved === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = saved;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("parses [auth] enabled string forms via Go ParseBool and fails on malformed", () => {
+    const ok = withConfig(["[auth]", 'enabled = "0"', ""].join("\n"));
+    const bad = withConfig(["[storage]", 'enabled = "nope"', ""].join("\n"));
+    return Effect.gen(function* () {
+      const v = yield* read(ok);
+      expect(v.baseline.authEnabled).toBe(false); // "0" → false (ParseBool)
+      const exit = yield* read(bad).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "failed to parse config: invalid storage.enabled.",
+        );
+      }
+      rmSync(ok, { recursive: true, force: true });
+      rmSync(bad, { recursive: true, force: true });
+    });
+  });
+
   it.effect("fails with LegacyDbConfigLoadError when config.toml is present but unreadable", () => {
     // Go's mergeFileConfig swallows only os.ErrNotExist; every other read error aborts
     // rather than silently running against the default local database (Codex P2 parity).
