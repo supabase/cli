@@ -253,6 +253,16 @@ function localDockerId(name: string, projectId: string) {
   return `supabase_${name}_${normalizeProjectId(projectId)}`;
 }
 
+const dockerCliProjectLabel = "com.supabase.cli.project";
+const dockerComposeProjectLabel = "com.docker.compose.project";
+
+function dockerProjectLabels(projectId: string) {
+  return {
+    [dockerCliProjectLabel]: projectId,
+    [dockerComposeProjectLabel]: projectId,
+  };
+}
+
 function toDockerPath(hostPath: string) {
   const normalized = toSlash(resolve(hostPath));
   return normalized.replace(/^[A-Za-z]:/, "");
@@ -282,6 +292,10 @@ function isContainedPath(root: string, candidate: string) {
     relativePath === "" ||
     (!isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${sep}`))
   );
+}
+
+function isContainedInAnyPath(roots: ReadonlyArray<string>, candidate: string) {
+  return roots.some((root) => isContainedPath(root, candidate));
 }
 
 function humanSize(bytes: number) {
@@ -589,13 +603,13 @@ function resolveImportSpecifier(
 async function walkImportPaths(
   importMap: ImportMapFile,
   srcPath: string,
-  projectRoot: string,
+  allowedRoots: ReadonlyArray<string>,
+  displayRoot: string,
   onFile: (pathname: string, contents: Uint8Array) => Promise<void>,
   onWarning: (message: string) => Promise<void>,
 ) {
   const seen = new Set<string>();
   const queue = [toSlash(srcPath)];
-  const realProjectRoot = await realpath(projectRoot);
 
   while (queue.length > 0) {
     const current = queue.pop();
@@ -607,7 +621,7 @@ async function walkImportPaths(
     let contents: Uint8Array;
     try {
       const resolvedCurrent = await realpath(resolve(current));
-      if (!isContainedPath(realProjectRoot, resolvedCurrent)) {
+      if (!isContainedInAnyPath(allowedRoots, resolvedCurrent)) {
         await onWarning(`WARN: Skipping import path outside project root: ${current}\n`);
         continue;
       }
@@ -615,7 +629,7 @@ async function walkImportPaths(
     } catch (error) {
       if (error instanceof Error) {
         if ("code" in error && error.code === "ENOENT") {
-          const message = `failed to read file: open ${toApiRelativePath(projectRoot, current)}: no such file or directory`;
+          const message = `failed to read file: open ${toApiRelativePath(displayRoot, current)}: no such file or directory`;
           await onWarning(`WARN: ${message}\n`);
           continue;
         }
@@ -657,7 +671,7 @@ async function walkImportPaths(
       }
 
       const resolvedModule = resolve(modulePath);
-      if (!isContainedPath(projectRoot, resolvedModule)) {
+      if (!isContainedInAnyPath(allowedRoots, resolvedModule)) {
         await onWarning(`WARN: Skipping import path outside project root: ${modulePath}\n`);
         continue;
       }
@@ -798,14 +812,15 @@ async function forEachLocalImportMapTarget(
 async function walkLocalImportMapTargetImports(
   importMap: ImportMapFile,
   pathname: string,
-  projectRoot: string,
+  allowedRoots: ReadonlyArray<string>,
+  displayRoot: string,
   onFile: (pathname: string, contents: Uint8Array) => Promise<void>,
   onWarning: (message: string) => Promise<void>,
 ) {
   if ((await stat(pathname)).isDirectory()) {
     return;
   }
-  await walkImportPaths(importMap, pathname, projectRoot, onFile, onWarning);
+  await walkImportPaths(importMap, pathname, allowedRoots, displayRoot, onFile, onWarning);
 }
 
 async function isFile(pathname: string): Promise<boolean> {
@@ -814,6 +829,20 @@ async function isFile(pathname: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function resolveImportMapAllowedRoots(projectRoot: string, importMapPath: string) {
+  const realProjectRoot = await realpath(projectRoot);
+  const allowedRoots = [realProjectRoot];
+  if (importMapPath.length === 0) {
+    return allowedRoots;
+  }
+
+  const realImportMapPath = await realpath(importMapPath);
+  if (!isContainedPath(realProjectRoot, realImportMapPath)) {
+    allowedRoots.push(dirname(realImportMapPath));
+  }
+  return allowedRoots;
 }
 
 async function writeSourceDeployForm(
@@ -826,6 +855,7 @@ async function writeSourceDeployForm(
   const form = new FormData();
   form.append("metadata", JSON.stringify(metadata));
   const realProjectRoot = await realpath(projectRoot);
+  const importMapAllowedRoots = await resolveImportMapAllowedRoots(projectRoot, config.importMap);
   const uploadedAssets = new Set<string>();
 
   const appendAsset = async (pathname: string, contents: Uint8Array, realPathname: string) => {
@@ -848,12 +878,26 @@ async function writeSourceDeployForm(
 
   const uploadImportMapAsset = async (pathname: string, contents: Uint8Array) => {
     const realPathname = await realpath(pathname);
+    if (!isContainedInAnyPath(importMapAllowedRoots, realPathname)) {
+      throw new Error(`refusing to upload import map outside allowed roots: ${pathname}`);
+    }
+    await appendAsset(pathname, contents, realPathname);
+  };
+
+  const uploadImportMapTargetAsset = async (pathname: string, contents: Uint8Array) => {
+    const realPathname = await realpath(pathname);
+    if (!isContainedInAnyPath(importMapAllowedRoots, realPathname)) {
+      await Effect.runPromise(
+        outputRaw(`WARN: Skipping import path outside project root: ${pathname}\n`),
+      );
+      return;
+    }
     await appendAsset(pathname, contents, realPathname);
   };
 
   const uploadScopeTarget = async (pathname: string) => {
     const resolvedPath = await realpath(pathname);
-    if (!isContainedPath(realProjectRoot, resolvedPath)) {
+    if (!isContainedInAnyPath(importMapAllowedRoots, resolvedPath)) {
       await Effect.runPromise(
         outputRaw(`WARN: Skipping import path outside project root: ${pathname}\n`),
       );
@@ -861,12 +905,13 @@ async function writeSourceDeployForm(
     }
     const pathInfo = await stat(pathname);
     if (!pathInfo.isDirectory()) {
-      await uploadAsset(pathname, await readFile(pathname));
+      await uploadImportMapTargetAsset(pathname, await readFile(pathname));
       await walkLocalImportMapTargetImports(
         importMap,
         pathname,
+        importMapAllowedRoots,
         projectRoot,
-        uploadAsset,
+        uploadImportMapTargetAsset,
         async (message) => {
           await Effect.runPromise(outputRaw(message));
         },
@@ -879,13 +924,13 @@ async function writeSourceDeployForm(
         continue;
       }
       const resolvedNestedPath = await realpath(nestedPath);
-      if (!isContainedPath(realProjectRoot, resolvedNestedPath)) {
+      if (!isContainedInAnyPath(importMapAllowedRoots, resolvedNestedPath)) {
         await Effect.runPromise(
           outputRaw(`WARN: Skipping import path outside project root: ${nestedPath}\n`),
         );
         continue;
       }
-      await uploadAsset(nestedPath, await readFile(nestedPath));
+      await uploadImportMapTargetAsset(nestedPath, await readFile(nestedPath));
     }
   };
 
@@ -915,9 +960,16 @@ async function writeSourceDeployForm(
     metadata.import_map_path !== undefined && metadata.import_map_path.length > 0
       ? await loadImportMapFile(config.importMap)
       : new ImportMapFile();
-  await walkImportPaths(importMap, config.entrypoint, projectRoot, uploadAsset, async (message) => {
-    await Effect.runPromise(outputRaw(message));
-  });
+  await walkImportPaths(
+    importMap,
+    config.entrypoint,
+    [realProjectRoot],
+    projectRoot,
+    uploadAsset,
+    async (message) => {
+      await Effect.runPromise(outputRaw(message));
+    },
+  );
   await forEachLocalImportMapTarget(importMap, uploadScopeTarget);
 
   return form;
@@ -999,6 +1051,7 @@ async function buildDockerBinds(
   const hostOutputDir = resolve(outputDir);
   const projectRoot = resolve(functionsDir, "..", "..");
   const realProjectRoot = await realpath(projectRoot);
+  const importMapAllowedRoots = await resolveImportMapAllowedRoots(projectRoot, config.importMap);
   const binds = [
     `${localDockerId("edge_runtime", projectId)}:/root/.cache/deno:rw`,
     `${hostFunctionsDir}:${toDockerPath(hostFunctionsDir)}:ro`,
@@ -1009,24 +1062,31 @@ async function buildDockerBinds(
   }
 
   const extraBinds: string[] = [];
-  const appendBind = async (pathname: string, _contents: Uint8Array) => {
+  const appendBindWithinRoots = async (roots: ReadonlyArray<string>, pathname: string) => {
     const hostPath = await realpath(pathname);
-    if (!isContainedPath(realProjectRoot, hostPath)) {
+    if (!isContainedInAnyPath(roots, hostPath)) {
       return;
     }
     extraBinds.push(`${hostPath}:${toDockerPath(hostPath)}:ro`);
   };
+  const appendProjectBind = async (pathname: string, _contents: Uint8Array) =>
+    appendBindWithinRoots([realProjectRoot], pathname);
+  const appendImportMapBind = async (pathname: string, _contents: Uint8Array) =>
+    appendBindWithinRoots(importMapAllowedRoots, pathname);
   const importMap =
     config.importMap.length > 0
-      ? await loadImportMapFile(config.importMap, appendBind)
+      ? await loadImportMapFile(config.importMap, appendImportMapBind)
       : new ImportMapFile();
-  await walkImportPaths(importMap, config.entrypoint, projectRoot, appendBind, async () => {});
+  await walkImportPaths(
+    importMap,
+    config.entrypoint,
+    [realProjectRoot],
+    projectRoot,
+    appendProjectBind,
+    async () => {},
+  );
   await forEachLocalImportMapTarget(importMap, async (target) => {
-    const hostPath = await realpath(target);
-    if (!isContainedPath(realProjectRoot, hostPath)) {
-      return;
-    }
-    extraBinds.push(`${hostPath}:${toDockerPath(hostPath)}:ro`);
+    await appendBindWithinRoots(importMapAllowedRoots, target);
   });
   for (const pattern of config.staticFiles) {
     let files: ReadonlyArray<string>;
@@ -1039,7 +1099,7 @@ async function buildDockerBinds(
       if ((await stat(pathname)).isDirectory()) {
         throw new Error(`file path is a directory: ${pathname}`);
       }
-      await appendBind(pathname, new Uint8Array());
+      await appendProjectBind(pathname, new Uint8Array());
     }
   }
 
@@ -1060,7 +1120,7 @@ function isUserDefinedDockerNetwork(networkMode: string) {
   );
 }
 
-const ensureDockerNetwork = Effect.fnUntraced(function* (networkMode: string) {
+const ensureDockerNetwork = Effect.fnUntraced(function* (networkMode: string, projectId: string) {
   if (!isUserDefinedDockerNetwork(networkMode)) {
     return;
   }
@@ -1073,12 +1133,55 @@ const ensureDockerNetwork = Effect.fnUntraced(function* (networkMode: string) {
     return;
   }
 
-  const create = yield* runChildProcess("docker", ["network", "create", networkMode], {
-    stdout: "ignore",
-    stderr: "pipe",
-  });
+  const labels = dockerProjectLabels(projectId);
+  const create = yield* runChildProcess(
+    "docker",
+    [
+      "network",
+      "create",
+      "--label",
+      `${dockerCliProjectLabel}=${labels[dockerCliProjectLabel]}`,
+      "--label",
+      `${dockerComposeProjectLabel}=${labels[dockerComposeProjectLabel]}`,
+      networkMode,
+    ],
+    {
+      stdout: "ignore",
+      stderr: "pipe",
+    },
+  );
   if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
     return yield* Effect.fail(new Error(`failed to create docker network: ${networkMode}`));
+  }
+});
+
+const ensureDockerNamedVolume = Effect.fnUntraced(function* (
+  volumeName: string,
+  projectId: string,
+) {
+  if (process.env["BITBUCKET_CLONE_DIR"] !== undefined) {
+    return;
+  }
+
+  const labels = dockerProjectLabels(projectId);
+  const create = yield* runChildProcess(
+    "docker",
+    [
+      "volume",
+      "create",
+      "--label",
+      `${dockerCliProjectLabel}=${labels[dockerCliProjectLabel]}`,
+      "--label",
+      `${dockerComposeProjectLabel}=${labels[dockerComposeProjectLabel]}`,
+      volumeName,
+    ],
+    {
+      stdout: "ignore",
+      stderr: "pipe",
+    },
+  );
+  if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
+    return yield* Effect.fail(new Error(`failed to create docker volume: ${volumeName}`));
   }
 });
 
@@ -1153,7 +1256,8 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       buildDockerBinds(projectId, functionsDir, outputDir, config),
     );
     const networkMode = dockerNetworkId ?? localDockerId("network", projectId);
-    yield* ensureDockerNetwork(networkMode);
+    yield* ensureDockerNetwork(networkMode, projectId);
+    yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId);
     const command = ["run", "--rm", ...binds.flatMap((bind) => ["-v", bind])];
     command.push("--network", networkMode);
     if (process.platform === "linux") {
@@ -1545,7 +1649,7 @@ const deleteRemoteFunction = Effect.fnUntraced(function* (
 
 const discoverFunctionSlugs = Effect.fnUntraced(function* (
   projectRoot: string,
-  configFunctions: Readonly<Record<string, ManifestFunctionConfig>>,
+  configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>,
 ) {
   const functionsDir = join(projectRoot, SUPABASE_FUNCTIONS_DIR);
   const slugs: string[] = [];
@@ -1579,11 +1683,18 @@ const discoverFunctionSlugs = Effect.fnUntraced(function* (
     }
   }
 
+  const configSlugs = yield* validateConfigFunctionSlugs(configDeclaredFunctions);
+  return [...new Set([...slugs, ...configSlugs])];
+});
+
+const validateConfigFunctionSlugs = Effect.fnUntraced(function* (
+  configFunctions: Readonly<Record<string, ManifestFunctionConfig>>,
+) {
   const configSlugs = Object.keys(configFunctions).sort((left, right) => left.localeCompare(right));
   for (const slug of configSlugs) {
     yield* validateDeploySlug(slug);
   }
-  return [...new Set([...slugs, ...configSlugs])];
+  return configSlugs;
 });
 
 const resolveFunctionConfigs = Effect.fnUntraced(function* (input: {
@@ -1592,7 +1703,7 @@ const resolveFunctionConfigs = Effect.fnUntraced(function* (input: {
   readonly projectRoot: string;
   readonly supabaseDir: string;
   readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
-  readonly configFunctionOverrides: Readonly<Record<string, ManifestFunctionConfig>>;
+  readonly configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
   readonly importMapOverride: Option.Option<string>;
   readonly noVerifyJwtOverride: Option.Option<boolean>;
 }) {
@@ -1612,7 +1723,7 @@ const resolveFunctionConfigs = Effect.fnUntraced(function* (input: {
 
   for (const slug of input.slugs) {
     const configured = input.configFunctions[slug] ?? defaultManifestFunctionConfig;
-    const override = input.configFunctionOverrides[slug];
+    const override = input.configDeclaredFunctions[slug];
     const enabled = configured.enabled;
     const verifyJwt = Option.match(input.noVerifyJwtOverride, {
       onNone: () => configured.verify_jwt,
@@ -1939,11 +2050,19 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
 ) {
   return Effect.gen(function* () {
     const output = yield* Output;
+    const commandPath = ["functions", "deploy"] as const;
+    const explicitUseApi = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-api");
+    const explicitUseDocker = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-docker");
+    const explicitLegacyBundle = hasExplicitLongFlag(
+      dependencies.rawArgs,
+      commandPath,
+      "legacy-bundle",
+    );
 
     const selectedModes = [
-      flags.useApi ? "--use-api" : undefined,
-      flags.useDocker ? "--use-docker" : undefined,
-      flags.legacyBundle ? "--legacy-bundle" : undefined,
+      explicitUseApi ? "--use-api" : undefined,
+      explicitUseDocker ? "--use-docker" : undefined,
+      explicitLegacyBundle ? "--legacy-bundle" : undefined,
     ].filter((flag) => flag !== undefined);
 
     if (selectedModes.length > 1) {
@@ -1954,7 +2073,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       );
     }
 
-    const useLocalBundler = flags.useDocker || flags.legacyBundle;
+    const useLocalBundler = !explicitUseApi && (flags.useDocker || flags.legacyBundle);
     const configuredJobs = Option.getOrElse(flags.jobs, () => 1);
     const jobs = configuredJobs === 0 ? 1 : configuredJobs;
     if (useLocalBundler && jobs > 1) {
@@ -1994,11 +2113,12 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       cwd: dependencies.projectRoot,
       config: deployConfig,
     });
-    const configFunctionOverrides = deployConfig?.functions ?? {};
+    const configDeclaredFunctions = deployConfig?.functions ?? {};
+    yield* validateConfigFunctionSlugs(configDeclaredFunctions);
     const slugs =
       flags.functionNames.length > 0
         ? [...flags.functionNames]
-        : yield* discoverFunctionSlugs(dependencies.projectRoot, configFunctions);
+        : yield* discoverFunctionSlugs(dependencies.projectRoot, configDeclaredFunctions);
 
     if (slugs.length === 0) {
       return yield* Effect.fail(
@@ -2015,7 +2135,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       projectRoot: dependencies.projectRoot,
       supabaseDir: dependencies.supabaseDir,
       configFunctions,
-      configFunctionOverrides,
+      configDeclaredFunctions,
       importMapOverride: flags.importMap,
       noVerifyJwtOverride,
     });
@@ -2070,10 +2190,6 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       return;
     }
 
-    if (flags.prune) {
-      yield* pruneFunctions(projectRef, configs, dependencies.api, dependencies.yes ?? false);
-    }
-
     if (output.format === "text") {
       yield* output.raw(`Deployed Functions on project ${projectRef}: ${uniqueSlugs.join(", ")}\n`);
       yield* output.raw(`You can inspect your deployment in the Dashboard: ${dashboardUrl}\n`);
@@ -2083,6 +2199,10 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
         functions: uniqueSlugs,
         dashboard_url: dashboardUrl,
       });
+    }
+
+    if (flags.prune) {
+      yield* pruneFunctions(projectRef, configs, dependencies.api, dependencies.yes ?? false);
     }
   }).pipe(Effect.withSpan("functions.deploy"));
 }

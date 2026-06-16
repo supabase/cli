@@ -38,6 +38,7 @@ const config = {
   ),
   useDocker: Flag.boolean("use-docker").pipe(
     Flag.withDescription("Use Docker to bundle functions locally."),
+    Flag.withDefault(true),
     Flag.withHidden,
   ),
   legacyBundle: Flag.boolean("legacy-bundle").pipe(

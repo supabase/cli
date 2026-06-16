@@ -639,6 +639,59 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
+  it.live(
+    "uploads local targets referenced by an explicit import map outside the project root",
+    () => {
+      const tempDir = makeTempDir();
+      const projectDir = join(tempDir, "project");
+      const sharedDir = join(tempDir, "shared");
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => writeProjectConfig(projectDir));
+        yield* Effect.promise(() =>
+          writeLocalFunction(
+            projectDir,
+            "hello-world",
+            'import { value } from "lib"\nDeno.serve(() => new Response(value))\n',
+          ),
+        );
+        yield* Effect.promise(() => mkdir(sharedDir, { recursive: true }));
+        yield* Effect.promise(() =>
+          writeFile(join(sharedDir, "import_map.json"), '{"imports":{"lib":"./lib.ts"}}\n'),
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            join(sharedDir, "lib.ts"),
+            'import { helper } from "./helper.ts"\nexport const value = helper\n',
+          ),
+        );
+        yield* Effect.promise(() =>
+          writeFile(join(sharedDir, "helper.ts"), 'export const helper = "ok"\n'),
+        );
+
+        const { api, layer } = setup(projectDir, {
+          rawArgs: [
+            "functions",
+            "deploy",
+            "hello-world",
+            "--import-map",
+            "../shared/import_map.json",
+          ],
+        });
+
+        yield* functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world"],
+          importMap: Option.some("../shared/import_map.json"),
+        }).pipe(Effect.provide(layer));
+
+        expect(api.multiparts[0]?.fileNames).toContain("../shared/import_map.json");
+        expect(api.multiparts[0]?.fileNames).toContain("../shared/lib.ts");
+        expect(api.multiparts[0]?.fileNames).toContain("../shared/helper.ts");
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+    },
+  );
+
   it.live("sends an empty import_map_path when a function has no local import map", () => {
     const tempDir = makeTempDir();
 
@@ -1122,7 +1175,7 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned).toHaveLength(3);
+      expect(child.spawned).toHaveLength(4);
       expect(child.spawned[0]).toEqual({
         command: "docker",
         args: ["info"],
@@ -1130,6 +1183,18 @@ describe("functions deploy", () => {
       expect(child.spawned[1]).toEqual({
         command: "docker",
         args: ["network", "inspect", "supabase_network_test-project"],
+      });
+      expect(child.spawned[2]).toEqual({
+        command: "docker",
+        args: [
+          "volume",
+          "create",
+          "--label",
+          "com.supabase.cli.project=test-project",
+          "--label",
+          "com.docker.compose.project=test-project",
+          "supabase_edge_runtime_test-project",
+        ],
       });
       expect(api.requests[0]).toMatchObject({
         method: "GET",
@@ -1141,8 +1206,8 @@ describe("functions deploy", () => {
       });
       expect(api.requests[1]?.urlParams).toContain("slug=hello-world");
       expect(api.requests[1]?.urlParams).toContain("verify_jwt=false");
-      expect(child.spawned[2]?.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.68.4");
-      expect(child.spawned[2]?.args).toContain(
+      expect(child.spawned.at(-1)?.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.68.4");
+      expect(child.spawned.at(-1)?.args).toContain(
         `${join(tempDir, "supabase", "custom_import_map.json")}:${join(
           tempDir,
           "supabase",
@@ -1273,7 +1338,7 @@ describe("functions deploy", () => {
           path: `/v1/projects/${PROJECT_REF}/functions/hello-world`,
         });
         expect(api.requests[1]?.urlParams).not.toContain("name=");
-        expect(child.spawned).toHaveLength(3);
+        expect(child.spawned).toHaveLength(4);
       }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
@@ -1362,7 +1427,7 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned[2]?.args).toContain("--verbose");
+      expect(child.spawned.at(-1)?.args).toContain("--verbose");
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
@@ -1399,7 +1464,7 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned[2]?.args).toContain("public.ecr.aws/supabase/edge-runtime:v9.9.9");
+      expect(child.spawned.at(-1)?.args).toContain("public.ecr.aws/supabase/edge-runtime:v9.9.9");
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
@@ -1445,8 +1510,8 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned).toHaveLength(3);
-      expect(child.spawned[2]?.args).toContain(
+      expect(child.spawned).toHaveLength(4);
+      expect(child.spawned.at(-1)?.args).toContain(
         `${staticFile}:${staticFile.replaceAll("\\", "/").replace(/^[A-Za-z]:/, "")}:ro`,
       );
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
