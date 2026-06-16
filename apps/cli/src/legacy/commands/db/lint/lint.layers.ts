@@ -81,6 +81,16 @@ export const legacyDbLintRuntimeLayer = Layer.mergeAll(
   credentials,
   projectRef,
   linkedProjectCache,
+  // The one per-command identity stitcher (Go's single root-context `sync.Once`),
+  // exposed at top level so `withLegacyCommandInstrumentation` can read
+  // `stitchedDistinctId()` and attribute the cli_command_executed event to the
+  // gotrue id. The SAME reference is provided to platformApiFactory /
+  // linkedProjectCache / dbConfig above, so memoisation makes the linked
+  // path, the cache GET, and the db-config stack all share one
+  // `stitchAttempted` guard — aliasing/persisting at most once. Its
+  // Analytics / TelemetryRuntime / FileSystem / Path deps are ambient (root
+  // runtime). Mirrors advisors.layers.ts exactly.
+  legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["db", "lint"]),
 );
