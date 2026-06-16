@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { legacyBuildRlsAdvisory } from "./query.advisory.ts";
 import {
+  legacyFormatLinkedValue,
   legacyFormatValue,
   legacyOrderedKeys,
   legacyRenderJson,
@@ -43,7 +44,39 @@ describe("legacyFormatValue", () => {
   });
 });
 
+describe("legacyFormatLinkedValue", () => {
+  it("renders top-level JSON numbers with Go's float64 %g (interface{} path)", () => {
+    // Go unmarshals linked rows into interface{}, so every number is a float64 and
+    // `fmt.Sprintf("%v")` prints it with %g — unlike the local pgx path.
+    expect(legacyFormatLinkedValue(1000000)).toBe("1e+06");
+    expect(legacyFormatLinkedValue(1234567)).toBe("1.234567e+06");
+    expect(legacyFormatLinkedValue(999999)).toBe("999999");
+    expect(legacyFormatLinkedValue(0.5)).toBe("0.5");
+  });
+
+  it("matches legacyFormatValue for nil, strings, bools, and JSON containers", () => {
+    expect(legacyFormatLinkedValue(null)).toBe("NULL");
+    expect(legacyFormatLinkedValue(undefined)).toBe("NULL");
+    expect(legacyFormatLinkedValue("hello")).toBe("hello");
+    expect(legacyFormatLinkedValue(true)).toBe("true");
+    expect(legacyFormatLinkedValue({ k: "v", z: 1 })).toBe("map[k:v z:1]");
+  });
+
+  it("local legacyFormatValue keeps top-level integers plain (no %g)", () => {
+    // Guards the scoping: the shared formatter (local pgx path) must NOT apply %g
+    // to a plain integer, or local int columns would regress to 1e+06.
+    expect(legacyFormatValue(1000000)).toBe("1000000");
+  });
+});
+
 describe("legacyRenderTablewriter", () => {
+  it("applies a custom cell formatter (linked %g) when provided", () => {
+    const out = legacyRenderTablewriter(["n"], [[1000000]], legacyFormatLinkedValue);
+    expect(out).toContain("1e+06");
+    // Default (local) formatter keeps it plain.
+    expect(legacyRenderTablewriter(["n"], [[1000000]])).toContain("1000000");
+  });
+
   it("matches the olekukonko/tablewriter v1 box layout (AutoFormat off, NULL cells)", () => {
     const out = legacyRenderTablewriter(
       ["num", "greeting"],

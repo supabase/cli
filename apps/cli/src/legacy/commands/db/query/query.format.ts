@@ -65,6 +65,20 @@ export function legacyFormatValue(value: unknown): string {
   return String(value);
 }
 
+/**
+ * Go's `formatValue` for the `--linked` path, where the API response is
+ * unmarshaled into `interface{}` so every JSON number is a `float64`. `nil` →
+ * `"NULL"`, everything else via `fmt.Sprintf("%v")` — which prints `float64` with
+ * `%g` semantics, so `1000000` renders as `1e+06`. Unlike the local pgx path
+ * (whose integer columns stay plain via `legacyFormatValue`), primitive numbers
+ * here route through Go's float formatting. Used for `db query --linked`
+ * table/CSV cells only; JSON output re-marshals the raw values.
+ */
+export function legacyFormatLinkedValue(value: unknown): string {
+  if (value === null || value === undefined) return "NULL";
+  return goFormatValue(value);
+}
+
 const displayWidth = (text: string): number => Array.from(text).length;
 
 /**
@@ -76,9 +90,10 @@ const displayWidth = (text: string): number => Array.from(text).length;
 export function legacyRenderTablewriter(
   cols: ReadonlyArray<string>,
   data: ReadonlyArray<ReadonlyArray<unknown>>,
+  formatCell: (value: unknown) => string = legacyFormatValue,
 ): string {
   if (cols.length === 0) return "";
-  const rows = data.map((row) => row.map(legacyFormatValue));
+  const rows = data.map((row) => row.map(formatCell));
   const widths = cols.map((col, i) => {
     let width = displayWidth(col);
     for (const row of rows) {
@@ -116,10 +131,11 @@ function csvField(field: string): string {
 export function legacyToCsv(
   cols: ReadonlyArray<string>,
   data: ReadonlyArray<ReadonlyArray<unknown>>,
+  formatCell: (value: unknown) => string = legacyFormatValue,
 ): string {
   const lines = [cols.map(csvField).join(",")];
   for (const row of data) {
-    lines.push(row.map((value) => csvField(legacyFormatValue(value))).join(","));
+    lines.push(row.map((value) => csvField(formatCell(value))).join(","));
   }
   return `${lines.join("\n")}\n`;
 }

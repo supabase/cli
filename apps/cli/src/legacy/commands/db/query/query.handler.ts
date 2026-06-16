@@ -41,6 +41,7 @@ import {
 } from "./query.errors.ts";
 import {
   type LegacyAdvisory,
+  legacyFormatLinkedValue,
   legacyOrderedKeys,
   legacyRenderJson,
   legacyRenderTablewriter,
@@ -85,13 +86,17 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     data: ReadonlyArray<ReadonlyArray<unknown>>,
     agentMode: boolean,
     advisory: Option.Option<LegacyAdvisory>,
+    // The linked path passes `legacyFormatLinkedValue` so JSON-decoded `float64`
+    // cells render with Go's `%v`/`%g` rules in table/CSV; local rows keep the
+    // default pgx-text formatter. JSON output re-marshals the raw values either way.
+    formatCell?: (value: unknown) => string,
   ) =>
     Effect.gen(function* () {
       if (format === "table") {
-        return yield* output.raw(legacyRenderTablewriter(cols, data));
+        return yield* output.raw(legacyRenderTablewriter(cols, data, formatCell));
       }
       if (format === "csv") {
-        return yield* output.raw(legacyToCsv(cols, data));
+        return yield* output.raw(legacyToCsv(cols, data, formatCell));
       }
       const boundary = agentMode ? yield* random.randomHex(BOUNDARY_BYTES) : "";
       yield* output.raw(legacyRenderJson(cols, data, agentMode, boundary, advisory));
@@ -193,7 +198,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       const orderedCols = legacyOrderedKeys(body);
       const cols = orderedCols.length > 0 ? [...orderedCols] : Object.keys(rows[0] ?? {});
       const data = rows.map((row) => cols.map((col) => row?.[col] ?? null));
-      yield* emit(format, cols, data, agentMode, Option.none());
+      yield* emit(format, cols, data, agentMode, Option.none(), legacyFormatLinkedValue);
     });
 
   yield* Effect.gen(function* () {
