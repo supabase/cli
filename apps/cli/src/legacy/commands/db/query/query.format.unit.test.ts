@@ -5,6 +5,7 @@ import { legacyBuildRlsAdvisory } from "./query.advisory.ts";
 import {
   legacyFormatLinkedValue,
   legacyFormatValue,
+  legacyMakeLocalCellFormatter,
   legacyOrderedKeys,
   legacyRenderJson,
   legacyRenderTablewriter,
@@ -66,6 +67,23 @@ describe("legacyFormatLinkedValue", () => {
     // Guards the scoping: the shared formatter (local pgx path) must NOT apply %g
     // to a plain integer, or local int columns would regress to 1e+06.
     expect(legacyFormatValue(1000000)).toBe("1000000");
+  });
+});
+
+describe("legacyMakeLocalCellFormatter", () => {
+  // OIDs: int4=23, float4=700, float8=701, text=25.
+  it("renders float4/float8 columns with %g and integer columns plain", () => {
+    const fmt = legacyMakeLocalCellFormatter([23, 701, 700]);
+    expect(fmt(1000000, 0)).toBe("1000000"); // int4 column → plain
+    expect(fmt(1000000, 1)).toBe("1e+06"); // float8 column → %g
+    expect(fmt(1000000, 2)).toBe("1e+06"); // float4 column → %g
+  });
+
+  it("leaves non-number cells (and unknown columns) to the default formatter", () => {
+    const fmt = legacyMakeLocalCellFormatter([701, 25]);
+    expect(fmt(null, 0)).toBe("NULL");
+    expect(fmt("hi", 1)).toBe("hi");
+    expect(fmt(42, 99)).toBe("42"); // no OID for the column → plain
   });
 });
 

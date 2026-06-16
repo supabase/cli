@@ -42,6 +42,7 @@ import {
 import {
   type LegacyAdvisory,
   legacyFormatLinkedValue,
+  legacyMakeLocalCellFormatter,
   legacyOrderedKeys,
   legacyRenderJson,
   legacyRenderTablewriter,
@@ -86,10 +87,10 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     data: ReadonlyArray<ReadonlyArray<unknown>>,
     agentMode: boolean,
     advisory: Option.Option<LegacyAdvisory>,
-    // The linked path passes `legacyFormatLinkedValue` so JSON-decoded `float64`
-    // cells render with Go's `%v`/`%g` rules in table/CSV; local rows keep the
-    // default pgx-text formatter. JSON output re-marshals the raw values either way.
-    formatCell?: (value: unknown) => string,
+    // The linked path passes `legacyFormatLinkedValue` (JSON-decoded `float64` cells
+    // → Go's `%v`/`%g`); the local path passes an OID-aware formatter (`float4`/`float8`
+    // → `%g`, ints plain). JSON output re-marshals the raw values either way.
+    formatCell?: (value: unknown, columnIndex: number) => string,
   ) =>
     Effect.gen(function* () {
       if (format === "table") {
@@ -134,7 +135,14 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
             )
           : Option.none<LegacyAdvisory>();
 
-        yield* emit(format, result.fields, result.rows, agentMode, advisory);
+        yield* emit(
+          format,
+          result.fields,
+          result.rows,
+          agentMode,
+          advisory,
+          legacyMakeLocalCellFormatter(result.fieldTypeIds ?? []),
+        );
       }),
     );
   };

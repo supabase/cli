@@ -482,6 +482,9 @@ const connect = (
           );
           return {
             fields: result.fields.map((field) => field.name),
+            // Surface the column type OIDs so the table/CSV formatter can render
+            // float4/float8 with Go's %g while integer columns stay plain.
+            fieldTypeIds: result.fields.map((field) => field.dataTypeID),
             rows: result.rows,
             commandTag,
           };

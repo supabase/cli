@@ -137,6 +137,13 @@ export interface LegacyDbSession {
 /** Full result metadata for `db query` (see {@link LegacyDbSession.queryRaw}). */
 export interface LegacyQueryResult {
   readonly fields: ReadonlyArray<string>;
+  /**
+   * Postgres type OID per column (node-postgres `FieldDef.dataTypeID`). Lets the
+   * local/`--db-url` table/CSV formatter render `float4`/`float8` columns with Go's
+   * `%g` while integer columns stay plain — Go scans by field type
+   * (`internal/db/query`). Optional so other `queryRaw` callers/mocks need not set it.
+   */
+  readonly fieldTypeIds?: ReadonlyArray<number>;
   readonly rows: ReadonlyArray<ReadonlyArray<unknown>>;
   readonly commandTag: string;
 }

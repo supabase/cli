@@ -238,6 +238,22 @@ describe("legacy db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("renders a local float8 column with Go's %g, integer columns plain", () => {
+    // OIDs: int8=20 → plain; float8=701 → %g (select 1000000::int8, 1000000::float8).
+    const { layer, out } = setup({
+      result: {
+        fields: ["n", "f"],
+        fieldTypeIds: [20, 701],
+        rows: [[1000000, 1000000]],
+        commandTag: "SELECT 1",
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: true }));
+      expect(out.stdoutText).toContain("│ 1000000 │ 1e+06 │");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("reports connecting to the remote database for a --db-url target", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, isLocal: false });
     return Effect.gen(function* () {

@@ -79,6 +79,29 @@ export function legacyFormatLinkedValue(value: unknown): string {
   return goFormatValue(value);
 }
 
+// Postgres `float4` / `float8` type OIDs. node-postgres parses both to JS numbers;
+// Go scans them as float32/float64 so table/CSV cells render via `%g`.
+const PG_FLOAT4_OID = 700;
+const PG_FLOAT8_OID = 701;
+
+/**
+ * Per-column cell formatter for the local / `--db-url` path. Renders `float4`/`float8`
+ * columns with Go's `%g` (`select 1000000::float8` → `1e+06`) while every other
+ * column keeps the plain `legacyFormatValue` form (so integer columns are not turned
+ * into `1e+06`). `fieldTypeIds` is the per-column OID list from `queryRaw`.
+ */
+export function legacyMakeLocalCellFormatter(
+  fieldTypeIds: ReadonlyArray<number>,
+): (value: unknown, columnIndex: number) => string {
+  return (value, columnIndex) => {
+    const oid = fieldTypeIds[columnIndex];
+    if (typeof value === "number" && (oid === PG_FLOAT4_OID || oid === PG_FLOAT8_OID)) {
+      return goFormatFloat(value);
+    }
+    return legacyFormatValue(value);
+  };
+}
+
 const displayWidth = (text: string): number => Array.from(text).length;
 
 /**
@@ -90,10 +113,10 @@ const displayWidth = (text: string): number => Array.from(text).length;
 export function legacyRenderTablewriter(
   cols: ReadonlyArray<string>,
   data: ReadonlyArray<ReadonlyArray<unknown>>,
-  formatCell: (value: unknown) => string = legacyFormatValue,
+  formatCell: (value: unknown, columnIndex: number) => string = legacyFormatValue,
 ): string {
   if (cols.length === 0) return "";
-  const rows = data.map((row) => row.map(formatCell));
+  const rows = data.map((row) => row.map((cell, columnIndex) => formatCell(cell, columnIndex)));
   const widths = cols.map((col, i) => {
     let width = displayWidth(col);
     for (const row of rows) {
@@ -131,11 +154,11 @@ function csvField(field: string): string {
 export function legacyToCsv(
   cols: ReadonlyArray<string>,
   data: ReadonlyArray<ReadonlyArray<unknown>>,
-  formatCell: (value: unknown) => string = legacyFormatValue,
+  formatCell: (value: unknown, columnIndex: number) => string = legacyFormatValue,
 ): string {
   const lines = [cols.map(csvField).join(",")];
   for (const row of data) {
-    lines.push(row.map((value) => csvField(formatCell(value))).join(","));
+    lines.push(row.map((value, columnIndex) => csvField(formatCell(value, columnIndex))).join(","));
   }
   return `${lines.join("\n")}\n`;
 }
