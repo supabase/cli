@@ -188,6 +188,19 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       }
 
       yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, result);
+
+      // Warm the declarative catalog cache after writing the files and before the
+      // success message, gated on `!--no-cache` — Go's `Generate`
+      // (`apps/cli-go/internal/db/declarative/declarative.go:133-157`). This applies
+      // the generated schema to the shadow DB and caches the catalog under the
+      // `local` key a subsequent `sync` reuses; a schema that cannot be applied makes
+      // `generate` fail here rather than succeeding and forcing `sync` to reprovision.
+      if (!flags.noCache) {
+        yield* (yield* LegacyDeclarativeSeam).exportCatalog({
+          mode: "declarative",
+          noCache: flags.noCache,
+        });
+      }
       yield* output.raw(`Declarative schema written to ${legacyBold(declarativeDir)}\n`, "stderr");
     }).pipe(Effect.ensuring(telemetryState.flush));
   },

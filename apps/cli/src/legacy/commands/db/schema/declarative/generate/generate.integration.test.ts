@@ -22,6 +22,7 @@ import {
   type LegacyEdgeRuntimeRunOpts,
   LegacyEdgeRuntimeScript,
 } from "../../../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyDeclarativeShadowDbError } from "../declarative.errors.ts";
 import { type LegacyCatalogMode, LegacyDeclarativeSeam } from "../declarative.seam.service.ts";
 import type { LegacyDbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import { legacyDbSchemaDeclarativeGenerate } from "./generate.handler.ts";
@@ -50,6 +51,7 @@ interface SetupOpts {
   resetExitCode?: number;
   networkId?: Option.Option<string>;
   projectId?: Option.Option<string>;
+  exportFailsForMode?: LegacyCatalogMode;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -65,7 +67,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode }) => {
       seamCalls.push(mode);
-      return Effect.succeed("supabase/.temp/pgdelta/base.json");
+      return opts.exportFailsForMode === mode
+        ? Effect.fail(new LegacyDeclarativeShadowDbError({ message: `export failed for ${mode}` }))
+        : Effect.succeed("supabase/.temp/pgdelta/base.json");
     },
     execInherit: (args) => {
       execInheritCalls.push(args);
@@ -182,7 +186,8 @@ describe("legacy db schema declarative generate integration", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(flags({ local: true }));
-      expect(s.seamCalls).toEqual(["baseline"]);
+      // baseline (source catalog) for the diff, then the post-write declarative cache warm.
+      expect(s.seamCalls).toEqual(["baseline", "declarative"]);
       // TARGET is the local DB URL (passthrough); SOURCE is the baseline catalog.
       expect(s.edgeCalls[0]!.env["TARGET"]).toContain(
         "postgresql://postgres:postgres@127.0.0.1:54322",
@@ -343,10 +348,34 @@ describe("legacy db schema declarative generate integration", () => {
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: true });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(flags());
-      expect(s.seamCalls).toEqual(["baseline"]);
+      expect(s.seamCalls).toEqual(["baseline", "declarative"]);
       expect(
         s.out.rawChunks.some((c) => c.text.includes("Skipped generating declarative schema")),
       ).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("warms the declarative catalog cache after writing (skipped with --no-cache)", () => {
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: true, noCache: true }));
+      // --no-cache skips the post-write warm, so only the baseline export runs.
+      expect(s.seamCalls).toEqual(["baseline"]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("fails generate when the post-write catalog warm cannot apply to the shadow", () => {
+    // Go returns the warm error from Generate (declarative.go:144-153), so a schema that
+    // can't apply to the shadow DB fails generate rather than reporting success.
+    const s = setup(tmp.current, { experimental: true, exportFailsForMode: "declarative" });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeGenerate(flags({ local: true })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(s.out.rawChunks.some((c) => c.text.includes("Declarative schema written to"))).toBe(
+        false,
+      );
     }).pipe(Effect.provide(s.layer));
   });
 
