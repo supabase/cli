@@ -311,7 +311,10 @@ const applyMigrationToLocal = (
     const session = yield* dbConnection
       .connect(
         {
-          host: "127.0.0.1",
+          // Go's applyMigrationToLocal connects with utils.Config.Hostname
+          // (`apps/cli-go/cmd/db_schema_declarative.go:463`), honoring
+          // SUPABASE_SERVICES_HOSTNAME / tcp DOCKER_HOST — not a hardcoded loopback.
+          host: legacyGetHostname(),
           port: local.port,
           user: "postgres",
           password: local.password,
