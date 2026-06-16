@@ -35,6 +35,10 @@ const config = {
   yes: Flag.boolean("yes").pipe(Flag.withDescription("Skip the confirmation prompt.")),
   jobs: Flag.integer("jobs").pipe(
     Flag.withAlias("j"),
+    Flag.filter(
+      (jobs) => jobs >= 0,
+      (jobs) => `Expected --jobs to be non-negative, got ${jobs}`,
+    ),
     Flag.withDescription("Maximum number of parallel jobs."),
     Flag.optional,
   ),

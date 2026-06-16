@@ -1921,9 +1921,6 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
 
     const useLocalBundler = flags.useDocker || flags.legacyBundle;
     const configuredJobs = Option.getOrElse(flags.jobs, () => 1);
-    if (configuredJobs < 0) {
-      return yield* Effect.fail(new Error("Invalid value for --jobs: must be greater than or equal to 0."));
-    }
     const jobs = configuredJobs === 0 ? 1 : configuredJobs;
     if (useLocalBundler && jobs > 1) {
       return yield* Effect.fail(new Error("--jobs cannot be used with local bundling"));
