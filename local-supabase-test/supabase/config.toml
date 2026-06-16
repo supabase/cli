@@ -7,7 +7,7 @@ project_id = "deploy-e2e-local"
 import_map = "./import_map.json"
 
 [functions."deploy-e2e-custom-entry"]
-entrypoint = "./handler.ts"
+entrypoint = "./functions/deploy-e2e-custom-entry/handler.ts"
 
 [functions."deploy-e2e-static-in-fn"]
 static_files = ["./static/*.txt"]
