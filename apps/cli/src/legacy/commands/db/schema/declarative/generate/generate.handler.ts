@@ -62,7 +62,20 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         );
       }
 
-      const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      let toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      // Explicit `--linked`: Go re-loads config with the resolved ref (root
+      // `ParseDatabaseConfig` linked branch), so a matching `[remotes.<ref>]` block
+      // overrides `experimental.pgdelta.*` (declarative_schema_path / format_options)
+      // and the pg-delta gate. Re-read with that ref. (Smart-mode "Linked project"
+      // does NOT re-load in Go, so it is intentionally excluded — only `flags.linked`.)
+      if (flags.linked) {
+        const linkedRef = Option.isSome(cliConfig.projectId)
+          ? cliConfig.projectId
+          : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+        if (Option.isSome(linkedRef)) {
+          toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef.value);
+        }
+      }
       yield* legacyRequirePgDelta({
         experimental,
         pgDeltaEnabled: toml.pgDelta.enabled,

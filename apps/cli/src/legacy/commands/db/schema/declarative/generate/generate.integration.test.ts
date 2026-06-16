@@ -235,6 +235,46 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("explicit --linked applies a matching [remotes.<ref>] schema-path override", () => {
+    // Go re-loads config with the linked ref (root ParseDatabaseConfig), so a matching
+    // [remotes.<ref>] block overrides experimental.pgdelta.declarative_schema_path —
+    // the declarative files must land under the remote-overridden path.
+    const ref = "abcdefghijklmnopqrst";
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        'project_id = "base"',
+        "[experimental.pgdelta]",
+        "enabled = true",
+        "[remotes.prod]",
+        `project_id = "${ref}"`,
+        "[remotes.prod.experimental.pgdelta]",
+        'declarative_schema_path = "remote_schema"',
+        "",
+      ].join("\n"),
+    );
+    const s = setup(tmp.current, { experimental: true, projectId: Option.some(ref) });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ linked: true }));
+      const written = yield* Effect.promise(async () =>
+        (await import("node:fs")).readFileSync(
+          join(
+            tmp.current,
+            "supabase",
+            "remote_schema",
+            "schemas",
+            "public",
+            "tables",
+            "players.sql",
+          ),
+          "utf8",
+        ),
+      );
+      expect(written).toBe("create table players ();");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("smart mode: non-TTY without --yes fails with the target hint", () => {
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: false });
     return Effect.gen(function* () {
