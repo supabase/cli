@@ -1,4 +1,4 @@
-import type { Path } from "effect";
+import { Effect, FileSystem, Option, type Path } from "effect";
 
 /**
  * Absolute paths to the files the Go CLI writes under `<workdir>/supabase/.temp/`.
@@ -38,3 +38,24 @@ export function legacyTempPaths(path: Path.Path, workdir: string): LegacyTempPat
     linkedProjectCache: path.join(tempDir, "linked-project.json"),
   };
 }
+
+/**
+ * Reads the linked project ref from `<workdir>/supabase/.temp/project-ref`,
+ * returning `None` when the file is absent or blank. Mirrors the non-prompting
+ * file read in Go's `flags.LoadProjectRef` (`project_ref.go:54-76`); shared by the
+ * project-ref resolver and the declarative smart-generate prompt so both detect a
+ * linked workdir the same way.
+ */
+export const legacyReadProjectRefFile = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+): Effect.Effect<Option.Option<string>> =>
+  Effect.gen(function* () {
+    const refPath = legacyTempPaths(path, workdir).projectRef;
+    const exists = yield* fs.exists(refPath).pipe(Effect.orElseSucceed(() => false));
+    if (!exists) return Option.none<string>();
+    const content = yield* fs.readFileString(refPath).pipe(Effect.orElseSucceed(() => ""));
+    const trimmed = content.trim();
+    return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
+  });

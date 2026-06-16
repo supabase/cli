@@ -12,6 +12,8 @@ import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service
 import { legacyBold } from "../../../../../shared/legacy-colors.ts";
 import { LegacyDbConfigResolver } from "../../../../../shared/legacy-db-config.service.ts";
 import { legacyGetHostname } from "../../../../../shared/legacy-hostname.ts";
+import { legacyReadProjectRefFile } from "../../../../../shared/legacy-temp-paths.ts";
+import { PROJECT_REF_PATTERN } from "../../../../../config/legacy-project-ref.service.ts";
 import {
   legacyLoadProjectEnv,
   legacyReadDbToml,
@@ -138,6 +140,14 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           }
         }
         const hasMigrations = yield* hasMigrationFiles(fs, path, migrationsDir);
+        // Go's `runDeclarativeGenerate` offers a "Linked project" choice when the
+        // workdir is linked (`flags.LoadProjectRef` succeeds). Resolve the ref the
+        // same way the resolver's `--linked` branch does (config `project_id` →
+        // `.temp/project-ref`) so the smart prompt offers linked iff `--linked`
+        // would work for this workdir.
+        const linkedRef = Option.isSome(cliConfig.projectId)
+          ? cliConfig.projectId
+          : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
         targetUrl = yield* resolveSmartTargetUrl(
           flags,
           local,
@@ -145,6 +155,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           fs,
           path,
           cliConfig.workdir,
+          linkedRef,
         );
         overwrite = true;
       }
@@ -214,16 +225,37 @@ const resolveSmartTargetUrl = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
+  linkedRef: Option.Option<string>,
 ) {
   if (!hasMigrations) return localUrl(local);
 
   const output = yield* Output;
   const yes = yield* LegacyYesFlag;
   const networkId = yield* LegacyNetworkIdFlag;
+  // Insert "Linked project" between local and custom (Go's choice order) when the
+  // workdir is linked with a valid ref. Go gates this on `LoadProjectRef`, which
+  // validates the ref (`project_ref.go:75`), so an invalid on-disk ref hides the
+  // choice rather than showing it and failing later.
+  const showLinked = Option.isSome(linkedRef) && PROJECT_REF_PATTERN.test(linkedRef.value);
   const choice = yield* output.promptSelect("Generate declarative schema from:", [
     { value: "local", label: "Local database", hint: "generate from local Postgres" },
+    ...(showLinked && Option.isSome(linkedRef)
+      ? [
+          {
+            value: "linked",
+            label: "Linked project",
+            hint: `generate from remote linked project (${linkedRef.value})`,
+          },
+        ]
+      : []),
     { value: "custom", label: "Custom database URL", hint: "enter a connection string" },
   ]);
+
+  if (choice === "linked") {
+    // Same path as an explicit `--linked` (Go calls `NewDbConfigWithPassword`):
+    // login-role mint + pooler fallback, then `ToPostgresURL`.
+    return yield* resolveRemoteUrl({ ...flags, linked: true });
+  }
 
   if (choice === "custom") {
     const dbURL = yield* output.promptText("Enter database URL: ");

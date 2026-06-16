@@ -3,7 +3,7 @@ import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
-import { legacyTempPaths } from "../shared/legacy-temp-paths.ts";
+import { legacyReadProjectRefFile } from "../shared/legacy-temp-paths.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 import {
   LegacyInvalidProjectRefError,
@@ -36,15 +36,7 @@ export const legacyProjectRefLayer = Layer.effect(
     const output = yield* Output;
     const platformApi = yield* LegacyPlatformApiFactory;
 
-    const refPath = legacyTempPaths(path, cliConfig.workdir).projectRef;
-
-    const readRefFile = Effect.gen(function* () {
-      const exists = yield* fs.exists(refPath).pipe(Effect.orElseSucceed(() => false));
-      if (!exists) return Option.none<string>();
-      const content = yield* fs.readFileString(refPath).pipe(Effect.orElseSucceed(() => ""));
-      const trimmed = content.trim();
-      return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
-    });
+    const readRefFile = legacyReadProjectRefFile(fs, path, cliConfig.workdir);
 
     const promptForProjectRef = Effect.fnUntraced(function* (title: string) {
       const api = yield* platformApi.make.pipe(

@@ -49,6 +49,7 @@ interface SetupOpts {
   exportJson?: string;
   resetExitCode?: number;
   networkId?: Option.Option<string>;
+  projectId?: Option.Option<string>;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -104,7 +105,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     edge,
     resolver,
     proxy,
-    mockLegacyCliConfig({ workdir, projectId: Option.some("test") }),
+    mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
@@ -258,6 +259,44 @@ describe("legacy db schema declarative generate integration", () => {
       const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags({ reset: true })));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({ message: "database reset failed (exit 1)" });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("smart mode: offers and resolves the linked project when the workdir is linked", () => {
+    // Go's runDeclarativeGenerate adds a "Linked project" choice when LoadProjectRef
+    // succeeds; selecting it builds the URL via NewDbConfigWithPassword (the --linked
+    // path). Use a valid 20-char ref so the choice is shown.
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      projectId: Option.some("abcdefghijklmnopqrst"),
+      promptSelectResponses: ["linked"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags());
+      // The prompt offered the linked choice, and selecting it routed through the
+      // resolver's --linked branch.
+      const options = s.out.promptSelectCalls[0]?.options ?? [];
+      expect(options.map((o) => o.value)).toEqual(["local", "linked", "custom"]);
+      expect(s.resolverCalls).toContainEqual(expect.objectContaining({ linked: true }));
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("smart mode: hides the linked choice when the workdir is not linked", () => {
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      projectId: Option.none(),
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags());
+      const options = s.out.promptSelectCalls[0]?.options ?? [];
+      expect(options.map((o) => o.value)).toEqual(["local", "custom"]);
     }).pipe(Effect.provide(s.layer));
   });
 
