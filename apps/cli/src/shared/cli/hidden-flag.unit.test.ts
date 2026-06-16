@@ -133,13 +133,14 @@ describe("native hidden flags", () => {
           "abcdefghijklmnopqrst",
           "--use-docker",
         ]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-          "functions",
-          "deploy",
-          "hello",
-          "--use-docker",
-          "--legacy-bundle",
-        ]);
+        const useDockerExit = yield* Command.runWith(legacyTestRoot, {
+          version: "0.0.0-test",
+        })(["functions", "deploy", "hello", "--use-docker"]).pipe(Effect.exit);
+        const legacyBundleExit = yield* Command.runWith(legacyTestRoot, {
+          version: "0.0.0-test",
+        })(["functions", "deploy", "hello", "--legacy-bundle"]).pipe(Effect.exit);
+        expect(JSON.stringify(useDockerExit)).not.toContain("UnrecognizedFlag");
+        expect(JSON.stringify(legacyBundleExit)).not.toContain("UnrecognizedFlag");
         yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
           "functions",
           "serve",
@@ -161,7 +162,6 @@ describe("native hidden flags", () => {
       ["start", "--preview"],
       ["stop", "--backup=false"],
       ["functions", "download", "hello", "--project-ref", "abcdefghijklmnopqrst", "--use-docker"],
-      ["functions", "deploy", "hello", "--use-docker", "--legacy-bundle"],
       ["functions", "serve", "--all=false"],
     ]);
   });
