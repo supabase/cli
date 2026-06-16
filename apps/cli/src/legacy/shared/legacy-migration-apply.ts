@@ -58,12 +58,33 @@ export const legacyApplyMigrationFile = <E>(
     yield* createMigrationTable(session);
     yield* session.exec("RESET ALL");
     yield* session.exec("BEGIN");
+    // Mirror Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go:88-113`):
+    // on a failed statement, append `At statement: <index>` and the statement text so the
+    // error (and the debug bundle) point at the exact failing SQL. (Go also adds a caret /
+    // pgErr.Detail / extension-type hint, which need the driver SQLSTATE the session does
+    // not currently surface — the statement number + text is the always-present context.)
+    const errMessage = (e: unknown): string =>
+      typeof e === "object" && e !== null && "message" in e && typeof e.message === "string"
+        ? e.message
+        : String(e);
+    const atStatement = (e: unknown, index: number, stat: string) =>
+      new Error(`${errMessage(e)}\nAt statement: ${index}\n${stat}`);
     const body = Effect.gen(function* () {
-      for (const statement of statements) {
-        yield* session.exec(statement);
+      for (let i = 0; i < statements.length; i++) {
+        const statement = statements[i] ?? "";
+        yield* session
+          .exec(statement)
+          .pipe(Effect.mapError((cause) => atStatement(cause, i, statement)));
       }
       if (version.length > 0) {
-        yield* session.query(INSERT_MIGRATION_VERSION, [version, name, statements]);
+        // Go defaults to the version-insert statement when all listed statements succeed.
+        yield* session
+          .query(INSERT_MIGRATION_VERSION, [version, name, statements])
+          .pipe(
+            Effect.mapError((cause) =>
+              atStatement(cause, statements.length, INSERT_MIGRATION_VERSION),
+            ),
+          );
       }
       yield* session.exec("COMMIT");
     });

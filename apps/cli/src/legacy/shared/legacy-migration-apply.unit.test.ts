@@ -92,6 +92,12 @@ describe("legacyApplyMigrationFile", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           expect(calls.some((c) => c.kind === "exec" && c.sql === "ROLLBACK")).toBe(true);
+          // Go's ExecBatch appends the failing statement number + text for context.
+          if (Exit.isFailure(exit)) {
+            const msg = JSON.stringify(exit.cause);
+            expect(msg).toContain("At statement: 0");
+            expect(msg).toContain("ALTER TABLE a ADD COLUMN b int");
+          }
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
