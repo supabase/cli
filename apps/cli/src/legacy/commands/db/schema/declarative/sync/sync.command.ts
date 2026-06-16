@@ -1,15 +1,14 @@
+import { Effect } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../../../../shared/output/json-error-handling.ts";
 import { withLegacyCommandInstrumentation } from "../../../../../telemetry/legacy-command-instrumentation.ts";
+import { legacyDbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { legacyDbSchemaDeclarativeSync } from "./sync.handler.ts";
 import { legacyDbSchemaDeclarativeSyncRuntimeLayer } from "./sync.layers.ts";
 
 const config = {
-  noCache: Flag.boolean("no-cache").pipe(
-    Flag.withDescription("Disable catalog cache and force fresh shadow database setup."),
-  ),
   schema: Flag.string("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
@@ -34,25 +33,34 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer<typeof config>;
+// `--no-cache` is a shared flag on the `declarative` group (read from the parent),
+// so the handler input merges it in alongside the leaf's own flags.
+export type LegacyDbSchemaDeclarativeSyncFlags = CliCommand.Command.Config.Infer<typeof config> & {
+  readonly noCache: boolean;
+};
 
 export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config).pipe(
   Command.withDescription("Generate a new migration from declarative schema."),
   Command.withShortDescription("Generate a new migration from declarative schema"),
   Command.withHandler((flags) =>
-    legacyDbSchemaDeclarativeSync(flags).pipe(
-      withLegacyCommandInstrumentation({
-        flags: {
-          "no-cache": flags.noCache,
-          schema: flags.schema,
-          file: flags.file,
-          name: flags.name,
-          apply: flags.apply,
-          "no-apply": flags.noApply,
-        },
-      }),
-      withJsonErrorHandling,
-    ),
+    Effect.gen(function* () {
+      // `--no-cache` is shared on the parent group; read the resolved value there.
+      const shared = yield* legacyDbSchemaDeclarativeSharedBase;
+      const merged: LegacyDbSchemaDeclarativeSyncFlags = { ...flags, noCache: shared.noCache };
+      return yield* legacyDbSchemaDeclarativeSync(merged).pipe(
+        withLegacyCommandInstrumentation({
+          flags: {
+            "no-cache": merged.noCache,
+            schema: merged.schema,
+            file: merged.file,
+            name: merged.name,
+            apply: merged.apply,
+            "no-apply": merged.noApply,
+          },
+        }),
+        withJsonErrorHandling,
+      );
+    }),
   ),
   Command.provide(legacyDbSchemaDeclarativeSyncRuntimeLayer),
 );

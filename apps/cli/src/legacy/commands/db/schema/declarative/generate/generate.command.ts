@@ -6,13 +6,11 @@ import { withJsonErrorHandling } from "../../../../../../shared/output/json-erro
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { legacyAqua } from "../../../../../shared/legacy-colors.ts";
 import { withLegacyCommandInstrumentation } from "../../../../../telemetry/legacy-command-instrumentation.ts";
+import { legacyDbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { legacyDbSchemaDeclarativeGenerate } from "./generate.handler.ts";
 import { legacyDbSchemaDeclarativeGenerateRuntimeLayer } from "./generate.layers.ts";
 
 const config = {
-  noCache: Flag.boolean("no-cache").pipe(
-    Flag.withDescription("Disable catalog cache and force fresh shadow database setup."),
-  ),
   overwrite: Flag.boolean("overwrite").pipe(
     Flag.withDescription("Overwrite declarative schema files without confirmation."),
   ),
@@ -43,46 +41,55 @@ const config = {
   ),
 } as const;
 
-export type LegacyDbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.Infer<typeof config>;
+// `--no-cache` is a shared flag on the `declarative` group (read from the parent),
+// so the handler input merges it in alongside the leaf's own flags.
+export type LegacyDbSchemaDeclarativeGenerateFlags = CliCommand.Command.Config.Infer<
+  typeof config
+> & { readonly noCache: boolean };
 
 export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate", config).pipe(
   Command.withDescription("Generate declarative schema from a database."),
   Command.withShortDescription("Generate declarative schema from a database"),
   Command.withHandler((flags) =>
-    legacyDbSchemaDeclarativeGenerate(flags).pipe(
-      // Go's PostRun prints this on success via `fmt.Println` → stdout
-      // (`cmd/db_schema_declarative.go:93`), so keep it on stdout in text mode. In
-      // json / stream-json the bare human line would corrupt the payload, so emit a
-      // structured result instead (machine stdout is payload-only — CLI-1546).
-      Effect.tap(() =>
-        Effect.gen(function* () {
-          const output = yield* Output;
-          if (output.format === "text") {
-            yield* output.raw(
-              `Finished ${legacyAqua("supabase db schema declarative generate")}.\n`,
-            );
-            return;
-          }
-          yield* output.success("Finished supabase db schema declarative generate.");
+    Effect.gen(function* () {
+      // `--no-cache` is shared on the parent group; read the resolved value there.
+      const shared = yield* legacyDbSchemaDeclarativeSharedBase;
+      const merged: LegacyDbSchemaDeclarativeGenerateFlags = { ...flags, noCache: shared.noCache };
+      return yield* legacyDbSchemaDeclarativeGenerate(merged).pipe(
+        // Go's PostRun prints this on success via `fmt.Println` → stdout
+        // (`cmd/db_schema_declarative.go:93`), so keep it on stdout in text mode. In
+        // json / stream-json the bare human line would corrupt the payload, so emit a
+        // structured result instead (machine stdout is payload-only — CLI-1546).
+        Effect.tap(() =>
+          Effect.gen(function* () {
+            const output = yield* Output;
+            if (output.format === "text") {
+              yield* output.raw(
+                `Finished ${legacyAqua("supabase db schema declarative generate")}.\n`,
+              );
+              return;
+            }
+            yield* output.success("Finished supabase db schema declarative generate.");
+          }),
+        ),
+        withLegacyCommandInstrumentation({
+          flags: {
+            "no-cache": merged.noCache,
+            overwrite: merged.overwrite,
+            reset: merged.reset,
+            schema: merged.schema,
+            "db-url": merged.dbUrl,
+            linked: merged.linked,
+            local: merged.local,
+            // `password` must never be added to `safeFlags` — it is a credential and
+            // must always reach telemetry as `<redacted>` (matches Go, which never
+            // marks `--password` telemetry-safe).
+            password: merged.password,
+          },
         }),
-      ),
-      withLegacyCommandInstrumentation({
-        flags: {
-          "no-cache": flags.noCache,
-          overwrite: flags.overwrite,
-          reset: flags.reset,
-          schema: flags.schema,
-          "db-url": flags.dbUrl,
-          linked: flags.linked,
-          local: flags.local,
-          // `password` must never be added to `safeFlags` — it is a credential and
-          // must always reach telemetry as `<redacted>` (matches Go, which never
-          // marks `--password` telemetry-safe).
-          password: flags.password,
-        },
-      }),
-      withJsonErrorHandling,
-    ),
+        withJsonErrorHandling,
+      );
+    }),
   ),
   Command.provide(legacyDbSchemaDeclarativeGenerateRuntimeLayer),
 );
