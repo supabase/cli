@@ -806,6 +806,13 @@ async function writeSourceDeployForm(
   };
 
   const uploadScopeTarget = async (pathname: string) => {
+    const resolvedPath = await realpath(pathname);
+    if (!isContainedPath(realProjectRoot, resolvedPath)) {
+      await Effect.runPromise(
+        outputRaw(`WARN: Skipping import path outside project root: ${pathname}\n`),
+      );
+      return;
+    }
     const pathInfo = await stat(pathname);
     if (!pathInfo.isDirectory()) {
       await uploadAsset(pathname, await readFile(pathname));
@@ -814,6 +821,13 @@ async function writeSourceDeployForm(
     const nestedPaths = await listPathsRecursive(pathname);
     for (const nestedPath of nestedPaths) {
       if ((await stat(nestedPath)).isDirectory()) {
+        continue;
+      }
+      const resolvedNestedPath = await realpath(nestedPath);
+      if (!isContainedPath(realProjectRoot, resolvedNestedPath)) {
+        await Effect.runPromise(
+          outputRaw(`WARN: Skipping import path outside project root: ${nestedPath}\n`),
+        );
         continue;
       }
       await uploadAsset(nestedPath, await readFile(nestedPath));
