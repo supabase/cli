@@ -249,13 +249,23 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         if (shouldReset) {
           const code = yield* seam.execInherit(["db", "reset", "--local"]);
           if (code !== 0) {
-            yield* output.raw(`${legacyRed("Database reset also failed.")}\n`, "stderr");
+            // Go returns `resetErr` here (`apps/cli-go/cmd/db_schema_declarative.go:414-423`),
+            // surfacing the failure that actually blocked recovery — not the original
+            // apply error. The seam yields only an exit code, so build the reset error
+            // from it and use that one value for the message, debug bundle, and return.
+            const resetError = new LegacyDeclarativeApplyError({
+              message: `database reset failed (exit ${code})`,
+            });
+            yield* output.raw(
+              `${legacyRed(`Database reset also failed: ${resetError.message}`)}\n`,
+              "stderr",
+            );
             const resetDebugDir = yield* legacySaveDebugBundle(fs, path, tempDir, migrationsDir, {
               id: `${ts}-after-reset`,
               sourceRef: result.sourceRef,
               targetRef: result.targetRef,
               migrationSql: result.diffSQL,
-              error: `database reset failed (exit ${code})`,
+              error: resetError.message,
               migrations,
             });
             yield* output.raw(`Debug information saved to ${legacyBold(debugDir)}\n`, "stderr");
@@ -264,7 +274,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
               "stderr",
             );
             yield* output.raw(legacyDebugBundleMessage(""), "stderr");
-            return yield* Effect.fail(applyError);
+            return yield* Effect.fail(resetError);
           }
           yield* output.raw("Database reset and all migrations applied successfully.\n", "stderr");
           return;

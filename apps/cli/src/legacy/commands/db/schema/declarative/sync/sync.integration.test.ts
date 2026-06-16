@@ -243,4 +243,28 @@ describe("legacy db schema declarative sync integration", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
+
+  it.effect("surfaces the reset failure (not the apply error) when reset also fails", () => {
+    // Go returns resetErr here (`cmd/db_schema_declarative.go:414-423`), so the failure
+    // that actually blocked recovery is reported, not the original apply error ("boom").
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+      applyFails: true,
+      stdinIsTty: true,
+      promptConfirmResponses: [true], // accept the reset offer
+      resetExitCode: 1, // …and the reset itself fails
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags({ apply: true })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({ message: "database reset failed (exit 1)" });
+      expect(
+        s.out.rawChunks.some((c) =>
+          c.text.includes("Database reset also failed: database reset failed (exit 1)"),
+        ),
+      ).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
 });
