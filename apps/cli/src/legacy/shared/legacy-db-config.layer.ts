@@ -12,6 +12,7 @@ import { LegacyProjectRefResolver } from "../config/legacy-project-ref.service.t
 import { legacyProjectRefLayer } from "../config/legacy-project-ref.layer.ts";
 import {
   LegacyDebugFlag,
+  LegacyDnsResolverFlag,
   LegacyOutputFlag,
   LegacyProfileFlag,
   LegacyWorkdirFlag,
@@ -149,6 +150,10 @@ export const legacyDbConfigLayer = Layer.effect(
       Layer.succeed(LegacyWorkdirFlag, yield* LegacyWorkdirFlag),
       Layer.succeed(LegacyOutputFlag, yield* LegacyOutputFlag),
       Layer.succeed(LegacyDebugFlag, yield* LegacyDebugFlag),
+      // `legacyPlatformApiFactoryLayer` now provides `legacyDohFetchLayer`, which
+      // reads `LegacyDnsResolverFlag`. Snapshot it here so the lazily-built linked
+      // stack stays fully self-provided (`resolve`'s R remains `never`).
+      Layer.succeed(LegacyDnsResolverFlag, yield* LegacyDnsResolverFlag),
       Layer.succeed(RuntimeInfo, yield* RuntimeInfo),
       Layer.succeed(Analytics, yield* Analytics),
       Layer.succeed(TelemetryRuntime, yield* TelemetryRuntime),

@@ -15,6 +15,7 @@ import {
 import { mockLegacyCliConfig } from "../../../tests/helpers/legacy-mocks.ts";
 import {
   LegacyDebugFlag,
+  LegacyDnsResolverFlag,
   LegacyOutputFlag,
   LegacyProfileFlag,
   LegacyWorkdirFlag,
@@ -53,6 +54,7 @@ function buildResolver(workdir: string) {
     Layer.succeed(LegacyWorkdirFlag, Option.some(workdir)),
     Layer.succeed(LegacyOutputFlag, Option.none()),
     Layer.succeed(LegacyDebugFlag, false),
+    Layer.succeed(LegacyDnsResolverFlag, "native"),
     // The resolver snapshots the one `LegacyIdentityStitch` for its lazy linked
     // stack; `--local`/`--db-url` never force it, but the layer reads it at build.
     legacyIdentityStitchLayer.pipe(

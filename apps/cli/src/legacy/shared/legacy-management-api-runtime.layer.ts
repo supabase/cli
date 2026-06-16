@@ -13,6 +13,7 @@ import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
 import { LegacyProjectRefResolver } from "../config/legacy-project-ref.service.ts";
 import { legacyProjectRefLayer } from "../config/legacy-project-ref.layer.ts";
 import { legacyDebugLoggerLayer } from "./legacy-debug-logger.layer.ts";
+import { legacyDohFetchLayer } from "./legacy-http-dns.ts";
 import { LegacyIdentityStitch, legacyIdentityStitchLayer } from "./legacy-identity-stitch.ts";
 import { LegacyLinkedProjectCache } from "../telemetry/legacy-linked-project-cache.service.ts";
 import { legacyLinkedProjectCacheLayer } from "../telemetry/legacy-linked-project-cache.layer.ts";
@@ -65,10 +66,14 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
   // SAME reference is provided to the cache below so (by layer memoisation) the
   // typed client and the cache GET share a single `stitchAttempted` guard — Go's
   // one root-context `sync.Once`, not one per transport.
+  // `legacyDohFetchLayer` overrides `FetchHttpClient.Fetch` with a
+  // DNS-over-HTTPS-aware fetch when `--dns-resolver https` is set — mirrors
+  // Go's `withFallbackDNS` hook (`apps/cli-go/internal/utils/api.go:85-104`).
   const platformApiStack = legacyPlatformApiLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliConfig),
     Layer.provide(FetchHttpClient.layer),
+    Layer.provide(legacyDohFetchLayer),
     Layer.provide(legacyDebugLoggerLayer),
     Layer.provide(legacyIdentityStitchLayer),
   );
