@@ -13,9 +13,14 @@ import { legacyBold } from "../../../../../shared/legacy-colors.ts";
 import { LegacyDbConfigResolver } from "../../../../../shared/legacy-db-config.service.ts";
 import { legacyGetHostname } from "../../../../../shared/legacy-hostname.ts";
 import {
+  legacyLoadProjectEnv,
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
+import {
+  parseLegacyConnectionString,
+  redactLegacyConnectionString,
+} from "../../../../../shared/legacy-db-config.parse.ts";
 import { legacyToPostgresURL } from "../../../../../shared/legacy-postgres-url.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyListLocalMigrations } from "../declarative.cache.ts";
@@ -131,7 +136,14 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           }
         }
         const hasMigrations = yield* hasMigrationFiles(fs, path, migrationsDir);
-        targetUrl = yield* resolveSmartTargetUrl(flags, local, hasMigrations);
+        targetUrl = yield* resolveSmartTargetUrl(
+          flags,
+          local,
+          hasMigrations,
+          fs,
+          path,
+          cliConfig.workdir,
+        );
         overwrite = true;
       }
 
@@ -197,6 +209,9 @@ const resolveSmartTargetUrl = Effect.fnUntraced(function* (
   flags: LegacyDbSchemaDeclarativeGenerateFlags,
   local: LocalConn,
   hasMigrations: boolean,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
 ) {
   if (!hasMigrations) return localUrl(local);
 
@@ -213,7 +228,24 @@ const resolveSmartTargetUrl = Effect.fnUntraced(function* (
         new LegacyDeclarativeInvalidDbUrlError({ message: "database URL cannot be empty" }),
       );
     }
-    return dbURL;
+    // Go parses the entry with pgconn.ParseConfig then feeds pg-delta a normalized
+    // ToPostgresURL (`apps/cli-go/cmd/db_schema_declarative.go:283-287`). Layer the
+    // project env under the shell env like the --db-url path so libpq PG* fallbacks
+    // resolve, and reject malformed input with Go's "failed to parse connection
+    // string" error (password redacted, CWE-209).
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
+    const conn = parseLegacyConnectionString(
+      dbURL,
+      (name) => process.env[name] ?? projectEnv[name],
+    );
+    if (conn === undefined) {
+      return yield* Effect.fail(
+        new LegacyDeclarativeInvalidDbUrlError({
+          message: `failed to parse connection string: ${redactLegacyConnectionString(dbURL)}`,
+        }),
+      );
+    }
+    return legacyToPostgresURL(conn);
   }
 
   let shouldReset = flags.reset;

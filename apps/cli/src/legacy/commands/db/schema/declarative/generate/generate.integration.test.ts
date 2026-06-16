@@ -233,4 +233,41 @@ describe("legacy db schema declarative generate integration", () => {
       ).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect("smart mode: rejects a malformed custom database URL", () => {
+    // Go parses the custom URL with pgconn.ParseConfig and fails with
+    // "failed to parse connection string: ..." rather than passing it to pg-delta.
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      promptSelectResponses: ["custom"],
+      promptTextResponses: ["not a url"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeInvalidDbUrlError",
+        message: "failed to parse connection string: not a url",
+      });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("smart mode: normalizes a valid custom database URL before pg-delta", () => {
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      promptSelectResponses: ["custom"],
+      promptTextResponses: ["postgres://user:secret@db.example.com:5432/app"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags());
+      // Normalized via ToPostgresURL → connect_timeout appended, like Go.
+      expect(s.edgeCalls[0]!.env["TARGET"]).toContain("@db.example.com:5432/app?connect_timeout=");
+    }).pipe(Effect.provide(s.layer));
+  });
 });
