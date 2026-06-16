@@ -168,6 +168,14 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       return;
     }
 
+    // Read config (with any `[remotes.<ref>]` override applied) and resolve the image
+    // BEFORE opening `--file`. Go applies the remote override during
+    // `ParseDatabaseConfig` (before `dump.Run` opens the file), so an invalid merged
+    // config (e.g. an unsupported remote `db.major_version`) fails without
+    // creating/truncating the destination file.
+    const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
+    const image = yield* legacyResolveDbImage(fs, path, cliConfig.workdir, tomlValues.majorVersion);
+
     // Resolve a relative `--file` against the workdir: Go chdir's into the workdir
     // in PersistentPreRunE before opening the file (`cmd/root.go:104` →
     // `internal/utils/misc.go`), so `--workdir /repo db dump -f out.sql` writes
@@ -201,8 +209,6 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
         : { _tag: "host" as const };
     const extraHosts =
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-    const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
-    const image = yield* legacyResolveDbImage(fs, path, cliConfig.workdir, tomlValues.majorVersion);
 
     const runContainer = (env: Readonly<Record<string, string>>) =>
       docker.runCapture({
