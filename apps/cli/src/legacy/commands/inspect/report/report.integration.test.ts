@@ -65,6 +65,7 @@ function mockResolver(opts: { conn?: LegacyPgConnInput; isLocal?: boolean; fails
         isLocal: opts.isLocal ?? true,
       } satisfies LegacyResolvedDbConfig);
     },
+    resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   return {
     layer,

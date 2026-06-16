@@ -44,6 +44,7 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
     Layer.succeed(LegacyDbConfigResolver, {
       resolve: (_flags: LegacyDbConfigFlags) =>
         Effect.succeed({ conn: LOCAL_CONN, isLocal: true } satisfies LegacyResolvedDbConfig),
+      resolvePoolerFallback: () => Effect.succeed(Option.none()),
     }),
     Layer.succeed(LegacyDbConnection, {
       connect: () =>

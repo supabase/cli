@@ -51,6 +51,7 @@ const REMOTE_CONN: LegacyPgConnInput = {
 function mockResolver(opts: { conn?: LegacyPgConnInput; isLocal?: boolean } = {}) {
   return Layer.succeed(LegacyDbConfigResolver, {
     resolve: () => Effect.succeed({ conn: opts.conn ?? LOCAL_CONN, isLocal: opts.isLocal ?? true }),
+    resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 }
 

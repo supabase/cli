@@ -287,6 +287,56 @@ export const legacyDbConfigLayer = Layer.effect(
         });
       });
 
+    // Resolve the DB password with viper's precedence: `--password` flag →
+    // `SUPABASE_DB_PASSWORD` shell env → project `.env*` value. `legacyLoadProjectEnv`
+    // already excludes shell-set keys, so the shell value still wins over the file.
+    const resolveDbPassword = (passwordFlag: Option.Option<string>) =>
+      Effect.gen(function* () {
+        const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+        return (
+          Option.getOrUndefined(passwordFlag) ??
+          process.env["SUPABASE_DB_PASSWORD"] ??
+          projectEnv["SUPABASE_DB_PASSWORD"] ??
+          ""
+        );
+      });
+
+    // Resolve the IPv4 transaction pooler connection for `ref` (Go's
+    // `GetPoolerConfig` + `initPoolerLogin`). Returns `None` when no pooler URL is
+    // configured or it fails validation (Go's `GetPoolerConfig` returns nil), so the
+    // caller can keep the original error. With a password, uses it directly; without
+    // one, mints a temp login role and verify-connects through the pooler.
+    const resolvePoolerConn = (
+      ref: string,
+      dnsResolver: "native" | "https",
+      password: string,
+    ): Effect.Effect<
+      Option.Option<LegacyPgConnInput>,
+      LegacyDbConfigError,
+      LegacyPlatformApiFactory
+    > =>
+      Effect.gen(function* () {
+        const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+        const poolerString = tomlValues.poolerConnectionString;
+        if (Option.isNone(poolerString)) return Option.none();
+        const pooler = yield* poolerConfigFrom(ref, poolerString.value);
+        if (Option.isNone(pooler)) return Option.none();
+        const poolerConn = pooler.value;
+        if (password.length > 0) {
+          yield* debug.debug("Using database password from env var...");
+          return Option.some({ ...poolerConn, password });
+        }
+        // Mint a temp role; preserve Supavisor's `<user>.<ref>` tenant suffix.
+        const originalUser = poolerConn.user;
+        const withRole = yield* initLoginRole(ref, poolerConn);
+        const finalUser = originalUser.endsWith(`.${ref}`)
+          ? `${withRole.user}.${ref}`
+          : withRole.user;
+        const tempConn = { ...withRole, user: finalUser };
+        yield* waitForTempRole(ref, tempConn, dnsResolver);
+        return Option.some(tempConn);
+      });
+
     const resolveLinked = (
       ref: string,
       dnsResolver: "native" | "https",
@@ -294,18 +344,8 @@ export const legacyDbConfigLayer = Layer.effect(
     ): Effect.Effect<LegacyPgConnInput, LegacyDbConfigError, LegacyPlatformApiFactory> =>
       Effect.gen(function* () {
         // Read lazily (per invocation) rather than at layer build, so tests and
-        // env-substitution see the current value. Go reads viper `DB_PASSWORD`
-        // after `loadNestedEnv` has populated the environment from the project
-        // `.env*` files, so honor those too — `legacyLoadProjectEnv`'s map already
-        // excludes keys present in the shell env, so the shell value still wins.
-        // The `--password` flag (bound to viper `DB_PASSWORD`) takes precedence
-        // over the env var when set, matching viper's flag-over-env order.
-        const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
-        const dbPassword =
-          Option.getOrUndefined(passwordFlag) ??
-          process.env["SUPABASE_DB_PASSWORD"] ??
-          projectEnv["SUPABASE_DB_PASSWORD"] ??
-          "";
+        // env-substitution see the current value.
+        const dbPassword = yield* resolveDbPassword(passwordFlag);
         const host = `db.${ref}.${cliConfig.projectHost}`;
         const base: LegacyPgConnInput = {
           host,
@@ -325,9 +365,8 @@ export const legacyDbConfigLayer = Layer.effect(
         }
 
         // Direct host unreachable (IPv6-only network) → try the pooler.
-        const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-        const poolerString = tomlValues.poolerConnectionString;
-        if (Option.isNone(poolerString)) {
+        const poolerConn = yield* resolvePoolerConn(ref, dnsResolver, base.password);
+        if (Option.isNone(poolerConn)) {
           return yield* Effect.fail(
             new Errors.LegacyDbConfigIpv6Error({
               message: "IPv6 is not supported on your current network",
@@ -335,29 +374,7 @@ export const legacyDbConfigLayer = Layer.effect(
             }),
           );
         }
-        const pooler = yield* poolerConfigFrom(ref, poolerString.value);
-        if (Option.isNone(pooler)) {
-          return yield* Effect.fail(
-            new Errors.LegacyDbConfigIpv6Error({
-              message: "IPv6 is not supported on your current network",
-              suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
-            }),
-          );
-        }
-        const poolerConn = pooler.value;
-        if (base.password.length > 0) {
-          yield* debug.debug("Using database password from env var...");
-          return { ...poolerConn, password: base.password };
-        }
-        // Mint a temp role; preserve Supavisor's `<user>.<ref>` tenant suffix.
-        const originalUser = poolerConn.user;
-        const withRole = yield* initLoginRole(ref, poolerConn);
-        const finalUser = originalUser.endsWith(`.${ref}`)
-          ? `${withRole.user}.${ref}`
-          : withRole.user;
-        const tempConn = { ...withRole, user: finalUser };
-        yield* waitForTempRole(ref, tempConn, dnsResolver);
-        return tempConn;
+        return poolerConn.value;
       });
 
     const resolve = (flags: LegacyDbConfigFlags) =>
@@ -467,6 +484,32 @@ export const legacyDbConfigLayer = Layer.effect(
         };
       });
 
-    return LegacyDbConfigResolver.of({ resolve });
+    // Go's `RunWithPoolerFallback` (`internal/db/dump/pooler_fallback.go`): when a
+    // linked dump's pg_dump container fails with an IPv6 connectivity error (the
+    // direct host is reachable from the CLI process but not from inside Docker), it
+    // resolves the project's IPv4 transaction pooler and retries once. This exposes
+    // that pooler resolution (Go's `ResolvePoolerConfigForFallback`) for the dump
+    // handler to invoke on demand. Returns `None` when the path is not pooler-eligible
+    // (`--linked` only) or no pooler URL is configured, so the caller keeps the
+    // original container error.
+    const resolvePoolerFallback = (flags: LegacyDbConfigFlags) =>
+      Effect.gen(function* () {
+        if (!flags.linked) return Option.none<LegacyPgConnInput>();
+        return yield* Effect.gen(function* () {
+          const projectRef = yield* LegacyProjectRefResolver;
+          const refOpt = yield* projectRef.resolveOptional(Option.none());
+          if (Option.isNone(refOpt)) return Option.none<LegacyPgConnInput>();
+          const ref = refOpt.value;
+          if (!PROJECT_REF_PATTERN.test(ref)) return Option.none<LegacyPgConnInput>();
+          const password = yield* resolveDbPassword(flags.password ?? Option.none());
+          return yield* resolvePoolerConn(ref, flags.dnsResolver, password);
+        }).pipe(
+          Effect.provide(
+            legacyLinkedDbResolverRuntimeLayer(["db", "dump"]).pipe(Layer.provide(ambientLayer)),
+          ),
+        );
+      });
+
+    return LegacyDbConfigResolver.of({ resolve, resolvePoolerFallback });
   }),
 );

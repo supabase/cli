@@ -7,7 +7,8 @@ import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts"
 import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
-import { legacyBold } from "../../../shared/legacy-colors.ts";
+import { legacyIsIPv6ConnectivityError } from "../../../shared/legacy-connect-errors.ts";
+import { legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
 import {
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
@@ -134,29 +135,28 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       excludeTable: splitCsv(flags.exclude),
       columnInsert: !flags.useCopy,
     };
+    // The script + diagnostic verb are connection-independent; the env is rebuilt
+    // per connection so the pooler-fallback retry can target a different host.
     const mode = flags.dataOnly
-      ? ({
-          verb: "data",
-          script: legacyDumpDataScript,
-          env: legacyBuildDataDumpEnv(conn, opt),
-        } as const)
+      ? ({ verb: "data", script: legacyDumpDataScript, buildEnv: legacyBuildDataDumpEnv } as const)
       : flags.roleOnly
         ? ({
             verb: "roles",
             script: legacyDumpRoleScript,
-            env: legacyBuildRoleDumpEnv(conn, opt),
+            buildEnv: legacyBuildRoleDumpEnv,
           } as const)
         : ({
             verb: "schemas",
             script: legacyDumpSchemaScript,
-            env: legacyBuildSchemaDumpEnv(conn, opt),
+            buildEnv: legacyBuildSchemaDumpEnv,
           } as const);
+    const modeEnv = mode.buildEnv(conn, opt);
 
     // 5. Dry-run: print the env-expanded script to stdout (no container).
     if (flags.dryRun) {
       yield* output.raw("DRY RUN: *only* printing the pg_dump script to console.\n", "stderr");
       yield* output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr");
-      yield* output.raw(`${legacyExpandScript(mode.script, mode.env)}\n`);
+      yield* output.raw(`${legacyExpandScript(mode.script, modeEnv)}\n`);
       return;
     }
 
@@ -196,20 +196,59 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
     const image = yield* legacyResolveDbImage(fs, path, cliConfig.workdir, tomlValues.majorVersion);
 
-    const result = yield* docker.runCapture({
-      image: legacyGetRegistryImageUrl(image),
-      cmd: ["bash", "-c", mode.script, "--"],
-      env: mode.env,
-      binds: [],
-      workingDir: Option.none(),
-      securityOpt: [],
-      extraHosts,
-      network,
-    });
+    const runContainer = (env: Readonly<Record<string, string>>) =>
+      docker.runCapture({
+        image: legacyGetRegistryImageUrl(image),
+        cmd: ["bash", "-c", mode.script, "--"],
+        env,
+        binds: [],
+        workingDir: Option.none(),
+        securityOpt: [],
+        extraHosts,
+        network,
+      });
+
+    let result = yield* runContainer(modeEnv);
+
+    // 7b. Container-level pooler fallback (Go's `RunWithPoolerFallback`,
+    //     `internal/db/dump/pooler_fallback.go`). A linked dump can reach the direct
+    //     host from the CLI process (so the resolver returned the direct conn) yet
+    //     fail from inside the pg_dump container on an IPv6-only Docker network. When
+    //     the captured container stderr classifies as an IPv6 connectivity error,
+    //     retry once through the project's IPv4 transaction pooler. Gated to the
+    //     `--linked` path with a direct `db.<ref>.<host>` connection (Go's
+    //     `PoolerFallbackEligible` + `ProjectRefFromDirectDbHost`).
+    if (
+      result.exitCode !== 0 &&
+      useLinked &&
+      !isLocal &&
+      conn.host.startsWith("db.") &&
+      conn.host.endsWith(`.${cliConfig.projectHost}`) &&
+      legacyIsIPv6ConnectivityError(result.stderr)
+    ) {
+      const pooler = yield* resolver.resolvePoolerFallback({
+        dbUrl: flags.dbUrl,
+        linked: true,
+        local: false,
+        dnsResolver,
+        password: flags.password,
+      });
+      if (Option.isSome(pooler)) {
+        yield* output.raw(
+          `${legacyYellow(
+            `Warning: Direct connection to ${conn.host} is unavailable because this environment does not support IPv6.\nRetrying via the IPv4 connection pooler.`,
+          )}\n`,
+          "stderr",
+        );
+        yield* output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr");
+        result = yield* runContainer(mode.buildEnv(pooler.value, opt));
+      }
+    }
 
     // 8. Persist the captured SQL — to `--file` (truncating) or stdout. Go streams
-    //    this live, so partial output on a failed run is also written; do the same
-    //    by writing the captured bytes before classifying the exit code.
+    //    this live; the captured bytes are written before classifying the exit code,
+    //    and on a pooler retry only the retry's output is written (Go truncates the
+    //    partial first-attempt output before retrying).
     if (Option.isSome(resolvedFile)) {
       yield* fs.writeFile(resolvedFile.value, result.stdout, { mode: DUMP_FILE_MODE }).pipe(
         Effect.mapError(

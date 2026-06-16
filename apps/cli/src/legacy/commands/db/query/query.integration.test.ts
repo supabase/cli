@@ -52,6 +52,7 @@ const failMessage = (exit: Exit.Exit<unknown, { readonly message: string }>): st
 function mockResolver(isLocal = true) {
   return Layer.succeed(LegacyDbConfigResolver, {
     resolve: () => Effect.succeed({ conn: LOCAL_CONN, isLocal }),
+    resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 }
 

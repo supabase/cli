@@ -1,5 +1,6 @@
-import { Context, type Effect } from "effect";
+import { Context, type Effect, type Option } from "effect";
 import type { LegacyPlatformApiFactoryError } from "../auth/legacy-platform-api-factory.service.ts";
+import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 import type {
   LegacyInvalidProjectRefError,
   LegacyProjectNotLinkedError,
@@ -53,6 +54,16 @@ interface LegacyDbConfigResolverShape {
   readonly resolve: (
     flags: LegacyDbConfigFlags,
   ) => Effect.Effect<LegacyResolvedDbConfig, LegacyDbConfigError>;
+  /**
+   * Resolves the IPv4 transaction pooler connection for a linked dump's
+   * container-level fallback (Go's `RunWithPoolerFallback` →
+   * `ResolvePoolerConfigForFallback`). Returns `None` when the path is not
+   * pooler-eligible (`--linked` only) or no pooler URL is configured, so the
+   * caller keeps the original error.
+   */
+  readonly resolvePoolerFallback: (
+    flags: LegacyDbConfigFlags,
+  ) => Effect.Effect<Option.Option<LegacyPgConnInput>, LegacyDbConfigError>;
 }
 
 /**

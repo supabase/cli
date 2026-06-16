@@ -41,12 +41,21 @@ const REMOTE_CONN: LegacyPgConnInput = {
   database: "postgres",
 };
 
-function mockResolver(opts: { conn?: LegacyPgConnInput; isLocal?: boolean }) {
+function mockResolver(opts: {
+  conn?: LegacyPgConnInput;
+  isLocal?: boolean;
+  poolerFallback?: Option.Option<LegacyPgConnInput>;
+}) {
   const calls: LegacyDbConfigFlags[] = [];
+  const fallbackCalls: LegacyDbConfigFlags[] = [];
   const layer = Layer.succeed(LegacyDbConfigResolver, {
     resolve: (flags) => {
       calls.push(flags);
       return Effect.succeed({ conn: opts.conn ?? LOCAL_CONN, isLocal: opts.isLocal ?? true });
+    },
+    resolvePoolerFallback: (flags) => {
+      fallbackCalls.push(flags);
+      return Effect.succeed(opts.poolerFallback ?? Option.none());
     },
   });
   return {
@@ -54,28 +63,54 @@ function mockResolver(opts: { conn?: LegacyPgConnInput; isLocal?: boolean }) {
     get calls() {
       return calls;
     },
+    get fallbackCalls() {
+      return fallbackCalls;
+    },
   };
 }
 
-function mockDockerRun(opts: { exitCode?: number; stdout?: string; runFails?: boolean }) {
-  let lastOpts: LegacyDockerRunOpts | undefined;
+interface DockerResult {
+  exitCode?: number;
+  stdout?: string;
+  stderr?: string;
+}
+
+function mockDockerRun(opts: {
+  exitCode?: number;
+  stdout?: string;
+  stderr?: string;
+  runFails?: boolean;
+  // A queue of results, one per runCapture call (for the pooler-fallback retry).
+  // Falls back to the single exitCode/stdout/stderr result when exhausted.
+  results?: ReadonlyArray<DockerResult>;
+}) {
+  const allOpts: LegacyDockerRunOpts[] = [];
+  const queue = [...(opts.results ?? [])];
   const layer = Layer.succeed(LegacyDockerRun, {
     run: () => Effect.succeed(0),
     runCapture: (runOpts) => {
-      lastOpts = runOpts;
-      return opts.runFails === true
-        ? Effect.fail(new LegacyDockerRunError({ message: "failed to run docker: not found" }))
-        : Effect.succeed({
-            exitCode: opts.exitCode ?? 0,
-            stdout: new TextEncoder().encode(opts.stdout ?? ""),
-            stderr: "",
-          });
+      allOpts.push(runOpts);
+      if (opts.runFails === true) {
+        return Effect.fail(
+          new LegacyDockerRunError({ message: "failed to run docker: not found" }),
+        );
+      }
+      const next = queue.shift();
+      const r = next ?? { exitCode: opts.exitCode, stdout: opts.stdout, stderr: opts.stderr };
+      return Effect.succeed({
+        exitCode: r.exitCode ?? 0,
+        stdout: new TextEncoder().encode(r.stdout ?? ""),
+        stderr: r.stderr ?? "",
+      });
     },
   });
   return {
     layer,
+    get allOpts() {
+      return allOpts;
+    },
     get lastOpts() {
-      return lastOpts;
+      return allOpts[allOpts.length - 1];
     },
   };
 }
@@ -95,7 +130,10 @@ interface SetupOpts {
   isLocal?: boolean;
   exitCode?: number;
   stdout?: string;
+  stderr?: string;
   runFails?: boolean;
+  results?: ReadonlyArray<DockerResult>;
+  poolerFallback?: Option.Option<LegacyPgConnInput>;
   networkId?: string;
   workdir?: string;
 }
@@ -103,7 +141,11 @@ interface SetupOpts {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
-  const resolver = mockResolver({ conn: opts.conn, isLocal: opts.isLocal });
+  const resolver = mockResolver({
+    conn: opts.conn,
+    isLocal: opts.isLocal,
+    poolerFallback: opts.poolerFallback,
+  });
   const docker = mockDockerRun(opts);
   const layer = Layer.mergeAll(
     out.layer,
@@ -334,6 +376,74 @@ describe("legacy db dump integration", () => {
       const exit = yield* legacyDbDump(flags({ local: true })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("error running container: exit 1");
+    }).pipe(Effect.provide(layer));
+  });
+
+  const POOLER_CONN: LegacyPgConnInput = {
+    host: "aws-0-us-east-1.pooler.supabase.com",
+    port: 5432,
+    user: "postgres.abcdefghijklmnopqrst",
+    password: "temp",
+    database: "postgres",
+  };
+  const IPV6_STDERR =
+    'could not translate host name "db.abcdefghijklmnopqrst.supabase.co" to address: No address associated with hostname';
+
+  it.live("linked: retries through the IPv4 pooler on a container IPv6 failure", () => {
+    const { layer, out, resolver, docker } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      poolerFallback: Option.some(POOLER_CONN),
+      results: [
+        { exitCode: 1, stderr: IPV6_STDERR },
+        { exitCode: 0, stdout: "CREATE SCHEMA x;\n" },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags());
+      // Retried once: two container runs, one fallback resolution.
+      expect(docker.allOpts).toHaveLength(2);
+      expect(resolver.fallbackCalls).toHaveLength(1);
+      expect(resolver.fallbackCalls[0]).toMatchObject({ linked: true });
+      // The retry targeted the pooler host (PGHOST in the rebuilt env).
+      expect(docker.allOpts[1]?.env["PGHOST"]).toBe(POOLER_CONN.host);
+      // The IPv6 warning was printed to stderr; only the retry's output reached stdout.
+      expect(out.stderrText).toContain("does not support IPv6");
+      expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
+      expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("linked: does not retry when the failure is not an IPv6 connectivity error", () => {
+    const { layer, resolver, docker } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      poolerFallback: Option.some(POOLER_CONN),
+      results: [{ exitCode: 1, stderr: "permission denied for schema public" }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDump(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe("error running container: exit 1");
+      expect(docker.allOpts).toHaveLength(1);
+      expect(resolver.fallbackCalls).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("linked: keeps the original error when no pooler fallback is available", () => {
+    const { layer, resolver, docker } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      poolerFallback: Option.none(),
+      results: [{ exitCode: 1, stderr: IPV6_STDERR }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDump(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe("error running container: exit 1");
+      // The fallback was attempted (classified IPv6) but returned no pooler.
+      expect(resolver.fallbackCalls).toHaveLength(1);
+      expect(docker.allOpts).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   });
 

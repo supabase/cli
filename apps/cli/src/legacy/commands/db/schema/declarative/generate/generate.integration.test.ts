@@ -93,6 +93,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         isLocal: false,
       });
     },
+    resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
   const proxyCalls: ReadonlyArray<string>[] = [];
   const proxy = Layer.succeed(LegacyGoProxy, {
