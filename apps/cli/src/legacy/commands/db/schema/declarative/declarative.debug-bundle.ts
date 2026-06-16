@@ -33,8 +33,10 @@ const copyBestEffort = (fs: FileSystem.FileSystem, from: string, to: string): Ef
 
 /**
  * Writes a debug bundle to `<tempDir>/debug/<id>/` and returns the directory.
- * Mirrors Go's `SaveDebugBundle`: every artifact write is best-effort (a failed
- * copy must not mask the original error).
+ * Mirrors Go's `SaveDebugBundle`: creating the top-level directory is fatal (the
+ * effect fails so callers don't claim a bundle was saved), while every individual
+ * artifact write and the nested `migrations/` dir are best-effort (a failed copy
+ * must not mask the original error).
  */
 export const legacySaveDebugBundle = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -45,7 +47,13 @@ export const legacySaveDebugBundle = Effect.fnUntraced(function* (
   bundle: LegacyDeclarativeDebugBundle,
 ) {
   const debugDir = path.join(tempDir, "debug", bundle.id);
-  yield* fs.makeDirectory(debugDir, { recursive: true }).pipe(Effect.ignore);
+  // Go's `SaveDebugBundle` returns an error when the top-level debug directory
+  // cannot be created (`apps/cli-go/internal/db/declarative/debug.go:40-42`); only
+  // the individual artifact writes (and the nested `migrations/` dir) are
+  // best-effort once the directory exists. Propagating this failure lets callers
+  // suppress the "Debug information saved" message instead of pointing at a
+  // directory that was never created.
+  yield* fs.makeDirectory(debugDir, { recursive: true });
 
   // The catalog refs come back from the Go seam as workdir-relative paths
   // (`supabase/.temp/pgdelta/...`); Go chdir's into the workdir before reading them,

@@ -22,6 +22,7 @@ import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-
 import { legacyListLocalMigrations, legacyPgDeltaTempPath } from "../declarative.cache.ts";
 import { legacyResolveSmartTargetUrl } from "../declarative.smart-target.ts";
 import {
+  type LegacyDeclarativeDebugBundle,
   legacyCollectMigrationsList,
   legacyDebugBundleMessage,
   legacySaveDebugBundle,
@@ -114,6 +115,21 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         noCache: flags.noCache,
       };
 
+      // Go's `saveApplyDebugBundle`: warn (rather than masking the apply error) and
+      // treat the bundle path as empty when the debug directory cannot be created, so
+      // an apply failure still surfaces without claiming a bundle was saved
+      // (`apps/cli-go/cmd/db_schema_declarative.go:447-461`).
+      const saveApplyDebugBundle = (bundle: LegacyDeclarativeDebugBundle) =>
+        legacySaveDebugBundle(fs, path, cliConfig.workdir, tempDir, migrationsDir, bundle).pipe(
+          Effect.matchEffect({
+            onFailure: (error) =>
+              output
+                .raw(`Warning: failed to save debug artifacts: ${error.message}\n`, "stderr")
+                .pipe(Effect.as("")),
+            onSuccess: Effect.succeed,
+          }),
+        );
+
       // Step 1: declarative files must exist; in a TTY, offer to generate them.
       if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
         const noFiles = new LegacyDeclarativeNonInteractiveError({
@@ -167,19 +183,18 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         Effect.tapError((error) =>
           Effect.gen(function* () {
             const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
-            const debugDir = yield* legacySaveDebugBundle(
-              fs,
-              path,
-              cliConfig.workdir,
-              tempDir,
-              migrationsDir,
-              {
-                id: formatDebugId(yield* Clock.currentTimeMillis),
-                error: error.message,
-                migrations,
-              },
+            yield* legacySaveDebugBundle(fs, path, cliConfig.workdir, tempDir, migrationsDir, {
+              id: formatDebugId(yield* Clock.currentTimeMillis),
+              error: error.message,
+              migrations,
+            }).pipe(
+              Effect.matchEffect({
+                // Go prints nothing when SaveDebugBundle errors on the diff path
+                // (`db_schema_declarative.go:337-340`: `if saveErr == nil`).
+                onFailure: () => Effect.void,
+                onSuccess: (debugDir) => output.raw(legacyDebugBundleMessage(debugDir), "stderr"),
+              }),
             );
-            yield* output.raw(legacyDebugBundleMessage(debugDir), "stderr");
           }),
         ),
       );
@@ -257,21 +272,14 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       );
       const ts = formatDebugId(yield* Clock.currentTimeMillis);
       const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
-      const debugDir = yield* legacySaveDebugBundle(
-        fs,
-        path,
-        cliConfig.workdir,
-        tempDir,
-        migrationsDir,
-        {
-          id: `${ts}-apply-error`,
-          sourceRef: result.sourceRef,
-          targetRef: result.targetRef,
-          migrationSql: result.diffSQL,
-          error: applyError.message,
-          migrations,
-        },
-      );
+      const debugDir = yield* saveApplyDebugBundle({
+        id: `${ts}-apply-error`,
+        sourceRef: result.sourceRef,
+        targetRef: result.targetRef,
+        migrationSql: result.diffSQL,
+        error: applyError.message,
+        migrations,
+      });
 
       if (tty.stdinIsTty && !yes) {
         const shouldReset = yield* output.promptConfirm(
@@ -300,26 +308,26 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
               `${legacyRed(`Database reset also failed: ${resetError.message}`)}\n`,
               "stderr",
             );
-            const resetDebugDir = yield* legacySaveDebugBundle(
-              fs,
-              path,
-              cliConfig.workdir,
-              tempDir,
-              migrationsDir,
-              {
-                id: `${ts}-after-reset`,
-                sourceRef: result.sourceRef,
-                targetRef: result.targetRef,
-                migrationSql: result.diffSQL,
-                error: resetError.message,
-                migrations,
-              },
-            );
-            yield* output.raw(`Debug information saved to ${legacyBold(debugDir)}\n`, "stderr");
-            yield* output.raw(
-              `Debug information saved to ${legacyBold(resetDebugDir)}\n`,
-              "stderr",
-            );
+            const resetDebugDir = yield* saveApplyDebugBundle({
+              id: `${ts}-after-reset`,
+              sourceRef: result.sourceRef,
+              targetRef: result.targetRef,
+              migrationSql: result.diffSQL,
+              error: resetError.message,
+              migrations,
+            });
+            // Go guards each saved-path line with `len(debugDir) > 0`
+            // (`db_schema_declarative.go:413-419`), so a bundle that failed to save
+            // does not print a path that does not exist.
+            if (debugDir.length > 0) {
+              yield* output.raw(`\nDebug information saved to ${legacyBold(debugDir)}\n`, "stderr");
+            }
+            if (resetDebugDir.length > 0) {
+              yield* output.raw(
+                `Debug information saved to ${legacyBold(resetDebugDir)}\n`,
+                "stderr",
+              );
+            }
             yield* output.raw(legacyDebugBundleMessage(""), "stderr");
             return yield* Effect.fail(resetError);
           }
@@ -327,7 +335,11 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           return;
         }
       }
-      yield* output.raw(legacyDebugBundleMessage(debugDir), "stderr");
+      // Go: `if len(debugDir) > 0 { PrintDebugBundleMessage(debugDir) }`
+      // (`db_schema_declarative.go:428-431`).
+      if (debugDir.length > 0) {
+        yield* output.raw(legacyDebugBundleMessage(debugDir), "stderr");
+      }
       return yield* Effect.fail(applyError);
     }).pipe(Effect.ensuring(telemetryState.flush));
   },
