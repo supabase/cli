@@ -33,4 +33,11 @@ export interface LegacyDbConfigFlags {
 export interface LegacyResolvedDbConfig {
   readonly conn: LegacyPgConnInput;
   readonly isLocal: boolean;
+  /**
+   * The resolved linked project ref (`--linked` path only; `None` for
+   * `--local` / `--db-url`). Lets the caller re-read config with the ref applied
+   * so a matching `[remotes.<ref>]` block overrides e.g. `db.major_version` for the
+   * container image, matching Go's remote-merged `utils.Config` on the linked path.
+   */
+  readonly ref?: Option.Option<string>;
 }

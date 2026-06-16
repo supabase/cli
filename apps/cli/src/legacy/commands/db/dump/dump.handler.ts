@@ -113,7 +113,11 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     //    (`internal/utils/flags/db_url.go:46-62`).
     const useLocal = Option.isNone(flags.dbUrl) && flags.local;
     const useLinked = Option.isNone(flags.dbUrl) && !flags.local;
-    const { conn, isLocal } = yield* resolver.resolve({
+    const {
+      conn,
+      isLocal,
+      ref: resolvedRef,
+    } = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       linked: useLinked,
       local: useLocal,
@@ -121,6 +125,10 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       password: flags.password,
     });
     const db = isLocal ? "local" : "remote";
+    // On the linked path, re-read config with the resolved ref so a matching
+    // `[remotes.<ref>]` block overrides `db.major_version` for the pg_dump image,
+    // mirroring Go's remote-merged `utils.Config` for `db dump --linked`.
+    const linkedRef = Option.getOrUndefined(resolvedRef ?? Option.none());
 
     // 4. Pick the mode-specific script + env (pure builders, `dump.env.ts`).
     //    Go declares --schema/-s and --exclude/-x as cobra StringSlice
@@ -193,7 +201,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
         : { _tag: "host" as const };
     const extraHosts =
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-    const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+    const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
     const image = yield* legacyResolveDbImage(fs, path, cliConfig.workdir, tomlValues.majorVersion);
 
     const runContainer = (env: Readonly<Record<string, string>>) =>

@@ -111,6 +111,40 @@ function asRecord(value: unknown): RawDoc | undefined {
     : undefined;
 }
 
+/** Recursively merge `override` over `base` (nested tables merge, scalars/arrays
+ * replace) — mirrors Go's per-key viper override (`config.go:550-562`). */
+function deepMergeDoc(base: RawDoc, override: RawDoc): RawDoc {
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    const baseValue = out[key];
+    const baseRecord = asRecord(baseValue);
+    const overrideRecord = asRecord(value);
+    out[key] =
+      baseRecord !== undefined && overrideRecord !== undefined
+        ? deepMergeDoc(baseRecord, overrideRecord)
+        : value;
+  }
+  return out;
+}
+
+/**
+ * Merge the `[remotes.<name>]` block whose `project_id` equals `ref` over the base
+ * config (Go's `config.Load`, `config.go:503-518` + `mergeRemoteConfig`). The block
+ * key name is only used for diagnostics in Go; the match is on `project_id`.
+ */
+function applyRemoteOverride(doc: RawDoc | undefined, ref: string): RawDoc | undefined {
+  const remotes = asRecord(doc?.["remotes"]);
+  if (doc === undefined || remotes === undefined) return doc;
+  for (const name of Object.keys(remotes)) {
+    const block = asRecord(remotes[name]);
+    if (block === undefined) continue;
+    if (typeof block["project_id"] === "string" && block["project_id"] === ref) {
+      return deepMergeDoc(doc, block);
+    }
+  }
+  return doc;
+}
+
 const ENV_PATTERN = /^env\((.*)\)$/;
 
 /**
@@ -266,6 +300,12 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
+  // When set (the explicitly-linked path only), a `[remotes.<name>]` block whose
+  // `project_id` equals `ref` is merged over the base config before fields are
+  // read — Go's `config.Load` merge keyed on `Config.ProjectId` (config.go:503-562).
+  // `--local` / `--db-url` / declarative pass nothing and read the unmerged config,
+  // matching Go (those paths never resolve a ref before config load).
+  ref?: string,
 ) {
   const supabaseDir = path.join(workdir, "supabase");
   const configPath = path.join(supabaseDir, "config.toml");
@@ -307,14 +347,17 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
         }),
       );
     }
-    db = asRecord(doc?.["db"]);
-    pgDeltaRaw = asRecord(asRecord(doc?.["experimental"])?.["pgdelta"]);
-    authRaw = asRecord(doc?.["auth"]);
-    storageRaw = asRecord(doc?.["storage"]);
-    realtimeRaw = asRecord(doc?.["realtime"]);
-    apiRaw = asRecord(doc?.["api"]);
-    edgeRuntimeRaw = asRecord(doc?.["edge_runtime"]);
-    projectId = nonEmptyString(doc?.["project_id"]);
+    // Apply a matching `[remotes.<name>]` override (Go merges the block whose
+    // `project_id` equals the resolved ref over the base, config.go:503-562).
+    const effectiveDoc = ref === undefined ? doc : applyRemoteOverride(doc, ref);
+    db = asRecord(effectiveDoc?.["db"]);
+    pgDeltaRaw = asRecord(asRecord(effectiveDoc?.["experimental"])?.["pgdelta"]);
+    authRaw = asRecord(effectiveDoc?.["auth"]);
+    storageRaw = asRecord(effectiveDoc?.["storage"]);
+    realtimeRaw = asRecord(effectiveDoc?.["realtime"]);
+    apiRaw = asRecord(effectiveDoc?.["api"]);
+    edgeRuntimeRaw = asRecord(effectiveDoc?.["edge_runtime"]);
+    projectId = nonEmptyString(effectiveDoc?.["project_id"]);
   }
 
   // Go: `config.go:626` — read the linked pooler URL from `.temp/pooler-url` and

@@ -31,6 +31,13 @@ const read = (workdir: string) =>
     return yield* legacyReadDbToml(fs, path, workdir);
   }).pipe(Effect.provide(BunServices.layer));
 
+const readRef = (workdir: string, ref: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* legacyReadDbToml(fs, path, workdir, ref);
+  }).pipe(Effect.provide(BunServices.layer));
+
 const loadEnv = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -96,6 +103,58 @@ describe("legacyReadDbToml", () => {
         }),
       ),
     );
+  });
+
+  describe("[remotes.<ref>] override", () => {
+    const REMOTE_CONFIG = [
+      'project_id = "base"',
+      "[db]",
+      "major_version = 15",
+      'password = "base-pw"',
+      "[remotes.production]",
+      'project_id = "prodprodprodprodprod"',
+      "[remotes.production.db]",
+      "major_version = 17",
+      "",
+    ].join("\n");
+
+    it.effect("merges the matching remote block when the ref matches its project_id", () => {
+      const dir = withConfig(REMOTE_CONFIG);
+      return readRef(dir, "prodprodprodprodprod").pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            // db.major_version overridden by [remotes.production.db]; password kept from base.
+            expect(v.majorVersion).toBe(17);
+            expect(v.password).toBe("base-pw");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    });
+
+    it.effect("ignores the remote block when no ref is passed (local/db-url parity)", () => {
+      const dir = withConfig(REMOTE_CONFIG);
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.majorVersion).toBe(15);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    });
+
+    it.effect("ignores the remote block when the ref does not match any project_id", () => {
+      const dir = withConfig(REMOTE_CONFIG);
+      return readRef(dir, "otherotherotherother").pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.majorVersion).toBe(15);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    });
   });
 
   it.effect("rejects invalid [experimental.pgdelta] format_options JSON during load", () => {

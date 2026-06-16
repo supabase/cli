@@ -431,7 +431,7 @@ export const legacyDbConfigLayer = Layer.effect(
         // the access token only on first use (minting a temp role), so a
         // `--linked --password` invocation stays auth-free, matching Go.
         if (flags.linked) {
-          const conn = yield* Effect.gen(function* () {
+          const linked = yield* Effect.gen(function* () {
             const projectRef = yield* LegacyProjectRefResolver;
             // Go's ParseDatabaseConfig resolves the linked ref via LoadProjectRef
             // (`apps/cli-go/internal/utils/flags/db_url.go:88`) — load-or-fail with no
@@ -462,13 +462,15 @@ export const legacyDbConfigLayer = Layer.effect(
             // no-ops when the file exists, the token is missing, or the GET is non-200.
             const linkedProjectCache = yield* LegacyLinkedProjectCache;
             yield* linkedProjectCache.cache(ref);
-            return resolved;
+            return { conn: resolved, ref };
           }).pipe(
             Effect.provide(
               legacyLinkedDbResolverRuntimeLayer(["test", "db"]).pipe(Layer.provide(ambientLayer)),
             ),
           );
-          return { conn, isLocal: false };
+          // Surface the resolved ref so the caller can re-read config with a matching
+          // `[remotes.<ref>]` override applied (Go merges it into the linked config).
+          return { conn: linked.conn, isLocal: false, ref: Option.some(linked.ref) };
         }
 
         // --local (default).
