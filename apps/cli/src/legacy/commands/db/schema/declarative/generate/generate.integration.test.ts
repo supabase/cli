@@ -174,6 +174,26 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("honors --yes to overwrite existing declarative files without prompting", () => {
+    // Pre-seed the declarative dir so the overwrite branch is reached. With --yes,
+    // Go's confirmOverwrite returns true immediately (Console.PromptYesNo); the
+    // handler must skip the prompt and overwrite. No promptConfirmResponses are
+    // queued, so reaching the prompt would error — success proves --yes bypassed it.
+    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "database", "existing.sql"), "create table x ();");
+    const s = setup(tmp.current, { experimental: true, yes: true });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: true }));
+      const written = yield* Effect.promise(async () =>
+        (await import("node:fs")).readFileSync(
+          join(tmp.current, "supabase", "database", "schemas", "public", "tables", "players.sql"),
+          "utf8",
+        ),
+      );
+      expect(written).toBe("create table players ();");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("explicit --db-url: resolves the remote URL via the resolver", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {

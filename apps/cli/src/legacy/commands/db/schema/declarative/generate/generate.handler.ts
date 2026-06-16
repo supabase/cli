@@ -138,10 +138,16 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       const result = yield* legacyGenerateDeclarativeOutput(run, targetUrl);
 
       if (!overwrite && (yield* hasDeclarativeFiles(fs, declarativeDir))) {
-        const ok = yield* output.promptConfirm(
-          "Overwrite declarative schema? Existing files may be deleted.",
-          { defaultValue: false },
-        );
+        // Go's confirmOverwrite goes through Console.PromptYesNo, which returns true
+        // immediately when the global YES flag is set (`apps/cli-go/internal/utils/
+        // console.go:70-73`). Honor --yes here too, or non-interactive/JSON runs
+        // would error on the prompt and a TTY would block despite --yes.
+        const ok = yes
+          ? true
+          : yield* output.promptConfirm(
+              "Overwrite declarative schema? Existing files may be deleted.",
+              { defaultValue: false },
+            );
         if (!ok) {
           yield* output.raw("Skipped writing declarative schema.\n", "stderr");
           return;
