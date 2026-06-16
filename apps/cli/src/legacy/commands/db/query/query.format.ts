@@ -7,10 +7,61 @@ import { Option } from "effect";
  * Go-parity rules (NULL rendering, key sort order, HTML escaping) are explicit.
  */
 
-/** Go's `formatValue`: `nil` → `"NULL"`, everything else via `fmt.Sprintf("%v")`. */
+/**
+ * Render a number the way Go's `fmt.Sprintf("%v", float64)` does — JSON numbers
+ * decode to `float64`, so Go uses shortest `%g`: exponent form when the decimal
+ * exponent is `< -4` or `>= 6` (e.g. `1000000` → `1e+06`, `1.5e8` → `1.5e+08`,
+ * `1e-5` → `1e-05`), fixed notation otherwise. The exponent is signed and at least
+ * two digits. JS fixed notation matches Go for the `[-4, 6)` range, so only the
+ * exponent cases need reformatting.
+ */
+function goFormatFloat(n: number): string {
+  if (Number.isNaN(n)) return "NaN";
+  if (!Number.isFinite(n)) return n > 0 ? "+Inf" : "-Inf";
+  if (n === 0) return "0";
+  const neg = n < 0;
+  const abs = Math.abs(n);
+  const [mantissa, eRaw] = abs.toExponential().split("e");
+  const exp = Number.parseInt(eRaw!, 10);
+  let out: string;
+  if (exp < -4 || exp >= 6) {
+    const mag = Math.abs(exp).toString().padStart(2, "0");
+    out = `${mantissa}e${exp < 0 ? "-" : "+"}${mag}`;
+  } else {
+    out = abs.toString();
+  }
+  return neg ? `-${out}` : out;
+}
+
+/**
+ * Reproduce Go's `fmt.Sprintf("%v", v)` for JSON-decoded (`interface{}`) values:
+ * objects → `map[k:v ...]` with byte-sorted keys, arrays → `[a b ...]`
+ * (space-separated, recursive), booleans → `true`/`false`, numbers via Go's
+ * `float64` `%g`, and nested `nil` → `<nil>`.
+ */
+function goFormatValue(value: unknown): string {
+  if (value === null || value === undefined) return "<nil>";
+  if (typeof value === "string") return value;
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number") return goFormatFloat(value);
+  if (Array.isArray(value)) return `[${value.map(goFormatValue).join(" ")}]`;
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    return `map[${keys.map((k) => `${k}:${goFormatValue(obj[k])}`).join(" ")}]`;
+  }
+  return String(value);
+}
+
+/**
+ * Go's `formatValue`: `nil` → `"NULL"`, everything else via `fmt.Sprintf("%v")`.
+ * JSON object/array column values (common for JSONB on the linked path) render as
+ * Go's `map[...]` / `[...]` rather than JS `[object Object]` / comma-joined text.
+ */
 export function legacyFormatValue(value: unknown): string {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "string") return value;
+  if (typeof value === "object") return goFormatValue(value);
   return String(value);
 }
 

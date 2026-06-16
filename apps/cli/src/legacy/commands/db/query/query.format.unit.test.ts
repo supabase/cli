@@ -19,6 +19,28 @@ describe("legacyFormatValue", () => {
     expect(legacyFormatValue("hello")).toBe("hello");
     expect(legacyFormatValue(true)).toBe("true");
   });
+
+  it("renders JSON objects and arrays like Go's fmt %v (not [object Object])", () => {
+    // Captured from `fmt.Sprintf("%v", ...)` on the Go toolchain.
+    expect(legacyFormatValue({ k: "v", z: 1, a: true })).toBe("map[a:true k:v z:1]");
+    expect(legacyFormatValue([1, 2, "x"])).toBe("[1 2 x]");
+    expect(legacyFormatValue({ count: 1000000 })).toBe("map[count:1e+06]");
+    expect(legacyFormatValue([null])).toBe("[<nil>]");
+    expect(legacyFormatValue({ arr: ["a", "b"], nested: { deep: [1, 2] } })).toBe(
+      "map[arr:[a b] nested:map[deep:[1 2]]]",
+    );
+    expect(legacyFormatValue({})).toBe("map[]");
+    expect(legacyFormatValue([])).toBe("[]");
+  });
+
+  it("renders nested JSON numbers with Go's float64 %g", () => {
+    expect(legacyFormatValue([1000000, 1234567, 999999, 0.5, 100.5])).toBe(
+      "[1e+06 1.234567e+06 999999 0.5 100.5]",
+    );
+    expect(legacyFormatValue([0.00001, 1.5e8, 12345678901234])).toBe(
+      "[1e-05 1.5e+08 1.2345678901234e+13]",
+    );
+  });
 });
 
 describe("legacyRenderTablewriter", () => {
