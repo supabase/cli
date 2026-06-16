@@ -358,9 +358,12 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     );
   }
 
-  const passwordRaw =
-    envOverride("SUPABASE_DB_PASSWORD") ??
-    (typeof db?.["password"] === "string" ? db["password"] : undefined);
+  // Go's `db.Password` is tagged `json:"-"` (`apps/cli-go/pkg/config/db.go:88`), so
+  // it is NOT bound from `SUPABASE_DB_PASSWORD` — the local password is the fixed
+  // config value/`"postgres"` default. `DB_PASSWORD` is read only by linked password
+  // resolution (`legacy-db-config.layer.ts`), so the local password must not source
+  // it or `db query --local` etc. would authenticate with a remote secret.
+  const passwordRaw = typeof db?.["password"] === "string" ? db["password"] : undefined;
 
   const majorVersionRaw = envOverride("SUPABASE_DB_MAJOR_VERSION") ?? db?.["major_version"];
   const majorVersionNum =
@@ -369,6 +372,23 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
       : typeof majorVersionRaw === "string"
         ? Number.parseInt(majorVersionRaw, 10)
         : Number.NaN;
+  // Reject unsupported major versions like Go's config.Validate ({13,14,15,17};
+  // `apps/cli-go/pkg/config/config.go:869-897`) before any image/container runs. An
+  // absent/unparseable value falls through to the default (Go's zero-then-default).
+  if (
+    majorVersionRaw !== undefined &&
+    Number.isInteger(majorVersionNum) &&
+    ![13, 14, 15, 17].includes(majorVersionNum)
+  ) {
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({
+        message:
+          majorVersionNum === 12
+            ? "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects."
+            : `Failed reading config: Invalid db.major_version: ${majorVersionNum}.`,
+      }),
+    );
+  }
   const majorVersion = Number.isInteger(majorVersionNum) ? majorVersionNum : DEFAULT_MAJOR_VERSION;
 
   // `[edge_runtime] deno_version` (default 2). Go switches the edge-runtime image

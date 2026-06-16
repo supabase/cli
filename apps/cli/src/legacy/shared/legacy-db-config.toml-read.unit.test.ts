@@ -339,7 +339,9 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(v.port).toBe(6000);
           expect(v.shadowPort).toBe(6001);
-          expect(v.password).toBe("env-override");
+          // db.password is tagged `json:"-"` in Go, so it is NOT bound from
+          // SUPABASE_DB_PASSWORD — the local password stays the config value.
+          expect(v.password).toBe("hunter2");
           for (const [k, val] of Object.entries({
             SUPABASE_DB_PORT: prev.PORT,
             SUPABASE_DB_SHADOW_PORT: prev.SHADOW,
@@ -348,6 +350,69 @@ describe("legacyReadDbToml", () => {
             if (val === undefined) delete process.env[k];
             else process.env[k] = val;
           }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not source the local password from SUPABASE_DB_PASSWORD", () => {
+    // Go's db.Password is json:"-" — not env-bound; the local default is "postgres".
+    const prev = process.env["SUPABASE_DB_PASSWORD"];
+    process.env["SUPABASE_DB_PASSWORD"] = "remote-secret";
+    const dir = withConfig(["[db]", "port = 5000", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.password).toBe("postgres");
+          if (prev === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
+          else process.env["SUPABASE_DB_PASSWORD"] = prev;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects db.major_version = 12 with Go's 12.x message", () => {
+    const dir = withConfig(["[db]", "major_version = 12", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("Postgres version 12.x is unsupported");
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects an unsupported db.major_version with the generic message", () => {
+    const dir = withConfig(["[db]", "major_version = 16", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Failed reading config: Invalid db.major_version: 16.",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("accepts a supported db.major_version", () => {
+    const dir = withConfig(["[db]", "major_version = 15", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.majorVersion).toBe(15);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
