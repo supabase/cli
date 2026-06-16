@@ -85,11 +85,11 @@ function mockDbConnection(opts: {
   });
 }
 
-function mockProjectRef() {
+function mockProjectRef(unlinked = false) {
   return Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(REF),
     resolveForLink: () => Effect.succeed(REF),
-    resolveOptional: () => Effect.succeed(Option.some(REF)),
+    resolveOptional: () => Effect.succeed(unlinked ? Option.none() : Option.some(REF)),
     promptProjectRef: () => Effect.succeed(REF),
   });
 }
@@ -148,6 +148,7 @@ interface SetupOpts {
   networkFail?: boolean;
   accessToken?: Option.Option<Redacted.Redacted<string>>;
   workdir?: string;
+  unlinked?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -160,7 +161,7 @@ function setup(opts: SetupOpts = {}) {
     cache.layer,
     mockResolver(opts.isLocal),
     mockDbConnection(opts),
-    mockProjectRef(),
+    mockProjectRef(opts.unlinked),
     mockStdin({ isTTY: opts.stdinTTY, piped: opts.piped }),
     Layer.succeed(Random, { randomHex: () => Effect.succeed(BOUNDARY) }),
     Layer.succeed(AiTool, {
@@ -402,6 +403,18 @@ describe("legacy db query integration", () => {
       );
       // Failure precedes target resolution, so no linked-project cache write.
       expect(cache.cached).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails an unlinked --linked query without prompting for a project", () => {
+    // Go's --linked PreRun loads the ref or fails (ErrNotLinked); it never prompts.
+    const { layer } = setup({ unlinked: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe("Cannot find project ref. Have you run supabase link?");
     }).pipe(Effect.provide(layer));
   });
 

@@ -4,7 +4,16 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import {
+  INVALID_PROJECT_REF_MESSAGE,
+  LegacyProjectRefResolver,
+  PROJECT_NOT_LINKED_MESSAGE,
+  PROJECT_REF_PATTERN,
+} from "../../../config/legacy-project-ref.service.ts";
+import {
+  LegacyInvalidProjectRefError,
+  LegacyProjectNotLinkedError,
+} from "../../../config/legacy-project-ref.errors.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -274,7 +283,24 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
           }),
         );
       }
-      const ref = yield* projectRef.resolve(Option.none());
+      // PreRun parity: Go's `db query --linked` calls `flags.LoadProjectRef`
+      // (`apps/cli-go/cmd/db.go`), which loads flag → env → ref file and fails with
+      // ErrNotLinked — it never opens the project-selection prompt. Use the
+      // non-prompting `resolveOptional` so an unlinked workdir fails instead of
+      // running the query against an interactively-selected project. Validate the
+      // resolved ref like Go's `AssertProjectRefIsValid`.
+      const refOpt = yield* projectRef.resolveOptional(Option.none());
+      if (Option.isNone(refOpt)) {
+        return yield* Effect.fail(
+          new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
+        );
+      }
+      const ref = refOpt.value;
+      if (!PROJECT_REF_PATTERN.test(ref)) {
+        return yield* Effect.fail(
+          new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }),
+        );
+      }
 
       // Mirror Go's `ensureProjectGroupsCached` PersistentPostRun
       // (`apps/cli-go/cmd/root.go:176,214-234`): once a project ref is resolved,
