@@ -11,8 +11,8 @@ import { Effect, type FileSystem, type Path } from "effect";
  * mirrored here as constants rather than read from any file.
  */
 
-// `FROM supabase/postgres:17.6.1.135 AS pg` (the embedded Dockerfile `pg` stage).
-const LEGACY_PG_IMAGE = "supabase/postgres:17.6.1.135";
+// `FROM supabase/postgres:17.6.1.136 AS pg` (the embedded Dockerfile `pg` stage).
+const LEGACY_PG_IMAGE = "supabase/postgres:17.6.1.136";
 // `pkg/config/constants.go:12-14`.
 const LEGACY_PG14 = "supabase/postgres:14.1.0.89";
 const LEGACY_PG15 = "supabase/postgres:15.8.1.085";
