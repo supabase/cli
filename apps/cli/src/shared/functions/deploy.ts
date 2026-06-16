@@ -1469,7 +1469,7 @@ const upsertBundledFunction = Effect.fnUntraced(function* (
       ref: projectRef,
       verify_jwt: bundled.metadata.verify_jwt,
       entrypoint_path: bundled.metadata.entrypoint_path,
-      import_map_path: bundled.metadata.import_map_path,
+      ...withOptional("import_map_path", bundled.metadata.import_map_path),
       ezbr_sha256: bundled.metadata.sha256,
       body: bundled.body,
     };

@@ -1278,6 +1278,61 @@ describe("functions deploy", () => {
     },
   );
 
+  it.live("omits undefined import_map_path on bundled function updates", () => {
+    const tempDir = makeTempDir();
+    const child = mockChildProcessSpawner({
+      exitCode: 0,
+      onSpawn: (record) => {
+        if (record.command !== "docker" || record.args[0] !== "run") {
+          return;
+        }
+        const outputPath = resolveDockerOutputPath(record.args);
+        mkdirSync(dirname(outputPath), { recursive: true });
+        writeFileSync(outputPath, "eszip-test-output");
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* Effect.promise(() =>
+        rm(join(tempDir, "supabase", "functions", "hello-world", "deno.json")),
+      );
+      yield* Effect.promise(() =>
+        writeFile(
+          join(tempDir, "supabase", "functions", "hello-world", "package.json"),
+          '{"dependencies":{"chalk":"^5.0.0"}}\n',
+        ),
+      );
+
+      const { api, layer } = setup(tempDir, {
+        rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
+        childLayer: child.layer,
+        api: {
+          listFunctions: [
+            {
+              ...makeFunction(),
+              ezbr_sha256: null,
+              import_map_path: null,
+            },
+          ],
+        },
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+        useDocker: true,
+      }).pipe(Effect.provide(layer));
+
+      expect(api.requests[1]).toMatchObject({
+        method: "PATCH",
+        path: `/v1/projects/${PROJECT_REF}/functions/hello-world`,
+      });
+      expect(api.requests[1]?.urlParams).not.toContain("import_map_path=");
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
   it.live("passes --verbose to the Docker bundler when --debug is set", () => {
     const tempDir = makeTempDir();
     const child = mockChildProcessSpawner({
