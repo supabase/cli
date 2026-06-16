@@ -1553,11 +1553,13 @@ const discoverFunctionSlugs = Effect.fnUntraced(function* (
   const entries = yield* Effect.tryPromise(() =>
     readdir(functionsDir, { withFileTypes: true }),
   ).pipe(
-    Effect.catchIf(
-      (error): error is NodeJS.ErrnoException =>
-        error instanceof Error && "code" in error && error.code === "ENOENT",
-      () => Effect.succeed(undefined),
-    ),
+    Effect.catch((error) => {
+      const cause =
+        typeof error === "object" && error !== null && "error" in error ? error.error : error;
+      return cause instanceof Error && "code" in cause && cause.code === "ENOENT"
+        ? Effect.succeed(undefined)
+        : Effect.fail(error);
+    }),
   );
   if (entries !== undefined) {
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
