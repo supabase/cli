@@ -125,4 +125,36 @@ describe("resolveLegacyDbTargetFlags", () => {
     expect(result.connType).toBe("local");
     expect(result.setFlags).toEqual(["local"]);
   });
+
+  it("--output-dir <value> does NOT mark --local as changed (value consumed)", () => {
+    // inspect report has --output-dir (StringVar, no short alias). In space form
+    // the next token is the dir value, not a flag. Without output-dir in the
+    // value-consuming set, --local would be falsely detected as changed.
+    const result = resolveLegacyDbTargetFlags(["--output-dir", "--local"]);
+    expect(result.connType).toBeUndefined();
+    expect(result.setFlags).toEqual([]);
+  });
+
+  it("--output-dir=<value> (attached form) DOES mark --local as changed", () => {
+    // Attached form does not consume the next token, so --local is a real flag.
+    const result = resolveLegacyDbTargetFlags(["--output-dir=./reports", "--local"]);
+    expect(result.connType).toBe("local");
+    expect(result.setFlags).toEqual(["local"]);
+  });
+
+  it("--schema -- --linked: -- consumed as schema value, --linked is a real flag (Go pflag parity)", () => {
+    // pflag: a bare value-consuming flag consumes the very next token as its
+    // value, even when that token is "--". Only a "--" with no pending value
+    // terminates the scan.
+    const result = resolveLegacyDbTargetFlags(["db", "lint", "--schema", "--", "--linked"]);
+    expect(result.connType).toBe("linked");
+    expect(result.setFlags).toEqual(["linked"]);
+  });
+
+  it("bare -- with no pending skip still stops the scan", () => {
+    // --linked sets changed; bare -- terminates; --local after is not scanned.
+    const result = resolveLegacyDbTargetFlags(["--linked", "--", "--local"]);
+    expect(result.connType).toBe("linked");
+    expect(result.setFlags).toEqual(["linked"]);
+  });
 });

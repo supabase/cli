@@ -50,6 +50,8 @@ const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "level",
   "fail-on",
   "type",
+  // inspect report flag (StringVar, no short alias)
+  "output-dir",
   // legacy global flags (Flag.string / Flag.choice)
   "output",
   "output-format",
@@ -92,12 +94,15 @@ export function resolveLegacyDbTargetFlags(args: ReadonlyArray<string>): LegacyD
 
   let skipNext = false;
   for (const token of args) {
-    if (token === "--") break;
-
+    // pflag: a value-consuming flag consumes the next token as its value even
+    // when that token is "--". Only a "--" that is NOT a pending value acts as
+    // the end-of-options sentinel.
     if (skipNext) {
       skipNext = false;
       continue;
     }
+
+    if (token === "--") break;
 
     if (token.startsWith("--")) {
       const eqIdx = token.indexOf("=");
