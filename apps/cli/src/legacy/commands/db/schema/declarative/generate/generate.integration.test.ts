@@ -135,6 +135,23 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("rejects conflicting targets (--local --linked) before the pg-delta gate", () => {
+    // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local") runs before
+    // PreRunE, so this fails even when pg-delta is not enabled.
+    const { layer } = setup(tmp.current, { experimental: false });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeGenerate(flags({ local: true, linked: true })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeMutuallyExclusiveFlagsError",
+        message:
+          "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("explicit --local: provisions baseline, exports, writes declarative files", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {

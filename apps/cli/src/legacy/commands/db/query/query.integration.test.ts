@@ -370,6 +370,22 @@ describe("legacy db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("rejects conflicting targets (--linked --local) before running any SQL", () => {
+    // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local") fails before RunE.
+    const { layer, cache } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbQuery(
+        flags({ sql: Option.some("select 1"), linked: true, local: true }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe(
+        "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+      );
+      // Failure precedes target resolution, so no linked-project cache write.
+      expect(cache.cached).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
   // ---- linked path -------------------------------------------------------
 
   it.live("queries the linked project over HTTP and writes the linked-project cache", () => {

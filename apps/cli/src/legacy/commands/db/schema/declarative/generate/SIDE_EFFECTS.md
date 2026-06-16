@@ -45,6 +45,7 @@ pg-delta catalog (source) against the target database's catalog (target).
 | Code | Condition                                                             |
 | ---- | --------------------------------------------------------------------- |
 | `0`  | success (files written, or skipped after a declined prompt)           |
+| `1`  | conflicting `--db-url`/`--linked`/`--local` (mutually exclusive)      |
 | `1`  | pg-delta not enabled (no `--experimental` / `[experimental.pgdelta]`) |
 | `1`  | non-interactive mode with no explicit target                          |
 | `1`  | shadow-database / edge-runtime / export failure                       |

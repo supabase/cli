@@ -25,6 +25,7 @@ import {
 } from "../declarative.debug-bundle.ts";
 import {
   LegacyDeclarativeApplyError,
+  LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNoFilesGeneratedError,
   LegacyDeclarativeNonInteractiveError,
 } from "../declarative.errors.ts";
@@ -69,6 +70,21 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     const seam = yield* LegacyDeclarativeSeam;
 
     yield* Effect.gen(function* () {
+      // cobra `MarkFlagsMutuallyExclusive("apply", "no-apply")`
+      // (`apps/cli-go/cmd/db_schema_declarative.go:490`) runs before PreRunE/RunE,
+      // so reject the conflict before reading config or the pg-delta gate, rather
+      // than letting `--no-apply` silently win in the apply-decision helper.
+      const exclusive: Array<string> = [];
+      if (flags.apply) exclusive.push("apply");
+      if (flags.noApply) exclusive.push("no-apply");
+      if (exclusive.length > 1) {
+        return yield* Effect.fail(
+          new LegacyDeclarativeMutuallyExclusiveFlagsError({
+            message: `if any flags in the group [apply no-apply] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
+          }),
+        );
+      }
+
       const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
       yield* legacyRequirePgDelta({
         experimental,

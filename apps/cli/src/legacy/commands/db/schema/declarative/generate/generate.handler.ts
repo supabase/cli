@@ -20,6 +20,7 @@ import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-
 import { legacyListLocalMigrations } from "../declarative.cache.ts";
 import {
   LegacyDeclarativeInvalidDbUrlError,
+  LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNonInteractiveError,
 } from "../declarative.errors.ts";
 import { legacyRequirePgDelta } from "../declarative.gate.ts";
@@ -58,6 +59,22 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     const yes = yield* LegacyYesFlag;
 
     yield* Effect.gen(function* () {
+      // cobra `MarkFlagsMutuallyExclusive("db-url", "linked", "local")`
+      // (`apps/cli-go/cmd/db_schema_declarative.go:499`) runs before PreRunE/RunE,
+      // so reject conflicting targets before reading config or the pg-delta gate.
+      // "Set" follows cobra's `Changed`: Option set when `Some`, boolean when `true`.
+      const exclusive: Array<string> = [];
+      if (Option.isSome(flags.dbUrl)) exclusive.push("db-url");
+      if (flags.linked) exclusive.push("linked");
+      if (flags.local) exclusive.push("local");
+      if (exclusive.length > 1) {
+        return yield* Effect.fail(
+          new LegacyDeclarativeMutuallyExclusiveFlagsError({
+            message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
+          }),
+        );
+      }
+
       const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
       yield* legacyRequirePgDelta({
         experimental,

@@ -37,6 +37,18 @@ export class LegacyDbQueryExecError extends Data.TaggedError("LegacyDbQueryExecE
 }> {}
 
 /**
+ * More than one of `--db-url` / `--linked` / `--local` was set. Reproduces
+ * cobra's `dbQueryCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")`
+ * (`apps/cli-go/cmd/db.go:526`) `ValidateFlagGroups` error byte-for-byte, so the
+ * invocation fails before any SQL runs.
+ */
+export class LegacyDbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
+  "LegacyDbQueryMutuallyExclusiveFlagsError",
+)<{
+  readonly message: string;
+}> {}
+
+/**
  * The linked Management API returned a non-201 status. Byte-matches Go's
  * `"unexpected status %d: %s"` (`RunLinked`).
  */

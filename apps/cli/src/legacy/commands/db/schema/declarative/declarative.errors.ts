@@ -27,6 +27,19 @@ export class LegacyDeclarativeNonInteractiveError extends Data.TaggedError(
 }> {}
 
 /**
+ * A mutually-exclusive flag group was violated. Reproduces cobra's
+ * `MarkFlagsMutuallyExclusive` `ValidateFlagGroups` error byte-for-byte:
+ *  - `generate`: `db-url`/`linked`/`local` (`apps/cli-go/cmd/db_schema_declarative.go:499`)
+ *  - `sync`: `apply`/`no-apply` (`apps/cli-go/cmd/db_schema_declarative.go:490`)
+ * Both fail before any side effects run, matching cobra's pre-RunE validation.
+ */
+export class LegacyDeclarativeMutuallyExclusiveFlagsError extends Data.TaggedError(
+  "LegacyDeclarativeMutuallyExclusiveFlagsError",
+)<{
+  readonly message: string;
+}> {}
+
+/**
  * The interactive custom-database-URL prompt was empty or unparseable. Byte-matches
  * Go's `"database URL cannot be empty"` (`:281`) and
  * `"failed to parse connection string: " + err` (`:285`).

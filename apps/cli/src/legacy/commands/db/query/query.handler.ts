@@ -23,6 +23,7 @@ import { LEGACY_RLS_CHECK_SQL, legacyBuildRlsAdvisory } from "./query.advisory.t
 import {
   LegacyDbQueryExecError,
   LegacyDbQueryLoginRequiredError,
+  LegacyDbQueryMutuallyExclusiveFlagsError,
   LegacyDbQueryNoSqlError,
   LegacyDbQueryNoStdinSqlError,
   LegacyDbQueryReadFileError,
@@ -183,6 +184,22 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     });
 
   yield* Effect.gen(function* () {
+    // 0. cobra `MarkFlagsMutuallyExclusive("db-url", "linked", "local")`
+    //    (`apps/cli-go/cmd/db.go:526`) runs before RunE, so reject conflicting
+    //    targets before resolving any SQL. "Set" follows cobra's `Changed`: an
+    //    Option is set when `Some`, a boolean when explicitly `true`.
+    const exclusive: Array<string> = [];
+    if (Option.isSome(flags.dbUrl)) exclusive.push("db-url");
+    if (flags.linked) exclusive.push("linked");
+    if (flags.local) exclusive.push("local");
+    if (exclusive.length > 1) {
+      return yield* Effect.fail(
+        new LegacyDbQueryMutuallyExclusiveFlagsError({
+          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
+        }),
+      );
+    }
+
     // 1. Resolve SQL: --file > positional arg > piped stdin.
     const sql = yield* Effect.gen(function* () {
       if (Option.isSome(flags.file)) {

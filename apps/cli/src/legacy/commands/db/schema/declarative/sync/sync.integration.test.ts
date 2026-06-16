@@ -122,6 +122,23 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("rejects --apply and --no-apply together before the pg-delta gate", () => {
+    // cobra MarkFlagsMutuallyExclusive("apply", "no-apply") runs before PreRunE,
+    // so this fails even when pg-delta is not enabled.
+    const { layer } = setup(tmp.current, { experimental: false });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(flags({ apply: true, noApply: true })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeMutuallyExclusiveFlagsError",
+        message:
+          "if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set",
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("fails when there are no declarative files", () => {
     const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {

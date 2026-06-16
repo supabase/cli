@@ -43,6 +43,7 @@ as a new timestamped migration.
 | Code | Condition                                                          |
 | ---- | ------------------------------------------------------------------ |
 | `0`  | success (migration created, applied, or "No schema changes found") |
+| `1`  | conflicting `--apply`/`--no-apply` (mutually exclusive)            |
 | `1`  | pg-delta not enabled                                               |
 | `1`  | no declarative schema files found                                  |
 | `1`  | shadow-database / edge-runtime / diff failure                      |

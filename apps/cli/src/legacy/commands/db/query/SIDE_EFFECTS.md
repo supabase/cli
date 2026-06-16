@@ -36,10 +36,10 @@ the result as a table or JSON.
 
 ## Exit Codes
 
-| Code | Condition                                                                                                              |
-| ---- | ---------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success                                                                                                                |
-| `1`  | no SQL provided; empty stdin; unreadable `--file`; `--linked` without login; query exec failure; non-201 linked status |
+| Code | Condition                                                                                                                                                           |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                                                                                             |
+| `1`  | conflicting `--db-url`/`--linked`/`--local`; no SQL provided; empty stdin; unreadable `--file`; `--linked` without login; query exec failure; non-201 linked status |
 
 ## Output
 
