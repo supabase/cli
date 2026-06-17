@@ -37,12 +37,14 @@ permissions:
 
 jobs:
   live-e2e:
-    # Skip fork PRs: repository secrets (the staging token) are not available to
-    # them, so the live job would call staging with an empty token and fail.
+    # Skip fork PRs and Dependabot: repository secrets (the staging token) are
+    # not available to them (GitHub treats Dependabot pull_request runs like
+    # forks), so the live job would call staging with an empty token and fail.
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.pull_request.draft == false &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       github.actor != 'dependabot[bot]')
     name: Live e2e (${{ matrix.target }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
     # Serialize a target against itself across runs; go and ts-legacy run in
@@ -136,12 +138,19 @@ jobs:
         run: |
           set -o pipefail
           PREFIX="cli-e2e-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
-          curl -fsS -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+          # Capture the list in a var (not a pipe-to-while subshell) so a failed
+          # delete is recorded. A failed *listing* aborts the step via pipefail.
+          refs=$(curl -fsS -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
             "${CLI_E2E_API_URL}/v1/projects" \
-            | jq -r --arg p "$PREFIX" '.[] | select(.name|startswith($p)) | .ref // .id' \
-            | while read -r ref; do
-                [ -n "$ref" ] || continue
-                echo "cleaning up project $ref"
-                curl -fsS -X DELETE -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
-                  "${CLI_E2E_API_URL}/v1/projects/${ref}" >/dev/null || true
-              done
+            | jq -r --arg p "$PREFIX" '.[] | select(.name|startswith($p)) | .ref // .id')
+          failed=0
+          for ref in $refs; do
+            [ -n "$ref" ] || continue
+            echo "cleaning up project $ref"
+            if ! curl -fsS -X DELETE -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+              "${CLI_E2E_API_URL}/v1/projects/${ref}" >/dev/null; then
+              echo "::error::failed to delete leftover project $ref"
+              failed=1
+            fi
+          done
+          exit "$failed"
