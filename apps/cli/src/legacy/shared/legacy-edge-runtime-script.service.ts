@@ -21,6 +21,13 @@ export interface LegacyEdgeRuntimeRunOpts {
   readonly extraFiles?: ReadonlyArray<LegacyEdgeRuntimeFile>;
   /** Extra container env appended after `env` (Go's `WithExtraEnv`). */
   readonly extraEnv?: Readonly<Record<string, string>>;
+  /**
+   * Effective `edge_runtime.deno_version` for this run, used to pick the image tag
+   * (`1` → the `deno1` image). Lets a caller that has the remote-merged config (e.g.
+   * `--linked` declarative generate) override the layer's base-config default so
+   * pg-delta runs under the configured Deno version. Absent → the base-config value.
+   */
+  readonly denoVersion?: number;
 }
 
 export interface LegacyEdgeRuntimeRunResult {

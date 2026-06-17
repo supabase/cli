@@ -41,7 +41,7 @@ function mockEdge(stdout: string) {
 }
 
 const ctx = (declarativeDir: string): LegacyDeclarativeRunContext => ({
-  pgDelta: { projectId: "cferry", cwd: "/proj", npmVersion: undefined },
+  pgDelta: { projectId: "cferry", cwd: "/proj", npmVersion: undefined, denoVersion: 2 },
   formatOptions: "",
   declarativeDir,
   schema: [],

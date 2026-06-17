@@ -59,15 +59,13 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
     // Read `[edge_runtime] deno_version` so a `deno_version = 1` project runs the
     // `deno1` image, matching Go's config-driven image switch (the resolver applies
-    // the version pin first, then the deno1 override).
+    // the version pin first, then the deno1 override). This is the *base*-config
+    // value; a caller with a remote-merged config (e.g. `--linked` declarative
+    // generate) overrides it per-run via `opts.denoVersion` below.
     const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-    const image = yield* legacyResolveEdgeRuntimeImage(
-      fs,
-      path,
-      cliConfig.workdir,
-      toml.denoVersion,
+    const baseImage = legacyGetRegistryImageUrl(
+      yield* legacyResolveEdgeRuntimeImage(fs, path, cliConfig.workdir, toml.denoVersion),
     );
-    const registryImage = legacyGetRegistryImageUrl(image);
 
     // Go requests host networking for the edge-runtime container, but `DockerStart`
     // overrides any network mode (host included) with `--network-id` when set
@@ -83,6 +81,21 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
     return LegacyEdgeRuntimeScript.of({
       run: (opts) =>
         Effect.gen(function* () {
+          // Resolve the image per-run only when the caller supplies an effective
+          // `deno_version` that differs from the base config (the remote-merged
+          // value on `--linked` declarative generate); otherwise reuse the base
+          // image resolved once at layer construction.
+          const registryImage =
+            opts.denoVersion !== undefined && opts.denoVersion !== toml.denoVersion
+              ? legacyGetRegistryImageUrl(
+                  yield* legacyResolveEdgeRuntimeImage(
+                    fs,
+                    path,
+                    cliConfig.workdir,
+                    opts.denoVersion,
+                  ),
+                )
+              : baseImage;
           const port = yield* allocateFreeHostPort;
           const startCmd = legacyBuildEdgeRuntimeStartCmd({ port, debug }).join(" ");
           const files = [{ name: "index.ts", content: opts.script }, ...(opts.extraFiles ?? [])];

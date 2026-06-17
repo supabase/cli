@@ -104,6 +104,9 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           projectId: Option.getOrElse(cliConfig.projectId, () => ""),
           cwd: cliConfig.workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
+          // Merged config's deno_version (re-loaded with the linked ref above on
+          // `--linked`), so pg-delta runs under the remote-configured Deno image.
+          denoVersion: toml.denoVersion,
         },
         formatOptions: Option.getOrElse(toml.pgDelta.formatOptions, () => ""),
         declarativeDir,

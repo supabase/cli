@@ -53,6 +53,13 @@ export interface LegacyPgDeltaContext {
   readonly projectId: string;
   readonly cwd: string;
   readonly npmVersion: string | undefined;
+  /**
+   * Effective `edge_runtime.deno_version` from the (remote-merged on `--linked`)
+   * config, forwarded to the edge-runtime container so pg-delta runs under the
+   * configured Deno image. Mirrors Go, which resolves the image from the loaded
+   * config the command operates on rather than the base `config.toml`.
+   */
+  readonly denoVersion: number;
 }
 
 /** Mirrors Go's `isPostgresURL` (`internal/db/diff/pgdelta.go:46`). */
@@ -179,6 +186,7 @@ export const legacyDiffPgDelta = Effect.fnUntraced(function* (
       errPrefix: "error diffing schema",
       extraFiles: npm.extraFiles,
       extraEnv: npm.extraEnv,
+      denoVersion: ctx.denoVersion,
     })
     .pipe(Effect.mapError(toDeclarativeEdgeRuntimeError));
   return { sql: result.stdout, stderr: result.stderr } satisfies LegacyPgDeltaDiffResult;
@@ -211,6 +219,7 @@ export const legacyDeclarativeExportPgDelta = Effect.fnUntraced(function* (
       errPrefix: "error exporting declarative schema",
       extraFiles: npm.extraFiles,
       extraEnv: npm.extraEnv,
+      denoVersion: ctx.denoVersion,
     })
     .pipe(Effect.mapError(toDeclarativeEdgeRuntimeError));
 
@@ -258,6 +267,7 @@ export const legacyExportCatalogPgDelta = Effect.fnUntraced(function* (
       errPrefix: "error exporting pg-delta catalog",
       extraFiles: npm.extraFiles,
       extraEnv: npm.extraEnv,
+      denoVersion: ctx.denoVersion,
     })
     .pipe(Effect.mapError(toDeclarativeEdgeRuntimeError));
 

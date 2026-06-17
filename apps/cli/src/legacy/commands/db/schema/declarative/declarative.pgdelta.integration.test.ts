@@ -19,7 +19,12 @@ import {
   type LegacyPgDeltaContext,
 } from "./declarative.pgdelta.ts";
 
-const CTX: LegacyPgDeltaContext = { projectId: "ref", cwd: "/proj", npmVersion: undefined };
+const CTX: LegacyPgDeltaContext = {
+  projectId: "ref",
+  cwd: "/proj",
+  npmVersion: undefined,
+  denoVersion: 2,
+};
 
 function fakeEdgeRuntime(outcome: { stdout?: string; stderr?: string; fail?: string } = {}) {
   const calls: LegacyEdgeRuntimeRunOpts[] = [];
@@ -58,6 +63,9 @@ describe("legacyDiffPgDelta", () => {
             expect(result.stderr).toBe("warn");
             const opts = edge.calls[0]!;
             expect(opts.errPrefix).toBe("error diffing schema");
+            // The (remote-merged) deno_version is forwarded so the edge-runtime
+            // layer picks the configured Deno image, matching Go.
+            expect(opts.denoVersion).toBe(2);
             // Default npm version interpolated into the template.
             expect(opts.script).toContain(
               `npm:@supabase/pg-delta@${LEGACY_DEFAULT_PG_DELTA_NPM_VERSION}`,
