@@ -12,10 +12,13 @@ function writeFunction(workspacePath: string, slug: string, jsonBody: string): v
   writeFileSync(join(dir, "deno.json"), `{\n  "imports": {}\n}\n`);
 }
 
-function listedSlugs(stdout: string): string[] {
-  return (JSON.parse(stdout) as Array<{ slug?: string; name?: string }>).map(
-    (f) => f.slug ?? f.name ?? "",
-  );
+// Active (non-REMOVED) function slugs. The Management API can keep deleted
+// functions in the list with status REMOVED (the Go prune path skips them), so a
+// successful delete may leave a REMOVED row — filter those out.
+function activeSlugs(stdout: string): string[] {
+  return (JSON.parse(stdout) as Array<{ slug?: string; name?: string; status?: string }>)
+    .filter((f) => (f.status ?? "").toUpperCase() !== "REMOVED")
+    .map((f) => f.slug ?? f.name ?? "");
 }
 
 describe("functions update + delete (live)", () => {
@@ -57,7 +60,7 @@ describe("functions update + delete (live)", () => {
       projectRef,
     ]);
     expect(before.exitCode, before.stderr).toBe(0);
-    expect(listedSlugs(before.stdout)).toContain(slug);
+    expect(activeSlugs(before.stdout)).toContain(slug);
 
     const del = await run(["functions", "delete", slug, "--project-ref", projectRef]);
     expect(del.exitCode, del.stderr).toBe(0);
@@ -65,6 +68,6 @@ describe("functions update + delete (live)", () => {
 
     const after = await run(["functions", "list", "--output", "json", "--project-ref", projectRef]);
     expect(after.exitCode, after.stderr).toBe(0);
-    expect(listedSlugs(after.stdout)).not.toContain(slug);
+    expect(activeSlugs(after.stdout)).not.toContain(slug);
   });
 });

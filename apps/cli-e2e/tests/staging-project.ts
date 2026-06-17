@@ -56,14 +56,21 @@ export async function createTestProject(
   return ref;
 }
 
-export async function deleteTestProject(apiUrl: string, projectRef: string): Promise<void> {
+// `throwOnError` surfaces a failed deletion (live teardown uses it so a leaked
+// staging project fails the run loudly; record setup keeps the lenient default).
+export async function deleteTestProject(
+  apiUrl: string,
+  projectRef: string,
+  opts: { throwOnError?: boolean } = {},
+): Promise<void> {
   try {
     const result = await exec(harness(apiUrl), ["projects", "delete", projectRef, "--yes"]);
     if (result.exitCode !== 0) {
-      console.error(`Warning: failed to delete test project ${projectRef}: ${result.stderr}`);
+      throw new Error(`projects delete exited ${result.exitCode}: ${result.stderr}`);
     }
   } catch (err) {
-    console.error(`Warning: exception deleting test project ${projectRef}:`, err);
+    if (opts.throwOnError) throw err;
+    console.error(`Warning: failed to delete test project ${projectRef}:`, err);
   }
 }
 

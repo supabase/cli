@@ -18,6 +18,13 @@ export const isLive = MODE === "live";
 // from MODE so `CLI_E2E_MODE=record` records instead of silently replaying.
 if (isRecording) process.env["RECORD"] = "true";
 
+// startReplayServer + tests/setup.ts read SUPABASE_STAGING_URL directly as the
+// record proxy target. Normalise it from CLI_E2E_API_URL so
+// `CLI_E2E_MODE=record CLI_E2E_API_URL=…` works without also setting the legacy var.
+if (isRecording && !process.env["SUPABASE_STAGING_URL"] && process.env["CLI_E2E_API_URL"]) {
+  process.env["SUPABASE_STAGING_URL"] = process.env["CLI_E2E_API_URL"];
+}
+
 // Which backend the live/record suite targets. Only `staging` is wired today;
 // `supabox` is a later env swap (CLI_E2E_API_URL + CLI_E2E_PROJECT_HOST + token).
 const TARGET_ENV: CliE2eTargetEnv =

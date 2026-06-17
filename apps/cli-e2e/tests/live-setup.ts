@@ -69,7 +69,12 @@ export async function setup({
     // the profile's project_host. connect_timeout keeps a bad attempt from hanging.
     dbUrl = `postgresql://postgres:${TEST_DB_PASSWORD}@db.${projectRef}.${PROJECT_HOST}:5432/postgres?connect_timeout=30`;
   } catch (err) {
-    if (!KEEP_PROJECT) await deleteTestProject(TARGET_API_URL, projectRef);
+    // Delete the half-provisioned project, but never mask the original failure.
+    if (!KEEP_PROJECT) {
+      await deleteTestProject(TARGET_API_URL, projectRef, { throwOnError: true }).catch(
+        (cleanupErr) => console.error("Failed to delete project after setup failure:", cleanupErr),
+      );
+    }
     throw err;
   }
 
@@ -83,6 +88,8 @@ export async function setup({
       console.log(`CLI_E2E_KEEP_PROJECT set — leaving project ${projectRef} (${name}) alive`);
       return;
     }
-    await deleteTestProject(TARGET_API_URL, projectRef);
+    // Surface a failed teardown so a leaked staging project is visible locally
+    // (CI also has the always() sweep as a backstop).
+    await deleteTestProject(TARGET_API_URL, projectRef, { throwOnError: true });
   };
 }
