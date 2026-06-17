@@ -334,4 +334,27 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
       );
     },
   );
+
+  it.effect("surfaces a project-ref read failure instead of reporting not-linked", () => {
+    // Go's ParseDatabaseConfig linked branch uses the hard LoadProjectRef (db_url.go:88),
+    // which returns `failed to load project ref` on a real `.temp/project-ref` read error
+    // (project_ref.go:71-72) rather than masking it as not-linked. With no project_id /
+    // env and the ref file seeded as a DIRECTORY, the resolver must surface that.
+    const dir = withWorkdir();
+    mkdirSync(join(dir, "supabase", ".temp", "project-ref"), { recursive: true });
+    return resolve(dir, linkedFlags).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const json = JSON.stringify(exit.cause);
+            expect(json).toContain("failed to load project ref");
+            expect(json).not.toContain("Cannot find project ref");
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });

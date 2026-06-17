@@ -6,15 +6,9 @@ import { getDomain } from "tldts";
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import {
-  INVALID_PROJECT_REF_MESSAGE,
   LegacyProjectRefResolver,
-  PROJECT_NOT_LINKED_MESSAGE,
   PROJECT_REF_PATTERN,
 } from "../config/legacy-project-ref.service.ts";
-import {
-  LegacyInvalidProjectRefError,
-  LegacyProjectNotLinkedError,
-} from "../config/legacy-project-ref.errors.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
@@ -466,23 +460,15 @@ export const legacyDbConfigLayer = Layer.effect(
         if (flags.connType === "linked") {
           const linked = yield* Effect.gen(function* () {
             const projectRef = yield* LegacyProjectRefResolver;
-            // Go's ParseDatabaseConfig resolves the linked ref via LoadProjectRef
+            // Go's ParseDatabaseConfig resolves the linked ref via the HARD `LoadProjectRef`
             // (`apps/cli-go/internal/utils/flags/db_url.go:88`) — load-or-fail with no
-            // prompt. Use the non-prompting resolveOptional so an unlinked workdir fails
-            // with ErrNotLinked rather than letting a TTY user pick an arbitrary project
-            // to dump/generate from. Validate like Go's AssertProjectRefIsValid.
-            const refOpt = yield* projectRef.resolveOptional(Option.none());
-            if (Option.isNone(refOpt)) {
-              return yield* Effect.fail(
-                new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
-              );
-            }
-            const ref = refOpt.value;
-            if (!PROJECT_REF_PATTERN.test(ref)) {
-              return yield* Effect.fail(
-                new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }),
-              );
-            }
+            // prompt, format validation, and `failed to load project ref` on a real
+            // `.temp/project-ref` read error. Use `loadProjectRef` (not the soft
+            // `resolveOptional`, which swallows that read error to None): an unlinked
+            // workdir fails with ErrNotLinked, a bad ref with the invalid-ref error, and an
+            // unreadable ref file surfaces the filesystem problem — matching Go for every
+            // caller of this resolver (`test db --linked`, dump, declarative).
+            const ref = yield* projectRef.loadProjectRef(Option.none());
             // Go's `ParseDatabaseConfig` runs `LoadProjectRef` → `LoadConfig` →
             // `NewDbConfigWithPassword` (`internal/utils/flags/db_url.go:81-92`), so
             // the `[remotes.<ref>]`-merged config (e.g. an unsupported remote

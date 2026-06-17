@@ -5,6 +5,7 @@ import type {
   LegacyInvalidProjectRefError,
   LegacyProjectNotLinkedError,
 } from "../config/legacy-project-ref.errors.ts";
+import type { LegacyProjectRefReadError } from "./legacy-temp-paths.ts";
 import type { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
 import type {
   LegacyDbConfigConnectTempRoleError,
@@ -27,6 +28,9 @@ export type LegacyDbConfigError =
   | LegacyDbConfigLoadError
   | LegacyProjectNotLinkedError
   | LegacyInvalidProjectRefError
+  // Hard linked-ref load surfaces a real `.temp/project-ref` read error (Go's
+  // `failed to load project ref`) instead of masking it as not-linked.
+  | LegacyProjectRefReadError
   | LegacyDbConfigLoginRoleNetworkError
   | LegacyDbConfigLoginRoleStatusError
   | LegacyDbConfigListBansNetworkError
