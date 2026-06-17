@@ -250,13 +250,20 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       conn.host.endsWith(`.${cliConfig.projectHost}`) &&
       legacyIsIPv6ConnectivityError(result.stderr)
     ) {
-      const pooler = yield* resolver.resolvePoolerFallback({
-        dbUrl: flags.dbUrl,
-        linked: true,
-        local: false,
-        dnsResolver,
-        password: flags.password,
-      });
+      // Go's `PoolerFallbackConfig` returns `ok=false` on ANY fallback-resolution
+      // error (e.g. temp-role creation/wait fails) and then reports the ORIGINAL
+      // pg_dump failure with the IPv6 guidance — the optional retry must not replace
+      // the actionable dump error. So a resolution failure is treated as "no
+      // fallback" (the original `result` is surfaced at step 9).
+      const pooler = yield* resolver
+        .resolvePoolerFallback({
+          dbUrl: flags.dbUrl,
+          linked: true,
+          local: false,
+          dnsResolver,
+          password: flags.password,
+        })
+        .pipe(Effect.orElseSucceed(() => Option.none()));
       if (Option.isSome(pooler)) {
         yield* output.raw(
           `${legacyYellow(

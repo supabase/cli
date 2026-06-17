@@ -18,6 +18,7 @@ import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts"
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConfigFlags } from "../../../shared/legacy-db-config.types.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyDbConfigConnectTempRoleError } from "../../../shared/legacy-db-config.errors.ts";
 import { LegacyDockerRunError } from "../../../shared/legacy-docker-run.errors.ts";
 import {
   LegacyDockerRun,
@@ -45,6 +46,7 @@ function mockResolver(opts: {
   conn?: LegacyPgConnInput;
   isLocal?: boolean;
   poolerFallback?: Option.Option<LegacyPgConnInput>;
+  poolerFallbackFails?: boolean;
 }) {
   const calls: LegacyDbConfigFlags[] = [];
   const fallbackCalls: LegacyDbConfigFlags[] = [];
@@ -55,7 +57,11 @@ function mockResolver(opts: {
     },
     resolvePoolerFallback: (flags) => {
       fallbackCalls.push(flags);
-      return Effect.succeed(opts.poolerFallback ?? Option.none());
+      return opts.poolerFallbackFails === true
+        ? Effect.fail(
+            new LegacyDbConfigConnectTempRoleError({ message: "failed to create temp role" }),
+          )
+        : Effect.succeed(opts.poolerFallback ?? Option.none());
     },
   });
   return {
@@ -134,6 +140,7 @@ interface SetupOpts {
   runFails?: boolean;
   results?: ReadonlyArray<DockerResult>;
   poolerFallback?: Option.Option<LegacyPgConnInput>;
+  poolerFallbackFails?: boolean;
   networkId?: string;
   workdir?: string;
 }
@@ -145,6 +152,7 @@ function setup(opts: SetupOpts = {}) {
     conn: opts.conn,
     isLocal: opts.isLocal,
     poolerFallback: opts.poolerFallback,
+    poolerFallbackFails: opts.poolerFallbackFails,
   });
   const docker = mockDockerRun(opts);
   const layer = Layer.mergeAll(
@@ -430,6 +438,25 @@ describe("legacy db dump integration", () => {
       expect(out.stderrText).toContain("does not support IPv6");
       expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
       expect(out.stdoutText).toBe("CREATE SCHEMA x;\n");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("linked: preserves the original dump error when the pooler fallback fails", () => {
+    // Go's PoolerFallbackConfig returns ok=false on any fallback-resolution error and
+    // reports the original pg_dump failure — the optional retry must not replace it.
+    const { layer, resolver, docker } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      poolerFallbackFails: true,
+      results: [{ exitCode: 1, stderr: IPV6_STDERR }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDump(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      // Original container failure, NOT the fallback-resolution error.
+      expect(failMessage(exit)).toBe("error running container: exit 1");
+      expect(resolver.fallbackCalls).toHaveLength(1); // attempted
+      expect(docker.allOpts).toHaveLength(1); // no retry container ran
     }).pipe(Effect.provide(layer));
   });
 
