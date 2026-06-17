@@ -554,26 +554,29 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("smart mode: caches the linked project even when the user picks local (Go PostRun)", () => {
-    // Go's runDeclarativeGenerate calls LoadProjectRef inside the hasMigrationFiles
-    // branch to offer the linked choice, which sets the global flags.ProjectRef; root
-    // ensureProjectGroupsCached then writes the linked-project cache regardless of
-    // which target the user picks (cmd/root.go:176,214-218). So a linked workdir +
-    // smart mode + "Local database" choice must still cache.
-    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
-    const s = setup(tmp.current, {
-      experimental: true,
-      stdinIsTty: true,
-      yes: true,
-      projectId: Option.some("abcdefghijklmnopqrst"),
-      promptSelectResponses: ["local"],
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeGenerate(flags());
-      expect(s.cache.cached).toBe(true);
-    }).pipe(Effect.provide(s.layer));
-  });
+  it.effect(
+    "smart mode: caches the linked project even when the user picks local (Go PostRun)",
+    () => {
+      // Go's runDeclarativeGenerate calls LoadProjectRef inside the hasMigrationFiles
+      // branch to offer the linked choice, which sets the global flags.ProjectRef; root
+      // ensureProjectGroupsCached then writes the linked-project cache regardless of
+      // which target the user picks (cmd/root.go:176,214-218). So a linked workdir +
+      // smart mode + "Local database" choice must still cache.
+      mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+      const s = setup(tmp.current, {
+        experimental: true,
+        stdinIsTty: true,
+        yes: true,
+        projectId: Option.some("abcdefghijklmnopqrst"),
+        promptSelectResponses: ["local"],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbSchemaDeclarativeGenerate(flags());
+        expect(s.cache.cached).toBe(true);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("smart mode: does not cache when no migrations exist (Go skips LoadProjectRef)", () => {
     // With no migrations, Go never enters the hasMigrationFiles branch, so it never

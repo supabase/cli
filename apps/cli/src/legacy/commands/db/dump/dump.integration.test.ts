@@ -379,7 +379,9 @@ describe("legacy db dump integration", () => {
     const filePath = join(tmp.current, "dry.sql");
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* legacyDbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some(filePath) }));
+      yield* legacyDbDump(
+        flags({ dryRun: true, local: Option.some(true), file: Option.some(filePath) }),
+      );
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);

@@ -15,8 +15,8 @@ script run inside the local Postgres image to stdout or `--file`.
 
 ## Files Written
 
-| Path                            | Format | When                                                       |
-| ------------------------------- | ------ | ---------------------------------------------------------- |
+| Path                            | Format | When                                                                               |
+| ------------------------------- | ------ | ---------------------------------------------------------------------------------- |
 | `<path>` (from `--file` / `-f`) | SQL    | when `--file` is set and **not** `--dry-run` (created/truncated `0644` before run) |
 
 ## API Routes
