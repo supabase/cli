@@ -510,9 +510,9 @@ describe("legacy db query integration", () => {
     // Go's --linked PreRun loads the ref or fails (ErrNotLinked); it never prompts.
     const { layer } = setup({ unlinked: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* legacyDbQuery(
+        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("Cannot find project ref. Have you run supabase link?");
     }).pipe(Effect.provide(layer));
@@ -559,9 +559,9 @@ describe("legacy db query integration", () => {
     );
     const { layer, out } = setup({ workdir: wd, linkedStatus: 201, linkedBody: '[{"id":1}]' });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* legacyDbQuery(
+        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain(
         "Invalid config for remotes.bad.project_id. Must be like: abcdefghijklmnopqrst",
@@ -579,9 +579,9 @@ describe("legacy db query integration", () => {
         linkedBody: '{"message":"syntax error"}',
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbQuery(flags({ sql: Option.some("bad"), linked: Option.some(true) })).pipe(
-          Effect.exit,
-        );
+        const exit = yield* legacyDbQuery(
+          flags({ sql: Option.some("bad"), linked: Option.some(true) }),
+        ).pipe(Effect.exit);
         expect(failMessage(exit)).toContain("unexpected status 400");
         // Go runs the cache write in PersistentPostRun, so it fires on failure too.
         expect(cache.cached).toBe(true);
@@ -592,7 +592,9 @@ describe("legacy db query integration", () => {
   it.live("handles an empty linked result array", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[]" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1 where false"), linked: Option.some(true) }));
+      yield* legacyDbQuery(
+        flags({ sql: Option.some("select 1 where false"), linked: Option.some(true) }),
+      );
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -650,9 +652,9 @@ describe("legacy db query integration", () => {
   it.live("maps a linked HTTP transport failure to an exec error", () => {
     const { layer } = setup({ networkFail: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* legacyDbQuery(
+        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+      ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("failed to execute query");
     }).pipe(Effect.provide(layer));
   });
@@ -660,9 +662,9 @@ describe("legacy db query integration", () => {
   it.live("requires login before querying --linked", () => {
     const { layer } = setup({ accessToken: Option.none() });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* legacyDbQuery(
+        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+      ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("Access token not provided");
     }).pipe(Effect.provide(layer));
   });

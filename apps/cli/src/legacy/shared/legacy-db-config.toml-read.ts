@@ -199,7 +199,10 @@ const LEGACY_PROJECT_REF_PATTERN = /^[a-z]{20}$/;
  * missing remote `project_id` fails even local/direct commands before touching the
  * database. Returns the first offending block name (object order) or `undefined`.
  */
-function findInvalidRemoteProjectId(doc: RawDoc | undefined, lookup: EnvLookup): string | undefined {
+function findInvalidRemoteProjectId(
+  doc: RawDoc | undefined,
+  lookup: EnvLookup,
+): string | undefined {
   const remotes = asRecord(doc?.["remotes"]);
   if (remotes === undefined) return undefined;
   for (const name of Object.keys(remotes)) {
