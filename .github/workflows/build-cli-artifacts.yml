@@ -93,6 +93,13 @@ jobs:
           echo "Checking dist/..."
           ls -la dist/
 
+      - name: Free space before saving GitHub-hosted artifacts cache
+        if: inputs.cache_key_suffix == '-github'
+        run: |
+          rm -rf node_modules apps/*/node_modules packages/*/node_modules
+          rm -rf "$(pnpm store path --silent)" "$HOME/.cache/go-build" "$HOME/go/pkg/mod"
+          df -h
+
       - name: Check existing build artifacts cache
         id: build-artifacts-cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
