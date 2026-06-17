@@ -2,13 +2,23 @@ import { Effect, Layer, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
-import { buildLegacyDockerArgs } from "./legacy-docker-run.args.ts";
+import {
+  buildLegacyDockerArgs,
+  legacyApplyBitbucketDockerFilter,
+} from "./legacy-docker-run.args.ts";
 import { LegacyDockerRunError } from "./legacy-docker-run.errors.ts";
 import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
 
 // Go's prerequisite hint (`apps/cli-go/internal/utils/docker.go:248`).
 const SUGGEST_DOCKER_INSTALL =
   "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop";
+
+// Go's `DockerStart` checks `os.Getenv("BITBUCKET_CLONE_DIR") != ""`
+// (`apps/cli-go/internal/utils/docker.go:289`) to drop named volumes / security-opts.
+const legacyIsBitbucketPipeline = (): boolean => {
+  const value = globalThis.process.env["BITBUCKET_CLONE_DIR"];
+  return value !== undefined && value.length > 0;
+};
 
 export const legacyDockerRunLayer: Layer.Layer<
   LegacyDockerRun,
@@ -43,7 +53,9 @@ export const legacyDockerRunLayer: Layer.Layer<
           Effect.gen(function* () {
             const teeStderr = captureOpts?.teeStderr ?? false;
             yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
-            const args = buildLegacyDockerArgs(opts);
+            const args = buildLegacyDockerArgs(
+              legacyApplyBitbucketDockerFilter(opts, legacyIsBitbucketPipeline()),
+            );
             // Pipe stdout/stderr (rather than inherit) so the SQL dump can be
             // captured and redirected to `--file`/post-processing. Go's `dockerExec`
             // does the same: stdout → caller's writer, stderr → `MultiWriter(os.Stderr,
@@ -96,7 +108,9 @@ export const legacyDockerRunLayer: Layer.Layer<
         Effect.scoped(
           Effect.gen(function* () {
             yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
-            const args = buildLegacyDockerArgs(opts);
+            const args = buildLegacyDockerArgs(
+              legacyApplyBitbucketDockerFilter(opts, legacyIsBitbucketPipeline()),
+            );
             // Pass run env (incl. PGPASSWORD) through the docker child's own
             // environment, not the argv. `buildLegacyDockerArgs` emits the
             // key-only `-e KEY` form, so docker inherits each value from here

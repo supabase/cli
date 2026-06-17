@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { Option } from "effect";
 
-import { buildLegacyDockerArgs } from "./legacy-docker-run.args.ts";
+import {
+  buildLegacyDockerArgs,
+  legacyApplyBitbucketDockerFilter,
+} from "./legacy-docker-run.args.ts";
 import type { LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
 
 const base: LegacyDockerRunOpts = {
@@ -14,6 +17,25 @@ const base: LegacyDockerRunOpts = {
   extraHosts: [],
   network: { _tag: "named", name: "supabase_network_proj" },
 };
+
+describe("legacyApplyBitbucketDockerFilter", () => {
+  const pgDelta: LegacyDockerRunOpts = {
+    ...base,
+    binds: ["supabase_edge_runtime_proj:/root/.cache/deno:rw", "/repo:/workspace"],
+    securityOpt: ["label:disable"],
+  };
+
+  test("passes opts through unchanged outside Bitbucket", () => {
+    expect(legacyApplyBitbucketDockerFilter(pgDelta, false)).toBe(pgDelta);
+  });
+
+  test("drops named-volume binds and clears security-opt under Bitbucket (Go DockerStart)", () => {
+    const filtered = legacyApplyBitbucketDockerFilter(pgDelta, true);
+    // Named Deno-cache volume dropped; the /repo:/workspace bind mount kept.
+    expect(filtered.binds).toEqual(["/repo:/workspace"]);
+    expect(filtered.securityOpt).toEqual([]);
+  });
+});
 
 describe("buildLegacyDockerArgs", () => {
   test("assembles run args in Go-parity order for a named network", () => {
