@@ -12,11 +12,11 @@ on:
       issue-days:
         description: "Select issues with no activity for this many days"
         type: string
-        default: "90"
+        default: "45"
       pr-days:
         description: "Select PRs with no activity for this many days"
         type: string
-        default: "90"
+        default: "60"
       max-items:
         description: "Maximum number of matching issues and PRs to close in one run"
         type: string
@@ -48,8 +48,8 @@ jobs:
             const execute =
               eventName === "workflow_dispatch" &&
               core.getInput("execute", { required: false }) === "true";
-            const issueDays = positiveIntegerInput("issue-days", "90");
-            const prDays = positiveIntegerInput("pr-days", "90");
+            const issueDays = positiveIntegerInput("issue-days", "45");
+            const prDays = positiveIntegerInput("pr-days", "60");
             const maxItems = positiveIntegerInput("max-items", "25");
             const excludeLabels = commaSeparatedInput(
               "exclude-labels",
