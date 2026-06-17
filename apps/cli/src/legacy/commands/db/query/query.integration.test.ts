@@ -3,14 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, type Redacted } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
+  LEGACY_VALID_TOKEN,
   mockLegacyCliConfig,
-  mockLegacyCredentialsLayer,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -23,6 +23,8 @@ import {
 import { Random } from "../../../../shared/runtime/random.service.ts";
 import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../../shared/telemetry/ai-tool.service.ts";
+import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
+import { validateLegacyAccessToken } from "../../../auth/legacy-access-token.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyTelemetryOutputFormat } from "../../../telemetry/legacy-telemetry-output-format.service.ts";
 import { LegacyDbConfigParseUrlError } from "../../../shared/legacy-db-config.errors.ts";
@@ -174,6 +176,7 @@ interface SetupOpts {
   linkedBody?: string;
   networkFail?: boolean;
   accessToken?: Option.Option<Redacted.Redacted<string>>;
+  accessTokenInvalid?: boolean;
   workdir?: string;
   unlinked?: boolean;
   resolveFails?: boolean;
@@ -207,7 +210,22 @@ function setup(opts: SetupOpts = {}) {
       workdir: opts.workdir ?? "/work/project",
       accessToken: opts.accessToken,
     }),
-    mockLegacyCredentialsLayer,
+    // The linked token check routes through `credentials.getAccessToken`, which Go's
+    // `LoadAccessTokenFS` mirrors by validating the resolved token (env/keyring/file)
+    // against `sbp_`. `accessTokenInvalid` exercises that via the real validator.
+    Layer.succeed(LegacyCredentials, {
+      getAccessToken:
+        opts.accessTokenInvalid === true
+          ? validateLegacyAccessToken("not_sbp").pipe(
+              Effect.map((t) => Option.some(Redacted.make(t))),
+            )
+          : Effect.succeed(opts.accessToken ?? Option.some(Redacted.make(LEGACY_VALID_TOKEN))),
+      saveAccessToken: () => Effect.die("unexpected legacy credentials write in test"),
+      deleteAccessToken: Effect.die("unexpected legacy credentials delete in test"),
+      deleteAllProjectCredentials: Effect.die("unexpected legacy project-credential sweep in test"),
+      deleteProjectCredential: () =>
+        Effect.die("unexpected legacy project-credential delete in test"),
+    }),
     mockHttpClient({
       status: opts.linkedStatus,
       body: opts.linkedBody,
@@ -713,6 +731,26 @@ describe("legacy db query integration", () => {
       expect(failMessage(exit)).toContain("Access token not provided");
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "rejects an invalid env access token before the linked query (Go LoadAccessTokenFS)",
+    () => {
+      // Go's linked PreRun calls LoadAccessTokenFS, which validates the resolved token
+      // (env/keyring/file) against `sbp_...` and fails with ErrInvalidToken before any
+      // API request (cmd/db.go:303, access_token.go:24-33). So an invalid env token must
+      // fail with the invalid-token error, not make the query and surface unexpected status.
+      const { layer, out } = setup({ accessTokenInvalid: true, linkedStatus: 201 });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbQuery(
+          flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failMessage(exit)).toContain("Invalid access token format");
+        // Failed at the token check → no query result emitted.
+        expect(out.stdoutText).toBe("");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("runs the --linked login preflight before reading --file (Go PreRun order)", () => {
     // `db query --linked -f missing.sql` without a token must surface the login error,

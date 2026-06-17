@@ -298,10 +298,14 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       // 3. Command `PreRunE` token check (`cmd/db.go:303`): Go still requires a token
       //    for the Management API query even when config resolved without minting a
       //    login role (e.g. a direct `DB_PASSWORD` was set), so keep this — but after
-      //    the config/ref resolution above.
-      const tokenOpt = Option.isSome(cliConfig.accessToken)
-        ? cliConfig.accessToken
-        : yield* credentials.getAccessToken;
+      //    the config/ref resolution above. Go's `LoadAccessTokenFS` validates the
+      //    RESOLVED token (env → keyring → file alike) against `sbp_...` and fails with
+      //    `ErrInvalidToken` before any API request (`internal/utils/access_token.go:
+      //    24-33`). `credentials.getAccessToken` already applies that env-precedence +
+      //    `sbp_` validation on every source, so route through it rather than accepting
+      //    the env `SUPABASE_ACCESS_TOKEN` on presence alone — an invalid env token must
+      //    fail here, not surface an `unexpected status` from `/database/query`.
+      const tokenOpt = yield* credentials.getAccessToken;
       if (Option.isNone(tokenOpt)) {
         return yield* Effect.fail(
           new LegacyDbQueryLoginRequiredError({
