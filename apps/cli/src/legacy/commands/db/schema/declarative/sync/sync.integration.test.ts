@@ -22,6 +22,7 @@ import {
   type LegacyEdgeRuntimeRunOpts,
   LegacyEdgeRuntimeScript,
 } from "../../../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDeclarativeSeam } from "../declarative.seam.service.ts";
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { legacyDbSchemaDeclarativeSync } from "./sync.handler.ts";
@@ -112,6 +113,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
     ),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
+    // Sync diffs against the local DB, which refuses TLS → no SSL env injected.
+    Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
     BunServices.layer,
   );
   return { layer, out, execInheritCalls, dbExec };

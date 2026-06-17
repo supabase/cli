@@ -9,6 +9,7 @@ import {
   type LegacyEdgeRuntimeRunOpts,
   LegacyEdgeRuntimeScript,
 } from "../../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { type LegacyCatalogMode, LegacyDeclarativeSeam } from "./declarative.seam.service.ts";
 import {
   type LegacyDeclarativeRunContext,
@@ -39,6 +40,12 @@ function mockEdge(stdout: string) {
   });
   return { layer, calls };
 }
+
+// Remote refs in these tests are non-Supabase hosts that refuse TLS → probe
+// reports "not required", so no CA bundle/SSL env is injected.
+const probe = Layer.succeed(LegacyPgDeltaSslProbe, {
+  requireSsl: () => Effect.succeed(false),
+});
 
 const ctx = (declarativeDir: string): LegacyDeclarativeRunContext => ({
   pgDelta: { projectId: "cferry", cwd: "/proj", npmVersion: undefined, denoVersion: 2 },
@@ -73,7 +80,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
-      Effect.provide(Layer.mergeAll(seam.layer, edge.layer, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(seam.layer, edge.layer, probe, BunServices.layer)),
     );
   });
 
@@ -96,7 +103,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
-      Effect.provide(Layer.mergeAll(seam.layer, edge.layer, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(seam.layer, edge.layer, probe, BunServices.layer)),
     );
   });
 });
@@ -129,7 +136,7 @@ describe("legacyGenerateDeclarativeOutput", () => {
           );
         }),
       ),
-      Effect.provide(Layer.mergeAll(seam.layer, edge.layer, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(seam.layer, edge.layer, probe, BunServices.layer)),
     );
   });
 });

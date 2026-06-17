@@ -23,6 +23,7 @@ import {
   type LegacyEdgeRuntimeRunOpts,
   LegacyEdgeRuntimeScript,
 } from "../../../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDeclarativeShadowDbError } from "../declarative.errors.ts";
 import { type LegacyCatalogMode, LegacyDeclarativeSeam } from "../declarative.seam.service.ts";
 import type { LegacyDbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
@@ -122,6 +123,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
+    // The remote ref is a non-Supabase host that refuses TLS → no SSL env.
+    Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
     BunServices.layer,
   );
   return {

@@ -7,6 +7,7 @@ import { legacyDbConnectionLayer } from "../../../../../shared/legacy-db-connect
 import { legacyDebugLoggerLayer } from "../../../../../shared/legacy-debug-logger.layer.ts";
 import { legacyDockerRunLayer } from "../../../../../shared/legacy-docker-run.layer.ts";
 import { legacyEdgeRuntimeScriptLayer } from "../../../../../shared/legacy-edge-runtime-script.layer.ts";
+import { legacyPgDeltaSslProbeLayer } from "../../../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyDeclarativeSeamLayer } from "../declarative.seam.layer.ts";
 
@@ -36,6 +37,7 @@ const seam = legacyDeclarativeSeamLayer.pipe(Layer.provide(cliConfig));
 export const legacyDbSchemaDeclarativeSyncRuntimeLayer = Layer.mergeAll(
   dbConfig,
   edgeRuntime,
+  legacyPgDeltaSslProbeLayer,
   seam,
   legacyDbConnectionLayer,
   cliConfig,

@@ -8,6 +8,7 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyEdgeRuntimeScriptError } from "../../../../shared/legacy-edge-runtime-script.errors.ts";
+import { LegacyPgDeltaSslProbe } from "../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import {
   LEGACY_DEFAULT_PG_DELTA_NPM_VERSION,
   LEGACY_PG_DELTA_NPM_VERSION_PLACEHOLDER,
@@ -42,6 +43,12 @@ function fakeEdgeRuntime(outcome: { stdout?: string; stderr?: string; fail?: str
   });
   return { layer, calls };
 }
+
+// These refs are local (127.0.0.1) endpoints that refuse TLS, so the probe reports
+// "not required" — matching the no-SSL-env passthrough these tests assert.
+const probe = Layer.succeed(LegacyPgDeltaSslProbe, {
+  requireSsl: () => Effect.succeed(false),
+});
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
@@ -86,7 +93,7 @@ describe("legacyDiffPgDelta", () => {
             ]);
           }),
         ),
-        Effect.provide(Layer.mergeAll(edge.layer, BunServices.layer)),
+        Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
       );
     },
   );
@@ -107,7 +114,7 @@ describe("legacyDiffPgDelta", () => {
           expect(env["FORMAT_OPTIONS"]).toBeUndefined();
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
     );
   });
 
@@ -128,7 +135,7 @@ describe("legacyDiffPgDelta", () => {
           );
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
     );
   });
 });
@@ -154,7 +161,7 @@ describe("legacyDeclarativeExportPgDelta", () => {
           expect(edge.calls[0]!.errPrefix).toBe("error exporting declarative schema");
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
     );
   });
 
@@ -175,7 +182,7 @@ describe("legacyDeclarativeExportPgDelta", () => {
           );
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
     );
   });
 
@@ -196,7 +203,7 @@ describe("legacyDeclarativeExportPgDelta", () => {
           );
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
     );
   });
 });
@@ -217,7 +224,7 @@ describe("legacyExportCatalogPgDelta", () => {
           expect(opts.env["ROLE"]).toBe("postgres");
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
     );
   });
 
@@ -230,7 +237,7 @@ describe("legacyExportCatalogPgDelta", () => {
           expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeEmptyOutputError");
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
     );
   });
 });

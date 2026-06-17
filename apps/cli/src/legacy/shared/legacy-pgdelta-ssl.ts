@@ -1,16 +1,20 @@
 import { Effect, type FileSystem, type Path } from "effect";
 
+import { LegacyPgDeltaSslProbe } from "./legacy-pgdelta-ssl-probe.service.ts";
+
 /**
  * pg-delta SSL handling for remote Postgres endpoints. Ported from Go's
  * `internal/gen/types/pgdelta_conn.go` + `types.go`. pg-delta (Deno) disables
  * TLS when `sslmode` is absent and only reads `PGDELTA_*_SSLROOTCERT` for
- * verify-ca/verify-full, so Supabase-hosted endpoints need a CA bundle written
+ * verify-ca/verify-full, so a TLS-requiring endpoint needs a CA bundle written
  * into the workspace and the URL rewritten to `sslmode=verify-ca`.
  *
- * Non-Supabase remotes (and local DBs) need no embedded bundle: a local DB uses
- * no TLS, and a public remote validates against Deno's system CA store. So the
- * Supabase-host check fully decides whether to inject the bundle — Go's live SSL
- * probe (`isRequireSSL`) is unnecessary for these inputs.
+ * Mirroring Go's `pgDeltaRootCA`, the decision runs for EVERY postgres URL (not
+ * just Supabase hosts): a live `SSLRequest` probe (`isRequireSSL`) determines
+ * whether the server speaks TLS; if it does, the bundle is injected. Supabase-hosted
+ * URLs additionally get the bundle as a fallback even if the probe reports no TLS.
+ * Only a non-URL ref (a catalog-file path) or a server that refuses TLS (e.g. a
+ * plain local DB) passes through unchanged.
  */
 
 const PG_DELTA_CA_BUNDLE_DIR_SEGMENTS = ["supabase", ".temp", "pgdelta"] as const;
@@ -66,10 +70,23 @@ export function legacyEnsurePgDeltaSsl(dbUrl: string, sslRootCertPath: string): 
 }
 
 /**
- * Prepares a SOURCE/TARGET ref + its SSL env for pg-delta. Catalog-file refs and
- * non-Supabase / local URLs pass through unchanged; a Supabase-hosted URL gets
- * the embedded CA bundle written under `supabase/.temp/pgdelta/` and the URL
- * rewritten. Mirrors Go's `PreparePgDeltaPostgresRef`.
+ * Mirrors Go's `pgDeltaRootCA` (`internal/gen/types/pgdelta_conn.go:37`): probe the
+ * endpoint for TLS (`GetRootCA` → `isRequireSSL`); if it speaks TLS, the embedded
+ * bundle is needed. A Supabase-hosted URL gets the bundle regardless (fallback for
+ * when the probe is skipped or reports no TLS). Otherwise no bundle.
+ */
+const legacyPgDeltaNeedsRootCa = Effect.fnUntraced(function* (ref: string) {
+  const probe = yield* LegacyPgDeltaSslProbe;
+  const requireSsl = yield* probe.requireSsl(ref);
+  return requireSsl || legacyIsSupabaseHostedPostgresUrl(ref);
+});
+
+/**
+ * Prepares a SOURCE/TARGET ref + its SSL env for pg-delta. Catalog-file refs pass
+ * through unchanged; a postgres URL is probed for TLS (Go's `pgDeltaRootCA`) and,
+ * when TLS is required (or it is a Supabase-hosted host), gets the embedded CA bundle
+ * written under `supabase/.temp/pgdelta/` and the URL rewritten to `sslmode=verify-ca`.
+ * Mirrors Go's `PreparePgDeltaPostgresRef`.
  */
 export const legacyPreparePgDeltaRef = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -78,7 +95,12 @@ export const legacyPreparePgDeltaRef = Effect.fnUntraced(function* (
   ref: string,
   sslRootCertEnv: string,
 ) {
-  if (!legacyIsPostgresUrl(ref) || !legacyIsSupabaseHostedPostgresUrl(ref)) {
+  // Go only short-circuits on a non-postgres ref (`if !isPostgresURL(ref)`); a
+  // catalog-file path needs no SSL handling.
+  if (!legacyIsPostgresUrl(ref)) {
+    return { ref, sslEnv: {} as Record<string, string> };
+  }
+  if (!(yield* legacyPgDeltaNeedsRootCa(ref))) {
     return { ref, sslEnv: {} as Record<string, string> };
   }
   const relPath = path.join(...PG_DELTA_CA_BUNDLE_DIR_SEGMENTS, caBundleFilename(sslRootCertEnv));
