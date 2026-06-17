@@ -178,6 +178,16 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
             }),
           );
         }
+        // Go's bootstrap delegates to the full `declarative.Generate`, which warms the
+        // declarative catalog cache when --no-cache is unset (`declarative.go:133-157`,
+        // `cmd/db_schema_declarative.go:321`) — applying the just-generated schema to a
+        // shadow DB so an unappliable schema fails HERE, before building the migrations
+        // catalog / emitting a diff debug bundle, and warming the catalog the following
+        // diff reuses. (sync is target-less and writes to the single toml-resolved dir,
+        // so the generate handler's remote-override dir guard isn't needed here.)
+        if (!run.noCache) {
+          yield* seam.exportCatalog({ mode: "declarative", noCache: run.noCache });
+        }
       }
 
       // Step 2: diff migrations state vs declarative; on error, save a debug bundle.
