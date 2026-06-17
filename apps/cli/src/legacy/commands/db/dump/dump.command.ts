@@ -109,6 +109,10 @@ export const legacyDbDumpCommand = Command.make("dump", config).pipe(
           password: flags.password,
           schema: flags.schema,
         },
+        // Map dump's shorthand flags to their canonical names so a shorthand
+        // invocation (`-s`/`-x`/`-f`/`-p`) is reported in telemetry under the long
+        // name, matching Go's `pflag.Visit` → `flag.Name` (`cmd/root_analytics.go`).
+        aliases: { s: "schema", x: "exclude", f: "file", p: "password" },
       }),
       Effect.catchTag("LegacyDbDumpRunError", onRunFailure),
       withJsonErrorHandling,

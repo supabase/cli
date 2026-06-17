@@ -245,6 +245,34 @@ describe("withLegacyCommandInstrumentation", () => {
     );
   });
 
+  it.live("records db dump shorthand flags (-x/-f) under their canonical names", () => {
+    // db dump declares -s/-x/-f/-p shorthands; Go's changedFlags() reports the
+    // canonical long names, so the instrumentation alias map must map all of them.
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { exclude: ["public.users"], file: Option.some("out.sql") },
+        aliases: { s: "schema", x: "exclude", f: "file", p: "password" },
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["db", "dump", "-x", "public.users", "-f", "out.sql"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ exclude: "<redacted>", file: "<redacted>" });
+        }),
+      ),
+    );
+  });
+
   it.live("passes boolean flag values through verbatim", () => {
     const analytics = mockContextualAnalytics();
 
