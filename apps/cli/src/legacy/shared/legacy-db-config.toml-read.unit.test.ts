@@ -300,6 +300,72 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("parses [api] auto_expose_new_tables string with Go bool tokens (TRUE → true)", () => {
+    // Go decodes the *bool via strconv.ParseBool, so `TRUE`/`1`/`t` are true — not only
+    // the literal lowercase `true`.
+    const dir = withConfig('[api]\nauto_expose_new_tables = "TRUE"\n');
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.baseline.apiAutoExposeNewTables)).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("keeps [api] auto_expose_new_tables tri-state None when absent", () => {
+    const dir = withConfig("[api]\n");
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.isNone(v.baseline.apiAutoExposeNewTables)).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects a malformed [api] auto_expose_new_tables during load", () => {
+    // Go's UnmarshalExact fails the load on a non-bool string rather than coercing.
+    const dir = withConfig('[api]\nauto_expose_new_tables = "maybe"\n');
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const json = JSON.stringify(exit.cause);
+            expect(json).toContain("LegacyDbConfigLoadError");
+            expect(json).toContain("failed to parse config: invalid api.auto_expose_new_tables.");
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("honors SUPABASE_API_AUTO_EXPOSE_NEW_TABLES env override (AutomaticEnv)", () => {
+    // viper AutomaticEnv overrides the TOML value; `1` decodes to true.
+    const dir = withConfig("[api]\nauto_expose_new_tables = false\n");
+    const saved = process.env["SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"];
+    process.env["SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"] = "1";
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.baseline.apiAutoExposeNewTables)).toBe(true);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (saved === undefined) delete process.env["SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"];
+          else process.env["SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"] = saved;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("honors SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED / _DECLARATIVE_SCHEMA_PATH env", () => {
     // Go's viper AutomaticEnv overrides TOML for experimental.pgdelta.* before validation.
     const dir = withConfig(undefined);

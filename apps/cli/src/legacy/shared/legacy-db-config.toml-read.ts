@@ -429,6 +429,43 @@ const resolveBoolOrFail = Effect.fnUntraced(function* (
 });
 
 /**
+ * Tri-state (`*bool`) sibling of `resolveBoolOrFail` for fields Go decodes as a
+ * pointer-bool (absent → `nil`/`None`, never `false`). The `SUPABASE_*` AutomaticEnv
+ * override wins when present; otherwise a present TOML bool/string is decoded with Go's
+ * `strconv.ParseBool` set (`legacyParseGoBool`) and a malformed value aborts the load
+ * with Go's `failed to parse config` error (`pkg/config/config.go:584-590`). An absent
+ * value stays `None`. (`envOverride` already drops empty env values, matching viper's
+ * `AllowEmptyEnv=false`.)
+ */
+const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
+  field: string,
+  envValue: string | undefined,
+  value: unknown,
+  lookup: EnvLookup,
+) {
+  if (envValue !== undefined) {
+    const parsed = legacyParseGoBool(envValue);
+    if (parsed === undefined) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
+      );
+    }
+    return Option.some(parsed);
+  }
+  if (typeof value === "boolean") return Option.some(value);
+  if (typeof value === "string") {
+    const parsed = legacyParseGoBool(legacyExpandEnv(value, lookup));
+    if (parsed === undefined) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
+      );
+    }
+    return Option.some(parsed);
+  }
+  return Option.none<boolean>();
+});
+
+/**
  * Reads `<workdir>/supabase/config.toml` (db subtree + project id) and the linked
  * `<workdir>/supabase/.temp/pooler-url`. `fs`/`path` are passed in so the resolver
  * can capture them once and keep its own `R` at `never`.
@@ -793,14 +830,17 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   const vaultRaw = asRecord(db?.["vault"]);
   const vaultNames = vaultRaw === undefined ? [] : Object.keys(vaultRaw).sort();
 
-  // `[api] auto_expose_new_tables` is a tri-state `*bool`: present → Some(bool).
-  const autoExposeRaw = apiRaw?.["auto_expose_new_tables"];
-  const apiAutoExposeNewTables =
-    typeof autoExposeRaw === "boolean"
-      ? Option.some(autoExposeRaw)
-      : typeof autoExposeRaw === "string"
-        ? Option.some(legacyExpandEnv(autoExposeRaw, lookup) === "true")
-        : Option.none<boolean>();
+  // `[api] auto_expose_new_tables` is a tri-state `*bool` (`pkg/config/api.go:25`):
+  // present → Some(bool), absent → None (never false). Go applies the
+  // `SUPABASE_API_AUTO_EXPOSE_NEW_TABLES` AutomaticEnv override and decodes the value
+  // with `strconv.ParseBool`, failing the load on a malformed value — so `1`/`TRUE`/
+  // `env(...)` parse correctly and `maybe` aborts rather than silently coercing to false.
+  const apiAutoExposeNewTables = yield* resolveOptionalBoolOrFail(
+    "api.auto_expose_new_tables",
+    envOverride("SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"),
+    apiRaw?.["auto_expose_new_tables"],
+    lookup,
+  );
 
   const values: LegacyDbTomlValues = {
     port,
