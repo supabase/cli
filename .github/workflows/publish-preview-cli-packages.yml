@@ -30,6 +30,8 @@ jobs:
     with:
       version: 0.0.0-pr.${{ github.event.pull_request.number }}
       shell: legacy
+    secrets:
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   publish:
     needs: build
@@ -52,6 +54,8 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Restore preview build artifacts cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5

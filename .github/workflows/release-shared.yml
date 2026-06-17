@@ -53,6 +53,8 @@ on:
         required: false
       ANTHROPIC_API_KEY:
         required: false
+      DF_FIREWALL_TOKEN:
+        required: false
 jobs:
   build-blacksmith:
     name: Build CLI artifacts (Blacksmith)
@@ -64,6 +66,7 @@ jobs:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
       POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   build-github:
     name: Build CLI artifacts (GitHub hosted)
@@ -77,6 +80,7 @@ jobs:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
       POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   smoke-test:
     needs:
@@ -99,6 +103,8 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Restore build artifacts cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -202,6 +208,8 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Restore build artifacts cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -258,6 +266,8 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Restore build artifacts cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -382,6 +392,8 @@ jobs:
       tag: v${{ inputs.version }}
       apply: true
       non_blocking: true
+    secrets:
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   # Once the raw semantic-release block is in the release body, ask Claude to
   # rewrite it into user-centric notes and open a PR for human approval. Stable
@@ -398,6 +410,7 @@ jobs:
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   publish-homebrew:
     needs: publish
@@ -414,6 +427,8 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Restore build artifacts cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
@@ -466,6 +481,8 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Restore build artifacts cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5

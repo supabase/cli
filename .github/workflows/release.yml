@@ -222,6 +222,7 @@ jobs:
       POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
       GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   # Posts to the release Slack channel once the pipeline succeeds. Listing
   # `release` in `needs` without a status function in `if:` keeps the implicit
