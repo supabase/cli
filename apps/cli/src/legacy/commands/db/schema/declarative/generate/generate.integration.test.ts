@@ -242,6 +242,31 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("aborts (does not overwrite) when the declarative dir cannot be read", () => {
+    // Go's confirmOverwrite returns the ReadDir error and Generate aborts on it
+    // (declarative.go:123-127, 226-229), rather than treating an unreadable existing
+    // dir as empty and letting WriteDeclarativeSchemas wipe/recreate the path.
+    // Seeding supabase/database as a FILE makes readDirectory fail with ENOTDIR (a
+    // non-NotFound PlatformError), so the command must fail without writing.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "database"), "not a directory");
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      // The declarative path is untouched — still our seeded file, never wiped and
+      // rewritten as a directory of schema files.
+      expect(readFileSync(join(tmp.current, "supabase", "database"), "utf8")).toBe(
+        "not a directory",
+      );
+      expect(
+        s.out.rawChunks.some((c) => c.text.includes("Declarative schema written to")),
+      ).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("explicit --db-url: resolves the remote URL via the resolver", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {

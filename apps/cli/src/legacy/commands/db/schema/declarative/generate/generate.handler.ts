@@ -194,7 +194,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
 
       const result = yield* legacyGenerateDeclarativeOutput(run, targetUrl);
 
-      if (!overwrite && (yield* hasDeclarativeFiles(fs, declarativeDir))) {
+      if (!overwrite && (yield* confirmOverwriteHasFiles(fs, declarativeDir))) {
         // Go's confirmOverwrite goes through Console.PromptYesNo, which returns true
         // immediately when the global YES flag is set (`apps/cli-go/internal/utils/
         // console.go:70-73`). Honor --yes here too, or non-interactive/JSON runs
@@ -261,6 +261,29 @@ const hasDeclarativeFiles = Effect.fnUntraced(function* (fs: FileSystem.FileSyst
   const exists = yield* fs.exists(dir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) return false;
   const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]));
+  return entries.length > 0;
+});
+
+// The overwrite-confirmation guard, mirroring Go's `confirmOverwrite`
+// (`apps/cli-go/internal/db/declarative/declarative.go:220-235`). Unlike the
+// smart-mode `hasDeclarativeFiles` above (which matches `cmd.hasDeclarativeFiles`
+// and swallows read errors), `confirmOverwrite` returns the `ReadDir` error and
+// `Generate` aborts on it (`declarative.go:123-127`). So an unreadable-but-existing
+// declarative dir must abort here rather than read as "empty" and get silently
+// overwritten by `legacyWriteDeclarativeSchemas`. Only a not-exist directory means
+// "no confirmation needed"; Go returns the raw error, so let the `PlatformError`
+// propagate unwrapped.
+const confirmOverwriteHasFiles = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  dir: string,
+) {
+  const entries = yield* fs.readDirectory(dir).pipe(
+    Effect.catchTag("PlatformError", (error) =>
+      error.reason._tag === "NotFound"
+        ? Effect.succeed<ReadonlyArray<string>>([])
+        : Effect.fail(error),
+    ),
+  );
   return entries.length > 0;
 });
 
