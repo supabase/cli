@@ -290,6 +290,36 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("rejects an invalid [functions.<slug>] during load", () => {
+    // Go's config.Validate runs ValidateFunctionSlug over every functions key on load
+    // (`apps/cli-go/pkg/config/config.go:993-998`), aborting with this exact message
+    // (`config.go:1376`). `123` starts with a digit → rejected by `^[A-Za-z][A-Za-z0-9_-]*$`.
+    const dir = withConfig("[functions.123]\n");
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const json = JSON.stringify(exit.cause);
+            expect(json).toContain("LegacyDbConfigLoadError");
+            expect(json).toContain(
+              "Invalid Function name: 123. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens.",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("accepts a valid [functions.<slug>] (letters, digits, _ and -)", () => {
+    const dir = withConfig("[functions.my-function]\n[functions.function_1]\n");
+    return read(dir).pipe(
+      Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
   it.effect("accepts an underscore bucket name like Go's permissive pattern", () => {
     // Go's bucketNamePattern uses `\w` (includes `_`) and is not case-restricted
     // despite the prose, so `Bad_Name` actually passes — match the regex, not the

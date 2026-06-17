@@ -200,6 +200,12 @@ const LEGACY_PROJECT_REF_PATTERN = /^[a-z]{20}$/;
 // `.source` so it byte-matches Go's `bucketNamePattern.String()`.
 const LEGACY_BUCKET_NAME_PATTERN = /^(\w|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
 
+// Go's function-slug pattern (`apps/cli-go/pkg/config/config.go:1372`). `config.Validate`
+// runs `ValidateFunctionSlug` over every `[functions.*]` key during config load
+// (`config.go:993-998`), rejecting the config before any db command. `.source` is reused
+// in the message so it byte-matches Go's `funcSlugPattern.String()`.
+const LEGACY_FUNCTION_SLUG_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
+
 /**
  * Go's `config.Validate` rejects any `[remotes.<name>]` whose `project_id` is not a
  * valid project ref (`config.go:832-836`), on every config load — so a malformed or
@@ -521,6 +527,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   let apiRaw: RawDoc | undefined;
   let edgeRuntimeRaw: RawDoc | undefined;
   let experimentalRaw: RawDoc | undefined;
+  let functionsRaw: RawDoc | undefined;
   let projectId = Option.none<string>();
   if (Option.isSome(maybeContent)) {
     let doc: RawDoc | undefined;
@@ -565,6 +572,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     realtimeRaw = asRecord(effectiveDoc?.["realtime"]);
     apiRaw = asRecord(effectiveDoc?.["api"]);
     edgeRuntimeRaw = asRecord(effectiveDoc?.["edge_runtime"]);
+    functionsRaw = asRecord(effectiveDoc?.["functions"]);
     // Go expands `env(VAR)` for the top-level `project_id` during `config.Load`
     // (`config.go:584-588`) before `UpdateDockerIds` derives container names from
     // it, so expand here too — otherwise a `project_id = "env(PROJECT_ID)"` would
@@ -820,6 +828,23 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
         return yield* Effect.fail(
           new LegacyDbConfigLoadError({
             message: `Invalid Bucket name: ${name}. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (${LEGACY_BUCKET_NAME_PATTERN.source})`,
+          }),
+        );
+      }
+    }
+  }
+
+  // Go's config.Validate runs `ValidateFunctionSlug` over every `[functions.*]` key on
+  // load (`apps/cli-go/pkg/config/config.go:993-998`, immediately after the bucket loop),
+  // rejecting the config before any db command when a slug does not match
+  // `funcSlugPattern`. The reader otherwise drops `functions`, so port the check here
+  // with Go's exact message (the trailing `(%s)` is the regex source, `config.go:1376`).
+  if (functionsRaw !== undefined) {
+    for (const name of Object.keys(functionsRaw)) {
+      if (!LEGACY_FUNCTION_SLUG_PATTERN.test(name)) {
+        return yield* Effect.fail(
+          new LegacyDbConfigLoadError({
+            message: `Invalid Function name: ${name}. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (${LEGACY_FUNCTION_SLUG_PATTERN.source})`,
           }),
         );
       }
