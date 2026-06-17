@@ -1,3 +1,5 @@
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { expectFunctionOk } from "./invoke.ts";
 import { testLive } from "./live-context.ts";
@@ -31,3 +33,27 @@ describe.each(MODES)("functions deploy ($name)", ({ slug, flags }) => {
     expectFunctionOk(res, slug);
   });
 });
+
+// No slug → the CLI walks every function declared under supabase/functions and
+// deploys them all. Assert each declared function appears in the deploy output,
+// then smoke-invoke a representative one.
+testLive(
+  "deploys every declared function when no slug is given",
+  async ({ run, invoke, workspace, projectRef }) => {
+    const declared = readdirSync(join(workspace.path, "supabase", "functions"), {
+      withFileTypes: true,
+    })
+      .filter((e) => e.isDirectory() && !e.name.startsWith("_"))
+      .map((e) => e.name);
+    expect(declared.length).toBeGreaterThan(1);
+
+    const deployed = await run(["functions", "deploy", "--project-ref", projectRef]);
+    expect(deployed.exitCode, deployed.stderr).toBe(0);
+    expect(deployed.stdout).toContain("Deployed Functions");
+    for (const slug of declared) {
+      expect(deployed.stdout, `expected "${slug}" in deploy output`).toContain(slug);
+    }
+
+    expectFunctionOk(await invoke("deploy-e2e-basic"), "deploy-e2e-basic");
+  },
+);
