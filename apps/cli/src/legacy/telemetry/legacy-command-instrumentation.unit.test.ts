@@ -316,7 +316,16 @@ describe("withLegacyCommandInstrumentation", () => {
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
-          args: Effect.succeed(["db", "schema", "declarative", "generate", "-s", "public", "-p", "secret"]),
+          args: Effect.succeed([
+            "db",
+            "schema",
+            "declarative",
+            "generate",
+            "-s",
+            "public",
+            "-p",
+            "secret",
+          ]),
         }),
       ),
       Effect.provide(commandRuntimeLayer(["db", "schema", "declarative", "generate"])),
@@ -344,7 +353,16 @@ describe("withLegacyCommandInstrumentation", () => {
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
         Stdio.layerTest({
-          args: Effect.succeed(["db", "schema", "declarative", "sync", "-s", "public", "-f", "out.sql"]),
+          args: Effect.succeed([
+            "db",
+            "schema",
+            "declarative",
+            "sync",
+            "-s",
+            "public",
+            "-f",
+            "out.sql",
+          ]),
         }),
       ),
       Effect.provide(commandRuntimeLayer(["db", "schema", "declarative", "sync"])),
