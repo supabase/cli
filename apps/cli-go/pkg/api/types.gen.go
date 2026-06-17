@@ -5125,6 +5125,7 @@ type V1AuthorizeUserParams struct {
 
 	// OrganizationSlug Organization slug
 	OrganizationSlug *string `form:"organization_slug,omitempty" json:"organization_slug,omitempty"`
+	TargetFlow       *string `form:"target_flow,omitempty" json:"target_flow,omitempty"`
 
 	// Resource Resource indicator for MCP (Model Context Protocol) clients
 	Resource *string `form:"resource,omitempty" json:"resource,omitempty"`
