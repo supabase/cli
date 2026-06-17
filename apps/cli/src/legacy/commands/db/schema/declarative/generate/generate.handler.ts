@@ -238,22 +238,18 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // `local` key a subsequent `sync` reuses; a schema that cannot be applied makes
       // `generate` fail here rather than succeeding and forcing `sync` to reprovision.
       //
-      // The warm runs through the `__catalog` seam, which loads the BASE config (the
-      // seam subprocess has no channel to receive the linked ref — `--project-ref` is
-      // not registered on it), so it targets the BASE declarative dir. Only warm when
-      // that matches the dir we wrote to — i.e. when a `[remotes.<ref>]` override did
-      // NOT change `declarative_schema_path`. Otherwise (a linked path override) skip
-      // the warm rather than apply/hash the wrong (or absent) base dir, which would
-      // fail or warm the wrong cache. Go warms correctly there via its in-process
-      // merged config; the seam structurally cannot, so a missed warm in that rare
-      // case is the safe divergence.
-      const warmTargetsWrittenDir =
-        legacyResolveDeclarativeDir(path, baseToml.pgDelta) ===
-        legacyResolveDeclarativeDir(path, toml.pgDelta);
-      if (!flags.noCache && warmTargetsWrittenDir) {
+      // On explicit `--linked`, thread the resolved ref as `SUPABASE_PROJECT_ID` into the
+      // `__catalog` subprocess (the same channel the baseline export uses), so it loads
+      // the `[remotes.<ref>]`-merged config and its own `GetDeclarativeDir()` resolves the
+      // remote-overridden `declarative_schema_path` — i.e. the warm builds from the same
+      // merged config and targets the same dir the handler wrote to (also computed from
+      // the merged `toml`). Go warms against the in-process merged config identically
+      // (`declarative.go:138-154`), so this always runs when `!--no-cache`.
+      if (!flags.noCache) {
         yield* (yield* LegacyDeclarativeSeam).exportCatalog({
           mode: "declarative",
           noCache: flags.noCache,
+          ...(linkedProjectRef !== undefined ? { projectRef: linkedProjectRef } : {}),
         });
       }
       yield* output.raw(`Declarative schema written to ${legacyBold(declarativeDir)}\n`, "stderr");
