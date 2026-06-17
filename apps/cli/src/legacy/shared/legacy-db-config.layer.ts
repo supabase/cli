@@ -223,7 +223,15 @@ export const legacyDbConfigLayer = Layer.effect(
               Duration.toMillis(BACKOFF_MAX),
             );
             return Effect.gen(function* () {
-              yield* unban;
+              // Go runs the unban inside `backoff.RetryNotify`'s notify callback,
+              // which cannot abort the retry — `NewErrorCallback` only logs a callback
+              // error and continues (`internal/utils/retry.go:28-29`). So a transient
+              // ban-list/unban failure must NOT propagate out of the retry loop; log it
+              // to --debug like Go, then discard.
+              yield* unban.pipe(
+                Effect.tapError((banError) => debug.debug(banError.message)),
+                Effect.ignore,
+              );
               yield* debug.debug(`Retry (${n}/${MAX_RETRIES}): ${cause.message}`);
               yield* Effect.sleep(Duration.millis(delayMs));
               return yield* attempt(n + 1);
