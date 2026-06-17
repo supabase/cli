@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createHarness, exec } from "@supabase/cli-test-helpers";
 import { ACCESS_TOKEN, REGION, TARGET } from "../src/tests/env.ts";
 
@@ -14,9 +15,11 @@ function harness(apiUrl: string) {
 
 const PROJECT_REF_RE = /^[a-z]{20}$/;
 
-// DB password set at project creation; also used to build the live --db-url for
-// DB-connectivity commands (inspect db, migration list, db dump, gen types).
-export const TEST_DB_PASSWORD = "cli-e2e-password-123";
+// DB password for the throwaway project, used at creation and to build the live
+// --db-url. Randomised per run (overridable via CLI_E2E_DB_PASSWORD) so no static
+// credential is committed to source — the project is deleted on teardown anyway.
+export const TEST_DB_PASSWORD =
+  process.env["CLI_E2E_DB_PASSWORD"] ?? `cli-e2e-${randomBytes(12).toString("hex")}`;
 
 export async function resolveOrgId(apiUrl: string): Promise<string> {
   const result = await exec(harness(apiUrl), ["orgs", "list", "--output", "json"]);

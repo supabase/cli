@@ -3,16 +3,20 @@ import type { CLITarget } from "@supabase/cli-test-helpers";
 type CliE2eMode = "replay" | "record" | "live";
 type CliE2eTargetEnv = "staging" | "supabox";
 
-export const isRecording = process.env["RECORD"] === "true";
-
 // Runtime mode. `replay` (default) serves recorded fixtures; `record` proxies to
 // staging and captures fixtures; `live` (ADR-0013) bypasses the replay server and
 // wires the CLI straight at the real Management API + Docker socket.
 // Back-compat: RECORD=true still maps to `record`.
 const MODE: CliE2eMode =
-  (process.env["CLI_E2E_MODE"] as CliE2eMode | undefined) ?? (isRecording ? "record" : "replay");
+  (process.env["CLI_E2E_MODE"] as CliE2eMode | undefined) ??
+  (process.env["RECORD"] === "true" ? "record" : "replay");
 
+export const isRecording = MODE === "record";
 export const isLive = MODE === "live";
+
+// The replay server keys recording off the RECORD env var directly. Normalise it
+// from MODE so `CLI_E2E_MODE=record` records instead of silently replaying.
+if (isRecording) process.env["RECORD"] = "true";
 
 // Which backend the live/record suite targets. Only `staging` is wired today;
 // `supabox` is a later env swap (CLI_E2E_API_URL + CLI_E2E_PROJECT_HOST + token).
