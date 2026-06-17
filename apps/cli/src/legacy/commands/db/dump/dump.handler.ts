@@ -49,6 +49,10 @@ const LEGACY_DUMP_EXCLUSIVE_GROUPS = [
 
 const DUMP_FILE_MODE = 0o644;
 
+/** Map a filesystem error to Go's `--file` open-failure error. */
+const toOpenFileError = (cause: { readonly message: string }) =>
+  new LegacyDbDumpOpenFileError({ message: `failed to open dump file: ${cause.message}` });
+
 export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: LegacyDbDumpFlags) {
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
@@ -191,14 +195,9 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // path fails before the dump runs, matching Go's `OpenFile(O_WRONLY|O_CREATE|
     // O_TRUNC, 0644)` ordering (`internal/db/dump/dump.go:24-31`).
     if (Option.isSome(resolvedFile)) {
-      yield* fs.writeFile(resolvedFile.value, new Uint8Array(0), { mode: DUMP_FILE_MODE }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new LegacyDbDumpOpenFileError({
-              message: `failed to open dump file: ${cause.message}`,
-            }),
-        ),
-      );
+      yield* fs
+        .writeFile(resolvedFile.value, new Uint8Array(0), { mode: DUMP_FILE_MODE })
+        .pipe(Effect.mapError(toOpenFileError));
     }
 
     // 6. Diagnostic to stderr (Go writes this for both real and dry-run paths).
@@ -215,22 +214,53 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     const extraHosts =
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
 
+    const dockerOpts = (env: Readonly<Record<string, string>>) => ({
+      image: legacyGetRegistryImageUrl(image),
+      cmd: ["bash", "-c", mode.script, "--"],
+      env,
+      binds: [],
+      workingDir: Option.none(),
+      securityOpt: [],
+      extraHosts,
+      network,
+    });
+
+    // Go streams pg_dump stdout straight to the destination sink (the `--file` handle
+    // or `os.Stdout`) via `stdcopy.StdCopy` with `Follow:true`, at constant memory
+    // (`apps/cli-go/internal/utils/docker.go:374,394`). Mirror that: write each chunk
+    // to the destination as it arrives instead of buffering the whole dump. stderr is
+    // teed live (Go's `io.MultiWriter(os.Stderr, errBuf)`).
     const runContainer = (env: Readonly<Record<string, string>>) =>
-      docker.runCapture(
-        {
-          image: legacyGetRegistryImageUrl(image),
-          cmd: ["bash", "-c", mode.script, "--"],
-          env,
-          binds: [],
-          workingDir: Option.none(),
-          securityOpt: [],
-          extraHosts,
-          network,
-        },
-        // Go's dump tees container stderr to os.Stderr live (`io.MultiWriter`),
-        // so pg_dump progress/warnings reach the user as they happen.
-        { teeStderr: true },
-      );
+      Option.isSome(resolvedFile)
+        ? // `--file`: (re)truncate then append-stream. Truncating per attempt
+          // reproduces Go's `resetOutput` before a pooler retry, so the file ends
+          // up holding only the successful attempt's output.
+          fs
+            .writeFile(resolvedFile.value, new Uint8Array(0), { mode: DUMP_FILE_MODE })
+            .pipe(Effect.mapError(toOpenFileError))
+            .pipe(
+              Effect.andThen(
+                Effect.scoped(
+                  Effect.gen(function* () {
+                    const file = yield* fs
+                      .open(resolvedFile.value, { flag: "a" })
+                      .pipe(Effect.mapError(toOpenFileError));
+                    return yield* docker.runStream(dockerOpts(env), {
+                      onStdout: (chunk) =>
+                        file.writeAll(chunk).pipe(Effect.mapError(toOpenFileError)),
+                      teeStderr: true,
+                    });
+                  }),
+                ),
+              ),
+            )
+        : // stdout: write each chunk straight to stdout (binary-safe, no decode).
+          // On a pooler retry Go leaves the partial first-attempt bytes on stdout
+          // (its `resetOutput` can't rewind a pipe); streaming matches that.
+          docker.runStream(dockerOpts(env), {
+            onStdout: (chunk) => output.rawBytes(chunk),
+            teeStderr: true,
+          });
 
     let result = yield* runContainer(modeEnv);
 
@@ -276,24 +306,8 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       }
     }
 
-    // 8. Persist the captured SQL — to `--file` (truncating) or stdout. Go streams
-    //    this live; the captured bytes are written before classifying the exit code,
-    //    and on a pooler retry only the retry's output is written (Go truncates the
-    //    partial first-attempt output before retrying).
-    if (Option.isSome(resolvedFile)) {
-      yield* fs.writeFile(resolvedFile.value, result.stdout, { mode: DUMP_FILE_MODE }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new LegacyDbDumpOpenFileError({
-              message: `failed to open dump file: ${cause.message}`,
-            }),
-        ),
-      );
-    } else {
-      // Write the captured bytes verbatim — Go streams pg_dump stdout byte-for-byte,
-      // so a non-UTF-8 dump (SQL_ASCII/LATIN1) must not be decoded/re-encoded.
-      yield* output.rawBytes(result.stdout);
-    }
+    // 8. The dump has already been streamed to the destination by `runContainer`
+    //    (to `--file` or stdout) as pg_dump produced it.
 
     // 9. Non-zero container exit → exit 1 (PostRun is skipped, matching cobra).
     if (result.exitCode !== 0) {

@@ -109,6 +109,22 @@ function mockDockerRun(opts: {
         stderr: r.stderr ?? "",
       });
     },
+    // db dump now streams stdout: deliver the configured bytes to `onStdout` (as Go's
+    // StdCopy would), then report the exit code + stderr.
+    runStream: (runOpts, streamOpts) =>
+      Effect.gen(function* () {
+        allOpts.push(runOpts);
+        if (opts.runFails === true) {
+          return yield* Effect.fail(
+            new LegacyDockerRunError({ message: "failed to run docker: not found" }),
+          );
+        }
+        const next = queue.shift();
+        const r = next ?? { exitCode: opts.exitCode, stdout: opts.stdout, stderr: opts.stderr };
+        const bytes = new TextEncoder().encode(r.stdout ?? "");
+        if (bytes.length > 0) yield* streamOpts.onStdout(bytes);
+        return { exitCode: r.exitCode ?? 0, stderr: r.stderr ?? "" };
+      }),
   });
   return {
     layer,

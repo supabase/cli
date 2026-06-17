@@ -104,6 +104,51 @@ export const legacyDockerRunLayer: Layer.Layer<
             };
           }),
         ),
+      runStream: (opts, streamOpts) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const teeStderr = streamOpts.teeStderr ?? false;
+            yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
+            const args = buildLegacyDockerArgs(
+              legacyApplyBitbucketDockerFilter(opts, legacyIsBitbucketPipeline()),
+            );
+            const command = ChildProcess.make("docker", args, {
+              stdin: "inherit",
+              stdout: "pipe",
+              stderr: "pipe",
+              detached: false,
+              env: opts.env,
+              extendEnv: true,
+            });
+            const handle = yield* spawner.spawn(command).pipe(Effect.mapError(spawnError));
+
+            const stderrChunks: Array<Uint8Array> = [];
+            // Stream stdout to the caller's sink in arrival order while draining
+            // stderr concurrently — reading one pipe to completion before the other
+            // would deadlock once the unread pipe's OS buffer fills. Go does the same
+            // via `stdcopy.StdCopy(stdout, stderr, logs)` (`docker.go:394`).
+            yield* Effect.all(
+              [
+                // Map the stdout pipe's own read errors to a docker error while letting
+                // the caller's `onStdout` failure (`E`) propagate unchanged.
+                Stream.runForEach(
+                  handle.stdout.pipe(Stream.mapError(spawnError)),
+                  streamOpts.onStdout,
+                ),
+                Stream.runForEach(handle.stderr, (chunk) =>
+                  Effect.sync(() => {
+                    stderrChunks.push(chunk);
+                    if (teeStderr) globalThis.process.stderr.write(chunk);
+                  }),
+                ).pipe(Effect.mapError(spawnError)),
+              ],
+              { concurrency: "unbounded" },
+            );
+
+            const exitCode = yield* handle.exitCode.pipe(Effect.mapError(spawnError));
+            return { exitCode, stderr: new TextDecoder().decode(concat(stderrChunks)) };
+          }),
+        ),
       run: (opts) =>
         Effect.scoped(
           Effect.gen(function* () {

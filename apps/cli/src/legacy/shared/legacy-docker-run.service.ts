@@ -48,21 +48,43 @@ interface LegacyDockerRunShape {
   /** Runs `docker run --rm ...`, inheriting stdio, returns the container's exit code. */
   readonly run: (opts: LegacyDockerRunOpts) => Effect.Effect<number, LegacyDockerRunError>;
   /**
-   * Runs `docker run --rm ...` capturing stdout into a buffer (instead of
-   * inheriting it) and collecting stderr for classification. Used by `db dump`
-   * (which must redirect the SQL stream to `--file` or post-process it) and the
-   * declarative edge-runtime export.
+   * Runs `docker run --rm ...` capturing the full stdout into a buffer (instead of
+   * inheriting it) and collecting stderr for classification. Used by the declarative
+   * edge-runtime / pg-delta export, which must parse the whole stdout payload as JSON.
+   * (`db dump` streams instead — see {@link runStream}.)
    *
    * `teeStderr` controls whether container stderr is also written to the parent
-   * terminal in real time. `db dump` opts in (Go's `io.MultiWriter(os.Stderr,
-   * errBuf)`, `apps/cli-go/internal/db/dump/dump.go:50-90`); the edge-runtime /
-   * pg-delta path leaves it off (Go passes a plain `bytes.Buffer`, surfacing
-   * stderr only on failure — `apps/cli-go/internal/utils/edgeruntime.go:79-113`).
+   * terminal in real time. The edge-runtime / pg-delta path leaves it off (Go passes
+   * a plain `bytes.Buffer`, surfacing stderr only on failure —
+   * `apps/cli-go/internal/utils/edgeruntime.go:79-113`).
    */
   readonly runCapture: (
     opts: LegacyDockerRunOpts,
     captureOpts?: { readonly teeStderr?: boolean },
   ) => Effect.Effect<LegacyDockerRunCaptureResult, LegacyDockerRunError>;
+  /**
+   * Runs `docker run --rm ...` streaming container stdout to `onStdout` chunk-by-chunk
+   * as it arrives (instead of buffering), while collecting stderr for classification.
+   * Mirrors Go's `DockerStreamLogs` → `stdcopy.StdCopy(stdout, stderr, logs)` with
+   * `Follow:true` (`apps/cli-go/internal/utils/docker.go:374,394`): the destination is
+   * the real sink, so a large `db dump` streams to `--file`/stdout at constant memory
+   * and a piped consumer sees output incrementally.
+   *
+   * `onStdout` chunks are delivered in arrival order; its failure aborts the run and
+   * propagates as `E`. `teeStderr` mirrors `runCapture` (Go's
+   * `io.MultiWriter(os.Stderr, errBuf)`). Returns the exit code + captured stderr; the
+   * stdout bytes are not retained.
+   */
+  readonly runStream: <E>(
+    opts: LegacyDockerRunOpts,
+    streamOpts: {
+      readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
+      readonly teeStderr?: boolean;
+    },
+  ) => Effect.Effect<
+    { readonly exitCode: number; readonly stderr: string },
+    LegacyDockerRunError | E
+  >;
 }
 
 export class LegacyDockerRun extends Context.Service<LegacyDockerRun, LegacyDockerRunShape>()(

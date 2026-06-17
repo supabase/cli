@@ -119,6 +119,12 @@ function mockDockerRun(opts: { exitCode?: number; runFails?: boolean }) {
         ? Effect.fail(new LegacyDockerRunError({ message: "failed to run docker: not found" }))
         : Effect.succeed({ exitCode: opts.exitCode ?? 0, stdout: new Uint8Array(0), stderr: "" });
     },
+    runStream: (runOpts) => {
+      lastOpts = runOpts;
+      return opts.runFails === true
+        ? Effect.fail(new LegacyDockerRunError({ message: "failed to run docker: not found" }))
+        : Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: "" });
+    },
   });
   return {
     layer,
