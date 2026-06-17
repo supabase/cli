@@ -8,7 +8,7 @@ import {
   type CLIResult,
   type TempDir,
 } from "@supabase/cli-test-helpers";
-import { ACCESS_TOKEN, isLive, TARGET, TARGET_API_URL } from "../env.ts";
+import { ACCESS_TOKEN, isLive, PROJECT_HOST, TARGET, TARGET_API_URL } from "../env.ts";
 import { invokeFunction, type InvokeResult } from "./invoke.ts";
 
 type ExecOptions = NonNullable<Parameters<typeof exec>[2]>;
@@ -23,6 +23,7 @@ interface LiveFixtures {
   anonKey: string;
   functionsUrl: string;
   dbUrl: string;
+  storageBucket: string;
   workspace: TempDir;
   run: (cmd: string[], execOpts?: ExecOptions) => Promise<CLIResult>;
   invoke: (slug: string, opts?: { anonKey?: string; payload?: unknown }) => Promise<InvokeResult>;
@@ -49,6 +50,11 @@ const base = test.extend<LiveFixtures>({
     await use(inject("dbUrl"));
   },
 
+  // eslint-disable-next-line no-empty-pattern
+  storageBucket: async ({}, use) => {
+    await use(inject("storageBucket"));
+  },
+
   workspace: async ({ task }, use) => {
     const dir = makeTempDir(`cli-e2e-live-${task.name.slice(0, 30)}-`);
     // CLI expects a `supabase/` directory containing config.toml + functions/.
@@ -63,6 +69,9 @@ const base = test.extend<LiveFixtures>({
       accessToken: ACCESS_TOKEN,
       cwd: workspace.path,
       projectId: inject("projectRef") as string,
+      // Real host so host-derived commands (storage --linked → <ref>.<host>)
+      // reach the live endpoint instead of localhost.
+      projectHost: PROJECT_HOST,
     });
     await use((cmd, execOpts) => exec(harness, cmd, execOpts));
   },

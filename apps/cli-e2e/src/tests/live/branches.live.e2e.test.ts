@@ -7,7 +7,9 @@ import { testLive } from "./live-context.ts";
 // on a paid org, create → list → delete; on a free org, assert the plan-gate.
 describe("branches (live)", () => {
   testLive("create + list + delete (or surface the plan gate)", async ({ run, projectRef }) => {
-    const name = "e2e-branch";
+    // Unique per attempt so a retry (vitest retry:2) after a post-create flake
+    // can't collide on the name; a finally guarantees cleanup either way.
+    const name = `e2e-branch-${Date.now()}`;
     const created = await run(["branches", "create", name, "--project-ref", projectRef]);
 
     if (created.exitCode !== 0) {
@@ -17,14 +19,26 @@ describe("branches (live)", () => {
       return;
     }
 
-    expect(created.stdout).toContain("Created preview branch");
+    try {
+      expect(created.stdout).toContain("Created preview branch");
 
-    const listed = await run(["branches", "list", "--output", "json", "--project-ref", projectRef]);
-    expect(listed.exitCode, listed.stderr).toBe(0);
-    const names = (JSON.parse(listed.stdout) as Array<{ name?: string }>).map((b) => b.name);
-    expect(names).toContain(name);
+      const listed = await run([
+        "branches",
+        "list",
+        "--output",
+        "json",
+        "--project-ref",
+        projectRef,
+      ]);
+      expect(listed.exitCode, listed.stderr).toBe(0);
+      const names = (JSON.parse(listed.stdout) as Array<{ name?: string }>).map((b) => b.name);
+      expect(names).toContain(name);
 
-    const deleted = await run(["branches", "delete", name, "--project-ref", projectRef, "--yes"]);
-    expect(deleted.exitCode, deleted.stderr).toBe(0);
+      const deleted = await run(["branches", "delete", name, "--project-ref", projectRef, "--yes"]);
+      expect(deleted.exitCode, deleted.stderr).toBe(0);
+    } finally {
+      // Retry/leak safety: ensure the branch is gone even if an assertion flaked.
+      await run(["branches", "delete", name, "--project-ref", projectRef, "--yes"]);
+    }
   });
 });

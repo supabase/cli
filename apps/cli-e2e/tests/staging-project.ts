@@ -135,10 +135,17 @@ export async function getAnonKey(
     });
     if (res.ok) {
       const keys = (await res.json()) as ApiKey[];
-      const anon =
-        keys.find((k) => k.name === "anon" && k.api_key)?.api_key ??
-        keys.find((k) => k.api_key?.startsWith("sb_publishable_"))?.api_key;
-      if (anon) return anon;
+      const anonJwt = keys.find((k) => k.name === "anon" && k.api_key)?.api_key;
+      if (anonJwt) return anonJwt;
+      // Keys present but no legacy anon JWT. A publishable (sb_publishable_) key
+      // is NOT a JWT and 401s on the default verify_jwt=true functions, so fail
+      // loudly rather than proceed with a key that can't authenticate verified
+      // invokes (the suite would need to deploy with --no-verify-jwt instead).
+      if (keys.length > 0) {
+        throw new Error(
+          `Project ${projectRef} returned no anon JWT (only new-style keys); verified-function invokes require a JWT`,
+        );
+      }
     }
     if (attempt === attempts) {
       throw new Error(
@@ -151,6 +158,51 @@ export async function getAnonKey(
   }
   // Unreachable — the loop either returns a key or throws on the last attempt.
   throw new Error(`Failed to resolve anon key for ${projectRef}`);
+}
+
+/** Service-role / secret key, used to seed a storage bucket for the live storage
+ *  tests (the same way record setup does). Retries like getAnonKey. */
+export async function getServiceRoleKey(
+  apiBaseUrl: string,
+  projectRef: string,
+  attempts = 12,
+): Promise<string> {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const res = await fetch(`${apiBaseUrl}/v1/projects/${projectRef}/api-keys`, {
+      headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
+    });
+    if (res.ok) {
+      const keys = (await res.json()) as ApiKey[];
+      const secret =
+        keys.find((k) => k.name === "service_role" && k.api_key)?.api_key ??
+        keys.find((k) => k.api_key?.startsWith("sb_secret_"))?.api_key;
+      if (secret) return secret;
+    }
+    if (attempt === attempts) {
+      throw new Error(`Failed to resolve service-role key for ${projectRef}`);
+    }
+    await new Promise((r) => setTimeout(r, 10_000));
+  }
+  throw new Error(`Failed to resolve service-role key for ${projectRef}`);
+}
+
+/** Create a private storage bucket via the project's Storage API (host derived
+ *  from projectHost, IPv4-reachable). Idempotent — treats an existing bucket as
+ *  success. */
+export async function createStorageBucket(
+  projectHost: string,
+  projectRef: string,
+  serviceRoleKey: string,
+  bucket: string,
+): Promise<void> {
+  const res = await fetch(`https://${projectRef}.${projectHost}/storage/v1/bucket`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ id: bucket, name: bucket, public: false }),
+  });
+  if (!res.ok && res.status !== 409) {
+    throw new Error(`Failed to create bucket ${bucket}: ${res.status} ${await res.text()}`);
+  }
 }
 
 interface PoolerConfig {

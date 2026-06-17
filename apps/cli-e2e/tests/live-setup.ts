@@ -9,14 +9,18 @@ import {
   TARGET_API_URL,
 } from "../src/tests/env.ts";
 import {
+  createStorageBucket,
   createTestProject,
   deleteTestProject,
   getAnonKey,
   getPoolerSessionUrl,
+  getServiceRoleKey,
   resolveOrgId,
   TEST_DB_PASSWORD,
   waitForProjectReady,
 } from "./staging-project.ts";
+
+const STORAGE_BUCKET = "cli-e2e-live-bucket";
 
 declare module "vitest" {
   export interface ProvidedContext {
@@ -26,6 +30,7 @@ declare module "vitest" {
     functionsUrl: string;
     /** Direct Postgres connection string for --db-url DB commands. */
     dbUrl: string;
+    // storageBucket is declared by tests/setup.ts (shared ProvidedContext).
   }
 }
 
@@ -69,6 +74,10 @@ export async function setup({
     // IPv4 session-mode pooler — the direct host is IPv6-only (unreachable from
     // IPv4-only CI runners); the pooler is IPv4 and session mode supports pg_dump.
     dbUrl = await getPoolerSessionUrl(TARGET_API_URL, projectRef, TEST_DB_PASSWORD);
+    // Seed a private bucket via the Storage API so the storage live tests have
+    // something to cp/ls/rm against (cleaned up with the project on teardown).
+    const serviceRoleKey = await getServiceRoleKey(TARGET_API_URL, projectRef);
+    await createStorageBucket(PROJECT_HOST, projectRef, serviceRoleKey, STORAGE_BUCKET);
   } catch (err) {
     // Delete the half-provisioned project, but never mask the original failure.
     if (!KEEP_PROJECT) {
@@ -83,6 +92,7 @@ export async function setup({
   provide("anonKey", anonKey);
   provide("functionsUrl", functionsUrl);
   provide("dbUrl", dbUrl);
+  provide("storageBucket", STORAGE_BUCKET);
 
   return async () => {
     if (KEEP_PROJECT) {
