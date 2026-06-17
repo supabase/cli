@@ -36,4 +36,9 @@ export class LegacyDbDumpOpenFileError extends Data.TaggedError("LegacyDbDumpOpe
  */
 export class LegacyDbDumpRunError extends Data.TaggedError("LegacyDbDumpRunError")<{
   readonly message: string;
+  // Go attaches an actionable hint (`utils.CmdSuggestion`) to a failed dump via
+  // `SetConnectSuggestion`/`SuggestIPv6Pooler` before returning — e.g. the IPv6
+  // transaction-pooler guidance. `Output.fail` prints it bare on stderr after the
+  // error message, mirroring Go's `recoverAndExit`.
+  readonly suggestion?: string;
 }> {}

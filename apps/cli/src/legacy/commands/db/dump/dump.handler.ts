@@ -10,7 +10,10 @@ import { legacyReadProjectRefFile } from "../../../shared/legacy-temp-paths.ts";
 import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
-import { legacyIsIPv6ConnectivityError } from "../../../shared/legacy-connect-errors.ts";
+import {
+  legacyIpv6Suggestion,
+  legacyIsIPv6ConnectivityError,
+} from "../../../shared/legacy-connect-errors.ts";
 import { legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
 import {
   LegacyDnsResolverFlag,
@@ -370,9 +373,23 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     //    (to `--file` or stdout) as pg_dump produced it.
 
     // 9. Non-zero container exit → exit 1 (PostRun is skipped, matching cobra).
+    //    Go classifies the captured container stderr into an actionable suggestion
+    //    before returning (`RunWithPoolerFallback` → `SetConnectSuggestion`,
+    //    `pooler_fallback.go:52-65`): on the no-fallback path and the failed-retry
+    //    path alike, an IPv6 connectivity failure attaches the IPv4 transaction-pooler
+    //    guidance. `result.stderr` is the relevant stderr in both cases (the original
+    //    when no retry ran, the retry's when it did), so classify it here. (Go further
+    //    enriches the no-fallback hint with the project's pooler URL via
+    //    `SuggestIPv6Pooler`; that prefill needs the pooler connection string exposed
+    //    through the resolver and is left as a follow-up — the generic hint is restored.)
     if (result.exitCode !== 0) {
       return yield* Effect.fail(
-        new LegacyDbDumpRunError({ message: `error running container: exit ${result.exitCode}` }),
+        new LegacyDbDumpRunError({
+          message: `error running container: exit ${result.exitCode}`,
+          ...(legacyIsIPv6ConnectivityError(result.stderr)
+            ? { suggestion: legacyIpv6Suggestion() }
+            : {}),
+        }),
       );
     }
 

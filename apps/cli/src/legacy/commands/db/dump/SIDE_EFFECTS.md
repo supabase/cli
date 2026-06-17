@@ -56,6 +56,10 @@ the env-expanded script to stdout without running a container; with `--file` it
 still prints the `Dumped schema to <abs>.` confirmation (Go's PostRun fires on the
 successful dry-run) but does **not** create or truncate the file.
 
+On a linked dump whose container fails with an IPv6 connectivity error (no IPv4
+pooler retry available, or the retry also fails), the error is followed on stderr by
+the IPv4 transaction-pooler suggestion (Go's `SetConnectSuggestion`/`ipv6Suggestion`).
+
 > **Credential warning:** `--dry-run` expands the pg_dump script with live env
 > values, so the resolved `PGPASSWORD` (for a remote/linked project, the database
 > password) is printed **in cleartext** to stdout. This matches Go's `noExec`

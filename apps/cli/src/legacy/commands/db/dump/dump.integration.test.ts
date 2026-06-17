@@ -230,6 +230,11 @@ const flags = (over: Partial<LegacyDbDumpFlags> = {}): LegacyDbDumpFlags => ({
 const failMessage = (exit: Exit.Exit<unknown, { readonly message: string }>): string | undefined =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.message : undefined;
 
+const failSuggestion = (
+  exit: Exit.Exit<unknown, { readonly message: string; readonly suggestion?: string }>,
+): string | undefined =>
+  Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error.suggestion : undefined;
+
 describe("legacy db dump integration", () => {
   const tmp = useLegacyTempWorkdir();
 
@@ -657,6 +662,48 @@ describe("legacy db dump integration", () => {
       // The fallback was attempted (classified IPv6) but returned no pooler.
       expect(resolver.fallbackCalls).toHaveLength(1);
       expect(docker.allOpts).toHaveLength(1);
+      // Go's SetConnectSuggestion attaches the IPv6 pooler guidance on the no-fallback
+      // path (pooler_fallback.go:60-64); the bare container error must carry it.
+      expect(failSuggestion(exit)).toContain(
+        "Your network does not support IPv6, which is required for direct connections",
+      );
+      expect(failSuggestion(exit)).toContain("IPv4 transaction pooler");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("linked: attaches the IPv6 suggestion when the pooler retry also fails", () => {
+    // Go's RunWithPoolerFallback calls SetConnectSuggestion on the retry's stderr when
+    // the pooler retry also fails (pooler_fallback.go:52-55); an IPv6 retry failure
+    // surfaces the same guidance.
+    const { layer, docker } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      poolerFallback: Option.some(POOLER_CONN),
+      results: [
+        { exitCode: 1, stderr: IPV6_STDERR },
+        { exitCode: 1, stderr: IPV6_STDERR },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDump(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe("error running container: exit 1");
+      expect(docker.allOpts).toHaveLength(2); // original + failed retry
+      expect(failSuggestion(exit)).toContain("Your network does not support IPv6");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("linked: no IPv6 suggestion on a non-IPv6 container failure", () => {
+    const { layer } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      poolerFallback: Option.some(POOLER_CONN),
+      results: [{ exitCode: 1, stderr: "permission denied for schema public" }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDump(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failSuggestion(exit)).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
