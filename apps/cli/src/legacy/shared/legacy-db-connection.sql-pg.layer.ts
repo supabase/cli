@@ -23,6 +23,15 @@ import {
 } from "./legacy-db-connection.service.ts";
 import { legacyResolveHostsOverHttps } from "./legacy-db-dns.ts";
 
+// node-postgres honors `queryMode: "extended"` to force the Parse/Bind/Execute
+// protocol (`pg/lib/query.js` `requiresPreparation`), but `@types/pg` doesn't declare
+// it. Augment `QueryConfig` so `queryRaw` can request it without an `as` cast.
+declare module "pg" {
+  interface QueryConfig {
+    queryMode?: "extended" | "simple";
+  }
+}
+
 // Go's role step-down (`apps/cli-go/internal/utils/connect.go:200-220`,
 // `ConnectByConfigStream`): after connecting to a remote database as a
 // platform-provisioned login role (`cli_login_*`) or a privileged role
@@ -494,9 +503,16 @@ const connect = (
             // `rowMode: "array"` returns rows positionally so duplicate column
             // names survive (Go reads pgx values by index). `types` keeps date/
             // timestamp/timestamptz cells as raw text to preserve microseconds.
+            // `queryMode: "extended"` forces the Parse/Bind/Execute protocol so a
+            // multi-statement string is rejected — Go's pgx v4 defaults to the
+            // extended protocol (`cannot insert multiple commands into a prepared
+            // statement`), whereas node-postgres' default simple protocol would
+            // execute every statement (an empty `values` array stays simple, since
+            // pg gates preparation on `values.length > 0`).
             try: () =>
               activeClient.query<Array<unknown>>({
                 text: sql,
+                queryMode: "extended",
                 rowMode: "array",
                 types: legacyQueryRawTypes,
               }),
