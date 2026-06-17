@@ -37,11 +37,18 @@ const config = {
     ),
     Flag.optional,
   ),
+  // Go gates explicit-target selection on `flag.Changed` (presence), not the bool
+  // value — `hasExplicitTargetFlag` is `Changed("local")||Changed("linked")||
+  // Changed("db-url")` (`apps/cli-go/cmd/db_schema_declarative.go:139-141`). Model
+  // `--linked`/`--local` as `Option` (like `--db-url`) so `--linked=false` still
+  // takes the explicit linked path, matching Go (and the `db query` fix).
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Generates declarative schema from the linked project."),
+    Flag.optional,
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Generates declarative schema from the local database."),
+    Flag.optional,
   ),
   password: Flag.string("password").pipe(
     Flag.withAlias("p"),

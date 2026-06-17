@@ -52,8 +52,8 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // "Set" follows cobra's `Changed`: Option set when `Some`, boolean when `true`.
       const exclusive: Array<string> = [];
       if (Option.isSome(flags.dbUrl)) exclusive.push("db-url");
-      if (flags.linked) exclusive.push("linked");
-      if (flags.local) exclusive.push("local");
+      if (Option.isSome(flags.linked)) exclusive.push("linked");
+      if (Option.isSome(flags.local)) exclusive.push("local");
       if (exclusive.length > 1) {
         return yield* Effect.fail(
           new LegacyDeclarativeMutuallyExclusiveFlagsError({
@@ -79,7 +79,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // for the downstream path/format settings only — NOT the gate above. (Smart-mode
       // "Linked project" does NOT re-load in Go, so it is excluded — only `flags.linked`.)
       let toml = baseToml;
-      if (flags.linked) {
+      if (Option.isSome(flags.linked)) {
         const linkedRef = Option.isSome(cliConfig.projectId)
           ? cliConfig.projectId
           : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
@@ -114,12 +114,13 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         noCache: flags.noCache,
       };
 
-      const hasExplicitTarget = flags.local || flags.linked || Option.isSome(flags.dbUrl);
+      const hasExplicitTarget =
+        Option.isSome(flags.local) || Option.isSome(flags.linked) || Option.isSome(flags.dbUrl);
 
       let targetUrl: string;
       let overwrite: boolean;
       if (hasExplicitTarget) {
-        if (flags.local) {
+        if (Option.isSome(flags.local)) {
           // Go runs ensureLocalDatabaseStarted before generating from local
           // (db_schema_declarative.go:190) — start a stopped stack instead of
           // failing to connect.

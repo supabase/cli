@@ -37,7 +37,9 @@ export interface LegacyLocalConn {
  */
 export interface LegacySmartTargetFlags {
   readonly dbUrl: Option.Option<string>;
-  readonly linked: boolean;
+  // Presence-modelled (Go's `flag.Changed`), like `--db-url`. The resolver only
+  // reads `dbUrl` to pick db-url vs linked, so this is carried for type-compat.
+  readonly linked: Option.Option<boolean>;
   readonly password: Option.Option<string>;
   readonly reset: boolean;
 }
@@ -115,7 +117,7 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
   if (choice === "linked") {
     // Same path as an explicit `--linked` (Go calls `NewDbConfigWithPassword`):
     // login-role mint + pooler fallback, then `ToPostgresURL`.
-    return yield* legacyResolveRemoteUrl({ ...flags, linked: true });
+    return yield* legacyResolveRemoteUrl({ ...flags, linked: Option.some(true) });
   }
 
   if (choice === "custom") {

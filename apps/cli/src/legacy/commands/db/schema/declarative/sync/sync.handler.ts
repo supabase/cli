@@ -161,7 +161,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // sync has no target flags (Go passes its target-less `cmd` into generate),
         // so reset stays interactive (the prompt fires under the local choice).
         const targetUrl = yield* legacyResolveSmartTargetUrl(
-          { dbUrl: Option.none(), linked: false, password: Option.none(), reset: false },
+          { dbUrl: Option.none(), linked: Option.none(), password: Option.none(), reset: false },
           { port: toml.port, password: toml.password },
           hasMigrations,
           fs,

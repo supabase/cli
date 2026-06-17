@@ -149,8 +149,8 @@ const flags = (
   reset: over.reset ?? false,
   schema: over.schema ?? [],
   dbUrl: over.dbUrl ?? Option.none(),
-  linked: over.linked ?? false,
-  local: over.local ?? false,
+  linked: over.linked ?? Option.none(),
+  local: over.local ?? Option.none(),
   password: over.password ?? Option.none(),
 });
 
@@ -163,7 +163,7 @@ describe("legacy db schema declarative generate integration", () => {
   it.effect("gate: fails when neither --experimental nor config enables pg-delta", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags({ local: true })));
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeNotEnabledError");
     }).pipe(Effect.provide(layer));
@@ -175,7 +175,7 @@ describe("legacy db schema declarative generate integration", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbSchemaDeclarativeGenerate(flags({ local: true, linked: true })),
+        legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true), linked: Option.some(true) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
@@ -189,7 +189,7 @@ describe("legacy db schema declarative generate integration", () => {
   it.effect("explicit --local: provisions baseline, exports, writes declarative files", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: true }));
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
       // baseline (source catalog) for the diff, then the post-write declarative cache warm.
       expect(s.seamCalls).toEqual(["baseline", "declarative"]);
       // TARGET is the local DB URL (passthrough); SOURCE is the baseline catalog.
@@ -220,7 +220,7 @@ describe("legacy db schema declarative generate integration", () => {
     writeFileSync(join(tmp.current, "supabase", "database", "existing.sql"), "create table x ();");
     const s = setup(tmp.current, { experimental: true, yes: true });
     return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: true }));
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
       const written = yield* Effect.promise(async () =>
         (await import("node:fs")).readFileSync(
           join(tmp.current, "supabase", "database", "schemas", "public", "tables", "players.sql"),
@@ -260,7 +260,7 @@ describe("legacy db schema declarative generate integration", () => {
     );
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: true }));
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
       // File lands under the absolute path, NOT tmp.current/<absSchema>.
       expect(existsSync(join(absSchema, "schemas", "public", "tables", "players.sql"))).toBe(true);
       expect(
@@ -291,7 +291,7 @@ describe("legacy db schema declarative generate integration", () => {
     );
     const s = setup(tmp.current, { experimental: true, projectId: Option.some(ref) });
     return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeGenerate(flags({ linked: true }));
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ linked: Option.some(true) }));
       const written = yield* Effect.promise(async () =>
         (await import("node:fs")).readFileSync(
           join(
@@ -312,6 +312,21 @@ describe("legacy db schema declarative generate integration", () => {
       // warming would apply/hash the wrong (absent) base dir. Go warms via its in-process
       // merged config; the seam can't, so we skip rather than regress.
       expect(s.seamCalls).not.toContain("declarative");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--linked=false is an explicit linked target (Go gates on flag.Changed)", () => {
+    // pflag marks `--linked=false` as Changed, so Go takes the explicit linked path
+    // rather than smart mode. Non-interactive (no TTY, no --yes) so a smart-mode
+    // fall-through would fail with "specify a target" — assert it does NOT.
+    const s = setup(tmp.current, { experimental: true, stdinIsTty: false });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeGenerate(flags({ linked: Option.some(false) })),
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // Took the explicit linked path: the resolver was called with connType "linked".
+      expect(s.resolverCalls).toContainEqual(expect.objectContaining({ connType: "linked" }));
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -336,7 +351,7 @@ describe("legacy db schema declarative generate integration", () => {
       );
       const s = setup(tmp.current, { experimental: false, projectId: Option.some(ref) });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags({ linked: true })));
+        const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags({ linked: Option.some(true) })));
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeNotEnabledError");
       }).pipe(Effect.provide(s.layer));
@@ -393,7 +408,7 @@ describe("legacy db schema declarative generate integration", () => {
   it.effect("warms the declarative catalog cache after writing (skipped with --no-cache)", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: true, noCache: true }));
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true), noCache: true }));
       // --no-cache skips the post-write warm, so only the baseline export runs.
       expect(s.seamCalls).toEqual(["baseline"]);
     }).pipe(Effect.provide(s.layer));
@@ -404,7 +419,7 @@ describe("legacy db schema declarative generate integration", () => {
     // can't apply to the shadow DB fails generate rather than reporting success.
     const s = setup(tmp.current, { experimental: true, exportFailsForMode: "declarative" });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbSchemaDeclarativeGenerate(flags({ local: true })).pipe(
+      const exit = yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
