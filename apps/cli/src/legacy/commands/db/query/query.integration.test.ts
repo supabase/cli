@@ -239,7 +239,9 @@ describe("legacy db query integration", () => {
   it.live("runs SQL passed as a positional argument and renders a table for humans", () => {
     const { layer, out, cache } = setup({ result: SELECT_RESULT });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select * from users"), local: Option.some(true) }));
+      yield* legacyDbQuery(
+        flags({ sql: Option.some("select * from users"), local: Option.some(true) }),
+      );
       expect(out.stderrText).toContain("Connecting to local database...");
       expect(out.stdoutText).toContain("│ id │ name  │");
       expect(out.stdoutText).toContain("│ 1  │ alice │");
@@ -341,7 +343,9 @@ describe("legacy db query integration", () => {
   it.live("prints the command tag for DDL with no result columns", () => {
     const { layer, out } = setup({ result: { fields: [], rows: [], commandTag: "CREATE TABLE" } });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("create table t()"), local: Option.some(true) }));
+      yield* legacyDbQuery(
+        flags({ sql: Option.some("create table t()"), local: Option.some(true) }),
+      );
       expect(out.stdoutText).toBe("CREATE TABLE\n");
     }).pipe(Effect.provide(layer));
   });
@@ -483,9 +487,9 @@ describe("legacy db query integration", () => {
   it.live("fails with LegacyDbQueryExecError when the query errors", () => {
     const { layer } = setup({ queryFails: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ sql: Option.some("bad"), local: Option.some(true) })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* legacyDbQuery(
+        flags({ sql: Option.some("bad"), local: Option.some(true) }),
+      ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("failed to execute query");
     }).pipe(Effect.provide(layer));
   });
@@ -495,7 +499,11 @@ describe("legacy db query integration", () => {
     const { layer, cache } = setup();
     return Effect.gen(function* () {
       const exit = yield* legacyDbQuery(
-        flags({ sql: Option.some("select 1"), linked: Option.some(true), local: Option.some(true) }),
+        flags({
+          sql: Option.some("select 1"),
+          linked: Option.some(true),
+          local: Option.some(true),
+        }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(
@@ -512,7 +520,11 @@ describe("legacy db query integration", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* legacyDbQuery(
-        flags({ sql: Option.some("select 1"), linked: Option.some(false), local: Option.some(false) }),
+        flags({
+          sql: Option.some("select 1"),
+          linked: Option.some(false),
+          local: Option.some(false),
+        }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(

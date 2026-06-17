@@ -214,7 +214,9 @@ describe("legacy db dump integration", () => {
   it.live("errors when --use-copy is used without --data-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDump(flags({ useCopy: true, local: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* legacyDbDump(flags({ useCopy: true, local: Option.some(true) })).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(`required flag(s) "data-only" not set`);
     }).pipe(Effect.provide(layer));
@@ -223,9 +225,9 @@ describe("legacy db dump integration", () => {
   it.live("errors when --exclude is used without --data-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDump(flags({ exclude: ["public.users"], local: Option.some(true) })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* legacyDbDump(
+        flags({ exclude: ["public.users"], local: Option.some(true) }),
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(`required flag(s) "data-only" not set`);
     }).pipe(Effect.provide(layer));
@@ -234,7 +236,9 @@ describe("legacy db dump integration", () => {
   it.live("rejects combining --data-only and --role-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDump(flags({ dataOnly: Option.some(true), roleOnly: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* legacyDbDump(
+        flags({ dataOnly: Option.some(true), roleOnly: Option.some(true) }),
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(
         "if any flags in the group [role-only data-only] are set none of the others can be; [data-only role-only] were all set",
@@ -245,9 +249,9 @@ describe("legacy db dump integration", () => {
   it.live("rejects combining --keep-comments and --data-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDump(flags({ keepComments: Option.some(true), dataOnly: Option.some(true) })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* legacyDbDump(
+        flags({ keepComments: Option.some(true), dataOnly: Option.some(true) }),
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(
         "if any flags in the group [keep-comments data-only] are set none of the others can be; [data-only keep-comments] were all set",
@@ -258,9 +262,9 @@ describe("legacy db dump integration", () => {
   it.live("rejects combining --schema and --role-only", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDump(flags({ schema: ["public"], roleOnly: Option.some(true) })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* legacyDbDump(
+        flags({ schema: ["public"], roleOnly: Option.some(true) }),
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(
         "if any flags in the group [schema role-only] are set none of the others can be; [role-only schema] were all set",
@@ -271,7 +275,9 @@ describe("legacy db dump integration", () => {
   it.live("rejects combining --linked and --local", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDump(flags({ linked: Option.some(true), local: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* legacyDbDump(
+        flags({ linked: Option.some(true), local: Option.some(true) }),
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(
         "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
@@ -339,7 +345,9 @@ describe("legacy db dump integration", () => {
     );
     const { layer, out } = setup({ isLocal: true, workdir: tmp.current });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbDump(flags({ dryRun: true, local: Option.some(true) })).pipe(Effect.exit);
+      const exit = yield* legacyDbDump(flags({ dryRun: true, local: Option.some(true) })).pipe(
+        Effect.exit,
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain(
         "Invalid config for remotes.staging.project_id. Must be like: abcdefghijklmnopqrst",
@@ -379,7 +387,9 @@ describe("legacy db dump integration", () => {
   it.live("dumps only data without column inserts when --use-copy is set", () => {
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* legacyDbDump(flags({ dataOnly: Option.some(true), useCopy: true, local: Option.some(true) }));
+      yield* legacyDbDump(
+        flags({ dataOnly: Option.some(true), useCopy: true, local: Option.some(true) }),
+      );
       expect(docker.lastOpts?.env["EXTRA_FLAGS"]).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });

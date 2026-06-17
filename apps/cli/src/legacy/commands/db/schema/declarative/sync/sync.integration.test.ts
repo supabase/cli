@@ -158,7 +158,9 @@ describe("legacy db schema declarative sync integration", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true), noApply: Option.some(true) })),
+        legacyDbSchemaDeclarativeSync(
+          flags({ apply: Option.some(true), noApply: Option.some(true) }),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
@@ -175,7 +177,9 @@ describe("legacy db schema declarative sync integration", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(false), noApply: Option.some(true) })),
+        legacyDbSchemaDeclarativeSync(
+          flags({ apply: Option.some(false), noApply: Option.some(true) }),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
@@ -202,7 +206,9 @@ describe("legacy db schema declarative sync integration", () => {
     // so reaching the prompt would also error.
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: true, diffSql: "" });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })));
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
+      );
       expect(JSON.stringify(exit)).not.toContain("no declarative schema found");
     }).pipe(Effect.provide(s.layer));
   });
@@ -287,7 +293,9 @@ describe("legacy db schema declarative sync integration", () => {
       diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
     });
     return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true), name: Option.some("add_b") }));
+      yield* legacyDbSchemaDeclarativeSync(
+        flags({ noApply: Option.some(true), name: Option.some("add_b") }),
+      );
       const migrations = readdirSync(join(tmp.current, "supabase", "migrations"));
       expect(migrations[0]).toMatch(/^\d{14}_add_b\.sql$/);
     }).pipe(Effect.provide(s.layer));
@@ -334,7 +342,9 @@ describe("legacy db schema declarative sync integration", () => {
       resetExitCode: 1, // …and the reset itself fails
     });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) })));
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) })),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({ message: "database reset failed (exit 1)" });
       expect(
