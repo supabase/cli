@@ -82,8 +82,11 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     const keepComments = Option.getOrElse(flags.keepComments, () => false);
 
     // 1. cobra `ValidateRequiredFlags` runs after the PreRun marks `data-only`
-    //    required when `--use-copy`/`--exclude` are set (`cmd/db.go:134-137`).
-    if ((flags.useCopy || flags.exclude.length > 0) && !dataOnly) {
+    //    required when `--use-copy`/`--exclude` are set (`cmd/db.go:134-137`). The
+    //    requirement is satisfied by flag PRESENCE (cobra checks `flag.Changed`), not
+    //    the value — so `--use-copy --data-only=false` passes the check and Go runs the
+    //    schema dump with dataOnly=false. Gate on absence, not the resolved value.
+    if ((flags.useCopy || flags.exclude.length > 0) && Option.isNone(flags.dataOnly)) {
       return yield* Effect.fail(
         new LegacyDbDumpRequiresDataOnlyError({
           message: `required flag(s) "data-only" not set`,
