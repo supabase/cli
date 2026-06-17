@@ -14,9 +14,15 @@ const MODE: CliE2eMode =
 export const isRecording = MODE === "record";
 export const isLive = MODE === "live";
 
-// The replay server keys recording off the RECORD env var directly. Normalise it
-// from MODE so `CLI_E2E_MODE=record` records instead of silently replaying.
-if (isRecording) process.env["RECORD"] = "true";
+// The replay server + tests/setup.ts key recording off the RECORD env var
+// directly. Keep RECORD in sync with MODE in BOTH directions so an explicit
+// CLI_E2E_MODE wins over a stale RECORD env — e.g. CLI_E2E_MODE=replay must NOT
+// record and wipe fixtures just because RECORD=true lingers in the shell.
+if (isRecording) {
+  process.env["RECORD"] = "true";
+} else {
+  delete process.env["RECORD"];
+}
 
 // startReplayServer + tests/setup.ts read SUPABASE_STAGING_URL directly as the
 // record proxy target. Normalise it from CLI_E2E_API_URL so
