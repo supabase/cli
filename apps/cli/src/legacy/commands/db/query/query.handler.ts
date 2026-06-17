@@ -237,7 +237,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     const exclusive: Array<string> = [];
     if (Option.isSome(flags.dbUrl)) exclusive.push("db-url");
     if (Option.isSome(flags.linked)) exclusive.push("linked");
-    if (flags.local) exclusive.push("local");
+    if (Option.isSome(flags.local)) exclusive.push("local");
     if (exclusive.length > 1) {
       return yield* Effect.fail(
         new LegacyDbQueryMutuallyExclusiveFlagsError({

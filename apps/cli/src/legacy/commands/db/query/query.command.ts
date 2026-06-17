@@ -38,7 +38,14 @@ const config = {
     Flag.withDescription("Queries the linked project's database via Management API."),
     Flag.optional,
   ),
-  local: Flag.boolean("local").pipe(Flag.withDescription("Queries the local database.")),
+  // Go puts `--local` in the same mutually-exclusive target group as `--db-url`/
+  // `--linked` (`cmd/db.go:526`) and cobra keys the conflict off `flag.Changed`, not
+  // the value (`--local` even defaults to true), so model presence with `Option` so
+  // `--local=false` still counts as an explicit target in the conflict check.
+  local: Flag.boolean("local").pipe(
+    Flag.withDescription("Queries the local database."),
+    Flag.optional,
+  ),
   file: Flag.string("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription("Path to a SQL file to execute."),
