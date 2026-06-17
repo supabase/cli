@@ -237,7 +237,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     //    Option is set when `Some`, a boolean when explicitly `true`.
     const exclusive: Array<string> = [];
     if (Option.isSome(flags.dbUrl)) exclusive.push("db-url");
-    if (flags.linked) exclusive.push("linked");
+    if (Option.isSome(flags.linked)) exclusive.push("linked");
     if (flags.local) exclusive.push("local");
     if (exclusive.length > 1) {
       return yield* Effect.fail(
@@ -252,7 +252,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     // stdin pipe must not mask the expected login / not-linked error. Run that
     // preflight here, before resolving SQL.
     let linkedAuth: { readonly token: Redacted.Redacted<string>; readonly ref: string } | undefined;
-    if (flags.linked) {
+    if (Option.isSome(flags.linked)) {
       const credentials = yield* LegacyCredentials;
       const projectRef = yield* LegacyProjectRefResolver;
       const tokenOpt = Option.isSome(cliConfig.accessToken)

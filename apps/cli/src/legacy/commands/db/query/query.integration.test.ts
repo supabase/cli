@@ -221,7 +221,7 @@ function setup(opts: SetupOpts = {}) {
 const flags = (over: Partial<LegacyDbQueryFlags> = {}): LegacyDbQueryFlags => ({
   sql: over.sql ?? Option.none(),
   dbUrl: over.dbUrl ?? Option.none(),
-  linked: over.linked ?? false,
+  linked: over.linked ?? Option.none(),
   local: over.local ?? false,
   file: over.file ?? Option.none(),
 });
@@ -495,7 +495,7 @@ describe("legacy db query integration", () => {
     const { layer, cache } = setup();
     return Effect.gen(function* () {
       const exit = yield* legacyDbQuery(
-        flags({ sql: Option.some("select 1"), linked: true, local: true }),
+        flags({ sql: Option.some("select 1"), linked: Option.some(true), local: true }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe(
@@ -510,7 +510,7 @@ describe("legacy db query integration", () => {
     // Go's --linked PreRun loads the ref or fails (ErrNotLinked); it never prompts.
     const { layer } = setup({ unlinked: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) })).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -526,9 +526,24 @@ describe("legacy db query integration", () => {
       linkedBody: '[{"name":"alice","id":1}]',
     });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: true }));
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       expect(out.stdoutText).toContain("│ name  │ id │");
       // Go's PersistentPostRun caches the linked project after a --linked run.
+      expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("treats --linked=false as an explicit linked target (Go gates on flag.Changed)", () => {
+    // pflag marks `--linked=false` as Changed, and Go's PreRun/RunE gate the linked
+    // path on flag.Changed (not the value), so this still runs the linked HTTP path
+    // rather than falling through to local.
+    const { layer, out, cache } = setup({
+      linkedStatus: 201,
+      linkedBody: '[{"name":"alice","id":1}]',
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(false) }));
+      expect(out.stdoutText).toContain("│ name  │ id │");
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -544,7 +559,7 @@ describe("legacy db query integration", () => {
     );
     const { layer, out } = setup({ workdir: wd, linkedStatus: 201, linkedBody: '[{"id":1}]' });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) })).pipe(
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -564,7 +579,7 @@ describe("legacy db query integration", () => {
         linkedBody: '{"message":"syntax error"}',
       });
       return Effect.gen(function* () {
-        const exit = yield* legacyDbQuery(flags({ sql: Option.some("bad"), linked: true })).pipe(
+        const exit = yield* legacyDbQuery(flags({ sql: Option.some("bad"), linked: Option.some(true) })).pipe(
           Effect.exit,
         );
         expect(failMessage(exit)).toContain("unexpected status 400");
@@ -577,7 +592,7 @@ describe("legacy db query integration", () => {
   it.live("handles an empty linked result array", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[]" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1 where false"), linked: true }));
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1 where false"), linked: Option.some(true) }));
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -585,7 +600,7 @@ describe("legacy db query integration", () => {
   it.live("prints the raw body when the linked response is not a JSON array", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: '{"command":"INSERT"}' });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("insert ..."), linked: true }));
+      yield* legacyDbQuery(flags({ sql: Option.some("insert ..."), linked: Option.some(true) }));
       expect(out.stdoutText).toBe('{"command":"INSERT"}\n');
     }).pipe(Effect.provide(layer));
   });
@@ -593,7 +608,7 @@ describe("legacy db query integration", () => {
   it.live("prints the raw body when the linked response is not valid JSON", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "CREATE TABLE" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("create ..."), linked: true }));
+      yield* legacyDbQuery(flags({ sql: Option.some("create ..."), linked: Option.some(true) }));
       expect(out.stdoutText).toBe("CREATE TABLE\n");
     }).pipe(Effect.provide(layer));
   });
@@ -605,7 +620,7 @@ describe("legacy db query integration", () => {
       linkedBody: '[{"id":1}]',
     });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: true }));
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       const parsed = JSON.parse(out.stdoutText);
       expect(parsed.boundary).toBe(BOUNDARY);
       expect(parsed.rows).toEqual([{ id: 1 }]);
@@ -618,7 +633,7 @@ describe("legacy db query integration", () => {
     // the first row's own keys (here also empty), rendering an empty table.
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: "[null]" });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: true }));
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -626,7 +641,7 @@ describe("legacy db query integration", () => {
   it.live("renders NULL for a null row object in a linked result", () => {
     const { layer, out } = setup({ linkedStatus: 201, linkedBody: '[{"a":1},null]' });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: true }));
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       expect(out.stdoutText).toContain("NULL");
       expect(out.stdoutText).toContain("│ 1");
     }).pipe(Effect.provide(layer));
@@ -635,7 +650,7 @@ describe("legacy db query integration", () => {
   it.live("maps a linked HTTP transport failure to an exec error", () => {
     const { layer } = setup({ networkFail: true });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) })).pipe(
         Effect.exit,
       );
       expect(failMessage(exit)).toContain("failed to execute query");
@@ -645,7 +660,7 @@ describe("legacy db query integration", () => {
   it.live("requires login before querying --linked", () => {
     const { layer } = setup({ accessToken: Option.none() });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: true })).pipe(
+      const exit = yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) })).pipe(
         Effect.exit,
       );
       expect(failMessage(exit)).toContain("Access token not provided");
@@ -658,7 +673,7 @@ describe("legacy db query integration", () => {
     const { layer } = setup({ accessToken: Option.none() });
     return Effect.gen(function* () {
       const exit = yield* legacyDbQuery(
-        flags({ linked: true, file: Option.some("/no/such/file.sql") }),
+        flags({ linked: Option.some(true), file: Option.some("/no/such/file.sql") }),
       ).pipe(Effect.exit);
       expect(failMessage(exit)).toContain("Access token not provided");
       expect(failMessage(exit)).not.toContain("failed to read SQL file");

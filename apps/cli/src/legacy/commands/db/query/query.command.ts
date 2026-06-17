@@ -29,8 +29,14 @@ const config = {
     ),
     Flag.optional,
   ),
+  // Go's `db query` defaults `--linked` to false and never reads its value; the
+  // linked-vs-local decision is driven entirely by `flag.Changed` in both PreRunE
+  // and RunE (`apps/cli-go/cmd/db.go:301,329,524`). Model presence (not value) with
+  // `Option` — the same way `--db-url` does — so `--linked=false` still selects the
+  // linked path (pflag marks an explicit assignment as changed), matching Go.
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Queries the linked project's database via Management API."),
+    Flag.optional,
   ),
   local: Flag.boolean("local").pipe(Flag.withDescription("Queries the local database.")),
   file: Flag.string("file").pipe(
