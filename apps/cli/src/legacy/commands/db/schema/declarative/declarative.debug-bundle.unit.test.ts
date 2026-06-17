@@ -5,10 +5,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Path } from "effect";
 
-import {
-  legacyCollectMigrationsList,
-  legacySaveDebugBundle,
-} from "./declarative.debug-bundle.ts";
+import { legacyCollectMigrationsList, legacySaveDebugBundle } from "./declarative.debug-bundle.ts";
 
 const save = (workdir: string, tempDir: string, migrationsDir: string, id: string) =>
   Effect.gen(function* () {
@@ -79,19 +76,22 @@ describe("legacyCollectMigrationsList", () => {
     );
   });
 
-  it.effect("swallows an unreadable migrations dir (returns []) so it never masks the primary error", () => {
-    // Go's CollectMigrationsList returns nil on a read error; the debug bundle just
-    // omits migration copies rather than replacing the in-flight diff/apply error.
-    const root = mkdtempSync(join(tmpdir(), "legacy-collect-fail-"));
-    const migrationsPath = join(root, "migrations");
-    writeFileSync(migrationsPath, "not a directory");
-    return collect(migrationsPath).pipe(
-      Effect.tap((names) =>
-        Effect.sync(() => {
-          expect(names).toEqual([]);
-          rmSync(root, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect(
+    "swallows an unreadable migrations dir (returns []) so it never masks the primary error",
+    () => {
+      // Go's CollectMigrationsList returns nil on a read error; the debug bundle just
+      // omits migration copies rather than replacing the in-flight diff/apply error.
+      const root = mkdtempSync(join(tmpdir(), "legacy-collect-fail-"));
+      const migrationsPath = join(root, "migrations");
+      writeFileSync(migrationsPath, "not a directory");
+      return collect(migrationsPath).pipe(
+        Effect.tap((names) =>
+          Effect.sync(() => {
+            expect(names).toEqual([]);
+            rmSync(root, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });

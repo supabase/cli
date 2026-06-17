@@ -222,17 +222,20 @@ describe("legacy db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("allows --use-copy with an explicit --data-only=false (Go required check is presence)", () => {
-    // cobra's required-flag check keys off flag.Changed, so `--data-only=false`
-    // satisfies it; Go proceeds and runs the schema dump with dataOnly=false.
-    const { layer } = setup({ isLocal: true, stdout: "SELECT 1;\n" });
-    return Effect.gen(function* () {
-      const exit = yield* legacyDbDump(
-        flags({ useCopy: true, dataOnly: Option.some(false), local: Option.some(true) }),
-      ).pipe(Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "allows --use-copy with an explicit --data-only=false (Go required check is presence)",
+    () => {
+      // cobra's required-flag check keys off flag.Changed, so `--data-only=false`
+      // satisfies it; Go proceeds and runs the schema dump with dataOnly=false.
+      const { layer } = setup({ isLocal: true, stdout: "SELECT 1;\n" });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbDump(
+          flags({ useCopy: true, dataOnly: Option.some(false), local: Option.some(true) }),
+        ).pipe(Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("errors when --exclude is used without --data-only", () => {
     const { layer } = setup();
