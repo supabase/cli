@@ -23,6 +23,7 @@ import {
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { LEGACY_GLOBAL_FLAGS, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
+import { processControlLayer } from "../../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../../../shared/telemetry/identity.ts";
 import { legacyGenCommand } from "../gen.command.ts";
@@ -148,6 +149,7 @@ describe("legacy gen signing-key integration", () => {
     const analytics = mockAnalytics();
     const layer = Layer.mergeAll(
       BunServices.layer,
+      processControlLayer,
       CliOutput.layer(textCliOutputFormatter()),
       out.layer,
       analytics.layer,

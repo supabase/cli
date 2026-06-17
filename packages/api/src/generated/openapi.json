@@ -11627,6 +11627,10 @@
             "type": "string",
             "format": "uri",
             "description": "Template URL used to create the project from the CLI."
+          },
+          "high_availability": {
+            "type": "boolean",
+            "description": "Whether to enable high availability for the project."
           }
         },
         "required": ["db_pass", "name", "organization_slug"],
@@ -17529,7 +17533,8 @@
             "type": "string"
           },
           "import_map_path": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "ezbr_sha256": {
             "type": "string"
@@ -17660,7 +17665,8 @@
                   "type": "string"
                 },
                 "import_map_path": {
-                  "type": "string"
+                  "type": "string",
+                  "nullable": true
                 },
                 "ezbr_sha256": {
                   "type": "string"
@@ -17754,7 +17760,8 @@
             "type": "string"
           },
           "import_map_path": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "ezbr_sha256": {
             "type": "string"
@@ -17799,7 +17806,8 @@
             "type": "string"
           },
           "import_map_path": {
-            "type": "string"
+            "type": "string",
+            "nullable": true
           },
           "ezbr_sha256": {
             "type": "string"
@@ -18949,7 +18957,7 @@
                     }
                   }
                 },
-                "required": ["keys"]
+                "required": []
               },
               "name_id_format": {
                 "type": "string",
@@ -19060,7 +19068,7 @@
                           }
                         }
                       },
-                      "required": ["keys"]
+                      "required": []
                     },
                     "name_id_format": {
                       "type": "string",
@@ -19170,7 +19178,7 @@
                     }
                   }
                 },
-                "required": ["keys"]
+                "required": []
               },
               "name_id_format": {
                 "type": "string",
@@ -19182,7 +19190,7 @@
                 ]
               }
             },
-            "required": ["id", "entity_id"]
+            "required": ["entity_id"]
           },
           "domains": {
             "type": "array",
@@ -19349,7 +19357,7 @@
                     }
                   }
                 },
-                "required": ["keys"]
+                "required": []
               },
               "name_id_format": {
                 "type": "string",
@@ -19455,7 +19463,7 @@
                     }
                   }
                 },
-                "required": ["keys"]
+                "required": []
               },
               "name_id_format": {
                 "type": "string",

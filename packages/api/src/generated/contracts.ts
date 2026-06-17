@@ -189,7 +189,7 @@ export const FunctionResponse = Schema.Struct({
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.String),
+  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   ezbr_sha256: Schema.optionalKey(Schema.String),
 });
 export const V1StorageBucketResponse = Schema.Struct({
@@ -428,7 +428,7 @@ export const V1BulkUpdateFunctionsOutput = Schema.Struct({
       verify_jwt: Schema.optionalKey(Schema.Boolean),
       import_map: Schema.optionalKey(Schema.Boolean),
       entrypoint_path: Schema.optionalKey(Schema.String),
-      import_map_path: Schema.optionalKey(Schema.String),
+      import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
       ezbr_sha256: Schema.optionalKey(Schema.String),
     }),
   ),
@@ -586,7 +586,7 @@ export const V1CreateAFunctionOutput = Schema.Struct({
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.String),
+  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   ezbr_sha256: Schema.optionalKey(Schema.String),
 });
 export const V1CreateAProjectInput = Schema.Struct({
@@ -709,6 +709,11 @@ export const V1CreateAProjectInput = Schema.Struct({
       format: "uri",
     }),
   ),
+  high_availability: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description: "Whether to enable high availability for the project.",
+    }),
+  ),
 });
 export const V1CreateAProjectOutput = Schema.Struct({
   id: Schema.String.annotate({ description: "Deprecated: Use `ref` instead." }),
@@ -793,24 +798,26 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
       metadata_xml: Schema.optionalKey(Schema.String),
       attribute_mapping: Schema.optionalKey(
         Schema.Struct({
-          keys: Schema.Record(
-            Schema.String,
-            Schema.Struct({
-              name: Schema.optionalKey(Schema.String),
-              names: Schema.optionalKey(Schema.Array(Schema.String)),
-              default: Schema.optionalKey(
-                Schema.Union(
-                  [
-                    Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
-                    Schema.String,
-                    Schema.Boolean,
-                  ],
-                  { mode: "oneOf" },
+          keys: Schema.optionalKey(
+            Schema.Record(
+              Schema.String,
+              Schema.Struct({
+                name: Schema.optionalKey(Schema.String),
+                names: Schema.optionalKey(Schema.Array(Schema.String)),
+                default: Schema.optionalKey(
+                  Schema.Union(
+                    [
+                      Schema.Struct({}),
+                      Schema.Number.check(Schema.isFinite()),
+                      Schema.String,
+                      Schema.Boolean,
+                    ],
+                    { mode: "oneOf" },
+                  ),
                 ),
-              ),
-              array: Schema.optionalKey(Schema.Boolean),
-            }),
+                array: Schema.optionalKey(Schema.Boolean),
+              }),
+            ),
           ),
         }),
       ),
@@ -1153,24 +1160,26 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
       metadata_xml: Schema.optionalKey(Schema.String),
       attribute_mapping: Schema.optionalKey(
         Schema.Struct({
-          keys: Schema.Record(
-            Schema.String,
-            Schema.Struct({
-              name: Schema.optionalKey(Schema.String),
-              names: Schema.optionalKey(Schema.Array(Schema.String)),
-              default: Schema.optionalKey(
-                Schema.Union(
-                  [
-                    Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
-                    Schema.String,
-                    Schema.Boolean,
-                  ],
-                  { mode: "oneOf" },
+          keys: Schema.optionalKey(
+            Schema.Record(
+              Schema.String,
+              Schema.Struct({
+                name: Schema.optionalKey(Schema.String),
+                names: Schema.optionalKey(Schema.Array(Schema.String)),
+                default: Schema.optionalKey(
+                  Schema.Union(
+                    [
+                      Schema.Struct({}),
+                      Schema.Number.check(Schema.isFinite()),
+                      Schema.String,
+                      Schema.Boolean,
+                    ],
+                    { mode: "oneOf" },
+                  ),
                 ),
-              ),
-              array: Schema.optionalKey(Schema.Boolean),
-            }),
+                array: Schema.optionalKey(Schema.Boolean),
+              }),
+            ),
           ),
         }),
       ),
@@ -1323,7 +1332,7 @@ export const V1DeployAFunctionOutput = Schema.Struct({
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.String),
+  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   ezbr_sha256: Schema.optionalKey(Schema.String),
 });
 export const V1DiffABranchInput = Schema.Struct({
@@ -1541,7 +1550,7 @@ export const V1GetAFunctionOutput = Schema.Struct({
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.String),
+  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   ezbr_sha256: Schema.optionalKey(Schema.String),
 });
 export const V1GetAFunctionBodyInput = Schema.Struct({
@@ -1611,30 +1620,32 @@ export const V1GetASsoProviderOutput = Schema.Struct({
   id: Schema.String,
   saml: Schema.optionalKey(
     Schema.Struct({
-      id: Schema.String,
+      id: Schema.optionalKey(Schema.String),
       entity_id: Schema.String,
       metadata_url: Schema.optionalKey(Schema.String),
       metadata_xml: Schema.optionalKey(Schema.String),
       attribute_mapping: Schema.optionalKey(
         Schema.Struct({
-          keys: Schema.Record(
-            Schema.String,
-            Schema.Struct({
-              name: Schema.optionalKey(Schema.String),
-              names: Schema.optionalKey(Schema.Array(Schema.String)),
-              default: Schema.optionalKey(
-                Schema.Union(
-                  [
-                    Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
-                    Schema.String,
-                    Schema.Boolean,
-                  ],
-                  { mode: "oneOf" },
+          keys: Schema.optionalKey(
+            Schema.Record(
+              Schema.String,
+              Schema.Struct({
+                name: Schema.optionalKey(Schema.String),
+                names: Schema.optionalKey(Schema.Array(Schema.String)),
+                default: Schema.optionalKey(
+                  Schema.Union(
+                    [
+                      Schema.Struct({}),
+                      Schema.Number.check(Schema.isFinite()),
+                      Schema.String,
+                      Schema.Boolean,
+                    ],
+                    { mode: "oneOf" },
+                  ),
                 ),
-              ),
-              array: Schema.optionalKey(Schema.Boolean),
-            }),
+                array: Schema.optionalKey(Schema.Boolean),
+              }),
+            ),
           ),
         }),
       ),
@@ -3618,24 +3629,26 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
           metadata_xml: Schema.optionalKey(Schema.String),
           attribute_mapping: Schema.optionalKey(
             Schema.Struct({
-              keys: Schema.Record(
-                Schema.String,
-                Schema.Struct({
-                  name: Schema.optionalKey(Schema.String),
-                  names: Schema.optionalKey(Schema.Array(Schema.String)),
-                  default: Schema.optionalKey(
-                    Schema.Union(
-                      [
-                        Schema.Struct({}),
-                        Schema.Number.check(Schema.isFinite()),
-                        Schema.String,
-                        Schema.Boolean,
-                      ],
-                      { mode: "oneOf" },
+              keys: Schema.optionalKey(
+                Schema.Record(
+                  Schema.String,
+                  Schema.Struct({
+                    name: Schema.optionalKey(Schema.String),
+                    names: Schema.optionalKey(Schema.Array(Schema.String)),
+                    default: Schema.optionalKey(
+                      Schema.Union(
+                        [
+                          Schema.Struct({}),
+                          Schema.Number.check(Schema.isFinite()),
+                          Schema.String,
+                          Schema.Boolean,
+                        ],
+                        { mode: "oneOf" },
+                      ),
                     ),
-                  ),
-                  array: Schema.optionalKey(Schema.Boolean),
-                }),
+                    array: Schema.optionalKey(Schema.Boolean),
+                  }),
+                ),
               ),
             }),
           ),
@@ -4315,7 +4328,7 @@ export const V1UpdateAFunctionOutput = Schema.Struct({
   verify_jwt: Schema.optionalKey(Schema.Boolean),
   import_map: Schema.optionalKey(Schema.Boolean),
   entrypoint_path: Schema.optionalKey(Schema.String),
-  import_map_path: Schema.optionalKey(Schema.String),
+  import_map_path: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   ezbr_sha256: Schema.optionalKey(Schema.String),
 });
 export const V1UpdateAProjectInput = Schema.Struct({
@@ -4383,24 +4396,26 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
       metadata_xml: Schema.optionalKey(Schema.String),
       attribute_mapping: Schema.optionalKey(
         Schema.Struct({
-          keys: Schema.Record(
-            Schema.String,
-            Schema.Struct({
-              name: Schema.optionalKey(Schema.String),
-              names: Schema.optionalKey(Schema.Array(Schema.String)),
-              default: Schema.optionalKey(
-                Schema.Union(
-                  [
-                    Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
-                    Schema.String,
-                    Schema.Boolean,
-                  ],
-                  { mode: "oneOf" },
+          keys: Schema.optionalKey(
+            Schema.Record(
+              Schema.String,
+              Schema.Struct({
+                name: Schema.optionalKey(Schema.String),
+                names: Schema.optionalKey(Schema.Array(Schema.String)),
+                default: Schema.optionalKey(
+                  Schema.Union(
+                    [
+                      Schema.Struct({}),
+                      Schema.Number.check(Schema.isFinite()),
+                      Schema.String,
+                      Schema.Boolean,
+                    ],
+                    { mode: "oneOf" },
+                  ),
                 ),
-              ),
-              array: Schema.optionalKey(Schema.Boolean),
-            }),
+                array: Schema.optionalKey(Schema.Boolean),
+              }),
+            ),
           ),
         }),
       ),
@@ -6341,6 +6356,7 @@ export const operationDefinitions = {
         "kps_enabled",
         "desired_instance_size",
         "template_url",
+        "high_availability",
       ],
     },
     response: { kind: "json" },

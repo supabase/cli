@@ -1,6 +1,7 @@
 import * as nodePath from "node:path";
 import { Effect, FileSystem, Option, Path } from "effect";
 
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -8,6 +9,7 @@ import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts"
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
+import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
@@ -55,16 +57,15 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
   const debug = yield* LegacyDebugFlag;
   const networkIdFlag = yield* LegacyNetworkIdFlag;
   const dnsResolver = yield* LegacyDnsResolverFlag;
+  const cliArgs = yield* CliArgs;
 
   yield* Effect.gen(function* () {
     // Reproduce cobra's MarkFlagsMutuallyExclusive("db-url","linked","local")
-    // (`apps/cli-go/cmd/db.go:485`). `--local` defaults to false in the TS flag
-    // surface, so a `true` value means it was explicitly passed — matching
-    // cobra's `Changed` semantics.
-    const setFlags: Array<string> = [];
-    if (Option.isSome(flags.dbUrl)) setFlags.push("db-url");
-    if (flags.linked) setFlags.push("linked");
-    if (flags.local) setFlags.push("local");
+    // (`apps/cli-go/cmd/db.go:485`). Selection is keyed off flag PRESENCE (cobra's
+    // `Changed`), not boolean value — `--linked=false` and `--no-linked` both count
+    // as explicitly setting the `linked` flag (`db_url.go:46-63`).
+    const target = resolveLegacyDbTargetFlags(cliArgs.args);
+    const { setFlags } = target;
     if (setFlags.length > 1) {
       return yield* Effect.fail(
         new LegacyTestDbMutuallyExclusiveFlagsError({
@@ -75,8 +76,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
 
     const { conn, isLocal } = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
-      linked: flags.linked,
-      local: flags.local,
+      connType: target.connType ?? "local",
       dnsResolver,
     });
 

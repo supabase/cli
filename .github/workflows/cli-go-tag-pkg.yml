@@ -7,8 +7,6 @@ on:
         description: "pkg version to tag (e.g. v1.2.2)"
         required: true
         type: string
-    paths:
-      - apps/cli-go/**
 
 permissions:
   contents: write

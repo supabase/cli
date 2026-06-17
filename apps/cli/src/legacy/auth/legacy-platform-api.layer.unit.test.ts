@@ -12,9 +12,10 @@ import { vi } from "vitest";
 import { LegacyDebugFlag } from "../../shared/legacy/global-flags.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
-import { makeTelemetryIdentity, type TelemetryIdentity } from "../../shared/telemetry/identity.ts";
+import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
+import { legacyIdentityStitchLayer } from "../shared/legacy-identity-stitch.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import { legacyPlatformApiLayer } from "./legacy-platform-api.layer.ts";
 import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
@@ -57,7 +58,6 @@ function mockTelemetryRuntime(
     configDir?: string;
     deviceId?: string;
     distinctId?: string;
-    identity?: TelemetryIdentity;
     isFirstRun?: boolean;
     isTty?: boolean;
     isCi?: boolean;
@@ -73,7 +73,7 @@ function mockTelemetryRuntime(
       showDebug: false,
       deviceId: opts.deviceId ?? "device-123",
       sessionId: "session-123",
-      identity: opts.identity ?? makeTelemetryIdentity(opts.distinctId),
+      identity: makeTelemetryIdentity(opts.distinctId),
       isFirstRun: opts.isFirstRun ?? false,
       isTty: opts.isTty ?? false,
       isCi: opts.isCi ?? false,
@@ -162,7 +162,6 @@ function withBaseDeps(
     analytics?: ReturnType<typeof mockAnalytics>;
     configDir?: string;
     distinctId?: string;
-    identity?: TelemetryIdentity;
     isFirstRun?: boolean;
     isTty?: boolean;
     isCi?: boolean;
@@ -170,23 +169,30 @@ function withBaseDeps(
   } = {},
 ) {
   const analytics = opts.analytics ?? mockAnalytics();
+  // The typed client now consumes the single `LegacyIdentityStitch` service rather
+  // than building its own stitcher, so build that service from the test's
+  // Analytics / TelemetryRuntime / FileSystem / Path fakes and provide it. The
+  // underlying stitch behaviour is identical (the service wraps the same
+  // `makeLegacyIdentityStitcher`), so all alias/persist assertions still hold.
+  const identityStitch = legacyIdentityStitchLayer.pipe(
+    Layer.provide(analytics.layer),
+    Layer.provide(
+      mockTelemetryRuntime({
+        configDir: opts.configDir,
+        distinctId: opts.distinctId,
+        isFirstRun: opts.isFirstRun,
+        isTty: opts.isTty,
+        isCi: opts.isCi,
+      }),
+    ),
+    Layer.provide(nodeFileSystemLayer()),
+    Layer.provide(nodePathLayer()),
+  );
   return <ROut, E, RIn>(layer: Layer.Layer<ROut, E, RIn>) =>
     layer.pipe(
-      Layer.provide(analytics.layer),
-      Layer.provide(
-        mockTelemetryRuntime({
-          configDir: opts.configDir,
-          distinctId: opts.distinctId,
-          identity: opts.identity,
-          isFirstRun: opts.isFirstRun,
-          isTty: opts.isTty,
-          isCi: opts.isCi,
-        }),
-      ),
+      Layer.provide(identityStitch),
       Layer.provide(legacyDebugLoggerLayer),
       Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
-      Layer.provide(nodeFileSystemLayer()),
-      Layer.provide(nodePathLayer()),
     );
 }
 
@@ -266,6 +272,38 @@ describe("legacyPlatformApiLayer", () => {
     });
   });
 
+  it.effect(
+    "fails with the invalid-token error when the env token is malformed (Go parity)",
+    () => {
+      // Go's GetSupabase() → LoadAccessTokenFS validates the env token against the
+      // sbp_ pattern before any API call; a malformed SUPABASE_ACCESS_TOKEN must
+      // fail with ErrInvalidToken, not be sent to the API.
+      const http = captureRequests();
+      const layer = legacyPlatformApiLayer.pipe(
+        Layer.provide(mockCliConfig({ accessToken: "sbp_not_a_valid_token" })),
+        Layer.provide(mockCredentials(Option.none())),
+        Layer.provide(http.layer),
+        withBaseDeps(),
+      );
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          Effect.gen(function* () {
+            const api = yield* LegacyPlatformApi;
+            return yield* api.v1.listAllProjects();
+          }).pipe(Effect.provide(layer)),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const errorJson = JSON.stringify(exit.cause);
+          expect(errorJson).toContain("LegacyInvalidAccessTokenError");
+          expect(errorJson).toContain("Invalid access token format");
+        }
+        // The bad token was never sent to the API.
+        expect(http.requests).toHaveLength(0);
+      });
+    },
+  );
+
   it.effect("sends Go-style User-Agent and no X-Supabase-Command headers", () => {
     const http = captureRequests();
     const layer = legacyPlatformApiLayer.pipe(
@@ -332,13 +370,12 @@ describe("legacyPlatformApiLayer", () => {
   it.effect("stitches identity from X-Gotrue-Id responses outside CI", () => {
     const configDir = tempTelemetryConfig();
     const analytics = mockAnalytics();
-    const identity = makeTelemetryIdentity(undefined);
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir, identity }),
+      withBaseDeps({ analytics, configDir }),
     );
 
     return Effect.gen(function* () {
@@ -346,7 +383,6 @@ describe("legacyPlatformApiLayer", () => {
         const api = yield* LegacyPlatformApi;
         yield* api.v1.listAllProjects();
 
-        expect(identity.current()).toBe("user-123");
         expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
         expect(analytics.identifies).toEqual([]);
         const telemetry = readTelemetryConfig(configDir);
@@ -359,16 +395,15 @@ describe("legacyPlatformApiLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("stamps in-process identity in CI without alias or persisted distinct_id", () => {
+  it.effect("does not stitch identity from X-Gotrue-Id responses in CI", () => {
     const configDir = tempTelemetryConfig();
     const analytics = mockAnalytics();
-    const identity = makeTelemetryIdentity(undefined);
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir, identity, isCi: true }),
+      withBaseDeps({ analytics, configDir, isCi: true }),
     );
 
     return Effect.gen(function* () {
@@ -376,7 +411,6 @@ describe("legacyPlatformApiLayer", () => {
         const api = yield* LegacyPlatformApi;
         yield* api.v1.listAllProjects();
 
-        expect(identity.current()).toBe("user-123");
         expect(analytics.aliases).toEqual([]);
         expect(analytics.identifies).toEqual([]);
         expect(readTelemetryConfig(configDir).distinct_id).toBeUndefined();
@@ -386,16 +420,15 @@ describe("legacyPlatformApiLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("stamps without alias or file write in a first-run non-TTY runtime", () => {
+  it.effect("does not stitch identity in a first-run non-TTY runtime", () => {
     const configDir = mkdtempSync(path.join(tmpdir(), "supabase-legacy-platform-api-"));
     const analytics = mockAnalytics();
-    const identity = makeTelemetryIdentity(undefined);
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir, identity, isFirstRun: true, isTty: false }),
+      withBaseDeps({ analytics, configDir, isFirstRun: true, isTty: false }),
     );
 
     return Effect.gen(function* () {
@@ -403,7 +436,6 @@ describe("legacyPlatformApiLayer", () => {
         const api = yield* LegacyPlatformApi;
         yield* api.v1.listAllProjects();
 
-        expect(identity.current()).toBe("user-123");
         expect(analytics.aliases).toEqual([]);
         expect(analytics.identifies).toEqual([]);
         expect(existsSync(path.join(configDir, "telemetry.json"))).toBe(false);
@@ -438,41 +470,15 @@ describe("legacyPlatformApiLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("concurrent first authenticated responses stitch exactly once", () => {
-    const configDir = tempTelemetryConfig();
-    const analytics = mockAnalytics();
-    const http = captureRequests({ "X-Gotrue-Id": "user-123" });
-    const layer = legacyPlatformApiLayer.pipe(
-      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
-      Layer.provide(mockCredentials(Option.none())),
-      Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir }),
-    );
-
-    return Effect.gen(function* () {
-      try {
-        const api = yield* LegacyPlatformApi;
-        yield* Effect.all([api.v1.listAllProjects(), api.v1.listAllProjects()], {
-          concurrency: "unbounded",
-        });
-
-        expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("stamps over a stale persisted distinct_id without alias or file write", () => {
+  it.effect("does not stitch identity when a distinct_id is already known", () => {
     const configDir = tempTelemetryConfig({ distinctId: "existing-user" });
     const analytics = mockAnalytics();
-    const identity = makeTelemetryIdentity("existing-user");
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir, identity }),
+      withBaseDeps({ analytics, configDir, distinctId: "existing-user" }),
     );
 
     return Effect.gen(function* () {
@@ -480,7 +486,6 @@ describe("legacyPlatformApiLayer", () => {
         const api = yield* LegacyPlatformApi;
         yield* api.v1.listAllProjects();
 
-        expect(identity.current()).toBe("user-123");
         expect(analytics.aliases).toEqual([]);
         expect(analytics.identifies).toEqual([]);
         expect(readTelemetryConfig(configDir).distinct_id).toBe("existing-user");

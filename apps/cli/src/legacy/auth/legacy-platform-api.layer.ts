@@ -1,14 +1,12 @@
 import { makeApiClient } from "@supabase/api/effect";
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, Layer, Option, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
-import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
-import { Analytics } from "../../shared/telemetry/analytics.service.ts";
-import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
-import { isEphemeralIdentityRuntime } from "../../shared/telemetry/identity.ts";
+import { LegacyIdentityStitch } from "../shared/legacy-identity-stitch.ts";
+import { validateLegacyAccessToken } from "./legacy-access-token.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import { LegacyPlatformAuthRequiredError } from "./legacy-errors.ts";
 import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
@@ -16,112 +14,16 @@ import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
 const MISSING_TOKEN_MESSAGE =
   "Access token not provided. Supply an access token by running `supabase login` or setting the SUPABASE_ACCESS_TOKEN environment variable.";
 
-const HEADER_GOTRUE_ID = "x-gotrue-id";
-const TELEMETRY_SCHEMA_VERSION = 1;
-
-interface LegacyTelemetryState {
-  readonly enabled: boolean;
-  readonly device_id: string;
-  readonly session_id: string;
-  readonly session_last_active: string;
-  readonly distinct_id: string;
-  readonly schema_version: number;
-}
-
-function gotrueIdFromResponse(response: HttpClientResponse.HttpClientResponse): string | undefined {
-  const value = response.headers[HEADER_GOTRUE_ID] ?? response.headers["X-Gotrue-Id"];
-  if (value === undefined) return undefined;
-  const trimmed = value.trim();
-  return trimmed.length === 0 ? undefined : trimmed;
-}
-
-function fieldValue(value: unknown, key: string): unknown {
-  if (typeof value !== "object" || value === null) return undefined;
-  return Reflect.get(value, key);
-}
-
-function stringField(value: unknown, key: string): string | undefined {
-  const field = fieldValue(value, key);
-  return typeof field === "string" && field.length > 0 ? field : undefined;
-}
-
-function boolField(value: unknown, key: string): boolean | undefined {
-  const field = fieldValue(value, key);
-  return typeof field === "boolean" ? field : undefined;
-}
-
-function numberField(value: unknown, key: string): number | undefined {
-  const field = fieldValue(value, key);
-  return typeof field === "number" && Number.isFinite(field) ? field : undefined;
-}
-
 export const legacyMakePlatformApi = Effect.gen(function* () {
   const cliConfig = yield* LegacyCliConfig;
   const credentials = yield* LegacyCredentials;
-  const analytics = yield* Analytics;
-  const runtime = yield* TelemetryRuntime;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const debugLogger = yield* LegacyDebugLogger;
-  let stitchAttempted = false;
-
-  const hasIdentity = () => {
-    const current = runtime.identity.current();
-    return current !== undefined && current.length > 0;
-  };
-
-  const stitchIdentity = (gotrueId: string) =>
-    Effect.gen(function* () {
-      if (runtime.consent !== "granted" || stitchAttempted) return;
-      // Mark before the first yield: concurrent authenticated responses must
-      // not both pass this guard and double-stitch.
-      stitchAttempted = true;
-      if (hasIdentity()) {
-        // An identity already exists (e.g. telemetry.json holds a previous
-        // user but the active token belongs to another). Stamp memory only —
-        // re-aliasing the device to a second user would merge unrelated
-        // person graphs in PostHog. Mirrors Go's ObserveAuthenticatedUser.
-        runtime.identity.stamp(gotrueId);
-        return;
-      }
-
-      const telemetryPath = path.join(runtime.configDir, "telemetry.json");
-      const existing = yield* fs.readFileString(telemetryPath).pipe(Effect.option);
-      const prior = Option.match(existing, {
-        onNone: () => undefined,
-        onSome: (content) => {
-          try {
-            const parsed: unknown = JSON.parse(content);
-            return parsed;
-          } catch {
-            return undefined;
-          }
-        },
-      });
-      const enabled = boolField(prior, "enabled") ?? true;
-      if (!enabled) return;
-
-      // The in-memory stamp always happens so subsequent captures in this
-      // process carry the user's id; the alias (merging pre-login history) and
-      // the telemetry.json write are only worthwhile where the file survives.
-      // Same rules as LegacyTelemetryState.stitchLogin and Go's StitchLogin.
-      runtime.identity.stamp(gotrueId);
-      if (isEphemeralIdentityRuntime(runtime)) return;
-
-      yield* analytics.alias(gotrueId, runtime.deviceId);
-
-      const state: LegacyTelemetryState = {
-        enabled,
-        device_id: stringField(prior, "device_id") ?? runtime.deviceId,
-        session_id: stringField(prior, "session_id") ?? runtime.sessionId,
-        session_last_active: new Date().toISOString(),
-        distinct_id: gotrueId,
-        schema_version: numberField(prior, "schema_version") ?? TELEMETRY_SCHEMA_VERSION,
-      };
-
-      yield* fs.makeDirectory(runtime.configDir, { recursive: true });
-      yield* fs.writeFileString(telemetryPath, JSON.stringify(state));
-    });
+  // Go wraps every Management API response in identityTransport for session
+  // identity stitching. Consume the single per-command stitcher service rather
+  // than building one here, so the typed client shares the one `stitchAttempted`
+  // guard with the raw advisor GETs and the linked-project cache (Go's single
+  // root-context `sync.Once`); otherwise each transport would re-alias/re-persist.
+  const { stitch: stitchIdentityFromResponse } = yield* LegacyIdentityStitch;
 
   const transformClient = (client: HttpClient.HttpClient) => {
     const debugClient = HttpClient.mapRequestEffect(client, (request) =>
@@ -130,13 +32,7 @@ export const legacyMakePlatformApi = Effect.gen(function* () {
 
     return Effect.succeed(
       HttpClient.transform(debugClient, (requestEffect) =>
-        requestEffect.pipe(
-          Effect.tap((response) => {
-            const gotrueId = gotrueIdFromResponse(response);
-            if (gotrueId === undefined) return Effect.void;
-            return stitchIdentity(gotrueId).pipe(Effect.exit, Effect.asVoid);
-          }),
-        ),
+        requestEffect.pipe(Effect.tap((response) => stitchIdentityFromResponse(response))),
       ),
     );
   };
@@ -145,6 +41,13 @@ export const legacyMakePlatformApi = Effect.gen(function* () {
   const resolveAccessToken = Effect.gen(function* () {
     if (Option.isSome(configuredToken)) {
       yield* debugLogger.debug("Using access token from env var...");
+      // Go's GetSupabase() → LoadAccessTokenFS validates the token — including the
+      // env value — against the sbp_ pattern before any API call
+      // (internal/utils/api.go:121, access_token.go:24-41). credentials.getAccessToken
+      // already validates the keyring/file paths; validate the env token here too so
+      // a malformed SUPABASE_ACCESS_TOKEN fails with the invalid-token error rather
+      // than being sent to the API.
+      yield* validateLegacyAccessToken(Redacted.value(configuredToken.value));
       return configuredToken;
     }
     return yield* credentials.getAccessToken;

@@ -4557,6 +4557,9 @@ type V1CreateProjectBody struct {
 	// DesiredInstanceSize Desired instance size. Omit this field to always default to the smallest possible size.
 	DesiredInstanceSize *V1CreateProjectBodyDesiredInstanceSize `json:"desired_instance_size,omitempty"`
 
+	// HighAvailability [Experimental] Whether to enable high availability for the project.
+	HighAvailability *bool `json:"high_availability,omitempty"`
+
 	// KpsEnabled This field is deprecated and is ignored in this request
 	// Deprecated:
 	KpsEnabled *bool `json:"kps_enabled,omitempty"`

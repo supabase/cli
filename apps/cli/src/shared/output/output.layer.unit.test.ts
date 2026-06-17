@@ -297,6 +297,15 @@ describe("Output", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.effect("promptPassword treats an undefined response as blank input", () => {
+      mockClack.password.mockResolvedValue(undefined);
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const result = yield* out.promptPassword("Enter password");
+        expect(result).toBe("");
+      }).pipe(Effect.provide(layer));
+    });
+
     it.effect("promptConfirm interrupts on cancel", () => {
       mockClack.confirm.mockResolvedValue(Symbol.for("clack:cancel"));
       mockClack.isCancel.mockReturnValue(true);

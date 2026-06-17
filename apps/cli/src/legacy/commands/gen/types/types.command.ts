@@ -2,6 +2,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import { legacyGenTypes } from "./types.handler.ts";
 import { legacyGenTypesRuntimeLayer } from "./types.layers.ts";
 
@@ -31,6 +32,10 @@ const config = {
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
+    Flag.mapTryCatch(
+      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (err) => (err instanceof Error ? err.message : String(err)),
+    ),
   ),
   swiftAccessControl: Flag.choice("swift-access-control", SWIFT_ACCESS_CONTROL_VALUES).pipe(
     Flag.withDescription("Access control for Swift generated types. (default internal)"),

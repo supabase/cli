@@ -89,6 +89,8 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Apply notes, comment, and close
         env:

@@ -4,6 +4,9 @@ import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { LegacyCredentials } from "../auth/legacy-credentials.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyIdentityStitch } from "../shared/legacy-identity-stitch.ts";
+import { Analytics } from "../../shared/telemetry/analytics.service.ts";
+import { GroupOrganization, GroupProject } from "../../shared/telemetry/event-catalog.ts";
 import { legacyTempPaths } from "../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "./legacy-linked-project-cache.service.ts";
 
@@ -39,6 +42,16 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
     const credentials = yield* LegacyCredentials;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const analytics = yield* Analytics;
+    // Go's `ensureProjectGroupsCached` GETs `/v1/projects/{ref}` through
+    // `GetSupabase()`'s identityTransport (`cmd/root.go:226`, `api.go:128-134`),
+    // so the X-Gotrue-Id on that response stitches the session identity. For a
+    // password-only `db lint`/`db advisors --linked` run this cache GET can be the
+    // ONLY Management API response, so it must stitch too. Consume the single
+    // per-command stitcher service (shared with the typed client + advisor GETs)
+    // so the alias + persist fire at most once per command, matching Go's one
+    // root-context `sync.Once`.
+    const { stitch } = yield* LegacyIdentityStitch;
 
     return LegacyLinkedProjectCache.of({
       cache: (ref: string, workdir?: string) =>
@@ -59,6 +72,9 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
             HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
           );
           const response = yield* httpClient.execute(request);
+          // Stitch identity from the response (Go's identityTransport fires on
+          // every response regardless of status), before the status gate.
+          yield* stitch(response);
           if (response.status !== 200) return;
           const body = yield* response.json;
 
@@ -71,6 +87,24 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
 
           yield* fs.makeDirectory(path.dirname(cachePath), { recursive: true });
           yield* fs.writeFileString(cachePath, JSON.stringify(linked));
+
+          // Go's CacheProjectAndIdentifyGroups (telemetry/project.go:66-88) does
+          // not just write the file — on the same cache miss it also publishes the
+          // org/project group metadata via GroupIdentify before the post-run
+          // cli_command_executed capture. Reproduce both calls (same payload shape
+          // as the link handler) so the first linked run after a port doesn't drop
+          // the group properties Go sends. Best-effort like Go (wrapped in ignore).
+          if (linked.organization_id.length > 0) {
+            yield* analytics.groupIdentify(GroupOrganization, linked.organization_id, {
+              organization_slug: linked.organization_slug,
+            });
+          }
+          if (linked.ref.length > 0) {
+            yield* analytics.groupIdentify(GroupProject, linked.ref, {
+              name: linked.name,
+              organization_slug: linked.organization_slug,
+            });
+          }
         }).pipe(Effect.ignore),
     });
   }),

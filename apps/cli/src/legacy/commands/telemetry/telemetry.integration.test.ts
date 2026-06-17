@@ -7,6 +7,7 @@ import { Effect, Layer } from "effect";
 import { Command } from "effect/unstable/cli";
 
 import { mockAnalytics, mockOutput, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
+import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { legacyTelemetryCommand } from "./telemetry.command.ts";
 
 function makeTempDir(): string {
@@ -28,6 +29,7 @@ function setup(dir: string) {
     out.layer,
     analytics.layer,
     BunServices.layer,
+    processControlLayer,
     processEnvLayer({ SUPABASE_HOME: dir }),
   );
   return { out, layer };

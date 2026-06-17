@@ -12,6 +12,7 @@ import { legacyFunctionsCommand } from "../commands/functions/functions.command.
 import { legacyGenCommand } from "../commands/gen/gen.command.ts";
 import { legacyInitCommand } from "../commands/init/init.command.ts";
 import { legacyInspectCommand } from "../commands/inspect/inspect.command.ts";
+import { legacyIssueCommand } from "../commands/issue/issue.command.ts";
 import { legacyLinkCommand } from "../commands/link/link.command.ts";
 import { legacyLoginCommand } from "../commands/login/login.command.ts";
 import { legacyLogoutCommand } from "../commands/logout/logout.command.ts";
@@ -73,6 +74,7 @@ export const legacyRoot = Command.make("supabase").pipe(
     legacyGenCommand,
     legacyInitCommand,
     legacyInspectCommand,
+    legacyIssueCommand,
     legacyLinkCommand,
     legacyLoginCommand,
     legacyLogoutCommand,
