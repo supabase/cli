@@ -28,7 +28,7 @@ on:
       GH_APP_PRIVATE_KEY:
         required: true
       DF_FIREWALL_TOKEN:
-        required: true
+        required: false
   workflow_dispatch:
     inputs:
       tag:

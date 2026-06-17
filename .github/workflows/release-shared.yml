@@ -54,7 +54,7 @@ on:
       ANTHROPIC_API_KEY:
         required: false
       DF_FIREWALL_TOKEN:
-        required: true
+        required: false
 jobs:
   build-blacksmith:
     name: Build CLI artifacts (Blacksmith)

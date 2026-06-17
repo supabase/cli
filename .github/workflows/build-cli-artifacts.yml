@@ -34,7 +34,7 @@ on:
       POSTHOG_ENDPOINT:
         required: false
       DF_FIREWALL_TOKEN:
-        required: true
+        required: false
 
 permissions:
   contents: read

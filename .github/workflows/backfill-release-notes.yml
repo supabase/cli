@@ -19,7 +19,7 @@ on:
         default: false
     secrets:
       DF_FIREWALL_TOKEN:
-        required: true
+        required: false
   workflow_dispatch:
     inputs:
       tag:
