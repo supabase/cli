@@ -1,0 +1,95 @@
+name: Reopen stale issue
+
+on:
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: reopen-stale-issue-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  reopen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Reopen issue on command
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const staleClosedLabel = "stale-closed";
+            const issue = context.payload.issue;
+            const comment = context.payload.comment;
+            const { owner, repo } = context.repo;
+
+            if (issue.pull_request) {
+              core.info("Ignoring pull request comment.");
+              return;
+            }
+
+            const hasReopenCommand = comment.body
+              .split(/\r?\n/)
+              .some((line) => line.trim() === "/reopen");
+
+            if (!hasReopenCommand) {
+              core.info("Ignoring comment without /reopen command.");
+              return;
+            }
+
+            if (issue.state !== "closed") {
+              core.info("Ignoring /reopen command on an issue that is already open.");
+              return;
+            }
+
+            const wasClosedByStaleCleanup = (issue.labels ?? []).some(
+              (label) => label.name === staleClosedLabel,
+            );
+
+            if (!wasClosedByStaleCleanup) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: issue.number,
+                body: [
+                  `@${comment.user.login} thanks for checking in.`,
+                  "",
+                  "The `/reopen` command only reopens issues that were closed by stale cleanup. If this issue should be reopened, please add the current reproduction details so a maintainer can review it.",
+                ].join("\n"),
+              });
+              return;
+            }
+
+            await github.rest.issues.update({
+              owner,
+              repo,
+              issue_number: issue.number,
+              state: "open",
+              state_reason: "reopened",
+            });
+
+            try {
+              await github.rest.issues.removeLabel({
+                owner,
+                repo,
+                issue_number: issue.number,
+                name: staleClosedLabel,
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issue.number,
+              body: [
+                `Reopened because @${comment.user.login} used \`/reopen\`.`,
+                "",
+                "Please add any current CLI version, reproduction steps, or error output that helps confirm this is still relevant.",
+              ].join("\n"),
+            });
