@@ -172,14 +172,25 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           }
         }
         const hasMigrations = yield* hasMigrationFiles(fs, path, migrationsDir);
-        // Go's `runDeclarativeGenerate` offers a "Linked project" choice when the
-        // workdir is linked (`flags.LoadProjectRef` succeeds). Resolve the ref the
-        // same way the resolver's `--linked` branch does (config `project_id` →
-        // `.temp/project-ref`) so the smart prompt offers linked iff `--linked`
-        // would work for this workdir.
-        const linkedRef = Option.isSome(cliConfig.projectId)
-          ? cliConfig.projectId
-          : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+        // Go's `runDeclarativeGenerate` calls `flags.LoadProjectRef` ONLY inside the
+        // `hasMigrationFiles` branch (`db_schema_declarative.go:219-224`): it offers a
+        // "Linked project" choice when the workdir is linked, and that `LoadProjectRef`
+        // sets the global `flags.ProjectRef`, so root `ensureProjectGroupsCached` writes
+        // the linked-project cache/groups regardless of which target the user then picks
+        // (`cmd/root.go:176,214-218`). Resolve the ref the same way the resolver's
+        // `--linked` branch does (config `project_id` → `.temp/project-ref`) — only when
+        // migrations exist (matching Go's placement; no read in the no-migrations path) —
+        // and record it for the post-run cache finalizer so smart generate in a linked
+        // workdir caches like Go even when the user chooses local/custom.
+        let linkedRef = Option.none<string>();
+        if (hasMigrations) {
+          linkedRef = Option.isSome(cliConfig.projectId)
+            ? cliConfig.projectId
+            : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+          if (Option.isSome(linkedRef)) {
+            linkedProjectRef = linkedRef.value;
+          }
+        }
         targetUrl = yield* legacyResolveSmartTargetUrl(
           flags,
           local,
