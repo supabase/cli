@@ -241,6 +241,13 @@ describe("legacyRenderJson", () => {
     expect(out).toBe('[\n  {\n    "a": 2,\n    "b": 1\n  }\n]\n');
   });
 
+  it("keeps integer-like column keys in Go's lexicographic order (not JS numeric)", () => {
+    // `select 1 as "10", 2 as "2"` — Go's map marshal emits "10" before "2"; a plain
+    // JS object would reorder them numerically to "2","10".
+    const out = legacyRenderJson(["10", "2"], [[1, 2]], false, "", Option.none());
+    expect(out).toBe('[\n  {\n    "10": 1,\n    "2": 2\n  }\n]\n');
+  });
+
   it("wraps agent results in the untrusted-data envelope with HTML-escaped boundary markers", () => {
     const out = legacyRenderJson(["id"], [[1]], true, "deadbeef", Option.none());
     // Envelope keys in Go map-sort order: boundary, rows, warning (no advisory).
