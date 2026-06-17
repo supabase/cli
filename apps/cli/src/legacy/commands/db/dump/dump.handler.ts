@@ -74,9 +74,16 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
+    // The grouped boolean flags are modelled as `Option` (presence = pflag `Changed`)
+    // for the mutex/target checks; resolve their effective values here for the places
+    // that consume the value (Go's `BoolVar` default is false).
+    const dataOnly = Option.getOrElse(flags.dataOnly, () => false);
+    const roleOnly = Option.getOrElse(flags.roleOnly, () => false);
+    const keepComments = Option.getOrElse(flags.keepComments, () => false);
+
     // 1. cobra `ValidateRequiredFlags` runs after the PreRun marks `data-only`
     //    required when `--use-copy`/`--exclude` are set (`cmd/db.go:134-137`).
-    if ((flags.useCopy || flags.exclude.length > 0) && !flags.dataOnly) {
+    if ((flags.useCopy || flags.exclude.length > 0) && !dataOnly) {
       return yield* Effect.fail(
         new LegacyDbDumpRequiresDataOnlyError({
           message: `required flag(s) "data-only" not set`,
@@ -92,15 +99,15 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
         case "db-url":
           return Option.isSome(flags.dbUrl);
         case "linked":
-          return flags.linked;
+          return Option.isSome(flags.linked);
         case "local":
-          return flags.local;
+          return Option.isSome(flags.local);
         case "data-only":
-          return flags.dataOnly;
+          return Option.isSome(flags.dataOnly);
         case "role-only":
-          return flags.roleOnly;
+          return Option.isSome(flags.roleOnly);
         case "keep-comments":
-          return flags.keepComments;
+          return Option.isSome(flags.keepComments);
         case "schema":
           return flags.schema.length > 0;
         default:
@@ -123,8 +130,8 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     //    selection the way Go's `ParseDatabaseConfig` does: db-url > local >
     //    linked, defaulting to linked when neither local nor db-url is set
     //    (`internal/utils/flags/db_url.go:46-62`).
-    const useLocal = Option.isNone(flags.dbUrl) && flags.local;
-    const useLinked = Option.isNone(flags.dbUrl) && !flags.local;
+    const useLocal = Option.isNone(flags.dbUrl) && Option.isSome(flags.local);
+    const useLinked = Option.isNone(flags.dbUrl) && Option.isNone(flags.local);
     // `connType` selects the resolver branch (Go's Changed-first precedence): a
     // `--db-url` wins, then explicit `--local`; otherwise dump defaults to linked
     // (unlike the other db commands, whose unset default is local).
@@ -165,15 +172,15 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     //    already split — matching `gen types` / `db lint` / declarative.
     const opt = {
       schema: flags.schema,
-      keepComments: flags.keepComments,
+      keepComments,
       excludeTable: flags.exclude,
       columnInsert: !flags.useCopy,
     };
     // The script + diagnostic verb are connection-independent; the env is rebuilt
     // per connection so the pooler-fallback retry can target a different host.
-    const mode = flags.dataOnly
+    const mode = dataOnly
       ? ({ verb: "data", script: legacyDumpDataScript, buildEnv: legacyBuildDataDumpEnv } as const)
-      : flags.roleOnly
+      : roleOnly
         ? ({
             verb: "roles",
             script: legacyDumpRoleScript,

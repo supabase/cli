@@ -33,7 +33,16 @@ const config = {
   dryRun: Flag.boolean("dry-run").pipe(
     Flag.withDescription("Prints the pg_dump script that would be executed."),
   ),
-  dataOnly: Flag.boolean("data-only").pipe(Flag.withDescription("Dumps only data records.")),
+  // The boolean flags in cobra mutually-exclusive groups (`data-only`/`role-only`/
+  // `keep-comments` and the `db-url`/`linked`/`local` target group) are modelled as
+  // `Option` so presence tracks pflag `Changed`: cobra's group validation and dump's
+  // target selection key off `Changed`, not the value (`cmd/db.go:434,436,441,445`),
+  // so e.g. `--data-only=false` still counts as set. Handlers read the value via
+  // `Option.getOrElse(..., () => false)` where the value actually matters.
+  dataOnly: Flag.boolean("data-only").pipe(
+    Flag.withDescription("Dumps only data records."),
+    Flag.optional,
+  ),
   useCopy: Flag.boolean("use-copy").pipe(
     Flag.withDescription("Use copy statements in place of inserts."),
   ),
@@ -49,9 +58,13 @@ const config = {
       (err) => (err instanceof Error ? err.message : String(err)),
     ),
   ),
-  roleOnly: Flag.boolean("role-only").pipe(Flag.withDescription("Dumps only cluster roles.")),
+  roleOnly: Flag.boolean("role-only").pipe(
+    Flag.withDescription("Dumps only cluster roles."),
+    Flag.optional,
+  ),
   keepComments: Flag.boolean("keep-comments").pipe(
     Flag.withDescription("Keeps commented lines from pg_dump output."),
+    Flag.optional,
   ),
   file: Flag.string("file").pipe(
     Flag.withAlias("f"),
@@ -64,8 +77,14 @@ const config = {
     ),
     Flag.optional,
   ),
-  linked: Flag.boolean("linked").pipe(Flag.withDescription("Dumps from the linked project.")),
-  local: Flag.boolean("local").pipe(Flag.withDescription("Dumps from the local database.")),
+  linked: Flag.boolean("linked").pipe(
+    Flag.withDescription("Dumps from the linked project."),
+    Flag.optional,
+  ),
+  local: Flag.boolean("local").pipe(
+    Flag.withDescription("Dumps from the local database."),
+    Flag.optional,
+  ),
   password: Flag.string("password").pipe(
     Flag.withAlias("p"),
     Flag.withDescription("Password to your remote Postgres database."),
