@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
   LegacyDbConfigFlags,
@@ -41,6 +42,7 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
   let queryParams: ReadonlyArray<unknown> | undefined;
   const layer = Layer.mergeAll(
     out.layer,
+    Layer.succeed(CliArgs, { args: [] }),
     Layer.succeed(LegacyDbConfigResolver, {
       resolve: (_flags: LegacyDbConfigFlags) =>
         Effect.succeed({ conn: LOCAL_CONN, isLocal: true } satisfies LegacyResolvedDbConfig),

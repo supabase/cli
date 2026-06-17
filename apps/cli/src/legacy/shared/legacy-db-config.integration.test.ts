@@ -15,11 +15,13 @@ import {
 import { mockLegacyCliConfig } from "../../../tests/helpers/legacy-mocks.ts";
 import {
   LegacyDebugFlag,
+  LegacyDnsResolverFlag,
   LegacyOutputFlag,
   LegacyProfileFlag,
   LegacyWorkdirFlag,
 } from "../../shared/legacy/global-flags.ts";
 import { LegacyDebugLogger } from "./legacy-debug-logger.service.ts";
+import { legacyIdentityStitchLayer } from "./legacy-identity-stitch.ts";
 import { legacyDbConfigLayer } from "./legacy-db-config.layer.ts";
 import { LegacyDbConfigResolver } from "./legacy-db-config.service.ts";
 import type { LegacyDbConfigFlags } from "./legacy-db-config.types.ts";
@@ -52,6 +54,14 @@ function buildResolver(workdir: string) {
     Layer.succeed(LegacyWorkdirFlag, Option.some(workdir)),
     Layer.succeed(LegacyOutputFlag, Option.none()),
     Layer.succeed(LegacyDebugFlag, false),
+    Layer.succeed(LegacyDnsResolverFlag, "native"),
+    // The resolver snapshots the one `LegacyIdentityStitch` for its lazy linked
+    // stack; `--local`/`--db-url` never force it, but the layer reads it at build.
+    legacyIdentityStitchLayer.pipe(
+      Layer.provide(mockAnalytics().layer),
+      Layer.provide(mockTelemetryRuntime()),
+      Layer.provide(BunServices.layer),
+    ),
     BunServices.layer,
   );
   return legacyDbConfigLayer.pipe(Layer.provide(deps));
@@ -74,14 +84,12 @@ const resolve = (workdir: string, flags: LegacyDbConfigFlags) =>
 
 const localFlags: LegacyDbConfigFlags = {
   dbUrl: Option.none(),
-  linked: false,
-  local: true,
+  connType: "local",
   dnsResolver: "native",
 };
 const dbUrlFlags = (url: string): LegacyDbConfigFlags => ({
   dbUrl: Option.some(url),
-  linked: false,
-  local: false,
+  connType: "db-url",
   dnsResolver: "native",
 });
 

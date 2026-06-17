@@ -49,24 +49,32 @@ function contextProperties(context: AnalyticsContext): Record<string, unknown> {
   });
 }
 
-function resolveGroups(
+// Builds the PostHog `groups` map for a captured event, or `undefined` when no
+// group attribution applies. Go keys the organization group by the org ID (not
+// the slug) for BOTH the GroupIdentify and the event groups
+// (`linkedProjectGroups`, apps/cli-go/internal/telemetry/project.go:99-103); the
+// slug is only a GroupIdentify property value. Keying events by slug would
+// attach cli_command_executed to a different group than the identify published.
+// Go also omits the org group when the ID is empty (project.go:99-100
+// `if linked.OrganizationID != ""`).
+export function resolveGroups(
   context: AnalyticsContext,
   linkedProject: Option.Option<LinkedProjectCacheValue>,
-): { organization: string; project: string } | undefined {
-  if (context.groups?.organization !== undefined && context.groups.project !== undefined) {
-    return {
-      organization: context.groups.organization,
-      project: context.groups.project,
-    };
-  }
+): Record<string, string> | undefined {
+  const resolved =
+    context.groups?.organization !== undefined && context.groups.project !== undefined
+      ? { organization: context.groups.organization, project: context.groups.project }
+      : Option.match(linkedProject, {
+          onNone: () => undefined,
+          onSome: (linked) => ({ organization: linked.organization_id, project: linked.ref }),
+        });
 
-  return Option.match(linkedProject, {
-    onNone: () => undefined,
-    onSome: (linked) => ({
-      organization: linked.organization_slug,
-      project: linked.ref,
-    }),
-  });
+  if (resolved === undefined) return undefined;
+
+  return {
+    ...(resolved.organization === "" ? {} : { [GroupOrganization]: resolved.organization }),
+    [GroupProject]: resolved.project,
+  };
 }
 
 // Mirrors apps/cli-go/cmd/root_analytics.go:149-165 envSignals().
@@ -188,14 +196,7 @@ export const legacyAnalyticsLayer = Layer.effect(
         client.capture({
           event,
           distinctId: context.distinct_id ?? runtime.distinctId ?? runtime.deviceId,
-          ...(groups === undefined
-            ? {}
-            : {
-                groups: {
-                  [GroupOrganization]: groups.organization,
-                  [GroupProject]: groups.project,
-                },
-              }),
+          ...(groups === undefined ? {} : { groups }),
           properties: {
             ...baseProperties,
             ...contextProperties(context),

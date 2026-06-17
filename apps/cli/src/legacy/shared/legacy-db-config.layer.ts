@@ -3,11 +3,16 @@ import { BunServices } from "@effect/platform-bun";
 import { Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { getDomain } from "tldts";
 
-import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
+import { legacyCredentialsLayer } from "../auth/legacy-credentials.layer.ts";
+import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
+import { legacyPlatformApiFactoryLayer } from "../auth/legacy-platform-api-factory.layer.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
 import { LegacyProjectRefResolver } from "../config/legacy-project-ref.service.ts";
+import { legacyProjectRefLayer } from "../config/legacy-project-ref.layer.ts";
 import {
   LegacyDebugFlag,
+  LegacyDnsResolverFlag,
   LegacyOutputFlag,
   LegacyProfileFlag,
   LegacyWorkdirFlag,
@@ -17,11 +22,10 @@ import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
+import { LegacyIdentityStitch } from "./legacy-identity-stitch.ts";
 import { LegacyDbConnection, type LegacyPgConnInput } from "./legacy-db-connection.service.ts";
-import {
-  legacyManagementApiRuntimeLayer,
-  type LegacyManagementApiRuntimeRequirements,
-} from "./legacy-management-api-runtime.layer.ts";
+import type { LegacyManagementApiRuntimeError } from "./legacy-management-api-runtime.layer.ts";
+import { legacyDebugLoggerLayer } from "./legacy-debug-logger.layer.ts";
 import * as Errors from "./legacy-db-config.errors.ts";
 import {
   parseLegacyConnectionString,
@@ -91,6 +95,38 @@ const tcpReachable = (host: string, port: number): Effect.Effect<boolean> =>
     Effect.timeoutOrElse({ duration: TCP_PROBE_TIMEOUT, orElse: () => Effect.succeed(false) }),
   );
 
+/**
+ * Lazy Management API stack for the `--linked` branch. Unlike the eager
+ * `legacyManagementApiRuntimeLayer` (which builds `LegacyPlatformApi` and
+ * resolves an access token at layer-construction time), this provides the lazy
+ * `LegacyPlatformApiFactory` + the project-ref resolver, so the token is
+ * resolved only when `resolveLinked` actually forces `factory.make` to mint a
+ * temp role / clear network bans. A password-only linked connection (reachable
+ * host + `SUPABASE_DB_PASSWORD`) returns early without ever forcing the factory,
+ * matching Go's `NewDbConfigWithPassword` (`internal/utils/flags/db_url.go`),
+ * which only needs the token on the no-password temp-role path. The stack's
+ * ambient requirements (config flags, Analytics, TelemetryRuntime, Tty, Output,
+ * FileSystem/Path) are satisfied by `ambientLayer` at provide time.
+ */
+const linkedCliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const linkedCredentials = legacyCredentialsLayer.pipe(
+  Layer.provide(linkedCliConfig),
+  Layer.provide(legacyDebugLoggerLayer),
+);
+const linkedPlatformApiFactory = legacyPlatformApiFactoryLayer.pipe(
+  Layer.provide(linkedCredentials),
+  Layer.provide(linkedCliConfig),
+  Layer.provide(legacyDebugLoggerLayer),
+);
+const linkedProjectRef = legacyProjectRefLayer.pipe(
+  Layer.provide(linkedPlatformApiFactory),
+  Layer.provide(linkedCliConfig),
+);
+const lazyLinkedManagementStack = Layer.mergeAll(linkedPlatformApiFactory, linkedProjectRef);
+
+type LegacyLinkedManagementRequirements =
+  typeof lazyLinkedManagementStack extends Layer.Layer<infer _A, infer _E, infer R> ? R : never;
+
 export const legacyDbConfigLayer = Layer.effect(
   LegacyDbConfigResolver,
   Effect.gen(function* () {
@@ -114,32 +150,48 @@ export const legacyDbConfigLayer = Layer.effect(
       Layer.succeed(LegacyWorkdirFlag, yield* LegacyWorkdirFlag),
       Layer.succeed(LegacyOutputFlag, yield* LegacyOutputFlag),
       Layer.succeed(LegacyDebugFlag, yield* LegacyDebugFlag),
+      // `legacyPlatformApiFactoryLayer` now provides `legacyDohFetchLayer`, which
+      // reads `LegacyDnsResolverFlag`. Snapshot it here so the lazily-built linked
+      // stack stays fully self-provided (`resolve`'s R remains `never`).
+      Layer.succeed(LegacyDnsResolverFlag, yield* LegacyDnsResolverFlag),
       Layer.succeed(RuntimeInfo, yield* RuntimeInfo),
       Layer.succeed(Analytics, yield* Analytics),
       Layer.succeed(TelemetryRuntime, yield* TelemetryRuntime),
       Layer.succeed(Tty, yield* Tty),
       Layer.succeed(Output, output),
+      // Snapshot the one per-command identity stitcher so the lazily-built linked
+      // platform-API factory shares the SAME `stitchAttempted` guard as the typed
+      // client / advisor GETs / cache (Go's single root-context `sync.Once`).
+      // Provided to `legacyDbConfigLayer` by each command runtime (lint/advisors).
+      Layer.succeed(LegacyIdentityStitch, yield* LegacyIdentityStitch),
       BunServices.layer,
     );
-    // Compile-time guard: if `legacyManagementApiRuntimeLayer`'s requirements ever
-    // grow a service not captured above, this assignment fails to type-check (the
-    // lazy `Effect.provide` in the `--linked` branch would otherwise leak that
-    // service into `resolve`'s R and only surface as a runtime panic). Mirrors the
+    // Compile-time guard: if `lazyLinkedManagementStack`'s requirements ever grow
+    // a service not captured above, this assignment fails to type-check (the lazy
+    // `Effect.provide` in the `--linked` branch would otherwise leak that service
+    // into `resolve`'s R and only surface as a runtime panic). Mirrors the
     // `_serviceCoverageCheck` pattern in `legacy-management-api-runtime.layer.ts`.
-    const _ambientCoverageCheck: Layer.Layer<LegacyManagementApiRuntimeRequirements, never, never> =
+    const _ambientCoverageCheck: Layer.Layer<LegacyLinkedManagementRequirements, never, never> =
       ambientLayer;
     void _ambientCoverageCheck;
 
     // POST /v1/projects/{ref}/cli/login-role → mint a temporary postgres role.
-    // `LegacyPlatformApi` is yielded here (not at layer build) so that the
-    // platform stack — and its eager access-token resolution — is only forced on
-    // the `--linked` path; `--local` / `--db-url` stay auth-free.
+    // The access token is resolved here — by forcing the lazy
+    // `LegacyPlatformApiFactory.make` — NOT at layer build, so the password-only
+    // linked path (which returns before reaching this) and `--local`/`--db-url`
+    // stay auth-free. Go prints "Initialising login role..." before constructing
+    // the client, so the stderr line precedes any token-resolution failure.
     const initLoginRole = (ref: string, conn: LegacyPgConnInput) =>
       Effect.gen(function* () {
-        const api = yield* LegacyPlatformApi;
+        const factory = yield* LegacyPlatformApiFactory;
         // Go writes this to stderr unconditionally (not gated on --debug):
         // `apps/cli-go/internal/utils/flags/db_url.go` initLoginRole.
         yield* output.raw("Initialising login role...\n", "stderr");
+        // Let token-resolution failures propagate raw (Go's `GetSupabase()` →
+        // `LoadAccessTokenFS` exits with the raw missing/invalid-token message,
+        // `internal/utils/api.go:121-123`). Only the createLoginRole HTTP call is
+        // wrapped as "failed to initialise login role" (`db_url.go:206-208`).
+        const api = yield* factory.make;
         const role = yield* api.v1
           .createLoginRole({ ref, read_only: false })
           .pipe(Effect.catch(loginRoleErrorMapper));
@@ -148,7 +200,8 @@ export const legacyDbConfigLayer = Layer.effect(
 
     const listAndUnban = (ref: string) =>
       Effect.gen(function* () {
-        const api = yield* LegacyPlatformApi;
+        const factory = yield* LegacyPlatformApiFactory;
+        const api = yield* factory.make;
         const bans = yield* api.v1
           .listAllNetworkBans({ ref })
           .pipe(Effect.catch(listBansErrorMapper));
@@ -166,8 +219,18 @@ export const legacyDbConfigLayer = Layer.effect(
       ref: string,
       conn: LegacyPgConnInput,
       dnsResolver: "native" | "https",
-    ): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApi> => {
-      const attempt = (n: number): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApi> =>
+    ): Effect.Effect<
+      void,
+      LegacyDbConfigError | LegacyManagementApiRuntimeError,
+      LegacyPlatformApiFactory
+    > => {
+      const attempt = (
+        n: number,
+      ): Effect.Effect<
+        void,
+        LegacyDbConfigError | LegacyManagementApiRuntimeError,
+        LegacyPlatformApiFactory
+      > =>
         // The temp-role probe always targets the remote Supavisor pooler, so it
         // connects with TLS (Go's pooler path goes through `ConnectByUrl`) and
         // honors `--dns-resolver` (Go's `ConnectByConfigStream` installs the DoH
@@ -197,7 +260,16 @@ export const legacyDbConfigLayer = Layer.effect(
               Duration.toMillis(BACKOFF_MAX),
             );
             return Effect.gen(function* () {
-              yield* unban;
+              // Go runs the unban inside the backoff *notify* callback
+              // (`utils.NewErrorCallback`), whose error is printed and swallowed —
+              // a `backoff.Notify` returns nothing, so it can never abort the
+              // retry loop (`apps/cli-go/internal/utils/retry.go:27-29`). Mirror
+              // that: on an unban failure, print to stderr (Go's logger is
+              // os.Stderr from the 3rd failure on, and unban only runs at n >= 3)
+              // and keep retrying — never let the Management API error escape.
+              yield* unban.pipe(
+                Effect.catch((banError) => output.raw(`${banError.message}\n`, "stderr")),
+              );
               yield* debug.debug(`Retry (${n}/${MAX_RETRIES}): ${cause.message}`);
               yield* Effect.sleep(Duration.millis(delayMs));
               return yield* attempt(n + 1);
@@ -273,7 +345,11 @@ export const legacyDbConfigLayer = Layer.effect(
     const resolveLinked = (
       ref: string,
       dnsResolver: "native" | "https",
-    ): Effect.Effect<LegacyPgConnInput, LegacyDbConfigError, LegacyPlatformApi> =>
+    ): Effect.Effect<
+      LegacyPgConnInput,
+      LegacyDbConfigError | LegacyManagementApiRuntimeError,
+      LegacyPlatformApiFactory
+    > =>
       Effect.gen(function* () {
         // Read lazily (per invocation) rather than at layer build, so tests and
         // env-substitution see the current value. Go reads viper `DB_PASSWORD`
@@ -346,7 +422,7 @@ export const legacyDbConfigLayer = Layer.effect(
         const localHost = legacyGetHostname();
 
         // --db-url (direct) takes precedence.
-        if (Option.isSome(flags.dbUrl)) {
+        if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {
           // Go's direct path runs `LoadConfig` before `pgconn.ParseConfig`
           // (`internal/utils/flags/db_url.go:59-68`), so the project `.env*` files
           // populate the environment that the libpq `PG*` fallbacks read. Layer the
@@ -385,19 +461,23 @@ export const legacyDbConfigLayer = Layer.effect(
           };
         }
 
-        // --linked. The Management API stack (project-ref resolver + platform API,
-        // with its eager token resolution) is provided here at runtime so it is
-        // only built on this branch — `--local` and `--db-url` never touch it.
-        if (flags.linked) {
+        // --linked. The lazy Management API stack (project-ref resolver + the
+        // lazy platform-API factory) is provided here at runtime so it is only
+        // built on this branch — `--local` and `--db-url` never touch it. The
+        // access token is resolved only when `resolveLinked` forces the factory
+        // (temp-role mint / unban), so a password-only linked connection works
+        // without a token, matching Go's `NewDbConfigWithPassword`.
+        if (flags.connType === "linked") {
           const conn = yield* Effect.gen(function* () {
             const projectRef = yield* LegacyProjectRefResolver;
-            const ref = yield* projectRef.resolve(Option.none());
+            // Go's `ParseDatabaseConfig` linked branch uses `flags.LoadProjectRef`
+            // (`internal/utils/flags/db_url.go:88`) — non-prompting, hard-failing
+            // with ErrNotLinked. Match it so the whole db family (`lint`, `dump`,
+            // `push`, `pull`, `reset`, `query`) fails fast on `--linked` without a
+            // linked-project file instead of opening an interactive picker.
+            const ref = yield* projectRef.loadProjectRef(Option.none());
             return yield* resolveLinked(ref, flags.dnsResolver);
-          }).pipe(
-            Effect.provide(
-              legacyManagementApiRuntimeLayer(["test", "db"]).pipe(Layer.provide(ambientLayer)),
-            ),
-          );
+          }).pipe(Effect.provide(lazyLinkedManagementStack.pipe(Layer.provide(ambientLayer))));
           return { conn, isLocal: false };
         }
 

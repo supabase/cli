@@ -7,6 +7,7 @@ import { legacyPlatformApiLayer } from "../../auth/legacy-platform-api.layer.ts"
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyProjectRefLayer } from "../../config/legacy-project-ref.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
+import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
 import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -42,6 +43,7 @@ const platformApi = legacyPlatformApiLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(httpClient),
   Layer.provide(debugLogger),
+  Layer.provide(legacyIdentityStitchLayer),
 );
 const platformApiFactory = legacyPlatformApiFactoryFromApiLayer.pipe(Layer.provide(platformApi));
 
@@ -56,8 +58,17 @@ export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
     Layer.provide(credentials),
     Layer.provide(cliConfig),
     Layer.provide(httpClient),
+    Layer.provide(legacyIdentityStitchLayer),
   ),
   legacyTelemetryStateLayer,
+  // The one per-command identity stitcher (Go's single root-context `sync.Once`),
+  // exposed at top level so `withLegacyCommandInstrumentation` can read
+  // `stitchedDistinctId()` and attribute the cli_command_executed event to the
+  // gotrue id. The SAME reference is provided to platformApi / linkedProjectCache
+  // above, so memoisation gives all transports one `stitchAttempted` guard —
+  // aliasing/persisting at most once. Its Analytics / TelemetryRuntime /
+  // FileSystem / Path deps are ambient (root runtime). Mirrors advisors.layers.ts.
+  legacyIdentityStitchLayer,
   legacyLoginApiLayer.pipe(Layer.provide(httpClient), Layer.provide(cliConfig)),
   legacyLoginCryptoLayer,
   legacyTemplateServiceLayer.pipe(Layer.provide(httpClient)),

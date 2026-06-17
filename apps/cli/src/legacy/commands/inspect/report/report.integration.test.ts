@@ -10,6 +10,7 @@ import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
@@ -122,6 +123,8 @@ interface SetupOpts {
   stdoutIsTty?: boolean;
   cwd?: string;
   workdir?: string;
+  /** Raw CLI args slice — drives Changed-based flag detection (cobra parity). */
+  cliArgs?: ReadonlyArray<string>;
 }
 
 function setupLegacyReport(opts: SetupOpts = {}) {
@@ -144,6 +147,7 @@ function setupLegacyReport(opts: SetupOpts = {}) {
     connection.layer,
     telemetry.layer,
     Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     mockLegacyCliConfig({ workdir }),
     mockRuntimeInfo({ cwd: opts.cwd ?? tempDir("supabase-report-cwd-") }),
     mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false }),
@@ -207,17 +211,23 @@ describe("legacy inspect report", () => {
 
   it.live("inspects the local database with --local", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, resolver } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
+    const { layer, resolver } = setupLegacyReport({
+      csvs: DEFAULT_RULE_CSVS,
+      cliArgs: ["--local"],
+    });
     return Effect.gen(function* () {
       yield* legacyInspectReport(flags({ outputDir: base, local: true }));
-      expect((resolver.resolveInput as { local: boolean }).local).toBe(true);
-      expect((resolver.resolveInput as { linked: boolean }).linked).toBe(false);
+      expect((resolver.resolveInput as { connType: string }).connType).toBe("local");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("inspects a custom database with --db-url and labels the diagnostic 'remote'", () => {
     const base = tempDir("supabase-report-out-");
-    const { layer, resolver, out } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS, isLocal: false });
+    const { layer, resolver, out } = setupLegacyReport({
+      csvs: DEFAULT_RULE_CSVS,
+      isLocal: false,
+      cliArgs: ["--db-url=postgres://x"],
+    });
     return Effect.gen(function* () {
       yield* legacyInspectReport(flags({ outputDir: base, dbUrl: Option.some("postgres://x") }));
       expect(Option.isSome((resolver.resolveInput as { dbUrl: Option.Option<string> }).dbUrl)).toBe(
@@ -233,18 +243,56 @@ describe("legacy inspect report", () => {
     const { layer, resolver } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
       yield* legacyInspectReport(flags({ outputDir: base }));
-      expect((resolver.resolveInput as { linked: boolean }).linked).toBe(true);
+      expect((resolver.resolveInput as { connType: string }).connType).toBe("linked");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("rejects more than one of --db-url/--linked/--local", () => {
-    const { layer } = setupLegacyReport();
+    const { layer } = setupLegacyReport({ cliArgs: ["--linked", "--local"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyInspectReport(flags({ linked: true, local: true })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("are set none of the others can be");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--local=false is Changed and routes to local (not linked)", () => {
+    const base = tempDir("supabase-report-out-");
+    const { layer, resolver } = setupLegacyReport({
+      csvs: DEFAULT_RULE_CSVS,
+      cliArgs: ["--local=false"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyInspectReport(flags({ outputDir: base, local: false }));
+      expect((resolver.resolveInput as { connType: string }).connType).toBe("local");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--linked --local=false raises the mutual-exclusion error", () => {
+    const { layer } = setupLegacyReport({ cliArgs: ["--linked", "--local=false"] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyInspectReport(flags({ linked: true, local: false, outputDir: "." })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("are set none of the others can be");
+        expect(JSON.stringify(exit.cause)).toContain("[linked local]");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--linked routes to linked", () => {
+    const base = tempDir("supabase-report-out-");
+    const { layer, resolver } = setupLegacyReport({
+      csvs: DEFAULT_RULE_CSVS,
+      cliArgs: ["--linked"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyInspectReport(flags({ outputDir: base, linked: true }));
+      expect((resolver.resolveInput as { connType: string }).connType).toBe("linked");
     }).pipe(Effect.provide(layer));
   });
 

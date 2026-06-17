@@ -21,6 +21,7 @@ import {
 import { mockLegacyTelemetryStateTracked } from "../../../../tests/helpers/legacy-mocks.ts";
 import { listLocalServiceVersions } from "../../../shared/services/services.shared.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
+import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { legacyServicesCommand } from "./services.command.ts";
 import { legacyServices } from "./services.handler.ts";
@@ -121,6 +122,7 @@ describe("legacy services", () => {
         const args = ["services"];
         const layer = Layer.mergeAll(
           BunServices.layer,
+          processControlLayer,
           CliOutput.layer(textCliOutputFormatter()),
           out.layer,
           analytics.layer,

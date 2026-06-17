@@ -1,11 +1,13 @@
 import { Data, Effect, Option } from "effect";
 
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyResolvedDbConfig } from "../../../shared/legacy-db-config.types.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
+import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 
 /**
@@ -172,30 +174,29 @@ export const legacyRunInspectQuery = Effect.fnUntraced(function* (
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const dbConn = yield* LegacyDbConnection;
+  const cliArgs = yield* CliArgs;
 
   // Reproduce cobra's MarkFlagsMutuallyExclusive("db-url","linked","local"),
-  // keyed off explicitly-set flags (cobra's `Changed`), not the default value.
-  const setFlags: Array<string> = [];
-  if (Option.isSome(flags.dbUrl)) setFlags.push("db-url");
-  if (flags.linked) setFlags.push("linked");
-  if (flags.local) setFlags.push("local");
-  if (setFlags.length > 1) {
+  // keyed off raw argv (cobra's `Changed`), not the parsed boolean value.
+  // `--local=false` is Changed even though its value is false; value-based
+  // detection would miss it and route to linked incorrectly.
+  const target = resolveLegacyDbTargetFlags(cliArgs.args);
+  if (target.setFlags.length > 1) {
     return yield* Effect.fail(
       new LegacyInspectMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
       }),
     );
   }
 
   // Go's `--linked` defaults to true, so absence of `--db-url`/`--local` resolves
   // to the linked project. Exclusivity above is already keyed off the raw flags,
-  // so deriving the default here does not re-trigger it.
-  const linked = flags.linked || (Option.isNone(flags.dbUrl) && !flags.local);
+  // so deriving the connType here does not re-trigger it.
+  const connType = target.connType ?? "linked";
 
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
-    linked,
-    local: flags.local,
+    connType,
     dnsResolver,
   });
 

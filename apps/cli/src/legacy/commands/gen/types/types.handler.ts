@@ -23,7 +23,6 @@ import {
   localDbContainerId,
   localDbPassword,
   localNetworkId,
-  normalizeSchemaFlags,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
   probeTlsSupport,
@@ -220,7 +219,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
   }
 
-  const schemas = normalizeSchemaFlags(flags.schema);
+  // flags.schema is already CSV-parsed and validated by `Flag.mapTryCatch(legacyParseSchemaFlags)`
+  // in types.command.ts — use it directly.
+  const schemas = flags.schema;
   const queryTimeoutSeconds = yield* parseQueryTimeoutSeconds(flags.queryTimeout);
   const lang = flags.lang;
   const swiftAccessControl = flags.swiftAccessControl;
