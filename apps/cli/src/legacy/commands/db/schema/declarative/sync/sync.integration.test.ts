@@ -7,6 +7,7 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { mockOutput, mockTty } from "../../../../../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCliConfig,
+  mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../../../tests/helpers/legacy-mocks.ts";
@@ -38,6 +39,7 @@ interface SetupOpts {
   promptSelectResponses?: ReadonlyArray<string>;
   promptTextResponses?: ReadonlyArray<string>;
   networkId?: string;
+  projectId?: Option.Option<string>;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -47,6 +49,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     promptTextResponses: opts.promptTextResponses,
   });
   const telemetry = mockLegacyTelemetryStateTracked();
+  const cache = mockLegacyLinkedProjectCacheTracked();
   const execInheritCalls: ReadonlyArray<string>[] = [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode }) => Effect.succeed(`supabase/.temp/pgdelta/${mode}.json`),
@@ -100,11 +103,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
+    cache.layer,
     seam,
     edge,
     dbConn,
     resolver,
-    mockLegacyCliConfig({ workdir, projectId: Option.some("test") }),
+    mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
@@ -117,7 +121,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
     BunServices.layer,
   );
-  return { layer, out, execInheritCalls, dbExec };
+  return { layer, out, execInheritCalls, dbExec, cache };
 }
 
 const flags = (
@@ -230,6 +234,47 @@ describe("legacy db schema declarative sync integration", () => {
       yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })));
       const options = s.out.promptSelectCalls[0]?.options ?? [];
       expect(options.map((o) => o.value)).toEqual(["local", "custom"]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("bootstrap caches the linked project even when a later step fails (Go PostRun)", () => {
+    // Go's bootstrap delegates to runDeclarativeGenerate, whose LoadProjectRef (under
+    // hasMigrationFiles) sets flags.ProjectRef; root ensureProjectGroupsCached then
+    // writes the linked-project cache on success OR failure (cmd/root.go:176,214-218).
+    // Here the bootstrap resolves the linked ref then fails (empty generate output),
+    // and the linked-project cache must still be written.
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      diffSql: "",
+      projectId: Option.some("abcdefghijklmnopqrst"),
+      promptConfirmResponses: [true, false], // [generate a new one? yes][reset? no]
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })));
+      expect(s.cache.cached).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("does not cache when the workdir is not linked", () => {
+    // No project_id and no .temp/project-ref file → no ref resolves in the bootstrap,
+    // so flags.ProjectRef stays empty in Go and nothing is cached.
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      diffSql: "",
+      projectId: Option.none(),
+      promptConfirmResponses: [true, false],
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })));
+      expect(s.cache.cached).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 

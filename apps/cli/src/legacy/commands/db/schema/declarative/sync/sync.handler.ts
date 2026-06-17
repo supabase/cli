@@ -18,6 +18,7 @@ import {
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
 import { legacyApplyMigrationFile } from "../../../../../shared/legacy-migration-apply.ts";
 import { legacyReadProjectRefFile } from "../../../../../shared/legacy-temp-paths.ts";
+import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyListLocalMigrations, legacyPgDeltaTempPath } from "../declarative.cache.ts";
 import { legacyResolveSmartTargetUrl } from "../declarative.smart-target.ts";
@@ -73,6 +74,16 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     const networkId = yield* LegacyNetworkIdFlag;
     const dnsResolver = yield* LegacyDnsResolverFlag;
     const seam = yield* LegacyDeclarativeSeam;
+    const linkedProjectCache = yield* LegacyLinkedProjectCache;
+
+    // Go's sync bootstrap delegates to `runDeclarativeGenerate`, whose
+    // `flags.LoadProjectRef` (called inside the `hasMigrationFiles` branch) sets the
+    // global `flags.ProjectRef`; root `ensureProjectGroupsCached` then writes the
+    // linked-project cache/groups on success or failure (`cmd/root.go:176,214-218`).
+    // Captured in the bootstrap branch below; the finalizer on the whole handler body
+    // reads it. Declared at handler scope so it is visible to both the body and the
+    // `.pipe` finalizer.
+    let linkedProjectRef: string | undefined;
 
     yield* Effect.gen(function* () {
       // cobra `MarkFlagsMutuallyExclusive("apply", "no-apply")`
@@ -155,9 +166,21 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // workdir can bootstrap from the remote rather than silently using local.
         const hasMigrations =
           (yield* legacyListLocalMigrations(fs, path, migrationsDir)).length > 0;
-        const linkedRef = Option.isSome(cliConfig.projectId)
-          ? cliConfig.projectId
-          : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+        // Go calls `flags.LoadProjectRef` only inside `runDeclarativeGenerate`'s
+        // `hasMigrationFiles` branch (`db_schema_declarative.go:219-224`), which sets
+        // the global `flags.ProjectRef` so the post-run cache fires regardless of the
+        // chosen target. Resolve the ref the same way (config `project_id` →
+        // `.temp/project-ref`), only when migrations exist, and record it for the
+        // finalizer so a linked-workdir bootstrap caches like Go.
+        let linkedRef = Option.none<string>();
+        if (hasMigrations) {
+          linkedRef = Option.isSome(cliConfig.projectId)
+            ? cliConfig.projectId
+            : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+          if (Option.isSome(linkedRef)) {
+            linkedProjectRef = linkedRef.value;
+          }
+        }
         // sync has no target flags (Go passes its target-less `cmd` into generate),
         // so reset stays interactive (the prompt fires under the local choice).
         const targetUrl = yield* legacyResolveSmartTargetUrl(
@@ -357,7 +380,20 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         yield* output.raw(legacyDebugBundleMessage(debugDir), "stderr");
       }
       return yield* Effect.fail(applyError);
-    }).pipe(Effect.ensuring(telemetryState.flush));
+    }).pipe(
+      // Mirror Go's `ensureProjectGroupsCached` PersistentPostRun (`cmd/root.go:176,
+      // 214-218`): when the bootstrap path resolved a linked ref, write the
+      // linked-project cache (`GET /v1/projects/{ref}` → `supabase/.temp/
+      // linked-project.json`) whether sync succeeds or fails. The cache layer no-ops
+      // when the file exists / no token / non-200. Only the linked bootstrap sets
+      // `linkedProjectRef`, so non-linked syncs never trigger this.
+      Effect.ensuring(
+        Effect.suspend(() =>
+          linkedProjectRef !== undefined ? linkedProjectCache.cache(linkedProjectRef) : Effect.void,
+        ),
+      ),
+      Effect.ensuring(telemetryState.flush),
+    );
   },
 );
 
