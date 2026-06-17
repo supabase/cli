@@ -132,13 +132,23 @@ function deepMergeDoc(base: RawDoc, override: RawDoc): RawDoc {
  * config (Go's `config.Load`, `config.go:503-518` + `mergeRemoteConfig`). The block
  * key name is only used for diagnostics in Go; the match is on `project_id`.
  */
-function applyRemoteOverride(doc: RawDoc | undefined, ref: string): RawDoc | undefined {
+function applyRemoteOverride(
+  doc: RawDoc | undefined,
+  ref: string,
+  lookup: EnvLookup,
+): RawDoc | undefined {
   const remotes = asRecord(doc?.["remotes"]);
   if (doc === undefined || remotes === undefined) return doc;
   for (const name of Object.keys(remotes)) {
     const block = asRecord(remotes[name]);
     if (block === undefined) continue;
-    if (typeof block["project_id"] === "string" && block["project_id"] === ref) {
+    // Go decodes the remote `project_id` through `LoadEnvHook` before matching it
+    // against the resolved ref (`config.go:503-518`), so an `env(VAR)` block id is
+    // compared by its expanded value.
+    if (
+      typeof block["project_id"] === "string" &&
+      legacyExpandEnv(block["project_id"], lookup) === ref
+    ) {
       return deepMergeDoc(doc, block);
     }
   }
@@ -152,15 +162,18 @@ function applyRemoteOverride(doc: RawDoc | undefined, ref: string): RawDoc | und
  */
 function findDuplicateRemoteProjectId(
   doc: RawDoc | undefined,
+  lookup: EnvLookup,
 ): { readonly name: string; readonly other: string } | undefined {
   const remotes = asRecord(doc?.["remotes"]);
   if (remotes === undefined) return undefined;
   const seen = new Map<string, string>();
   for (const name of Object.keys(remotes)) {
     const block = asRecord(remotes[name]);
+    // Go decodes each remote `project_id` through `LoadEnvHook` before the
+    // duplicate check (`config.go:506-511`), so dedupe on the expanded value.
     const projectId =
       block !== undefined && typeof block["project_id"] === "string"
-        ? block["project_id"]
+        ? legacyExpandEnv(block["project_id"], lookup)
         : undefined;
     if (projectId === undefined) continue;
     const prior = seen.get(projectId);
@@ -180,12 +193,18 @@ const LEGACY_PROJECT_REF_PATTERN = /^[a-z]{20}$/;
  * missing remote `project_id` fails even local/direct commands before touching the
  * database. Returns the first offending block name (object order) or `undefined`.
  */
-function findInvalidRemoteProjectId(doc: RawDoc | undefined): string | undefined {
+function findInvalidRemoteProjectId(doc: RawDoc | undefined, lookup: EnvLookup): string | undefined {
   const remotes = asRecord(doc?.["remotes"]);
   if (remotes === undefined) return undefined;
   for (const name of Object.keys(remotes)) {
     const block = asRecord(remotes[name]);
-    const projectId = block !== undefined ? block["project_id"] : undefined;
+    const rawProjectId = block !== undefined ? block["project_id"] : undefined;
+    // Go expands `env(VAR)` via `LoadEnvHook` before `Validate` checks the ref
+    // pattern (`config.go:832-836`), so an env-backed `project_id` is validated by
+    // its resolved value. An unset/empty expansion still fails (Go's `refPattern`
+    // rejects the literal `env(...)` / empty string).
+    const projectId =
+      typeof rawProjectId === "string" ? legacyExpandEnv(rawProjectId, lookup) : rawProjectId;
     if (typeof projectId !== "string" || !LEGACY_PROJECT_REF_PATTERN.test(projectId)) {
       return name;
     }
@@ -433,6 +452,14 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     ),
   );
 
+  // Resolve `env(VAR)` against the shell env first, then the project `.env` files
+  // (Go's `loadNestedEnv` populates the process env before `LoadEnvHook`). Built
+  // here — before the remote-config validation/merge below — so remote and
+  // top-level `project_id` env() forms are expanded before they are validated or
+  // used to derive Docker IDs, matching Go's decode-then-validate ordering.
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
+  const lookup: EnvLookup = (name) => process.env[name] ?? projectEnv[name];
+
   let db: RawDoc | undefined;
   let pgDeltaRaw: RawDoc | undefined;
   let authRaw: RawDoc | undefined;
@@ -454,7 +481,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     }
     // Go aborts config load when two `[remotes.*]` blocks share a `project_id`,
     // regardless of which command runs (config.go:506-511) — check before merging.
-    const duplicateRemote = findDuplicateRemoteProjectId(doc);
+    const duplicateRemote = findDuplicateRemoteProjectId(doc, lookup);
     if (duplicateRemote !== undefined) {
       return yield* Effect.fail(
         new LegacyDbConfigLoadError({
@@ -465,7 +492,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     // Go's Validate rejects any remote whose `project_id` is not a valid 20-char ref,
     // on every load (config.go:832-836), after the duplicate check. So a malformed
     // remote fails even local/direct commands before any DB connection.
-    const invalidRemote = findInvalidRemoteProjectId(doc);
+    const invalidRemote = findInvalidRemoteProjectId(doc, lookup);
     if (invalidRemote !== undefined) {
       return yield* Effect.fail(
         new LegacyDbConfigLoadError({
@@ -475,7 +502,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     }
     // Apply a matching `[remotes.<name>]` override (Go merges the block whose
     // `project_id` equals the resolved ref over the base, config.go:503-562).
-    const effectiveDoc = ref === undefined ? doc : applyRemoteOverride(doc, ref);
+    const effectiveDoc = ref === undefined ? doc : applyRemoteOverride(doc, ref, lookup);
     db = asRecord(effectiveDoc?.["db"]);
     pgDeltaRaw = asRecord(asRecord(effectiveDoc?.["experimental"])?.["pgdelta"]);
     authRaw = asRecord(effectiveDoc?.["auth"]);
@@ -483,7 +510,14 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     realtimeRaw = asRecord(effectiveDoc?.["realtime"]);
     apiRaw = asRecord(effectiveDoc?.["api"]);
     edgeRuntimeRaw = asRecord(effectiveDoc?.["edge_runtime"]);
-    projectId = nonEmptyString(effectiveDoc?.["project_id"]);
+    // Go expands `env(VAR)` for the top-level `project_id` during `config.Load`
+    // (`config.go:584-588`) before `UpdateDockerIds` derives container names from
+    // it, so expand here too — otherwise a `project_id = "env(PROJECT_ID)"` would
+    // sanitize to a wrong local-stack id like `supabase_db_env_PROJECT_ID_`.
+    const rawProjectId = effectiveDoc?.["project_id"];
+    projectId = nonEmptyString(
+      typeof rawProjectId === "string" ? legacyExpandEnv(rawProjectId, lookup) : rawProjectId,
+    );
   }
 
   // Go: `config.go:626` — read the linked pooler URL from `.temp/pooler-url` and
@@ -502,11 +536,6 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     Effect.map((content) => nonEmptyString(content.trim())),
     Effect.orElseSucceed(Option.none<string>),
   );
-
-  // Resolve `env(VAR)` against the shell env first, then the project `.env` files
-  // (Go's `loadNestedEnv` populates the process env before `LoadEnvHook`).
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
-  const lookup: EnvLookup = (name) => process.env[name] ?? projectEnv[name];
 
   // Go's loader enables viper `SetEnvPrefix("SUPABASE")` + `EnvKeyReplacer(".",
   // "_")` + `AutomaticEnv()` (`config.go:487-492`), so `SUPABASE_DB_*` env vars

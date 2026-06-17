@@ -431,6 +431,70 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("expands env(VAR) for the top-level project_id (Go config.Load before Docker IDs)", () => {
+    // Go expands `project_id` via LoadEnvHook before deriving local container names,
+    // so a raw `env(...)` must not leak into `supabase_db_env_PROJECT_ID_`.
+    process.env["LEGACY_PROJECT_REF"] = "abcdefghijklmnopqrst";
+    const dir = withConfig(['project_id = "env(LEGACY_PROJECT_REF)"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.projectId)).toBe("abcdefghijklmnopqrst");
+          delete process.env["LEGACY_PROJECT_REF"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("accepts an env-backed remote project_id that expands to a valid ref", () => {
+    // Go expands env(VAR) via LoadEnvHook before Validate checks the ref pattern
+    // (config.go:832-836), so an env-backed remote project_id is validated and
+    // merged by its resolved value.
+    process.env["LEGACY_STAGING_REF"] = "stagingrefstagingref";
+    const dir = withConfig(
+      [
+        'project_id = "base"',
+        "[db]",
+        "major_version = 15",
+        "[remotes.staging]",
+        'project_id = "env(LEGACY_STAGING_REF)"',
+        "[remotes.staging.db]",
+        "major_version = 17",
+        "",
+      ].join("\n"),
+    );
+    return readRef(dir, "stagingrefstagingref").pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.majorVersion).toBe(17); // remote block merged via the expanded ref
+          delete process.env["LEGACY_STAGING_REF"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects an env-backed remote project_id that expands to nothing", () => {
+    // An unset env() expands to the literal `env(...)`, which fails Go's ref pattern.
+    delete process.env["LEGACY_MISSING_REF"];
+    const dir = withConfig(
+      ["[remotes.staging]", 'project_id = "env(LEGACY_MISSING_REF)"', ""].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("Invalid config for remotes.staging.project_id");
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("keeps the literal password when its env var is unset/empty", () => {
     // Go's LoadEnvHook only substitutes when len(os.Getenv(name)) > 0; otherwise it
     // preserves the literal string. Password is a plain string field, so an
