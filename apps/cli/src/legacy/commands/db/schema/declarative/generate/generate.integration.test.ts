@@ -8,6 +8,7 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { mockOutput, mockTty } from "../../../../../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCliConfig,
+  mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../../../tests/helpers/legacy-mocks.ts";
@@ -63,6 +64,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     promptTextResponses: opts.promptTextResponses,
   });
   const telemetry = mockLegacyTelemetryStateTracked();
+  const cache = mockLegacyLinkedProjectCacheTracked();
   const seamCalls: LegacyCatalogMode[] = [];
   const seamExportCalls: Array<{ mode: LegacyCatalogMode; projectRef?: string }> = [];
   const execInheritCalls: ReadonlyArray<string>[] = [];
@@ -115,6 +117,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
+    cache.layer,
     seam,
     edge,
     resolver,
@@ -132,6 +135,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   return {
     layer,
     out,
+    cache,
     seamCalls,
     seamExportCalls,
     execInheritCalls,
@@ -356,6 +360,17 @@ describe("legacy db schema declarative generate integration", () => {
       yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
       const baseline = s.seamExportCalls.find((c) => c.mode === "baseline");
       expect(baseline?.projectRef).toBeUndefined();
+      // No linked ref resolved → no linked-project cache write (Go gates on ProjectRef).
+      expect(s.cache.cached).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("caches the linked project after generate --linked (Go PersistentPostRun)", () => {
+    const ref = "abcdefghijklmnopqrst";
+    const s = setup(tmp.current, { experimental: true, projectId: Option.some(ref) });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ linked: Option.some(true) }));
+      expect(s.cache.cached).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 

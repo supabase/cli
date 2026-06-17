@@ -13,6 +13,7 @@ import {
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
+import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyListLocalMigrations } from "../declarative.cache.ts";
 import {
@@ -42,8 +43,13 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     const path = yield* Path.Path;
     const cliConfig = yield* LegacyCliConfig;
     const telemetryState = yield* LegacyTelemetryState;
+    const linkedProjectCache = yield* LegacyLinkedProjectCache;
     const experimental = yield* LegacyExperimentalFlag;
     const yes = yield* LegacyYesFlag;
+
+    // The resolved linked ref (explicit `--linked` only), hoisted so the post-run
+    // linked-project cache finalizer can read it after the body resolves it.
+    let linkedProjectRef: string | undefined;
 
     yield* Effect.gen(function* () {
       // cobra `MarkFlagsMutuallyExclusive("db-url", "linked", "local")`
@@ -79,11 +85,10 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // for the downstream path/format settings only — NOT the gate above. (Smart-mode
       // "Linked project" does NOT re-load in Go, so it is excluded — only `flags.linked`.)
       let toml = baseToml;
-      // The resolved linked ref (explicit `--linked` only). Threaded into the
-      // baseline `__catalog` export so its platform baseline is built from the
-      // remote-merged config, matching Go's `Generate` (which loads the
-      // `[remotes.<ref>]` override before building the baseline catalog).
-      let linkedProjectRef: string | undefined;
+      // The resolved linked ref (explicit `--linked` only) is threaded into the
+      // baseline `__catalog` export (so its platform baseline is built from the
+      // remote-merged config, matching Go's `Generate`) and into the post-run
+      // linked-project cache finalizer below.
       if (Option.isSome(flags.linked)) {
         const linkedRef = Option.isSome(cliConfig.projectId)
           ? cliConfig.projectId
@@ -234,7 +239,23 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         });
       }
       yield* output.raw(`Declarative schema written to ${legacyBold(declarativeDir)}\n`, "stderr");
-    }).pipe(Effect.ensuring(telemetryState.flush));
+    }).pipe(
+      // Go's `ensureProjectGroupsCached` PersistentPostRun (`cmd/root.go:176,214-234`)
+      // writes the linked-project cache (`GET /v1/projects/{ref}` →
+      // `supabase/.temp/linked-project.json`) for any resolved ref, on success and
+      // failure. Only explicit `--linked` resolves a ref here (Go gates on
+      // `flags.ProjectRef != ""`); the cache layer no-ops when the file exists, the
+      // token is missing, or the GET is non-200. Read the ref lazily — it is assigned
+      // inside the body above.
+      Effect.ensuring(
+        Effect.suspend(() =>
+          linkedProjectRef !== undefined
+            ? linkedProjectCache.cache(linkedProjectRef)
+            : Effect.void,
+        ),
+      ),
+      Effect.ensuring(telemetryState.flush),
+    );
   },
 );
 
