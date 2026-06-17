@@ -100,6 +100,30 @@ function collectRuntimeParams(
   return Object.keys(params).length > 0 ? params : undefined;
 }
 
+/**
+ * Resolve libpq client-certificate settings (`sslcert`/`sslkey`/`sslpassword`) with
+ * pgconn's connection-string → service → `PG*` precedence. pgconn's `configTLS`
+ * loads `sslcert`+`sslkey` into the client TLS certificate and requires **both or
+ * neither** (`pgconn/config.go:710-711`); `sslpassword` decrypts an encrypted key.
+ * Returns `"invalid"` when exactly one of cert/key is present (a pgconn parse error).
+ */
+function resolveClientCert(
+  get: (key: string) => string | null | undefined,
+  svc: (key: string) => string | undefined,
+  env: LegacyParseEnv,
+): { sslcert?: string; sslkey?: string; sslpassword?: string } | "invalid" {
+  const pick = (key: string, pg: string): string | undefined => {
+    const value = get(key) ?? svc(key) ?? libpqEnv(env, pg);
+    return value !== null && value !== undefined && value.length > 0 ? value : undefined;
+  };
+  const sslcert = pick("sslcert", "PGSSLCERT");
+  const sslkey = pick("sslkey", "PGSSLKEY");
+  const sslpassword = pick("sslpassword", "PGSSLPASSWORD");
+  if ((sslcert === undefined) !== (sslkey === undefined)) return "invalid";
+  if (sslcert === undefined) return {};
+  return { sslcert, sslkey, ...(sslpassword !== undefined ? { sslpassword } : {}) };
+}
+
 /** Whether a resolved sslmode is present and not one pgconn accepts. */
 function isInvalidSslmode(sslmode: string | null | undefined): boolean {
   return (
@@ -475,6 +499,12 @@ function parseUrlConnectionString(
       svc("sslrootcert") ??
       libpqEnv(env, "PGSSLROOTCERT") ??
       null;
+    // libpq client cert (query, service, or PGSSLCERT/PGSSLKEY/PGSSLPASSWORD); both
+    // or neither (pgconn config.go:710-711), else this is a parse error.
+    const clientCert = resolveClientCert((key) => url.searchParams.get(key), svc, env);
+    if (clientCert === "invalid") {
+      return undefined;
+    }
     const options = url.searchParams.get("options") ?? svc("options") ?? null;
     // Every other query setting (e.g. search_path, statement_timeout) is a startup
     // runtime param Go forwards to the server / pg-delta.
@@ -601,6 +631,7 @@ function parseUrlConnectionString(
       ...(runtimeParams !== undefined ? { runtimeParams } : {}),
       ...(sslmode !== null && sslmode.length > 0 ? { sslmode } : {}),
       ...(sslrootcert !== null && sslrootcert.length > 0 ? { sslrootcert } : {}),
+      ...clientCert,
       ...(connectTimeout !== undefined ? { connectTimeoutSeconds: connectTimeout } : {}),
     };
   } catch {
@@ -715,6 +746,9 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   if (isInvalidSslmode(sslmode)) return undefined;
   const sslrootcert =
     params.get("sslrootcert") ?? svc("sslrootcert") ?? libpqEnv(env, "PGSSLROOTCERT");
+  // libpq client cert (keyword, service, or PG*); both or neither (config.go:710-711).
+  const clientCert = resolveClientCert((key) => params.get(key), svc, env);
+  if (clientCert === "invalid") return undefined;
   const options = params.get("options") ?? svc("options");
   // Every other keyword setting (e.g. search_path, statement_timeout) is a startup
   // runtime param Go forwards to the server / pg-delta.
@@ -754,6 +788,7 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
     ...(runtimeParams !== undefined ? { runtimeParams } : {}),
     ...(sslmode !== undefined && sslmode.length > 0 ? { sslmode } : {}),
     ...(sslrootcert !== undefined && sslrootcert.length > 0 ? { sslrootcert } : {}),
+    ...clientCert,
     ...(connectTimeout !== undefined ? { connectTimeoutSeconds: connectTimeout } : {}),
   };
 }

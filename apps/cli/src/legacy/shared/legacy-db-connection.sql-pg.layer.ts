@@ -209,11 +209,18 @@ export function legacyBuildConnectionUrl(
  * DoH-resolved IP (via `FallbackLookupIP`). Dropping the SNI on `require`/
  * `prefer` would break endpoints/proxies that route TLS on the server name.
  */
+export interface LegacyClientCert {
+  readonly cert: string;
+  readonly key: string;
+  readonly passphrase?: string;
+}
+
 export function legacySslOptionFor(
   sslmode: string | undefined,
   isLocal: boolean,
   servername: string | undefined,
   caCert?: string,
+  clientCert?: LegacyClientCert,
 ): boolean | ConnectionOptions | undefined {
   if (isLocal) return undefined;
   if (sslmode === "disable" || sslmode === "allow") return false;
@@ -221,20 +228,37 @@ export function legacySslOptionFor(
   // A configured `sslrootcert` pins the server CA (pgconn loads it into RootCAs);
   // it only affects the verifying modes.
   const ca = caCert !== undefined ? { ca: caCert } : {};
+  // pgconn attaches the client `sslcert`/`sslkey` (and optional `sslpassword`) to the
+  // single shared `tlsConfig.Certificates` regardless of verification mode
+  // (`config.go:710-762`), so carry it on every TLS config.
+  const clientCertOpts: ConnectionOptions =
+    clientCert !== undefined
+      ? {
+          cert: clientCert.cert,
+          key: clientCert.key,
+          ...(clientCert.passphrase !== undefined ? { passphrase: clientCert.passphrase } : {}),
+        }
+      : {};
   if (sslmode === "verify-ca") {
     // pgconn's `verify-ca` verifies the CA chain but **skips hostname**
     // verification (`configTLS` sets a custom `VerifyPeerCertificate` with an
     // empty DNSName and does not set `ServerName` for the check); SNI still
     // carries the host. Node's equivalent is full chain verification with the
     // identity check disabled.
-    return { rejectUnauthorized: true, checkServerIdentity: () => undefined, ...ca, ...sni };
+    return {
+      rejectUnauthorized: true,
+      checkServerIdentity: () => undefined,
+      ...ca,
+      ...clientCertOpts,
+      ...sni,
+    };
   }
   if (sslmode === "verify-full") {
     // Full verification, including hostname against the servername.
-    return { rejectUnauthorized: true, ...ca, ...sni };
+    return { rejectUnauthorized: true, ...ca, ...clientCertOpts, ...sni };
   }
   // prefer / require / unset → TLS without verification (pgx default).
-  return { rejectUnauthorized: false, ...sni };
+  return { rejectUnauthorized: false, ...clientCertOpts, ...sni };
 }
 
 /**
@@ -266,6 +290,7 @@ export function legacySslConfigsFor(
   servername: string | undefined,
   caCert?: string,
   host?: string,
+  clientCert?: LegacyClientCert,
 ): Array<boolean | ConnectionOptions | undefined> {
   if (isLocal) return [undefined];
   // pgconn skips TLS entirely for a unix-socket host (`NetworkAddress == "unix"`)
@@ -274,7 +299,8 @@ export function legacySslConfigsFor(
   // socket path is not the local services hostname (so `isLocal` is `false`).
   if (host !== undefined && legacyIsUnixSocketHost(host)) return [undefined];
   if (sslmode === "disable") return [false];
-  if (sslmode === "allow") return [false, legacySslOptionFor("require", false, servername, caCert)];
+  if (sslmode === "allow")
+    return [false, legacySslOptionFor("require", false, servername, caCert, clientCert)];
   // pgconn: `require` + a root cert behaves like `verify-ca` (`configTLS`).
   const effectiveMode = sslmode === "require" && caCert !== undefined ? "verify-ca" : sslmode;
   if (
@@ -282,12 +308,12 @@ export function legacySslConfigsFor(
     effectiveMode === "verify-ca" ||
     effectiveMode === "verify-full"
   ) {
-    return [legacySslOptionFor(effectiveMode, false, servername, caCert)];
+    return [legacySslOptionFor(effectiveMode, false, servername, caCert, clientCert)];
   }
   // prefer (and the unset default): pgconn's raw list is `{tlsConfig, nil}`, but
   // `ConnectByUrl` strips the plaintext fallback because the primary is TLS, so
   // this is TLS-only — a failed TLS handshake must error, never downgrade.
-  return [legacySslOptionFor(sslmode, false, servername, caCert)];
+  return [legacySslOptionFor(sslmode, false, servername, caCert, clientCert)];
 }
 
 /**
@@ -393,13 +419,42 @@ const connect = (
           })
         : undefined;
 
+    // Load the client `sslcert`/`sslkey` (pgconn's `configTLS` reads both into
+    // `tlsConfig.Certificates` for cert auth; the parser only sets them as a pair).
+    // Same non-local/TCP gate as the CA bundle. `sslpassword` decrypts an encrypted
+    // key (Node's `tls` `passphrase`). Bound to locals so the narrowing holds in the
+    // `Effect.try` closures.
+    const certPath = cfg.sslcert;
+    const keyPath = cfg.sslkey;
+    const clientCert =
+      certPath !== undefined && keyPath !== undefined && !isLocal && anyTcpTarget
+        ? {
+            cert: yield* Effect.try({
+              try: () => readFileSync(certPath, "utf8"),
+              catch: (error) =>
+                new LegacyDbConnectError({
+                  message: `failed to read sslcert ${certPath}: ${error}`,
+                }),
+            }),
+            key: yield* Effect.try({
+              try: () => readFileSync(keyPath, "utf8"),
+              catch: (error) =>
+                new LegacyDbConnectError({
+                  message: `failed to read sslkey ${keyPath}: ${error}`,
+                }),
+            }),
+            ...(cfg.sslpassword !== undefined ? { passphrase: cfg.sslpassword } : {}),
+          }
+        : undefined;
+
     // Build the ordered attempt list, mirroring pgconn's fallback loop
     // (`configTLS` fallback configs, expanded across each resolved address by
     // `expandWithIPs`): each TLS config (`legacySslConfigsFor`) is tried against
     // each dial target (host × resolved IPs). `servername` is per target (the
     // original hostname when we dial a DoH-resolved IP).
     const attempts = dialTargets.flatMap(({ dialHost, port, servername }) =>
-      legacySslConfigsFor(cfg.sslmode, isLocal, servername, caCert, dialHost).map((ssl) => ({
+      legacySslConfigsFor(cfg.sslmode, isLocal, servername, caCert, dialHost, clientCert).map(
+        (ssl) => ({
         client: makeClient(dialHost, port, ssl),
         // pgconn only short-circuits the fallback chain on an auth error when the
         // failed attempt used TLS (`pgconn.go:182`, gated on `fc.TLSConfig != nil`);

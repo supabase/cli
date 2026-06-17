@@ -188,6 +188,34 @@ describe("parseLegacyConnectionString (URL form)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("carries client sslcert/sslkey (and sslpassword) from a --db-url", () => {
+    const parsed = parseLegacyConnectionString(
+      "postgres://u:pw@h/db?sslmode=verify-full&sslcert=/c/client.crt&sslkey=/c/client.key&sslpassword=secret",
+    );
+    expect(parsed?.sslcert).toBe("/c/client.crt");
+    expect(parsed?.sslkey).toBe("/c/client.key");
+    expect(parsed?.sslpassword).toBe("secret");
+    // sslcert/sslkey are connection settings, never forwarded as runtime params.
+    expect(parsed).not.toHaveProperty("runtimeParams");
+  });
+
+  it("resolves client certs from PGSSLCERT/PGSSLKEY env (pgconn precedence)", () => {
+    const env = (name: string): string | undefined =>
+      name === "PGSSLCERT" ? "/e/c.crt" : name === "PGSSLKEY" ? "/e/c.key" : undefined;
+    const parsed = parseLegacyConnectionString("postgres://u:pw@h/db", env);
+    expect(parsed?.sslcert).toBe("/e/c.crt");
+    expect(parsed?.sslkey).toBe("/e/c.key");
+  });
+
+  it("rejects a client cert with sslcert but no sslkey (pgconn both-or-neither)", () => {
+    expect(
+      parseLegacyConnectionString("postgres://u:pw@h/db?sslcert=/c/client.crt"),
+    ).toBeUndefined();
+    expect(
+      parseLegacyConnectionString("host=h user=u sslkey=/c/client.key"),
+    ).toBeUndefined();
+  });
+
   it("returns undefined for an unparseable URL", () => {
     expect(parseLegacyConnectionString("postgres://user:pw@ bad host/db")).toBeUndefined();
   });

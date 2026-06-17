@@ -147,6 +147,20 @@ describe("legacySslOptionFor", () => {
     }
   });
 
+  it("attaches the client cert (cert/key/passphrase) to every TLS mode (pgconn parity)", () => {
+    const clientCert = { cert: "CERT", key: "KEY", passphrase: "pw" };
+    // verify-full / verify-ca / require|prefer all carry the client certificate.
+    expect(legacySslOptionFor("verify-full", false, undefined, undefined, clientCert)).toMatchObject(
+      { cert: "CERT", key: "KEY", passphrase: "pw" },
+    );
+    expect(legacySslOptionFor("require", false, undefined, undefined, clientCert)).toMatchObject({
+      cert: "CERT",
+      key: "KEY",
+    });
+    // Plaintext modes carry no client cert.
+    expect(legacySslOptionFor("disable", false, undefined, undefined, clientCert)).toBe(false);
+  });
+
   it("carries the servername into verifying modes (so a DoH IP verifies the hostname)", () => {
     expect(legacySslOptionFor("verify-full", false, "db.example.com")).toEqual({
       rejectUnauthorized: true,

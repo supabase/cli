@@ -55,6 +55,16 @@ export interface LegacyPgConnInput {
    */
   readonly sslrootcert?: string;
   /**
+   * libpq client-certificate auth (Go's `pgconn.Config` `TLSConfig.Certificates`,
+   * from the DSN or `PGSSLCERT`/`PGSSLKEY`/`PGSSLPASSWORD`). `sslcert`/`sslkey` are
+   * file paths loaded by the driver layer into the client cert; `sslpassword`
+   * decrypts an encrypted key. pgconn requires both `sslcert` and `sslkey` together
+   * (`config.go:710-711`), so the parser only ever sets them as a pair.
+   */
+  readonly sslcert?: string;
+  readonly sslkey?: string;
+  readonly sslpassword?: string;
+  /**
    * libpq `connect_timeout` in seconds (Go's `pgconn.Config.ConnectTimeout`, from
    * the DSN or `PGCONNECT_TIMEOUT`). Only set when explicitly provided and > 0; the
    * driver layer applies Go's default otherwise (10s remote, 2s local — see
