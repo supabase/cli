@@ -13,6 +13,7 @@ import {
   deleteTestProject,
   getAnonKey,
   resolveOrgId,
+  TEST_DB_PASSWORD,
   waitForProjectReady,
 } from "./staging-project.ts";
 
@@ -22,6 +23,8 @@ declare module "vitest" {
     anonKey: string;
     /** https://{ref}.{CLI_E2E_PROJECT_HOST}/functions/v1 */
     functionsUrl: string;
+    /** Direct Postgres connection string for --db-url DB commands. */
+    dbUrl: string;
   }
 }
 
@@ -57,10 +60,14 @@ export async function setup({
   // setup returns before the teardown closure, so Vitest cannot clean up.
   let anonKey: string;
   let functionsUrl: string;
+  let dbUrl: string;
   try {
     await waitForProjectReady(TARGET_API_URL, projectRef);
     anonKey = await getAnonKey(TARGET_API_URL, projectRef);
     functionsUrl = `https://${projectRef}.${PROJECT_HOST}/functions/v1`;
+    // Direct connection (db.<ref>.<host>:5432) — confirmed reachable; bypasses
+    // the profile's project_host. connect_timeout keeps a bad attempt from hanging.
+    dbUrl = `postgresql://postgres:${TEST_DB_PASSWORD}@db.${projectRef}.${PROJECT_HOST}:5432/postgres?connect_timeout=30`;
   } catch (err) {
     if (!KEEP_PROJECT) await deleteTestProject(TARGET_API_URL, projectRef);
     throw err;
@@ -69,6 +76,7 @@ export async function setup({
   provide("projectRef", projectRef);
   provide("anonKey", anonKey);
   provide("functionsUrl", functionsUrl);
+  provide("dbUrl", dbUrl);
 
   return async () => {
     if (KEEP_PROJECT) {

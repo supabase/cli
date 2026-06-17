@@ -22,6 +22,7 @@ interface LiveFixtures {
   projectRef: string;
   anonKey: string;
   functionsUrl: string;
+  dbUrl: string;
   workspace: TempDir;
   run: (cmd: string[], execOpts?: ExecOptions) => Promise<CLIResult>;
   invoke: (slug: string, opts?: { anonKey?: string; payload?: unknown }) => Promise<InvokeResult>;
@@ -41,6 +42,11 @@ const base = test.extend<LiveFixtures>({
   // eslint-disable-next-line no-empty-pattern
   functionsUrl: async ({}, use) => {
     await use(inject("functionsUrl"));
+  },
+
+  // eslint-disable-next-line no-empty-pattern
+  dbUrl: async ({}, use) => {
+    await use(inject("dbUrl"));
   },
 
   workspace: async ({ task }, use) => {

@@ -14,6 +14,10 @@ function harness(apiUrl: string) {
 
 const PROJECT_REF_RE = /^[a-z]{20}$/;
 
+// DB password set at project creation; also used to build the live --db-url for
+// DB-connectivity commands (inspect db, migration list, db dump, gen types).
+export const TEST_DB_PASSWORD = "cli-e2e-password-123";
+
 export async function resolveOrgId(apiUrl: string): Promise<string> {
   const result = await exec(harness(apiUrl), ["orgs", "list", "--output", "json"]);
   if (result.exitCode !== 0) throw new Error(`orgs list failed: ${result.stderr}`);
@@ -34,7 +38,7 @@ export async function createTestProject(
     "--org-id",
     orgId,
     "--db-password",
-    "cli-e2e-password-123",
+    TEST_DB_PASSWORD,
     "--region",
     REGION,
     "--output",
