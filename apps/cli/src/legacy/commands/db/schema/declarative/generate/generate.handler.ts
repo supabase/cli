@@ -184,9 +184,16 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         // workdir caches like Go even when the user chooses local/custom.
         let linkedRef = Option.none<string>();
         if (hasMigrations) {
+          // Smart prompt only decides whether to OFFER the linked choice — Go guards
+          // this `LoadProjectRef` with `if err == nil` (`db_schema_declarative.go:222-224`),
+          // ignoring read/validation errors and proceeding with local/custom. So swallow
+          // a broken `.temp/project-ref` here (omit the linked choice) rather than
+          // aborting; the explicit `--linked` branch above keeps propagating (hard path).
           linkedRef = Option.isSome(cliConfig.projectId)
             ? cliConfig.projectId
-            : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+            : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
+                Effect.orElseSucceed(() => Option.none<string>()),
+              );
           if (Option.isSome(linkedRef)) {
             linkedProjectRef = linkedRef.value;
           }
@@ -305,6 +312,13 @@ const hasMigrationFiles = Effect.fnUntraced(function* (
   path: Path.Path,
   migrationsDir: string,
 ) {
-  const migrations = yield* legacyListLocalMigrations(fs, path, migrationsDir);
+  // Smart-mode presence/prompt probe only: mirror Go's `cmd.hasMigrationFiles`
+  // (`db_schema_declarative.go:164-169`), which wraps `migration.ListLocalMigrations`
+  // and returns `false` on EVERY error (unreadable dir, path-is-a-file, …), not just
+  // not-exist — so generate continues into the no-migrations local flow. The real diff
+  // path keeps `legacyListLocalMigrations`' hard error behavior (Go `declarative.go:369`).
+  const migrations = yield* legacyListLocalMigrations(fs, path, migrationsDir).pipe(
+    Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+  );
   return migrations.length > 0;
 });

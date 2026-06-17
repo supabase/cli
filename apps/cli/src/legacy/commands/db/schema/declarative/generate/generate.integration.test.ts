@@ -611,6 +611,49 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("smart mode: an unreadable migrations path is treated as no migrations", () => {
+    // Go's cmd.hasMigrationFiles returns false on ANY ListLocalMigrations error
+    // (db_schema_declarative.go:164-169), flowing into the no-migrations local generate.
+    // Seeding supabase/migrations as a FILE makes the list fail with ENOTDIR — the smart
+    // probe must swallow it and proceed, not abort.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations"), "not a directory");
+    const s = setup(tmp.current, { experimental: true, yes: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags()));
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // No migrations → local generate path started the stack (not aborted on the read).
+      expect(s.ensureStartedCalls).toBe(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("smart mode: an unreadable ref file just omits the linked choice", () => {
+    // Go guards the smart-prompt LoadProjectRef with `if err == nil`
+    // (db_schema_declarative.go:222-224): a broken .temp/project-ref omits the linked
+    // choice and local/custom generation proceeds. Seeding project-ref as a DIRECTORY
+    // makes the read fail; the smart read must swallow it, not abort.
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    mkdirSync(join(tmp.current, "supabase", ".temp", "project-ref"), { recursive: true });
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      yes: true,
+      projectId: Option.none(),
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags()));
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // Linked choice omitted (ref unreadable), and nothing cached as linked.
+      expect((s.out.promptSelectCalls[0]?.options ?? []).map((o) => o.value)).toEqual([
+        "local",
+        "custom",
+      ]);
+      expect(s.cache.cached).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("smart mode: --yes auto-resets the local database without prompting", () => {
     // Go's Console.PromptYesNo auto-returns true under the global --yes flag, so the
     // "Reset local database to match migrations first?" prompt must be skipped and the
