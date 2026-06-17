@@ -80,8 +80,8 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // so reject the conflict before reading config or the pg-delta gate, rather
       // than letting `--no-apply` silently win in the apply-decision helper.
       const exclusive: Array<string> = [];
-      if (flags.apply) exclusive.push("apply");
-      if (flags.noApply) exclusive.push("no-apply");
+      if (Option.isSome(flags.apply)) exclusive.push("apply");
+      if (Option.isSome(flags.noApply)) exclusive.push("no-apply");
       if (exclusive.length > 1) {
         return yield* Effect.fail(
           new LegacyDeclarativeMutuallyExclusiveFlagsError({
@@ -240,8 +240,10 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
 
       // Step 7: apply decision.
       const decision = legacyResolveDeclarativeSyncApplyDecision({
-        apply: flags.apply,
-        noApply: flags.noApply,
+        // The mutex check above gates on presence (Go `flag.Changed`); the decision
+        // itself reads the resolved boolean value (Go's `BoolVar` default is false).
+        apply: Option.getOrElse(flags.apply, () => false),
+        noApply: Option.getOrElse(flags.noApply, () => false),
         yes,
         tty: tty.stdinIsTty,
       });
