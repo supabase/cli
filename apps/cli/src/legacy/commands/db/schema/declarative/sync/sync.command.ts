@@ -3,6 +3,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../../../../shared/output/json-error-handling.ts";
+import { legacyParseSchemaFlags } from "../../../../../shared/legacy-schema-flags.ts";
 import { withLegacyCommandInstrumentation } from "../../../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyDbSchemaDeclarativeSharedBase } from "../declarative.shared.ts";
 import { legacyDbSchemaDeclarativeSync } from "./sync.handler.ts";
@@ -13,6 +14,14 @@ const config = {
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
+    // Go registers `--schema` as a cobra `StringSliceVarP`
+    // (`apps/cli-go/cmd/db_schema_declarative.go:484`), which CSV-splits each
+    // occurrence so `-s public,auth` includes the two schemas separately. Mirror
+    // the `gen types` / `db lint` parsing so quoted commas are handled the same way.
+    Flag.mapTryCatch(
+      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (err) => (err instanceof Error ? err.message : String(err)),
+    ),
   ),
   file: Flag.string("file").pipe(
     Flag.withAlias("f"),
