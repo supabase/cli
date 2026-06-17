@@ -152,3 +152,45 @@ export async function getAnonKey(
   // Unreachable — the loop either returns a key or throws on the last attempt.
   throw new Error(`Failed to resolve anon key for ${projectRef}`);
 }
+
+interface PoolerConfig {
+  db_host?: string;
+  db_user?: string;
+  db_name?: string;
+}
+
+/** Build a SESSION-mode (port 5432) Supavisor pooler connection string for the
+ *  project's Postgres. The direct host (db.<ref>...) is IPv6-only and unreachable
+ *  from IPv4-only CI runners, so DB commands go through the pooler, which is IPv4.
+ *  Session mode (not the API's default transaction 6543) is required for pg_dump
+ *  (`db dump`). Host/user come from the Management API; the password is ours. */
+export async function getPoolerSessionUrl(
+  apiBaseUrl: string,
+  projectRef: string,
+  password: string,
+  attempts = 12,
+): Promise<string> {
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const res = await fetch(`${apiBaseUrl}/v1/projects/${projectRef}/config/database/pooler`, {
+      headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
+    });
+    if (res.ok) {
+      const raw = (await res.json()) as PoolerConfig | PoolerConfig[];
+      const cfg = Array.isArray(raw) ? raw[0] : raw;
+      if (cfg?.db_host && cfg.db_user) {
+        const name = cfg.db_name ?? "postgres";
+        return `postgresql://${cfg.db_user}:${encodeURIComponent(password)}@${cfg.db_host}:5432/${name}?connect_timeout=30`;
+      }
+    }
+    if (attempt === attempts) {
+      throw new Error(
+        `Failed to resolve pooler config for ${projectRef} after ${attempts} attempts: ${await res
+          .text()
+          .catch(() => res.status)}`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 10_000));
+  }
+  // Unreachable — the loop either returns a URL or throws on the last attempt.
+  throw new Error(`Failed to resolve pooler config for ${projectRef}`);
+}

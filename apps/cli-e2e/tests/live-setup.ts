@@ -12,6 +12,7 @@ import {
   createTestProject,
   deleteTestProject,
   getAnonKey,
+  getPoolerSessionUrl,
   resolveOrgId,
   TEST_DB_PASSWORD,
   waitForProjectReady,
@@ -65,9 +66,9 @@ export async function setup({
     await waitForProjectReady(TARGET_API_URL, projectRef);
     anonKey = await getAnonKey(TARGET_API_URL, projectRef);
     functionsUrl = `https://${projectRef}.${PROJECT_HOST}/functions/v1`;
-    // Direct connection (db.<ref>.<host>:5432) — confirmed reachable; bypasses
-    // the profile's project_host. connect_timeout keeps a bad attempt from hanging.
-    dbUrl = `postgresql://postgres:${TEST_DB_PASSWORD}@db.${projectRef}.${PROJECT_HOST}:5432/postgres?connect_timeout=30`;
+    // IPv4 session-mode pooler — the direct host is IPv6-only (unreachable from
+    // IPv4-only CI runners); the pooler is IPv4 and session mode supports pg_dump.
+    dbUrl = await getPoolerSessionUrl(TARGET_API_URL, projectRef, TEST_DB_PASSWORD);
   } catch (err) {
     // Delete the half-provisioned project, but never mask the original failure.
     if (!KEEP_PROJECT) {
