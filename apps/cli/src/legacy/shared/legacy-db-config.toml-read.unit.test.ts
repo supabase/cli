@@ -495,6 +495,65 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("parses experimental.orioledb_version (env-expanded) on a 15/17 project", () => {
+    process.env["LEGACY_ORIOLE_VER"] = "16.0.0.1";
+    const dir = withConfig(
+      [
+        "[db]",
+        "major_version = 17",
+        "[experimental]",
+        'orioledb_version = "env(LEGACY_ORIOLE_VER)"',
+        's3_host = "s3.example.com"',
+        's3_region = "us-east-1"',
+        's3_access_key = "key"',
+        's3_secret_key = "secret"',
+        "",
+      ].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.orioledbVersion)).toBe("16.0.0.1");
+          delete process.env["LEGACY_ORIOLE_VER"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("warns (does not fail) for an unset S3 env on an OrioleDB project", () => {
+    // Go's assertEnvLoaded prints `WARN: environment variable is unset: <NAME>` to
+    // stderr for an S3 value still holding an unexpanded env(...), and returns nil.
+    delete process.env["LEGACY_S3_KEY"];
+    const writes: Array<string> = [];
+    const original = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+      writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+      return true;
+    }) as typeof process.stderr.write;
+    const dir = withConfig(
+      [
+        "[db]",
+        "major_version = 15",
+        "[experimental]",
+        'orioledb_version = "15.1.0.55"',
+        's3_access_key = "env(LEGACY_S3_KEY)"',
+        "",
+      ].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          // Config load succeeds (warning only), and the orioledb version is parsed.
+          expect(Option.getOrNull(v.orioledbVersion)).toBe("15.1.0.55");
+          expect(writes.join("")).toContain("WARN: environment variable is unset: LEGACY_S3_KEY");
+          process.stderr.write = original;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("keeps the literal password when its env var is unset/empty", () => {
     // Go's LoadEnvHook only substitutes when len(os.Getenv(name)) > 0; otherwise it
     // preserves the literal string. Password is a plain string field, so an

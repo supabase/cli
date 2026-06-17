@@ -65,7 +65,20 @@ export const legacyResolveDbImage = Effect.fnUntraced(function* (
   path: Path.Path,
   workdir: string,
   majorVersion: number,
+  orioledbVersion?: string,
 ) {
+  // OrioleDB override (Go's `config.Validate`, `pkg/config/config.go:876-880`): on a
+  // 15/17 project with `experimental.orioledb_version` set, the Postgres image is
+  // replaced with the OrioleDB tag, taking precedence over the default/pinned image.
+  if (
+    orioledbVersion !== undefined &&
+    orioledbVersion.length > 0 &&
+    (majorVersion === 15 || majorVersion === 17)
+  ) {
+    return versionCompare(orioledbVersion, "15.1.1.13") > 0
+      ? `supabase/postgres:${orioledbVersion}-orioledb`
+      : `supabase/postgres:orioledb-${orioledbVersion}`;
+  }
   let image = LEGACY_PG_IMAGE;
   switch (majorVersion) {
     case 13:

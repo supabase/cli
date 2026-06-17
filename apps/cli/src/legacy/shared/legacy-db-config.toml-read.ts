@@ -35,6 +35,12 @@ interface LegacyDbTomlValues {
   /** `[db] major_version`, default 17 (`apps/cli-go/pkg/config/templates/config.toml:42`). */
   readonly majorVersion: number;
   /**
+   * `[experimental] orioledb_version` (env-expanded). When set on a 15/17 project,
+   * Go's `config.Validate` rewrites the Postgres image to the OrioleDB tag
+   * (`apps/cli-go/pkg/config/config.go:876-894`); `None` for a vanilla project.
+   */
+  readonly orioledbVersion: Option.Option<string>;
+  /**
    * `[edge_runtime] deno_version`, default 2. Selects the edge-runtime image tag:
    * `1` → the `deno1` image, otherwise the default (Go's `config.go:999-1008`).
    */
@@ -467,6 +473,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   let realtimeRaw: RawDoc | undefined;
   let apiRaw: RawDoc | undefined;
   let edgeRuntimeRaw: RawDoc | undefined;
+  let experimentalRaw: RawDoc | undefined;
   let projectId = Option.none<string>();
   if (Option.isSome(maybeContent)) {
     let doc: RawDoc | undefined;
@@ -504,7 +511,8 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     // `project_id` equals the resolved ref over the base, config.go:503-562).
     const effectiveDoc = ref === undefined ? doc : applyRemoteOverride(doc, ref, lookup);
     db = asRecord(effectiveDoc?.["db"]);
-    pgDeltaRaw = asRecord(asRecord(effectiveDoc?.["experimental"])?.["pgdelta"]);
+    experimentalRaw = asRecord(effectiveDoc?.["experimental"]);
+    pgDeltaRaw = asRecord(experimentalRaw?.["pgdelta"]);
     authRaw = asRecord(effectiveDoc?.["auth"]);
     storageRaw = asRecord(effectiveDoc?.["storage"]);
     realtimeRaw = asRecord(effectiveDoc?.["realtime"]);
@@ -611,6 +619,29 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   }
   const majorVersion =
     typeof majorVersionResolved === "number" ? majorVersionResolved : DEFAULT_MAJOR_VERSION;
+
+  // `[experimental] orioledb_version`: on a 15/17 project Go's Validate rewrites the
+  // Postgres image to the OrioleDB tag and `assertEnvLoaded`s the four S3 fields
+  // (`apps/cli-go/pkg/config/config.go:874-894`). Expand env() like every other
+  // field; the image rewrite itself is applied by `legacyResolveDbImage`.
+  const expandString = (value: unknown): Option.Option<string> =>
+    typeof value === "string" ? nonEmptyString(legacyExpandEnv(value, lookup)) : Option.none();
+  const orioledbVersion = expandString(experimentalRaw?.["orioledb_version"]);
+  if (Option.isSome(orioledbVersion) && (majorVersion === 15 || majorVersion === 17)) {
+    // `assertEnvLoaded` warns (does NOT fail) for any S3 value still holding an
+    // unexpanded `env(VAR)` after env loading (`config.go:1029-1034`). Match the
+    // stderr line byte-for-byte; the env var name is the `env(...)` capture.
+    const s3Fields = ["s3_host", "s3_region", "s3_access_key", "s3_secret_key"] as const;
+    for (const field of s3Fields) {
+      const raw = experimentalRaw?.[field];
+      if (typeof raw !== "string") continue;
+      const expanded = legacyExpandEnv(raw, lookup);
+      const unset = ENV_PATTERN.exec(expanded);
+      if (unset !== null) {
+        process.stderr.write(`WARN: environment variable is unset: ${unset[1] ?? ""}\n`);
+      }
+    }
+  }
 
   // `[edge_runtime] deno_version` (default 2). Go switches the edge-runtime image
   // to the `deno1` tag when this is 1 (`apps/cli-go/pkg/config/config.go:999-1008`);
@@ -750,6 +781,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     poolerConnectionString,
     projectId,
     majorVersion,
+    orioledbVersion,
     denoVersion,
     pgDelta: {
       enabled,

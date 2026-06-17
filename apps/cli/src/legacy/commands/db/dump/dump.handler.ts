@@ -199,7 +199,13 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // container path; the dry-run script above is image-independent). Go skips the
     // file OpenFile on dry-run (`internal/db/dump/dump.go:23-32`), so the file is
     // created/truncated only here, after the dry-run early return.
-    const image = yield* legacyResolveDbImage(fs, path, cliConfig.workdir, tomlValues.majorVersion);
+    const image = yield* legacyResolveDbImage(
+      fs,
+      path,
+      cliConfig.workdir,
+      tomlValues.majorVersion,
+      Option.getOrUndefined(tomlValues.orioledbVersion),
+    );
 
     // Resolve a relative `--file` against the workdir: Go chdir's into the workdir
     // in PersistentPreRunE before opening the file (`cmd/root.go:104` →
