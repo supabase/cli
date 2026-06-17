@@ -15,12 +15,11 @@ name: Live E2E
 # Secrets: uses `pull_request` (same-repo branches), never `pull_request_target`,
 # so the staging token is never exposed to fork PRs.
 on:
+  # Dispatched runs use the selected branch (github.ref), which is always a
+  # same-repo branch. We deliberately do NOT take a free-form `ref` input: that
+  # would let a manual run check out arbitrary (e.g. external PR) code while the
+  # staging token is in the job env, bypassing the fork/Dependabot guard below.
   workflow_dispatch:
-    inputs:
-      ref:
-        description: "Branch or PR ref to run the live suite against"
-        required: false
-        type: string
   pull_request:
     types:
       - opened
@@ -50,7 +49,7 @@ jobs:
     # Serialize a target against itself across runs; go and ts-legacy run in
     # parallel. Per-job-scoped project names mean this is mostly belt-and-braces.
     concurrency:
-      group: live-e2e-${{ matrix.target }}-${{ github.event.inputs.ref || github.head_ref || github.ref }}
+      group: live-e2e-${{ matrix.target }}-${{ github.head_ref || github.ref }}
       cancel-in-progress: true
     strategy:
       # Each target is an independent green/red signal.
@@ -73,7 +72,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          ref: ${{ github.event.inputs.ref || github.ref }}
           persist-credentials: false
 
       - name: Setup
