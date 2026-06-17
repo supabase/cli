@@ -38,19 +38,6 @@ export interface LegacyGenTypesDbTarget {
   readonly networkMode: "host" | string;
 }
 
-export function normalizeSchemaFlags(raw: ReadonlyArray<string>): ReadonlyArray<string> {
-  const schemas: string[] = [];
-  for (const value of raw) {
-    for (const schema of value.split(",")) {
-      const trimmed = schema.trim();
-      if (trimmed.length > 0) {
-        schemas.push(trimmed);
-      }
-    }
-  }
-  return schemas;
-}
-
 export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
   return [...new Set(["public", ...extraSchemas])];
 }

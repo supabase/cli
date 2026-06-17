@@ -5,6 +5,7 @@ import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
+import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 
@@ -24,6 +25,12 @@ const dbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
+  // The linked db-config resolver snapshots `LegacyIdentityStitch` (shared with the
+  // lazy platform-API factory + linked-project cache, Go's single `sync.Once`), so
+  // the command runtime must provide it or the bundled binary panics with a
+  // missing-service error (legacy CLAUDE.md rule 5). Its Analytics / TelemetryRuntime
+  // / FileSystem / Path deps are ambient from the root runtime.
+  Layer.provide(legacyIdentityStitchLayer),
 );
 
 export const legacyDbDumpRuntimeLayer = Layer.mergeAll(
@@ -31,6 +38,7 @@ export const legacyDbDumpRuntimeLayer = Layer.mergeAll(
   legacyDbConnectionLayer,
   legacyDockerRunLayer,
   cliConfig,
+  legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["db", "dump"]),
 );

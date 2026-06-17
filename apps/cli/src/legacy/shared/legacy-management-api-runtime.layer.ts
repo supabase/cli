@@ -201,12 +201,3 @@ export function legacyLinkedDbResolverRuntimeLayer(subcommand: ReadonlyArray<str
 type LegacyLinkedDbResolverRuntime = ReturnType<typeof legacyLinkedDbResolverRuntimeLayer>;
 export type LegacyLinkedDbResolverRuntimeRequirements =
   LegacyLinkedDbResolverRuntime extends Layer.Layer<infer _A, infer _E, infer R> ? R : never;
-
-/**
- * The error this runtime layer can fail with at build (access-token resolution).
- * Exported as a named type so `legacy-db-config.service.ts` can express the
- * `--linked` resolve error channel without re-deriving the structural inference.
- */
-type LegacyManagementApiRuntime = ReturnType<typeof legacyManagementApiRuntimeLayer>;
-export type LegacyManagementApiRuntimeError =
-  LegacyManagementApiRuntime extends Layer.Layer<infer _A, infer E, infer _R> ? E : never;

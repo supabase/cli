@@ -7,6 +7,7 @@ import { legacyDbConnectionLayer } from "../../../../../shared/legacy-db-connect
 import { legacyDebugLoggerLayer } from "../../../../../shared/legacy-debug-logger.layer.ts";
 import { legacyDockerRunLayer } from "../../../../../shared/legacy-docker-run.layer.ts";
 import { legacyEdgeRuntimeScriptLayer } from "../../../../../shared/legacy-edge-runtime-script.layer.ts";
+import { legacyIdentityStitchLayer } from "../../../../../shared/legacy-identity-stitch.ts";
 import { legacyPgDeltaSslProbeLayer } from "../../../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyDeclarativeSeamLayer } from "../declarative.seam.layer.ts";
@@ -25,6 +26,10 @@ const dbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
+  // The linked db-config resolver snapshots the single `LegacyIdentityStitch`
+  // (Go's one `sync.Once`); the command runtime must provide it or the bundled
+  // binary panics with a missing-service error (legacy CLAUDE.md rule 5).
+  Layer.provide(legacyIdentityStitchLayer),
 );
 
 const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
@@ -41,6 +46,7 @@ export const legacyDbSchemaDeclarativeSyncRuntimeLayer = Layer.mergeAll(
   seam,
   legacyDbConnectionLayer,
   cliConfig,
+  legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["db", "schema", "declarative", "sync"]),
 );
