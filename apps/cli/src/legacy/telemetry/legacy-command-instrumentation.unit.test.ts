@@ -273,6 +273,34 @@ describe("withLegacyCommandInstrumentation", () => {
     );
   });
 
+  it.live("records db query shorthand -f under its canonical name file", () => {
+    // db query declares only the -f/file shorthand; Go's changedFlags() reports the
+    // canonical `file`, so `db query -f query.sql` must log `file`, not `f`.
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { file: Option.some("query.sql") },
+        aliases: { f: "file" },
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["db", "query", "-f", "query.sql"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["db", "query"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ file: "<redacted>" });
+        }),
+      ),
+    );
+  });
+
   it.live("passes boolean flag values through verbatim", () => {
     const analytics = mockContextualAnalytics();
 

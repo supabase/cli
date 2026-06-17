@@ -69,6 +69,11 @@ export const legacyDbQueryCommand = Command.make("query", config).pipe(
         },
         // db query's Go enum is `json|table|csv`, not the resource-command set.
         outputFormats: LEGACY_QUERY_OUTPUT_FORMATS,
+        // Go registers `--file` with shorthand `-f` (`cmd/db.go:527`) and telemetry
+        // reports changed flags by canonical `flag.Name` via `flags.Visit`
+        // (`cmd/root_analytics.go`), so `-f query.sql` must log as `file`. `f` is
+        // query's only telemetry-relevant shorthand. Mirrors dump.command.ts.
+        aliases: { f: "file" },
       }),
       withJsonErrorHandling,
     ),
