@@ -224,6 +224,16 @@ describe("legacyRenderTablewriter", () => {
     );
   });
 
+  it("sizes columns by terminal rune width so CJK cells stay aligned (Go runewidth)", () => {
+    // "日本語" is 6 display columns, not 3 code points; the borders must match its width.
+    const out = legacyRenderTablewriter(["name"], [["日本語"], ["ab"]]);
+    expect(out).toBe(
+      ["┌────────┐", "│ name   │", "├────────┤", "│ 日本語 │", "│ ab     │", "└────────┘", ""].join(
+        "\n",
+      ),
+    );
+  });
+
   it("renders nothing for an empty column set", () => {
     expect(legacyRenderTablewriter([], [])).toBe("");
   });

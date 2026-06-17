@@ -1,5 +1,7 @@
 import { Option } from "effect";
 
+import { legacyStringWidth } from "../../../shared/legacy-rune-width.ts";
+
 // `JSON.rawJSON` (ES2025, present in Bun) wraps a string so `JSON.stringify` emits it
 // verbatim as a number/literal token — used to serialize int8/bigint exactly, beyond
 // JS number precision. tsgo's bundled lib does not yet declare it.
@@ -301,7 +303,10 @@ export function legacyFindNonFiniteJsonValue(
   return undefined;
 }
 
-const displayWidth = (text: string): number => Array.from(text).length;
+// Go's tablewriter measures cells with `mattn/go-runewidth` (East Asian Wide = 2,
+// zero-width/combining = 0), so column widths/borders align for CJK/emoji output.
+// Counting JS code points would under-measure those cells and misalign the table.
+const displayWidth = (text: string): number => legacyStringWidth(text);
 
 /**
  * Render rows as the `olekukonko/tablewriter` v1 default box layout with
