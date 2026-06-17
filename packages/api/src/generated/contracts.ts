@@ -798,24 +798,26 @@ export const V1CreateASsoProviderOutput = Schema.Struct({
       metadata_xml: Schema.optionalKey(Schema.String),
       attribute_mapping: Schema.optionalKey(
         Schema.Struct({
-          keys: Schema.Record(
-            Schema.String,
-            Schema.Struct({
-              name: Schema.optionalKey(Schema.String),
-              names: Schema.optionalKey(Schema.Array(Schema.String)),
-              default: Schema.optionalKey(
-                Schema.Union(
-                  [
-                    Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
-                    Schema.String,
-                    Schema.Boolean,
-                  ],
-                  { mode: "oneOf" },
+          keys: Schema.optionalKey(
+            Schema.Record(
+              Schema.String,
+              Schema.Struct({
+                name: Schema.optionalKey(Schema.String),
+                names: Schema.optionalKey(Schema.Array(Schema.String)),
+                default: Schema.optionalKey(
+                  Schema.Union(
+                    [
+                      Schema.Struct({}),
+                      Schema.Number.check(Schema.isFinite()),
+                      Schema.String,
+                      Schema.Boolean,
+                    ],
+                    { mode: "oneOf" },
+                  ),
                 ),
-              ),
-              array: Schema.optionalKey(Schema.Boolean),
-            }),
+                array: Schema.optionalKey(Schema.Boolean),
+              }),
+            ),
           ),
         }),
       ),
@@ -1158,24 +1160,26 @@ export const V1DeleteASsoProviderOutput = Schema.Struct({
       metadata_xml: Schema.optionalKey(Schema.String),
       attribute_mapping: Schema.optionalKey(
         Schema.Struct({
-          keys: Schema.Record(
-            Schema.String,
-            Schema.Struct({
-              name: Schema.optionalKey(Schema.String),
-              names: Schema.optionalKey(Schema.Array(Schema.String)),
-              default: Schema.optionalKey(
-                Schema.Union(
-                  [
-                    Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
-                    Schema.String,
-                    Schema.Boolean,
-                  ],
-                  { mode: "oneOf" },
+          keys: Schema.optionalKey(
+            Schema.Record(
+              Schema.String,
+              Schema.Struct({
+                name: Schema.optionalKey(Schema.String),
+                names: Schema.optionalKey(Schema.Array(Schema.String)),
+                default: Schema.optionalKey(
+                  Schema.Union(
+                    [
+                      Schema.Struct({}),
+                      Schema.Number.check(Schema.isFinite()),
+                      Schema.String,
+                      Schema.Boolean,
+                    ],
+                    { mode: "oneOf" },
+                  ),
                 ),
-              ),
-              array: Schema.optionalKey(Schema.Boolean),
-            }),
+                array: Schema.optionalKey(Schema.Boolean),
+              }),
+            ),
           ),
         }),
       ),
@@ -1616,30 +1620,32 @@ export const V1GetASsoProviderOutput = Schema.Struct({
   id: Schema.String,
   saml: Schema.optionalKey(
     Schema.Struct({
-      id: Schema.String,
+      id: Schema.optionalKey(Schema.String),
       entity_id: Schema.String,
       metadata_url: Schema.optionalKey(Schema.String),
       metadata_xml: Schema.optionalKey(Schema.String),
       attribute_mapping: Schema.optionalKey(
         Schema.Struct({
-          keys: Schema.Record(
-            Schema.String,
-            Schema.Struct({
-              name: Schema.optionalKey(Schema.String),
-              names: Schema.optionalKey(Schema.Array(Schema.String)),
-              default: Schema.optionalKey(
-                Schema.Union(
-                  [
-                    Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
-                    Schema.String,
-                    Schema.Boolean,
-                  ],
-                  { mode: "oneOf" },
+          keys: Schema.optionalKey(
+            Schema.Record(
+              Schema.String,
+              Schema.Struct({
+                name: Schema.optionalKey(Schema.String),
+                names: Schema.optionalKey(Schema.Array(Schema.String)),
+                default: Schema.optionalKey(
+                  Schema.Union(
+                    [
+                      Schema.Struct({}),
+                      Schema.Number.check(Schema.isFinite()),
+                      Schema.String,
+                      Schema.Boolean,
+                    ],
+                    { mode: "oneOf" },
+                  ),
                 ),
-              ),
-              array: Schema.optionalKey(Schema.Boolean),
-            }),
+                array: Schema.optionalKey(Schema.Boolean),
+              }),
+            ),
           ),
         }),
       ),
@@ -3623,24 +3629,26 @@ export const V1ListAllSsoProviderOutput = Schema.Struct({
           metadata_xml: Schema.optionalKey(Schema.String),
           attribute_mapping: Schema.optionalKey(
             Schema.Struct({
-              keys: Schema.Record(
-                Schema.String,
-                Schema.Struct({
-                  name: Schema.optionalKey(Schema.String),
-                  names: Schema.optionalKey(Schema.Array(Schema.String)),
-                  default: Schema.optionalKey(
-                    Schema.Union(
-                      [
-                        Schema.Struct({}),
-                        Schema.Number.check(Schema.isFinite()),
-                        Schema.String,
-                        Schema.Boolean,
-                      ],
-                      { mode: "oneOf" },
+              keys: Schema.optionalKey(
+                Schema.Record(
+                  Schema.String,
+                  Schema.Struct({
+                    name: Schema.optionalKey(Schema.String),
+                    names: Schema.optionalKey(Schema.Array(Schema.String)),
+                    default: Schema.optionalKey(
+                      Schema.Union(
+                        [
+                          Schema.Struct({}),
+                          Schema.Number.check(Schema.isFinite()),
+                          Schema.String,
+                          Schema.Boolean,
+                        ],
+                        { mode: "oneOf" },
+                      ),
                     ),
-                  ),
-                  array: Schema.optionalKey(Schema.Boolean),
-                }),
+                    array: Schema.optionalKey(Schema.Boolean),
+                  }),
+                ),
               ),
             }),
           ),
@@ -4388,24 +4396,26 @@ export const V1UpdateASsoProviderOutput = Schema.Struct({
       metadata_xml: Schema.optionalKey(Schema.String),
       attribute_mapping: Schema.optionalKey(
         Schema.Struct({
-          keys: Schema.Record(
-            Schema.String,
-            Schema.Struct({
-              name: Schema.optionalKey(Schema.String),
-              names: Schema.optionalKey(Schema.Array(Schema.String)),
-              default: Schema.optionalKey(
-                Schema.Union(
-                  [
-                    Schema.Struct({}),
-                    Schema.Number.check(Schema.isFinite()),
-                    Schema.String,
-                    Schema.Boolean,
-                  ],
-                  { mode: "oneOf" },
+          keys: Schema.optionalKey(
+            Schema.Record(
+              Schema.String,
+              Schema.Struct({
+                name: Schema.optionalKey(Schema.String),
+                names: Schema.optionalKey(Schema.Array(Schema.String)),
+                default: Schema.optionalKey(
+                  Schema.Union(
+                    [
+                      Schema.Struct({}),
+                      Schema.Number.check(Schema.isFinite()),
+                      Schema.String,
+                      Schema.Boolean,
+                    ],
+                    { mode: "oneOf" },
+                  ),
                 ),
-              ),
-              array: Schema.optionalKey(Schema.Boolean),
-            }),
+                array: Schema.optionalKey(Schema.Boolean),
+              }),
+            ),
           ),
         }),
       ),

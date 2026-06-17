@@ -136,6 +136,24 @@ export const legacyProjectRefLayer = Layer.effect(
           }
           return yield* readRefFile;
         }),
+      loadProjectRef: (flagValue) =>
+        Effect.gen(function* () {
+          // Go's `flags.LoadProjectRef`: flag → env → ref file → hard
+          // `ErrNotLinked`, with format validation, and NO interactive prompt.
+          if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+            return yield* assertValid(flagValue.value);
+          }
+          if (Option.isSome(cliConfig.projectId)) {
+            return yield* assertValid(cliConfig.projectId.value);
+          }
+          const fileValue = yield* readRefFile;
+          if (Option.isSome(fileValue)) {
+            return yield* assertValid(fileValue.value);
+          }
+          return yield* Effect.fail(
+            new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
+          );
+        }),
       promptProjectRef: promptForProjectRef,
     });
   }),

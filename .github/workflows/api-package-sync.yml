@@ -74,6 +74,8 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Regenerate API package
         run: pnpm generate

@@ -2,6 +2,12 @@ name: Setup
 
 description: Perform standard setup and install dependencies using pnpm
 
+inputs:
+  dependency-firewall-token:
+    description: Token used to authenticate the Dependency Firewall registry
+    required: false
+    default: ""
+
 runs:
   using: "composite"
   steps:
@@ -55,4 +61,18 @@ runs:
 
     - name: Install dependencies
       shell: bash
-      run: pnpm install --frozen-lockfile
+      env:
+        DEPENDENCY_FIREWALL_TOKEN: ${{ inputs.dependency-firewall-token }}
+      run: |
+        if [ -z "$DEPENDENCY_FIREWALL_TOKEN" ]; then
+          echo "Dependency Firewall token unavailable; using default npm registry."
+          pnpm install --frozen-lockfile
+          exit 0
+        fi
+
+        npmrc="${RUNNER_TEMP}/dependency-firewall.npmrc"
+        {
+          echo "registry=https://firewall.depthfirst.com/npm/"
+          echo "//firewall.depthfirst.com/npm/:_authToken=${DEPENDENCY_FIREWALL_TOKEN}"
+        } > "$npmrc"
+        NPM_CONFIG_USERCONFIG="$npmrc" pnpm install --frozen-lockfile

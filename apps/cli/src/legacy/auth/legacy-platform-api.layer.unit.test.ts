@@ -14,6 +14,7 @@ import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
+import { legacyIdentityStitchLayer } from "../shared/legacy-identity-stitch.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import { legacyPlatformApiLayer } from "./legacy-platform-api.layer.ts";
 import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
@@ -167,22 +168,30 @@ function withBaseDeps(
   } = {},
 ) {
   const analytics = opts.analytics ?? mockAnalytics();
+  // The typed client now consumes the single `LegacyIdentityStitch` service rather
+  // than building its own stitcher, so build that service from the test's
+  // Analytics / TelemetryRuntime / FileSystem / Path fakes and provide it. The
+  // underlying stitch behaviour is identical (the service wraps the same
+  // `makeLegacyIdentityStitcher`), so all alias/persist assertions still hold.
+  const identityStitch = legacyIdentityStitchLayer.pipe(
+    Layer.provide(analytics.layer),
+    Layer.provide(
+      mockTelemetryRuntime({
+        configDir: opts.configDir,
+        distinctId: opts.distinctId,
+        isFirstRun: opts.isFirstRun,
+        isTty: opts.isTty,
+        isCi: opts.isCi,
+      }),
+    ),
+    Layer.provide(nodeFileSystemLayer()),
+    Layer.provide(nodePathLayer()),
+  );
   return <ROut, E, RIn>(layer: Layer.Layer<ROut, E, RIn>) =>
     layer.pipe(
-      Layer.provide(analytics.layer),
-      Layer.provide(
-        mockTelemetryRuntime({
-          configDir: opts.configDir,
-          distinctId: opts.distinctId,
-          isFirstRun: opts.isFirstRun,
-          isTty: opts.isTty,
-          isCi: opts.isCi,
-        }),
-      ),
+      Layer.provide(identityStitch),
       Layer.provide(legacyDebugLoggerLayer),
       Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
-      Layer.provide(nodeFileSystemLayer()),
-      Layer.provide(nodePathLayer()),
     );
 }
 
@@ -261,6 +270,38 @@ describe("legacyPlatformApiLayer", () => {
       }
     });
   });
+
+  it.effect(
+    "fails with the invalid-token error when the env token is malformed (Go parity)",
+    () => {
+      // Go's GetSupabase() → LoadAccessTokenFS validates the env token against the
+      // sbp_ pattern before any API call; a malformed SUPABASE_ACCESS_TOKEN must
+      // fail with ErrInvalidToken, not be sent to the API.
+      const http = captureRequests();
+      const layer = legacyPlatformApiLayer.pipe(
+        Layer.provide(mockCliConfig({ accessToken: "sbp_not_a_valid_token" })),
+        Layer.provide(mockCredentials(Option.none())),
+        Layer.provide(http.layer),
+        withBaseDeps(),
+      );
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          Effect.gen(function* () {
+            const api = yield* LegacyPlatformApi;
+            return yield* api.v1.listAllProjects();
+          }).pipe(Effect.provide(layer)),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const errorJson = JSON.stringify(exit.cause);
+          expect(errorJson).toContain("LegacyInvalidAccessTokenError");
+          expect(errorJson).toContain("Invalid access token format");
+        }
+        // The bad token was never sent to the API.
+        expect(http.requests).toHaveLength(0);
+      });
+    },
+  );
 
   it.effect("sends Go-style User-Agent and no X-Supabase-Command headers", () => {
     const http = captureRequests();

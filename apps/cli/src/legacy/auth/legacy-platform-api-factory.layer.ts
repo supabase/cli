@@ -1,6 +1,7 @@
 import { FetchHttpClient } from "effect/unstable/http";
 import { Effect, Layer } from "effect";
 
+import { legacyDohFetchLayer } from "../shared/legacy-http-dns.ts";
 import { legacyMakePlatformApi } from "./legacy-platform-api.layer.ts";
 import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
 import { LegacyPlatformApiFactory } from "./legacy-platform-api-factory.service.ts";
@@ -12,6 +13,10 @@ type LegacyPlatformApiDeps =
  * Captures the surrounding Management API context without resolving an access
  * token. The raw fetch client is provided here so `legacyMakePlatformApi` owns
  * the single typed-API debug wrapper.
+ *
+ * `legacyDohFetchLayer` overrides `FetchHttpClient.Fetch` so that when the
+ * factory's `make` resolves on the `--linked` path, the typed API client
+ * honours `--dns-resolver https` — mirroring Go's `withFallbackDNS` hook.
  */
 export const legacyPlatformApiFactoryLayer = Layer.effect(
   LegacyPlatformApiFactory,
@@ -23,7 +28,7 @@ export const legacyPlatformApiFactoryLayer = Layer.effect(
       make,
     });
   }),
-).pipe(Layer.provide(FetchHttpClient.layer));
+).pipe(Layer.provide(FetchHttpClient.layer), Layer.provide(legacyDohFetchLayer));
 
 /**
  * Adapts an already-built eager `LegacyPlatformApi` into a factory. Use this in

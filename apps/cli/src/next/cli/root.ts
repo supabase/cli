@@ -7,6 +7,7 @@ import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../../shared/cli
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { branchesCommand } from "../commands/branches/branches.command.ts";
 import { functionsCommand } from "../commands/functions/functions.command.ts";
+import { issueCommand } from "../commands/issue/issue.command.ts";
 import { linkCommand } from "../commands/link/link.command.ts";
 import { initCommand } from "../commands/init/init.command.ts";
 import { listCommand } from "../commands/list/list.command.ts";
@@ -36,6 +37,7 @@ export const nextRoot = Command.make("supabase").pipe(
     loginCommand,
     logoutCommand,
     telemetryCommand,
+    issueCommand,
     functionsCommand,
     branchesCommand,
     linkCommand,

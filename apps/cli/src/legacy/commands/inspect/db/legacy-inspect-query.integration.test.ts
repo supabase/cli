@@ -3,6 +3,7 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { mockLegacyTelemetryStateTracked } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -144,6 +145,8 @@ interface SetupOpts {
   connectFails?: boolean;
   queryFails?: boolean;
   dnsResolver?: "native" | "https";
+  /** Raw CLI args slice — drives Changed-based flag detection (cobra parity). */
+  cliArgs?: ReadonlyArray<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -165,6 +168,7 @@ function setup(opts: SetupOpts = {}) {
     connection.layer,
     telemetry.layer,
     Layer.succeed(LegacyDnsResolverFlag, opts.dnsResolver ?? "native"),
+    Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
   );
   return { layer, out, resolver, connection, telemetry };
 }
@@ -258,21 +262,21 @@ describe("legacy inspect db query runner", () => {
       conn: REMOTE_CONN,
       isLocal: false,
       rows: [DB_STATS_ROW],
+      cliArgs: ["--db-url=postgres://x"],
     });
     return Effect.gen(function* () {
       yield* legacyInspectDbDbStats(flags({ dbUrl: Option.some("postgres://x") }));
       expect(Option.isSome(resolver.resolveInput?.dbUrl ?? Option.none())).toBe(true);
-      expect(resolver.resolveInput?.linked).toBe(false);
+      expect(resolver.resolveInput?.connType).toBe("db-url");
       expect(connection.connectCalls[0]?.isLocal).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("inspects the local database", () => {
-    const { layer, resolver, out } = setup({ rows: [DB_STATS_ROW] });
+    const { layer, resolver, out } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--local"] });
     return Effect.gen(function* () {
       yield* legacyInspectDbDbStats(flags({ local: true }));
-      expect(resolver.resolveInput?.local).toBe(true);
-      expect(resolver.resolveInput?.linked).toBe(false);
+      expect(resolver.resolveInput?.connType).toBe("local");
       expect(out.stderrText).toContain("Connecting to local database...");
     }).pipe(Effect.provide(layer));
   });
@@ -281,15 +285,19 @@ describe("legacy inspect db query runner", () => {
     const { layer, resolver } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* legacyInspectDbDbStats(flags());
-      // Go's `--linked` defaults to true; the runner derives it from absence.
-      expect(resolver.resolveInput?.linked).toBe(true);
-      expect(resolver.resolveInput?.local).toBe(false);
+      // Go's `--linked` defaults to true; the runner derives connType="linked" from absence.
+      expect(resolver.resolveInput?.connType).toBe("linked");
       expect(Option.isNone(resolver.resolveInput?.dbUrl ?? Option.some("x"))).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("labels the diagnostic 'remote' for a non-local connection", () => {
-    const { layer, out } = setup({ conn: REMOTE_CONN, isLocal: false, rows: [DB_STATS_ROW] });
+    const { layer, out } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      rows: [DB_STATS_ROW],
+      cliArgs: ["--db-url=postgres://x"],
+    });
     return Effect.gen(function* () {
       yield* legacyInspectDbDbStats(flags({ dbUrl: Option.some("postgres://x") }));
       expect(out.stderrText).toContain("Connecting to remote database...");
@@ -297,7 +305,7 @@ describe("legacy inspect db query runner", () => {
   });
 
   it.live("rejects conflicting connection flags", () => {
-    const { layer } = setup();
+    const { layer } = setup({ cliArgs: ["--linked", "--local"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyInspectDbDbStats(flags({ linked: true, local: true })));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -314,6 +322,50 @@ describe("legacy inspect db query runner", () => {
           }
         }
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--local=false is Changed and routes to local (not linked)", () => {
+    // Go's pflag treats `--local=false` as Changed regardless of value; value-based
+    // detection would miss it and fall through to the linked default. This test guards
+    // that regression.
+    const { layer, resolver } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--local=false"] });
+    return Effect.gen(function* () {
+      yield* legacyInspectDbDbStats(flags({ local: false }));
+      expect(resolver.resolveInput?.connType).toBe("local");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--linked --local=false raises the mutual-exclusion error", () => {
+    // Both flags are Changed (one explicit false, one true) → cobra raises the
+    // mutual-exclusion error regardless of their boolean values.
+    const { layer } = setup({ cliArgs: ["--linked", "--local=false"] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyInspectDbDbStats(flags({ linked: true, local: false })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure)) {
+          const error = failure.value;
+          expect(error).toBeInstanceOf(LegacyInspectMutuallyExclusiveFlagsError);
+          if (error instanceof LegacyInspectMutuallyExclusiveFlagsError) {
+            expect(error.message).toBe(
+              "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+            );
+          }
+        }
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--linked routes to linked", () => {
+    const { layer, resolver } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--linked"] });
+    return Effect.gen(function* () {
+      yield* legacyInspectDbDbStats(flags({ linked: true }));
+      expect(resolver.resolveInput?.connType).toBe("linked");
     }).pipe(Effect.provide(layer));
   });
 

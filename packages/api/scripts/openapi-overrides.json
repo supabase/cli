@@ -11,6 +11,66 @@
   },
   {
     "op": "test",
+    "path": "/components/schemas/GetProviderResponse/properties/saml/required",
+    "value": ["id", "entity_id"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/GetProviderResponse/properties/saml/required",
+    "value": ["entity_id"]
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/CreateProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": ["keys"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/CreateProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": []
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/GetProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": ["keys"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/GetProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": []
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/ListProvidersResponse/properties/items/items/properties/saml/properties/attribute_mapping/required",
+    "value": ["keys"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/ListProvidersResponse/properties/items/items/properties/saml/properties/attribute_mapping/required",
+    "value": []
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/UpdateProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": ["keys"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/UpdateProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": []
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/DeleteProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": ["keys"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/DeleteProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": []
+  },
+  {
+    "op": "test",
     "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/properties/ssl/required",
     "value": ["status", "validation_records"]
   },
