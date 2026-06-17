@@ -45,9 +45,10 @@ jobs:
         with:
           script: |
             const eventName = context.eventName;
+            const workflowInputs = context.payload.inputs ?? {};
             const execute =
               eventName === "workflow_dispatch" &&
-              core.getInput("execute", { required: false }) === "true";
+              workflowInput("execute", "false") === "true";
             const issueDays = positiveIntegerInput("issue-days", "45");
             const prDays = positiveIntegerInput("pr-days", "60");
             const maxItems = positiveIntegerInput("max-items", "25");
@@ -163,8 +164,13 @@ jobs:
               cappedCount,
             });
 
+            function workflowInput(name, fallback) {
+              const value = workflowInputs[name];
+              return value === undefined || value === "" ? fallback : value;
+            }
+
             function positiveIntegerInput(name, fallback) {
-              const raw = core.getInput(name, { required: false }) || fallback;
+              const raw = workflowInput(name, fallback);
               const value = Number(raw);
               if (!Number.isInteger(value) || value <= 0) {
                 throw new Error(`${name} must be a positive integer, got ${raw}`);
@@ -173,7 +179,7 @@ jobs:
             }
 
             function commaSeparatedInput(name, fallback) {
-              const raw = core.getInput(name, { required: false }) || fallback;
+              const raw = workflowInput(name, fallback);
               return raw
                 .split(",")
                 .map((value) => value.trim())
