@@ -24,7 +24,7 @@ const bugFlags = {
   actualOutput: optionalTextFlag("actual-output", "Actual output or error text"),
   expectedBehavior: optionalTextFlag("expected-behavior", "Expected behavior"),
   reproduce: optionalTextFlag("reproduce", "Steps to reproduce"),
-  ticketId: optionalTextFlag("ticket-id", "Crash report or support ticket ID"),
+  crashReportId: optionalTextFlag("crash-report-id", "Crash report ID printed by --create-ticket"),
   dockerServices: optionalTextFlag("docker-services", "Relevant Docker service status or logs"),
   additionalContext: commonContextFlag,
   noBrowser: noBrowserFlag,
@@ -65,8 +65,8 @@ const bugIssueCommand = Command.make("bug", bugFlags).pipe(
       description: "Open a prefilled bug report for a failing command",
     },
     {
-      command: 'supabase issue bug --ticket-id "abc123" --no-browser',
-      description: "Print a prefilled issue URL for a crash report",
+      command: 'supabase issue bug --crash-report-id "abc123" --no-browser',
+      description: "Print a prefilled issue URL with a crash report ID",
     },
   ]),
   Command.withHandler((flags) =>

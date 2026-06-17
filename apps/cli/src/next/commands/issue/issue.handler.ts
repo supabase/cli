@@ -39,7 +39,7 @@ export const openBugIssue = Effect.fn("issue.bug")(function* (flags: BugIssueFla
       "actual-output": readIssueFlagValue(flags.actualOutput),
       "expected-behavior": readIssueFlagValue(flags.expectedBehavior),
       reproduce: readIssueFlagValue(flags.reproduce),
-      "ticket-id": readIssueFlagValue(flags.ticketId),
+      "ticket-id": readIssueFlagValue(flags.crashReportId),
       "docker-services": readIssueFlagValue(flags.dockerServices),
       "additional-context": readIssueFlagValue(flags.additionalContext),
     },

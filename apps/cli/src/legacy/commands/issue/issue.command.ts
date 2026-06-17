@@ -24,7 +24,10 @@ const legacyIssueBugConfig = {
   actualOutput: legacyIssueOptionalTextFlag("actual-output", "Actual output or error text."),
   expectedBehavior: legacyIssueOptionalTextFlag("expected-behavior", "Expected behavior."),
   reproduce: legacyIssueOptionalTextFlag("reproduce", "Steps to reproduce."),
-  ticketId: legacyIssueOptionalTextFlag("ticket-id", "Crash report or support ticket ID."),
+  crashReportId: legacyIssueOptionalTextFlag(
+    "crash-report-id",
+    "Crash report ID printed by --create-ticket.",
+  ),
   dockerServices: legacyIssueOptionalTextFlag(
     "docker-services",
     "Relevant Docker service status or logs.",
@@ -70,8 +73,8 @@ const legacyIssueBugCommand = Command.make("bug", legacyIssueBugConfig).pipe(
       description: "Open a prefilled bug report for a failing command",
     },
     {
-      command: 'supabase issue bug --ticket-id "abc123" --no-browser',
-      description: "Print a prefilled issue URL for a crash report",
+      command: 'supabase issue bug --crash-report-id "abc123" --no-browser',
+      description: "Print a prefilled issue URL with a crash report ID",
     },
   ]),
   Command.withHandler((flags) =>

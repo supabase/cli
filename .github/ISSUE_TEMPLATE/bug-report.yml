@@ -104,8 +104,8 @@ body:
   - type: input
     id: ticket-id
     attributes:
-      label: Debug ticket ID
-      description: If possible, rerun the failing command with `--create-ticket` and paste the ticket ID.
+      label: Crash report ID
+      description: If the CLI printed one after rerunning with `--create-ticket`, paste the crash report ID.
       placeholder: ab1ac733e31e4f928a4d7c8402543712
     validations:
       required: false
