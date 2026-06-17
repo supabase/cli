@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -369,6 +369,23 @@ describe("legacy db dump integration", () => {
       // The script must have $PGHOST expanded from the resolved local connection.
       expect(out.stdoutText).toContain('export PGHOST="127.0.0.1"');
       expect(docker.lastOpts).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("prints the post-run Dumped-schema message on --dry-run --file without writing", () => {
+    // Go's dump.Run skips opening the file on dry-run but returns success, so cobra's
+    // PostRun still prints `Dumped schema to <abs>.` (cmd/db.go:148-156), with no
+    // dry-run guard and without touching the file (dump.go:23-32).
+    const filePath = join(tmp.current, "dry.sql");
+    const { layer, out, docker } = setup({ isLocal: true });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some(filePath) }));
+      expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
+      expect(out.stderrText).toContain(`Dumped schema to`);
+      expect(out.stderrText).toContain(filePath);
+      // No container ran and the file was never created/truncated on dry-run.
+      expect(docker.lastOpts).toBeUndefined();
+      expect(existsSync(filePath)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

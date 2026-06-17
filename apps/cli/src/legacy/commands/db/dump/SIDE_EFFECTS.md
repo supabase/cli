@@ -17,7 +17,7 @@ script run inside the local Postgres image to stdout or `--file`.
 
 | Path                            | Format | When                                                       |
 | ------------------------------- | ------ | ---------------------------------------------------------- |
-| `<path>` (from `--file` / `-f`) | SQL    | when `--file` is set (created/truncated `0644` before run) |
+| `<path>` (from `--file` / `-f`) | SQL    | when `--file` is set and **not** `--dry-run` (created/truncated `0644` before run) |
 
 ## API Routes
 
@@ -52,7 +52,9 @@ no `--output-format` for `db dump`, so there is no machine envelope (same
 rationale as `test db`). Diagnostics go to **stderr**: `Dumping {schemas|data|
 roles} from {local|remote} database...`, the `--dry-run` notice, and the
 `Dumped schema to <abs>.` confirmation when `--file` is used. `--dry-run` prints
-the env-expanded script to stdout without running a container.
+the env-expanded script to stdout without running a container; with `--file` it
+still prints the `Dumped schema to <abs>.` confirmation (Go's PostRun fires on the
+successful dry-run) but does **not** create or truncate the file.
 
 > **Credential warning:** `--dry-run` expands the pg_dump script with live env
 > values, so the resolved `PGPASSWORD` (for a remote/linked project, the database

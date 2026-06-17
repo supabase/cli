@@ -221,6 +221,16 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       yield* output.raw("DRY RUN: *only* printing the pg_dump script to console.\n", "stderr");
       yield* output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr");
       yield* output.raw(`${legacyExpandScript(mode.script, modeEnv)}\n`);
+      // Go's `dump.Run` skips opening the file on dry-run but returns success, so the
+      // cobra `PostRun` (not `PostRunE`) still prints `Dumped schema to <abs>.` when
+      // `--file` is set (`cmd/db.go:148-156`), with no dry-run guard. Emit the same
+      // stderr line here WITHOUT creating/truncating the file — Go never touches it on
+      // a dry-run (`internal/db/dump/dump.go:23-32`). Resolve the path like the real
+      // path (Go's `filepath.Abs` after the PreRun chdir into the workdir).
+      if (Option.isSome(flags.file)) {
+        const dryRunFile = path.resolve(cliConfig.workdir, flags.file.value);
+        yield* output.raw(`Dumped schema to ${legacyBold(dryRunFile)}.\n`, "stderr");
+      }
       return;
     }
 
