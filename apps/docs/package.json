@@ -8,17 +8,17 @@
     "build": "bun run generate && next build"
   },
   "dependencies": {
-    "fumadocs-core": "^16.9.1",
-    "fumadocs-mdx": "^15.0.9",
-    "fumadocs-ui": "^16.9.1",
-    "next": "^16.2.6",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "fumadocs-core": "^16.9.3",
+    "fumadocs-mdx": "^15.0.11",
+    "fumadocs-ui": "^16.9.3",
+    "next": "^16.2.9",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
-    "@types/mdx": "^2.0.13",
-    "@types/node": "^25.9.1",
-    "@types/react": "^19.2.15",
+    "@types/mdx": "^2.0.14",
+    "@types/node": "^25.9.2",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^19.1.6",
     "typescript": "^6.0.3"
   },

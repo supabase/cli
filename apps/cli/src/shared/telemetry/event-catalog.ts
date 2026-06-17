@@ -28,6 +28,7 @@ export const PropCommand = "command";
 export const PropFlags = "flags";
 export const PropExitCode = "exit_code";
 export const PropDurationMs = "duration_ms";
+export const PropOutputFormat = "output_format";
 
 export const GroupOrganization = "organization";
 export const GroupProject = "project";

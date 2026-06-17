@@ -55,6 +55,7 @@ const (
 	ApplyProjectAddonBodyAddonTypeAuthMfaWebAuthn ApplyProjectAddonBodyAddonType = "auth_mfa_web_authn"
 	ApplyProjectAddonBodyAddonTypeComputeInstance ApplyProjectAddonBodyAddonType = "compute_instance"
 	ApplyProjectAddonBodyAddonTypeCustomDomain    ApplyProjectAddonBodyAddonType = "custom_domain"
+	ApplyProjectAddonBodyAddonTypeEtlPipeline     ApplyProjectAddonBodyAddonType = "etl_pipeline"
 	ApplyProjectAddonBodyAddonTypeIpv4            ApplyProjectAddonBodyAddonType = "ipv4"
 	ApplyProjectAddonBodyAddonTypeLogDrain        ApplyProjectAddonBodyAddonType = "log_drain"
 	ApplyProjectAddonBodyAddonTypePitr            ApplyProjectAddonBodyAddonType = "pitr"
@@ -543,6 +544,7 @@ const (
 	ListProjectAddonsResponseAvailableAddonsTypeAuthMfaWebAuthn ListProjectAddonsResponseAvailableAddonsType = "auth_mfa_web_authn"
 	ListProjectAddonsResponseAvailableAddonsTypeComputeInstance ListProjectAddonsResponseAvailableAddonsType = "compute_instance"
 	ListProjectAddonsResponseAvailableAddonsTypeCustomDomain    ListProjectAddonsResponseAvailableAddonsType = "custom_domain"
+	ListProjectAddonsResponseAvailableAddonsTypeEtlPipeline     ListProjectAddonsResponseAvailableAddonsType = "etl_pipeline"
 	ListProjectAddonsResponseAvailableAddonsTypeIpv4            ListProjectAddonsResponseAvailableAddonsType = "ipv4"
 	ListProjectAddonsResponseAvailableAddonsTypeLogDrain        ListProjectAddonsResponseAvailableAddonsType = "log_drain"
 	ListProjectAddonsResponseAvailableAddonsTypePitr            ListProjectAddonsResponseAvailableAddonsType = "pitr"
@@ -602,6 +604,11 @@ const (
 	ListProjectAddonsResponseAvailableAddonsVariantsId6LogDrainDefault ListProjectAddonsResponseAvailableAddonsVariantsId6 = "log_drain_default"
 )
 
+// Defines values for ListProjectAddonsResponseAvailableAddonsVariantsId7.
+const (
+	ListProjectAddonsResponseAvailableAddonsVariantsId7EtlPipelineDefault ListProjectAddonsResponseAvailableAddonsVariantsId7 = "etl_pipeline_default"
+)
+
 // Defines values for ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval.
 const (
 	ListProjectAddonsResponseAvailableAddonsVariantsPriceIntervalHourly  ListProjectAddonsResponseAvailableAddonsVariantsPriceInterval = "hourly"
@@ -620,6 +627,7 @@ const (
 	ListProjectAddonsResponseSelectedAddonsTypeAuthMfaWebAuthn ListProjectAddonsResponseSelectedAddonsType = "auth_mfa_web_authn"
 	ListProjectAddonsResponseSelectedAddonsTypeComputeInstance ListProjectAddonsResponseSelectedAddonsType = "compute_instance"
 	ListProjectAddonsResponseSelectedAddonsTypeCustomDomain    ListProjectAddonsResponseSelectedAddonsType = "custom_domain"
+	ListProjectAddonsResponseSelectedAddonsTypeEtlPipeline     ListProjectAddonsResponseSelectedAddonsType = "etl_pipeline"
 	ListProjectAddonsResponseSelectedAddonsTypeIpv4            ListProjectAddonsResponseSelectedAddonsType = "ipv4"
 	ListProjectAddonsResponseSelectedAddonsTypeLogDrain        ListProjectAddonsResponseSelectedAddonsType = "log_drain"
 	ListProjectAddonsResponseSelectedAddonsTypePitr            ListProjectAddonsResponseSelectedAddonsType = "pitr"
@@ -679,6 +687,11 @@ const (
 	ListProjectAddonsResponseSelectedAddonsVariantId6LogDrainDefault ListProjectAddonsResponseSelectedAddonsVariantId6 = "log_drain_default"
 )
 
+// Defines values for ListProjectAddonsResponseSelectedAddonsVariantId7.
+const (
+	ListProjectAddonsResponseSelectedAddonsVariantId7EtlPipelineDefault ListProjectAddonsResponseSelectedAddonsVariantId7 = "etl_pipeline_default"
+)
+
 // Defines values for ListProjectAddonsResponseSelectedAddonsVariantPriceInterval.
 const (
 	ListProjectAddonsResponseSelectedAddonsVariantPriceIntervalHourly  ListProjectAddonsResponseSelectedAddonsVariantPriceInterval = "hourly"
@@ -729,8 +742,9 @@ const (
 
 // Defines values for OAuthTokenBodyGrantType.
 const (
-	AuthorizationCode OAuthTokenBodyGrantType = "authorization_code"
-	RefreshToken      OAuthTokenBodyGrantType = "refresh_token"
+	AuthorizationCode                    OAuthTokenBodyGrantType = "authorization_code"
+	RefreshToken                         OAuthTokenBodyGrantType = "refresh_token"
+	UrnIetfParamsOauthGrantTypeJwtBearer OAuthTokenBodyGrantType = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 )
 
 // Defines values for OAuthTokenResponseTokenType.
@@ -3014,6 +3028,9 @@ type ListProjectAddonsResponseAvailableAddonsVariantsId5 string
 // ListProjectAddonsResponseAvailableAddonsVariantsId6 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.6.
 type ListProjectAddonsResponseAvailableAddonsVariantsId6 string
 
+// ListProjectAddonsResponseAvailableAddonsVariantsId7 defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.7.
+type ListProjectAddonsResponseAvailableAddonsVariantsId7 string
+
 // ListProjectAddonsResponse_AvailableAddons_Variants_Id defines model for ListProjectAddonsResponse.AvailableAddons.Variants.Id.
 type ListProjectAddonsResponse_AvailableAddons_Variants_Id struct {
 	union json.RawMessage
@@ -3048,6 +3065,9 @@ type ListProjectAddonsResponseSelectedAddonsVariantId5 string
 
 // ListProjectAddonsResponseSelectedAddonsVariantId6 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.6.
 type ListProjectAddonsResponseSelectedAddonsVariantId6 string
+
+// ListProjectAddonsResponseSelectedAddonsVariantId7 defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.7.
+type ListProjectAddonsResponseSelectedAddonsVariantId7 string
 
 // ListProjectAddonsResponse_SelectedAddons_Variant_Id defines model for ListProjectAddonsResponse.SelectedAddons.Variant.Id.
 type ListProjectAddonsResponse_SelectedAddons_Variant_Id struct {
@@ -3193,6 +3213,8 @@ type OAuthRevokeTokenBody struct {
 
 // OAuthTokenBody defines model for OAuthTokenBody.
 type OAuthTokenBody struct {
+	// Assertion IDJAG assertion JWT for grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer. Beta - available on Team and Enterprise plans only.
+	Assertion    *string                  `json:"assertion,omitempty"`
 	ClientId     *openapi_types.UUID      `json:"client_id,omitempty"`
 	ClientSecret *string                  `json:"client_secret,omitempty"`
 	Code         *string                  `json:"code,omitempty"`
@@ -3211,9 +3233,11 @@ type OAuthTokenBodyGrantType string
 
 // OAuthTokenResponse defines model for OAuthTokenResponse.
 type OAuthTokenResponse struct {
-	AccessToken  string                      `json:"access_token"`
-	ExpiresIn    int                         `json:"expires_in"`
-	RefreshToken string                      `json:"refresh_token"`
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+
+	// RefreshToken The `urn:ietf:params:oauth:grant-type:jwt-bearer` grant type issues access tokens only, no refresh token is returned and the token cannot be revoked via `/v1/oauth/revoke`.
+	RefreshToken *string                     `json:"refresh_token,omitempty"`
 	TokenType    OAuthTokenResponseTokenType `json:"token_type"`
 }
 
@@ -4532,6 +4556,9 @@ type V1CreateProjectBody struct {
 
 	// DesiredInstanceSize Desired instance size. Omit this field to always default to the smallest possible size.
 	DesiredInstanceSize *V1CreateProjectBodyDesiredInstanceSize `json:"desired_instance_size,omitempty"`
+
+	// HighAvailability [Experimental] Whether to enable high availability for the project.
+	HighAvailability *bool `json:"high_availability,omitempty"`
 
 	// KpsEnabled This field is deprecated and is ignored in this request
 	// Deprecated:
@@ -6345,6 +6372,32 @@ func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProject
 	return err
 }
 
+// AsListProjectAddonsResponseAvailableAddonsVariantsId7 returns the union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as a ListProjectAddonsResponseAvailableAddonsVariantsId7
+func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) AsListProjectAddonsResponseAvailableAddonsVariantsId7() (ListProjectAddonsResponseAvailableAddonsVariantsId7, error) {
+	var body ListProjectAddonsResponseAvailableAddonsVariantsId7
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseAvailableAddonsVariantsId7 overwrites any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id as the provided ListProjectAddonsResponseAvailableAddonsVariantsId7
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) FromListProjectAddonsResponseAvailableAddonsVariantsId7(v ListProjectAddonsResponseAvailableAddonsVariantsId7) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseAvailableAddonsVariantsId7 performs a merge with any union data inside the ListProjectAddonsResponse_AvailableAddons_Variants_Id, using the provided ListProjectAddonsResponseAvailableAddonsVariantsId7
+func (t *ListProjectAddonsResponse_AvailableAddons_Variants_Id) MergeListProjectAddonsResponseAvailableAddonsVariantsId7(v ListProjectAddonsResponseAvailableAddonsVariantsId7) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
 func (t ListProjectAddonsResponse_AvailableAddons_Variants_Id) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
@@ -6527,6 +6580,32 @@ func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAdd
 
 // MergeListProjectAddonsResponseSelectedAddonsVariantId6 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId6
 func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId6(v ListProjectAddonsResponseSelectedAddonsVariantId6) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsListProjectAddonsResponseSelectedAddonsVariantId7 returns the union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as a ListProjectAddonsResponseSelectedAddonsVariantId7
+func (t ListProjectAddonsResponse_SelectedAddons_Variant_Id) AsListProjectAddonsResponseSelectedAddonsVariantId7() (ListProjectAddonsResponseSelectedAddonsVariantId7, error) {
+	var body ListProjectAddonsResponseSelectedAddonsVariantId7
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromListProjectAddonsResponseSelectedAddonsVariantId7 overwrites any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id as the provided ListProjectAddonsResponseSelectedAddonsVariantId7
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) FromListProjectAddonsResponseSelectedAddonsVariantId7(v ListProjectAddonsResponseSelectedAddonsVariantId7) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeListProjectAddonsResponseSelectedAddonsVariantId7 performs a merge with any union data inside the ListProjectAddonsResponse_SelectedAddons_Variant_Id, using the provided ListProjectAddonsResponseSelectedAddonsVariantId7
+func (t *ListProjectAddonsResponse_SelectedAddons_Variant_Id) MergeListProjectAddonsResponseSelectedAddonsVariantId7(v ListProjectAddonsResponseSelectedAddonsVariantId7) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err

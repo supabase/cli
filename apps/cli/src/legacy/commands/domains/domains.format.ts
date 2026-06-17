@@ -9,6 +9,24 @@ export type LegacyHostnameResponse = typeof V1GetHostnameConfigOutput.Type;
 
 type LegacyHostnameSsl = LegacyHostnameResponse["data"]["result"]["ssl"];
 
+type LegacyHostnameStatus = Exclude<LegacyHostnameResponse["status"], undefined>;
+
+function getHostnameStatus(response: LegacyHostnameResponse): LegacyHostnameStatus | undefined {
+  if (response.status !== undefined) {
+    return response.status;
+  }
+  const result = response.data.result;
+  if (
+    result.status === "pending" ||
+    result.ssl.status === "initializing" ||
+    result.ssl.validation_records !== undefined ||
+    result.ownership_verification !== undefined
+  ) {
+    return "2_initiated";
+  }
+  return undefined;
+}
+
 /**
  * Byte-for-byte port of Go's `hostnames.PrintStatus`
  * (`apps/cli-go/internal/hostnames/common.go:24-59`). Returns the exact string
@@ -16,7 +34,7 @@ type LegacyHostnameSsl = LegacyHostnameResponse["data"]["result"]["ssl"];
  * `Fprintln` (adds `\n`) and `Fprintf` (does not).
  */
 export function formatHostnameStatus(response: LegacyHostnameResponse): string {
-  switch (response.status) {
+  switch (getHostnameStatus(response)) {
     case "5_services_reconfigured":
       // Fprintf — no trailing newline.
       return `Custom hostname setup completed. Project is now accessible at ${response.custom_hostname}.`;
@@ -46,7 +64,8 @@ ${response.custom_hostname} CNAME -> ${response.data.result.custom_origin_server
         // Fprintf with explicit trailing `\n`.
         return `SSL validation errors: \n\t- ${errorMessages.join("\n\t- ")}\n`;
       }
-      if (ssl.validation_records.length !== 1) {
+      const validationRecords = ssl.validation_records ?? [];
+      if (validationRecords.length !== 1) {
         // Fprintf — no trailing newline. Go formats the ssl struct with `%+v`;
         // not byte-reproducible (see formatSslStructDump).
         return `expected a single SSL verification record, received: ${formatSslStructDump(ssl)}`;
@@ -54,7 +73,7 @@ ${response.custom_hostname} CNAME -> ${response.data.result.custom_origin_server
       // Fprintln on the two-line heading, then a tab-indented record (Fprintf, no newline).
       let out =
         "Custom hostname verification in-progress; please configure the appropriate DNS entries and request re-verification.\nRequired outstanding validation records:\n";
-      const rec = ssl.validation_records[0];
+      const rec = validationRecords[0];
       if (rec !== undefined && rec.txt_name !== "") {
         out += `\t${rec.txt_name} TXT -> ${rec.txt_value}`;
       }
@@ -80,7 +99,7 @@ export function formatSslStructDump(ssl: LegacyHostnameSsl): string {
     ssl.validation_errors === undefined
       ? "<nil>"
       : `&[${ssl.validation_errors.map((e) => `{Message:${e.message}}`).join(" ")}]`;
-  const validationRecords = ssl.validation_records
+  const validationRecords = (ssl.validation_records ?? [])
     .map((r) => `{TxtName:${r.txt_name} TxtValue:${r.txt_value}}`)
     .join(" ");
   return `{Status:${ssl.status} ValidationErrors:${validationErrors} ValidationRecords:[${validationRecords}]}`;

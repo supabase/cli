@@ -1,7 +1,6 @@
 package diff
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -22,7 +21,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/pgdelta"
 	"github.com/supabase/cli/internal/utils"
@@ -33,10 +31,11 @@ import (
 type DiffFunc func(context.Context, pgconn.Config, pgconn.Config, []string, ...func(*pgx.ConnConfig)) (string, error)
 
 func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, usePgDelta bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
-	out, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDelta, options...)
+	result, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDelta, options...)
 	if err != nil {
 		return err
 	}
+	out := result.SQL
 	branch := utils.GetGitBranch(fsys)
 	fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase db diff")+" on branch "+utils.Aqua(branch)+".\n")
 	if err := SaveDiff(out, file, fsys); err != nil {
@@ -142,6 +141,35 @@ func ConnectShadowDatabase(ctx context.Context, timeout time.Duration, options .
 // Required to bypass pg_cron check: https://github.com/citusdata/pg_cron/blob/main/pg_cron.sql#L3
 const CREATE_TEMPLATE = "CREATE DATABASE contrib_regression TEMPLATE postgres"
 
+// setupShadowConn applies the Supabase platform schema (auth, storage, realtime,
+// etc.) to an already-connected shadow database and creates the pg_cron template
+// database. It deliberately stops short of applying user migrations so that
+// callers which only need the platform baseline (declarative apply) share the
+// exact same starting point as callers that also replay migrations.
+func setupShadowConn(ctx context.Context, conn *pgx.Conn, container string, fsys afero.Fs) error {
+	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
+		return err
+	}
+	if _, err := conn.Exec(ctx, CREATE_TEMPLATE); err != nil {
+		return errors.Errorf("failed to create template database: %w", err)
+	}
+	return nil
+}
+
+// SetupShadowDatabase provisions the Supabase platform baseline (service schemas
+// such as auth/storage/realtime) on a freshly created shadow database, without
+// applying user migrations. Declarative apply uses this so the shadow matches the
+// real database closely enough for Supabase-managed dependencies (auth.sessions,
+// auth.jwt(), ...) to resolve.
+func SetupShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	conn, err := ConnectShadowDatabase(ctx, 10*time.Second, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	return setupShadowConn(ctx, conn, container, fsys)
+}
+
 func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	migrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
@@ -152,27 +180,24 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
+	if err := setupShadowConn(ctx, conn, container, fsys); err != nil {
 		return err
-	}
-	if _, err := conn.Exec(ctx, CREATE_TEMPLATE); err != nil {
-		return errors.Errorf("failed to create template database: %w", err)
 	}
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
-func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, usePgDelta bool, options ...func(*pgx.ConnConfig)) (string, error) {
+func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, usePgDelta bool, options ...func(*pgx.ConnConfig)) (DatabaseDiff, error) {
 	fmt.Fprintln(w, "Creating shadow database...")
 	shadow, err := CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
 	if err != nil {
-		return "", err
+		return DatabaseDiff{}, err
 	}
 	defer utils.DockerRemove(shadow)
 	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, shadow); err != nil {
-		return "", err
+		return DatabaseDiff{}, err
 	}
 	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
-		return "", err
+		return DatabaseDiff{}, err
 	}
 	shadowConfig := pgconn.Config{
 		Host:     utils.Config.Hostname,
@@ -189,20 +214,20 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 				declDir := utils.GetDeclarativeDir()
 				if exists, _ := afero.DirExists(fsys, declDir); exists {
 					if err := pgdelta.ApplyDeclarative(ctx, config, fsys); err != nil {
-						return "", err
+						return DatabaseDiff{}, err
 					}
 				} else {
 					if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
-						return "", err
+						return DatabaseDiff{}, err
 					}
 				}
 			} else {
 				if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
-					return "", err
+					return DatabaseDiff{}, err
 				}
 			}
 		} else if err != nil {
-			return "", err
+			return DatabaseDiff{}, err
 		}
 	}
 	// Load all user defined schemas
@@ -211,7 +236,28 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 	} else {
 		fmt.Fprintln(w, "Diffing schemas...")
 	}
-	return differ(ctx, shadowConfig, config, schema, options...)
+	if IsPgDeltaDebugEnabled() && usePgDelta {
+		// Capture the shadow baseline catalog and edge-runtime stderr so an
+		// empty diff can be inspected later. DiffPgDeltaRefDetailed mirrors the
+		// pg-delta differ but additionally surfaces stderr, which differ() drops.
+		debugCapture := &PgDeltaDebugCapture{}
+		if snapshot, exportErr := exportCatalogPgDelta(ctx, utils.ToPostgresURL(shadowConfig), "postgres", options...); exportErr == nil {
+			debugCapture.SourceCatalog = snapshot
+		} else {
+			fmt.Fprintf(w, "Warning: failed to export shadow pg-delta catalog: %v\n", exportErr)
+		}
+		result, err := DiffPgDeltaRefDetailed(ctx, utils.ToPostgresURL(shadowConfig), utils.ToPostgresURL(config), schema, pgDeltaFormatOptions(), options...)
+		if err != nil {
+			return DatabaseDiff{}, err
+		}
+		debugCapture.Stderr = result.Stderr
+		return DatabaseDiff{SQL: result.SQL, Debug: debugCapture}, nil
+	}
+	output, err := differ(ctx, shadowConfig, config, schema, options...)
+	if err != nil {
+		return DatabaseDiff{}, err
+	}
+	return DatabaseDiff{SQL: output}, nil
 }
 
 func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
@@ -227,38 +273,4 @@ func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations [
 	}
 	defer conn.Close(context.Background())
 	return migration.SeedGlobals(ctx, migrations, conn, afero.NewIOFS(fsys))
-}
-
-func diffWithStream(ctx context.Context, env []string, script string, stdout io.Writer) error {
-	cmd := utils.EdgeRuntimeStartCmd()
-	if viper.GetBool("DEBUG") {
-		cmd = append(cmd, "--verbose")
-	}
-	cmdString := strings.Join(cmd, " ")
-	entrypoint := []string{"sh", "-c", `cat <<'EOF' > index.ts && ` + cmdString + `
-` + script + `
-EOF
-`}
-	var stderr bytes.Buffer
-	if err := utils.DockerRunOnceWithConfig(
-		ctx,
-		container.Config{
-			Image:      utils.Config.EdgeRuntime.Image,
-			Env:        env,
-			Entrypoint: entrypoint,
-		},
-		container.HostConfig{
-			Binds:       []string{utils.EdgeRuntimeId + ":/root/.cache/deno:rw"},
-			NetworkMode: network.NetworkHost,
-		},
-		network.NetworkingConfig{},
-		"",
-		stdout,
-		&stderr,
-	// The "main worker has been destroyed" message may not appear at the start of stderr
-	// (e.g. preceded by other Deno runtime output), so use Contains instead of HasPrefix.
-	); err != nil && !strings.Contains(stderr.String(), "main worker has been destroyed") {
-		return errors.Errorf("error diffing schema: %w:\n%s", err, stderr.String())
-	}
-	return nil
 }

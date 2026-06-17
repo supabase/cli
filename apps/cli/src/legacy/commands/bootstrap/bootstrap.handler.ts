@@ -18,8 +18,9 @@ import { legacyLinkServicesCore } from "../../shared/legacy-link-services-core.t
 import { legacyProjectCreateCore } from "../../shared/legacy-project-create-core.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
 import { legacyExtractServiceKeys } from "../../shared/legacy-tenant-keys.ts";
+import { parseDotEnv } from "../../shared/legacy-dotenv.ts";
 import { initProject } from "../../../shared/init/project-init.ts";
-import { buildDotEnv, marshalDotEnv, parseDotEnv } from "./bootstrap.dotenv.ts";
+import { buildDotEnv, marshalDotEnv } from "./bootstrap.dotenv.ts";
 import {
   LegacyBootstrapHealthError,
   LegacyBootstrapInvalidTemplateError,
@@ -175,6 +176,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       dbPassword: seededPassword,
       region: undefined,
       size: undefined,
+      highAvailability: undefined,
       templateUrl: starter.url.length > 0 ? starter.url : undefined,
       emitStructuredResult: false,
     });
@@ -253,9 +255,33 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // No instrumentation wrap: the subprocess fires its own push telemetry.
     // `bootstrap.go:122-127` -> push.Run(..., includeRoles, includeSeed) =>
     // `--include-roles --include-seed` (no `--include-all`).
+    //
+    // Channel parity (CLI-1617): the proxy must be called 1:1 with the user's
+    // input — a flag stays a flag, an env var stays an env var. Go binds
+    // bootstrap's `-p` to viper `DB_PASSWORD` and `db push` reads it from viper
+    // (== the `SUPABASE_DB_PASSWORD` env var for the subprocess), so only a
+    // flag-sourced password travels as `--password`; an env-/prompt-sourced one
+    // travels as the env var.
+    //
+    // The flag branch keys on a *non-empty* flag value: an explicit `--password ""`
+    // (e.g. an unset `$SUPABASE_DB_PASSWORD` expanded by the shell) leaves viper
+    // `DB_PASSWORD` empty in Go too, so `create.promptMissingParams` prompts and
+    // `viper.Set`s the resolved value — which in-process `db push` then reads.
+    // Forwarding the literal empty flag would lose that prompted password, so an
+    // empty flag falls through to the resolved `created.dbPassword` (which carries
+    // the env- or prompt-sourced value) on the env channel.
     const pushArgs = ["db", "push", "--include-roles", "--include-seed"];
-    if (created.dbPassword.length > 0) pushArgs.push("--password", created.dbPassword);
-    yield* proxy.exec(pushArgs);
+    if (Option.isSome(flags.password) && flags.password.value.length > 0) {
+      pushArgs.push("--password", flags.password.value);
+      yield* proxy.exec(pushArgs);
+    } else {
+      yield* proxy.exec(
+        pushArgs,
+        created.dbPassword.length > 0
+          ? { env: { SUPABASE_DB_PASSWORD: created.dbPassword } }
+          : undefined,
+      );
+    }
 
     // M. Start suggestion. `bootstrap.go:128-130`.
     if (isText) {

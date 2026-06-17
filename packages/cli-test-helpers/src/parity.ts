@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHarness, exec, makeTempDir } from "./harness.ts";
-import { normalize, sortTableRows } from "./normalize.ts";
+import { normalize, type NormalizeOptions, sortTableRows } from "./normalize.ts";
 
 // ---------------------------------------------------------------------------
 // Table parsing (Level 2)
@@ -111,6 +111,27 @@ export interface RunResult {
   files: FileRecord[];
 }
 
+interface ParityChannelNormalizeOptions {
+  readonly stdout?: NormalizeOptions;
+  readonly stderr?: NormalizeOptions;
+}
+
+type ParityNormalizeOptions = NormalizeOptions | ParityChannelNormalizeOptions;
+
+function isChannelNormalizeOptions(
+  options: ParityNormalizeOptions | undefined,
+): options is ParityChannelNormalizeOptions {
+  return options !== undefined && ("stdout" in options || "stderr" in options);
+}
+
+function normalizeChannel(
+  output: string,
+  options: ParityNormalizeOptions | undefined,
+  channel: "stdout" | "stderr",
+): string {
+  return normalize(output, isChannelNormalizeOptions(options) ? options[channel] : options);
+}
+
 // ---------------------------------------------------------------------------
 // Git-based file snapshot
 // ---------------------------------------------------------------------------
@@ -215,13 +236,14 @@ async function collectRunResult(
   dir: string,
   apiUrl: string,
   extraEnv?: Record<string, string>,
+  normalizeOptions?: ParityNormalizeOptions,
 ): Promise<RunResult> {
   const result = await exec(harness, cmd, extraEnv ? { env: extraEnv } : undefined);
   const requests = await fetchRequestLog(apiUrl);
   const files = snapshotChangedFiles(dir);
   return {
-    stdout: normalize(result.stdout),
-    stderr: normalize(result.stderr),
+    stdout: normalizeChannel(result.stdout, normalizeOptions, "stdout"),
+    stderr: normalizeChannel(result.stderr, normalizeOptions, "stderr"),
     exitCode: result.exitCode,
     requests,
     files,
@@ -242,7 +264,12 @@ function formatSection(label: string, go: string, ts: string): string {
   ].join("\n");
 }
 
-function compareRunResults(cmdStr: string, go: RunResult, ts: RunResult): void {
+function compareRunResults(
+  cmdStr: string,
+  go: RunResult,
+  ts: RunResult,
+  opts: { compareStdout: boolean } = { compareStdout: true },
+): void {
   const summary: string[] = [];
   const diffs: string[] = [];
 
@@ -254,7 +281,9 @@ function compareRunResults(cmdStr: string, go: RunResult, ts: RunResult): void {
     summary.push(`  ✓ exit code: ${go.exitCode.toString()}`);
   }
 
-  if (go.stdout !== ts.stdout) {
+  if (!opts.compareStdout) {
+    summary.push("  – stdout: comparison skipped (compareStdout: false)");
+  } else if (go.stdout !== ts.stdout) {
     summary.push("  ✗ stdout differs");
     diffs.push(formatSection("stdout", go.stdout, ts.stdout));
   } else {
@@ -309,8 +338,16 @@ export interface ParityOptions {
   /** Sort table data rows before comparing stdout. Use when the Go CLI produces
    *  non-deterministic row order (e.g. from map iteration). */
   sortStdoutRows?: boolean;
+  /** Compare stdout (default true). Set false only when stdout is not faithfully
+   *  reproducible through the test mocks AND is covered by lower-level tests — e.g.
+   *  `inspect report`, whose rules summary is computed from COPY CSV content the
+   *  pg-mock cannot emit, and where Go's csvq panics on the empty mock CSVs. The
+   *  other dimensions (exit code, stderr, request log, filesystem) are still compared. */
+  compareStdout?: boolean;
   /** Additional environment variables injected into both CLI subprocesses. */
   extraEnv?: Record<string, string>;
+  /** Fine-grained normalization controls for stdout/stderr parity comparison. */
+  normalize?: ParityNormalizeOptions;
 }
 
 /**
@@ -341,6 +378,7 @@ export async function runParity(opts: ParityOptions, cmd: string[]): Promise<voi
       goDir.path,
       opts.apiUrl,
       opts.extraEnv,
+      opts.normalize,
     );
 
     await fetch(`${opts.apiUrl}/_ctrl/requests`, { method: "DELETE" });
@@ -357,6 +395,7 @@ export async function runParity(opts: ParityOptions, cmd: string[]): Promise<voi
       tsDir.path,
       opts.apiUrl,
       opts.extraEnv,
+      opts.normalize,
     );
 
     // Self-cleaning: reset after ts-legacy so callers start with a clean log.
@@ -369,7 +408,9 @@ export async function runParity(opts: ParityOptions, cmd: string[]): Promise<voi
       ? { ...tsResult, stdout: sortTableRows(tsResult.stdout) }
       : tsResult;
 
-    compareRunResults(cmd.join(" "), finalGoResult, finalTsResult);
+    compareRunResults(cmd.join(" "), finalGoResult, finalTsResult, {
+      compareStdout: opts.compareStdout ?? true,
+    });
   } finally {
     goDir[Symbol.dispose]();
     tsDir[Symbol.dispose]();

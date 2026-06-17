@@ -2,8 +2,10 @@ package utils
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/go-errors/errors"
@@ -14,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/utils/cloudflare"
+	"github.com/supabase/cli/pkg/api"
 	"github.com/supabase/cli/pkg/pgtest"
 )
 
@@ -221,7 +224,43 @@ func TestSetConnectSuggestion(t *testing.T) {
 			suggestion: "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD",
 		},
 		{
-			name:       "no route to host",
+			name:       "ipv6 no route to host",
+			err:        errors.New("dial tcp [2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432: connect: no route to host"),
+			suggestion: "Your network does not support IPv6",
+		},
+		{
+			name:       "ipv6 network is unreachable",
+			err:        errors.New("dial tcp [2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432: connect: network is unreachable"),
+			suggestion: "Your network does not support IPv6",
+		},
+		{
+			name:       "libpq unsupported address family",
+			err:        errors.New(`pg_dump: error: connection to server failed: could not translate host name "db.test.supabase.co" to address: Address family for hostname not supported`),
+			suggestion: "Your network does not support IPv6",
+		},
+		{
+			name:       "libpq no address associated with hostname",
+			err:        errors.New(`pg_dump: error: could not translate host name "db.ngpopfcjxrfmzmhmmpct.supabase.co" to address: No address associated with hostname`),
+			suggestion: "Your network does not support IPv6",
+		},
+		{
+			name:       "libpq network is unreachable without literal",
+			err:        errors.New(`connection to server at "db.test.supabase.co", port 5432 failed: Network is unreachable`),
+			suggestion: "Your network does not support IPv6",
+		},
+		{
+			name: "libpq cannot assign requested address",
+			err: errors.New(`pg_dump: error: connection to server at "db.test.supabase.co" (2600:1f1c:c19:4901:963f:d22e:683a:381c), port 5432 failed: Cannot assign requested address
+	Is the server running on that host and accepting TCP/IP connections?`),
+			suggestion: "Your network does not support IPv6",
+		},
+		{
+			name:       "cannot assign requested address without ipv6 literal",
+			err:        errors.New("connect: cannot assign requested address"),
+			suggestion: "",
+		},
+		{
+			name:       "no route to host without ipv6 address",
 			err:        errors.New("connect: no route to host"),
 			suggestion: "Make sure your project exists on profile: " + CurrentProfile.Name,
 		},
@@ -243,6 +282,104 @@ func TestSetConnectSuggestion(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSuggestIPv6Pooler(t *testing.T) {
+	ref := apitest.RandomProjectRef()
+	poolerURL := "postgres://postgres." + ref + ":[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+
+	t.Run("enriches suggestion with transaction pooler url", func(t *testing.T) {
+		CmdSuggestion = ""
+		t.Cleanup(func() { CmdSuggestion = "" })
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		gock.New(DefaultApiHost).
+			Get("/v1/projects/" + ref + "/config/database/pooler").
+			Reply(http.StatusOK).
+			JSON([]api.SupavisorConfigResponse{{
+				DatabaseType:     api.SupavisorConfigResponseDatabaseTypePRIMARY,
+				ConnectionString: poolerURL,
+			}})
+		ok := SuggestIPv6Pooler(context.Background(), "db."+ref+".supabase.co")
+		assert.True(t, ok)
+		assert.Contains(t, CmdSuggestion, "--db-url")
+		assert.Contains(t, CmdSuggestion, poolerURL)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("masks a real password returned by the api", func(t *testing.T) {
+		CmdSuggestion = ""
+		t.Cleanup(func() { CmdSuggestion = "" })
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		secretURL := "postgres://postgres." + ref + ":sup3r-s3cret@aws-0-us-east-1.pooler.supabase.com:6543/postgres"
+		gock.New(DefaultApiHost).
+			Get("/v1/projects/" + ref + "/config/database/pooler").
+			Reply(http.StatusOK).
+			JSON([]api.SupavisorConfigResponse{{
+				DatabaseType:     api.SupavisorConfigResponseDatabaseTypePRIMARY,
+				ConnectionString: secretURL,
+			}})
+		ok := SuggestIPv6Pooler(context.Background(), "db."+ref+".supabase.co")
+		assert.True(t, ok)
+		assert.NotContains(t, CmdSuggestion, "sup3r-s3cret")
+		assert.Contains(t, CmdSuggestion, "[YOUR-PASSWORD]")
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("skips non-supabase host without api call", func(t *testing.T) {
+		CmdSuggestion = ""
+		assert.False(t, SuggestIPv6Pooler(context.Background(), "localhost"))
+		assert.Empty(t, CmdSuggestion)
+	})
+
+	t.Run("returns false when pooler config is unavailable", func(t *testing.T) {
+		CmdSuggestion = ""
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		gock.New(DefaultApiHost).
+			Get("/v1/projects/" + ref + "/config/database/pooler").
+			Reply(http.StatusOK).
+			JSON([]api.SupavisorConfigResponse{})
+		assert.False(t, SuggestIPv6Pooler(context.Background(), "db."+ref+".supabase.co"))
+		assert.Empty(t, CmdSuggestion)
+	})
+}
+
+func TestProjectRefFromDirectDbHost(t *testing.T) {
+	ref := apitest.RandomProjectRef()
+
+	t.Run("extracts ref from direct host", func(t *testing.T) {
+		got, ok := ProjectRefFromDirectDbHost("db." + ref + ".supabase.co")
+		assert.True(t, ok)
+		assert.Equal(t, ref, got)
+	})
+
+	t.Run("rejects pooler and local hosts", func(t *testing.T) {
+		for _, host := range []string{
+			"aws-0-us-east-1.pooler.supabase.com",
+			"localhost",
+			"127.0.0.1",
+			"db." + ref + ".supabase.net",
+		} {
+			_, ok := ProjectRefFromDirectDbHost(host)
+			assert.False(t, ok, host)
+		}
+	})
+}
+
+func TestWarnIPv6PoolerFallback(t *testing.T) {
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stderr = w
+	t.Cleanup(func() { os.Stderr = oldStderr })
+
+	WarnIPv6PoolerFallback("db.test.supabase.co")
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(out), "db.test.supabase.co")
+	assert.Contains(t, string(out), "does not support IPv6")
+	assert.Contains(t, string(out), "connection pooler")
 }
 
 func TestPostgresURL(t *testing.T) {

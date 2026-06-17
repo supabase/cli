@@ -29,21 +29,38 @@ export function sortTableRows(output: string): string {
   return result.join("\n");
 }
 
+export interface NormalizeOptions {
+  readonly versions?: boolean;
+  readonly stripPatterns?: readonly RegExp[];
+}
+
 /**
  * Normalize CLI output by stripping non-deterministic content before parity
  * comparisons. Applied to both Go and ts-legacy output so spurious differences
  * in timestamps, versions, paths, and stack traces don't produce false failures.
  */
-export function normalize(output: string): string {
+export function normalize(output: string, options: NormalizeOptions = {}): string {
+  const normalizeVersions = options.versions ?? true;
+  const withoutAnsi = output
+    // 1. Strip ANSI escape codes (color, bold, reset, etc.) — \u001b is ESC
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "");
+  const withoutVersions = normalizeVersions
+    ? withoutAnsi.replace(
+        // 2. Semantic version strings (e.g. 1.187.0, v2.0.0-rc.1, v14.13).
+        //    Lookbehind prevents matching mid-IP-address (e.g. 0.0.1 inside 127.0.0.1).
+        //    Lookahead prevents matching where more dotted-number segments follow.
+        /(?<![.\d])\bv?\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?\b(?!\.)/g,
+        "<VERSION>",
+      )
+    : withoutAnsi;
+  const withoutStrippedPatterns = (options.stripPatterns ?? []).reduce(
+    (acc, pattern) => acc.replace(pattern, ""),
+    withoutVersions,
+  );
+
   return (
-    output
-      // 1. Strip ANSI escape codes (color, bold, reset, etc.) — \u001b is ESC
-      // eslint-disable-next-line no-control-regex
-      .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "")
-      // 2. Semantic version strings (e.g. 1.187.0, v2.0.0-rc.1, v14.13).
-      //    Lookbehind prevents matching mid-IP-address (e.g. 0.0.1 inside 127.0.0.1).
-      //    Lookahead prevents matching where more dotted-number segments follow.
-      .replace(/(?<![.\d])\bv?\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?\b(?!\.)/g, "<VERSION>")
+    withoutStrippedPatterns
       // 3. ISO-8601 timestamps (2026-04-15T10:46:15Z or with milliseconds)
       .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, "<TIMESTAMP>")
       // 4. Display timestamps (2026-04-15 10:46:15 — space-separated, no T)
@@ -56,6 +73,14 @@ export function normalize(output: string): string {
       //     before duration normalization because opaque bytes can contain
       //     duration-looking substrings such as "100s".
       .replace(/"(d|x|y|n|e|p|q|dp|dq|qi|k)"\s*:\s*"[A-Za-z0-9_-]+"/g, '"$1":"<KEY_BYTES>"')
+      // 6b. JWT tokens (header starts with eyJ — base64url of `{"`). Masks the
+      //     full three-part token so non-deterministic signatures and Unix
+      //     timestamps in the payload don't cause false parity failures. Must run
+      //     BEFORE duration normalization (rule 7): a random base64url signature
+      //     can contain a duration-looking substring (e.g. "-60s-") bounded by
+      //     `-`/`_`/`.`, which the duration pass would otherwise inject `<DURATION>`
+      //     into mid-token. Same ordering rationale as the JWK key bytes above.
+      .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g, "<JWT>")
       // 7. Durations (e.g. 1.23s, 123ms, 42s)
       .replace(/\b\d+(?:\.\d+)?(?:ms|s)\b/g, "<DURATION>")
       // 8. Unix absolute paths (/home/…, /Users/…, /tmp/…, /var/…, /opt/…, /usr/…)
@@ -89,10 +114,6 @@ export function normalize(output: string): string {
       .replace(/(?:^[ \t]+at [^\n]+\n?)+/gm, "<STACK_TRACE>\n")
       // 14. File reference line numbers (file.ts:123 or file.ts:123:45)
       .replace(/\b(\w[\w.-]*\.(?:ts|js|go|tsx|jsx|mts|mjs|cjs)):\d+(?::\d+)?\b/g, "$1:<LINE>")
-      // 15. JWT tokens (header starts with eyJ — base64url of `{"`)
-      //     Replaces full three-part token so non-deterministic signatures and
-      //     Unix-integer timestamps in the payload don't cause false parity failures.
-      .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g, "<JWT>")
       // 16. db query agent-mode boundary: a 32-char hex string generated randomly
       //     per process. Both the JSON key value and its appearance inside the
       //     warning string (unicode-escaped in raw JSON) must be replaced.

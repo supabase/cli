@@ -119,6 +119,12 @@ export const DEFAULT_PORTS: Partial<AllocatedPorts> = {
 interface PortAllocationOptions {
   readonly reserved?: ReadonlySet<number>;
   readonly preferred?: Partial<AllocatedPorts>;
+  readonly probe?: PortProbe;
+}
+
+interface PortProbe {
+  readonly exact: (port: number) => Effect.Effect<number, PortAllocationError>;
+  readonly random: (exclude: ReadonlySet<number>) => Effect.Effect<number, PortAllocationError>;
 }
 
 /** Bind port 0 to get an OS-assigned random port, then close immediately. */
@@ -159,20 +165,25 @@ const probeExactPort = (port: number): Effect.Effect<number, PortAllocationError
 const chooseExactPort = (
   port: number,
   exclude: ReadonlySet<number>,
+  probe: PortProbe,
 ): Effect.Effect<number, PortAllocationError> =>
   exclude.has(port)
     ? Effect.fail(new PortAllocationError({ detail: `Port ${port} is not available` }))
-    : probeExactPort(port);
+    : probe.exact(port);
 
 const choosePreferredPort = (
   port: number,
   exclude: ReadonlySet<number>,
+  probe: PortProbe,
 ): Effect.Effect<number, PortAllocationError> =>
   exclude.has(port)
-    ? probeRandomPort(exclude)
-    : probeExactPort(port).pipe(
-        Effect.catchTag("PortAllocationError", () => probeRandomPort(exclude)),
-      );
+    ? probe.random(exclude)
+    : probe.exact(port).pipe(Effect.catchTag("PortAllocationError", () => probe.random(exclude)));
+
+const defaultPortProbe: PortProbe = {
+  exact: probeExactPort,
+  random: probeRandomPort,
+};
 
 export const allocatePorts = (
   input: PortInput,
@@ -181,6 +192,7 @@ export const allocatePorts = (
   Effect.gen(function* () {
     const reserved = options.reserved ?? new Set<number>();
     const preferred = options.preferred ?? {};
+    const probe = options.probe ?? defaultPortProbe;
     const allocated = new Set<number>();
 
     const alloc = (port: number) => {
@@ -193,15 +205,15 @@ export const allocatePorts = (
     const resolvePort = (field: PortField) => {
       const explicit = input[field];
       if (explicit !== undefined) {
-        return chooseExactPort(explicit, exclude());
+        return chooseExactPort(explicit, exclude(), probe);
       }
 
       const preferredPort = preferred[field];
       if (preferredPort !== undefined) {
-        return choosePreferredPort(preferredPort, exclude());
+        return choosePreferredPort(preferredPort, exclude(), probe);
       }
 
-      return probeRandomPort(exclude());
+      return probe.random(exclude());
     };
 
     const partial: Partial<Record<PortField, number>> = {};

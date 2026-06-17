@@ -20,6 +20,7 @@ import {
   LegacyInvalidAccessTokenError,
   LegacyNotLoggedInError,
 } from "../../src/legacy/auth/legacy-errors.ts";
+import { LegacyPlatformApiFactory } from "../../src/legacy/auth/legacy-platform-api-factory.service.ts";
 import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
 import {
   LegacyLoginApi,
@@ -328,6 +329,7 @@ export function mockLegacyCliConfig(opts: {
   readonly profile?: string;
   readonly apiUrl?: string;
   readonly projectHost?: string;
+  readonly poolerHost?: string;
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
   readonly projectId?: Option.Option<string>;
   readonly userAgent?: string;
@@ -336,6 +338,7 @@ export function mockLegacyCliConfig(opts: {
     profile: opts.profile ?? "supabase",
     apiUrl: opts.apiUrl ?? LEGACY_DEFAULT_API_URL,
     projectHost: opts.projectHost ?? "supabase.co",
+    poolerHost: opts.poolerHost ?? "supabase.com",
     accessToken: opts.accessToken ?? Option.some(Redacted.make(LEGACY_VALID_TOKEN)),
     projectId: opts.projectId ?? Option.some(LEGACY_VALID_REF),
     workdir: opts.workdir,
@@ -677,7 +680,11 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
     processControl,
     runtimeInfo,
     legacyProjectRefLayer.pipe(
-      Layer.provide(opts.api.layer),
+      Layer.provide(
+        Layer.succeed(LegacyPlatformApiFactory, {
+          make: LegacyPlatformApi.pipe(Effect.provide(opts.api.layer)),
+        }),
+      ),
       Layer.provide(opts.cliConfig),
       Layer.provide(tty),
       Layer.provide(opts.out.layer),

@@ -97,17 +97,20 @@ Human banners are suppressed; a single structured result is emitted:
 ## Notes
 
 - **Interim Go-proxy delegation for migration push.** The push step shells out to the bundled
-  Go binary (`db push --include-roles --include-seed [--password …]`) until `db push` gets its
-  own native port (separate Linear issue). The sub-step is **not** instrumentation-wrapped (the
-  subprocess fires its own push telemetry). Known divergence: `LegacyGoProxy.exec` propagates the
-  exit code, so Go's push backoff is **not** reproduced (single attempt) — to be restored when
-  `db push` is natively ported. (`LegacyGoProxy.exec` exits the process on a non-zero exit rather
-  than returning a failure, so the step cannot be wrapped in `Effect.retry`.)
-- **Interim credential exposure.** Because the push step runs in a subprocess, the DB password is
-  passed as `--password <value>` and is therefore briefly visible in the OS process table for the
-  lifetime of that subprocess (Go runs `push.Run` in-process and never exposes it). The same
-  password is already written in plaintext to `<workdir>/.env` in the same directory, so the
-  incremental exposure is small; it is eliminated when `db push` is natively ported (no subprocess).
+  Go binary (`db push --include-roles --include-seed`) until `db push` gets its own native port
+  (separate Linear issue). The sub-step is **not** instrumentation-wrapped (the subprocess fires
+  its own push telemetry). Known divergence: `LegacyGoProxy.exec` propagates the exit code, so Go's
+  push backoff is **not** reproduced (single attempt) — to be restored when `db push` is natively
+  ported. (`LegacyGoProxy.exec` exits the process on a non-zero exit rather than returning a
+  failure, so the step cannot be wrapped in `Effect.retry`.)
+- **DB password is forwarded on the same channel the user supplied it (CLI-1617).** The proxy must
+  be called 1:1 with the user's input: a flag stays a flag, an env var stays an env var. So when the
+  user passed `-p/--password`, the push sub-step receives `--password <value>` (flag → flag); when
+  the password came from the `SUPABASE_DB_PASSWORD` env var **or** the interactive prompt, it is
+  forwarded as the `SUPABASE_DB_PASSWORD` env var instead (env → env), matching Go, which binds `-p`
+  to viper `DB_PASSWORD` and reads it back from viper in `db push`. A consequence is that an
+  env-/prompt-sourced password is no longer placed in the OS process table; only an explicit
+  `--password` flag is (the same password is already written in plaintext to `<workdir>/.env`).
 - The api-keys and health retries use the full Go `utils.NewBackoffPolicy` policy: exponential
   backoff, 3s initial interval, multiplier 1.5, 60s max interval (capped before jitter), ±50% jitter
   (randomization factor 0.5), 15m max-elapsed cap, and 8 retries (9 total attempts). The per-attempt

@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
-import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { legacyTempPaths } from "../shared/legacy-temp-paths.ts";
@@ -34,7 +34,7 @@ export const legacyProjectRefLayer = Layer.effect(
     const cliConfig = yield* LegacyCliConfig;
     const tty = yield* Tty;
     const output = yield* Output;
-    const api = yield* LegacyPlatformApi;
+    const platformApi = yield* LegacyPlatformApiFactory;
 
     const refPath = legacyTempPaths(path, cliConfig.workdir).projectRef;
 
@@ -47,6 +47,16 @@ export const legacyProjectRefLayer = Layer.effect(
     });
 
     const promptForProjectRef = Effect.fnUntraced(function* (title: string) {
+      const api = yield* platformApi.make.pipe(
+        Effect.mapError(
+          (cause) =>
+            new LegacyProjectNotLinkedError({
+              message: `${PROJECT_NOT_LINKED_MESSAGE}\n  Reason: failed to retrieve projects: ${String(
+                cause,
+              )}`,
+            }),
+        ),
+      );
       const projects = yield* api.v1.listAllProjects().pipe(
         Effect.mapError(
           (cause) =>
@@ -125,6 +135,24 @@ export const legacyProjectRefLayer = Layer.effect(
             return cliConfig.projectId;
           }
           return yield* readRefFile;
+        }),
+      loadProjectRef: (flagValue) =>
+        Effect.gen(function* () {
+          // Go's `flags.LoadProjectRef`: flag → env → ref file → hard
+          // `ErrNotLinked`, with format validation, and NO interactive prompt.
+          if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+            return yield* assertValid(flagValue.value);
+          }
+          if (Option.isSome(cliConfig.projectId)) {
+            return yield* assertValid(cliConfig.projectId.value);
+          }
+          const fileValue = yield* readRefFile;
+          if (Option.isSome(fileValue)) {
+            return yield* assertValid(fileValue.value);
+          }
+          return yield* Effect.fail(
+            new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
+          );
         }),
       promptProjectRef: promptForProjectRef,
     });

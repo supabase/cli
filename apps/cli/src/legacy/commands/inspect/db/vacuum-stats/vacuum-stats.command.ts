@@ -1,22 +1,17 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command } from "effect/unstable/cli";
 import { legacyInspectDbVacuumStats } from "./vacuum-stats.handler.ts";
+import {
+  LEGACY_INSPECT_DB_FLAGS,
+  legacyInspectDbCommandHandler,
+} from "../legacy-inspect-db-command.ts";
+import { legacyInspectDbRuntimeLayer } from "../db.layers.ts";
 
-const config = {
-  dbUrl: Flag.string("db-url").pipe(
-    Flag.withDescription(
-      "Inspect the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.boolean("linked").pipe(Flag.withDescription("Inspect the linked project.")),
-  local: Flag.boolean("local").pipe(Flag.withDescription("Inspect the local database.")),
-} as const;
-
-export type LegacyInspectDbVacuumStatsFlags = CliCommand.Command.Config.Infer<typeof config>;
-
-export const legacyInspectDbVacuumStatsCommand = Command.make("vacuum-stats", config).pipe(
+export const legacyInspectDbVacuumStatsCommand = Command.make(
+  "vacuum-stats",
+  LEGACY_INSPECT_DB_FLAGS,
+).pipe(
   Command.withDescription("Show statistics related to vacuum operations per table."),
   Command.withShortDescription("Show vacuum stats"),
-  Command.withHandler((flags) => legacyInspectDbVacuumStats(flags)),
+  Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbVacuumStats)),
+  Command.provide(legacyInspectDbRuntimeLayer("vacuum-stats")),
 );

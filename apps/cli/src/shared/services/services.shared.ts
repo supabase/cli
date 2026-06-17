@@ -3,6 +3,7 @@ import { makeApiClient, type ApiClient } from "@supabase/api/effect";
 import { Data, Duration, Effect, Exit, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import serviceImagesDockerfile from "../../../../cli-go/pkg/config/templates/Dockerfile" with { type: "text" };
 import { renderGlamourTable } from "../../legacy/output/legacy-glamour-table.ts";
 
 export type RemoteServiceName = "postgres" | "auth" | "postgrest" | "storage";
@@ -19,28 +20,73 @@ interface ServiceImageSpec {
   readonly remoteService: RemoteServiceName | undefined;
 }
 
-// Mirrors the legacy `services` image matrix:
-// - source versions: `apps/cli-go/pkg/config/templates/Dockerfile`
-// - source order: `apps/cli-go/pkg/config/config.go` `GetServiceImages()`
-//
-// We keep this compiled into the TS CLI because the published package does not
-// ship the Go source tree at runtime, but the user-visible `services` output
-// still needs to match the bundled image manifest.
-const LOCAL_SERVICE_IMAGES = [
-  { image: "supabase/postgres:17.6.1.132", remoteService: "postgres" },
-  { image: "supabase/gotrue:v2.189.0", remoteService: "auth" },
-  { image: "postgrest/postgrest:v14.12", remoteService: "postgrest" },
-  { image: "supabase/realtime:v2.103.2", remoteService: undefined },
-  { image: "supabase/storage-api:v1.60.4", remoteService: "storage" },
-  { image: "supabase/edge-runtime:v1.74.0", remoteService: undefined },
-  {
-    image: "supabase/studio:2026.06.03-sha-0bca601",
-    remoteService: undefined,
-  },
-  { image: "supabase/postgres-meta:v0.96.6", remoteService: undefined },
-  { image: "supabase/logflare:1.43.3", remoteService: undefined },
-  { image: "supabase/supavisor:2.9.7", remoteService: undefined },
-] as const satisfies ReadonlyArray<ServiceImageSpec>;
+interface DockerfileImageSpec {
+  readonly alias: string;
+  readonly image: string;
+}
+
+interface ServiceImageAliasSpec {
+  readonly alias: string;
+  readonly remoteService: RemoteServiceName | undefined;
+}
+
+const SERVICE_IMAGE_ALIASES: ReadonlyArray<ServiceImageAliasSpec> = [
+  { alias: "pg", remoteService: "postgres" },
+  { alias: "gotrue", remoteService: "auth" },
+  { alias: "postgrest", remoteService: "postgrest" },
+  { alias: "realtime", remoteService: undefined },
+  { alias: "storage", remoteService: "storage" },
+  { alias: "edgeruntime", remoteService: undefined },
+  { alias: "studio", remoteService: undefined },
+  { alias: "pgmeta", remoteService: undefined },
+  { alias: "logflare", remoteService: undefined },
+  { alias: "supavisor", remoteService: undefined },
+];
+
+const FROM_LINE_PATTERN = /^FROM\s+(.+):([^:\s]+)\s+AS\s+([^\s#]+)/i;
+
+export function parseDockerfileServiceImages(
+  dockerfile: string,
+): ReadonlyArray<DockerfileImageSpec> {
+  return dockerfile
+    .split("\n")
+    .map((line) => line.trim())
+    .flatMap((line) => {
+      const match = FROM_LINE_PATTERN.exec(line);
+      if (match === null) {
+        return [];
+      }
+
+      const [, repository, tag, alias] = match;
+      if (repository === undefined || tag === undefined || alias === undefined) {
+        return [];
+      }
+
+      return [{ alias, image: `${repository}:${tag}` }];
+    });
+}
+
+export function localServiceImagesFromDockerfile(
+  dockerfile: string,
+): ReadonlyArray<ServiceImageSpec> {
+  const imagesByAlias = new Map(
+    parseDockerfileServiceImages(dockerfile).map((service) => [service.alias, service.image]),
+  );
+
+  return SERVICE_IMAGE_ALIASES.map((service) => {
+    const image = imagesByAlias.get(service.alias);
+    if (image === undefined) {
+      throw new Error(`Missing service image alias '${service.alias}' in Dockerfile manifest.`);
+    }
+
+    return {
+      image,
+      remoteService: service.remoteService,
+    };
+  });
+}
+
+const LOCAL_SERVICE_IMAGES = localServiceImagesFromDockerfile(serviceImagesDockerfile);
 
 const TABLE_HEADERS = ["SERVICE IMAGE", "LOCAL", "LINKED"] as const;
 
@@ -61,13 +107,13 @@ function toServiceVersionRow(
   service: ServiceImageSpec,
   remote: Partial<Record<RemoteServiceName, string>> = {},
 ): ServiceVersionRow {
-  const parts = service.image.split(":");
-  const name = parts[0];
-  const local = parts[1];
-
-  if (name === undefined || local === undefined) {
+  const tagSeparator = service.image.lastIndexOf(":");
+  if (tagSeparator === -1) {
     throw new Error(`Invalid service image entry: ${service.image}`);
   }
+
+  const name = service.image.slice(0, tagSeparator);
+  const local = service.image.slice(tagSeparator + 1);
 
   return {
     name,

@@ -80,6 +80,7 @@ interface SetupOpts {
   readonly health?: { readonly status: number; readonly body: unknown };
   readonly promptTextResponses?: ReadonlyArray<string>;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
+  readonly promptPasswordResponses?: ReadonlyArray<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -87,6 +88,7 @@ function setup(opts: SetupOpts = {}) {
     format: opts.format ?? "text",
     promptTextResponses: opts.promptTextResponses,
     promptConfirmResponses: opts.promptConfirmResponses,
+    promptPasswordResponses: opts.promptPasswordResponses,
   });
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedCache = mockLegacyLinkedProjectCacheTracked();
@@ -136,11 +138,11 @@ function setup(opts: SetupOpts = {}) {
       }),
   });
 
-  const proxyCalls: Array<ReadonlyArray<string>> = [];
+  const proxyCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
   const proxyLayer = Layer.succeed(LegacyGoProxy, {
-    exec: (args: ReadonlyArray<string>) =>
+    exec: (args: ReadonlyArray<string>, execOpts?: { env?: Record<string, string> }) =>
       Effect.sync(() => {
-        proxyCalls.push(args);
+        proxyCalls.push({ args, env: execOpts?.env });
       }),
   });
 
@@ -394,7 +396,7 @@ describe("legacy bootstrap integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.live("delegates the db push step to the Go proxy with the resolved password", () => {
+  it.live("forwards a --password flag to the Go proxy as a flag (flag stays a flag)", () => {
     const s = setup();
     return Effect.gen(function* () {
       yield* legacyBootstrap(
@@ -402,7 +404,8 @@ describe("legacy bootstrap integration", () => {
         FAST_BACKOFF,
       );
       expect(s.proxyCalls).toHaveLength(1);
-      expect(s.proxyCalls[0]).toEqual([
+      // Flag-sourced password travels as a flag, never re-mapped to an env var.
+      expect(s.proxyCalls[0]?.args).toEqual([
         "db",
         "push",
         "--include-roles",
@@ -410,7 +413,84 @@ describe("legacy bootstrap integration", () => {
         "--password",
         "pw123",
       ]);
+      expect(s.proxyCalls[0]?.env).toBeUndefined();
     }).pipe(Effect.provide(s.layer));
+  });
+
+  it.live("forwards the prompted password (not the empty flag) when --password is empty", () => {
+    // An explicit `--password ""` (e.g. unset `$SUPABASE_DB_PASSWORD` expanded by
+    // the shell) leaves the password empty, so the create step prompts. Go reads
+    // the prompted value from viper for the in-process push, so the subprocess
+    // must receive the prompted password — never the literal empty flag value.
+    const s = setup({ promptPasswordResponses: ["prompted-pw"] });
+    const prev = process.env["SUPABASE_DB_PASSWORD"];
+    delete process.env["SUPABASE_DB_PASSWORD"];
+    return Effect.gen(function* () {
+      yield* legacyBootstrap(
+        flags({ template: Option.some("scratch"), password: Option.some("") }),
+        FAST_BACKOFF,
+      );
+      expect(s.proxyCalls).toHaveLength(1);
+      expect(s.proxyCalls[0]?.args).toEqual(["db", "push", "--include-roles", "--include-seed"]);
+      expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_DB_PASSWORD: "prompted-pw" });
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
+          else process.env["SUPABASE_DB_PASSWORD"] = prev;
+        }),
+      ),
+    );
+  });
+
+  it.live("forwards a SUPABASE_DB_PASSWORD env var to the proxy as an env var", () => {
+    const s = setup();
+    const prev = process.env["SUPABASE_DB_PASSWORD"];
+    process.env["SUPABASE_DB_PASSWORD"] = "env-pw";
+    return Effect.gen(function* () {
+      yield* legacyBootstrap(
+        flags({ template: Option.some("scratch"), password: Option.none() }),
+        FAST_BACKOFF,
+      );
+      expect(s.proxyCalls).toHaveLength(1);
+      // Env-sourced password stays an env var — no --password flag mapping (CLI-1617).
+      expect(s.proxyCalls[0]?.args).toEqual(["db", "push", "--include-roles", "--include-seed"]);
+      expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_DB_PASSWORD: "env-pw" });
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
+          else process.env["SUPABASE_DB_PASSWORD"] = prev;
+        }),
+      ),
+    );
+  });
+
+  it.live("forwards a prompted password to the proxy as an env var, not a flag", () => {
+    const s = setup({ promptPasswordResponses: ["prompted-pw"] });
+    const prev = process.env["SUPABASE_DB_PASSWORD"];
+    delete process.env["SUPABASE_DB_PASSWORD"];
+    return Effect.gen(function* () {
+      yield* legacyBootstrap(
+        flags({ template: Option.some("scratch"), password: Option.none() }),
+        FAST_BACKOFF,
+      );
+      expect(s.proxyCalls).toHaveLength(1);
+      // Go funnels the prompted value into viper DB_PASSWORD; the subprocess
+      // equivalent is the SUPABASE_DB_PASSWORD env var.
+      expect(s.proxyCalls[0]?.args).toEqual(["db", "push", "--include-roles", "--include-seed"]);
+      expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_DB_PASSWORD: "prompted-pw" });
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
+          else process.env["SUPABASE_DB_PASSWORD"] = prev;
+        }),
+      ),
+    );
   });
 
   it.live("flushes telemetry and caches the linked project via ensuring", () => {

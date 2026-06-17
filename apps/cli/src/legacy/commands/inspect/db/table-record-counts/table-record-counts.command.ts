@@ -1,27 +1,19 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command } from "effect/unstable/cli";
 import { legacyInspectDbTableRecordCounts } from "./table-record-counts.handler.ts";
-
-const config = {
-  dbUrl: Flag.string("db-url").pipe(
-    Flag.withDescription(
-      "Inspect the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.boolean("linked").pipe(Flag.withDescription("Inspect the linked project.")),
-  local: Flag.boolean("local").pipe(Flag.withDescription("Inspect the local database.")),
-} as const;
-
-export type LegacyInspectDbTableRecordCountsFlags = CliCommand.Command.Config.Infer<typeof config>;
+import {
+  LEGACY_INSPECT_DB_FLAGS,
+  legacyInspectDbCommandHandler,
+} from "../legacy-inspect-db-command.ts";
+import { legacyInspectDbRuntimeLayer } from "../db.layers.ts";
 
 export const legacyInspectDbTableRecordCountsCommand = Command.make(
   "table-record-counts",
-  config,
+  LEGACY_INSPECT_DB_FLAGS,
 ).pipe(
   Command.withDescription(
     'Show estimated number of rows per table. Deprecated: use "table-stats" instead.',
   ),
   Command.withShortDescription("Show table record counts (deprecated)"),
-  Command.withHandler((flags) => legacyInspectDbTableRecordCounts(flags)),
+  Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbTableRecordCounts)),
+  Command.provide(legacyInspectDbRuntimeLayer("table-record-counts")),
 );
