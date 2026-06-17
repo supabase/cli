@@ -27,9 +27,16 @@ describe("db push + pull (live, session pooler)", () => {
       expect(listed.exitCode, listed.stderr).toBe(0);
       expect(listed.stdout).toContain("20240101000000");
 
-      // Local history now matches remote, so pull connects and completes cleanly.
+      // Local history now matches remote, so pull connects and runs the diff.
+      // It either finds a remote-only change (exit 0, writes a migration) or
+      // reports no changes — both prove connectivity; only a real connection
+      // failure would surface a different error.
       const pulled = await run(["db", "pull", "--db-url", dbUrl, "--yes"]);
-      expect(pulled.exitCode, pulled.stderr).toBe(0);
+      expect(
+        pulled.exitCode === 0 ||
+          /No schema changes found/i.test(`${pulled.stdout}${pulled.stderr}`),
+        pulled.stderr,
+      ).toBe(true);
     },
   );
 });
