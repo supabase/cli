@@ -15,7 +15,6 @@ import {
   LegacyInvalidProjectRefError,
   LegacyProjectNotLinkedError,
 } from "../config/legacy-project-ref.errors.ts";
-import { LegacyLinkedProjectCache } from "../telemetry/legacy-linked-project-cache.service.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
@@ -481,13 +480,12 @@ export const legacyDbConfigLayer = Layer.effect(
               flags.dnsResolver,
               flags.password ?? Option.none(),
             );
-            // Mirror Go's ensureProjectGroupsCached post-run (cmd/root.go:214-234): once
-            // a linked ref resolves, cache the project (GET /v1/projects/{ref} →
-            // supabase/.temp/linked-project.json) so linked db dump / declarative
-            // generate attach project/org telemetry groups. Best-effort: the layer
-            // no-ops when the file exists, the token is missing, or the GET is non-200.
-            const linkedProjectCache = yield* LegacyLinkedProjectCache;
-            yield* linkedProjectCache.cache(ref);
+            // NB: the linked-project telemetry cache (GET /v1/projects/{ref}) is NOT
+            // issued here. Go caches it in `PersistentPostRun`
+            // (`ensureProjectGroupsCached`, cmd/root.go:214-234) — i.e. AFTER the
+            // command's own API calls — so each linked command owns that GET in its
+            // post-run finalizer (see e.g. advisors/query handlers). Issuing it mid-
+            // resolve reordered the request log ahead of the command's GETs.
             return { conn: resolved, ref };
           }).pipe(
             Effect.provide(

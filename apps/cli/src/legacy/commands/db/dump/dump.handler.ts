@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
@@ -61,10 +62,16 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
   const cliConfig = yield* LegacyCliConfig;
   const runtimeInfo = yield* RuntimeInfo;
   const telemetryState = yield* LegacyTelemetryState;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
   const networkIdFlag = yield* LegacyNetworkIdFlag;
+
+  // Resolved linked ref, captured so the post-run finalizer can cache the project
+  // (GET /v1/projects/{ref}) AFTER the command's own API calls — matching Go's
+  // `ensureProjectGroupsCached` in `PersistentPostRun` (cmd/root.go:214-234).
+  let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
     // 1. cobra `ValidateRequiredFlags` runs after the PreRun marks `data-only`
@@ -141,6 +148,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // `[remotes.<ref>]` block overrides `db.major_version` for the pg_dump image,
     // mirroring Go's remote-merged `utils.Config` for `db dump --linked`.
     const linkedRef = Option.getOrUndefined(resolvedRef ?? Option.none());
+    linkedRefForCache = linkedRef;
 
     // Read config (with any `[remotes.<ref>]` override applied) BEFORE the dry-run
     // print. Go validates the merged config in the root `ParseDatabaseConfig`
@@ -327,5 +335,15 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     if (Option.isSome(resolvedFile)) {
       yield* output.raw(`Dumped schema to ${legacyBold(resolvedFile.value)}.\n`, "stderr");
     }
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  }).pipe(
+    // Cache the linked project (telemetry groups) in post-run, after the command's
+    // own API calls, then flush telemetry — Go's PersistentPostRun ordering. The
+    // cache layer no-ops when the file exists / no token / non-200.
+    Effect.ensuring(
+      Effect.suspend(() =>
+        linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
+      ),
+    ),
+    Effect.ensuring(telemetryState.flush),
+  );
 });
