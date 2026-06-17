@@ -138,3 +138,14 @@ export class LegacyDeclarativeApplyError extends Data.TaggedError("LegacyDeclara
 export class LegacyDeclarativeWriteError extends Data.TaggedError("LegacyDeclarativeWriteError")<{
   readonly message: string;
 }> {}
+
+/**
+ * Listing local migrations failed for a reason other than the directory being
+ * absent. Byte-matches Go's `migration.ListLocalMigrations`
+ * (`apps/cli-go/pkg/migration/list.go:34-37`), which returns
+ * `"failed to read directory: " + err` for anything but `os.ErrNotExist` rather
+ * than treating an unreadable `supabase/migrations` as "no migrations".
+ */
+export class LegacyMigrationsReadError extends Data.TaggedError("LegacyMigrationsReadError")<{
+  readonly message: string;
+}> {}

@@ -153,6 +153,26 @@ describe("legacyListLocalMigrations", () => {
       ),
     );
   });
+
+  it.effect("fails (instead of returning []) when the migrations path is unreadable", () => {
+    // `supabase/migrations` exists but is a file, not a directory — Go's
+    // ListLocalMigrations aborts with `failed to read directory` rather than
+    // treating it as "no migrations".
+    const dir = withTemp();
+    const migrationsPath = join(dir, "supabase", "migrations");
+    mkdirSync(join(dir, "supabase"), { recursive: true });
+    writeFileSync(migrationsPath, "not a directory");
+    return withServices((fs, path) =>
+      legacyListLocalMigrations(fs, path, migrationsPath).pipe(Effect.exit),
+    ).pipe(
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(exit._tag).toBe("Failure");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });
 
 describe("legacyHashMigrations", () => {

@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { Effect, type FileSystem, Option, type Path } from "effect";
 
+import { LegacyMigrationsReadError } from "./declarative.errors.ts";
+
 /**
  * Declarative catalog-cache key builders + on-disk catalog resolution, ported
  * 1:1 from Go (`apps/cli-go/internal/db/declarative/declarative.go` +
@@ -110,11 +112,23 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
   path: Path.Path,
   migrationsDir: string,
 ) {
-  const exists = yield* fs.exists(migrationsDir).pipe(Effect.orElseSucceed(() => false));
-  if (!exists) return [] as ReadonlyArray<string>;
-  const names = yield* fs
-    .readDirectory(migrationsDir)
-    .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+  // Mirror Go's single `fs.ReadDir` (`pkg/migration/list.go:34-37`): only a
+  // not-exist directory is "no migrations"; every other read error (the path is a
+  // file → `ENOTDIR`, permission denied, …) aborts rather than silently letting
+  // smart generate/sync believe there are no local migrations. Effect surfaces
+  // "not found" as a `PlatformError` with a `SystemError` reason tagged `"NotFound"`.
+  const names = yield* fs.readDirectory(migrationsDir).pipe(
+    Effect.catchTag("PlatformError", (error) =>
+      error.reason._tag === "NotFound"
+        ? Effect.succeed([] as ReadonlyArray<string>)
+        : Effect.fail(
+            new LegacyMigrationsReadError({
+              message: `failed to read directory: ${error.message}`,
+            }),
+          ),
+    ),
+  );
+  if (names.length === 0) return [] as ReadonlyArray<string>;
   const sorted = [...names].sort();
   const result: Array<string> = [];
   for (let index = 0; index < sorted.length; index++) {
