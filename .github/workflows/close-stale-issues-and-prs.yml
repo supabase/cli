@@ -1,0 +1,275 @@
+name: Close stale issues and PRs
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # Daily at 02:00 UTC
+  workflow_dispatch:
+    inputs:
+      execute:
+        description: "Comment on and close matching issues and PRs"
+        type: boolean
+        default: false
+      issue-days:
+        description: "Select issues with no activity for this many days"
+        type: string
+        default: "45"
+      pr-days:
+        description: "Select PRs with no activity for this many days"
+        type: string
+        default: "60"
+      max-items:
+        description: "Maximum number of matching issues and PRs to close in one run"
+        type: string
+        default: "25"
+      exclude-labels:
+        description: "Comma-separated labels that prevent stale cleanup"
+        type: string
+        default: "security,pinned,do-not-close,keep-open,do not merge"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: close-stale-issues-and-prs
+  cancel-in-progress: false
+
+jobs:
+  close-stale:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Close stale issues and PRs
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const eventName = context.eventName;
+            const execute =
+              eventName === "workflow_dispatch" &&
+              core.getInput("execute", { required: false }) === "true";
+            const issueDays = positiveIntegerInput("issue-days", "45");
+            const prDays = positiveIntegerInput("pr-days", "60");
+            const maxItems = positiveIntegerInput("max-items", "25");
+            const excludeLabels = commaSeparatedInput(
+              "exclude-labels",
+              "security,pinned,do-not-close,keep-open,do not merge",
+            );
+            const { owner, repo } = context.repo;
+
+            const categories = [
+              {
+                kind: "issue",
+                label: "issue",
+                query: staleQuery({
+                  owner,
+                  repo,
+                  type: "issue",
+                  days: issueDays,
+                  excludeLabels,
+                }),
+                message: staleIssueMessage(issueDays),
+              },
+              {
+                kind: "pull-request",
+                label: "pull request",
+                query: staleQuery({
+                  owner,
+                  repo,
+                  type: "pr",
+                  days: prDays,
+                  excludeLabels,
+                }),
+                message: stalePullRequestMessage(prDays),
+              },
+            ];
+
+            core.info(`${execute ? "EXECUTE" : "DRY RUN"} stale cleanup for ${owner}/${repo}`);
+            core.info("Scheduled runs are always dry runs. Use workflow dispatch with execute=true to close items.");
+            core.info(`Issue cutoff: ${issueDays} days`);
+            core.info(`PR cutoff: ${prDays} days`);
+            core.info(`Max items per execution: ${maxItems}`);
+            core.info(`Excluded labels: ${excludeLabels.length > 0 ? excludeLabels.join(", ") : "(none)"}`);
+
+            const candidatesByKey = new Map();
+            for (const category of categories) {
+              const candidates = await searchCandidates(category);
+              core.info(`Found ${candidates.length} stale ${category.label}(s).`);
+              for (const candidate of candidates) {
+                candidatesByKey.set(`${category.kind}:${candidate.number}`, candidate);
+              }
+            }
+
+            const selected = [...candidatesByKey.values()]
+              .sort((a, b) => new Date(a.updated_at) - new Date(b.updated_at));
+            const capped = selected.slice(0, maxItems);
+            const cappedCount = selected.length - capped.length;
+
+            if (cappedCount > 0) {
+              core.warning(`Found ${selected.length} matching items but capped this run at ${maxItems}.`);
+            }
+
+            if (capped.length === 0) {
+              core.info("No stale issues or PRs found.");
+              await core.summary
+                .addHeading("Close stale issues and PRs")
+                .addRaw("No matching issues or PRs were found.")
+                .write();
+              return;
+            }
+
+            for (const item of capped) {
+              core.info(`#${item.number} ${item.kind} updated=${item.updated_at} ${item.html_url} ${item.title}`);
+            }
+
+            if (!execute) {
+              await writeSummary("Close stale issues and PRs dry run", capped, {
+                matchingCount: selected.length,
+                cappedCount,
+              });
+              return;
+            }
+
+            for (const item of capped) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: item.number,
+                body: item.message,
+              });
+
+              if (item.kind === "pull-request") {
+                await github.rest.pulls.update({
+                  owner,
+                  repo,
+                  pull_number: item.number,
+                  state: "closed",
+                });
+              } else {
+                await github.rest.issues.update({
+                  owner,
+                  repo,
+                  issue_number: item.number,
+                  state: "closed",
+                  state_reason: "not_planned",
+                });
+              }
+
+              core.info(`Closed ${item.kind} #${item.number}`);
+            }
+
+            await writeSummary("Closed stale issues and PRs", capped, {
+              matchingCount: selected.length,
+              cappedCount,
+            });
+
+            function positiveIntegerInput(name, fallback) {
+              const raw = core.getInput(name, { required: false }) || fallback;
+              const value = Number(raw);
+              if (!Number.isInteger(value) || value <= 0) {
+                throw new Error(`${name} must be a positive integer, got ${raw}`);
+              }
+              return value;
+            }
+
+            function commaSeparatedInput(name, fallback) {
+              const raw = core.getInput(name, { required: false }) || fallback;
+              return raw
+                .split(",")
+                .map((value) => value.trim())
+                .filter(Boolean);
+            }
+
+            function cutoffDate(days) {
+              return new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+                .toISOString()
+                .slice(0, 10);
+            }
+
+            function staleQuery({ owner, repo, type, days, excludeLabels }) {
+              return [
+                `repo:${owner}/${repo}`,
+                `is:${type}`,
+                "is:open",
+                `updated:<${cutoffDate(days)}`,
+                ...excludeLabels.map((label) => `-label:"${escapeSearchValue(label)}"`),
+              ].join(" ");
+            }
+
+            function escapeSearchValue(value) {
+              return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+            }
+
+            async function searchCandidates(category) {
+              const candidates = [];
+              for (let page = 1; ; page++) {
+                const { data } = await github.rest.search.issuesAndPullRequests({
+                  q: category.query,
+                  sort: "updated",
+                  order: "asc",
+                  per_page: 100,
+                  page,
+                });
+
+                for (const item of data.items) {
+                  candidates.push({
+                    kind: category.kind,
+                    label: category.label,
+                    number: item.number,
+                    title: item.title,
+                    html_url: item.html_url,
+                    updated_at: item.updated_at,
+                    message: category.message,
+                  });
+                }
+
+                if (data.items.length < 100) break;
+              }
+              return candidates;
+            }
+
+            function staleIssueMessage(days) {
+              return [
+                "Hi! Thanks for opening this issue.",
+                "",
+                `We're closing this because it has not had any activity for ${days} days, and we try to keep the Supabase CLI issue tracker focused on reports that are still current.`,
+                "",
+                "If this still reproduces on the latest Supabase CLI, please feel free to reopen it with your CLI version, updated reproduction steps, and any recent error output. We appreciate the signal and are happy to take another look.",
+              ].join("\n");
+            }
+
+            function stalePullRequestMessage(days) {
+              return [
+                "Hi! Thanks for contributing to Supabase CLI.",
+                "",
+                `We're closing this pull request because it has not had any activity for ${days} days, and we try to keep the PR queue focused on changes that are still active.`,
+                "",
+                "If this change is still relevant, please update it against the current develop branch and reopen it if GitHub allows, or leave a comment and a maintainer can help reopen it. You're also welcome to open a fresh PR with updated changes.",
+              ].join("\n");
+            }
+
+            async function writeSummary(title, items, { matchingCount, cappedCount }) {
+              await core.summary
+                .addHeading(title)
+                .addRaw(`${execute ? "Closed" : "Found"} ${items.length} issue(s) and PR(s).`)
+                .addBreak()
+                .addRaw(`${matchingCount} total item(s) matched the search filters.`)
+                .addBreak()
+                .addRaw(`${cappedCount} item(s) were left for a later run because of the per-run cap.`)
+                .addBreak()
+                .addTable([
+                  [
+                    { data: "Type", header: true },
+                    { data: "Item", header: true },
+                    { data: "Updated", header: true },
+                    { data: "Title", header: true },
+                  ],
+                  ...items.map((item) => [
+                    item.label,
+                    `#${item.number}`,
+                    item.updated_at,
+                    `[${item.title}](${item.html_url})`,
+                  ]),
+                ])
+                .write();
+            }
