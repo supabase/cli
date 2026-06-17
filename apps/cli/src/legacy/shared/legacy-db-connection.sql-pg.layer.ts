@@ -143,6 +143,29 @@ export function legacyIsUnixSocketHost(host: string): boolean {
  * socket dial has no TCP port. Interpolating the raw path makes `new URL()` throw,
  * which would otherwise break a socket DSN carrying startup `options`.
  */
+/**
+ * Merge the libpq `options` startup param with the parsed `runtimeParams`, encoding
+ * each runtime param as a `-c <key>=<value>` flag. Go sends every
+ * `pgconn.Config.RuntimeParams` entry as a discrete StartupMessage parameter
+ * (`ToPostgresURL`, `apps/cli-go/internal/utils/connect.go:31-33`), so the live
+ * query/COPY connection applies `search_path`, `statement_timeout`, etc.
+ * node-postgres has no discrete startup-param API, but Postgres applies the
+ * `-c key=value` flags carried in the `options` startup param to the same session
+ * GUCs — behaviorally equivalent, the same pragmatic mapping already used for
+ * `options`. Any existing `cfg.options` (e.g. the Supavisor `reference=<ref>` form)
+ * is preserved, with the `-c` flags appended. Returns `undefined` when neither is set.
+ */
+export function legacyMergedConnectionOptions(cfg: LegacyPgConnInput): string | undefined {
+  const base = cfg.options !== undefined && cfg.options.length > 0 ? cfg.options : undefined;
+  const params = cfg.runtimeParams;
+  if (params === undefined || Object.keys(params).length === 0) return base;
+  // libpq `options` is space-delimited; a literal backslash or space in a value
+  // must be backslash-escaped.
+  const escape = (value: string): string => value.replace(/([\\ ])/g, "\\$1");
+  const flags = Object.entries(params).map(([key, value]) => `-c ${key}=${escape(value)}`);
+  return [...(base === undefined ? [] : [base]), ...flags].join(" ");
+}
+
 export function legacyBuildConnectionUrl(
   cfg: LegacyPgConnInput,
   host: string,
@@ -154,8 +177,9 @@ export function legacyBuildConnectionUrl(
   const url = new URL(
     `postgresql://${encodeURIComponent(cfg.user)}:${encodeURIComponent(cfg.password)}@${hostPart}${portPart}/${encodeURIComponent(cfg.database)}`,
   );
-  if (cfg.options !== undefined && cfg.options.length > 0) {
-    url.searchParams.set("options", cfg.options);
+  const options = legacyMergedConnectionOptions(cfg);
+  if (options !== undefined && options.length > 0) {
+    url.searchParams.set("options", options);
   }
   return url.toString();
 }
@@ -299,7 +323,9 @@ const connect = (
         dialTargets.push({ dialHost, port, servername: dialHost === host ? undefined : host });
       }
     }
-    const hasOptions = cfg.options !== undefined && cfg.options.length > 0;
+    // Route through the connection string whenever a libpq `options` param OR
+    // parsed `runtimeParams` are present, so both reach the live connection.
+    const hasOptions = legacyMergedConnectionOptions(cfg) !== undefined;
     // Connect timeout parity: Go's `ToPostgresURL` always sets `connect_timeout`,
     // defaulting to 10s (`connect.go:24-28`); `ConnectLocalPostgres` uses 2s for
     // local (`connect.go:143-145`). A DSN/`PGCONNECT_TIMEOUT` value (>0) overrides

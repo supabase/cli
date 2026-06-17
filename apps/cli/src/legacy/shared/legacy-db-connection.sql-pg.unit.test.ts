@@ -4,6 +4,7 @@ import {
   legacyBuildConnectionUrl,
   legacyIsTerminalConnectError,
   legacyIsUnixSocketHost,
+  legacyMergedConnectionOptions,
   legacySslConfigsFor,
   legacySslOptionFor,
 } from "./legacy-db-connection.sql-pg.layer.ts";
@@ -54,6 +55,55 @@ describe("legacyBuildConnectionUrl", () => {
     expect(legacyBuildConnectionUrl({ ...base, host: "h1" }, "h2.example.com", 5433)).toContain(
       "@h2.example.com:5433/",
     );
+  });
+
+  it("forwards runtimeParams as -c flags in the options startup param (Go RuntimeParams)", () => {
+    const url = legacyBuildConnectionUrl(
+      {
+        user: "postgres",
+        password: "pw",
+        port: 5432,
+        database: "postgres",
+        host: "db.example.com",
+        runtimeParams: { search_path: "tenant", statement_timeout: "5000" },
+      },
+      "db.example.com",
+    );
+    const options = new URL(url).searchParams.get("options");
+    expect(options).toBe("-c search_path=tenant -c statement_timeout=5000");
+  });
+});
+
+describe("legacyMergedConnectionOptions", () => {
+  const base = { user: "postgres", password: "pw", port: 5432, database: "postgres", host: "h" };
+
+  it("returns undefined when neither options nor runtimeParams are set", () => {
+    expect(legacyMergedConnectionOptions(base)).toBeUndefined();
+  });
+
+  it("returns the libpq options verbatim when there are no runtimeParams", () => {
+    expect(legacyMergedConnectionOptions({ ...base, options: "reference=abc" })).toBe(
+      "reference=abc",
+    );
+  });
+
+  it("appends -c flags for each runtimeParam, preserving the existing options", () => {
+    expect(
+      legacyMergedConnectionOptions({
+        ...base,
+        options: "reference=abc",
+        runtimeParams: { search_path: "tenant" },
+      }),
+    ).toBe("reference=abc -c search_path=tenant");
+  });
+
+  it("backslash-escapes spaces in a runtimeParam value (libpq options syntax)", () => {
+    expect(
+      legacyMergedConnectionOptions({
+        ...base,
+        runtimeParams: { application_name: "my app" },
+      }),
+    ).toBe("-c application_name=my\\ app");
   });
 });
 
