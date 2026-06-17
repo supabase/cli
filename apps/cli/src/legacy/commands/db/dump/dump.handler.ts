@@ -6,6 +6,7 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
+import { legacyReadProjectRefFile } from "../../../shared/legacy-temp-paths.ts";
 import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
@@ -143,6 +144,21 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       : useLocal
         ? "local"
         : "linked";
+    // Go's `LoadProjectRef` sets `flags.ProjectRef` BEFORE `NewDbConfigWithPassword`
+    // (`flags/db_url.go:88` vs `:95`), and `ensureProjectGroupsCached` runs on failure
+    // too (`cmd/root.go:176`), so a connection-resolution failure (IPv6 / pooler /
+    // login-role) still refreshes the linked-project cache. The resolver only returns
+    // the ref on success, so capture it up-front for the linked path. `db dump` has no
+    // `--project-ref` flag, so the ref comes from config.toml `project_id` then the
+    // `.temp/project-ref` file — the same chain `resolveOptional`/smart generate use.
+    if (connType === "linked") {
+      const refOpt = Option.isSome(cliConfig.projectId)
+        ? cliConfig.projectId
+        : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+      if (Option.isSome(refOpt)) {
+        linkedRefForCache = refOpt.value;
+      }
+    }
     const {
       conn,
       isLocal,
@@ -158,7 +174,11 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // `[remotes.<ref>]` block overrides `db.major_version` for the pg_dump image,
     // mirroring Go's remote-merged `utils.Config` for `db dump --linked`.
     const linkedRef = Option.getOrUndefined(resolvedRef ?? Option.none());
-    linkedRefForCache = linkedRef;
+    // On a successful linked resolve this is the canonical ref (it equals the
+    // up-front capture); guard so a `None` from a non-linked path never clobbers it.
+    if (linkedRef !== undefined) {
+      linkedRefForCache = linkedRef;
+    }
 
     // Read config (with any `[remotes.<ref>]` override applied) BEFORE the dry-run
     // print. Go validates the merged config in the root `ParseDatabaseConfig`

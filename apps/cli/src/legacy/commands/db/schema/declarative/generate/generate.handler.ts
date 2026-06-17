@@ -277,13 +277,15 @@ const confirmOverwriteHasFiles = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   dir: string,
 ) {
-  const entries = yield* fs.readDirectory(dir).pipe(
-    Effect.catchTag("PlatformError", (error) =>
-      error.reason._tag === "NotFound"
-        ? Effect.succeed<ReadonlyArray<string>>([])
-        : Effect.fail(error),
-    ),
-  );
+  const entries = yield* fs
+    .readDirectory(dir)
+    .pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        error.reason._tag === "NotFound"
+          ? Effect.succeed<ReadonlyArray<string>>([])
+          : Effect.fail(error),
+      ),
+    );
   return entries.length > 0;
 });
 

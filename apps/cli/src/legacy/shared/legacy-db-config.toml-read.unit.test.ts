@@ -294,7 +294,7 @@ describe("legacyReadDbToml", () => {
     // Go's bucketNamePattern uses `\w` (includes `_`) and is not case-restricted
     // despite the prose, so `Bad_Name` actually passes — match the regex, not the
     // message text.
-    const dir = withConfig('[storage.buckets.Bad_Name]\n');
+    const dir = withConfig("[storage.buckets.Bad_Name]\n");
     return read(dir).pipe(
       Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );

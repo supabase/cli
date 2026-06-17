@@ -261,9 +261,9 @@ describe("legacy db schema declarative generate integration", () => {
       expect(readFileSync(join(tmp.current, "supabase", "database"), "utf8")).toBe(
         "not a directory",
       );
-      expect(
-        s.out.rawChunks.some((c) => c.text.includes("Declarative schema written to")),
-      ).toBe(false);
+      expect(s.out.rawChunks.some((c) => c.text.includes("Declarative schema written to"))).toBe(
+        false,
+      );
     }).pipe(Effect.provide(s.layer));
   });
 

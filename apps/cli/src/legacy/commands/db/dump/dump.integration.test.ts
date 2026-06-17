@@ -48,13 +48,26 @@ function mockResolver(opts: {
   isLocal?: boolean;
   poolerFallback?: Option.Option<LegacyPgConnInput>;
   poolerFallbackFails?: boolean;
+  resolveFails?: boolean;
+  ref?: string;
 }) {
   const calls: LegacyDbConfigFlags[] = [];
   const fallbackCalls: LegacyDbConfigFlags[] = [];
   const layer = Layer.succeed(LegacyDbConfigResolver, {
     resolve: (flags) => {
       calls.push(flags);
-      return Effect.succeed({ conn: opts.conn ?? LOCAL_CONN, isLocal: opts.isLocal ?? true });
+      // Simulate Go's NewDbConfigWithPassword failing during connection resolution
+      // (IPv6 probe / pooler / temp login-role) after the ref is already loaded.
+      if (opts.resolveFails === true) {
+        return Effect.fail(
+          new LegacyDbConfigConnectTempRoleError({ message: "failed to create temp role" }),
+        );
+      }
+      return Effect.succeed({
+        conn: opts.conn ?? LOCAL_CONN,
+        isLocal: opts.isLocal ?? true,
+        ref: opts.ref === undefined ? undefined : Option.some(opts.ref),
+      });
     },
     resolvePoolerFallback: (flags) => {
       fallbackCalls.push(flags);
@@ -160,25 +173,34 @@ interface SetupOpts {
   poolerFallbackFails?: boolean;
   networkId?: string;
   workdir?: string;
+  projectId?: Option.Option<string>;
+  resolveFails?: boolean;
+  ref?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
+  const cache = mockLegacyLinkedProjectCacheTracked();
   const resolver = mockResolver({
     conn: opts.conn,
     isLocal: opts.isLocal,
     poolerFallback: opts.poolerFallback,
     poolerFallbackFails: opts.poolerFallbackFails,
+    resolveFails: opts.resolveFails,
+    ref: opts.ref,
   });
   const docker = mockDockerRun(opts);
   const layer = Layer.mergeAll(
     out.layer,
     resolver.layer,
     docker.layer,
-    mockLegacyCliConfig({ workdir: opts.workdir ?? "/work/project", projectId: Option.none() }),
+    mockLegacyCliConfig({
+      workdir: opts.workdir ?? "/work/project",
+      projectId: opts.projectId ?? Option.none(),
+    }),
     telemetry.layer,
-    mockLegacyLinkedProjectCacheTracked().layer,
+    cache.layer,
     runtimeInfoLayer,
     Layer.succeed(
       LegacyNetworkIdFlag,
@@ -187,7 +209,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     BunServices.layer,
   );
-  return { layer, out, telemetry, resolver, docker };
+  return { layer, out, telemetry, resolver, docker, cache };
 }
 
 const flags = (over: Partial<LegacyDbDumpFlags> = {}): LegacyDbDumpFlags => ({
@@ -464,6 +486,49 @@ describe("legacy db dump integration", () => {
     return Effect.gen(function* () {
       yield* legacyDbDump(flags({}));
       expect(resolver.calls[0]).toMatchObject({ connType: "linked" });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("caches the linked project even when connection resolution fails (Go PostRun)", () => {
+    // Go's LoadProjectRef sets flags.ProjectRef BEFORE NewDbConfigWithPassword
+    // (flags/db_url.go:88 vs :95), and ensureProjectGroupsCached runs on failure too
+    // (cmd/root.go:176). So an IPv6/pooler/login-role failure during resolution still
+    // refreshes the linked-project cache, because the ref was already loaded — here
+    // from config.toml project_id.
+    const { layer, cache, resolver } = setup({
+      projectId: Option.some("abcdefghijklmnopqrst"),
+      resolveFails: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDump(flags({ linked: Option.some(true) })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(resolver.calls[0]).toMatchObject({ connType: "linked" });
+      expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("does not cache when the linked ref is unknown and resolution fails", () => {
+    // No config project_id and no .temp/project-ref file (workdir is a throwaway
+    // path), so the ref is never loaded; Go gates ensureProjectGroupsCached on
+    // flags.ProjectRef != "", so nothing is cached.
+    const { layer, cache } = setup({ resolveFails: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDump(flags({ linked: Option.some(true) })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(cache.cached).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("caches the linked project from the resolved ref on a successful dump", () => {
+    const { layer, cache } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      ref: "abcdefghijklmnopqrst",
+      stdout: "CREATE SCHEMA public;\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ linked: Option.some(true) }));
+      expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
