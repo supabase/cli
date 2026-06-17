@@ -72,6 +72,11 @@ export const legacyDbSchemaDeclarativeSyncCommand = Command.make("sync", config)
             apply: merged.apply,
             "no-apply": merged.noApply,
           },
+          // Go registers `--schema`/`-s` (StringSliceVarP) and `--file`/`-f`
+          // (StringVarP) (`cmd/db_schema_declarative.go:484-485`); telemetry reports
+          // changed flags by canonical `flag.Name` via `pflag.Visit`, so map the
+          // shorthands so `sync -s public -f out.sql` logs `schema`/`file`.
+          aliases: { s: "schema", f: "file" },
         }),
         withJsonErrorHandling,
       );

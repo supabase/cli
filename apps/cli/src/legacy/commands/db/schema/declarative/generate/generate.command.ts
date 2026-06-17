@@ -102,6 +102,11 @@ export const legacyDbSchemaDeclarativeGenerateCommand = Command.make("generate",
             // marks `--password` telemetry-safe).
             password: merged.password,
           },
+          // Go registers `--schema`/`-s` (StringSliceVarP) and `--password`/`-p`
+          // (StringVarP) (`cmd/db_schema_declarative.go:495,500`); telemetry reports
+          // changed flags by canonical `flag.Name` via `pflag.Visit`, so map the
+          // shorthands so `generate -s public -p secret` logs `schema`/`password`.
+          aliases: { s: "schema", p: "password" },
         }),
         withJsonErrorHandling,
       );

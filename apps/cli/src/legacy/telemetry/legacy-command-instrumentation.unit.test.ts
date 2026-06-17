@@ -301,6 +301,62 @@ describe("withLegacyCommandInstrumentation", () => {
     );
   });
 
+  it.live("records declarative generate shorthands -s/-p under canonical names", () => {
+    // Go registers --schema/-s and --password/-p (cmd/db_schema_declarative.go:495,500);
+    // changedFlags() reports the canonical schema/password.
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { schema: ["public"], password: Option.some("secret") },
+        aliases: { s: "schema", p: "password" },
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["db", "schema", "declarative", "generate", "-s", "public", "-p", "secret"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["db", "schema", "declarative", "generate"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ schema: "<redacted>", password: "<redacted>" });
+        }),
+      ),
+    );
+  });
+
+  it.live("records declarative sync shorthands -s/-f under canonical names", () => {
+    // Go registers --schema/-s and --file/-f (cmd/db_schema_declarative.go:484-485);
+    // changedFlags() reports the canonical schema/file.
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { schema: ["public"], file: Option.some("out.sql") },
+        aliases: { s: "schema", f: "file" },
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["db", "schema", "declarative", "sync", "-s", "public", "-f", "out.sql"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["db", "schema", "declarative", "sync"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ schema: "<redacted>", file: "<redacted>" });
+        }),
+      ),
+    );
+  });
+
   it.live("passes boolean flag values through verbatim", () => {
     const analytics = mockContextualAnalytics();
 
