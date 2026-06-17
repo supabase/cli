@@ -415,7 +415,9 @@ jobs:
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # github-hosted to share a cache store with build-github/publish, whose
+    # -github-v1 artifacts this job's checksums must match.
+    runs-on: ubuntu-latest
     env:
       BREW_NAME: ${{ inputs.brew_name }}
       VERSION: ${{ inputs.version }}
@@ -430,13 +432,19 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
+      # Must restore the github-hosted build (-github-v1), the same artifacts
+      # the publish job uploads to the GitHub Release. The Bun-compiled binaries
+      # are not byte-for-byte reproducible across the blacksmith and github
+      # builds, so the blacksmith dist/checksums.txt does not match the released
+      # tarballs. Reading it here produced a formula whose sha256 rejected the
+      # downloaded archive ("Formula reports different checksum").
       - name: Restore build artifacts cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
@@ -469,7 +477,9 @@ jobs:
   publish-scoop:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # github-hosted to share a cache store with build-github/publish, whose
+    # -github-v1 artifacts this job's checksums must match.
+    runs-on: ubuntu-latest
     env:
       SCOOP_NAME: ${{ inputs.scoop_name }}
       VERSION: ${{ inputs.version }}
@@ -484,13 +494,19 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
+      # Must restore the github-hosted build (-github-v1), the same artifacts
+      # the publish job uploads to the GitHub Release. The Bun-compiled binaries
+      # are not byte-for-byte reproducible across the blacksmith and github
+      # builds, so the blacksmith dist/checksums.txt does not match the released
+      # tarballs. Reading it here would produce a manifest whose hash rejects the
+      # downloaded archive.
       - name: Restore build artifacts cache
         uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
