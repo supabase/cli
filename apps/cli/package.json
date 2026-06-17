@@ -38,8 +38,8 @@
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.169",
-    "@anthropic-ai/sdk": "^0.102.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.170",
+    "@anthropic-ai/sdk": "^0.104.1",
     "@clack/prompts": "^1.5.1",
     "@effect/atom-react": "catalog:",
     "@effect/platform-bun": "catalog:",
@@ -70,10 +70,10 @@
     "oxlint-tsgolint": "catalog:",
     "pg": "^8.21.0",
     "pg-copy-streams": "^7.0.0",
-    "posthog-node": "^5.36.6",
+    "posthog-node": "^5.36.8",
     "react": "^19.2.7",
     "react-devtools-core": "^7.0.1",
-    "semantic-release": "^25.0.3",
+    "semantic-release": "^25.0.5",
     "smol-toml": "^1.6.1",
     "tldts": "catalog:",
     "vitest": "catalog:",
