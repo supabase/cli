@@ -39,7 +39,14 @@ export function legacyParseSslProbeTarget(dbUrl: string): LegacySslProbeTarget {
     Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
       ? timeoutSeconds * 1000
       : DEFAULT_PROBE_TIMEOUT_MS;
-  return { host: parsed.hostname, port, timeoutMs };
+  // `URL.hostname` keeps the brackets around an IPv6 literal (`[::1]`), and
+  // `net.connect` then treats `[::1]` as a DNS name (`getaddrinfo ENOTFOUND`)
+  // instead of dialing the address. Go's pgx path dials the bare `::1` (via
+  // `url.Hostname()`), so strip the surrounding brackets to match.
+  const hostname = parsed.hostname;
+  const host =
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  return { host, port, timeoutMs };
 }
 
 /**

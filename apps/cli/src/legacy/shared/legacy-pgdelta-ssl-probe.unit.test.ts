@@ -26,6 +26,20 @@ describe("legacyParseSslProbeTarget", () => {
       10_000,
     );
   });
+
+  it("strips the brackets around an IPv6-literal host so net.connect dials the address", () => {
+    expect(legacyParseSslProbeTarget("postgresql://u:p@[::1]:5432/postgres")).toEqual({
+      host: "::1",
+      port: 5432,
+      timeoutMs: 10_000,
+    });
+  });
+
+  it("leaves a plain hostname untouched", () => {
+    expect(legacyParseSslProbeTarget("postgresql://u:p@db.example.com:5432/postgres").host).toBe(
+      "db.example.com",
+    );
+  });
 });
 
 describe("legacyInterpretSslProbeByte", () => {
