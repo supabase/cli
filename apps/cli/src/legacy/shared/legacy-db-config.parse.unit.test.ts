@@ -159,6 +159,35 @@ describe("parseLegacyConnectionString (URL form)", () => {
     expect(parsed).not.toHaveProperty("runtimeParams");
   });
 
+  it("merges PGAPPNAME into runtimeParams as application_name (pgconn env merge)", () => {
+    const env = (name: string): string | undefined => (name === "PGAPPNAME" ? "myapp" : undefined);
+    const parsed = parseLegacyConnectionString("postgres://u:pw@h/db", env);
+    expect(parsed?.runtimeParams).toEqual({ application_name: "myapp" });
+  });
+
+  it("lets a connection-string application_name override PGAPPNAME (pgconn precedence)", () => {
+    const env = (name: string): string | undefined =>
+      name === "PGAPPNAME" ? "from-env" : undefined;
+    const parsed = parseLegacyConnectionString(
+      "postgres://u:pw@h/db?application_name=from-url",
+      env,
+    );
+    expect(parsed?.runtimeParams?.application_name).toBe("from-url");
+  });
+
+  it("merges a pg_service.conf runtime setting (search_path) into runtimeParams", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pgservice-"));
+    const file = join(dir, "pg_service.conf");
+    writeFileSync(file, "[tenant]\nhost=svc.example.com\nsearch_path=tenant_schema\n");
+    const parsed = parseLegacyConnectionString(
+      `postgres:///db?service=tenant&servicefile=${file}`,
+      () => undefined,
+    );
+    expect(parsed?.host).toBe("svc.example.com");
+    expect(parsed?.runtimeParams?.search_path).toBe("tenant_schema");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("returns undefined for an unparseable URL", () => {
     expect(parseLegacyConnectionString("postgres://user:pw@ bad host/db")).toBeUndefined();
   });

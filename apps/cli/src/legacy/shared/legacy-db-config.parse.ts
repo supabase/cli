@@ -68,18 +68,35 @@ const NOT_RUNTIME_PARAMS = new Set([
 ]);
 
 /**
- * Collect the startup `RuntimeParams` from a connection string's settings, mirroring
- * pgconn: every key not in `NOT_RUNTIME_PARAMS` is forwarded to the server (and so to
- * pg-delta via `ToPostgresURL`). Later duplicates win, matching pgconn's last-write.
- * Returns `undefined` when there are none, so callers omit the field.
+ * Collect the startup `RuntimeParams`, mirroring pgconn: every key not in
+ * `NOT_RUNTIME_PARAMS` is forwarded to the server (and so to pg-delta via
+ * `ToPostgresURL`). pgconn builds these from the *fully merged* settings —
+ * `mergeSettings(defaultSettings, envSettings, serviceSettings, connStringSettings)`
+ * (`pgconn/config.go:249-322`) — so a `pg_service.conf` entry's `search_path` or
+ * `PGAPPNAME → application_name` (`config.go:423`) are runtime params too, not just
+ * the connection-string query. Merge in pgconn's precedence (env → service →
+ * connString, last write wins). Returns `undefined` when there are none.
  */
 function collectRuntimeParams(
-  entries: Iterable<readonly [string, string]>,
+  connStringEntries: Iterable<readonly [string, string]>,
+  serviceSettings: Map<string, string> | undefined,
+  env: LegacyParseEnv,
 ): Record<string, string> | undefined {
   const params: Record<string, string> = {};
-  for (const [key, value] of entries) {
+  const add = (key: string, value: string): void => {
     if (!NOT_RUNTIME_PARAMS.has(key)) params[key] = value;
+  };
+  // env: the only PG* var pgconn maps into RuntimeParams is PGAPPNAME → application_name
+  // (the rest are connection settings in `notRuntimeParams`). Empty is treated as unset.
+  const appName = libpqEnv(env, "PGAPPNAME");
+  if (appName !== undefined) add("application_name", appName);
+  // service: pgconn copies every service key verbatim into the merged settings, so its
+  // non-connection keys (search_path, application_name, …) are runtime params.
+  if (serviceSettings !== undefined) {
+    for (const [key, value] of serviceSettings) add(key, value);
   }
+  // connString: highest precedence (overrides env/service).
+  for (const [key, value] of connStringEntries) add(key, value);
   return Object.keys(params).length > 0 ? params : undefined;
 }
 
@@ -461,7 +478,7 @@ function parseUrlConnectionString(
     const options = url.searchParams.get("options") ?? svc("options") ?? null;
     // Every other query setting (e.g. search_path, statement_timeout) is a startup
     // runtime param Go forwards to the server / pg-delta.
-    const runtimeParams = collectRuntimeParams(query);
+    const runtimeParams = collectRuntimeParams(query, serviceSettings, env);
     // A `passfile=` setting (query or service) points `.pgpass` resolution at a
     // non-default file (pgconn `config.go:293`); non-empty wins over `PGPASSFILE`.
     // A present `passfile=` (even empty) overrides PGPASSFILE/default; a present-empty
@@ -701,7 +718,7 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   const options = params.get("options") ?? svc("options");
   // Every other keyword setting (e.g. search_path, statement_timeout) is a startup
   // runtime param Go forwards to the server / pg-delta.
-  const runtimeParams = collectRuntimeParams(params);
+  const runtimeParams = collectRuntimeParams(params, serviceSettings, env);
   // A `passfile=` setting (keyword or service) points `.pgpass` resolution at a
   // non-default file (pgconn `config.go:293`); non-empty wins over `PGPASSFILE`.
   // A present `passfile=` (even empty) overrides PGPASSFILE/default (see URL branch).
