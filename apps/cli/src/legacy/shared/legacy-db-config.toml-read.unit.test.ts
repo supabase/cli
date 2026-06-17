@@ -263,6 +263,43 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("rejects an invalid [storage.buckets.<name>] during load", () => {
+    // Go's config.Validate runs ValidateBucketName over every bucket key on load
+    // (`apps/cli-go/pkg/config/config.go:898-903`), aborting with this exact message
+    // (`config.go:1386`) before any db command — the trailing `(...)` is the regex
+    // source. `#` is outside bucketNamePattern, so this name is rejected.
+    const dir = withConfig('[storage.buckets."bad#name"]\n');
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const json = JSON.stringify(exit.cause);
+            expect(json).toContain("LegacyDbConfigLoadError");
+            // Prose part is backslash-free, so safe to assert through JSON.stringify;
+            // the trailing `(<regex source>)` is built from the pattern's `.source`,
+            // guaranteeing it byte-matches Go's `bucketNamePattern.String()`.
+            expect(json).toContain(
+              "Invalid Bucket name: bad#name. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed.",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("accepts an underscore bucket name like Go's permissive pattern", () => {
+    // Go's bucketNamePattern uses `\w` (includes `_`) and is not case-restricted
+    // despite the prose, so `Bad_Name` actually passes — match the regex, not the
+    // message text.
+    const dir = withConfig('[storage.buckets.Bad_Name]\n');
+    return read(dir).pipe(
+      Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
   it.effect("honors SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED / _DECLARATIVE_SCHEMA_PATH env", () => {
     // Go's viper AutomaticEnv overrides TOML for experimental.pgdelta.* before validation.
     const dir = withConfig(undefined);

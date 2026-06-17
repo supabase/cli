@@ -193,6 +193,13 @@ function findDuplicateRemoteProjectId(
 // lowercase ASCII letters.
 const LEGACY_PROJECT_REF_PATTERN = /^[a-z]{20}$/;
 
+// Go's storage bucket-name pattern (`apps/cli-go/pkg/config/config.go:1382`).
+// `config.Validate` runs `ValidateBucketName` over every `[storage.buckets.*]` key
+// during config load (`config.go:898-903`), aborting before any db command when a
+// name does not match. The source string is reused verbatim in the error message via
+// `.source` so it byte-matches Go's `bucketNamePattern.String()`.
+const LEGACY_BUCKET_NAME_PATTERN = /^(\w|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
+
 /**
  * Go's `config.Validate` rejects any `[remotes.<name>]` whose `project_id` is not a
  * valid project ref (`config.go:832-836`), on every config load — so a malformed or
@@ -763,6 +770,24 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     );
   }
   const formatOptions = nonEmptyString(formatOptionsExpanded);
+
+  // Go's config.Validate runs `ValidateBucketName` over every `[storage.buckets.*]`
+  // key on load (`apps/cli-go/pkg/config/config.go:898-903`), rejecting the config
+  // before any db command when a bucket name does not match `bucketNamePattern`.
+  // The reader otherwise drops `storage.buckets`, so port the check here with Go's
+  // exact message (the trailing `(%s)` is the regex source, `config.go:1386`).
+  const bucketsRaw = asRecord(storageRaw?.["buckets"]);
+  if (bucketsRaw !== undefined) {
+    for (const name of Object.keys(bucketsRaw)) {
+      if (!LEGACY_BUCKET_NAME_PATTERN.test(name)) {
+        return yield* Effect.fail(
+          new LegacyDbConfigLoadError({
+            message: `Invalid Bucket name: ${name}. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (${LEGACY_BUCKET_NAME_PATTERN.source})`,
+          }),
+        );
+      }
+    }
+  }
 
   // `[db.vault]` secret names, sorted (Go's `setupInputsToken` sorts before hashing).
   const vaultRaw = asRecord(db?.["vault"]);
