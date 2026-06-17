@@ -234,7 +234,7 @@ jobs:
                 "",
                 `We're closing this because it has not had any activity for ${days} days, and we try to keep the Supabase CLI issue tracker focused on reports that are still current.`,
                 "",
-                "If this is still relevant, please feel free to reopen it with any updated details or reproduction steps. We appreciate the signal and are happy to take another look.",
+                "If this still reproduces on the latest Supabase CLI, please feel free to reopen it with your CLI version, updated reproduction steps, and any recent error output. We appreciate the signal and are happy to take another look.",
               ].join("\n");
             }
 
@@ -244,7 +244,7 @@ jobs:
                 "",
                 `We're closing this pull request because it has not had any activity for ${days} days, and we try to keep the PR queue focused on changes that are still active.`,
                 "",
-                "If this is still relevant, please feel free to reopen it if GitHub allows, or leave a comment and a maintainer can help reopen it. You're also welcome to open a fresh PR with updated changes.",
+                "If this change is still relevant, please update it against the current develop branch and reopen it if GitHub allows, or leave a comment and a maintainer can help reopen it. You're also welcome to open a fresh PR with updated changes.",
               ].join("\n");
             }
 
