@@ -164,8 +164,15 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // db_schema_declarative.go:321): with migrations present it offers the
         // local / linked / custom target choice + local-reset prompt, so a linked
         // workdir can bootstrap from the remote rather than silently using local.
+        // Smart-mode presence probe only: Go's delegated `runDeclarativeGenerate` uses
+        // `hasMigrationFiles`, which returns `false` on ANY `ListLocalMigrations` error
+        // (`db_schema_declarative.go:164-169`), flowing into the no-migrations local
+        // generate. Swallow read errors here so an unreadable/file migrations path
+        // doesn't abort the bootstrap; the diff path below keeps the hard list behavior.
         const hasMigrations =
-          (yield* legacyListLocalMigrations(fs, path, migrationsDir)).length > 0;
+          (yield* legacyListLocalMigrations(fs, path, migrationsDir).pipe(
+            Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+          )).length > 0;
         // Go calls `flags.LoadProjectRef` only inside `runDeclarativeGenerate`'s
         // `hasMigrationFiles` branch (`db_schema_declarative.go:219-224`), which sets
         // the global `flags.ProjectRef` so the post-run cache fires regardless of the
@@ -174,9 +181,16 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // finalizer so a linked-workdir bootstrap caches like Go.
         let linkedRef = Option.none<string>();
         if (hasMigrations) {
+          // Smart prompt only decides whether to OFFER the linked choice — Go guards
+          // `LoadProjectRef` with `if err == nil` (`db_schema_declarative.go:222-224`),
+          // ignoring read errors and continuing with local/custom. Swallow a broken
+          // `.temp/project-ref` here; `linkedProjectRef` then stays unset so the post-run
+          // cache correctly does not fire (Go leaves `flags.ProjectRef` empty on error).
           linkedRef = Option.isSome(cliConfig.projectId)
             ? cliConfig.projectId
-            : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+            : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
+                Effect.orElseSucceed(() => Option.none<string>()),
+              );
           if (Option.isSome(linkedRef)) {
             linkedProjectRef = linkedRef.value;
           }

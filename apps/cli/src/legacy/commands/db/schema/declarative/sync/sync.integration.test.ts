@@ -237,6 +237,60 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("bootstrap: an unreadable migrations path is treated as no migrations", () => {
+    // Go's delegated hasMigrationFiles returns false on ANY ListLocalMigrations error
+    // (db_schema_declarative.go:164-169), flowing into the no-migrations local generate.
+    // Seeding supabase/migrations as a FILE makes the probe's list fail with ENOTDIR; it
+    // must be swallowed so the bootstrap reaches generation, not abort on the read.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations"), "not a directory");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      diffSql: "",
+      promptConfirmResponses: [true], // generate a new one? yes (no reset prompt: no migrations)
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
+      );
+      // The probe was softened: it reached generation and failed downstream on the
+      // empty edge-runtime output, NOT on the migrations directory read.
+      const msg = JSON.stringify(exit);
+      expect(msg).not.toContain("failed to read directory");
+      expect(msg).toContain("edge-runtime script produced no output");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("bootstrap: an unreadable ref file just omits the linked choice", () => {
+    // Go ignores smart-prompt LoadProjectRef errors (`if err == nil`,
+    // db_schema_declarative.go:222-224): a broken .temp/project-ref omits the linked
+    // choice and bootstrap continues. Seeding project-ref as a DIRECTORY makes the read
+    // fail; the bootstrap smart read must swallow it, not abort.
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    mkdirSync(join(tmp.current, "supabase", ".temp", "project-ref"), { recursive: true });
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      diffSql: "",
+      projectId: Option.none(),
+      promptConfirmResponses: [true, false], // [generate a new one? yes][reset? no]
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
+      );
+      // Reached the smart prompt (didn't abort on the ref read); linked choice omitted.
+      expect((s.out.promptSelectCalls[0]?.options ?? []).map((o) => o.value)).toEqual([
+        "local",
+        "custom",
+      ]);
+      expect(JSON.stringify(exit)).not.toContain("failed to load project ref");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("bootstrap caches the linked project even when a later step fails (Go PostRun)", () => {
     // Go's bootstrap delegates to runDeclarativeGenerate, whose LoadProjectRef (under
     // hasMigrationFiles) sets flags.ProjectRef; root ensureProjectGroupsCached then
