@@ -475,6 +475,16 @@ export const legacyDbConfigLayer = Layer.effect(
                 new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }),
               );
             }
+            // Go's `ParseDatabaseConfig` runs `LoadProjectRef` → `LoadConfig` →
+            // `NewDbConfigWithPassword` (`internal/utils/flags/db_url.go:81-92`), so
+            // the `[remotes.<ref>]`-merged config (e.g. an unsupported remote
+            // `db.major_version` / `edge_runtime.deno_version`) is validated as a pure
+            // config error BEFORE any network work. The base read in `resolve` above
+            // only validates remote `project_id`s, not the ref-merged block — so
+            // validate the merged config here, before `resolveLinked`'s TCP probe /
+            // pooler / temp-role Management API calls, rather than letting those mask
+            // (or run side effects ahead of) the real config error.
+            yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref);
             const resolved = yield* resolveLinked(
               ref,
               flags.dnsResolver,
