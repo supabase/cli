@@ -582,7 +582,7 @@ describe("legacy db query integration", () => {
     // of which can fail early. A resolver failure must stop the query before the API.
     // (The config-validation-before-network parity is covered at the resolver level in
     // legacy-db-config.integration.test.ts.)
-    const { layer, out } = setup({
+    const { layer, out, cache } = setup({
       resolveFails: true,
       linkedStatus: 201,
       linkedBody: '[{"id":1}]',
@@ -594,6 +594,25 @@ describe("legacy db query integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("failed to parse connection string");
       expect(out.stdoutText).toBe(""); // failed before emitting any query result
+      // Go loads the ref (LoadProjectRef) before NewDbConfigWithPassword, and
+      // ensureProjectGroupsCached runs on failure too, so a resolve-step failure
+      // still refreshes the linked-project cache.
+      expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("caches the linked project even when SQL resolution fails (Go PostRun)", () => {
+    // The ref resolves and the DB config validates, but no SQL is provided on a TTY
+    // (no --file / no stdin), so the query fails at ResolveSQL — before runLinked.
+    // Go records flags.ProjectRef in the pre-run and ensureProjectGroupsCached runs
+    // after the command returns even on a RunE error (cmd/root.go:176), so the
+    // linked-project cache must still refresh.
+    const { layer, cache } = setup({ stdinTTY: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbQuery(flags({ linked: Option.some(true) })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toContain("no SQL query provided");
+      expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 

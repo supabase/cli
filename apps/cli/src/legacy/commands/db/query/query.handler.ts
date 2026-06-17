@@ -69,6 +69,16 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
   const telemetryState = yield* LegacyTelemetryState;
   const telemetryOutputFormat = yield* LegacyTelemetryOutputFormat;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  // Go records `flags.ProjectRef` during the linked pre-run (`LoadProjectRef`),
+  // before `NewDbConfigWithPassword`'s DB resolution and before `RunE`'s
+  // `ResolveSQL` (`flags/db_url.go:88`). `Execute()` then calls
+  // `ensureProjectGroupsCached` after the command returns on success AND failure
+  // (`cmd/root.go:176`, ahead of the error panic at `:185`), gated on
+  // `flags.ProjectRef != ""`. So the linked-project cache must refresh even when a
+  // later step (DB resolution, missing `--file`, no-stdin SQL) fails. Captured in the
+  // linked preflight; the finalizer on the whole handler body reads it. Declared at
+  // handler scope so it is visible to both the preflight and the `.pipe` finalizer.
+  let linkedRefForCache: string | undefined;
   const stdin = yield* Stdin;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -274,6 +284,10 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
           new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }),
         );
       }
+      // Record the ref now (Go's `LoadProjectRef` sets `flags.ProjectRef` here),
+      // so the linked-project cache finalizer fires even if the DB resolution or
+      // token check below fails.
+      linkedRefForCache = ref;
       // 2. `NewDbConfigWithPassword`: loads + validates the remote-merged config and
       //    resolves the live DB connection (TCP probe, pooler fallback, temp login-role
       //    mint), any of which can fail early. The token is read lazily here only when a
@@ -378,21 +392,27 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     // 3. Linked → Management API (raw HTTP); local / --db-url → direct connection.
     // The --linked token/ref preflight already ran above (Go's PreRun order).
     if (linkedAuth !== undefined) {
-      // Mirror Go's `ensureProjectGroupsCached` PersistentPostRun
-      // (`apps/cli-go/cmd/root.go:176,214-234`): once a project ref is resolved,
-      // write the linked-project cache (`GET /v1/projects/{ref}` →
-      // `supabase/.temp/linked-project.json`) whether the query succeeds or fails.
-      // The cache layer no-ops when the file already exists, the token is missing,
-      // or the GET is non-200. Only the linked path resolves a ref, so `--local` /
-      // `--db-url` never trigger this write (Go gates on `flags.ProjectRef != ""`).
-      return yield* runLinked(sql, format, agentMode, linkedAuth.ref, linkedAuth.token).pipe(
-        Effect.ensuring(linkedProjectCache.cache(linkedAuth.ref)),
-      );
+      return yield* runLinked(sql, format, agentMode, linkedAuth.ref, linkedAuth.token);
     }
     if (localTarget === undefined) {
       // Unreachable: the non-linked branch always resolves a target above.
       return yield* Effect.die(new Error("db query: connection target was not resolved"));
     }
     return yield* runLocal(localTarget, sql, format, agentMode);
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  }).pipe(
+    // Mirror Go's `ensureProjectGroupsCached` PersistentPostRun
+    // (`apps/cli-go/cmd/root.go:176,214-234`): once a project ref is resolved, write
+    // the linked-project cache (`GET /v1/projects/{ref}` →
+    // `supabase/.temp/linked-project.json`) whether the query succeeds or fails — and
+    // even when it fails before `runLinked` (DB resolution, missing `--file`, no-stdin
+    // SQL). The cache layer no-ops when the file already exists, the token is missing,
+    // or the GET is non-200. Only the linked path sets `linkedRefForCache`, so
+    // `--local` / `--db-url` never trigger this (Go gates on `flags.ProjectRef != ""`).
+    Effect.ensuring(
+      Effect.suspend(() =>
+        linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
+      ),
+    ),
+    Effect.ensuring(telemetryState.flush),
+  );
 });
