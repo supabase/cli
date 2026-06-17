@@ -44,6 +44,22 @@ interface LegacyProjectRefResolverShape {
     flagValue: Option.Option<string>,
   ) => Effect.Effect<Option.Option<string>, never, never>;
   /**
+   * Non-prompting resolution chain (flag -> `cliConfig.projectId` -> ref file)
+   * that **fails hard** with `LegacyProjectNotLinkedError` when nothing
+   * resolves, with ref-format validation. A 1:1 port of Go's
+   * `flags.LoadProjectRef` (`internal/utils/flags/project_ref.go:54-76`) as used
+   * by the `--linked` PreRun of the `db` command family (`cmd/db.go:307,362`)
+   * and by `ParseDatabaseConfig`'s linked branch (`db_url.go:88`).
+   *
+   * Unlike `resolve`, it never reaches the interactive `PromptProjectRef` TTY
+   * fallback — Go's `db lint`/`db advisors`/`db query` deliberately call
+   * `LoadProjectRef`, not `ParseProjectRef`, so a `--linked` run with a token
+   * but no linked-project file must fail fast rather than open a project picker.
+   */
+  readonly loadProjectRef: (
+    flagValue: Option.Option<string>,
+  ) => Effect.Effect<string, LegacyProjectNotLinkedError | LegacyInvalidProjectRefError, never>;
+  /**
    * Lists all projects and prompts the user to select one with the given title,
    * writing "Selected project: <ref>" to stderr (text mode). Mirrors Go's
    * `flags.PromptProjectRef(ctx, title)` (`project_ref.go:30-52`). The `title`

@@ -451,7 +451,7 @@ describe("legacy db schema declarative generate integration", () => {
       // resolver's --linked branch.
       const options = s.out.promptSelectCalls[0]?.options ?? [];
       expect(options.map((o) => o.value)).toEqual(["local", "linked", "custom"]);
-      expect(s.resolverCalls).toContainEqual(expect.objectContaining({ linked: true }));
+      expect(s.resolverCalls).toContainEqual(expect.objectContaining({ connType: "linked" }));
     }).pipe(Effect.provide(s.layer));
   });
 

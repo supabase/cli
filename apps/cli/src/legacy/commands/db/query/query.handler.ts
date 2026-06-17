@@ -300,8 +300,9 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       linkedAuth === undefined
         ? yield* resolver.resolve({
             dbUrl: flags.dbUrl,
-            linked: false,
-            local: Option.isNone(flags.dbUrl) && !flags.linked,
+            // This branch is the non-linked path (linkedAuth handles `--linked`),
+            // so the target is `--db-url` or local.
+            connType: Option.isSome(flags.dbUrl) ? "db-url" : "local",
             dnsResolver,
           })
         : undefined;

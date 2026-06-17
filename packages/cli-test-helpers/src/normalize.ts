@@ -73,6 +73,14 @@ export function normalize(output: string, options: NormalizeOptions = {}): strin
       //     before duration normalization because opaque bytes can contain
       //     duration-looking substrings such as "100s".
       .replace(/"(d|x|y|n|e|p|q|dp|dq|qi|k)"\s*:\s*"[A-Za-z0-9_-]+"/g, '"$1":"<KEY_BYTES>"')
+      // 6b. JWT tokens (header starts with eyJ — base64url of `{"`). Masks the
+      //     full three-part token so non-deterministic signatures and Unix
+      //     timestamps in the payload don't cause false parity failures. Must run
+      //     BEFORE duration normalization (rule 7): a random base64url signature
+      //     can contain a duration-looking substring (e.g. "-60s-") bounded by
+      //     `-`/`_`/`.`, which the duration pass would otherwise inject `<DURATION>`
+      //     into mid-token. Same ordering rationale as the JWK key bytes above.
+      .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g, "<JWT>")
       // 7. Durations (e.g. 1.23s, 123ms, 42s)
       .replace(/\b\d+(?:\.\d+)?(?:ms|s)\b/g, "<DURATION>")
       // 8. Unix absolute paths (/home/…, /Users/…, /tmp/…, /var/…, /opt/…, /usr/…)
@@ -106,10 +114,6 @@ export function normalize(output: string, options: NormalizeOptions = {}): strin
       .replace(/(?:^[ \t]+at [^\n]+\n?)+/gm, "<STACK_TRACE>\n")
       // 14. File reference line numbers (file.ts:123 or file.ts:123:45)
       .replace(/\b(\w[\w.-]*\.(?:ts|js|go|tsx|jsx|mts|mjs|cjs)):\d+(?::\d+)?\b/g, "$1:<LINE>")
-      // 15. JWT tokens (header starts with eyJ — base64url of `{"`)
-      //     Replaces full three-part token so non-deterministic signatures and
-      //     Unix-integer timestamps in the payload don't cause false parity failures.
-      .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g, "<JWT>")
       // 16. db query agent-mode boundary: a 32-char hex string generated randomly
       //     per process. Both the JSON key value and its appearance inside the
       //     warning string (unicode-escaped in raw JSON) must be replaced.

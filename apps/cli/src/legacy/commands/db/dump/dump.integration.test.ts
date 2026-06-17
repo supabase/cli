@@ -396,7 +396,7 @@ describe("legacy db dump integration", () => {
     const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false });
     return Effect.gen(function* () {
       yield* legacyDbDump(flags({}));
-      expect(resolver.calls[0]).toMatchObject({ linked: true, local: false });
+      expect(resolver.calls[0]).toMatchObject({ connType: "linked" });
     }).pipe(Effect.provide(layer));
   });
 
@@ -447,7 +447,7 @@ describe("legacy db dump integration", () => {
       // Retried once: two container runs, one fallback resolution.
       expect(docker.allOpts).toHaveLength(2);
       expect(resolver.fallbackCalls).toHaveLength(1);
-      expect(resolver.fallbackCalls[0]).toMatchObject({ linked: true });
+      expect(resolver.fallbackCalls[0]).toMatchObject({ connType: "linked" });
       // The retry targeted the pooler host (PGHOST in the rebuilt env).
       expect(docker.allOpts[1]?.env["PGHOST"]).toBe(POOLER_CONN.host);
       // The IPv6 warning was printed to stderr; only the retry's output reached stdout.

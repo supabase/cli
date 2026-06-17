@@ -18957,7 +18957,7 @@
                     }
                   }
                 },
-                "required": ["keys"]
+                "required": []
               },
               "name_id_format": {
                 "type": "string",
@@ -19068,7 +19068,7 @@
                           }
                         }
                       },
-                      "required": ["keys"]
+                      "required": []
                     },
                     "name_id_format": {
                       "type": "string",
@@ -19178,7 +19178,7 @@
                     }
                   }
                 },
-                "required": ["keys"]
+                "required": []
               },
               "name_id_format": {
                 "type": "string",
@@ -19190,7 +19190,7 @@
                 ]
               }
             },
-            "required": ["id", "entity_id"]
+            "required": ["entity_id"]
           },
           "domains": {
             "type": "array",
@@ -19357,7 +19357,7 @@
                     }
                   }
                 },
-                "required": ["keys"]
+                "required": []
               },
               "name_id_format": {
                 "type": "string",
@@ -19463,7 +19463,7 @@
                     }
                   }
                 },
-                "required": ["keys"]
+                "required": []
               },
               "name_id_format": {
                 "type": "string",

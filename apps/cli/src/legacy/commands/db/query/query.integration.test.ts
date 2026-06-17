@@ -116,6 +116,7 @@ function mockProjectRef(unlinked = false) {
     resolve: () => Effect.succeed(REF),
     resolveForLink: () => Effect.succeed(REF),
     resolveOptional: () => Effect.succeed(unlinked ? Option.none() : Option.some(REF)),
+    loadProjectRef: () => Effect.succeed(REF),
     promptProjectRef: () => Effect.succeed(REF),
   });
 }

@@ -3,6 +3,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
@@ -117,14 +118,21 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     //    (`internal/utils/flags/db_url.go:46-62`).
     const useLocal = Option.isNone(flags.dbUrl) && flags.local;
     const useLinked = Option.isNone(flags.dbUrl) && !flags.local;
+    // `connType` selects the resolver branch (Go's Changed-first precedence): a
+    // `--db-url` wins, then explicit `--local`; otherwise dump defaults to linked
+    // (unlike the other db commands, whose unset default is local).
+    const connType: LegacyDbConnType = Option.isSome(flags.dbUrl)
+      ? "db-url"
+      : useLocal
+        ? "local"
+        : "linked";
     const {
       conn,
       isLocal,
       ref: resolvedRef,
     } = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
-      linked: useLinked,
-      local: useLocal,
+      connType,
       dnsResolver,
       password: flags.password,
     });
@@ -288,8 +296,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       const pooler = yield* resolver
         .resolvePoolerFallback({
           dbUrl: flags.dbUrl,
-          linked: true,
-          local: false,
+          connType: "linked",
           dnsResolver,
           password: flags.password,
         })

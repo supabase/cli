@@ -60,8 +60,8 @@ export const legacyResolveRemoteUrl = Effect.fnUntraced(function* (flags: Legacy
   const dnsResolver = yield* LegacyDnsResolverFlag;
   const resolved = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
-    linked: flags.linked,
-    local: false,
+    // Remote-only resolution: `--db-url` wins, otherwise the linked project.
+    connType: Option.isSome(flags.dbUrl) ? "db-url" : "linked",
     dnsResolver,
     password: flags.password,
   });

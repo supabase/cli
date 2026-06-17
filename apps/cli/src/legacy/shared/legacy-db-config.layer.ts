@@ -18,6 +18,7 @@ import {
 import { LegacyLinkedProjectCache } from "../telemetry/legacy-linked-project-cache.service.ts";
 import {
   LegacyDebugFlag,
+  LegacyDnsResolverFlag,
   LegacyOutputFlag,
   LegacyProfileFlag,
   LegacyWorkdirFlag,
@@ -28,6 +29,7 @@ import { Tty } from "../../shared/runtime/tty.service.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { LegacyDbConnection, type LegacyPgConnInput } from "./legacy-db-connection.service.ts";
+import { LegacyIdentityStitch } from "./legacy-identity-stitch.ts";
 import {
   legacyLinkedDbResolverRuntimeLayer,
   type LegacyLinkedDbResolverRuntimeRequirements,
@@ -124,11 +126,19 @@ export const legacyDbConfigLayer = Layer.effect(
       Layer.succeed(LegacyWorkdirFlag, yield* LegacyWorkdirFlag),
       Layer.succeed(LegacyOutputFlag, yield* LegacyOutputFlag),
       Layer.succeed(LegacyDebugFlag, yield* LegacyDebugFlag),
+      // `legacyLinkedDbResolverRuntimeLayer`'s platform-API factory provides a DoH
+      // fetch layer that reads `LegacyDnsResolverFlag`; snapshot it so the lazily
+      // built linked stack stays fully self-provided (`resolve`'s R stays `never`).
+      Layer.succeed(LegacyDnsResolverFlag, yield* LegacyDnsResolverFlag),
       Layer.succeed(RuntimeInfo, yield* RuntimeInfo),
       Layer.succeed(Analytics, yield* Analytics),
       Layer.succeed(TelemetryRuntime, yield* TelemetryRuntime),
       Layer.succeed(Tty, yield* Tty),
       Layer.succeed(Output, output),
+      // The per-command identity stitcher, shared with the linked stack's lazy
+      // platform-API factory + linked-project cache (Go's single root-context
+      // `sync.Once`). Provided to this layer by each command runtime.
+      Layer.succeed(LegacyIdentityStitch, yield* LegacyIdentityStitch),
       BunServices.layer,
     );
     // Compile-time guard: if `legacyLinkedDbResolverRuntimeLayer`'s requirements ever
@@ -402,7 +412,7 @@ export const legacyDbConfigLayer = Layer.effect(
         const localHost = legacyGetHostname();
 
         // --db-url (direct) takes precedence.
-        if (Option.isSome(flags.dbUrl)) {
+        if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {
           // Go's direct path runs `LoadConfig` before `pgconn.ParseConfig`
           // (`internal/utils/flags/db_url.go:59-68`), so the project `.env*` files
           // populate the environment that the libpq `PG*` fallbacks read. Layer the
@@ -446,7 +456,7 @@ export const legacyDbConfigLayer = Layer.effect(
         // this branch — `--local` and `--db-url` never touch it. The factory resolves
         // the access token only on first use (minting a temp role), so a
         // `--linked --password` invocation stays auth-free, matching Go.
-        if (flags.linked) {
+        if (flags.connType === "linked") {
           const linked = yield* Effect.gen(function* () {
             const projectRef = yield* LegacyProjectRefResolver;
             // Go's ParseDatabaseConfig resolves the linked ref via LoadProjectRef
@@ -512,7 +522,7 @@ export const legacyDbConfigLayer = Layer.effect(
     // original container error.
     const resolvePoolerFallback = (flags: LegacyDbConfigFlags) =>
       Effect.gen(function* () {
-        if (!flags.linked) return Option.none<LegacyPgConnInput>();
+        if (flags.connType !== "linked") return Option.none<LegacyPgConnInput>();
         return yield* Effect.gen(function* () {
           const projectRef = yield* LegacyProjectRefResolver;
           const refOpt = yield* projectRef.resolveOptional(Option.none());
