@@ -32,8 +32,15 @@ describe("storage (live --linked)", () => {
       expect(ls.exitCode, ls.stderr).toBe(0);
       expect(ls.stdout).toContain("upload.txt");
 
-      const rm = await run(["storage", "rm", remote, ...STORAGE_FLAGS]);
+      // --yes: rm prompts (default No) and would otherwise skip deletion in the
+      // non-TTY harness yet still exit 0.
+      const rm = await run(["storage", "rm", remote, "--yes", ...STORAGE_FLAGS]);
       expect(rm.exitCode, rm.stderr).toBe(0);
+
+      // Confirm the object is actually gone (guards against a no-op delete).
+      const after = await run(["storage", "ls", `ss:///${storageBucket}/`, ...STORAGE_FLAGS]);
+      expect(after.exitCode, after.stderr).toBe(0);
+      expect(after.stdout).not.toContain("upload.txt");
     },
   );
 });
