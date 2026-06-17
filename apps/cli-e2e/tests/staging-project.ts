@@ -154,16 +154,20 @@ export async function getAnonKey(
 }
 
 interface PoolerConfig {
-  db_host?: string;
-  db_user?: string;
-  db_name?: string;
+  database_type?: string;
+  connection_string?: string;
 }
 
 /** Build a SESSION-mode (port 5432) Supavisor pooler connection string for the
  *  project's Postgres. The direct host (db.<ref>...) is IPv6-only and unreachable
  *  from IPv4-only CI runners, so DB commands go through the pooler, which is IPv4.
  *  Session mode (not the API's default transaction 6543) is required for pg_dump
- *  (`db dump`). Host/user come from the Management API; the password is ours. */
+ *  (`db dump`).
+ *
+ *  Reuses the Management API's `connection_string` verbatim — it carries tenant
+ *  routing (e.g. options=reference=... query params) that a field-reconstructed
+ *  URL would drop — and only swaps in our password and the session port. Mirrors
+ *  the Go connector by selecting the PRIMARY pooler config. */
 export async function getPoolerSessionUrl(
   apiBaseUrl: string,
   projectRef: string,
@@ -176,10 +180,14 @@ export async function getPoolerSessionUrl(
     });
     if (res.ok) {
       const raw = (await res.json()) as PoolerConfig | PoolerConfig[];
-      const cfg = Array.isArray(raw) ? raw[0] : raw;
-      if (cfg?.db_host && cfg.db_user) {
-        const name = cfg.db_name ?? "postgres";
-        return `postgresql://${cfg.db_user}:${encodeURIComponent(password)}@${cfg.db_host}:5432/${name}?connect_timeout=30`;
+      const configs = Array.isArray(raw) ? raw : [raw];
+      const primary = configs.find((c) => c.database_type === "PRIMARY") ?? configs[0];
+      if (primary?.connection_string) {
+        const url = new URL(primary.connection_string);
+        url.password = password; // overwrites the [YOUR-PASSWORD] placeholder (URL-encoded)
+        url.port = "5432"; // session mode (API returns the 6543 transaction port)
+        if (!url.searchParams.has("connect_timeout")) url.searchParams.set("connect_timeout", "30");
+        return url.toString();
       }
     }
     if (attempt === attempts) {
