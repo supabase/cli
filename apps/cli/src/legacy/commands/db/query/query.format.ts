@@ -139,19 +139,17 @@ function parsePgUtcInstant(raw: string): PgUtcInstant | undefined {
   const m = PG_TIMESTAMP_PATTERN.exec(raw);
   if (m === null) return undefined;
   const [, y, mo, d, hh, mi, ss, frac, sign, oh, om, os] = m;
-  const baseMs = Date.UTC(
-    Number(y),
-    Number(mo) - 1,
-    Number(d),
-    Number(hh ?? "0"),
-    Number(mi ?? "0"),
-    Number(ss ?? "0"),
-  );
-  let utcMs = baseMs;
+  // `Date.UTC` remaps years 0–99 to 1900–1999, which would corrupt historical dates
+  // (`0001-01-01` → `1901-...`). `setUTCFullYear` does not remap, so build the instant
+  // explicitly to preserve the original year (Go's pgx `time.Time` keeps it).
+  const dt = new Date(0);
+  dt.setUTCFullYear(Number(y), Number(mo) - 1, Number(d));
+  dt.setUTCHours(Number(hh ?? "0"), Number(mi ?? "0"), Number(ss ?? "0"), 0);
+  let utcMs = dt.getTime();
   if (sign !== undefined) {
     // The text offset is the zone's offset from UTC; subtract it to reach UTC.
     const offsetSeconds = Number(oh) * 3600 + Number(om ?? "0") * 60 + Number(os ?? "0");
-    utcMs = baseMs - (sign === "-" ? -offsetSeconds : offsetSeconds) * 1000;
+    utcMs -= (sign === "-" ? -offsetSeconds : offsetSeconds) * 1000;
   }
   const u = new Date(utcMs);
   return {
@@ -443,13 +441,19 @@ function encodeGoJson(value: unknown, indent: number): string {
   return JSON.stringify(value) ?? "null";
 }
 
-/** A row as a Go `map` (column keys sorted by byte), order carried explicitly. */
+/**
+ * A row as a Go `map` (column keys sorted by byte), order carried explicitly.
+ * Duplicate column names (`select 1 as x, 2 as x`) collapse to a single key with the
+ * last value — Go's `writeJSON` builds a map, so the later assignment overwrites the
+ * earlier one. (The table/CSV path keeps both columns, matching Go's tablewriter.)
+ */
 function orderedRow(
   cols: ReadonlyArray<string>,
   values: ReadonlyArray<unknown>,
 ): LegacyOrderedJson {
-  const entries = cols.map((col, i) => [col, values[i] ?? null] as const);
-  return new LegacyOrderedJson([...entries].sort(([a], [b]) => byteLess(a, b)));
+  const byKey = new Map<string, unknown>();
+  cols.forEach((col, i) => byKey.set(col, values[i] ?? null));
+  return new LegacyOrderedJson([...byKey].sort(([a], [b]) => byteLess(a, b)));
 }
 
 /** The agent-mode RLS advisory (`internal/db/query/advisory.go` `Advisory`). */

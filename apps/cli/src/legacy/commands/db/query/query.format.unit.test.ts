@@ -123,6 +123,12 @@ describe("legacyMakeLocalCellFormatter", () => {
     expect(fmt("2026-01-01", 0)).toBe("2026-01-01 00:00:00 +0000 UTC");
   });
 
+  it("preserves years below 100 (Date.UTC would remap 0001 → 1901)", () => {
+    const fmt = legacyMakeLocalCellFormatter([1082]);
+    expect(fmt("0001-01-01", 0)).toBe("0001-01-01 00:00:00 +0000 UTC");
+    expect(fmt("0099-12-31", 0)).toBe("0099-12-31 00:00:00 +0000 UTC");
+  });
+
   it("falls back to the raw text for an unrecognized timestamp value", () => {
     const fmt = legacyMakeLocalCellFormatter([1114]);
     expect(fmt("infinity", 0)).toBe("infinity");
@@ -246,6 +252,12 @@ describe("legacyRenderJson", () => {
     // JS object would reorder them numerically to "2","10".
     const out = legacyRenderJson(["10", "2"], [[1, 2]], false, "", Option.none());
     expect(out).toBe('[\n  {\n    "10": 1,\n    "2": 2\n  }\n]\n');
+  });
+
+  it("collapses duplicate column names to the last value (Go's map overwrite)", () => {
+    // `select 1 as x, 2 as x` — Go's writeJSON map keeps a single "x" with the last value.
+    const out = legacyRenderJson(["x", "x"], [[1, 2]], false, "", Option.none());
+    expect(out).toBe('[\n  {\n    "x": 2\n  }\n]\n');
   });
 
   it("wraps agent results in the untrusted-data envelope with HTML-escaped boundary markers", () => {
