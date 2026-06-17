@@ -83,13 +83,4 @@ jobs:
               if (error.status !== 404) throw error;
             }
 
-            await github.rest.issues.createComment({
-              owner,
-              repo,
-              issue_number: issue.number,
-              body: [
-                `Reopened because @${comment.user.login} used \`/reopen\`.`,
-                "",
-                "Please add any current CLI version, reproduction steps, or error output that helps confirm this is still relevant.",
-              ].join("\n"),
-            });
+            core.info(`Reopened issue #${issue.number} because @${comment.user.login} used /reopen.`);
