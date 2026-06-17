@@ -33,6 +33,14 @@ export interface LegacyPgConnInput {
    */
   readonly options?: string;
   /**
+   * Additional libpq startup `RuntimeParams` parsed from a `--db-url` (e.g.
+   * `search_path`, `statement_timeout`, `application_name`) — every connection-string
+   * setting except pgconn's `notRuntimeParams` and `options` (carried separately). Go's
+   * `ToPostgresURL` re-appends all of these, so pg-delta introspects with the same
+   * session settings. Absent when the DSN carries none.
+   */
+  readonly runtimeParams?: Readonly<Record<string, string>>;
+  /**
    * libpq `sslmode` (Go's `pgconn.Config` TLS mode, parsed by `pgconn.ParseConfig`
    * from a `--db-url` query string). Controls whether the driver layer negotiates
    * TLS and whether it verifies the server certificate. Absent → the remote default

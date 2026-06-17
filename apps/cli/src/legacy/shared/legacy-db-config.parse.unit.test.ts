@@ -144,6 +144,21 @@ describe("parseLegacyConnectionString (URL form)", () => {
     expect(parsed).not.toHaveProperty("options");
   });
 
+  it("collects non-structural query settings as runtimeParams (pgconn parity)", () => {
+    const parsed = parseLegacyConnectionString(
+      "postgres://u:pw@h/db?search_path=tenant&statement_timeout=5000&sslmode=require&options=reference%3Dabc",
+    );
+    // search_path/statement_timeout → runtimeParams; sslmode/options stay dedicated.
+    expect(parsed?.runtimeParams).toEqual({ search_path: "tenant", statement_timeout: "5000" });
+    expect(parsed?.options).toBe("reference=abc");
+    expect(parsed).not.toHaveProperty("runtimeParams.options");
+  });
+
+  it("omits runtimeParams when only structural/ssl keys are present", () => {
+    const parsed = parseLegacyConnectionString("postgres://u:pw@h/db?sslmode=require");
+    expect(parsed).not.toHaveProperty("runtimeParams");
+  });
+
   it("returns undefined for an unparseable URL", () => {
     expect(parseLegacyConnectionString("postgres://user:pw@ bad host/db")).toBeUndefined();
   });

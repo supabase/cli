@@ -34,6 +34,55 @@ const VALID_SSLMODES = new Set([
   "verify-full",
 ]);
 
+// pgconn's `notRuntimeParams` (`pgconn@v1.14.3/config.go:287-322`): connection
+// settings that are NOT forwarded to the server as startup `RuntimeParams`. Everything
+// else in a DSN (e.g. `search_path`, `statement_timeout`, `application_name`) is a
+// runtime param Go's `ToPostgresURL` re-appends. `options` is technically a runtime
+// param but is carried as its own field here (Supavisor pooler routing), so it is
+// excluded from this collection to avoid emitting it twice. `dbname`/`hostaddr` are
+// structural and handled separately.
+const NOT_RUNTIME_PARAMS = new Set([
+  "host",
+  "hostaddr",
+  "port",
+  "database",
+  "dbname",
+  "user",
+  "password",
+  "passfile",
+  "connect_timeout",
+  "sslmode",
+  "sslkey",
+  "sslcert",
+  "sslrootcert",
+  "sslpassword",
+  "sslsni",
+  "sslnegotiation",
+  "krbspn",
+  "krbsrvname",
+  "gssencmode",
+  "target_session_attrs",
+  "service",
+  "servicefile",
+  "options",
+]);
+
+/**
+ * Collect the startup `RuntimeParams` from a connection string's settings, mirroring
+ * pgconn: every key not in `NOT_RUNTIME_PARAMS` is forwarded to the server (and so to
+ * pg-delta via `ToPostgresURL`). Later duplicates win, matching pgconn's last-write.
+ * Returns `undefined` when there are none, so callers omit the field.
+ */
+function collectRuntimeParams(
+  entries: Iterable<readonly [string, string]>,
+): Record<string, string> | undefined {
+  const params: Record<string, string> = {};
+  for (const [key, value] of entries) {
+    if (!NOT_RUNTIME_PARAMS.has(key)) params[key] = value;
+  }
+  return Object.keys(params).length > 0 ? params : undefined;
+}
+
 /** Whether a resolved sslmode is present and not one pgconn accepts. */
 function isInvalidSslmode(sslmode: string | null | undefined): boolean {
   return (
@@ -410,6 +459,9 @@ function parseUrlConnectionString(
       libpqEnv(env, "PGSSLROOTCERT") ??
       null;
     const options = url.searchParams.get("options") ?? svc("options") ?? null;
+    // Every other query setting (e.g. search_path, statement_timeout) is a startup
+    // runtime param Go forwards to the server / pg-delta.
+    const runtimeParams = collectRuntimeParams(query);
     // A `passfile=` setting (query or service) points `.pgpass` resolution at a
     // non-default file (pgconn `config.go:293`); non-empty wins over `PGPASSFILE`.
     // A present `passfile=` (even empty) overrides PGPASSFILE/default; a present-empty
@@ -529,6 +581,7 @@ function parseUrlConnectionString(
       database,
       ...(hostList.length > 1 ? { fallbacks: hostList.slice(1) } : {}),
       ...(options !== null && options.length > 0 ? { options } : {}),
+      ...(runtimeParams !== undefined ? { runtimeParams } : {}),
       ...(sslmode !== null && sslmode.length > 0 ? { sslmode } : {}),
       ...(sslrootcert !== null && sslrootcert.length > 0 ? { sslrootcert } : {}),
       ...(connectTimeout !== undefined ? { connectTimeoutSeconds: connectTimeout } : {}),
@@ -646,6 +699,9 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   const sslrootcert =
     params.get("sslrootcert") ?? svc("sslrootcert") ?? libpqEnv(env, "PGSSLROOTCERT");
   const options = params.get("options") ?? svc("options");
+  // Every other keyword setting (e.g. search_path, statement_timeout) is a startup
+  // runtime param Go forwards to the server / pg-delta.
+  const runtimeParams = collectRuntimeParams(params);
   // A `passfile=` setting (keyword or service) points `.pgpass` resolution at a
   // non-default file (pgconn `config.go:293`); non-empty wins over `PGPASSFILE`.
   // A present `passfile=` (even empty) overrides PGPASSFILE/default (see URL branch).
@@ -678,6 +734,7 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
     database,
     ...(hostList.length > 1 ? { fallbacks: hostList.slice(1) } : {}),
     ...(options !== undefined && options.length > 0 ? { options } : {}),
+    ...(runtimeParams !== undefined ? { runtimeParams } : {}),
     ...(sslmode !== undefined && sslmode.length > 0 ? { sslmode } : {}),
     ...(sslrootcert !== undefined && sslrootcert.length > 0 ? { sslrootcert } : {}),
     ...(connectTimeout !== undefined ? { connectTimeoutSeconds: connectTimeout } : {}),

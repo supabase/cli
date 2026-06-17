@@ -70,4 +70,22 @@ describe("legacyToPostgresURL", () => {
       "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10",
     );
   });
+
+  it("appends every runtimeParams entry (sorted) after options, like Go ToPostgresURL", () => {
+    expect(
+      legacyToPostgresURL({
+        ...base,
+        options: "reference=abc",
+        runtimeParams: { statement_timeout: "5000", search_path: "tenant" },
+      }),
+    ).toBe(
+      "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10&options=reference%3Dabc&search_path=tenant&statement_timeout=5000",
+    );
+  });
+
+  it("escapes runtimeParams values like Go's url.QueryEscape", () => {
+    expect(legacyToPostgresURL({ ...base, runtimeParams: { search_path: "a b,c" } })).toContain(
+      "&search_path=a+b%2Cc",
+    );
+  });
 });

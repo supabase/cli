@@ -46,11 +46,16 @@ export interface LegacyPostgresUrlInput {
   readonly connectTimeoutSeconds?: number;
   /**
    * libpq `options` startup parameter (Go's `pgconn.Config.RuntimeParams["options"]`,
-   * e.g. `reference=<ref>` for Supavisor pooler tenant routing). Go's `ToPostgresURL`
-   * appends every `RuntimeParams` entry to the query string; the resolver only ever
-   * populates `options`, so it is the one runtime param serialized here.
+   * e.g. `reference=<ref>` for Supavisor pooler tenant routing).
    */
   readonly options?: string;
+  /**
+   * The remaining libpq startup `RuntimeParams` (e.g. `search_path`,
+   * `statement_timeout`). Go's `ToPostgresURL` appends every `RuntimeParams` entry, so
+   * a custom `--db-url`'s session settings reach pg-delta. Emitted in sorted key order
+   * (Go iterates a map, so the exact order is not a parity contract).
+   */
+  readonly runtimeParams?: Readonly<Record<string, string>>;
 }
 
 export function legacyToPostgresURL(conn: LegacyPostgresUrlInput): string {
@@ -66,11 +71,20 @@ export function legacyToPostgresURL(conn: LegacyPostgresUrlInput): string {
   // Mirror Go's `connect_timeout` + `RuntimeParams` loop (`connect.go:30-33`): the
   // pooler tenant-routing `options` must reach pg-delta or the connection misses
   // the tenant on pooler fallback.
-  const runtimeParams =
+  const optionsParam =
     conn.options !== undefined && conn.options.length > 0
       ? `&options=${goQueryEscape(conn.options)}`
       : "";
+  // Every other runtime param (search_path, statement_timeout, …), sorted for a stable
+  // serialization (Go iterates a map, so order is not a parity contract).
+  const extraParams =
+    conn.runtimeParams === undefined
+      ? ""
+      : Object.keys(conn.runtimeParams)
+          .sort()
+          .map((key) => `&${goQueryEscape(key)}=${goQueryEscape(conn.runtimeParams![key]!)}`)
+          .join("");
   return `postgresql://${userinfo}@${host}:${conn.port}/${encodeURIComponent(
     conn.database,
-  )}?connect_timeout=${timeout}${runtimeParams}`;
+  )}?connect_timeout=${timeout}${optionsParam}${extraParams}`;
 }
