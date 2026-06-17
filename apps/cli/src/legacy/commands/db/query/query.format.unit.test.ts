@@ -94,6 +94,12 @@ describe("legacyMakeLocalCellFormatter", () => {
     expect(fmt(42, 99)).toBe("42"); // no OID for the column → plain
   });
 
+  it("preserves negative zero in a float column like Go's %v (-0, not 0)", () => {
+    const fmt = legacyMakeLocalCellFormatter([701, 701]);
+    expect(fmt(-0, 0)).toBe("-0"); // float8 column → Go keeps the sign
+    expect(fmt(0, 1)).toBe("0"); // positive zero stays plain
+  });
+
   it("renders Date (timestamp) cells like Go's time.Time %v instead of map[]", () => {
     const fmt = legacyMakeLocalCellFormatter([1114]);
     expect(fmt(new Date(Date.UTC(2024, 0, 2, 15, 4, 5)), 0)).toBe("2024-01-02 15:04:05 +0000 UTC");
@@ -268,6 +274,12 @@ describe("legacyRenderJson", () => {
     // `select 1 as x, 2 as x` — Go's writeJSON map keeps a single "x" with the last value.
     const out = legacyRenderJson(["x", "x"], [[1, 2]], false, "", Option.none());
     expect(out).toBe('[\n  {\n    "x": 2\n  }\n]\n');
+  });
+
+  it("preserves negative zero like Go's json.Encoder (-0, not 0)", () => {
+    // `select '-0'::float8 as n` — Go emits `-0`; JSON.stringify(-0) would collapse to `0`.
+    const out = legacyRenderJson(["n"], [[-0]], false, "", Option.none());
+    expect(out).toBe('[\n  {\n    "n": -0\n  }\n]\n');
   });
 
   it("wraps agent results in the untrusted-data envelope with HTML-escaped boundary markers", () => {

@@ -30,6 +30,9 @@ declare global {
 function goFormatFloat(n: number): string {
   if (Number.isNaN(n)) return "NaN";
   if (!Number.isFinite(n)) return n > 0 ? "+Inf" : "-Inf";
+  // Go's `%v` preserves the sign of negative zero (`-0`); `n === 0` is true for
+  // both `+0` and `-0`, so distinguish them with `Object.is` before the shortcut.
+  if (Object.is(n, -0)) return "-0";
   if (n === 0) return "0";
   const neg = n < 0;
   const abs = Math.abs(n);
@@ -419,6 +422,9 @@ class LegacyOrderedJson {
  */
 function encodeGoJson(value: unknown, indent: number): string {
   if (value === null || value === undefined) return "null";
+  // Go's `json.Encoder` preserves the sign of negative zero (`-0`), but
+  // `JSON.stringify(-0)` collapses it to `"0"`; emit `-0` explicitly to match.
+  if (typeof value === "number" && Object.is(value, -0)) return "-0";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
     return JSON.stringify(value);
   }
