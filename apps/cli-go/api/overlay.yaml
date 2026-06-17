@@ -29,6 +29,18 @@ actions:
 - target: $.components.schemas.*.properties.items.items.properties.saml.properties.name_id_format.enum
   description: Converts list of enum with duplicated type to a string
   remove: true
+- target: $.components.schemas.*.properties.saml.required[?(@ == "id")]
+  description: Allows provider responses to omit nested SAML IDs
+  remove: true
+- target: $.components.schemas.ListProvidersResponse.properties.items.items.properties.saml.required[?(@ == "id")]
+  description: Allows provider list responses to omit nested SAML IDs
+  remove: true
+- target: $.components.schemas.*.properties.saml.properties.attribute_mapping.required[?(@ == "keys")]
+  description: Allows provider responses to return an empty SAML attribute mapping object
+  remove: true
+- target: $.components.schemas.ListProvidersResponse.properties.items.items.properties.saml.properties.attribute_mapping.required[?(@ == "keys")]
+  description: Allows provider list responses to return an empty SAML attribute mapping object
+  remove: true
 - target: $.components.schemas.*.properties.connectionString
   description: Removes deprecated field that conflicts with naming convention
   remove: true

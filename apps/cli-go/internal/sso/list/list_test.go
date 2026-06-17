@@ -70,6 +70,41 @@ func TestSSOProvidersListCommand(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("lists providers with empty SAML attribute mapping", func(t *testing.T) {
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+		// Flush pending mocks after test execution
+		defer gock.OffAll()
+
+		projectRef := "abcdefghijklmnopqrst"
+
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + projectRef + "/config/auth/sso/providers").
+			Reply(200).
+			JSON(map[string]any{
+				"items": []map[string]any{
+					{
+						"id":         "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
+						"created_at": "2023-03-28T13:50:14.464Z",
+						"updated_at": "2023-03-28T13:50:14.464Z",
+						"saml": map[string]any{
+							"metadata_url":      "https://example.com",
+							"metadata_xml":      "<?xml version=\"2.0\"?>",
+							"entity_id":         "https://example.com",
+							"attribute_mapping": map[string]any{},
+						},
+					},
+				},
+			})
+
+		// Run test
+		assert.NoError(t, Run(context.Background(), projectRef, utils.OutputPretty))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("list providers with disabled SAML", func(t *testing.T) {
 		// Setup valid access token
 		token := apitest.RandomAccessToken(t)

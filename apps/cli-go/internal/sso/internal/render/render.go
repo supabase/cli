@@ -142,7 +142,7 @@ func SingleMarkdown(provider api.GetProviderResponse) error {
 		formatTimestamp(provider.CreatedAt),
 	))
 
-	if provider.Saml != nil && provider.Saml.AttributeMapping != nil && len(provider.Saml.AttributeMapping.Keys) > 0 {
+	if provider.Saml != nil && provider.Saml.AttributeMapping != nil && provider.Saml.AttributeMapping.Keys != nil && len(*provider.Saml.AttributeMapping.Keys) > 0 {
 		attributeMapping, err := json.MarshalIndent(provider.Saml.AttributeMapping, "", "  ")
 		if err != nil {
 			return errors.Errorf("failed to marshal attribute mapping: %w", err)

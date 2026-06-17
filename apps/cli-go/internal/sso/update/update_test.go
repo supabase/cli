@@ -57,6 +57,33 @@ func response(providerId string, domains []string) map[string]any {
 	return resp
 }
 
+func responseWithEmptyAttributeMapping(providerId string, domains []string) map[string]any {
+	resp := map[string]any{
+		"id":         providerId,
+		"created_at": "2023-03-28T13:50:14.464Z",
+		"updated_at": "2023-03-28T13:50:14.464Z",
+		"saml": map[string]any{
+			"metadata_url":      "https://example.com",
+			"metadata_xml":      "<?xml version=\"2.0\"?>",
+			"entity_id":         "https://example.com",
+			"attribute_mapping": map[string]any{},
+		},
+		"domains": []map[string]any{},
+	}
+
+	for _, domain := range domains {
+		respDomains := resp["domains"].([]map[string]any)
+		resp["domains"] = append(respDomains, map[string]any{
+			"id":         "9484591c-a203-4500-bea7-d0aaa845e2f5",
+			"domain":     domain,
+			"created_at": "2023-03-28T13:50:14.464Z",
+			"updated_at": "2023-03-28T13:50:14.464Z",
+		})
+	}
+
+	return resp
+}
+
 func TestSSOProvidersUpdateCommand(t *testing.T) {
 	t.Run("update provider", func(t *testing.T) {
 		// Setup valid access token
@@ -107,6 +134,41 @@ func TestSSOProvidersUpdateCommand(t *testing.T) {
 		// Validate api
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 		assert.Equal(t, 1, observed)
+	})
+
+	t.Run("update provider with empty SAML attribute mapping", func(t *testing.T) {
+		// Setup valid access token
+		token := apitest.RandomAccessToken(t)
+		t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+		// Flush pending mocks after test execution
+		defer gock.OffAll()
+
+		projectRef := apitest.RandomProjectRef()
+		providerId := uuid.New().String()
+
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + projectRef + "/config/auth/sso/providers/" + providerId).
+			Reply(200).
+			JSON(responseWithEmptyAttributeMapping(providerId, []string{"example.com"}))
+
+		gock.New(utils.DefaultApiHost).
+			Put("/v1/projects/" + projectRef + "/config/auth/sso/providers/" + providerId).
+			Reply(200).
+			JSON(responseWithEmptyAttributeMapping(providerId, []string{"new-domain.com"}))
+
+		// Run test
+		assert.NoError(t, Run(context.Background(), RunParams{
+			ProjectRef: projectRef,
+			ProviderID: providerId,
+			Format:     utils.OutputPretty,
+
+			Domains: []string{
+				"new-domain.com",
+			},
+		}))
+		// Validate api
+		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
 	t.Run("update provider with --add-domains and --remove-domains", func(t *testing.T) {

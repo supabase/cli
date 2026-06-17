@@ -2392,15 +2392,15 @@ type CreateProviderResponse struct {
 	Id   string `json:"id"`
 	Saml *struct {
 		AttributeMapping *struct {
-			Keys map[string]struct {
+			Keys *map[string]struct {
 				Array   *bool        `json:"array,omitempty"`
 				Default *interface{} `json:"default,omitempty"`
 				Name    *string      `json:"name,omitempty"`
 				Names   *[]string    `json:"names,omitempty"`
-			} `json:"keys"`
+			} `json:"keys,omitempty"`
 		} `json:"attribute_mapping,omitempty"`
 		EntityId     string  `json:"entity_id"`
-		Id           string  `json:"id"`
+		Id           *string `json:"id,omitempty"`
 		MetadataUrl  *string `json:"metadata_url,omitempty"`
 		MetadataXml  *string `json:"metadata_xml,omitempty"`
 		NameIdFormat *string `json:"name_id_format,omitempty"`
@@ -2607,15 +2607,15 @@ type DeleteProviderResponse struct {
 	Id   string `json:"id"`
 	Saml *struct {
 		AttributeMapping *struct {
-			Keys map[string]struct {
+			Keys *map[string]struct {
 				Array   *bool        `json:"array,omitempty"`
 				Default *interface{} `json:"default,omitempty"`
 				Name    *string      `json:"name,omitempty"`
 				Names   *[]string    `json:"names,omitempty"`
-			} `json:"keys"`
+			} `json:"keys,omitempty"`
 		} `json:"attribute_mapping,omitempty"`
 		EntityId     string  `json:"entity_id"`
-		Id           string  `json:"id"`
+		Id           *string `json:"id,omitempty"`
 		MetadataUrl  *string `json:"metadata_url,omitempty"`
 		MetadataXml  *string `json:"metadata_xml,omitempty"`
 		NameIdFormat *string `json:"name_id_format,omitempty"`
@@ -2833,15 +2833,15 @@ type GetProviderResponse struct {
 	Id   string `json:"id"`
 	Saml *struct {
 		AttributeMapping *struct {
-			Keys map[string]struct {
+			Keys *map[string]struct {
 				Array   *bool        `json:"array,omitempty"`
 				Default *interface{} `json:"default,omitempty"`
 				Name    *string      `json:"name,omitempty"`
 				Names   *[]string    `json:"names,omitempty"`
-			} `json:"keys"`
+			} `json:"keys,omitempty"`
 		} `json:"attribute_mapping,omitempty"`
 		EntityId     string  `json:"entity_id"`
-		Id           string  `json:"id"`
+		Id           *string `json:"id,omitempty"`
 		MetadataUrl  *string `json:"metadata_url,omitempty"`
 		MetadataXml  *string `json:"metadata_xml,omitempty"`
 		NameIdFormat *string `json:"name_id_format,omitempty"`
@@ -3093,15 +3093,15 @@ type ListProvidersResponse struct {
 		Id   string `json:"id"`
 		Saml *struct {
 			AttributeMapping *struct {
-				Keys map[string]struct {
+				Keys *map[string]struct {
 					Array   *bool        `json:"array,omitempty"`
 					Default *interface{} `json:"default,omitempty"`
 					Name    *string      `json:"name,omitempty"`
 					Names   *[]string    `json:"names,omitempty"`
-				} `json:"keys"`
+				} `json:"keys,omitempty"`
 			} `json:"attribute_mapping,omitempty"`
 			EntityId     string  `json:"entity_id"`
-			Id           string  `json:"id"`
+			Id           *string `json:"id,omitempty"`
 			MetadataUrl  *string `json:"metadata_url,omitempty"`
 			MetadataXml  *string `json:"metadata_xml,omitempty"`
 			NameIdFormat *string `json:"name_id_format,omitempty"`
@@ -4349,15 +4349,15 @@ type UpdateProviderResponse struct {
 	Id   string `json:"id"`
 	Saml *struct {
 		AttributeMapping *struct {
-			Keys map[string]struct {
+			Keys *map[string]struct {
 				Array   *bool        `json:"array,omitempty"`
 				Default *interface{} `json:"default,omitempty"`
 				Name    *string      `json:"name,omitempty"`
 				Names   *[]string    `json:"names,omitempty"`
-			} `json:"keys"`
+			} `json:"keys,omitempty"`
 		} `json:"attribute_mapping,omitempty"`
 		EntityId     string  `json:"entity_id"`
-		Id           string  `json:"id"`
+		Id           *string `json:"id,omitempty"`
 		MetadataUrl  *string `json:"metadata_url,omitempty"`
 		MetadataXml  *string `json:"metadata_xml,omitempty"`
 		NameIdFormat *string `json:"name_id_format,omitempty"`
