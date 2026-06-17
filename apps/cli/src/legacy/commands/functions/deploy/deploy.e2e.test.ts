@@ -56,7 +56,10 @@ describe("supabase functions deploy (legacy) — argument validation", () => {
       },
     );
     expect(exitCode).not.toBe(0);
-    expect(stderr).toMatch(/--jobs must be used together with --use-api/);
+    // The Go CLI phrases this as either "must be used together with --use-api"
+    // or "cannot be used with local bundling" depending on version — both mean
+    // --jobs is rejected without server-side (--use-api) bundling.
+    expect(stderr).toMatch(/--jobs\b.*(--use-api|local bundling)/i);
   });
 
   test("fails without a linked project or --project-ref", { timeout: E2E_TIMEOUT_MS }, async () => {
