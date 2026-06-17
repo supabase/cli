@@ -64,11 +64,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
   const telemetry = mockLegacyTelemetryStateTracked();
   const seamCalls: LegacyCatalogMode[] = [];
+  const seamExportCalls: Array<{ mode: LegacyCatalogMode; projectRef?: string }> = [];
   const execInheritCalls: ReadonlyArray<string>[] = [];
   let ensureStartedCalls = 0;
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
-    exportCatalog: ({ mode }) => {
+    exportCatalog: ({ mode, projectRef }) => {
       seamCalls.push(mode);
+      seamExportCalls.push({ mode, projectRef });
       return opts.exportFailsForMode === mode
         ? Effect.fail(new LegacyDeclarativeShadowDbError({ message: `export failed for ${mode}` }))
         : Effect.succeed("supabase/.temp/pgdelta/base.json");
@@ -131,6 +133,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     layer,
     out,
     seamCalls,
+    seamExportCalls,
     execInheritCalls,
     edgeCalls,
     resolverCalls,
@@ -331,6 +334,28 @@ describe("legacy db schema declarative generate integration", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       // Took the explicit linked path: the resolver was called with connType "linked".
       expect(s.resolverCalls).toContainEqual(expect.objectContaining({ connType: "linked" }));
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("explicit --linked builds the baseline catalog from the remote-merged config", () => {
+    // Go loads the [remotes.<ref>] override before building the baseline catalog, so
+    // the seam's baseline export must carry the resolved ref (SUPABASE_PROJECT_ID) to
+    // trigger that merge. Local/smart paths must NOT pass a ref.
+    const ref = "abcdefghijklmnopqrst";
+    const s = setup(tmp.current, { experimental: true, projectId: Option.some(ref) });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ linked: Option.some(true) }));
+      const baseline = s.seamExportCalls.find((c) => c.mode === "baseline");
+      expect(baseline?.projectRef).toBe(ref);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("explicit --local builds the baseline catalog without a project ref", () => {
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
+      const baseline = s.seamExportCalls.find((c) => c.mode === "baseline");
+      expect(baseline?.projectRef).toBeUndefined();
     }).pipe(Effect.provide(s.layer));
   });
 

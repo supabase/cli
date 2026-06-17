@@ -20,6 +20,15 @@ interface LegacyDeclarativeSeamShape {
   readonly exportCatalog: (opts: {
     readonly mode: LegacyCatalogMode;
     readonly noCache: boolean;
+    /**
+     * Resolved linked project ref for `generate --linked`. Passed to the `__catalog`
+     * subprocess as `SUPABASE_PROJECT_ID`, which viper's `AutomaticEnv` binds to
+     * `project_id` so `Config.Load` merges the matching `[remotes.<ref>]` override
+     * into the platform baseline — mirroring Go's monolith, which loads the remote-
+     * merged config before building the baseline catalog
+     * (`apps/cli-go/pkg/config/config.go:492-516`). Absent → base config only.
+     */
+    readonly projectRef?: string;
   }) => Effect.Effect<string, LegacyDeclarativeShadowDbError>;
   /**
    * Runs the bundled Go binary with the given args, inheriting stdio (so the

@@ -18,6 +18,14 @@ export interface LegacyDeclarativeRunContext {
   readonly declarativeDir: string;
   readonly schema: ReadonlyArray<string>;
   readonly noCache: boolean;
+  /**
+   * Resolved linked project ref for an explicit `generate --linked`. Threaded into
+   * the baseline `__catalog` export so the Go config load merges the matching
+   * `[remotes.<ref>]` override into the platform baseline (auth/storage/realtime/api/
+   * vault settings), matching Go's `Generate`, which builds the baseline from the
+   * remote-merged config. `undefined` for local/db-url/smart targets.
+   */
+  readonly linkedProjectRef?: string;
 }
 
 /** The output of a declarative-to-migrations diff. Mirrors Go's `SyncResult`. */
@@ -79,7 +87,11 @@ export const legacyGenerateDeclarativeOutput = Effect.fnUntraced(function* (
   targetDbUrl: string,
 ) {
   const seam = yield* LegacyDeclarativeSeam;
-  const baselineRef = yield* seam.exportCatalog({ mode: "baseline", noCache: run.noCache });
+  const baselineRef = yield* seam.exportCatalog({
+    mode: "baseline",
+    noCache: run.noCache,
+    ...(run.linkedProjectRef !== undefined ? { projectRef: run.linkedProjectRef } : {}),
+  });
   return yield* legacyDeclarativeExportPgDelta(run.pgDelta, {
     sourceRef: baselineRef,
     targetRef: targetDbUrl,

@@ -30,7 +30,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
     const resolved = resolveBinary();
 
     return LegacyDeclarativeSeam.of({
-      exportCatalog: ({ mode, noCache }) =>
+      exportCatalog: ({ mode, noCache, projectRef }) =>
         Effect.scoped(
           Effect.gen(function* () {
             if (!("found" in resolved)) {
@@ -63,6 +63,12 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               stdout: "pipe",
               stderr: "inherit",
               extendEnv: true,
+              // For `generate --linked`, pass the resolved ref as SUPABASE_PROJECT_ID
+              // so the Go config load merges the `[remotes.<ref>]` override into the
+              // platform baseline (viper AutomaticEnv binds it to `project_id`;
+              // `config.go:492-516`), matching the monolith. `extendEnv` keeps the
+              // rest of the environment.
+              ...(projectRef !== undefined ? { env: { SUPABASE_PROJECT_ID: projectRef } } : {}),
               detached: false,
             });
             const handle = yield* spawner.spawn(command).pipe(

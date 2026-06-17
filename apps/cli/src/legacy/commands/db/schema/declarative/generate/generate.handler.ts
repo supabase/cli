@@ -79,11 +79,17 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // for the downstream path/format settings only — NOT the gate above. (Smart-mode
       // "Linked project" does NOT re-load in Go, so it is excluded — only `flags.linked`.)
       let toml = baseToml;
+      // The resolved linked ref (explicit `--linked` only). Threaded into the
+      // baseline `__catalog` export so its platform baseline is built from the
+      // remote-merged config, matching Go's `Generate` (which loads the
+      // `[remotes.<ref>]` override before building the baseline catalog).
+      let linkedProjectRef: string | undefined;
       if (Option.isSome(flags.linked)) {
         const linkedRef = Option.isSome(cliConfig.projectId)
           ? cliConfig.projectId
           : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
         if (Option.isSome(linkedRef)) {
+          linkedProjectRef = linkedRef.value;
           toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef.value);
         }
       }
@@ -112,6 +118,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         declarativeDir,
         schema: flags.schema,
         noCache: flags.noCache,
+        ...(linkedProjectRef !== undefined ? { linkedProjectRef } : {}),
       };
 
       const hasExplicitTarget =
