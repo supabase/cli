@@ -25,7 +25,12 @@ import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../../shared/telemetry/ai-tool.service.ts";
 import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
 import { validateLegacyAccessToken } from "../../../auth/legacy-access-token.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import {
+  LegacyProjectRefResolver,
+  PROJECT_NOT_LINKED_MESSAGE,
+} from "../../../config/legacy-project-ref.service.ts";
+import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+import { LegacyProjectRefReadError } from "../../../shared/legacy-temp-paths.ts";
 import { LegacyTelemetryOutputFormat } from "../../../telemetry/legacy-telemetry-output-format.service.ts";
 import { LegacyDbConfigParseUrlError } from "../../../shared/legacy-db-config.errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -113,12 +118,25 @@ function mockTelemetryOutputFormat() {
   };
 }
 
-function mockProjectRef(unlinked = false) {
+function mockProjectRef(unlinked = false, refReadFails = false) {
+  // The linked query preflight uses the hard `loadProjectRef`: it fails with
+  // ErrNotLinked when absent and surfaces a `failed to load project ref` read error
+  // (LegacyProjectRefReadError) on an unreadable ref file, rather than masking it.
+  const loadProjectRef = () =>
+    refReadFails
+      ? Effect.fail(
+          new LegacyProjectRefReadError({
+            message: "failed to load project ref: permission denied",
+          }),
+        )
+      : unlinked
+        ? Effect.fail(new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
+        : Effect.succeed(REF);
   return Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(REF),
     resolveForLink: () => Effect.succeed(REF),
     resolveOptional: () => Effect.succeed(unlinked ? Option.none() : Option.some(REF)),
-    loadProjectRef: () => Effect.succeed(REF),
+    loadProjectRef,
     promptProjectRef: () => Effect.succeed(REF),
   });
 }
@@ -179,6 +197,7 @@ interface SetupOpts {
   accessTokenInvalid?: boolean;
   workdir?: string;
   unlinked?: boolean;
+  refReadFails?: boolean;
   resolveFails?: boolean;
 }
 
@@ -194,7 +213,7 @@ function setup(opts: SetupOpts = {}) {
     telemetryOutputFormat.layer,
     mockResolver(opts.isLocal, opts.resolveFails),
     mockDbConnection(opts),
-    mockProjectRef(opts.unlinked),
+    mockProjectRef(opts.unlinked, opts.refReadFails),
     mockStdin({ isTTY: opts.stdinTTY, piped: opts.piped }),
     Layer.succeed(Random, { randomHex: () => Effect.succeed(BOUNDARY) }),
     Layer.succeed(AiTool, {
@@ -560,6 +579,21 @@ describe("legacy db query integration", () => {
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toBe("Cannot find project ref. Have you run supabase link?");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("surfaces a project-ref read failure instead of reporting not-linked", () => {
+    // Go's --linked PreRun uses the hard LoadProjectRef, which returns
+    // `failed to load project ref` on an unreadable .temp/project-ref (project_ref.go:72)
+    // rather than the not-linked message. The handler must surface that, not mask it.
+    const { layer } = setup({ refReadFails: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbQuery(
+        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toContain("failed to load project ref");
+      expect(failMessage(exit)).not.toContain("Cannot find project ref");
     }).pipe(Effect.provide(layer));
   });
 
