@@ -249,9 +249,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // inside the body above.
       Effect.ensuring(
         Effect.suspend(() =>
-          linkedProjectRef !== undefined
-            ? linkedProjectCache.cache(linkedProjectRef)
-            : Effect.void,
+          linkedProjectRef !== undefined ? linkedProjectCache.cache(linkedProjectRef) : Effect.void,
         ),
       ),
       Effect.ensuring(telemetryState.flush),
