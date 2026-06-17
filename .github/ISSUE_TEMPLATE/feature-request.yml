@@ -1,6 +1,5 @@
 name: Feature request
 description: Suggest an improvement or new capability for the Supabase CLI.
-title: ""
 labels:
   - ✨ Feature
 body:

@@ -1,6 +1,5 @@
 name: Documentation
 description: Suggest an improvement to Supabase CLI documentation.
-title: ""
 labels:
   - 📘 Docs
 body:

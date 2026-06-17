@@ -1,6 +1,5 @@
 name: Bug report
 description: Report a reproducible problem with the Supabase CLI.
-title: ""
 labels:
   - 🐛 Bug
 body:
