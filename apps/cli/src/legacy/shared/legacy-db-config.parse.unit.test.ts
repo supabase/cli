@@ -211,9 +211,7 @@ describe("parseLegacyConnectionString (URL form)", () => {
     expect(
       parseLegacyConnectionString("postgres://u:pw@h/db?sslcert=/c/client.crt"),
     ).toBeUndefined();
-    expect(
-      parseLegacyConnectionString("host=h user=u sslkey=/c/client.key"),
-    ).toBeUndefined();
+    expect(parseLegacyConnectionString("host=h user=u sslkey=/c/client.key")).toBeUndefined();
   });
 
   it("returns undefined for an unparseable URL", () => {

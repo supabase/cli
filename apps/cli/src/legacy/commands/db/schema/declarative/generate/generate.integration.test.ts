@@ -163,7 +163,9 @@ describe("legacy db schema declarative generate integration", () => {
   it.effect("gate: fails when neither --experimental nor config enables pg-delta", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })));
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeNotEnabledError");
     }).pipe(Effect.provide(layer));
@@ -175,7 +177,9 @@ describe("legacy db schema declarative generate integration", () => {
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true), linked: Option.some(true) })),
+        legacyDbSchemaDeclarativeGenerate(
+          flags({ local: Option.some(true), linked: Option.some(true) }),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
@@ -351,7 +355,9 @@ describe("legacy db schema declarative generate integration", () => {
       );
       const s = setup(tmp.current, { experimental: false, projectId: Option.some(ref) });
       return Effect.gen(function* () {
-        const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags({ linked: Option.some(true) })));
+        const exit = yield* Effect.exit(
+          legacyDbSchemaDeclarativeGenerate(flags({ linked: Option.some(true) })),
+        );
         expect(Exit.isFailure(exit)).toBe(true);
         expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeNotEnabledError");
       }).pipe(Effect.provide(s.layer));
@@ -419,9 +425,9 @@ describe("legacy db schema declarative generate integration", () => {
     // can't apply to the shadow DB fails generate rather than reporting success.
     const s = setup(tmp.current, { experimental: true, exportFailsForMode: "declarative" });
     return Effect.gen(function* () {
-      const exit = yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })).pipe(
-        Effect.exit,
-      );
+      const exit = yield* legacyDbSchemaDeclarativeGenerate(
+        flags({ local: Option.some(true) }),
+      ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(s.out.rawChunks.some((c) => c.text.includes("Declarative schema written to"))).toBe(
         false,

@@ -455,13 +455,14 @@ const connect = (
     const attempts = dialTargets.flatMap(({ dialHost, port, servername }) =>
       legacySslConfigsFor(cfg.sslmode, isLocal, servername, caCert, dialHost, clientCert).map(
         (ssl) => ({
-        client: makeClient(dialHost, port, ssl),
-        // pgconn only short-circuits the fallback chain on an auth error when the
-        // failed attempt used TLS (`pgconn.go:182`, gated on `fc.TLSConfig != nil`);
-        // a TLS config is any non-plaintext `ssl` value.
-        usedTls: ssl !== undefined && ssl !== false,
-        rawConfig: buildRawPgConfig(dialHost, port, ssl),
-      })),
+          client: makeClient(dialHost, port, ssl),
+          // pgconn only short-circuits the fallback chain on an auth error when the
+          // failed attempt used TLS (`pgconn.go:182`, gated on `fc.TLSConfig != nil`);
+          // a TLS config is any non-plaintext `ssl` value.
+          usedTls: ssl !== undefined && ssl !== false,
+          rawConfig: buildRawPgConfig(dialHost, port, ssl),
+        }),
+      ),
     );
 
     // The `pg` driver connects lazily and cannot replay pgconn's fallback, so probe

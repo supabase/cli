@@ -150,9 +150,9 @@ describe("legacySslOptionFor", () => {
   it("attaches the client cert (cert/key/passphrase) to every TLS mode (pgconn parity)", () => {
     const clientCert = { cert: "CERT", key: "KEY", passphrase: "pw" };
     // verify-full / verify-ca / require|prefer all carry the client certificate.
-    expect(legacySslOptionFor("verify-full", false, undefined, undefined, clientCert)).toMatchObject(
-      { cert: "CERT", key: "KEY", passphrase: "pw" },
-    );
+    expect(
+      legacySslOptionFor("verify-full", false, undefined, undefined, clientCert),
+    ).toMatchObject({ cert: "CERT", key: "KEY", passphrase: "pw" });
     expect(legacySslOptionFor("require", false, undefined, undefined, clientCert)).toMatchObject({
       cert: "CERT",
       key: "KEY",
