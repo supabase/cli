@@ -128,10 +128,14 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       let overwrite: boolean;
       if (hasExplicitTarget) {
         if (Option.isSome(flags.local)) {
-          // Go runs ensureLocalDatabaseStarted before generating from local
-          // (db_schema_declarative.go:190) — start a stopped stack instead of
-          // failing to connect.
-          yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
+          // Target selection keys off flag presence (Go's `Changed`), but the
+          // auto-start gates on the boolean VALUE: Go passes `declarativeLocal` to
+          // `ensureLocalDatabaseStarted` (`db_schema_declarative.go:190`), which
+          // short-circuits `if !local { return nil }` (`:127-128`). So `--local=false`
+          // selects the local target but must NOT start a stopped stack.
+          if (Option.getOrElse(flags.local, () => false)) {
+            yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
+          }
           targetUrl = legacyLocalUrl(local);
         } else {
           targetUrl = yield* legacyResolveRemoteUrl(flags);

@@ -359,6 +359,19 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("--local=false selects the local target but does NOT auto-start the stack", () => {
+    // Go selects local on flag.Changed but gates ensureLocalDatabaseStarted on the
+    // bool value (declarativeLocal), so `--local=false` must not start a stopped stack.
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(false) }));
+      // Took the explicit local target (baseline built, local URL) ...
+      expect(s.seamCalls).toContain("baseline");
+      // ... but did NOT auto-start (value is false).
+      expect(s.ensureStartedCalls).toBe(0);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect(
     "explicit --linked gates pg-delta on base config, not a remote enabled override",
     () => {
