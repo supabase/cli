@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -548,26 +548,25 @@ describe("legacy db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("validates the linked config before the API call (Go root PreRun order)", () => {
-    // Go's ParseDatabaseConfig loads + validates the remote-merged config for --linked
-    // too, before the Management API call. A malformed config must fail before the query.
-    const wd = mkdtempSync(join(tmpdir(), "supabase-query-linked-"));
-    mkdirSync(join(wd, "supabase"), { recursive: true });
-    writeFileSync(
-      join(wd, "supabase", "config.toml"),
-      ["[remotes.bad]", 'project_id = "bad"', ""].join("\n"),
-    );
-    const { layer, out } = setup({ workdir: wd, linkedStatus: 201, linkedBody: '[{"id":1}]' });
+  it.live("resolves the linked DB config before the API call (Go root PreRun order)", () => {
+    // Go's root ParseDatabaseConfig runs NewDbConfigWithPassword for --linked before
+    // ResolveSQL/the Management API call: it loads+validates the remote-merged config
+    // AND resolves the live DB connection (TCP probe / pooler / temp login-role), any
+    // of which can fail early. A resolver failure must stop the query before the API.
+    // (The config-validation-before-network parity is covered at the resolver level in
+    // legacy-db-config.integration.test.ts.)
+    const { layer, out } = setup({
+      resolveFails: true,
+      linkedStatus: 201,
+      linkedBody: '[{"id":1}]',
+    });
     return Effect.gen(function* () {
       const exit = yield* legacyDbQuery(
         flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(failMessage(exit)).toContain(
-        "Invalid config for remotes.bad.project_id. Must be like: abcdefghijklmnopqrst",
-      );
+      expect(failMessage(exit)).toContain("failed to parse connection string");
       expect(out.stdoutText).toBe(""); // failed before emitting any query result
-      rmSync(wd, { recursive: true, force: true });
     }).pipe(Effect.provide(layer));
   });
 
