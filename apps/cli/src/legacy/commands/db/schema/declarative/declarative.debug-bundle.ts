@@ -98,7 +98,15 @@ export const legacyCollectMigrationsList = Effect.fnUntraced(function* (
   path: Path.Path,
   migrationsDir: string,
 ) {
-  const migrations = yield* legacyListLocalMigrations(fs, path, migrationsDir);
+  // Go's `CollectMigrationsList` swallows a `ListLocalMigrations` read error and
+  // returns nil (`internal/db/declarative/debug.go:118-128`): the debug bundle is
+  // collected while a primary diff/apply error is already in flight, so an
+  // unreadable `supabase/migrations` must only omit migration copies, never replace
+  // the actionable original error. (The main generate/sync path keeps failing on an
+  // unreadable dir — that fail-on-read lives at the direct callers.)
+  const migrations = yield* legacyListLocalMigrations(fs, path, migrationsDir).pipe(
+    Effect.orElseSucceed(() => [] as ReadonlyArray<string>),
+  );
   return migrations.map((p) => path.basename(p));
 });
 
