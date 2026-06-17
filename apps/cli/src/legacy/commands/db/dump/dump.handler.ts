@@ -159,15 +159,14 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
 
     // 4. Pick the mode-specific script + env (pure builders, `dump.env.ts`).
     //    Go declares --schema/-s and --exclude/-x as cobra StringSlice
-    //    (`apps/cli-go/cmd/db.go:432,444`), which comma-splits each value before it
-    //    reaches the pg_dump env builder. The Effect CLI flags are repeatable but do
-    //    not split on comma, so split here to match (e.g. `--schema public,auth`).
-    const splitCsv = (values: ReadonlyArray<string>): ReadonlyArray<string> =>
-      values.flatMap((value) => value.split(","));
+    //    (`apps/cli-go/cmd/db.go:432,444`); both flags are CSV-parsed at the flag
+    //    level via `legacyParseSchemaFlags` (pflag `readAsCSV` semantics, quoted
+    //    commas preserved, malformed CSV rejected at parse time), so they arrive here
+    //    already split — matching `gen types` / `db lint` / declarative.
     const opt = {
-      schema: splitCsv(flags.schema),
+      schema: flags.schema,
       keepComments: flags.keepComments,
-      excludeTable: splitCsv(flags.exclude),
+      excludeTable: flags.exclude,
       columnInsert: !flags.useCopy,
     };
     // The script + diagnostic verb are connection-independent; the env is rebuilt

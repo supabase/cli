@@ -5,6 +5,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
+import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { LegacyDbDumpRunError } from "./dump.errors.ts";
 import { legacyDbDump } from "./dump.handler.ts";
@@ -40,6 +41,13 @@ const config = {
     Flag.withAlias("x"),
     Flag.withDescription("List of schema.tables to exclude from data-only dump."),
     Flag.atLeast(0),
+    // Go registers --exclude/-x as a cobra StringSliceVarP (`apps/cli-go/cmd/db.go:432`),
+    // which CSV-parses each value via encoding/csv. Use the shared pflag-faithful
+    // helper so quoted commas survive and malformed CSV fails at parse time.
+    Flag.mapTryCatch(
+      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (err) => (err instanceof Error ? err.message : String(err)),
+    ),
   ),
   roleOnly: Flag.boolean("role-only").pipe(Flag.withDescription("Dumps only cluster roles.")),
   keepComments: Flag.boolean("keep-comments").pipe(
@@ -67,6 +75,12 @@ const config = {
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
+    // Go registers --schema/-s as a cobra StringSliceVarP (`apps/cli-go/cmd/db.go:444`);
+    // same pflag CSV semantics as --exclude above.
+    Flag.mapTryCatch(
+      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (err) => (err instanceof Error ? err.message : String(err)),
+    ),
   ),
 } as const;
 

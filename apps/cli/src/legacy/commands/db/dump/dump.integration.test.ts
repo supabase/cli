@@ -363,11 +363,13 @@ describe("legacy db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("splits comma-separated --schema values like cobra StringSlice", () => {
-    // Go declares --schema as a cobra StringSlice, which comma-splits each value.
+  it.live("joins a multi-schema selection into EXTRA_FLAGS with pipes", () => {
+    // CSV-splitting of `--schema` now happens at the flag level via
+    // `legacyParseSchemaFlags` (Go's cobra StringSlice / `cmd/db.go:444`), so the
+    // handler receives the already-split array and the env builder pipe-joins it.
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
-      yield* legacyDbDump(flags({ schema: ["public,auth"], local: true }));
+      yield* legacyDbDump(flags({ schema: ["public", "auth"], local: true }));
       expect(docker.lastOpts?.env["EXTRA_FLAGS"]).toBe("--schema=public|auth");
     }).pipe(Effect.provide(layer));
   });
