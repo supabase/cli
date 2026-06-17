@@ -707,4 +707,18 @@ describe("legacy db query integration", () => {
       expect(failMessage(exit)).not.toContain("failed to read SQL file");
     }).pipe(Effect.provide(layer));
   });
+
+  it.live("surfaces a linked config/connection failure before the missing-token error", () => {
+    // Go's root ParseDatabaseConfig (config + ref + NewDbConfigWithPassword) runs
+    // before the query command's token check, so an unresolvable linked config must
+    // surface ahead of the generic "supabase login" error — not be masked by it.
+    const { layer } = setup({ accessToken: Option.none(), resolveFails: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbQuery(
+        flags({ sql: Option.some("select 1"), linked: Option.some(true) }),
+      ).pipe(Effect.exit);
+      expect(failMessage(exit)).toContain("failed to parse connection string");
+      expect(failMessage(exit)).not.toContain("Access token not provided");
+    }).pipe(Effect.provide(layer));
+  });
 });

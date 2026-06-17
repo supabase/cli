@@ -254,19 +254,14 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     if (Option.isSome(flags.linked)) {
       const credentials = yield* LegacyCredentials;
       const projectRef = yield* LegacyProjectRefResolver;
-      const tokenOpt = Option.isSome(cliConfig.accessToken)
-        ? cliConfig.accessToken
-        : yield* credentials.getAccessToken;
-      if (Option.isNone(tokenOpt)) {
-        return yield* Effect.fail(
-          new LegacyDbQueryLoginRequiredError({
-            message: MISSING_TOKEN_MESSAGE,
-            suggestion: "Run supabase login first.",
-          }),
-        );
-      }
-      // Go's `LoadProjectRef` (flag → env → ref file) fails with ErrNotLinked and
-      // never prompts; use the non-prompting `resolveOptional` + `AssertProjectRefIsValid`.
+      // Order mirrors cobra: the root `PersistentPreRunE` runs `ParseDatabaseConfig`
+      // (`cmd/root.go:118`) BEFORE the query command's own `PreRunE` token check
+      // (`cmd/db.go:300-308`). So resolve the ref + DB config FIRST, and only then
+      // check the token — otherwise an unlinked-project / invalid-config / IPv6 /
+      // pooler / login-role failure is masked behind a generic "supabase login" error.
+      //
+      // 1. `LoadProjectRef` (flag → env → ref file): non-prompting, fails with
+      //    ErrNotLinked. (`flags/db_url.go:88`)
       const refOpt = yield* projectRef.resolveOptional(Option.none());
       if (Option.isNone(refOpt)) {
         return yield* Effect.fail(
@@ -279,16 +274,28 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
           new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }),
         );
       }
-      // Go's root `ParseDatabaseConfig` runs the linked branch's
-      // `NewDbConfigWithPassword` before `ResolveSQL` / the Management API call
-      // (`cmd/root.go:118`, `flags/db_url.go:87-95`): it loads + validates the
-      // remote-merged config AND resolves the live DB connection — a TCP probe to the
-      // direct host, pooler fallback, and temp login-role mint — any of which can fail
-      // early (e.g. the "IPv6 is not supported on your current network" error on a
-      // no-pooler network). The linked query itself uses the Management API, so the
-      // resolved connection is discarded; this runs purely to match Go's pre-run
-      // validation and its side effects/failures.
+      // 2. `NewDbConfigWithPassword`: loads + validates the remote-merged config and
+      //    resolves the live DB connection (TCP probe, pooler fallback, temp login-role
+      //    mint), any of which can fail early. The token is read lazily here only when a
+      //    login role must be minted (matching Go), so this stays before the token-only
+      //    check. The linked query itself uses the Management API, so the resolved
+      //    connection is discarded — this runs purely for Go's pre-run failures.
       yield* resolver.resolve({ dbUrl: Option.none(), connType: "linked", dnsResolver });
+      // 3. Command `PreRunE` token check (`cmd/db.go:303`): Go still requires a token
+      //    for the Management API query even when config resolved without minting a
+      //    login role (e.g. a direct `DB_PASSWORD` was set), so keep this — but after
+      //    the config/ref resolution above.
+      const tokenOpt = Option.isSome(cliConfig.accessToken)
+        ? cliConfig.accessToken
+        : yield* credentials.getAccessToken;
+      if (Option.isNone(tokenOpt)) {
+        return yield* Effect.fail(
+          new LegacyDbQueryLoginRequiredError({
+            message: MISSING_TOKEN_MESSAGE,
+            suggestion: "Run supabase login first.",
+          }),
+        );
+      }
       linkedAuth = { token: tokenOpt.value, ref };
     }
 
