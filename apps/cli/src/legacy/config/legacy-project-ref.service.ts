@@ -1,6 +1,7 @@
 import type { Effect, Option } from "effect";
 import { Context } from "effect";
 
+import type { LegacyProjectRefReadError } from "../shared/legacy-temp-paths.ts";
 import type {
   LegacyInvalidProjectRefError,
   LegacyProjectNotLinkedError,
@@ -10,7 +11,11 @@ import type {
 interface LegacyProjectRefResolverShape {
   readonly resolve: (
     flagValue: Option.Option<string>,
-  ) => Effect.Effect<string, LegacyProjectNotLinkedError | LegacyInvalidProjectRefError, never>;
+  ) => Effect.Effect<
+    string,
+    LegacyProjectNotLinkedError | LegacyInvalidProjectRefError | LegacyProjectRefReadError,
+    never
+  >;
   /**
    * Resolution chain used by `supabase link` (`apps/cli-go/cmd/link.go:30` calls
    * `flags.ParseProjectRef` with an **empty in-memory FS**, so the on-disk
@@ -58,7 +63,11 @@ interface LegacyProjectRefResolverShape {
    */
   readonly loadProjectRef: (
     flagValue: Option.Option<string>,
-  ) => Effect.Effect<string, LegacyProjectNotLinkedError | LegacyInvalidProjectRefError, never>;
+  ) => Effect.Effect<
+    string,
+    LegacyProjectNotLinkedError | LegacyInvalidProjectRefError | LegacyProjectRefReadError,
+    never
+  >;
   /**
    * Lists all projects and prompts the user to select one with the given title,
    * writing "Selected project: <ref>" to stderr (text mode). Mirrors Go's

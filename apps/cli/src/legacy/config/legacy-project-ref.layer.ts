@@ -126,7 +126,11 @@ export const legacyProjectRefLayer = Layer.effect(
           if (Option.isSome(cliConfig.projectId)) {
             return cliConfig.projectId;
           }
-          return yield* readRefFile;
+          // Soft load: Go's `projects list` ignores ALL `LoadProjectRef` errors and
+          // only uses the value as a "linked" marker (`list.go:31-33`), so a real
+          // ref-file read error degrades to "not linked" here (unlike the hard
+          // `resolve`/`loadProjectRef` paths, which surface it).
+          return yield* readRefFile.pipe(Effect.orElseSucceed(() => Option.none<string>()));
         }),
       loadProjectRef: (flagValue) =>
         Effect.gen(function* () {
