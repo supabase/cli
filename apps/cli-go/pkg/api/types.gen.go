@@ -5,7 +5,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -936,6 +935,16 @@ const (
 // Defines values for ProjectUpgradeEligibilityResponseWarnings0Type.
 const (
 	PgGraphqlIntrospectionChange ProjectUpgradeEligibilityResponseWarnings0Type = "pg_graphql_introspection_change"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseWarnings1Type.
+const (
+	LtreeReindexRequired ProjectUpgradeEligibilityResponseWarnings1Type = "ltree_reindex_required"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseWarnings2Type.
+const (
+	OperatorEstimatorGate ProjectUpgradeEligibilityResponseWarnings2Type = "operator_estimator_gate"
 )
 
 // Defines values for RegionsInfoAllSmartGroupCode.
@@ -3569,6 +3578,22 @@ type ProjectUpgradeEligibilityResponseWarnings0 struct {
 
 // ProjectUpgradeEligibilityResponseWarnings0Type defines model for ProjectUpgradeEligibilityResponse.Warnings.0.Type.
 type ProjectUpgradeEligibilityResponseWarnings0Type string
+
+// ProjectUpgradeEligibilityResponseWarnings1 defines model for .
+type ProjectUpgradeEligibilityResponseWarnings1 struct {
+	Type ProjectUpgradeEligibilityResponseWarnings1Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseWarnings1Type defines model for ProjectUpgradeEligibilityResponse.Warnings.1.Type.
+type ProjectUpgradeEligibilityResponseWarnings1Type string
+
+// ProjectUpgradeEligibilityResponseWarnings2 defines model for .
+type ProjectUpgradeEligibilityResponseWarnings2 struct {
+	Type ProjectUpgradeEligibilityResponseWarnings2Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseWarnings2Type defines model for ProjectUpgradeEligibilityResponse.Warnings.2.Type.
+type ProjectUpgradeEligibilityResponseWarnings2Type string
 
 // ProjectUpgradeEligibilityResponse_Warnings_Item defines model for ProjectUpgradeEligibilityResponse.warnings.Item.
 type ProjectUpgradeEligibilityResponse_Warnings_Item struct {
@@ -6906,7 +6931,6 @@ func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibi
 
 // FromProjectUpgradeEligibilityResponseWarnings0 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings0
 func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings0(v ProjectUpgradeEligibilityResponseWarnings0) error {
-	v.Type = ""
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
@@ -6914,7 +6938,6 @@ func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeElig
 
 // MergeProjectUpgradeEligibilityResponseWarnings0 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings0
 func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings0(v ProjectUpgradeEligibilityResponseWarnings0) error {
-	v.Type = ""
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -6925,25 +6948,56 @@ func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEli
 	return err
 }
 
-func (t ProjectUpgradeEligibilityResponse_Warnings_Item) Discriminator() (string, error) {
-	var discriminator struct {
-		Discriminator string `json:"type"`
-	}
-	err := json.Unmarshal(t.union, &discriminator)
-	return discriminator.Discriminator, err
+// AsProjectUpgradeEligibilityResponseWarnings1 returns the union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as a ProjectUpgradeEligibilityResponseWarnings1
+func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibilityResponseWarnings1() (ProjectUpgradeEligibilityResponseWarnings1, error) {
+	var body ProjectUpgradeEligibilityResponseWarnings1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
 }
 
-func (t ProjectUpgradeEligibilityResponse_Warnings_Item) ValueByDiscriminator() (interface{}, error) {
-	discriminator, err := t.Discriminator()
+// FromProjectUpgradeEligibilityResponseWarnings1 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings1
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings1(v ProjectUpgradeEligibilityResponseWarnings1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseWarnings1 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings1
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings1(v ProjectUpgradeEligibilityResponseWarnings1) error {
+	b, err := json.Marshal(v)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	switch discriminator {
-	case "":
-		return t.AsProjectUpgradeEligibilityResponseWarnings0()
-	default:
-		return nil, errors.New("unknown discriminator value: " + discriminator)
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseWarnings2 returns the union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as a ProjectUpgradeEligibilityResponseWarnings2
+func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibilityResponseWarnings2() (ProjectUpgradeEligibilityResponseWarnings2, error) {
+	var body ProjectUpgradeEligibilityResponseWarnings2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseWarnings2 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings2
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings2(v ProjectUpgradeEligibilityResponseWarnings2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseWarnings2 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings2
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings2(v ProjectUpgradeEligibilityResponseWarnings2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
 	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
 }
 
 func (t ProjectUpgradeEligibilityResponse_Warnings_Item) MarshalJSON() ([]byte, error) {
