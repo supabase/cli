@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
+import type { V1GetABranchConfigOutput } from "@supabase/api/effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { Deferred, Effect, Exit, Layer, Option, Sink, Stdio, Stream } from "effect";
@@ -112,6 +113,8 @@ function defaultFlags(overrides: Partial<LegacyGenTypesFlags> = {}): LegacyGenTy
   };
 }
 
+type BranchConfig = typeof V1GetABranchConfigOutput.Type;
+
 function setup(
   opts: {
     readonly workdir?: string;
@@ -135,6 +138,9 @@ function setup(
       readonly ref: string;
       readonly included_schemas?: string;
     }) => Effect.Effect<{ readonly types: string }, unknown>;
+    readonly getABranchConfig?: (input: {
+      readonly branch_id_or_ref: string;
+    }) => Effect.Effect<BranchConfig, unknown>;
   } = {},
 ) {
   const workdir = opts.workdir ?? mkdtempSync(join(tmpdir(), "supabase-gen-types-"));
@@ -156,6 +162,21 @@ function setup(
   });
   const api = mockLegacyPlatformApiService({
     v1: {
+      getABranchConfig:
+        opts.getABranchConfig ??
+        (({ branch_id_or_ref }) =>
+          Effect.succeed({
+            ref: branch_id_or_ref,
+            postgres_version: "15.1",
+            postgres_engine: "15",
+            release_channel: "ga",
+            status: "ACTIVE_HEALTHY",
+            db_host: "127.0.0.1",
+            db_port: 5432,
+            db_user: "postgres",
+            db_pass: "postgres",
+            jwt_secret: "secret",
+          })),
       generateTypescriptTypes:
         opts.generateTypescriptTypes ??
         (({ included_schemas }) =>
@@ -604,23 +625,56 @@ describe("legacy gen types", () => {
     });
   });
 
-  it.live("rejects non-typescript project generation", () => {
-    const { layer } = setup({ args: ["gen", "types", "--lang", "go"] });
+  it.live("generates python types from a project ref", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const { layer, out, child, api, linkedProjectCache } = setup({
+            args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
+            childStdout: ["class PublicMovies(BaseModel):"],
+            getABranchConfig: ({ branch_id_or_ref }) =>
+              Effect.succeed({
+                ref: branch_id_or_ref,
+                postgres_version: "15.1",
+                postgres_engine: "15",
+                release_channel: "ga",
+                status: "ACTIVE_HEALTHY",
+                db_host: "127.0.0.1",
+                db_port: port,
+                db_user: "postgres",
+                db_pass: "postgres",
+                jwt_secret: "secret",
+              }),
+            onSpawn: docker.onSpawn,
+          });
 
-    return Effect.gen(function* () {
-      const exit = yield* legacyGenTypes(
-        defaultFlags({
-          projectId: Option.some(LEGACY_VALID_REF),
-          lang: "go",
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                projectId: Option.some(LEGACY_VALID_REF),
+                lang: "python",
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(api.requests).toContainEqual({
+            method: "getABranchConfig",
+            input: { branch_id_or_ref: LEGACY_VALID_REF },
+          });
+          expect(api.requests).not.toContainEqual(
+            expect.objectContaining({ method: "generateTypescriptTypes" }),
+          );
+          expect(child.spawned[0]?.args).toContain("--network");
+          expect(child.spawned[0]?.args).toContain("host");
+          expect(docker.env.has("PG_META_GENERATE_TYPES=python")).toBe(true);
+          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(true);
+          expect(out.stdoutText).toContain("class PublicMovies(BaseModel):");
+          expect(linkedProjectCache.cached).toBe(true);
         }),
-      ).pipe(Effect.provide(layer), Effect.exit);
-
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(String(exit.cause)).toContain("Try using --db-url flag instead.");
-      }
-    });
-  });
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
 
   it.live("maps project type generation network failures", () => {
     const { layer } = setup({

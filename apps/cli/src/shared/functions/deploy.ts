@@ -656,7 +656,8 @@ async function walkImportPaths(
       }
 
       const resolvedModule = resolve(modulePath);
-      if (!isContainedInAnyPath(allowedRoots, resolvedModule)) {
+      const containmentPath = await realpath(resolvedModule).catch(() => resolvedModule);
+      if (!isContainedInAnyPath(allowedRoots, containmentPath)) {
         await onWarning(`WARN: Skipping import path outside project root: ${modulePath}\n`);
         continue;
       }

@@ -5,7 +5,7 @@
 | Path                                      | Format     | When                                                                                     |
 | ----------------------------------------- | ---------- | ---------------------------------------------------------------------------------------- |
 | `~/.supabase/access-token`                | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` or `--project-id`                      |
-| `<workdir>/supabase/config.toml`          | TOML       | when `--local` (required) or `--db-url` (best-effort) is specified                       |
+| `<workdir>/supabase/config.toml`          | TOML       | when selecting schemas from config; required for `--local`, best-effort otherwise        |
 | `<workdir>/supabase/.temp/rest-version`   | plain text | `--local` only, when `db.major_version > 14` — forces v9 compat if the tag contains `v9` |
 | `<workdir>/supabase/.temp/pgmeta-version` | plain text | `--local` only — overrides the pg-meta docker image tag                                  |
 
@@ -21,19 +21,22 @@ passed via `docker run --env KEY=VALUE` arguments, mirroring Go's
 
 ## API Routes
 
-| Method | Path                                  | Auth         | Request body | Response (used fields)           |
-| ------ | ------------------------------------- | ------------ | ------------ | -------------------------------- |
-| `GET`  | `/v1/projects/{ref}/types/typescript` | Bearer token | none         | TypeScript type definitions text |
+| Method | Path                                  | Auth         | Request body | Response (used fields)                     |
+| ------ | ------------------------------------- | ------------ | ------------ | ------------------------------------------ |
+| `GET`  | `/v1/projects/{ref}/types/typescript` | Bearer token | none         | TypeScript type definitions text           |
+| `GET`  | `/v1/branches/{ref}`                  | Bearer token | none         | `db_host`, `db_port`, `db_user`, `db_pass` |
 
-Called only for `--linked`, `--project-id`, and the implicit linked-project
-fallback. `--local` and `--db-url` do not call the Management API.
+The TypeScript endpoint is called for `--linked`, `--project-id`, and the implicit
+linked-project fallback when `--lang=typescript`. For other languages on those
+project-ref paths, the branch config endpoint supplies a direct DB URL for pg-meta.
+`--local` and `--db-url` do not call the Management API.
 
 ## Subprocesses
 
-| Command                                                                       | When                  | Purpose                                            |
-| ----------------------------------------------------------------------------- | --------------------- | -------------------------------------------------- |
-| `docker container inspect supabase_db_<project_id>`                           | `--local`             | assert `supabase start` is running                 |
-| `docker run --rm --network <net> --env … <pgmeta> node dist/server/server.js` | `--local`, `--db-url` | run pg-meta to generate types from a live database |
+| Command                                                                       | When                                                                  | Purpose                                            |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------- |
+| `docker container inspect supabase_db_<project_id>`                           | `--local`                                                             | assert `supabase start` is running                 |
+| `docker run --rm --network <net> --env … <pgmeta> node dist/server/server.js` | `--local`, `--db-url`, project-ref paths with non-TypeScript `--lang` | run pg-meta to generate types from a live database |
 
 A raw TCP `SSLRequest` probe is also opened to the target database host/port to
 detect TLS support before launching pg-meta (mirrors Go's `isRequireSSL`).
@@ -79,8 +82,9 @@ Not applicable.
 ## Notes
 
 - Exactly one of `--local`, `--linked`, `--project-id`, or `--db-url` must be specified.
-- `--lang` flag accepts `typescript` (default), `go`, `swift`, or `python`. Non-typescript
-  languages require a direct database connection (`--local` or `--db-url`).
+- `--lang` flag accepts `typescript` (default), `go`, `swift`, or `python`. Project-ref
+  paths use the Management API for TypeScript, and use branch DB config + pg-meta for
+  other languages.
 - `--schema` / `-s` accepts a comma-separated list of schemas to include.
 - `--swift-access-control` accepts `internal` (default) or `public`.
 - `--postgrest-v9-compat` generates types compatible with PostgREST v9 and below (requires `--db-url`).

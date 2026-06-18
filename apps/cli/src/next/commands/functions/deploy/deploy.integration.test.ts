@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient, FunctionResponse } from "@supabase/api/effect";
 import { BunServices } from "@effect/platform-bun";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { Effect, Layer, Option, Sink, Stdio, Stream } from "effect";
@@ -341,6 +341,11 @@ function resolveDockerOutputPath(args: ReadonlyArray<string>): string {
   }
 
   throw new Error(`unable to resolve host output path for ${dockerOutputPath}`);
+}
+
+async function dockerBindSpec(hostPath: string, mode: "ro" | "rw") {
+  const resolved = await realpath(hostPath);
+  return `${resolved}:${resolved.replaceAll("\\", "/").replace(/^[A-Za-z]:/, "")}:${mode}`;
 }
 
 function mockChildProcessSpawner(
@@ -1208,13 +1213,9 @@ describe("functions deploy", () => {
       expect(api.requests[1]?.urlParams).toContain("verify_jwt=false");
       expect(child.spawned.at(-1)?.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.68.4");
       expect(child.spawned.at(-1)?.args).toContain(
-        `${join(tempDir, "supabase", "custom_import_map.json")}:${join(
-          tempDir,
-          "supabase",
-          "custom_import_map.json",
-        )
-          .replaceAll("\\", "/")
-          .replace(/^[A-Za-z]:/, "")}:ro`,
+        yield* Effect.promise(() =>
+          dockerBindSpec(join(tempDir, "supabase", "custom_import_map.json"), "ro"),
+        ),
       );
       expect(out.stderrText).toContain("Bundling Function: hello-world\n");
       expect(out.stderrText).toContain("Deploying Function: hello-world (script size:");
@@ -1512,7 +1513,7 @@ describe("functions deploy", () => {
 
       expect(child.spawned).toHaveLength(4);
       expect(child.spawned.at(-1)?.args).toContain(
-        `${staticFile}:${staticFile.replaceAll("\\", "/").replace(/^[A-Za-z]:/, "")}:ro`,
+        yield* Effect.promise(() => dockerBindSpec(staticFile, "ro")),
       );
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
