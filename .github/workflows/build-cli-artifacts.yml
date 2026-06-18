@@ -97,6 +97,7 @@ jobs:
         if: inputs.cache_key_suffix == '-github'
         run: |
           rm -rf node_modules apps/*/node_modules packages/*/node_modules
+          chmod -R u+w "$HOME/.cache/go-build" "$HOME/go/pkg/mod" 2>/dev/null || true
           rm -rf "$(pnpm store path --silent)" "$HOME/.cache/go-build" "$HOME/go/pkg/mod"
           df -h
 
