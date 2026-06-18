@@ -71,9 +71,14 @@ the IPv4 transaction-pooler suggestion (Go's `SetConnectSuggestion`/`ipv6Suggest
 - `--data-only` XOR `--role-only`; `--keep-comments` XOR `--data-only`;
   `--schema` XOR `--role-only`; `--db-url` XOR `--linked` XOR `--local`.
   `--use-copy` / `--exclude` require `--data-only`. `--linked` defaults to true.
-- **Pooler fallback is not yet ported.** Go transparently retries a failed linked
-  remote dump through the IPv4 transaction pooler when the direct host is
-  unreachable over IPv6 from inside the container (`RunWithPoolerFallback`). The
-  resolver's connect-time pooler fallback still covers an unreachable direct host;
-  only the "direct host reachable from the host process but not from the container
-  over IPv6" macOS-Docker edge case is currently uncovered. Tracked as a follow-up.
+- **Container-level pooler fallback is ported** (`RunWithPoolerFallback`,
+  `internal/db/dump/pooler_fallback.go`). When a linked dump reaches the direct host
+  from the host process but the `pg_dump` container fails over IPv6, the captured
+  container stderr is classified (`legacyIsIPv6ConnectivityError`) and the dump is
+  retried once through the project's IPv4 transaction pooler
+  (`resolver.resolvePoolerFallback`). This is in addition to the resolver's
+  connect-time pooler fallback for an unreachable direct host.
+  - Remaining divergence: on the no-fallback / failed-retry path, the IPv6
+    suggestion uses the generic `ipv6Suggestion()` text rather than Go's
+    `SuggestIPv6Pooler`, which prefills the project's specific pooler connection
+    string. Surfacing that exact URL needs the pooler string exposed at this seam.
