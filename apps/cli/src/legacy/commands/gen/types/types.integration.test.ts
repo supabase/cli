@@ -353,6 +353,15 @@ async function withSslProbeServer<T>(
   }
 }
 
+const nonTypescriptProjectRefScenarios = [
+  { lang: "go", stdout: "type PublicMovies struct {}" },
+  { lang: "swift", stdout: "struct PublicMovies: Codable {}" },
+  { lang: "python", stdout: "class PublicMovies(BaseModel):" },
+] as const satisfies ReadonlyArray<{
+  readonly lang: Exclude<LegacyGenTypesFlags["lang"], "typescript">;
+  readonly stdout: string;
+}>;
+
 const legacyTestRoot = Command.make("supabase").pipe(
   Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyGenCommand]),
@@ -663,82 +672,84 @@ describe("legacy gen types", () => {
     });
   });
 
-  it.live("generates python types from a project ref", () =>
-    Effect.tryPromise({
-      try: () =>
-        withSslProbeServer(async (port) => {
-          const docker = captureDockerRun();
-          const { layer, out, child, api, linkedProjectCache } = setup({
-            args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
-            childStdout: ["class PublicMovies(BaseModel):"],
-            getABranchConfig: ({ branch_id_or_ref }) =>
-              Effect.fail(new Error(`unexpected preview branch lookup for ${branch_id_or_ref}`)),
-            getProject: ({ ref }) =>
-              Effect.succeed({
-                id: ref,
-                ref,
-                organization_id: "org-id",
-                organization_slug: "org",
-                name: "demo",
-                region: "us-east-1",
-                created_at: "2025-01-01T00:00:00Z",
-                status: "ACTIVE_HEALTHY",
-                database: {
-                  host: `127.0.0.1:${port}`,
-                  version: "15.1",
-                  postgres_engine: "15",
-                  release_channel: "ga",
-                },
-              }),
-            createLoginRole: ({ ref, read_only }) =>
-              Effect.succeed({
-                role: `cli_login_${ref}`,
-                password: "temporary-password",
-                ttl_seconds: read_only ? 1800 : 3600,
-              }),
-            onSpawn: docker.onSpawn,
-          });
+  for (const scenario of nonTypescriptProjectRefScenarios) {
+    it.live(`generates ${scenario.lang} types from a project ref`, () =>
+      Effect.tryPromise({
+        try: () =>
+          withSslProbeServer(async (port) => {
+            const docker = captureDockerRun();
+            const { layer, out, child, api, linkedProjectCache } = setup({
+              args: ["gen", "types", "--lang", scenario.lang, "--project-id", LEGACY_VALID_REF],
+              childStdout: [scenario.stdout],
+              getABranchConfig: ({ branch_id_or_ref }) =>
+                Effect.fail(new Error(`unexpected preview branch lookup for ${branch_id_or_ref}`)),
+              getProject: ({ ref }) =>
+                Effect.succeed({
+                  id: ref,
+                  ref,
+                  organization_id: "org-id",
+                  organization_slug: "org",
+                  name: "demo",
+                  region: "us-east-1",
+                  created_at: "2025-01-01T00:00:00Z",
+                  status: "ACTIVE_HEALTHY",
+                  database: {
+                    host: `127.0.0.1:${port}`,
+                    version: "15.1",
+                    postgres_engine: "15",
+                    release_channel: "ga",
+                  },
+                }),
+              createLoginRole: ({ ref, read_only }) =>
+                Effect.succeed({
+                  role: `cli_login_${ref}`,
+                  password: "temporary-password",
+                  ttl_seconds: read_only ? 1800 : 3600,
+                }),
+              onSpawn: docker.onSpawn,
+            });
 
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "python",
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
+            await Effect.runPromise(
+              legacyGenTypes(
+                defaultFlags({
+                  projectId: Option.some(LEGACY_VALID_REF),
+                  lang: scenario.lang,
+                }),
+              ).pipe(Effect.provide(layer)),
+            );
 
-          expect(api.requests).toContainEqual({
-            method: "getProject",
-            input: { ref: LEGACY_VALID_REF },
-          });
-          expect(api.requests).toContainEqual({
-            method: "createLoginRole",
-            input: { ref: LEGACY_VALID_REF, read_only: false },
-          });
-          expect(api.requests).not.toContainEqual(
-            expect.objectContaining({ method: "getABranchConfig" }),
-          );
-          expect(api.requests).not.toContainEqual(
-            expect.objectContaining({ method: "generateTypescriptTypes" }),
-          );
-          expect(child.spawned[0]?.args).toContain("--network");
-          expect(child.spawned[0]?.args).toContain("host");
-          expect(out.stderrText).toContain("Initialising login role...");
-          expect(out.stderrText).toContain(`Connecting to 127.0.0.1 ${port}`);
-          expect(
-            docker.env.has(
-              `PG_META_DB_URL=postgresql://cli_login_${LEGACY_VALID_REF}:temporary-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
-            ),
-          ).toBe(true);
-          expect(docker.env.has("PG_META_GENERATE_TYPES=python")).toBe(true);
-          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(true);
-          expect(out.stdoutText).toContain("class PublicMovies(BaseModel):");
-          expect(linkedProjectCache.cached).toBe(true);
-        }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }),
-  );
+            expect(api.requests).toContainEqual({
+              method: "getProject",
+              input: { ref: LEGACY_VALID_REF },
+            });
+            expect(api.requests).toContainEqual({
+              method: "createLoginRole",
+              input: { ref: LEGACY_VALID_REF, read_only: false },
+            });
+            expect(api.requests).not.toContainEqual(
+              expect.objectContaining({ method: "getABranchConfig" }),
+            );
+            expect(api.requests).not.toContainEqual(
+              expect.objectContaining({ method: "generateTypescriptTypes" }),
+            );
+            expect(child.spawned[0]?.args).toContain("--network");
+            expect(child.spawned[0]?.args).toContain("host");
+            expect(out.stderrText).toContain("Initialising login role...");
+            expect(out.stderrText).toContain(`Connecting to 127.0.0.1 ${port}`);
+            expect(
+              docker.env.has(
+                `PG_META_DB_URL=postgresql://cli_login_${LEGACY_VALID_REF}:temporary-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
+              ),
+            ).toBe(true);
+            expect(docker.env.has(`PG_META_GENERATE_TYPES=${scenario.lang}`)).toBe(true);
+            expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(true);
+            expect(out.stdoutText).toContain(scenario.stdout);
+            expect(linkedProjectCache.cached).toBe(true);
+          }),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      }),
+    );
+  }
 
   it.live("maps project type generation network failures", () => {
     const { layer } = setup({
