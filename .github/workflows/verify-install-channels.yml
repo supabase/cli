@@ -73,11 +73,14 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       BREW_NAME: ${{ inputs.brew_name }}
-      # Skip the formulae.brew.sh API and read the tap straight from its git
-      # HEAD, so a formula pushed seconds ago is picked up immediately. Auto
-      # update is disabled because the explicit tap clone already fetches HEAD
-      # and updating homebrew/core here only adds latency and flake.
-      HOMEBREW_NO_INSTALL_FROM_API: "1"
+      # Don't auto-update Homebrew itself before installing; `brew install
+      # <user>/<tap>/<formula>` taps supabase/homebrew-tap from its git HEAD
+      # regardless, so the freshly-pushed formula is picked up either way.
+      #
+      # NB: do NOT set HOMEBREW_NO_INSTALL_FROM_API here. It only affects the
+      # homebrew/core + cask taps (third-party taps are always read from git),
+      # and on Linux runners it forces a large, slow local checkout of
+      # homebrew/core that makes this job hang for 10+ minutes.
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - name: Set up Homebrew on PATH
