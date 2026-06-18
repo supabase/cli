@@ -20,7 +20,7 @@ import {
   legacyResolveDeclarativeCatalogPath,
   legacySanitizedCatalogPrefix,
   legacySetupInputsToken,
-} from "./declarative.cache.ts";
+} from "./legacy-pgdelta.cache.ts";
 
 const BASE: LegacySetupInputs = {
   image: "supabase/postgres:17.6.1.135",

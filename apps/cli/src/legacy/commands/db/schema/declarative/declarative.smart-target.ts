@@ -19,7 +19,7 @@ import {
   LegacyDeclarativeApplyError,
   LegacyDeclarativeInvalidDbUrlError,
 } from "./declarative.errors.ts";
-import { LegacyDeclarativeSeam } from "./declarative.seam.service.ts";
+import { LegacyDeclarativeSeam } from "../../shared/legacy-pgdelta.seam.service.ts";
 
 /**
  * The local connection bits the smart-target resolver needs (Go reads these from

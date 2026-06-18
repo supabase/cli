@@ -25,8 +25,11 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
-import { LegacyDeclarativeShadowDbError } from "../declarative.errors.ts";
-import { type LegacyCatalogMode, LegacyDeclarativeSeam } from "../declarative.seam.service.ts";
+import { LegacyDeclarativeShadowDbError } from "../../../shared/legacy-pgdelta.errors.ts";
+import {
+  type LegacyCatalogMode,
+  LegacyDeclarativeSeam,
+} from "../../../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import { legacyDbSchemaDeclarativeGenerate } from "./generate.handler.ts";
 
@@ -85,6 +88,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       Effect.sync(() => {
         ensureStartedCalls += 1;
       }),
+    provisionShadow: () => Effect.die("provisionShadow not used in declarative tests"),
+    removeShadowContainer: () => Effect.void,
   });
   const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {

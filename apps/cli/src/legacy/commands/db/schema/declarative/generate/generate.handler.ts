@@ -15,18 +15,18 @@ import {
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyListLocalMigrations } from "../declarative.cache.ts";
+import { legacyListLocalMigrations } from "../../../shared/legacy-pgdelta.cache.ts";
 import {
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNonInteractiveError,
 } from "../declarative.errors.ts";
-import { LegacyDeclarativeSeam } from "../declarative.seam.service.ts";
+import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
 import { legacyRequirePgDelta } from "../declarative.gate.ts";
 import {
   type LegacyDeclarativeRunContext,
   legacyGenerateDeclarativeOutput,
 } from "../declarative.orchestrate.ts";
-import { legacyWriteDeclarativeSchemas } from "../declarative.write.ts";
+import { legacyWriteDeclarativeSchemas } from "../../../shared/legacy-pgdelta.write.ts";
 import type { LegacyDbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import {
   type LegacyLocalConn,

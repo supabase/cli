@@ -1,7 +1,7 @@
 import { Effect, type FileSystem, type Path } from "effect";
 
 import { legacyBold, legacyYellow } from "../../../../shared/legacy-colors.ts";
-import { legacyListLocalMigrations } from "./declarative.cache.ts";
+import { legacyListLocalMigrations } from "../../shared/legacy-pgdelta.cache.ts";
 
 /**
  * Diagnostic artifacts collected when a declarative operation fails. Mirrors

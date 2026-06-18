@@ -20,7 +20,10 @@ import { legacyApplyMigrationFile } from "../../../../../shared/legacy-migration
 import { legacyReadProjectRefFile } from "../../../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyListLocalMigrations, legacyPgDeltaTempPath } from "../declarative.cache.ts";
+import {
+  legacyListLocalMigrations,
+  legacyPgDeltaTempPath,
+} from "../../../shared/legacy-pgdelta.cache.ts";
 import { legacyResolveSmartTargetUrl } from "../declarative.smart-target.ts";
 import {
   type LegacyDeclarativeDebugBundle,
@@ -45,8 +48,8 @@ import {
   legacyDiffDeclarativeToMigrations,
   legacyGenerateDeclarativeOutput,
 } from "../declarative.orchestrate.ts";
-import { LegacyDeclarativeSeam } from "../declarative.seam.service.ts";
-import { legacyWriteDeclarativeSchemas } from "../declarative.write.ts";
+import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
+import { legacyWriteDeclarativeSchemas } from "../../../shared/legacy-pgdelta.write.ts";
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 
 const DEFAULT_SYNC_NAME = "declarative_sync";

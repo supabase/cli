@@ -6,24 +6,9 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 
-import { LegacyDeclarativeWriteError } from "./declarative.errors.ts";
-import type { LegacyDeclarativeOutput } from "./declarative.pgdelta.ts";
-import { legacyFindDropStatements, legacyWriteDeclarativeSchemas } from "./declarative.write.ts";
-
-describe("legacyFindDropStatements", () => {
-  it("flags DROP statements (case-insensitive) and ignores others", () => {
-    const sql = "DROP TABLE a;\nCREATE TABLE b();\ndrop function f();";
-    expect(legacyFindDropStatements(sql)).toEqual(["DROP TABLE a", "drop function f()"]);
-  });
-
-  it("does not split a function body on its inner ; (no spurious statements)", () => {
-    // The dollar-quoted `;` must not create extra statements; this benign
-    // function (no DROP) stays whole and is therefore not flagged.
-    const sql =
-      "CREATE FUNCTION f() AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql;\nDROP TABLE real;";
-    expect(legacyFindDropStatements(sql)).toEqual(["DROP TABLE real"]);
-  });
-});
+import { LegacyDeclarativeWriteError } from "./legacy-pgdelta.errors.ts";
+import type { LegacyDeclarativeOutput } from "./legacy-pgdelta.ts";
+import { legacyWriteDeclarativeSchemas } from "./legacy-pgdelta.write.ts";
 
 const write = (declarativeDir: string, output: LegacyDeclarativeOutput) =>
   Effect.gen(function* () {

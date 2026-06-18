@@ -2,16 +2,16 @@ import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import { LegacyNetworkIdFlag } from "../../../../../shared/legacy/global-flags.ts";
-import { resolveBinary } from "../../../../../shared/legacy/go-proxy.layer.ts";
-import { LegacyCliConfig } from "../../../../config/legacy-cli-config.service.ts";
-import { legacyReadDbToml } from "../../../../shared/legacy-db-config.toml-read.ts";
+import { LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
+import { resolveBinary } from "../../../../shared/legacy/go-proxy.layer.ts";
+import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import {
   legacyResolveLocalProjectId,
   localDbContainerId,
-} from "../../../../shared/legacy-docker-ids.ts";
-import { LegacyDeclarativeShadowDbError } from "./declarative.errors.ts";
-import { LegacyDeclarativeSeam } from "./declarative.seam.service.ts";
+} from "../../../shared/legacy-docker-ids.ts";
+import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
+import { LegacyDeclarativeSeam, type LegacyShadowSource } from "./legacy-pgdelta.seam.service.ts";
 
 /**
  * Real `LegacyDeclarativeSeam`: runs the bundled `supabase-go`'s hidden
@@ -249,6 +249,90 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             }
           }),
         ),
+      provisionShadow: ({ mode, targetLocal, usePgDelta, schema }) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            if (!("found" in resolved)) {
+              return yield* Effect.fail(
+                new LegacyDeclarativeShadowDbError({
+                  message:
+                    "Could not find the supabase-go binary required to provision the shadow database.",
+                }),
+              );
+            }
+            const args = [
+              "db",
+              "__shadow",
+              "--mode",
+              mode,
+              ...(targetLocal ? ["--target-local"] : []),
+              ...(usePgDelta ? ["--use-pg-delta"] : []),
+              ...(schema.length > 0 ? ["--schema", schema.join(",")] : []),
+              ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
+            ];
+            const command = ChildProcess.make(resolved.found, args, {
+              cwd: cliConfig.workdir,
+              stdin: "inherit",
+              stdout: "pipe",
+              stderr: "inherit",
+              extendEnv: true,
+              detached: false,
+            });
+            const handle = yield* spawner.spawn(command).pipe(
+              Effect.mapError(
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: "failed to run the shadow-database provisioner (supabase-go).",
+                  }),
+              ),
+            );
+            const chunks: Array<Uint8Array> = [];
+            yield* Stream.runForEach(handle.stdout, (chunk) =>
+              Effect.sync(() => {
+                chunks.push(chunk);
+              }),
+            ).pipe(Effect.mapError(() => failure()));
+            const exitCode = yield* handle.exitCode.pipe(Effect.mapError(() => failure()));
+            if (exitCode !== 0) {
+              return yield* Effect.fail(failure(exitCode));
+            }
+            const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
+            const bytes = new Uint8Array(total);
+            let offset = 0;
+            for (const chunk of chunks) {
+              bytes.set(chunk, offset);
+              offset += chunk.length;
+            }
+            // stdout is three newline-separated lines: container id, source URL,
+            // and an optional target-override URL (empty unless the local-target
+            // declarative branch redirected the target to a second shadow db).
+            const lines = new TextDecoder().decode(bytes).split(/\r?\n/u);
+            const container = (lines[0] ?? "").trim();
+            const sourceUrl = (lines[1] ?? "").trim();
+            const targetOverride = (lines[2] ?? "").trim();
+            if (container.length === 0 || sourceUrl.length === 0) {
+              return yield* Effect.fail(failure());
+            }
+            return {
+              container,
+              sourceUrl,
+              targetUrlOverride: targetOverride.length > 0 ? targetOverride : undefined,
+            } satisfies LegacyShadowSource;
+          }),
+        ),
+      removeShadowContainer: (container) =>
+        Effect.gen(function* () {
+          if (container.length === 0) return;
+          // Remove the shadow left running by provisionShadow. Best-effort — a
+          // failure here must never mask the diff result.
+          const command = ChildProcess.make("docker", ["rm", "-f", container], {
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+            extendEnv: true,
+          });
+          yield* spawner.exitCode(command).pipe(Effect.ignore);
+        }),
     });
   }),
 );

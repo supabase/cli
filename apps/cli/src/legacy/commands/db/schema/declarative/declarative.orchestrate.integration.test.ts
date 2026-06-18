@@ -10,7 +10,10 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
-import { type LegacyCatalogMode, LegacyDeclarativeSeam } from "./declarative.seam.service.ts";
+import {
+  type LegacyCatalogMode,
+  LegacyDeclarativeSeam,
+} from "../../shared/legacy-pgdelta.seam.service.ts";
 import {
   type LegacyDeclarativeRunContext,
   legacyDiffDeclarativeToMigrations,
@@ -26,6 +29,8 @@ function mockSeam(paths: Record<LegacyCatalogMode, string>) {
     },
     execInherit: () => Effect.succeed(0),
     ensureLocalDatabaseStarted: () => Effect.void,
+    provisionShadow: () => Effect.die("provisionShadow not used in declarative tests"),
+    removeShadowContainer: () => Effect.void,
   });
   return { layer, calls };
 }

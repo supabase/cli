@@ -1,5 +1,5 @@
 // Verbatim copies of the Go pg-delta Deno templates. These embed the scripts
-// byte-for-byte; `declarative.deno-templates.unit.test.ts` asserts equality
+// byte-for-byte; `legacy-pgdelta.deno-templates.unit.test.ts` asserts equality
 // against the Go `.ts` sources. Do not hand-edit — regenerate from Go.
 //
 // Four templates back the in-scope flows: diff / declarative-export / catalog-

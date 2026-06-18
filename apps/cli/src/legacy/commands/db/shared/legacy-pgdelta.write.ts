@@ -1,20 +1,7 @@
 import { Effect, type FileSystem, type Path } from "effect";
 
-import { legacySplitAndTrim } from "../../../../shared/legacy-sql-split.ts";
-import { LegacyDeclarativeWriteError } from "./declarative.errors.ts";
-import type { LegacyDeclarativeOutput } from "./declarative.pgdelta.ts";
-
-// `(?i)drop\s+` — Go's `dropStatementRegexp` (`declarative.go:62`).
-const DROP_STATEMENT_PATTERN = /drop\s+/i;
-
-/**
- * Extracts DROP statements from a migration diff for the safety warning shown
- * during sync. Mirrors Go's `findDropStatements` (`declarative.go:812`): split
- * the SQL into statements, then keep those matching `(?i)drop\s+`.
- */
-export function legacyFindDropStatements(sql: string): ReadonlyArray<string> {
-  return legacySplitAndTrim(sql).filter((statement) => DROP_STATEMENT_PATTERN.test(statement));
-}
+import { LegacyDeclarativeWriteError } from "./legacy-pgdelta.errors.ts";
+import type { LegacyDeclarativeOutput } from "./legacy-pgdelta.ts";
 
 /**
  * Materializes pg-delta declarative export output under the declarative dir.

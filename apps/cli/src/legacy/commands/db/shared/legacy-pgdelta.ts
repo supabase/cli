@@ -3,23 +3,23 @@ import { Effect, FileSystem, Path } from "effect";
 import {
   type LegacyEdgeRuntimeFile,
   LegacyEdgeRuntimeScript,
-} from "../../../../shared/legacy-edge-runtime-script.service.ts";
+} from "../../../shared/legacy-edge-runtime-script.service.ts";
 import {
   LEGACY_PG_DELTA_SOURCE_SSL_ENV,
   LEGACY_PG_DELTA_TARGET_SSL_ENV,
   legacyPreparePgDeltaRef,
-} from "../../../../shared/legacy-pgdelta-ssl.ts";
+} from "../../../shared/legacy-pgdelta-ssl.ts";
 import {
   legacyInterpolatePgDeltaScript,
   legacyPgDeltaCatalogExportScript,
   legacyPgDeltaDeclarativeExportScript,
   legacyPgDeltaDiffScript,
-} from "./declarative.deno-templates.ts";
+} from "./legacy-pgdelta.deno-templates.ts";
 import {
   LegacyDeclarativeEdgeRuntimeError,
   LegacyDeclarativeEmptyOutputError,
   LegacyDeclarativeParseOutputError,
-} from "./declarative.errors.ts";
+} from "./legacy-pgdelta.errors.ts";
 
 const PG_DELTA_NPM_REGISTRY_ENV = "PGDELTA_NPM_REGISTRY";
 
