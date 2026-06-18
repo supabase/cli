@@ -12,6 +12,7 @@ import { vi } from "vitest";
 import { LegacyDebugFlag, LegacyDnsResolverFlag } from "../../shared/legacy/global-flags.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
+import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
 import { legacyIdentityStitchLayer } from "../shared/legacy-identity-stitch.ts";
@@ -74,7 +75,7 @@ function mockTelemetryRuntime(
       showDebug: false,
       deviceId: opts.deviceId ?? "device-123",
       sessionId: "session-123",
-      ...(opts.distinctId === undefined ? {} : { distinctId: opts.distinctId }),
+      identity: makeTelemetryIdentity(opts.distinctId),
       isFirstRun: opts.isFirstRun ?? false,
       isTty: opts.isTty ?? false,
       isCi: opts.isCi ?? false,

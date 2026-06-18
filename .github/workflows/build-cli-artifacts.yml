@@ -33,6 +33,8 @@ on:
         required: false
       POSTHOG_ENDPOINT:
         required: false
+      DF_FIREWALL_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -56,6 +58,8 @@ jobs:
 
       - name: Setup
         uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Setup Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -88,6 +92,13 @@ jobs:
           done
           echo "Checking dist/..."
           ls -la dist/
+
+      - name: Free space before saving GitHub-hosted artifacts cache
+        if: inputs.cache_key_suffix == '-github'
+        run: |
+          rm -rf node_modules apps/*/node_modules packages/*/node_modules
+          rm -rf "$(pnpm store path --silent)" "$HOME/.cache/go-build" "$HOME/go/pkg/mod"
+          df -h
 
       - name: Check existing build artifacts cache
         id: build-artifacts-cache

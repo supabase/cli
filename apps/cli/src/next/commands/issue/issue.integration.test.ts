@@ -5,6 +5,7 @@ import type { OutputFormat } from "../../../shared/output/types.ts";
 import { Browser } from "../../../shared/runtime/browser.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
+import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { buildIssueUrl } from "../../../shared/issue/issue-url.ts";
 import { openBugIssue, openDocsIssue, openFeatureIssue } from "./issue.handler.ts";
 
@@ -141,6 +142,7 @@ function setup(
       showDebug: false,
       deviceId: "device-id",
       sessionId: "session-id",
+      identity: makeTelemetryIdentity(undefined),
       isFirstRun: false,
       isTty: true,
       isCi: false,

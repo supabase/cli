@@ -25,6 +25,7 @@ import { LEGACY_GLOBAL_FLAGS, LegacyYesFlag } from "../../../../shared/legacy/gl
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import { processControlLayer } from "../../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
+import { makeTelemetryIdentity } from "../../../../shared/telemetry/identity.ts";
 import { legacyGenCommand } from "../gen.command.ts";
 import { legacyGenSigningKey } from "./signing-key.handler.ts";
 
@@ -164,7 +165,7 @@ describe("legacy gen signing-key integration", () => {
           showDebug: false,
           deviceId: "test-device-id",
           sessionId: "test-session-id",
-          distinctId: undefined,
+          identity: makeTelemetryIdentity(undefined),
           isFirstRun: false,
           isTty: false,
           isCi: false,

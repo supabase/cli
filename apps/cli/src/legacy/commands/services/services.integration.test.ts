@@ -23,6 +23,7 @@ import { listLocalServiceVersions } from "../../../shared/services/services.shar
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
+import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { legacyServicesCommand } from "./services.command.ts";
 import { legacyServices } from "./services.handler.ts";
 
@@ -139,7 +140,7 @@ describe("legacy services", () => {
               showDebug: false,
               deviceId: "test-device-id",
               sessionId: "test-session-id",
-              distinctId: undefined,
+              identity: makeTelemetryIdentity(undefined),
               isFirstRun: false,
               isTty: false,
               isCi: false,

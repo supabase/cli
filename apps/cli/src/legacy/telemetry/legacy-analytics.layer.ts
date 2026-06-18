@@ -195,7 +195,7 @@ export const legacyAnalyticsLayer = Layer.effect(
 
         client.capture({
           event,
-          distinctId: context.distinct_id ?? runtime.distinctId ?? runtime.deviceId,
+          distinctId: context.distinct_id ?? runtime.identity.current() ?? runtime.deviceId,
           ...(groups === undefined ? {} : { groups }),
           properties: {
             ...baseProperties,
@@ -233,7 +233,7 @@ export const legacyAnalyticsLayer = Layer.effect(
         client.groupIdentify({
           groupType,
           groupKey,
-          distinctId: context.distinct_id ?? runtime.distinctId ?? runtime.deviceId,
+          distinctId: context.distinct_id ?? runtime.identity.current() ?? runtime.deviceId,
           properties: stripUndefined(properties),
         });
       });

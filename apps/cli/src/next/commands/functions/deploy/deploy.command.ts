@@ -1,9 +1,14 @@
+import { BunServices } from "@effect/platform-bun";
+import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { credentialsLayer } from "../../../auth/credentials.layer.ts";
+import { platformApiLayer } from "../../../auth/platform-api.layer.ts";
+import { projectLinkStateLayer } from "../../../config/project-link-state.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
-import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
-import { legacyFunctionsDeploy } from "./deploy.handler.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { withCommandInstrumentation } from "../../../../shared/telemetry/command-instrumentation.ts";
+import { functionsDeploy } from "./deploy.handler.ts";
 
 const config = {
   functionNames: Argument.string("Function name").pipe(
@@ -27,6 +32,7 @@ const config = {
   prune: Flag.boolean("prune").pipe(
     Flag.withDescription("Delete Functions that exist in Supabase project but not locally."),
   ),
+  yes: Flag.boolean("yes").pipe(Flag.withDescription("Skip the confirmation prompt.")),
   jobs: Flag.integer("jobs").pipe(
     Flag.withAlias("j"),
     Flag.filter(
@@ -37,19 +43,31 @@ const config = {
     Flag.optional,
   ),
   useDocker: Flag.boolean("use-docker").pipe(
-    Flag.withDescription("Use Docker to bundle functions locally."),
+    Flag.withDescription("Use Docker to bundle functions."),
     Flag.withDefault(true),
     Flag.withHidden,
   ),
   legacyBundle: Flag.boolean("legacy-bundle").pipe(
-    Flag.withDescription("Use legacy bundling."),
+    Flag.withDescription("Use legacy bundling mechanism."),
     Flag.withHidden,
   ),
 } as const;
 
-export type LegacyFunctionsDeployFlags = CliCommand.Command.Config.Infer<typeof config>;
+export type FunctionsDeployFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-export const legacyFunctionsDeployCommand = Command.make("deploy", config).pipe(
+const functionsDeployCommandRuntimeLayer = commandRuntimeLayer(["functions", "deploy"]);
+const functionsDeployPlatformApiLayer = platformApiLayer.pipe(
+  Layer.provide(Layer.mergeAll(credentialsLayer, functionsDeployCommandRuntimeLayer)),
+);
+
+const functionsDeployRuntimeLayer = Layer.mergeAll(
+  BunServices.layer,
+  functionsDeployPlatformApiLayer,
+  projectLinkStateLayer,
+  functionsDeployCommandRuntimeLayer,
+);
+
+export const functionsDeployCommand = Command.make("deploy", config).pipe(
   Command.withDescription("Deploy a Function to the linked Supabase project."),
   Command.withShortDescription("Deploy a Function to Supabase"),
   Command.withExamples([
@@ -63,10 +81,7 @@ export const legacyFunctionsDeployCommand = Command.make("deploy", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyFunctionsDeploy(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
-      withJsonErrorHandling,
-    ),
+    functionsDeploy(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["functions", "deploy"])),
+  Command.provide(functionsDeployRuntimeLayer),
 );
