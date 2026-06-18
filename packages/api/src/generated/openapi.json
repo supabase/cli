@@ -11549,7 +11549,6 @@
                   },
                   "code": {
                     "type": "string",
-                    "minLength": 1,
                     "description": "Specific region code. The codes supported are not a stable API, and should be retrieved from the /available-regions endpoint.",
                     "enum": [
                       "us-east-1",
@@ -11630,7 +11629,7 @@
           },
           "high_availability": {
             "type": "boolean",
-            "description": "Whether to enable high availability for the project."
+            "description": "[Experimental] Whether to enable high availability for the project."
           }
         },
         "required": ["db_pass", "name", "organization_slug"],
@@ -16364,7 +16363,8 @@
                     "ipv4",
                     "auth_mfa_phone",
                     "auth_mfa_web_authn",
-                    "log_drain"
+                    "log_drain",
+                    "etl_pipeline"
                   ]
                 },
                 "variant": {
@@ -16418,6 +16418,10 @@
                         {
                           "type": "string",
                           "enum": ["log_drain_default"]
+                        },
+                        {
+                          "type": "string",
+                          "enum": ["etl_pipeline_default"]
                         }
                       ]
                     },
@@ -16468,7 +16472,8 @@
                     "ipv4",
                     "auth_mfa_phone",
                     "auth_mfa_web_authn",
-                    "log_drain"
+                    "log_drain",
+                    "etl_pipeline"
                   ]
                 },
                 "name": {
@@ -16527,6 +16532,10 @@
                           {
                             "type": "string",
                             "enum": ["log_drain_default"]
+                          },
+                          {
+                            "type": "string",
+                            "enum": ["etl_pipeline_default"]
                           }
                         ]
                       },
@@ -16618,7 +16627,8 @@
               "ipv4",
               "auth_mfa_phone",
               "auth_mfa_web_authn",
-              "log_drain"
+              "log_drain",
+              "etl_pipeline"
             ]
           }
         },

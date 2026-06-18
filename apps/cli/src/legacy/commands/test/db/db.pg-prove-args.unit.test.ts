@@ -47,13 +47,43 @@ describe("buildLegacyPgProveArgs", () => {
     expect(Option.getOrNull(result.workingDir)).toBe("/cwd/nested");
   });
 
-  test("uses the parent directory as workingDir when the first path is a file", () => {
+  test("mounts the containing directory (not the lone file) for a single file path", () => {
+    // CLI-1139: mounting only the file leaves sibling `\ir` includes absent in
+    // the container. Mount the parent directory so they resolve; the file path is
+    // still what pg_prove runs.
     const result = buildLegacyPgProveArgs({
       paths: ["/abs/dir/a_test.sql"],
       cwd: "/cwd",
       workdir: "/work",
       debug: false,
     });
+    expect(result.binds).toEqual(["/abs/dir:/abs/dir:ro"]);
+    expect(result.cmd).toContain("/abs/dir/a_test.sql");
+    expect(Option.getOrNull(result.workingDir)).toBe("/abs/dir");
+  });
+
+  test("dedupes the bind when multiple files share a directory", () => {
+    const result = buildLegacyPgProveArgs({
+      paths: ["/abs/dir/a_test.sql", "/abs/dir/b_test.sql"],
+      cwd: "/cwd",
+      workdir: "/work",
+      debug: false,
+    });
+    // A single bind for the shared directory; both files still run.
+    expect(result.binds).toEqual(["/abs/dir:/abs/dir:ro"]);
+    expect(result.cmd).toContain("/abs/dir/a_test.sql");
+    expect(result.cmd).toContain("/abs/dir/b_test.sql");
+  });
+
+  test("dedupes a file's mount against its explicitly-given containing directory", () => {
+    const result = buildLegacyPgProveArgs({
+      paths: ["/abs/dir", "/abs/dir/a_test.sql"],
+      cwd: "/cwd",
+      workdir: "/work",
+      debug: false,
+    });
+    expect(result.binds).toEqual(["/abs/dir:/abs/dir:ro"]);
+    // workingDir is derived from the first path (a directory → itself).
     expect(Option.getOrNull(result.workingDir)).toBe("/abs/dir");
   });
 
@@ -65,7 +95,9 @@ describe("buildLegacyPgProveArgs", () => {
       debug: false,
     });
     expect(result.binds).toEqual([
-      "/abs/first_test.sql:/abs/first_test.sql:ro",
+      // First path is a file → its containing directory is mounted.
+      "/abs:/abs:ro",
+      // Second path is a directory → mounted as-is.
       "/abs/second/dir:/abs/second/dir:ro",
     ]);
     // workingDir is derived from the first path only (a file → its parent).

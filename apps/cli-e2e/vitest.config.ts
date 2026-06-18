@@ -5,6 +5,10 @@ export default defineConfig({
   test: {
     passWithNoTests: true,
     include: ["**/*.e2e.test.ts"],
+    // Live tests are *.live.e2e.test.ts and run only via vitest.live.config.ts.
+    // They also match the include glob, so exclude them here to keep the
+    // PR-blocking replay suite from globbing them.
+    exclude: ["**/node_modules/**", "**/*.live.e2e.test.ts"],
     fileParallelism: false,
     maxWorkers: 1,
     globalSetup: ["tests/setup.ts"],
