@@ -12,6 +12,7 @@ import {
 } from "../../../shared/legacy-docker-ids.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 import { LegacyDeclarativeSeam, type LegacyShadowSource } from "./legacy-pgdelta.seam.service.ts";
+import { legacyInjectPostgresPassword } from "./legacy-pgdelta.seam.url.ts";
 
 /**
  * Real `LegacyDeclarativeSeam`: runs the bundled `supabase-go`'s hidden
@@ -306,6 +307,11 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             // stdout is three newline-separated lines: container id, source URL,
             // and an optional target-override URL (empty unless the local-target
             // declarative branch redirected the target to a second shadow db).
+            // The URLs arrive WITHOUT a password — the Go seam prints them via
+            // ToPostgresURLWithoutPassword so it never logs a credential to stdout
+            // (CWE-312). The shadow always uses the local Postgres password, so we
+            // re-inject the password resolved from config.toml (the same value Go
+            // used) before handing the URLs to the differ / sql-pg connection.
             const lines = new TextDecoder().decode(bytes).split(/\r?\n/u);
             const container = (lines[0] ?? "").trim();
             const sourceUrl = (lines[1] ?? "").trim();
@@ -313,10 +319,23 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             if (container.length === 0 || sourceUrl.length === 0) {
               return yield* Effect.fail(failure());
             }
+            const password = yield* legacyReadDbToml(fs, path, cliConfig.workdir).pipe(
+              Effect.map((toml) => toml.password),
+              Effect.mapError(
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message:
+                      "failed to read the local database password from config.toml to connect to the shadow database.",
+                  }),
+              ),
+            );
             return {
               container,
-              sourceUrl,
-              targetUrlOverride: targetOverride.length > 0 ? targetOverride : undefined,
+              sourceUrl: legacyInjectPostgresPassword(sourceUrl, password),
+              targetUrlOverride:
+                targetOverride.length > 0
+                  ? legacyInjectPostgresPassword(targetOverride, password)
+                  : undefined,
             } satisfies LegacyShadowSource;
           }),
         ),

@@ -209,8 +209,12 @@ var (
 	// three newline-separated lines to stdout: the container id, the source
 	// Postgres URL, and an optional target-override URL (empty unless the
 	// local-target declarative branch redirects the diff target to a second
-	// shadow database). Shadow provisioning (start.SetupDatabase) is not yet
-	// ported, which is why this stays in Go.
+	// shadow database). The URLs are emitted WITHOUT the password
+	// (ToPostgresURLWithoutPassword) so we never log a credential to stdout
+	// (CWE-312); the TS caller re-injects the local Postgres password it already
+	// resolves from config.toml, which is the same value the shadow uses. Shadow
+	// provisioning (start.SetupDatabase) is not yet ported, which is why this
+	// stays in Go.
 	dbShadowCmd = &cobra.Command{
 		Use:    "__shadow",
 		Hidden: true,
@@ -230,9 +234,9 @@ var (
 				return err
 			}
 			fmt.Println(src.Container)
-			fmt.Println(utils.ToPostgresURL(src.Source))
+			fmt.Println(utils.ToPostgresURLWithoutPassword(src.Source))
 			if src.TargetOverride != nil {
-				fmt.Println(utils.ToPostgresURL(*src.TargetOverride))
+				fmt.Println(utils.ToPostgresURLWithoutPassword(*src.TargetOverride))
 			} else {
 				fmt.Println("")
 			}
