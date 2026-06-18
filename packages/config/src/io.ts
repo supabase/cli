@@ -118,7 +118,12 @@ function withDbSeedDisabled(document: Record<string, unknown>): Record<string, u
  * Applies the `[remotes.<name>]` override whose `project_id` matches `projectRef`
  * to `document`, mirroring Go's `loadFromFile` remote resolution
  * (`config.go:503-518`). Returns the merged document (with `remotes` stripped) and
- * the matched remote name. Fails when two remotes share the target `project_id`.
+ * the matched remote name.
+ *
+ * Like Go, duplicate `project_id`s are detected across *all* `[remotes.*]` blocks —
+ * not just the ones matching `projectRef` — before the matching override is applied.
+ * A missing `project_id` reads as `""` (Go's `viper.GetString`), so two remotes that
+ * both omit it collide on the empty key and fail just as in Go.
  */
 const applyRemoteOverride = Effect.fnUntraced(function* (
   document: Record<string, unknown>,
@@ -128,18 +133,27 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
   if (!isObject(remotes)) {
     return { document, appliedRemote: undefined as string | undefined };
   }
-  const matches = Object.entries(remotes)
-    .filter(([, remote]) => isObject(remote) && remote["project_id"] === projectRef)
-    .map(([name]) => name);
-  if (matches.length > 1) {
-    return yield* new DuplicateRemoteProjectIdError({
-      message: `duplicate project_id for [remotes.${matches[1]}] and [remotes.${matches[0]}]`,
-    });
+  // Build a project_id -> "[remotes.<name>]" map over every remote, failing on the
+  // first duplicate, then resolve the single block matching projectRef.
+  const idToName = new Map<string, string>();
+  let name: string | undefined;
+  for (const [remoteName, remote] of Object.entries(remotes)) {
+    const projectId =
+      isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
+    const other = idToName.get(projectId);
+    if (other !== undefined) {
+      return yield* new DuplicateRemoteProjectIdError({
+        message: `duplicate project_id for [remotes.${remoteName}] and ${other}`,
+      });
+    }
+    idToName.set(projectId, `[remotes.${remoteName}]`);
+    if (projectId === projectRef) {
+      name = remoteName;
+    }
   }
-  if (matches.length === 0) {
+  if (name === undefined) {
     return { document, appliedRemote: undefined as string | undefined };
   }
-  const name = matches[0]!;
   const remoteSubtree = remotes[name];
   let merged = isObject(remoteSubtree)
     ? mergeRemoteSubtree(document, remoteSubtree)
@@ -148,7 +162,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
     merged = withDbSeedDisabled(merged);
   }
   delete merged["remotes"];
-  return { document: merged, appliedRemote: name as string | undefined };
+  return { document: merged, appliedRemote: name };
 });
 
 function isEqualValue(left: unknown, right: unknown): boolean {

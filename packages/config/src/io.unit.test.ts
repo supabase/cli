@@ -915,6 +915,64 @@ project_id = "dupref"
     }
   });
 
+  test("rejects duplicate project_id among remotes that do not match projectRef", async () => {
+    // Go builds the duplicate map across all [remotes.*] blocks before applying the
+    // matching override, so a clash between two non-target remotes still fails even
+    // though neither shares projectRef (config.go:503-518).
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.target]
+project_id = "previewref"
+
+[remotes.a]
+project_id = "dupref"
+
+[remotes.b]
+project_id = "dupref"
+`);
+    try {
+      const message = await Effect.runPromise(
+        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
+          Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
+            Effect.succeed(error.message),
+          ),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects two remotes that both omit project_id", async () => {
+    // A missing project_id reads as "" (Go's viper.GetString), so two remotes that
+    // both omit it collide on the empty key.
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.a]
+[remotes.a.api]
+max_rows = 1
+
+[remotes.b]
+[remotes.b.api]
+max_rows = 2
+`);
+    try {
+      const message = await Effect.runPromise(
+        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
+          Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
+            Effect.succeed(error.message),
+          ),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("the merged document carries pointer sections introduced by the remote", async () => {
     const cwd = await writeTomlProject(`project_id = "baseref"
 
