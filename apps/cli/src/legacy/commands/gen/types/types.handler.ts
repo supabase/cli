@@ -37,12 +37,27 @@ const mapProjectTypesError = mapLegacyHttpError({
   statusMessage: (_status, body) => `failed to retrieve generated types: ${body}`,
 });
 
-const mapProjectDatabaseConfigError = mapLegacyHttpError({
+const mapProjectLoginRoleError = mapLegacyHttpError({
+  networkError: LegacyGenTypesNetworkError,
+  statusError: LegacyGenTypesUnexpectedStatusError,
+  networkMessage: (cause) => `failed to initialise login role: ${cause}`,
+  statusMessage: (status, body) => `unexpected login role status ${status}: ${body}`,
+});
+
+const mapProjectDatabaseHostError = mapLegacyHttpError({
   networkError: LegacyGenTypesNetworkError,
   statusError: LegacyGenTypesUnexpectedStatusError,
   networkMessage: (cause) => `failed to get project database config: ${cause}`,
   statusMessage: (status, body) => `unexpected project database config status ${status}: ${body}`,
 });
+
+function parseProjectDatabaseHost(host: string) {
+  const parsed = new URL(`postgresql://${host}`);
+  return {
+    host: parsed.hostname,
+    port: parsed.port.length > 0 ? Number.parseInt(parsed.port, 10) : 5432,
+  };
+}
 
 function ensureMutuallyExclusive(
   group: ReadonlyArray<string>,
@@ -240,29 +255,27 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       const api = yield* platformApi.make;
 
       if (lang !== "typescript") {
-        const detail = yield* api.v1
-          .getABranchConfig({ branch_id_or_ref: projectRef })
-          .pipe(Effect.catch(mapProjectDatabaseConfigError));
-        if (detail.db_pass === undefined || detail.db_pass.length === 0) {
-          return yield* Effect.fail(
-            new Error(
-              `Unable to generate ${lang} types for selected project because the database password is unavailable. Try using --db-url flag instead.`,
-            ),
-          );
-        }
+        const project = yield* api.v1
+          .getProject({ ref: projectRef })
+          .pipe(Effect.catch(mapProjectDatabaseHostError));
+        const target = parseProjectDatabaseHost(project.database.host);
+        yield* output.raw("Initialising login role...\n", "stderr");
+        const role = yield* api.v1
+          .createLoginRole({ ref: projectRef, read_only: false })
+          .pipe(Effect.catch(mapProjectLoginRoleError));
 
         yield* runPgMeta({
           url: buildPostgresUrl({
-            host: detail.db_host,
-            port: detail.db_port,
-            user: detail.db_user ?? "postgres",
-            password: detail.db_pass,
+            host: target.host,
+            port: target.port,
+            user: role.role,
+            password: role.password,
             database: "postgres",
           }),
-          host: detail.db_host,
-          port: detail.db_port,
-          probeHost: detail.db_host,
-          probePort: detail.db_port,
+          host: target.host,
+          port: target.port,
+          probeHost: target.host,
+          probePort: target.port,
           networkMode: "host",
           includedSchemas: includedSchemas.join(","),
           postgrestV9Compat: flags.postgrestV9Compat,

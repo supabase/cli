@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import type { V1GetABranchConfigOutput } from "@supabase/api/effect";
+import type {
+  V1CreateLoginRoleOutput,
+  V1GetABranchConfigOutput,
+  V1GetProjectOutput,
+} from "@supabase/api/effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { Deferred, Effect, Exit, Layer, Option, Sink, Stdio, Stream } from "effect";
@@ -114,6 +118,8 @@ function defaultFlags(overrides: Partial<LegacyGenTypesFlags> = {}): LegacyGenTy
 }
 
 type BranchConfig = typeof V1GetABranchConfigOutput.Type;
+type LoginRole = typeof V1CreateLoginRoleOutput.Type;
+type Project = typeof V1GetProjectOutput.Type;
 
 function setup(
   opts: {
@@ -141,6 +147,11 @@ function setup(
     readonly getABranchConfig?: (input: {
       readonly branch_id_or_ref: string;
     }) => Effect.Effect<BranchConfig, unknown>;
+    readonly getProject?: (input: { readonly ref: string }) => Effect.Effect<Project, unknown>;
+    readonly createLoginRole?: (input: {
+      readonly ref: string;
+      readonly read_only: boolean;
+    }) => Effect.Effect<LoginRole, unknown>;
   } = {},
 ) {
   const workdir = opts.workdir ?? mkdtempSync(join(tmpdir(), "supabase-gen-types-"));
@@ -176,6 +187,33 @@ function setup(
             db_user: "postgres",
             db_pass: "postgres",
             jwt_secret: "secret",
+          })),
+      getProject:
+        opts.getProject ??
+        (({ ref }) =>
+          Effect.succeed({
+            id: ref,
+            ref,
+            organization_id: "org-id",
+            organization_slug: "org",
+            name: "demo",
+            region: "us-east-1",
+            created_at: "2025-01-01T00:00:00Z",
+            status: "ACTIVE_HEALTHY",
+            database: {
+              host: `db.${ref}.supabase.co`,
+              version: "15.1",
+              postgres_engine: "15",
+              release_channel: "ga",
+            },
+          })),
+      createLoginRole:
+        opts.createLoginRole ??
+        (() =>
+          Effect.succeed({
+            role: "postgres",
+            password: "postgres",
+            ttl_seconds: 3600,
           })),
       generateTypescriptTypes:
         opts.generateTypescriptTypes ??
@@ -634,17 +672,29 @@ describe("legacy gen types", () => {
             args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
             childStdout: ["class PublicMovies(BaseModel):"],
             getABranchConfig: ({ branch_id_or_ref }) =>
+              Effect.fail(new Error(`unexpected preview branch lookup for ${branch_id_or_ref}`)),
+            getProject: ({ ref }) =>
               Effect.succeed({
-                ref: branch_id_or_ref,
-                postgres_version: "15.1",
-                postgres_engine: "15",
-                release_channel: "ga",
+                id: ref,
+                ref,
+                organization_id: "org-id",
+                organization_slug: "org",
+                name: "demo",
+                region: "us-east-1",
+                created_at: "2025-01-01T00:00:00Z",
                 status: "ACTIVE_HEALTHY",
-                db_host: "127.0.0.1",
-                db_port: port,
-                db_user: "postgres",
-                db_pass: "postgres",
-                jwt_secret: "secret",
+                database: {
+                  host: `127.0.0.1:${port}`,
+                  version: "15.1",
+                  postgres_engine: "15",
+                  release_channel: "ga",
+                },
+              }),
+            createLoginRole: ({ ref, read_only }) =>
+              Effect.succeed({
+                role: `cli_login_${ref}`,
+                password: "temporary-password",
+                ttl_seconds: read_only ? 1800 : 3600,
               }),
             onSpawn: docker.onSpawn,
           });
@@ -659,14 +709,28 @@ describe("legacy gen types", () => {
           );
 
           expect(api.requests).toContainEqual({
-            method: "getABranchConfig",
-            input: { branch_id_or_ref: LEGACY_VALID_REF },
+            method: "getProject",
+            input: { ref: LEGACY_VALID_REF },
           });
+          expect(api.requests).toContainEqual({
+            method: "createLoginRole",
+            input: { ref: LEGACY_VALID_REF, read_only: false },
+          });
+          expect(api.requests).not.toContainEqual(
+            expect.objectContaining({ method: "getABranchConfig" }),
+          );
           expect(api.requests).not.toContainEqual(
             expect.objectContaining({ method: "generateTypescriptTypes" }),
           );
           expect(child.spawned[0]?.args).toContain("--network");
           expect(child.spawned[0]?.args).toContain("host");
+          expect(out.stderrText).toContain("Initialising login role...");
+          expect(out.stderrText).toContain(`Connecting to 127.0.0.1 ${port}`);
+          expect(
+            docker.env.has(
+              `PG_META_DB_URL=postgresql://cli_login_${LEGACY_VALID_REF}:temporary-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
+            ),
+          ).toBe(true);
           expect(docker.env.has("PG_META_GENERATE_TYPES=python")).toBe(true);
           expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(true);
           expect(out.stdoutText).toContain("class PublicMovies(BaseModel):");

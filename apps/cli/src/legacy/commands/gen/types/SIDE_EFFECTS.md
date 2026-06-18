@@ -21,14 +21,16 @@ passed via `docker run --env KEY=VALUE` arguments, mirroring Go's
 
 ## API Routes
 
-| Method | Path                                  | Auth         | Request body | Response (used fields)                     |
-| ------ | ------------------------------------- | ------------ | ------------ | ------------------------------------------ |
-| `GET`  | `/v1/projects/{ref}/types/typescript` | Bearer token | none         | TypeScript type definitions text           |
-| `GET`  | `/v1/branches/{ref}`                  | Bearer token | none         | `db_host`, `db_port`, `db_user`, `db_pass` |
+| Method | Path                                  | Auth         | Request body           | Response (used fields)           |
+| ------ | ------------------------------------- | ------------ | ---------------------- | -------------------------------- |
+| `GET`  | `/v1/projects/{ref}/types/typescript` | Bearer token | none                   | TypeScript type definitions text |
+| `GET`  | `/v1/projects/{ref}`                  | Bearer token | none                   | `database.host`                  |
+| `POST` | `/v1/projects/{ref}/cli/login-role`   | Bearer token | `{ read_only: false }` | temporary `role` and `password`  |
 
 The TypeScript endpoint is called for `--linked`, `--project-id`, and the implicit
 linked-project fallback when `--lang=typescript`. For other languages on those
-project-ref paths, the branch config endpoint supplies a direct DB URL for pg-meta.
+project-ref paths, the project endpoint supplies the database host and the login-role
+endpoint supplies temporary credentials for pg-meta.
 `--local` and `--db-url` do not call the Management API.
 
 ## Subprocesses
@@ -83,8 +85,8 @@ Not applicable.
 
 - Exactly one of `--local`, `--linked`, `--project-id`, or `--db-url` must be specified.
 - `--lang` flag accepts `typescript` (default), `go`, `swift`, or `python`. Project-ref
-  paths use the Management API for TypeScript, and use branch DB config + pg-meta for
-  other languages.
+  paths use the Management API for TypeScript, and use a project database host +
+  temporary login role + pg-meta for other languages.
 - `--schema` / `-s` accepts a comma-separated list of schemas to include.
 - `--swift-access-control` accepts `internal` (default) or `public`.
 - `--postgrest-v9-compat` generates types compatible with PostgREST v9 and below (requires `--db-url`).
