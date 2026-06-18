@@ -80,6 +80,16 @@ jobs:
       HOMEBREW_NO_INSTALL_FROM_API: "1"
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
+      - name: Set up Homebrew on PATH
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          # Homebrew ships preinstalled on GitHub's Ubuntu runners but is not on
+          # PATH in the non-login shells `run:` steps use, so expose it for the
+          # steps below. macOS runners already have `brew` on PATH.
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          echo "${HOMEBREW_PREFIX}/bin" >> "$GITHUB_PATH"
+          echo "${HOMEBREW_PREFIX}/sbin" >> "$GITHUB_PATH"
       - name: Install from Homebrew tap
         run: |
           set -euo pipefail
