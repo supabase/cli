@@ -42,6 +42,16 @@ on:
         required: false
         type: string
         default: supabase
+      publish_winget:
+        description: Whether to submit a Winget manifest PR
+        required: false
+        type: boolean
+        default: false
+      winget_package_id:
+        description: Winget package identifier
+        required: false
+        type: string
+        default: Supabase.CLI
     secrets:
       SENTRY_DSN:
         required: false
@@ -54,6 +64,8 @@ on:
       ANTHROPIC_API_KEY:
         required: false
       DF_FIREWALL_TOKEN:
+        required: false
+      WINGET_CREATE_GITHUB_TOKEN:
         required: false
 jobs:
   build-blacksmith:
@@ -536,20 +548,44 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
 
+  publish-winget:
+    needs: publish
+    if: ${{ !inputs.dry_run && inputs.publish_winget }}
+    runs-on: windows-2025
+    env:
+      VERSION: ${{ inputs.version }}
+      WINGET_PACKAGE_ID: ${{ inputs.winget_package_id }}
+      WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Submit Winget manifest
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:WINGET_CREATE_GITHUB_TOKEN)) {
+            Write-Error "WINGET_CREATE_GITHUB_TOKEN is required to submit Winget manifests."
+            exit 1
+          fi
+          ./apps/cli/scripts/update-winget.ps1 -Version $env:VERSION -PackageId $env:WINGET_PACKAGE_ID -Submit
+
   # Post-publish smoke test for the `supabase/setup-cli` GitHub Action against
   # the just-released CLI. Runs last and intentionally does not gate
-  # publish-homebrew / publish-scoop — by the time the smoke runs, the npm
-  # package and GitHub release are already live and the brew/scoop pushes
+  # publish-homebrew / publish-scoop / publish-winget — by the time the smoke
+  # runs, the npm package and GitHub release are already live and downstream pushes
   # have either succeeded or skipped, so a setup-cli regression surfaces as
   # a red post-release signal without holding back the rest of the channel.
   #
   # Depends on the publish jobs only via `needs` for ordering; the `if`
   # uses `always() && needs.publish.result == 'success'` so the smoke still
-  # runs when publish-homebrew / publish-scoop are skipped (alpha) or fail.
+  # runs when publish-homebrew / publish-scoop / publish-winget are skipped
+  # (alpha) or fail.
   # The reusable workflow can also be dispatched manually against any
   # already-published version when debugging setup-cli regressions.
   setup-cli-smoke:
-    needs: [publish, publish-homebrew, publish-scoop]
+    needs: [publish, publish-homebrew, publish-scoop, publish-winget]
     if: ${{ always() && !inputs.dry_run && needs.publish.result == 'success' }}
     uses: ./.github/workflows/setup-cli-smoke-test.yml
     with:

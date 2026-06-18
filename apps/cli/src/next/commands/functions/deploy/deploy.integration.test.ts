@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient, FunctionResponse } from "@supabase/api/effect";
 import { BunServices } from "@effect/platform-bun";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { Effect, Layer, Option, Sink, Stdio, Stream } from "effect";
@@ -341,6 +341,14 @@ function resolveDockerOutputPath(args: ReadonlyArray<string>): string {
   }
 
   throw new Error(`unable to resolve host output path for ${dockerOutputPath}`);
+}
+
+function toDockerBindPath(hostPath: string): string {
+  return hostPath.replaceAll("\\", "/").replace(/^[A-Za-z]:/, "");
+}
+
+function readonlyDockerBind(hostPath: string): string {
+  return `${hostPath}:${toDockerBindPath(hostPath)}:ro`;
 }
 
 function mockChildProcessSpawner(
@@ -1163,6 +1171,9 @@ describe("functions deploy", () => {
       yield* Effect.promise(() =>
         writeFile(join(tempDir, "supabase", "custom_import_map.json"), '{"imports":{}}\n'),
       );
+      const importMapPath = yield* Effect.promise(() =>
+        realpath(join(tempDir, "supabase", "custom_import_map.json")),
+      );
 
       const { out, api, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
@@ -1207,15 +1218,7 @@ describe("functions deploy", () => {
       expect(api.requests[1]?.urlParams).toContain("slug=hello-world");
       expect(api.requests[1]?.urlParams).toContain("verify_jwt=false");
       expect(child.spawned.at(-1)?.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.68.4");
-      expect(child.spawned.at(-1)?.args).toContain(
-        `${join(tempDir, "supabase", "custom_import_map.json")}:${join(
-          tempDir,
-          "supabase",
-          "custom_import_map.json",
-        )
-          .replaceAll("\\", "/")
-          .replace(/^[A-Za-z]:/, "")}:ro`,
-      );
+      expect(child.spawned.at(-1)?.args).toContain(readonlyDockerBind(importMapPath));
       expect(out.stderrText).toContain("Bundling Function: hello-world\n");
       expect(out.stderrText).toContain("Deploying Function: hello-world (script size:");
       expect(out.stdoutText).toContain(
@@ -1498,6 +1501,7 @@ describe("functions deploy", () => {
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
       yield* Effect.promise(() => mkdir(dirname(staticFile), { recursive: true }));
       yield* Effect.promise(() => writeFile(staticFile, "<h1>hello</h1>\n"));
+      const realStaticFile = yield* Effect.promise(() => realpath(staticFile));
 
       const { layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
@@ -1511,9 +1515,7 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer));
 
       expect(child.spawned).toHaveLength(4);
-      expect(child.spawned.at(-1)?.args).toContain(
-        `${staticFile}:${staticFile.replaceAll("\\", "/").replace(/^[A-Za-z]:/, "")}:ro`,
-      );
+      expect(child.spawned.at(-1)?.args).toContain(readonlyDockerBind(realStaticFile));
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 

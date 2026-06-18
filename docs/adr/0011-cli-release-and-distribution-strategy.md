@@ -12,6 +12,7 @@ The CLI is currently distributed through:
 - **npm / npx** — the primary install path
 - **Homebrew** — `supabase/homebrew-tap`
 - **Scoop** — `supabase/scoop-bucket`
+- **Winget** — `microsoft/winget-pkgs` manifest PRs for stable Windows installs
 - **apt / rpm / apk** — Linux package manager files hosted on GitHub Releases
 - **GitHub Releases** — platform archives + checksums for direct download
 
@@ -30,6 +31,7 @@ We replace GoReleaser with a pipeline built on **Bun `--compile` single-file exe
 | Linux packages                 | **`nfpm`** (binary only, installed from GoReleaser's apt repo) for `.deb` / `.rpm` / `.apk`                                                                                               |
 | Homebrew                       | Existing `supabase/homebrew-tap`, updated by [`apps/cli/scripts/update-homebrew.ts`](../../apps/cli/scripts/update-homebrew.ts)                                                           |
 | Scoop                          | Existing `supabase/scoop-bucket`, updated by [`apps/cli/scripts/update-scoop.ts`](../../apps/cli/scripts/update-scoop.ts)                                                                 |
+| Winget                         | Stable-only `Supabase.CLI` manifests submitted to `microsoft/winget-pkgs` by WingetCreate through [`apps/cli/scripts/update-winget.ps1`](../../apps/cli/scripts/update-winget.ps1)          |
 | apt / rpm repo hosting         | **None** — stay GitHub-Release-downloads-only                                                                                                                                             |
 | Dist-tags                      | `latest` = stable legacy shell, `beta` = prerelease legacy shell from `develop` (`X.Y.Z-beta.N`), `alpha` = next shell (TS-native). No separate `next` or `canary` tags                                                                                    |
 | CI                             | `[release.yml](../../.github/workflows/release.yml)` (pushes to `develop` / `main` plus manual dispatch) invokes `[release-shared.yml](../../.github/workflows/release-shared.yml)` — build → smoke-test matrix → publish → draft Release → finalize    |
@@ -145,6 +147,7 @@ flowchart TD
     finalize["gh release edit --draft=false"]
     hbUpdate["update-homebrew.ts<br/>Formula push"]
     scoopUpdate["update-scoop.ts<br/>manifest push"]
+    wingetUpdate["update-winget.ps1<br/>WingetCreate manifest PR"]
 
     dispatch --> releaseYml
     pushDev --> releaseYml
@@ -153,9 +156,10 @@ flowchart TD
     shared --> build --> smoke --> publish --> ghRelease --> finalize
     finalize -.follow-up.-> hbUpdate
     finalize -.follow-up.-> scoopUpdate
+    finalize -.stable only.-> wingetUpdate
 ```
 
-`release.yml` selects the channel (stable / beta / alpha); `release-shared.yml` performs build → smoke-test → publish → GitHub Release. Homebrew and Scoop updates follow stable and beta publishes (alpha stays npm-only). Operational detail: [`apps/cli/docs/release-process.md`](../../apps/cli/docs/release-process.md).
+`release.yml` selects the channel (stable / beta / alpha); `release-shared.yml` performs build → smoke-test → publish → GitHub Release. Homebrew and Scoop updates follow stable and beta publishes (alpha stays npm-only). Winget follows stable only through the `Supabase.CLI` package identifier. Operational detail: [`apps/cli/docs/release-process.md`](../../apps/cli/docs/release-process.md).
 
 ### Per-channel publish mechanisms
 
@@ -190,6 +194,12 @@ Production tap: `supabase/homebrew-tap`. A single `supabase` formula replaces th
 Windows-arm64 is live in the TS pipeline as of this branch — `packages/cli-windows-arm64/`, `bun-windows-arm64` in [`apps/cli/scripts/build.ts`](../../apps/cli/scripts/build.ts), and the `win32: { arm64, x64 }` map in [`apps/cli/src/shared/cli/bin.ts`](../../apps/cli/src/shared/cli/bin.ts) all shipped together. Bun supports this target natively ([Bun — Single-file executable § Supported targets](https://bun.com/docs/bundler/executables#supported-targets)), so no cross-compilation toolchain changes were required. See [`apps/cli/docs/release-process.md`](../../apps/cli/docs/release-process.md) for the full channel walkthrough.
 
 Production bucket: `supabase/scoop-bucket`.
+
+#### Winget
+
+The first `Supabase.CLI` manifest is a one-time bootstrap PR to `microsoft/winget-pkgs`, using the existing `supabase_<version>_windows_amd64.zip` and `supabase_<version>_windows_arm64.zip` GitHub Release assets. The installer type is `zip` with `NestedInstallerType: portable`, so the manifest exposes `supabase.exe` as the `supabase` command without introducing an MSI/MSIX build. Legacy-shell bootstrap manifests also list the colocated `supabase-go.exe` sidecar so proxied commands keep working after Winget extraction.
+
+After the bootstrap PR is accepted, production stable releases run [`apps/cli/scripts/update-winget.ps1`](../../apps/cli/scripts/update-winget.ps1) when `WINGET_PUBLISH_ENABLED=true`. The script downloads WingetCreate and calls `wingetcreate update Supabase.CLI` with the released Windows ZIP URLs and explicit architecture overrides. The job submits a PR using `WINGET_CREATE_GITHUB_TOKEN`. Beta and alpha are skipped for now; if they become necessary, use separate package identifiers rather than publishing prereleases into `Supabase.CLI`.
 
 #### apt / rpm / apk
 
@@ -322,7 +332,7 @@ This section tracks the work that has landed against the pre-cutover gates. Deta
 - [`apps/cli/docs/release-process.md`](../../apps/cli/docs/release-process.md) — the operational playbook: local Verdaccio → user-owned PoC repos → production pipeline.
 - [`apps/cli/docs/binary-distribution.md`](../../apps/cli/docs/binary-distribution.md) — runtime resolution details for the two-binary legacy model (TS SFE + Go binary).
 - [`.github/workflows/release-shared.yml`](../../.github/workflows/release-shared.yml), [`release.yml`](../../.github/workflows/release.yml) — the pipeline implementation (`release.yml` selects stable / beta / alpha channel per trigger).
-- [`apps/cli/scripts/build.ts`](../../apps/cli/scripts/build.ts), [`publish.ts`](../../apps/cli/scripts/publish.ts), [`sync-versions.ts`](../../apps/cli/scripts/sync-versions.ts), [`update-homebrew.ts`](../../apps/cli/scripts/update-homebrew.ts), [`update-scoop.ts`](../../apps/cli/scripts/update-scoop.ts) — release scripts.
+- [`apps/cli/scripts/build.ts`](../../apps/cli/scripts/build.ts), [`publish.ts`](../../apps/cli/scripts/publish.ts), [`sync-versions.ts`](../../apps/cli/scripts/sync-versions.ts), [`update-homebrew.ts`](../../apps/cli/scripts/update-homebrew.ts), [`update-scoop.ts`](../../apps/cli/scripts/update-scoop.ts), [`update-winget.ps1`](../../apps/cli/scripts/update-winget.ps1) — release scripts.
 - [`apps/cli-go/.goreleaser.yml`](../../apps/cli-go/.goreleaser.yml), [`release.yml`](../../apps/cli-go/.github/workflows/release.yml), [`release-beta.yml`](../../apps/cli-go/.github/workflows/release-beta.yml) — the Go CLI release config we mirror (no signing, `windows_arm64` target, GitHub-App-scoped publish tokens).
 - [CLI-1330](https://linear.app/supabase/issue/CLI-1330) — origin ticket.
 - [CLI-1344](https://linear.app/supabase/issue/CLI-1344/investigate-if-we-can-consolidate-local-release-logic-and-pipeline) — sub-issue: consolidate local and pipeline release logic.

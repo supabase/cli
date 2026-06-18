@@ -4,13 +4,13 @@ This document is the operational playbook for releasing the Supabase CLI TypeScr
 
 1. **Ring 1 — Local Verdaccio.** Fastest feedback loop. Build and install the CLI from a local npm registry on your own machine. No network side-effects; no repo pushes.
 2. **Ring 2 — User-owned PoC repos.** End-to-end validation through the exact same Homebrew / Scoop / GitHub-Release code paths production uses, but pointed at a reviewer's own GitHub account and a non-`supabase` artifact name. This is how ADR 0011 gates 2 and 3 are validated without risking the real production channels.
-3. **Ring 3 — Production.** The real `supabase` npm package + `supabase/homebrew-tap` + `supabase/scoop-bucket` + GitHub Releases on `supabase/cli`. Driven by GitHub Actions (`release.yml`, which dispatches three channels — `alpha`, `beta`, `stable` — into the shared `release-shared.yml`).
+3. **Ring 3 — Production.** The real `supabase` npm package + `supabase/homebrew-tap` + `supabase/scoop-bucket` + a Winget PR to `microsoft/winget-pkgs` + GitHub Releases on `supabase/cli`. Driven by GitHub Actions (`release.yml`, which dispatches three channels — `alpha`, `beta`, `stable` — into the shared `release-shared.yml`).
 
 ```mermaid
 flowchart LR
     local["Ring 1: Local Verdaccio<br/>pnpm cli-release<br/>--next or --legacy"]
     poc["Ring 2: User-owned PoC repos<br/>avallete/supabase-cli-release-poc<br/>avallete/homebrew-supabase-shim-poc<br/>avallete/scoop-bucket<br/>--name supabase-shim-poc"]
-    prod["Ring 3: Production<br/>supabase/cli<br/>supabase/homebrew-tap<br/>supabase/scoop-bucket<br/>(default name: supabase)"]
+    prod["Ring 3: Production<br/>supabase/cli<br/>supabase/homebrew-tap<br/>supabase/scoop-bucket<br/>microsoft/winget-pkgs PR<br/>(default name: supabase)"]
 
     local --> poc --> prod
 ```
@@ -86,7 +86,7 @@ gh auth status  # verify: ✓ Logged in to github.com account <you>
 
 ### Dry-run: generate artifacts without pushing
 
-The `--dry-run` flag on both updater scripts produces the `Formula/<name>.rb` and `<name>.json` in `dist/` and prints them, without cloning or pushing to the tap/bucket. Good for inspecting changes before they go out.
+The `--dry-run` flag on the updater scripts produces the generated downstream files in `dist/` and prints them, without cloning or pushing to the tap/bucket. Good for inspecting changes before they go out.
 
 ```sh
 # Build all eight platform archives + linux packages + checksums.txt.
@@ -107,9 +107,12 @@ bun apps/cli/scripts/update-scoop.ts --version 0.0.1 \
     --bucket avallete/scoop-bucket \
     --name supabase-shim-poc \
     --dry-run
+
 ```
 
 Inspect `dist/supabase-shim-poc.rb` and `dist/supabase-shim-poc.json`. The `sha256` / `hash` fields resolve against `dist/checksums.txt`; the `url` fields point at `https://github.com/avallete/supabase-cli-release-poc/releases/download/v0.0.1/...` (the release host specified by `--repo`).
+
+Winget is intentionally not part of Ring 2: WingetCreate's non-interactive update path depends on an existing package identifier in `microsoft/winget-pkgs`, so production automation starts only after the one-time `Supabase.CLI` bootstrap PR is accepted.
 
 ### Upload the GitHub Release
 
@@ -230,7 +233,7 @@ flowchart TD
     ff --> pushMain
     dispatch[workflow_dispatch<br/>channel + version] --> plan
 
-    plan["plan (ubuntu-latest)<br/>cycjimmy/semantic-release-action --dry-run<br/>computes channel, version, shell, npm_tag, brew/scoop name"]
+    plan["plan (ubuntu-latest)<br/>cycjimmy/semantic-release-action --dry-run<br/>computes channel, version, shell, npm_tag, downstream names"]
     plan --> shared
 
     shared["release-shared.yml"]
@@ -240,7 +243,21 @@ flowchart TD
     pub --> rel["softprops/action-gh-release<br/>(draft) → gh release edit --draft=false"]
     rel --> hb["publish-homebrew<br/>App-token-authed clone of homebrew-tap<br/>update-homebrew.ts --name <brew_name>"]
     rel --> sc["publish-scoop<br/>App-token-authed clone of scoop-bucket<br/>update-scoop.ts --name <scoop_name>"]
+    rel --> wg["publish-winget<br/>WingetCreate update --submit<br/>update-winget.ps1 -PackageId Supabase.CLI"]
 ```
+
+Only the stable channel is submitted to Winget (`Supabase.CLI`). Beta / alpha are intentionally skipped until there is a concrete need for separate prerelease package identifiers.
+
+### One-time Winget bootstrap
+
+Before enabling `publish-winget` in production, submit the first `Supabase.CLI` version to `microsoft/winget-pkgs`. The initial manifest should use the existing GitHub Release ZIP assets:
+
+- `https://github.com/supabase/cli/releases/download/v<version>/supabase_<version>_windows_amd64.zip`
+- `https://github.com/supabase/cli/releases/download/v<version>/supabase_<version>_windows_arm64.zip`
+
+The installer manifest must use `InstallerType: zip`, `NestedInstallerType: portable`, and `NestedInstallerFiles` entries for `supabase.exe` with `PortableCommandAlias: supabase`. While stable releases still ship the legacy shell, also include `supabase-go.exe` as a nested portable file.
+
+Open the bootstrap PR from the GitHub account that should own the Microsoft CLA and future WingetCreate submissions. After that PR is accepted and `winget show --id Supabase.CLI` resolves, configure the release repository with `WINGET_CREATE_GITHUB_TOKEN` and set `WINGET_PUBLISH_ENABLED=true`; stable release CI can then use WingetCreate's non-interactive `update` command for every later version.
 
 ### Trigger
 
@@ -283,7 +300,7 @@ The matrix does not yet include `windows-11-arm` (gate 6) or an Alpine musl runn
 3. `softprops/action-gh-release` creates a **draft** Release `v<version>` on `supabase/cli` with all tar / zip / deb / rpm / apk + `checksums.txt`.
 4. `gh release edit v<version> --draft=false` finalises it (immutable from this point).
 
-### Post-publish: Homebrew + Scoop
+### Post-publish: Homebrew + Scoop + Winget
 
 Both updaters run automatically from `release-shared.yml`'s `publish-homebrew` and `publish-scoop` jobs after the GitHub Release is finalised. Each job mints a GitHub App token scoped to `homebrew-tap` / `scoop-bucket` (via `actions/create-github-app-token` with the `GH_APP_CLIENT_ID` + `GH_APP_PRIVATE_KEY` secrets), runs `gh auth setup-git` + sets a `github-actions[bot]` git identity, then invokes `apps/cli/scripts/update-homebrew.ts` / `update-scoop.ts` with `--name <brew_name>` / `--name <scoop_name>`:
 
@@ -291,9 +308,11 @@ Both updaters run automatically from `release-shared.yml`'s `publish-homebrew` a
 - `beta` → `--name supabase-beta` (a separate formula / manifest for the prerelease channel)
 - `alpha` → skipped (Homebrew + Scoop are not part of the v3 alpha story; npm only)
 
+Stable releases also run `publish-winget` when `WINGET_PUBLISH_ENABLED=true`, invoking `apps/cli/scripts/update-winget.ps1 -PackageId Supabase.CLI -Submit` on a Windows runner. The script downloads WingetCreate, calls `wingetcreate update` with the released Windows ZIP URLs and explicit `x64` / `arm64` architecture overrides, and submits the PR against `microsoft/winget-pkgs`. The job requires a `WINGET_CREATE_GITHUB_TOKEN` secret for the account that should submit Winget PRs.
+
 ### Verification
 
-After `release-shared.yml` finishes (all jobs including `publish-homebrew` and `publish-scoop`):
+After `release-shared.yml` finishes (all jobs including `publish-homebrew`, `publish-scoop`, and `publish-winget`):
 
 ```sh
 npm view supabase@0.1.0 dist-tags   # expect: latest: 0.1.0 (or beta: 0.1.0-beta.N for beta channel)
@@ -307,6 +326,11 @@ supabase --version   # expect: supabase v0.1.0
 scoop update
 scoop install supabase                 # or: scoop install supabase-beta
 supabase --version   # expect: supabase v0.1.0
+
+# Windows (Winget, stable only, after the microsoft/winget-pkgs PR is accepted):
+winget source update
+winget install --id Supabase.CLI
+supabase --version   # expect: supabase v0.1.0
 ```
 
 The npm package page should also show **Provenance** linking back to `supabase/cli` + `release.yml` (OIDC-attested build).
@@ -319,6 +343,7 @@ The per-channel artifacts are immutable once published, so rollback = point user
 2. **GitHub Release:** `gh release delete v<broken-version> --repo supabase/cli` (or mark it `prerelease: true` via `gh release edit` to keep the tag around). Artifacts remain downloadable unless the release itself is deleted.
 3. **Homebrew:** in `supabase/homebrew-tap`, `git revert <commit that wrote Formula/supabase.rb for broken version>` + push. `brew update` picks it up.
 4. **Scoop:** same pattern in `supabase/scoop-bucket` — `git revert` the manifest commit.
+5. **Winget:** there is no dist-tag equivalent. Submit a follow-up PR to `microsoft/winget-pkgs` removing the broken version or publish a fixed newer CLI version and let Winget select the highest version.
 
 Rollback is straightforward because each channel is its own commit / release. There's no cross-channel state to reconcile.
 
@@ -329,5 +354,5 @@ Rollback is straightforward because each channel is its own commit / release. Th
 - [ADR 0011](../../../docs/adr/0011-cli-release-and-distribution-strategy.md) — the decision record. Channel choices, signing rationale, open pre-cutover gates.
 - `[apps/cli/docs/binary-distribution.md](./binary-distribution.md)` — why each platform package contains two binaries (`supabase` SFE + `supabase-go` sidecar) and how they're resolved at runtime.
 - `[tools/release/local-release.ts](../../../tools/release/local-release.ts)` — Ring 1 implementation.
-- `[apps/cli/scripts/build.ts](../scripts/build.ts)`, `[publish.ts](../scripts/publish.ts)`, `[sync-versions.ts](../scripts/sync-versions.ts)`, `[update-homebrew.ts](../scripts/update-homebrew.ts)`, `[update-scoop.ts](../scripts/update-scoop.ts)` — release script implementations.
+- `[apps/cli/scripts/build.ts](../scripts/build.ts)`, `[publish.ts](../scripts/publish.ts)`, `[sync-versions.ts](../scripts/sync-versions.ts)`, `[update-homebrew.ts](../scripts/update-homebrew.ts)`, `[update-scoop.ts](../scripts/update-scoop.ts)`, `[update-winget.ps1](../scripts/update-winget.ps1)` — release script implementations.
 - `[.github/workflows/release.yml](../../../.github/workflows/release.yml)`, `[release-shared.yml](../../../.github/workflows/release-shared.yml)`, `[deploy.yml](../../../.github/workflows/deploy.yml)`, `[deploy-check.yml](../../../.github/workflows/deploy-check.yml)` — Ring 3 pipeline.

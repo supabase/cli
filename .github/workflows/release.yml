@@ -87,6 +87,7 @@ jobs:
       brew_name: ${{ steps.compute.outputs.brew_name }}
       scoop_name: ${{ steps.compute.outputs.scoop_name }}
       publish_brew_scoop: ${{ steps.compute.outputs.publish_brew_scoop }}
+      publish_winget: ${{ steps.compute.outputs.publish_winget }}
       dry_run: ${{ steps.compute.outputs.dry_run }}
       channel: ${{ steps.compute.outputs.channel }}
     steps:
@@ -128,6 +129,7 @@ jobs:
           DISPATCH_DRY_RUN: ${{ inputs.dry_run }}
           SR_PUBLISHED: ${{ steps.semantic-release.outputs.new_release_published }}
           SR_VERSION: ${{ steps.semantic-release.outputs.new_release_version }}
+          WINGET_PUBLISH_ENABLED: ${{ vars.WINGET_PUBLISH_ENABLED }}
         run: |
           set -euo pipefail
           if [[ "$EVENT" == "workflow_dispatch" ]]; then
@@ -157,6 +159,7 @@ jobs:
               brew_name=""
               scoop_name=""
               publish_brew_scoop=false
+              publish_winget=false
               ;;
             beta)
               shell=legacy
@@ -165,6 +168,7 @@ jobs:
               brew_name=supabase-beta
               scoop_name=supabase-beta
               publish_brew_scoop=true
+              publish_winget=false
               ;;
             stable)
               shell=legacy
@@ -173,6 +177,10 @@ jobs:
               brew_name=supabase
               scoop_name=supabase
               publish_brew_scoop=true
+              publish_winget=false
+              if [[ "$WINGET_PUBLISH_ENABLED" == "true" ]]; then
+                publish_winget=true
+              fi
               ;;
             *)
               echo "Unknown channel: $channel" >&2
@@ -188,6 +196,7 @@ jobs:
             echo "brew_name=$brew_name"
             echo "scoop_name=$scoop_name"
             echo "publish_brew_scoop=$publish_brew_scoop"
+            echo "publish_winget=$publish_winget"
             echo "dry_run=$dry_run"
             echo "channel=$channel"
           } >> "$GITHUB_OUTPUT"
@@ -214,6 +223,7 @@ jobs:
       publish_brew_scoop: ${{ needs.plan.outputs.publish_brew_scoop == 'true' }}
       brew_name: ${{ needs.plan.outputs.brew_name }}
       scoop_name: ${{ needs.plan.outputs.scoop_name }}
+      publish_winget: ${{ needs.plan.outputs.publish_winget == 'true' }}
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
       channel: ${{ needs.plan.outputs.channel }}
     secrets:
@@ -223,6 +233,7 @@ jobs:
       GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
+      WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_CREATE_GITHUB_TOKEN }}
 
   # Posts to the release Slack channel once the pipeline succeeds. Listing
   # `release` in `needs` without a status function in `if:` keeps the implicit

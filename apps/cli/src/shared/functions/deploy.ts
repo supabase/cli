@@ -670,12 +670,7 @@ async function walkImportPaths(
         modulePath = toSlash(join(dirname(current), modulePath));
       }
 
-      const resolvedModule = resolve(modulePath);
-      if (!isContainedInAnyPath(allowedRoots, resolvedModule)) {
-        await onWarning(`WARN: Skipping import path outside project root: ${modulePath}\n`);
-        continue;
-      }
-      queue.push(toSlash(resolvedModule));
+      queue.push(toSlash(resolve(modulePath)));
     }
   }
 }
@@ -846,7 +841,6 @@ async function resolveImportMapAllowedRoots(projectRoot: string, importMapPath: 
 }
 
 async function writeSourceDeployForm(
-  cwd: string,
   projectRoot: string,
   config: ResolvedDeployFunctionConfig,
   metadata: SourceDeployMetadata,
@@ -863,7 +857,7 @@ async function writeSourceDeployForm(
       return;
     }
     uploadedAssets.add(realPathname);
-    const relativePath = toApiRelativePath(cwd, pathname);
+    const relativePath = toApiRelativePath(realProjectRoot, realPathname);
     await Effect.runPromise(outputRaw(`Uploading asset (${config.slug}): ${relativePath}\n`));
     form.append("file", new File([contents], relativePath));
   };
@@ -1445,7 +1439,7 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
   const output = yield* Output;
   const files = yield* Effect.tryPromise({
     try: async () => {
-      const form = await writeSourceDeployForm(cwd, projectRoot, config, metadata, (text) =>
+      const form = await writeSourceDeployForm(projectRoot, config, metadata, (text) =>
         output.raw(text, "stderr"),
       );
       return form.getAll("file").flatMap((part) => (part instanceof Blob ? [part] : []));
