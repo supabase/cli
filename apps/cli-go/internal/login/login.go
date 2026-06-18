@@ -283,9 +283,6 @@ func handleTelemetryAfterLogin(ctx context.Context, params RunParams) {
 	if distinctID, err := getProfile(ctx); err == nil {
 		if err := service.StitchLogin(distinctID); err != nil {
 			fmt.Fprintln(logger, err)
-			if err := service.ClearDistinctID(); err != nil {
-				fmt.Fprintln(logger, err)
-			}
 		}
 	} else {
 		fmt.Fprintln(logger, err)

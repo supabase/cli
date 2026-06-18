@@ -12,6 +12,7 @@ import { legacyFunctionsCommand } from "../commands/functions/functions.command.
 import { legacyGenCommand } from "../commands/gen/gen.command.ts";
 import { legacyInitCommand } from "../commands/init/init.command.ts";
 import { legacyInspectCommand } from "../commands/inspect/inspect.command.ts";
+import { legacyIssueCommand } from "../commands/issue/issue.command.ts";
 import { legacyLinkCommand } from "../commands/link/link.command.ts";
 import { legacyLoginCommand } from "../commands/login/login.command.ts";
 import { legacyLogoutCommand } from "../commands/logout/logout.command.ts";
@@ -73,6 +74,7 @@ export const legacyRoot = Command.make("supabase").pipe(
     legacyGenCommand,
     legacyInitCommand,
     legacyInspectCommand,
+    legacyIssueCommand,
     legacyLinkCommand,
     legacyLoginCommand,
     legacyLogoutCommand,
@@ -143,13 +145,14 @@ export const legacyRoot = Command.make("supabase").pipe(
         if (createTicket) globalArgs.push("--create-ticket");
         if (agent !== "auto") globalArgs.push("--agent", agent);
 
-        // Go's `-o {json,yaml,toml,env}` selects a machine encoder the handler
-        // writes via `output.raw`. Keep the text layer (so errors still render
-        // as red text on stderr, matching Go), but suppress its progress spinner
-        // — otherwise clack writes ANSI to stdout and corrupts the payload
-        // (CLI-1546). `-o pretty` / no `-o` keep the normal text/json layers.
+        // Go's `-o {json,yaml,toml,env,csv}` selects a machine encoder the
+        // handler writes via `output.raw`. Keep the text layer (so errors still
+        // render as red text on stderr, matching Go), but suppress its progress
+        // spinner — otherwise clack writes ANSI to stdout and corrupts the
+        // payload (CLI-1546). `-o pretty` / `-o table` (`db query`'s human
+        // default) / no `-o` keep the normal text/json layers.
         const goFmt = Option.getOrUndefined(goOutput);
-        const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty";
+        const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty" && goFmt !== "table";
         const outputLayer = isGoMachineFormat
           ? legacyQuietProgressTextOutputLayer
           : outputLayerFor(outputFormat);

@@ -144,6 +144,76 @@ describe("parseLegacyConnectionString (URL form)", () => {
     expect(parsed).not.toHaveProperty("options");
   });
 
+  it("collects non-structural query settings as runtimeParams (pgconn parity)", () => {
+    const parsed = parseLegacyConnectionString(
+      "postgres://u:pw@h/db?search_path=tenant&statement_timeout=5000&sslmode=require&options=reference%3Dabc",
+    );
+    // search_path/statement_timeout → runtimeParams; sslmode/options stay dedicated.
+    expect(parsed?.runtimeParams).toEqual({ search_path: "tenant", statement_timeout: "5000" });
+    expect(parsed?.options).toBe("reference=abc");
+    expect(parsed).not.toHaveProperty("runtimeParams.options");
+  });
+
+  it("omits runtimeParams when only structural/ssl keys are present", () => {
+    const parsed = parseLegacyConnectionString("postgres://u:pw@h/db?sslmode=require");
+    expect(parsed).not.toHaveProperty("runtimeParams");
+  });
+
+  it("merges PGAPPNAME into runtimeParams as application_name (pgconn env merge)", () => {
+    const env = (name: string): string | undefined => (name === "PGAPPNAME" ? "myapp" : undefined);
+    const parsed = parseLegacyConnectionString("postgres://u:pw@h/db", env);
+    expect(parsed?.runtimeParams).toEqual({ application_name: "myapp" });
+  });
+
+  it("lets a connection-string application_name override PGAPPNAME (pgconn precedence)", () => {
+    const env = (name: string): string | undefined =>
+      name === "PGAPPNAME" ? "from-env" : undefined;
+    const parsed = parseLegacyConnectionString(
+      "postgres://u:pw@h/db?application_name=from-url",
+      env,
+    );
+    expect(parsed?.runtimeParams?.application_name).toBe("from-url");
+  });
+
+  it("merges a pg_service.conf runtime setting (search_path) into runtimeParams", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pgservice-"));
+    const file = join(dir, "pg_service.conf");
+    writeFileSync(file, "[tenant]\nhost=svc.example.com\nsearch_path=tenant_schema\n");
+    const parsed = parseLegacyConnectionString(
+      `postgres:///db?service=tenant&servicefile=${file}`,
+      () => undefined,
+    );
+    expect(parsed?.host).toBe("svc.example.com");
+    expect(parsed?.runtimeParams?.search_path).toBe("tenant_schema");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("carries client sslcert/sslkey (and sslpassword) from a --db-url", () => {
+    const parsed = parseLegacyConnectionString(
+      "postgres://u:pw@h/db?sslmode=verify-full&sslcert=/c/client.crt&sslkey=/c/client.key&sslpassword=secret",
+    );
+    expect(parsed?.sslcert).toBe("/c/client.crt");
+    expect(parsed?.sslkey).toBe("/c/client.key");
+    expect(parsed?.sslpassword).toBe("secret");
+    // sslcert/sslkey are connection settings, never forwarded as runtime params.
+    expect(parsed).not.toHaveProperty("runtimeParams");
+  });
+
+  it("resolves client certs from PGSSLCERT/PGSSLKEY env (pgconn precedence)", () => {
+    const env = (name: string): string | undefined =>
+      name === "PGSSLCERT" ? "/e/c.crt" : name === "PGSSLKEY" ? "/e/c.key" : undefined;
+    const parsed = parseLegacyConnectionString("postgres://u:pw@h/db", env);
+    expect(parsed?.sslcert).toBe("/e/c.crt");
+    expect(parsed?.sslkey).toBe("/e/c.key");
+  });
+
+  it("rejects a client cert with sslcert but no sslkey (pgconn both-or-neither)", () => {
+    expect(
+      parseLegacyConnectionString("postgres://u:pw@h/db?sslcert=/c/client.crt"),
+    ).toBeUndefined();
+    expect(parseLegacyConnectionString("host=h user=u sslkey=/c/client.key")).toBeUndefined();
+  });
+
   it("returns undefined for an unparseable URL", () => {
     expect(parseLegacyConnectionString("postgres://user:pw@ bad host/db")).toBeUndefined();
   });

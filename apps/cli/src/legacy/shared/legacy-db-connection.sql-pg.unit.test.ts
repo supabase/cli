@@ -4,6 +4,7 @@ import {
   legacyBuildConnectionUrl,
   legacyIsTerminalConnectError,
   legacyIsUnixSocketHost,
+  legacyMergedConnectionOptions,
   legacySslConfigsFor,
   legacySslOptionFor,
 } from "./legacy-db-connection.sql-pg.layer.ts";
@@ -55,6 +56,55 @@ describe("legacyBuildConnectionUrl", () => {
       "@h2.example.com:5433/",
     );
   });
+
+  it("forwards runtimeParams as -c flags in the options startup param (Go RuntimeParams)", () => {
+    const url = legacyBuildConnectionUrl(
+      {
+        user: "postgres",
+        password: "pw",
+        port: 5432,
+        database: "postgres",
+        host: "db.example.com",
+        runtimeParams: { search_path: "tenant", statement_timeout: "5000" },
+      },
+      "db.example.com",
+    );
+    const options = new URL(url).searchParams.get("options");
+    expect(options).toBe("-c search_path=tenant -c statement_timeout=5000");
+  });
+});
+
+describe("legacyMergedConnectionOptions", () => {
+  const base = { user: "postgres", password: "pw", port: 5432, database: "postgres", host: "h" };
+
+  it("returns undefined when neither options nor runtimeParams are set", () => {
+    expect(legacyMergedConnectionOptions(base)).toBeUndefined();
+  });
+
+  it("returns the libpq options verbatim when there are no runtimeParams", () => {
+    expect(legacyMergedConnectionOptions({ ...base, options: "reference=abc" })).toBe(
+      "reference=abc",
+    );
+  });
+
+  it("appends -c flags for each runtimeParam, preserving the existing options", () => {
+    expect(
+      legacyMergedConnectionOptions({
+        ...base,
+        options: "reference=abc",
+        runtimeParams: { search_path: "tenant" },
+      }),
+    ).toBe("reference=abc -c search_path=tenant");
+  });
+
+  it("backslash-escapes spaces in a runtimeParam value (libpq options syntax)", () => {
+    expect(
+      legacyMergedConnectionOptions({
+        ...base,
+        runtimeParams: { application_name: "my app" },
+      }),
+    ).toBe("-c application_name=my\\ app");
+  });
 });
 
 describe("legacySslOptionFor", () => {
@@ -95,6 +145,20 @@ describe("legacySslOptionFor", () => {
       expect(typeof ssl.checkServerIdentity).toBe("function");
       expect(ssl.checkServerIdentity?.("wrong.host", {} as never)).toBeUndefined();
     }
+  });
+
+  it("attaches the client cert (cert/key/passphrase) to every TLS mode (pgconn parity)", () => {
+    const clientCert = { cert: "CERT", key: "KEY", passphrase: "pw" };
+    // verify-full / verify-ca / require|prefer all carry the client certificate.
+    expect(
+      legacySslOptionFor("verify-full", false, undefined, undefined, clientCert),
+    ).toMatchObject({ cert: "CERT", key: "KEY", passphrase: "pw" });
+    expect(legacySslOptionFor("require", false, undefined, undefined, clientCert)).toMatchObject({
+      cert: "CERT",
+      key: "KEY",
+    });
+    // Plaintext modes carry no client cert.
+    expect(legacySslOptionFor("disable", false, undefined, undefined, clientCert)).toBe(false);
   });
 
   it("carries the servername into verifying modes (so a DoH IP verifies the hostname)", () => {

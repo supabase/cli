@@ -9,9 +9,11 @@ import caProd2021 from "./templates/prod-ca-2021.ts";
 import caProd2025 from "./templates/prod-ca-2025.ts";
 import caStaging2021 from "./templates/staging-ca-2021.ts";
 
+// Local Docker resource ids are hoisted to `legacy/shared` so the declarative seam
+// can derive the same `supabase_db_<id>` name when checking the local stack.
+export { localDbContainerId, localNetworkId } from "../../../shared/legacy-docker-ids.ts";
+
 const LEGACY_DEFAULT_CONNECT_TIMEOUT_SECONDS = 10;
-const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
-const MAX_PROJECT_ID_LENGTH = 40;
 
 const DURATION_UNITS_TO_MILLIS = {
   ns: 1 / 1_000_000,
@@ -34,32 +36,6 @@ export interface LegacyGenTypesDbTarget {
   readonly host: string;
   readonly port: number;
   readonly networkMode: "host" | string;
-}
-
-function truncateText(text: string, maxLength: number) {
-  return text.length > maxLength ? text.slice(0, maxLength) : text;
-}
-
-function sanitizeProjectId(src: string) {
-  const sanitized = src.replaceAll(INVALID_PROJECT_ID, "_").replace(/^[_.-]+/, "");
-  return truncateText(sanitized, MAX_PROJECT_ID_LENGTH);
-}
-
-function localDockerId(name: string, projectId: string) {
-  return `supabase_${name}_${sanitizeProjectId(projectId)}`;
-}
-
-export function normalizeSchemaFlags(raw: ReadonlyArray<string>): ReadonlyArray<string> {
-  const schemas: string[] = [];
-  for (const value of raw) {
-    for (const schema of value.split(",")) {
-      const trimmed = schema.trim();
-      if (trimmed.length > 0) {
-        schemas.push(trimmed);
-      }
-    }
-  }
-  return schemas;
 }
 
 export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
@@ -115,19 +91,6 @@ export function parseQueryTimeoutSeconds(
 
     return Math.round(totalMillis / 1_000);
   });
-}
-
-/**
- * The default generated docker network name for a local project (Go's `utils.NetId`
- * fallback, `GetId("network")`). The `--network-id` override is applied at the docker
- * invocation site, mirroring Go's `DockerStart`.
- */
-export function localNetworkId(projectId: string) {
-  return localDockerId("network", projectId);
-}
-
-export function localDbContainerId(projectId: string) {
-  return localDockerId("db", projectId);
 }
 
 export function localDbPassword() {

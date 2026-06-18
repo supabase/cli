@@ -29,7 +29,7 @@
 
 One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_prove:3.36` resolved through the registry (`legacyGetRegistryImageUrl`, mirroring Go's `GetRegistryImageUrl`): `SUPABASE_INTERNAL_IMAGE_REGISTRY` overrides the registry, `docker.io` pulls from Docker Hub unchanged, and the default is `public.ecr.aws/supabase/pg_prove:3.36`.
 
-- `-v <hostpath>:<dockerpath>:ro` for each test path
+- `-v <hostpath>:<dockerpath>:ro` for each test path. A path that is a **file** is mounted via its **containing directory** (not the lone file) so that psql `\ir`/`\i` includes — which resolve relative to the test file's own directory — find their sibling files inside the container (CLI-1139). Directory paths are mounted as-is. Mounts are deduped by container target, so multiple files in the same directory produce a single `-v`. The full file path is still passed to `pg_prove`, so only the requested file runs.
 - `--security-opt label:disable`
 - `--network supabase_network_<project_id>` (local) with env `PGHOST=db PGPORT=5432`, or `--network host` (db-url / linked) with the resolved host/port. `<project_id>` is sanitized exactly as Go's `config.Load` does (`sanitizeProjectId`), so an invalid configured value (e.g. `"my project"`) joins the same network the local stack created
 - `-e PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE`

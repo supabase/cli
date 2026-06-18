@@ -11,7 +11,11 @@ import { Crypto } from "../../auth/crypto.service.ts";
 import { Browser } from "../../../shared/runtime/browser.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
 import { getConfigDir } from "../../../shared/telemetry/consent.ts";
-import { clearDistinctId, saveDistinctId } from "../../../shared/telemetry/identity.ts";
+import {
+  clearDistinctId,
+  isEphemeralIdentityRuntime,
+  saveDistinctId,
+} from "../../../shared/telemetry/identity.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import { withAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
@@ -42,14 +46,27 @@ const resolveAuthenticatedDistinctId = Effect.fnUntraced(function* (
 
   const profileExit = yield* api.fetchProfile(cliConfig.apiUrl, token).pipe(Effect.exit);
   if (Exit.isFailure(profileExit)) {
+    telemetryRuntime.identity.clear();
     yield* clearDistinctId(configDir);
     return Option.none<string>();
   }
 
+  // The in-memory stamp always happens so subsequent captures in this process
+  // carry the user's id; the alias (which merges pre-login device history) and
+  // the telemetry.json write only happen where the file survives between runs.
+  // See docs/adr/0013-hybrid-stitch-stamp-identity-attribution.md.
   const distinctId = profileExit.value.gotrue_id;
-  yield* analytics.alias(distinctId, telemetryRuntime.deviceId);
-  yield* analytics.identify(distinctId);
-  yield* saveDistinctId(configDir, distinctId);
+  // Alias only the first identity this device ever sees — re-aliasing on
+  // re-login would merge a second user into the device's person graph.
+  const current = telemetryRuntime.identity.current();
+  const firstIdentity = current === undefined || current.length === 0;
+  telemetryRuntime.identity.stamp(distinctId);
+  if (!isEphemeralIdentityRuntime(telemetryRuntime)) {
+    if (firstIdentity) {
+      yield* analytics.alias(distinctId, telemetryRuntime.deviceId);
+    }
+    yield* saveDistinctId(configDir, distinctId);
+  }
   return Option.some(distinctId);
 });
 

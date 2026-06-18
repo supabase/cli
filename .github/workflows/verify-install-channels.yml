@@ -1,0 +1,245 @@
+name: Verify Install Channels
+
+# Post-publish end-to-end verification that the *published* install channels
+# (Homebrew, Scoop, and the curl|bash install script) actually install the
+# just-released CLI and serve artifacts whose checksums match what the channel
+# manifests declare. Runs automatically after every brew/scoop publish (called
+# from release-shared.yml's `verify-install-channels` job) and can also be
+# dispatched manually against any already-published version when debugging an
+# install regression.
+#
+# Exists primarily to catch regressions like CLI v2.107.0, where the Homebrew
+# formula and Scoop manifest shipped sha256 checksums that did not match the
+# tarballs on the GitHub Release, so `brew install` / `scoop install` failed
+# for every user with "Formula reports different checksum". brew, scoop, and
+# the install script all verify the declared checksum against the downloaded
+# bytes before installing, so a real install reproduces that failure exactly
+# instead of trusting the manifest the publish step wrote.
+#
+# Each leg goes beyond `supabase --version` (handled by the Bun wrapper without
+# touching the sidecar) and runs `supabase completion bash`, a Go-proxied
+# command, so a package that omits or misplaces the colocated `supabase-go`
+# sidecar fails here instead of silently shipping broken proxied commands.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Supabase CLI version that was just published (with or without leading v)
+        required: true
+        type: string
+      brew_name:
+        description: Homebrew formula name (e.g. supabase or supabase-beta)
+        required: true
+        type: string
+      scoop_name:
+        description: Scoop manifest name (e.g. supabase or supabase-beta)
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Supabase CLI version to verify (must already be published; with or without leading v)
+        required: true
+        type: string
+      brew_name:
+        description: Homebrew formula name (e.g. supabase or supabase-beta)
+        required: false
+        type: string
+        default: supabase
+      scoop_name:
+        description: Scoop manifest name (e.g. supabase or supabase-beta)
+        required: false
+        type: string
+        default: supabase
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew:
+    # macOS and Linux exercise different stanzas of the formula
+    # (`on_macos` vs `on_linux`), each with its own URL + sha256, so both must
+    # install for the tap to be considered verified. Homebrew is preinstalled
+    # on GitHub-hosted Ubuntu runners.
+    name: Homebrew ${{ inputs.brew_name }} (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - macos-latest
+          - ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ inputs.version }}
+      BREW_NAME: ${{ inputs.brew_name }}
+      # Don't auto-update Homebrew itself before installing; `brew install
+      # <user>/<tap>/<formula>` taps supabase/homebrew-tap from its git HEAD
+      # regardless, so the freshly-pushed formula is picked up either way.
+      #
+      # NB: do NOT set HOMEBREW_NO_INSTALL_FROM_API here. It only affects the
+      # homebrew/core + cask taps (third-party taps are always read from git),
+      # and on Linux runners it forces a large, slow local checkout of
+      # homebrew/core that makes this job hang for 10+ minutes.
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - name: Set up Homebrew on PATH
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          # Homebrew ships preinstalled on GitHub's Ubuntu runners but is not on
+          # PATH in the non-login shells `run:` steps use, so expose it for the
+          # steps below. macOS runners already have `brew` on PATH.
+          eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          echo "${HOMEBREW_PREFIX}/bin" >> "$GITHUB_PATH"
+          echo "${HOMEBREW_PREFIX}/sbin" >> "$GITHUB_PATH"
+      - name: Install from Homebrew tap
+        run: |
+          set -euo pipefail
+          # `brew install <user>/<tap>/<formula>` taps supabase/homebrew-tap at
+          # its current git HEAD and installs from source, verifying the
+          # formula's sha256 against the downloaded tarball. A checksum mismatch
+          # (the v2.107.0 failure mode) aborts the install here.
+          brew install "supabase/tap/${BREW_NAME}"
+      - name: Verify supabase --version
+        run: |
+          set -euo pipefail
+          # `supabase --version` prints the version without the leading `v`,
+          # while release tags / dispatch inputs may include it, so strip it
+          # before comparing.
+          expected="${VERSION#v}"
+          actual="$(supabase --version | tr -d '\r' | head -n1)"
+          echo "supabase --version: ${actual}"
+          if [ "${actual}" != "${expected}" ]; then
+            echo "Version mismatch: expected ${expected}, got ${actual}" >&2
+            exit 1
+          fi
+      - name: Verify Go sidecar
+        run: |
+          set -euo pipefail
+          # `completion bash` is proxied to the colocated `supabase-go` sidecar,
+          # so this fails (NotFound: ChildProcess.spawn) if the package omitted
+          # or misplaced supabase-go, even though `--version` above passed.
+          out="$(supabase completion bash 2>&1)" || {
+            echo "${out}"
+            echo "Go sidecar probe failed: 'supabase completion bash' did not exit 0" >&2
+            exit 1
+          }
+          printf '%s' "${out}" | grep -q "supabase" || {
+            echo "${out}"
+            echo "Go sidecar probe failed: unexpected completion output" >&2
+            exit 1
+          }
+          echo "Go sidecar probe OK"
+
+  scoop:
+    name: Scoop (${{ inputs.scoop_name }})
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ inputs.version }}
+      SCOOP_NAME: ${{ inputs.scoop_name }}
+    steps:
+      - name: Install Scoop
+        shell: pwsh
+        run: |
+          iex "& {$(irm get.scoop.sh)} -RunAsAdmin"
+          Join-Path (Resolve-Path ~).Path "scoop\shims" >> $env:GITHUB_PATH
+      - name: Install from Scoop bucket
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Adding the bucket clones supabase/scoop-bucket at its current HEAD;
+          # `scoop install` then verifies the manifest hash against the
+          # downloaded tarball before extracting it. A hash mismatch (the
+          # v2.107.0 failure mode) aborts the install here.
+          scoop bucket add supabase https://github.com/supabase/scoop-bucket
+          scoop install "supabase/$env:SCOOP_NAME"
+      - name: Verify supabase --version
+        # Force bash so ${VERSION} expands the same way it does on the other
+        # legs — windows-latest defaults to pwsh, which treats it as an empty
+        # PowerShell variable (env vars are `$env:VAR`).
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${VERSION#v}"
+          actual="$(supabase --version | tr -d '\r' | head -n1)"
+          echo "supabase --version: ${actual}"
+          if [ "${actual}" != "${expected}" ]; then
+            echo "Version mismatch: expected ${expected}, got ${actual}" >&2
+            exit 1
+          fi
+      - name: Verify Go sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `completion bash` is proxied to the colocated `supabase-go` sidecar,
+          # so this fails if the package omitted or misplaced supabase-go.exe,
+          # even though `--version` above passed.
+          out="$(supabase completion bash 2>&1)" || {
+            echo "${out}"
+            echo "Go sidecar probe failed: 'supabase completion bash' did not exit 0" >&2
+            exit 1
+          }
+          printf '%s' "${out}" | grep -q "supabase" || {
+            echo "${out}"
+            echo "Go sidecar probe failed: unexpected completion output" >&2
+            exit 1
+          }
+          echo "Go sidecar probe OK"
+
+  install-script:
+    name: install script (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Install via the published install script
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          # Fetch the install script that shipped with THIS release (uploaded as
+          # a release asset by release-shared.yml's publish job) rather than the
+          # copy in the repo checkout — users run the published script, which can
+          # diverge from the release branch. The script downloads the GitHub
+          # Release tarball plus checksums.txt and aborts on a sha256 mismatch.
+          # --no-modify-path keeps it from editing the runner's shell rc files;
+          # in GitHub Actions it still appends the install dir to $GITHUB_PATH,
+          # so `supabase` is on PATH for the verification steps below.
+          curl -fsSL "https://github.com/supabase/cli/releases/download/v${version}/install" -o install.sh
+          bash install.sh --version "${version}" --no-modify-path
+      - name: Verify supabase --version
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${VERSION#v}"
+          actual="$(supabase --version | tr -d '\r' | head -n1)"
+          echo "supabase --version: ${actual}"
+          if [ "${actual}" != "${expected}" ]; then
+            echo "Version mismatch: expected ${expected}, got ${actual}" >&2
+            exit 1
+          fi
+      - name: Verify Go sidecar
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `completion bash` is proxied to the colocated `supabase-go` sidecar,
+          # so this fails if the install script did not place supabase-go next
+          # to supabase, even though `--version` above passed.
+          out="$(supabase completion bash 2>&1)" || {
+            echo "${out}"
+            echo "Go sidecar probe failed: 'supabase completion bash' did not exit 0" >&2
+            exit 1
+          }
+          printf '%s' "${out}" | grep -q "supabase" || {
+            echo "${out}"
+            echo "Go sidecar probe failed: unexpected completion output" >&2
+            exit 1
+          }
+          echo "Go sidecar probe OK"

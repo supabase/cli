@@ -398,6 +398,7 @@ describe("platform input", () => {
       success: () => Effect.void,
       fail: () => Effect.void,
       raw: () => Effect.void,
+      rawBytes: () => Effect.void,
     });
 
     return Effect.gen(function* () {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
@@ -8,6 +8,8 @@ import type { LoginFlags } from "./login.command.ts";
 import { login } from "./login.handler.ts";
 import type { TelemetryConfig } from "../../../shared/telemetry/types.ts";
 import { ApiError } from "../../auth/errors.ts";
+import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
+import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import {
   emptyEnv,
   mockApi,
@@ -160,10 +162,7 @@ describe("login", () => {
           distinctId: "user-123",
           alias: "test-device-id",
         });
-        expect(analytics.identified).toContainEqual({
-          distinctId: "user-123",
-          properties: {},
-        });
+        expect(analytics.identified).toEqual([]);
       }).pipe(Effect.provide(layer));
     });
 
@@ -181,6 +180,71 @@ describe("login", () => {
         yield* login(NO_FLAGS);
         expect(creds.savedToken).toBe(VALID_TOKEN);
       }).pipe(Effect.provide(layer));
+    });
+
+    it.live("token-based login in an ephemeral runtime stamps without alias or file write", () => {
+      const homeDir = makeTempDir();
+      const identity = makeTelemetryIdentity(undefined);
+      const { layer, analytics } = setupWithEnv({ SUPABASE_HOME: homeDir }, { isTTY: false });
+      const runtime = TelemetryRuntime.of({
+        configDir: homeDir,
+        tracesDir: path.join(homeDir, "traces"),
+        consent: "granted",
+        showDebug: false,
+        deviceId: "test-device-id",
+        sessionId: "test-session-id",
+        identity,
+        isFirstRun: false,
+        isTty: false,
+        isCi: true,
+        os: "linux",
+        arch: "x64",
+        cliVersion: "0.1.0",
+      });
+      return Effect.gen(function* () {
+        yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) }).pipe(
+          Effect.provideService(TelemetryRuntime, runtime),
+        );
+        expect(identity.current()).toBe("user-123");
+        expect(analytics.aliased).toEqual([]);
+        expect(analytics.identified).toEqual([]);
+        expect(existsSync(path.join(homeDir, "telemetry.json"))).toBe(false);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+      );
+    });
+
+    it.live("token-based re-login as a different user persists without re-aliasing", () => {
+      const homeDir = makeTempDir();
+      const identity = makeTelemetryIdentity("user-a");
+      const { layer, analytics } = setupWithEnv({ SUPABASE_HOME: homeDir }, { isTTY: false });
+      const runtime = TelemetryRuntime.of({
+        configDir: homeDir,
+        tracesDir: path.join(homeDir, "traces"),
+        consent: "granted",
+        showDebug: false,
+        deviceId: "test-device-id",
+        sessionId: "test-session-id",
+        identity,
+        isFirstRun: false,
+        isTty: true,
+        isCi: false,
+        os: "linux",
+        arch: "x64",
+        cliVersion: "0.1.0",
+      });
+      return Effect.gen(function* () {
+        yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) }).pipe(
+          Effect.provideService(TelemetryRuntime, runtime),
+        );
+        expect(identity.current()).toBe("user-123");
+        expect(analytics.aliased).toEqual([]);
+        expect(readTelemetryConfig(homeDir).distinct_id).toBe("user-123");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
+      );
     });
 
     it.live("token-based login clears a stale distinct_id when profile lookup fails", () => {
@@ -418,10 +482,7 @@ describe("login", () => {
           distinctId: "user-123",
           alias: "test-device-id",
         });
-        expect(analytics.identified).toContainEqual({
-          distinctId: "user-123",
-          properties: {},
-        });
+        expect(analytics.identified).toEqual([]);
         expect(analytics.captured).toContainEqual({
           event: "cli_login_completed",
           properties: {
