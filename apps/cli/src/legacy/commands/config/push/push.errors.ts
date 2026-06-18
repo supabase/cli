@@ -31,18 +31,6 @@ export class LegacyConfigPushLoadConfigError extends Data.TaggedError(
   "LegacyConfigPushLoadConfigError",
 )<NetworkErrorArgs> {}
 
-/**
- * A `[remotes.<name>]` block matches the target project ref. Faithful subset
- * merging (Go's `mergeRemoteConfig`) is not yet implemented, and applying the
- * decoded remote section verbatim would silently reset every field the block
- * does not override to its schema default — overwriting remote config the user
- * never intended to touch. We abort instead of corrupting the remote. Aborts
- * before any network call.
- */
-export class LegacyConfigPushUnsupportedRemoteError extends Data.TaggedError(
-  "LegacyConfigPushUnsupportedRemoteError",
-)<NetworkErrorArgs> {}
-
 // --- cost matrix (list addons) ---------------------------------------------
 
 export class LegacyConfigPushListAddonsNetworkError extends Data.TaggedError(

@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Path, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
-import { ProjectConfigParseError } from "./errors.ts";
+import { DuplicateRemoteProjectIdError, ProjectConfigParseError } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { findProjectPaths } from "./paths.ts";
 import { loadProjectEnvironment } from "./project.ts";
@@ -16,6 +16,32 @@ export interface LoadedProjectConfig {
   readonly config: ProjectConfig;
   readonly schemaRef?: string;
   readonly ignoredPaths: ReadonlyArray<string>;
+  /**
+   * The raw, post-`env()`-interpolation document the `config` was decoded from,
+   * with any matching `[remotes.*]` override already merged in (see
+   * {@link LoadProjectConfigOptions.projectRef}). Lets callers inspect key
+   * presence — which the decoded `config` loses because the schema defaults
+   * optional sections — without re-reading the file. Present whenever the file
+   * parsed to an object.
+   */
+  readonly document?: Record<string, unknown>;
+  /**
+   * Name of the `[remotes.<name>]` block whose subtree was merged over the base
+   * config because its `project_id` matched the requested `projectRef`.
+   * `undefined` when no `projectRef` was requested or none matched.
+   */
+  readonly appliedRemote?: string;
+}
+
+/**
+ * When `projectRef` is set, the matching `[remotes.<name>]` block (the one whose
+ * `project_id` equals it) is merged over the base config before decode, mirroring
+ * Go's `config.Load` with `Config.ProjectId` set
+ * (`apps/cli-go/pkg/config/config.go:503-562`). Omitting it loads the base config
+ * verbatim, so existing callers are unaffected.
+ */
+export interface LoadProjectConfigOptions {
+  readonly projectRef?: string;
 }
 
 export interface SaveProjectConfigOptions {
@@ -52,6 +78,78 @@ function siblingConfigPathWith(path: Path.Path, cwd: string, format: ConfigForma
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+/**
+ * Deep-merges a `[remotes.*]` subtree over the base document, reproducing Go's
+ * `mergeRemoteConfig` (`apps/cli-go/pkg/config/config.go:550`): nested objects
+ * merge recursively; arrays and scalars replace wholesale (viper sets each leaf
+ * key). Operates on the raw, pre-decode document so only keys the remote block
+ * actually declares override the base — the remote section's schema defaults
+ * never leak in.
+ */
+function mergeRemoteSubtree(
+  base: Record<string, unknown>,
+  remote: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(remote)) {
+    const existing = result[key];
+    result[key] =
+      isObject(existing) && isObject(value) ? mergeRemoteSubtree(existing, value) : value;
+  }
+  return result;
+}
+
+/** Whether a remote subtree explicitly declares `db.seed.enabled`. */
+function remoteSetsDbSeedEnabled(remote: Record<string, unknown>): boolean {
+  const db = remote["db"];
+  const seed = isObject(db) ? db["seed"] : undefined;
+  return isObject(seed) && "enabled" in seed;
+}
+
+/** Forces `db.seed.enabled = false`, immutably, matching Go's mergeRemoteConfig. */
+function withDbSeedDisabled(document: Record<string, unknown>): Record<string, unknown> {
+  const db = isObject(document["db"]) ? document["db"] : {};
+  const seed = isObject(db["seed"]) ? db["seed"] : {};
+  return { ...document, db: { ...db, seed: { ...seed, enabled: false } } };
+}
+
+/**
+ * Applies the `[remotes.<name>]` override whose `project_id` matches `projectRef`
+ * to `document`, mirroring Go's `loadFromFile` remote resolution
+ * (`config.go:503-518`). Returns the merged document (with `remotes` stripped) and
+ * the matched remote name. Fails when two remotes share the target `project_id`.
+ */
+const applyRemoteOverride = Effect.fnUntraced(function* (
+  document: Record<string, unknown>,
+  projectRef: string,
+) {
+  const remotes = document["remotes"];
+  if (!isObject(remotes)) {
+    return { document, appliedRemote: undefined as string | undefined };
+  }
+  const matches = Object.entries(remotes)
+    .filter(([, remote]) => isObject(remote) && remote["project_id"] === projectRef)
+    .map(([name]) => name);
+  if (matches.length > 1) {
+    return yield* new DuplicateRemoteProjectIdError({
+      message: `duplicate project_id for [remotes.${matches[1]}] and [remotes.${matches[0]}]`,
+    });
+  }
+  if (matches.length === 0) {
+    return { document, appliedRemote: undefined as string | undefined };
+  }
+  const name = matches[0]!;
+  const remoteSubtree = remotes[name];
+  let merged = isObject(remoteSubtree)
+    ? mergeRemoteSubtree(document, remoteSubtree)
+    : { ...document };
+  if (!(isObject(remoteSubtree) && remoteSetsDbSeedEnabled(remoteSubtree))) {
+    merged = withDbSeedDisabled(merged);
+  }
+  delete merged["remotes"];
+  return { document: merged, appliedRemote: name as string | undefined };
+});
 
 function isEqualValue(left: unknown, right: unknown): boolean {
   if (Array.isArray(left) && Array.isArray(right)) {
@@ -205,7 +303,10 @@ function encodeProjectConfigToTomlDocument(
   return `${SmolToml.stringify(toConfigDocument(config, schemaRef))}\n`;
 }
 
-export const loadProjectConfigFile = Effect.fnUntraced(function* (filePath: string) {
+export const loadProjectConfigFile = Effect.fnUntraced(function* (
+  filePath: string,
+  options?: LoadProjectConfigOptions,
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const format = filePath.endsWith(".json") ? "json" : "toml";
@@ -232,7 +333,18 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (filePath: stri
     ProjectConfigSchema,
   );
 
-  const config = yield* parseProjectConfig(interpolated, format, filePath);
+  // Merge the matching `[remotes.*]` override over the base document before
+  // decode (Go's `loadFromFile` with `Config.ProjectId` set). Only requested
+  // when a `projectRef` is supplied, so other callers load the base verbatim.
+  let documentForDecode: unknown = interpolated;
+  let appliedRemote: string | undefined;
+  if (options?.projectRef !== undefined && isObject(interpolated)) {
+    const resolved = yield* applyRemoteOverride(interpolated, options.projectRef);
+    documentForDecode = resolved.document;
+    appliedRemote = resolved.appliedRemote;
+  }
+
+  const config = yield* parseProjectConfig(documentForDecode, format, filePath);
 
   return {
     path: filePath,
@@ -240,10 +352,15 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (filePath: stri
     config,
     schemaRef: getSchemaRef(document),
     ignoredPaths: [],
+    document: isObject(documentForDecode) ? documentForDecode : undefined,
+    appliedRemote,
   } satisfies LoadedProjectConfig;
 });
 
-export const loadProjectConfig = Effect.fnUntraced(function* (cwd: string) {
+export const loadProjectConfig = Effect.fnUntraced(function* (
+  cwd: string,
+  options?: LoadProjectConfigOptions,
+) {
   const fs = yield* FileSystem.FileSystem;
   const project = yield* findProjectPaths(cwd);
 
@@ -259,7 +376,7 @@ export const loadProjectConfig = Effect.fnUntraced(function* (cwd: string) {
     : project.configPath.replace(/config\.json$/, "config.toml");
 
   if (yield* fs.exists(jsonPath)) {
-    const json = yield* loadProjectConfigFile(jsonPath);
+    const json = yield* loadProjectConfigFile(jsonPath, options);
 
     return {
       ...json,
@@ -268,7 +385,7 @@ export const loadProjectConfig = Effect.fnUntraced(function* (cwd: string) {
   }
 
   if (yield* fs.exists(tomlPath)) {
-    return yield* loadProjectConfigFile(tomlPath);
+    return yield* loadProjectConfigFile(tomlPath, options);
   }
 
   return null;
