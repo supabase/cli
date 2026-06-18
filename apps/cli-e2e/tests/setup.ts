@@ -6,25 +6,13 @@ import {
   cleanupProjectsByName,
   createTestProject,
   deleteTestProject,
+  generateDbPassword,
   resolveOrgId,
   waitForProjectReady,
 } from "./staging-project.ts";
+import "./provided-context.ts"; // centralized `inject()` key augmentation
 
 const FIXTURES_DIR = new URL("../fixtures", import.meta.url).pathname;
-
-declare module "vitest" {
-  export interface ProvidedContext {
-    replayServerUrl: string;
-    projectRef: string;
-    orgId: string;
-    storageBucket: string;
-    pgMockPort: number;
-    /** DOCKER_HOST value (tcp://host:port) pointing at the relay server.
-     *  In record mode the relay forwards to the real Docker socket; in replay
-     *  mode it serves recorded Docker API fixtures. */
-    dockerHostUrl: string;
-  }
-}
 
 function resolveDockerSocket(): string {
   const dockerHost = process.env["DOCKER_HOST"];
@@ -76,7 +64,12 @@ export async function setup({
 
   // Create a fresh project for this recording run.  Its ref is used by branches,
   // functions, secrets, and api-keys tests.
-  const projectRef = await createTestProject(server.url, orgId, "cli-e2e-test");
+  const projectRef = await createTestProject(
+    server.url,
+    orgId,
+    "cli-e2e-test",
+    generateDbPassword(),
+  );
   provide("projectRef", projectRef);
   provide("orgId", orgId);
 

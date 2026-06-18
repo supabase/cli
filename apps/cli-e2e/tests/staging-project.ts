@@ -15,11 +15,18 @@ function harness(apiUrl: string) {
 
 const PROJECT_REF_RE = /^[a-z]{20}$/;
 
-// DB password for the throwaway project, used at creation and to build the live
-// --db-url. Randomised per run (overridable via CLI_E2E_DB_PASSWORD) so no static
-// credential is committed to source — the project is deleted on teardown anyway.
-export const TEST_DB_PASSWORD =
-  process.env["CLI_E2E_DB_PASSWORD"] ?? `cli-e2e-${randomBytes(12).toString("hex")}`;
+// Project statuses from which provisioning never recovers — fast-fail instead of
+// polling to the timeout.
+const TERMINAL_BAD_STATUSES = new Set(["INIT_FAILED", "RESTORE_FAILED", "REMOVED"]);
+
+/** A DB password for a throwaway project, used at creation and to build the live
+ *  --db-url. Randomised per call (overridable via CLI_E2E_DB_PASSWORD) so no
+ *  static credential is committed — the project is deleted on teardown anyway.
+ *  Each setup generates its own and routes it through provide()/inject() rather
+ *  than sharing a module-level export. */
+export function generateDbPassword(): string {
+  return process.env["CLI_E2E_DB_PASSWORD"] ?? `cli-e2e-${randomBytes(12).toString("hex")}`;
+}
 
 export async function resolveOrgId(apiUrl: string): Promise<string> {
   const result = await exec(harness(apiUrl), ["orgs", "list", "--output", "json"]);
@@ -33,6 +40,7 @@ export async function createTestProject(
   apiUrl: string,
   orgId: string,
   name: string,
+  password: string,
 ): Promise<string> {
   const result = await exec(harness(apiUrl), [
     "projects",
@@ -41,7 +49,7 @@ export async function createTestProject(
     "--org-id",
     orgId,
     "--db-password",
-    TEST_DB_PASSWORD,
+    password,
     "--region",
     REGION,
     "--output",
@@ -107,6 +115,13 @@ export async function waitForProjectReady(
     if (res.ok) {
       const project = (await res.json()) as { status?: string };
       if (project.status === "ACTIVE_HEALTHY") return;
+      if (project.status && TERMINAL_BAD_STATUSES.has(project.status)) {
+        throw new Error(
+          `Project ${projectRef} entered terminal status ${project.status} during provisioning`,
+        );
+      }
+    } else {
+      await res.body?.cancel(); // free the socket before sleeping
     }
     await new Promise((r) => setTimeout(r, 5_000));
   }
@@ -146,12 +161,13 @@ export async function getAnonKey(
           `Project ${projectRef} returned no anon JWT (only new-style keys); verified-function invokes require a JWT`,
         );
       }
+    } else if (attempt < attempts) {
+      await res.body?.cancel(); // free the socket before sleeping
     }
     if (attempt === attempts) {
+      const detail = res.bodyUsed ? res.status : await res.text().catch(() => res.status);
       throw new Error(
-        `Failed to resolve anon key for ${projectRef} after ${attempts} attempts: ${await res
-          .text()
-          .catch(() => res.status)}`,
+        `Failed to resolve anon key for ${projectRef} after ${attempts} attempts: ${detail}`,
       );
     }
     await new Promise((r) => setTimeout(r, 10_000));
@@ -177,6 +193,8 @@ export async function getServiceRoleKey(
         keys.find((k) => k.name === "service_role" && k.api_key)?.api_key ??
         keys.find((k) => k.api_key?.startsWith("sb_secret_"))?.api_key;
       if (secret) return secret;
+    } else {
+      await res.body?.cancel(); // free the socket before sleeping
     }
     if (attempt === attempts) {
       throw new Error(`Failed to resolve service-role key for ${projectRef}`);
@@ -241,12 +259,13 @@ export async function getPoolerSessionUrl(
         if (!url.searchParams.has("connect_timeout")) url.searchParams.set("connect_timeout", "30");
         return url.toString();
       }
+    } else if (attempt < attempts) {
+      await res.body?.cancel(); // free the socket before sleeping
     }
     if (attempt === attempts) {
+      const detail = res.bodyUsed ? res.status : await res.text().catch(() => res.status);
       throw new Error(
-        `Failed to resolve pooler config for ${projectRef} after ${attempts} attempts: ${await res
-          .text()
-          .catch(() => res.status)}`,
+        `Failed to resolve pooler config for ${projectRef} after ${attempts} attempts: ${detail}`,
       );
     }
     await new Promise((r) => setTimeout(r, 10_000));

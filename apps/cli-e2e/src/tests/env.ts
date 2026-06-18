@@ -59,6 +59,12 @@ export const ACCESS_TOKEN =
   process.env["SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN"] ??
   "sbp_0000000000000000000000000000000000000000";
 
+// Whether a real token was supplied (vs the replay placeholder above). Live mode
+// must fail fast on a missing token instead of letting every API call 401.
+export const isAccessTokenProvided = Boolean(
+  process.env["SUPABASE_ACCESS_TOKEN"] ?? process.env["SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN"],
+);
+
 // Which target to run. Defaults to "ts-legacy"; set to "go" for recording and as
 // the source-of-truth target when authoring live tests.
 export const TARGET = (process.env["CLI_HARNESS_TARGET"] ?? "ts-legacy") as CLITarget;

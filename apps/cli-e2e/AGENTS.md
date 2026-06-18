@@ -162,7 +162,7 @@ The pre-recording cleanup deletes projects named `cli-e2e-test`, `my-project`, a
 - **Assertion style:** outcome-based — assert `exitCode`/`stdout` substrings and the function's HTTP status + JSON body. This is ID-agnostic, so **no normalization/snapshots by default**. If the CLI's own diagnostic output is ever the assertion target, add a scoped normalizer for that one test — do not make normalization the default.
 - **Authoring target is `go`** (source of truth for the port); `ts-legacy` runs the same tests to prove the shim matches. Both run as separate CI jobs.
 - Retargeting to another env (e.g. `supabox`) is an env swap only: `CLI_E2E_TARGET_ENV` + `CLI_E2E_API_URL` + `CLI_E2E_PROJECT_HOST` + token. Tests assert on function output, not hostnames.
-- **CI triggers** (`.github/workflows/live-e2e.yml`): `workflow_dispatch` (manual; the Actions branch picker selects the ref — no free-form `ref` input, so the staging token never reaches arbitrary code) and an hourly `schedule`. There is **no `pull_request` trigger** — run it manually on a PR branch for pre-merge coverage. The scheduled run exercises the `@beta` channel: `develop` is the default branch and the beta release source, so it builds from `develop` source and runs the same `[go, ts-legacy]` matrix. A `gate` job skips the run unless the published `supabase@beta` version changed since the last green run (an `actions/cache` marker keyed on the version, written by `finalize` only after **both** legs pass), so a staging project is spent only when there is a new beta to test.
+- **CI triggers** (`.github/workflows/live-e2e.yml`): `workflow_dispatch` (manual; the Actions branch picker selects the ref — no free-form `ref` input, so the staging token never reaches arbitrary code) and an hourly `schedule`. There is **no `pull_request` trigger** — run it manually on a PR branch for pre-merge coverage. The scheduled run exercises the `@beta` channel: `develop` is the default branch and the beta release source, so it builds from `develop` source and runs the same `[go, ts-legacy]` matrix. A `gate` job skips the run unless the published `supabase@beta` version changed since the last green run (an `actions/cache` marker keyed on the version, written by `finalize` only after **both** legs pass), so a staging project is spent only when there is a new beta to test. Because the marker is written only on a fully-green matrix, a chronically-failing `@beta` keeps re-running every hour until it goes green or a newer beta supersedes it (intended — the failure stays visible).
 
 ## Running the suite
 
@@ -175,10 +175,17 @@ pnpm nx run @supabase/cli-e2e:test:go       # go binary target
 SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
   pnpm nx run @supabase/cli-e2e:record
 
-# Live (requires staging access; creates + deletes a real project; needs Docker)
-CLI_HARNESS_TARGET=go SUPABASE_ACCESS_TOKEN=sbp_... \
+# Live (requires staging access; creates + deletes a real project; needs Docker).
+# For the `go` target, build the binary first so newly-added commands resolve
+# (the system `supabase` may be stale) — mirrors what CI does.
+cd apps/cli-go && go build -o /tmp/supabase-test-binary . && cd -
+SUPABASE_GO_BINARY=/tmp/supabase-test-binary CLI_HARNESS_TARGET=go \
+  SUPABASE_ACCESS_TOKEN=sbp_... \
   pnpm --filter @supabase/cli-e2e test:e2e:live
 ```
+
+See `apps/cli-e2e/.env.example` for the full set of live/record env vars (copy to
+a gitignored `.env.local`).
 
 After recording, replay must pass with no changes between the two commands.
 

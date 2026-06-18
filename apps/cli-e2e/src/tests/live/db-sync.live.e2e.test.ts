@@ -32,9 +32,14 @@ describe("db push + pull (live, session pooler)", () => {
       // reports no changes — both prove connectivity; only a real connection
       // failure would surface a different error.
       const pulled = await run(["db", "pull", "--db-url", dbUrl, "--yes"]);
+      const pullOutput = `${pulled.stdout}${pulled.stderr}`;
+      // The point of this test is connectivity over the pooler: a real connection
+      // failure must never be mistaken for a benign "no changes" outcome.
+      expect(pullOutput, "db pull hit a connection error").not.toMatch(
+        /dial|no route|connection refused|could not connect|server closed the connection|i\/o timeout/i,
+      );
       expect(
-        pulled.exitCode === 0 ||
-          /No schema changes found/i.test(`${pulled.stdout}${pulled.stderr}`),
+        pulled.exitCode === 0 || /No schema changes found/i.test(pullOutput),
         pulled.stderr,
       ).toBe(true);
     },

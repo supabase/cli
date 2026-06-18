@@ -1,7 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
-import { TEST_DB_PASSWORD } from "../../../tests/staging-project.ts";
 import { testLive } from "./live-context.ts";
 
 // Storage object round-trip against the project's real Storage API. `storage
@@ -13,9 +12,9 @@ const STORAGE_FLAGS = ["--linked", "--experimental"];
 describe("storage (live --linked)", () => {
   testLive(
     "uploads, lists, and removes an object",
-    async ({ run, workspace, projectRef, storageBucket }) => {
+    async ({ run, workspace, projectRef, storageBucket, dbPassword }) => {
       const linked = await run(["link", "--project-ref", projectRef], {
-        env: { SUPABASE_DB_PASSWORD: TEST_DB_PASSWORD },
+        env: { SUPABASE_DB_PASSWORD: dbPassword },
       });
       expect(linked.exitCode, linked.stderr).toBe(0);
 

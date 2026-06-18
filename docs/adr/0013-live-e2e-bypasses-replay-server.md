@@ -1,6 +1,6 @@
 # 0013. Live E2E Tests Bypass the Replay Server
 
-**Status**: proposed
+**Status**: accepted
 **Date**: 2026-06-16
 
 ## Problem Statement

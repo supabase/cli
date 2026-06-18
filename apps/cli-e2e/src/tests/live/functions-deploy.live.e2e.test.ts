@@ -54,12 +54,13 @@ testLive(
     expect(deployed.stdout).toContain("Deployed Functions");
 
     // Each declared function must be listed in the deploy output AND respond
-    // 200 when invoked. Bodies vary per fixture, so assert status only here
-    // (the per-mode tests above assert the exact body).
+    // with its own {case: slug, ok: true}. A handler returns that marker only if
+    // it actually executed — and for the npm/jsr/local-imports/scoped-map
+    // fixtures only if their imports resolved at runtime — so this proves the
+    // feature ran end-to-end, not merely that the function deployed and booted.
     for (const slug of declared) {
       expect(deployed.stdout, `expected "${slug}" in deploy output`).toContain(slug);
-      const res = await invoke(slug);
-      expect(res.status, `${slug} → ${res.text.slice(0, 200)}`).toBe(200);
+      expectFunctionOk(await invoke(slug), slug);
     }
   },
 );

@@ -19,6 +19,7 @@ describe("branches (live)", () => {
       return;
     }
 
+    let branchDeleted = false;
     try {
       expect(created.stdout).toContain("Created preview branch");
 
@@ -36,9 +37,13 @@ describe("branches (live)", () => {
 
       const deleted = await run(["branches", "delete", name, "--project-ref", projectRef, "--yes"]);
       expect(deleted.exitCode, deleted.stderr).toBe(0);
+      branchDeleted = true;
     } finally {
-      // Retry/leak safety: ensure the branch is gone even if an assertion flaked.
-      await run(["branches", "delete", name, "--project-ref", projectRef, "--yes"]);
+      // Retry/leak safety: clean up only if the in-try delete didn't already
+      // succeed (e.g. an earlier assertion threw). Tolerates a not-found branch.
+      if (!branchDeleted) {
+        await run(["branches", "delete", name, "--project-ref", projectRef, "--yes"]);
+      }
     }
   });
 });

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ProvidedContext } from "vitest";
 import {
+  isAccessTokenProvided,
   isLive,
   KEEP_PROJECT,
   ORG_ID_OVERRIDE,
@@ -12,27 +13,16 @@ import {
   createStorageBucket,
   createTestProject,
   deleteTestProject,
+  generateDbPassword,
   getAnonKey,
   getPoolerSessionUrl,
   getServiceRoleKey,
   resolveOrgId,
-  TEST_DB_PASSWORD,
   waitForProjectReady,
 } from "./staging-project.ts";
+import "./provided-context.ts"; // centralized `inject()` key augmentation
 
 const STORAGE_BUCKET = "cli-e2e-live-bucket";
-
-declare module "vitest" {
-  export interface ProvidedContext {
-    /** Publishable/anon key for invoking deployed functions over HTTP. */
-    anonKey: string;
-    /** https://{ref}.{CLI_E2E_PROJECT_HOST}/functions/v1 */
-    functionsUrl: string;
-    /** Direct Postgres connection string for --db-url DB commands. */
-    dbUrl: string;
-    // storageBucket is declared by tests/setup.ts (shared ProvidedContext).
-  }
-}
 
 // Live e2e global setup (ADR-0013). Provisions ONE ephemeral project per run,
 // wired straight at the real Management API — no replay server. Intentionally
@@ -47,6 +37,12 @@ export async function setup({
     // skipIf(!isLive), so provision nothing.
     return () => {};
   }
+  if (!isAccessTokenProvided) {
+    throw new Error(
+      "Live mode requires a staging access token: set SUPABASE_ACCESS_TOKEN " +
+        "(or SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN). Refusing to provision against an empty token.",
+    );
+  }
   if (!PROJECT_HOST) {
     throw new Error("CLI_E2E_PROJECT_HOST is required in live mode (function invoke host)");
   }
@@ -60,7 +56,10 @@ export async function setup({
   const runId = process.env["GITHUB_RUN_ID"] ?? String(Date.now());
   const name = `cli-e2e-live-${TARGET}-${runId}-${randomUUID().slice(0, 8)}`;
 
-  const projectRef = await createTestProject(TARGET_API_URL, orgId, name);
+  // Generated here (not a shared export) and routed through provide() so the
+  // password reaches tests only via inject(), never an importable module const.
+  const dbPassword = generateDbPassword();
+  const projectRef = await createTestProject(TARGET_API_URL, orgId, name, dbPassword);
 
   // Once the project exists, any later setup failure must still delete it —
   // setup returns before the teardown closure, so Vitest cannot clean up.
@@ -73,7 +72,7 @@ export async function setup({
     functionsUrl = `https://${projectRef}.${PROJECT_HOST}/functions/v1`;
     // IPv4 session-mode pooler — the direct host is IPv6-only (unreachable from
     // IPv4-only CI runners); the pooler is IPv4 and session mode supports pg_dump.
-    dbUrl = await getPoolerSessionUrl(TARGET_API_URL, projectRef, TEST_DB_PASSWORD);
+    dbUrl = await getPoolerSessionUrl(TARGET_API_URL, projectRef, dbPassword);
     // Seed a private bucket via the Storage API so the storage live tests have
     // something to cp/ls/rm against (cleaned up with the project on teardown).
     const serviceRoleKey = await getServiceRoleKey(TARGET_API_URL, projectRef);
@@ -92,6 +91,7 @@ export async function setup({
   provide("anonKey", anonKey);
   provide("functionsUrl", functionsUrl);
   provide("dbUrl", dbUrl);
+  provide("dbPassword", dbPassword);
   provide("storageBucket", STORAGE_BUCKET);
 
   return async () => {

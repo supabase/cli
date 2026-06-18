@@ -28,7 +28,7 @@ function liveHarness(cwd: string) {
     apiUrl: TARGET_API_URL,
     accessToken: ACCESS_TOKEN,
     cwd,
-    projectId: inject("projectRef") as string,
+    projectId: inject("projectRef"),
     // Real host so host-derived commands (storage --linked → <ref>.<host>) reach
     // the live endpoint instead of localhost.
     projectHost: PROJECT_HOST,
@@ -52,6 +52,7 @@ interface LiveFixtures {
   anonKey: string;
   functionsUrl: string;
   dbUrl: string;
+  dbPassword: string;
   storageBucket: string;
   workspace: TempDir;
   run: (cmd: string[], execOpts?: ExecOptions) => Promise<CLIResult>;
@@ -61,7 +62,7 @@ interface LiveFixtures {
 const base = test.extend<LiveFixtures>({
   // eslint-disable-next-line no-empty-pattern
   projectRef: async ({}, use) => {
-    await use(inject("projectRef") as string);
+    await use(inject("projectRef"));
   },
 
   // eslint-disable-next-line no-empty-pattern
@@ -77,6 +78,11 @@ const base = test.extend<LiveFixtures>({
   // eslint-disable-next-line no-empty-pattern
   dbUrl: async ({}, use) => {
     await use(inject("dbUrl"));
+  },
+
+  // eslint-disable-next-line no-empty-pattern
+  dbPassword: async ({}, use) => {
+    await use(inject("dbPassword"));
   },
 
   // eslint-disable-next-line no-empty-pattern
