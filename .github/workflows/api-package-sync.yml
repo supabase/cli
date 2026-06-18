@@ -9,63 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  detect:
-    name: Detect OpenAPI changes
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    outputs:
-      has_changes: ${{ steps.compare.outputs.has_changes }}
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          persist-credentials: false
-
-      - name: Compare upstream OpenAPI spec
-        id: compare
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          remote_spec="$RUNNER_TEMP/openapi.remote.json"
-          remote_normalized="$RUNNER_TEMP/openapi.remote.normalized.json"
-          tracked_normalized="$RUNNER_TEMP/openapi.tracked.normalized.json"
-          normalize_filter="$RUNNER_TEMP/normalize-openapi.jq"
-
-          curl -fsS https://api.supabase.com/api/v1-json -o "$remote_spec"
-
-          cat > "$normalize_filter" <<'JQ'
-          def pointer_path($p): $p | split("/")[1:] | map(gsub("~1"; "/") | gsub("~0"; "~"));
-          reduce ($overrides[0] // [])[] as $op (.;
-            if $op.op == "test" then
-              if getpath(pointer_path($op.path)) == $op.value then
-                .
-              else
-                error("OpenAPI override test failed at \($op.path)")
-              end
-            elif $op.op == "replace" then
-              setpath(pointer_path($op.path); $op.value)
-            else
-              error("Unsupported OpenAPI override op \($op.op)")
-            end
-          )
-          JQ
-
-          jq -S --slurpfile overrides packages/api/scripts/openapi-overrides.json \
-            -f "$normalize_filter" "$remote_spec" > "$remote_normalized"
-          jq -S . packages/api/src/generated/openapi.json > "$tracked_normalized"
-
-          if cmp -s "$remote_normalized" "$tracked_normalized"; then
-            echo "No upstream OpenAPI changes detected."
-            echo "has_changes=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "Upstream OpenAPI changes detected."
-            echo "has_changes=true" >> "$GITHUB_OUTPUT"
-            diff -u "$tracked_normalized" "$remote_normalized" | sed -n '1,160p' || true
-          fi
-
   sync:
     name: Sync API package
-    needs: detect
-    if: needs.detect.outputs.has_changes == 'true'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
