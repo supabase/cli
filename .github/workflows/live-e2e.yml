@@ -6,50 +6,81 @@ name: Live E2E
 # Non-blocking by construction: this is a standalone workflow, NOT part of the
 # required-checks set, and it never runs on the default PR path of test.yml.
 #
-# Bootstrap note: while this workflow does not yet exist on the default branch,
-# `workflow_dispatch` is not selectable, so we also trigger on `pull_request`
-# (path-filtered to cli-e2e changes) so it can be exercised on the introducing
-# PR. Once merged, the `pull_request` trigger can be dropped in favour of
-# `workflow_dispatch` + a nightly `schedule`.
+# Triggers:
+#   - workflow_dispatch — manual run. The Actions UI branch picker selects the
+#     ref (github.ref), always a same-repo branch. We deliberately take NO
+#     free-form `ref` input: that would let a manual run check out arbitrary
+#     (e.g. external PR) code while the staging token is in the job env.
+#   - schedule (hourly) — exercises the `@beta` channel. `develop` is the default
+#     branch AND the beta release source, so a scheduled run checks it out and
+#     builds from source. The `gate` job skips the run unless the published
+#     `supabase@beta` version changed since the last green run (an actions/cache
+#     marker keyed on the version), so we only spend a staging project when there
+#     is actually a new beta to test.
 #
-# Secrets: uses `pull_request` (same-repo branches), never `pull_request_target`,
-# so the staging token is never exposed to fork PRs.
+# Secrets: workflow_dispatch and schedule both run on trusted same-repo refs, so
+# the staging token is never exposed to fork code.
 on:
-  # Dispatched runs use the selected branch (github.ref), which is always a
-  # same-repo branch. We deliberately do NOT take a free-form `ref` input: that
-  # would let a manual run check out arbitrary (e.g. external PR) code while the
-  # staging token is in the job env, bypassing the fork/Dependabot guard below.
   workflow_dispatch:
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
-      - ready_for_review
-    paths:
-      - "apps/cli-e2e/**"
-      - "packages/cli-test-helpers/**"
-      - ".github/workflows/live-e2e.yml"
+  schedule:
+    # Hourly, offset from other scheduled workflows. Cron timing is best-effort.
+    - cron: "23 * * * *"
 
 permissions:
   contents: read
 
 jobs:
+  # Decide whether to run. Manual dispatch always runs. Scheduled runs only fire
+  # when the latest published `@beta` is newer than the last one we tested green.
+  gate:
+    name: Gate (newer @beta?)
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Resolve latest @beta version
+        id: ver
+        run: |
+          set -euo pipefail
+          version="$(npm view supabase@beta version)"
+          [ -n "$version" ] || { echo "::error::empty supabase@beta version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Marker presence == "this beta already tested green". lookup-only so we
+      # download nothing; the marker is written by `finalize` after a green run.
+      - name: Check tested marker
+        id: cache
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .beta-marker
+          key: live-e2e-beta-${{ steps.ver.outputs.version }}
+          lookup-only: true
+
+      - name: Decide
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "manual dispatch -> run"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.cache.outputs.cache-hit }}" = "true" ]; then
+            echo "beta ${{ steps.ver.outputs.version }} already tested green -> skip"
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new beta ${{ steps.ver.outputs.version }} -> run"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   live-e2e:
-    # Skip fork PRs and Dependabot: repository secrets (the staging token) are
-    # not available to them (GitHub treats Dependabot pull_request runs like
-    # forks), so the live job would call staging with an empty token and fail.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.draft == false &&
-       github.event.pull_request.head.repo.full_name == github.repository &&
-       github.actor != 'dependabot[bot]')
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
     name: Live e2e (${{ matrix.target }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
     # Serialize a target against itself across runs; go and ts-legacy run in
     # parallel. Per-job-scoped project names mean this is mostly belt-and-braces.
     concurrency:
-      group: live-e2e-${{ matrix.target }}-${{ github.head_ref || github.ref }}
+      group: live-e2e-${{ matrix.target }}-${{ github.ref }}
       cancel-in-progress: true
     strategy:
       # Each target is an independent green/red signal.
@@ -152,3 +183,23 @@ jobs:
             fi
           done
           exit "$failed"
+
+  # Record that this beta tested green so the next scheduled run skips it. Needs
+  # the whole matrix: the marker is saved only if BOTH go and ts-legacy passed
+  # (a red leg leaves no marker, so the next hour re-runs the same beta).
+  finalize:
+    needs: [gate, live-e2e]
+    if: github.event_name == 'schedule' && needs.live-e2e.result == 'success'
+    name: Mark @beta tested
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write marker
+        run: |
+          mkdir -p .beta-marker
+          echo "${{ needs.gate.outputs.version }}" > .beta-marker/version
+
+      - name: Save tested marker
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .beta-marker
+          key: live-e2e-beta-${{ needs.gate.outputs.version }}
