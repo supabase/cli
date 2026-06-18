@@ -276,12 +276,15 @@ describe("legacy test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes explicit paths as read-only binds", () => {
+  it.live("mounts a single file's containing directory so `\\ir` includes resolve", () => {
+    // CLI-1139: a lone-file bind leaves sibling files absent in the container, so
+    // `\ir ./sibling.sql` fails. The containing directory is mounted instead; the
+    // file path is still what pg_prove runs.
     const { layer, docker } = setup();
     return Effect.gen(function* () {
       yield* legacyTestDb(flags({ paths: ["/abs/a_test.sql"] }));
       const run = docker.lastOpts;
-      expect(run?.binds).toEqual(["/abs/a_test.sql:/abs/a_test.sql:ro"]);
+      expect(run?.binds).toEqual(["/abs:/abs:ro"]);
       expect(run?.cmd).toContain("/abs/a_test.sql");
     }).pipe(Effect.provide(layer));
   });
