@@ -2,7 +2,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { expectFunctionOk } from "./invoke.ts";
-import { testLive } from "./live-context.ts";
+import { seedFunctions, testLive } from "./live-context.ts";
 
 // Pilot (ADR-0013): deploy with the real CLI across the three bundler paths,
 // then invoke the deployed function over HTTP and assert the body it returns.
@@ -17,7 +17,8 @@ const MODES = [
 ] as const;
 
 describe.each(MODES)("functions deploy ($name)", ({ slug, flags }) => {
-  testLive("deploys and the function responds", async ({ run, invoke, projectRef }) => {
+  testLive("deploys and the function responds", async ({ run, invoke, workspace, projectRef }) => {
+    seedFunctions(workspace.path);
     const deployed = await run([
       "functions",
       "deploy",
@@ -40,6 +41,7 @@ describe.each(MODES)("functions deploy ($name)", ({ slug, flags }) => {
 testLive(
   "deploys every declared function when no slug is given",
   async ({ run, invoke, workspace, projectRef }) => {
+    seedFunctions(workspace.path);
     const declared = readdirSync(join(workspace.path, "supabase", "functions"), {
       withFileTypes: true,
     })
