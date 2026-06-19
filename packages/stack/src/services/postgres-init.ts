@@ -117,6 +117,12 @@ DECLARE
   roles text[] := ARRAY['authenticator','supabase_auth_admin','supabase_storage_admin','supabase_functions_admin','supabase_replication_admin','supabase_read_only_user','supabase_realtime_admin','postgres'];
   r text;
 BEGIN
+  -- supabase_realtime_admin is created later by realtime's own tenant migrations,
+  -- so it is missing from the base image. Create it up front so the password loop
+  -- below can set its credentials and realtime can connect as a least-privileged user.
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_realtime_admin') THEN
+    CREATE ROLE supabase_realtime_admin WITH NOINHERIT CREATEROLE LOGIN REPLICATION;
+  END IF;
   FOREACH r IN ARRAY roles LOOP
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
       EXECUTE format('ALTER ROLE %I WITH PASSWORD ''postgres''', r);
