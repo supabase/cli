@@ -302,6 +302,7 @@ function mockLegacyGoProxy() {
         Effect.sync(() => {
           calls.push([...args]);
         }),
+      execCapture: () => Effect.succeed(""),
     }),
     get calls() {
       return calls;

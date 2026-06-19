@@ -256,6 +256,28 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       }),
     });
 
+    // Runs a Go-delegated pull (initial-migra / EXPERIMENTAL structured dump). In
+    // machine-output mode the child's stdout is captured and a structured envelope
+    // is emitted instead, so scripted callers get valid JSON rather than the Go
+    // child's human output on stdout (CLI-1546: stdout is payload-only in machine
+    // mode). The delegated child owns the migration write and history prompt, so
+    // schemaWritten/remoteHistoryUpdated aren't introspectable here.
+    const delegatePull = (engine: "migra" | "pg-delta") =>
+      Effect.gen(function* () {
+        const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
+        if (output.format !== "text") {
+          yield* proxy.execCapture(rebuildDelegateArgs(flags), { env });
+          yield* output.success("Schema pulled.", {
+            declarative: false,
+            schemaWritten: null,
+            remoteHistoryUpdated: false,
+            engine,
+          });
+          return;
+        }
+        yield* proxy.exec(rebuildDelegateArgs(flags), { env });
+      });
+
     // Connectivity check (Go's `ConnectByConfig` at the top of `pull.Run`).
     yield* Effect.scoped(
       Effect.gen(function* () {
@@ -326,9 +348,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // (`cmd/root.go:318-320,327,334`), so honor both forms here; the legacy
         // root only forwards `--experimental` to Go proxy argv, never into env.
         if (experimental || legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL"))) {
-          yield* proxy.exec(rebuildDelegateArgs(flags), {
-            env: { SUPABASE_TELEMETRY_DISABLED: "1" },
-          });
+          yield* delegatePull(usePgDeltaDiff ? "pg-delta" : "migra");
           return;
         }
 
@@ -354,9 +374,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         }
         if (sync.kind === "missing" && !usePgDeltaDiff) {
           // Initial pull with the migra engine needs `pg_dump` — delegate to Go.
-          yield* proxy.exec(rebuildDelegateArgs(flags), {
-            env: { SUPABASE_TELEMETRY_DISABLED: "1" },
-          });
+          yield* delegatePull("migra");
           return;
         }
 

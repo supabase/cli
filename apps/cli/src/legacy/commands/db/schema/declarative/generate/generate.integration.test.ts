@@ -118,6 +118,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const proxyCalls: ReadonlyArray<string>[] = [];
   const proxy = Layer.succeed(LegacyGoProxy, {
     exec: (args) => Effect.sync(() => void proxyCalls.push(args)),
+    execCapture: () => Effect.succeed(""),
   });
   const layer = Layer.mergeAll(
     out.layer,

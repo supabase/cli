@@ -11,6 +11,7 @@ function setupLegacyStop() {
       Effect.sync(() => {
         calls.push(args);
       }),
+    execCapture: () => Effect.succeed(""),
   });
   return { layer, calls };
 }

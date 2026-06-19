@@ -52,6 +52,7 @@ interface SetupOpts {
   readonly edgeFailFirstWith?: string;
   // resolvePoolerFallback returns Some(pooler conn) when true, None otherwise.
   readonly poolerAvailable?: boolean;
+  readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -151,8 +152,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const proxyCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
+  const proxyCaptureCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> =
+    [];
   const proxy = Layer.succeed(LegacyGoProxy, {
     exec: (args, execOpts) => Effect.sync(() => void proxyCalls.push({ args, env: execOpts?.env })),
+    execCapture: (args, execOpts) =>
+      Effect.sync(() => {
+        proxyCaptureCalls.push({ args, env: execOpts?.env });
+        return opts.delegateStdout ?? "";
+      }),
   });
 
   const layer = Layer.mergeAll(
@@ -181,6 +189,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     provisionCalls,
     removedContainers,
     proxyCalls,
+    proxyCaptureCalls,
     historyUpserts,
     execLog,
     poolerFallbackCalls,
@@ -344,6 +353,30 @@ describe("legacy db pull", () => {
       expect(s.proxyCalls[0]?.args[0]).toBe("db");
       expect(s.proxyCalls[0]?.args[1]).toBe("pull");
       expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("an initial pull in json mode emits a structured envelope (delegated output)", () => {
+    // Regression: the initial-migra delegate inherited stdout and returned without
+    // output.success, so machine-mode callers got the Go child's human output
+    // instead of a JSON envelope (CLI-1546). Now the child's stdout is captured and
+    // a structured payload is emitted instead.
+    const s = setup(tmp.current, {
+      format: "json",
+      remoteVersions: [],
+      delegateStdout: "Schema written to supabase/migrations/x.sql\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      expect(s.proxyCalls).toHaveLength(0);
+      expect(s.proxyCaptureCalls).toHaveLength(1);
+      const success = s.out.messages.find((m) => m.type === "success");
+      expect(success?.data).toMatchObject({
+        declarative: false,
+        schemaWritten: null,
+        remoteHistoryUpdated: false,
+        engine: "migra",
+      });
     }).pipe(Effect.provide(s.layer));
   });
 

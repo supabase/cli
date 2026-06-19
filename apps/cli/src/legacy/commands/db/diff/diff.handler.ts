@@ -253,19 +253,36 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // comes from this TS command's instrumentation.
     const usePgAdmin = Option.getOrElse(flags.usePgAdmin, () => false);
     const usePgSchema = Option.getOrElse(flags.usePgSchema, () => false);
-    if (usePgAdmin) {
-      yield* proxy.exec(rebuildDelegateArgs(flags), {
-        env: { SUPABASE_TELEMETRY_DISABLED: "1" },
+    // Runs the delegated engine via the Go binary. In machine-output mode the
+    // child's stdout is captured and re-emitted as a structured envelope, so
+    // scripted callers get valid JSON instead of the Go child's raw SQL on stdout
+    // (CLI-1546: stdout is payload-only in machine mode). The delegated child owns
+    // any `--file` write, so the written migration path isn't introspectable here
+    // (reported as `file: null`).
+    const delegateDiff = (engine: "pgadmin" | "pg-schema") =>
+      Effect.gen(function* () {
+        const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
+        if (output.format !== "text") {
+          const captured = yield* proxy.execCapture(rebuildDelegateArgs(flags), { env });
+          yield* output.success("Diff complete.", {
+            diff: captured,
+            file: null,
+            schemas: flags.schema,
+            engine,
+          });
+          return;
+        }
+        yield* proxy.exec(rebuildDelegateArgs(flags), { env });
       });
+    if (usePgAdmin) {
+      yield* delegateDiff("pgadmin");
       return;
     }
     if (usePgSchema) {
       // The delegated Go `db diff --use-pg-schema` prints the experimental
       // warning itself in its RunE (`cmd/db.go`), so don't pre-print it here —
       // doing so would double the warning. Mirror the --use-pgadmin branch above.
-      yield* proxy.exec(rebuildDelegateArgs(flags), {
-        env: { SUPABASE_TELEMETRY_DISABLED: "1" },
-      });
+      yield* delegateDiff("pg-schema");
       return;
     }
 

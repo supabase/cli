@@ -34,6 +34,7 @@ interface SetupOpts {
   readonly diffSql?: string;
   readonly targetOverride?: string;
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
+  readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -117,8 +118,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const proxyCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
+  const proxyCaptureCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> =
+    [];
   const proxy = Layer.succeed(LegacyGoProxy, {
     exec: (args, execOpts) => Effect.sync(() => void proxyCalls.push({ args, env: execOpts?.env })),
+    execCapture: (args, execOpts) =>
+      Effect.sync(() => {
+        proxyCaptureCalls.push({ args, env: execOpts?.env });
+        return opts.delegateStdout ?? "";
+      }),
   });
 
   const layer = Layer.mergeAll(
@@ -149,6 +157,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     edgeCalls,
     resolverCalls,
     proxyCalls,
+    proxyCaptureCalls,
     dockerCalls,
   };
 }
@@ -315,6 +324,38 @@ describe("legacy db diff", () => {
       // warning itself; the TS wrapper must not print a second copy.
       expect(stderr(s.out)).not.toContain("--use-pg-schema flag is experimental");
       expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema"]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--use-pgadmin in json mode wraps the captured SQL in a structured envelope", () => {
+    // Regression: the delegated child inherited stdout and returned without
+    // output.success, so machine-mode stdout carried the Go child's raw SQL
+    // instead of a JSON envelope (CLI-1546). Now the child's stdout is captured
+    // and re-emitted as the structured payload.
+    const s = setup(tmp.current, { format: "json", delegateStdout: "create table d ();\n" });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+      // stdout stays payload-only; the child's SQL was captured, not inherited.
+      expect(stdout(s.out)).toBe("");
+      expect(s.proxyCalls).toHaveLength(0);
+      expect(s.proxyCaptureCalls).toHaveLength(1);
+      const success = s.out.messages.find((m) => m.type === "success");
+      expect(success?.data).toMatchObject({
+        diff: "create table d ();\n",
+        file: null,
+        engine: "pgadmin",
+      });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--use-pg-schema in json mode wraps the captured SQL in a structured envelope", () => {
+    const s = setup(tmp.current, { format: "json", delegateStdout: "create table e ();\n" });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgSchema: Option.some(true) }));
+      expect(stdout(s.out)).toBe("");
+      expect(s.proxyCaptureCalls).toHaveLength(1);
+      const success = s.out.messages.find((m) => m.type === "success");
+      expect(success?.data).toMatchObject({ diff: "create table e ();\n", engine: "pg-schema" });
     }).pipe(Effect.provide(s.layer));
   });
 

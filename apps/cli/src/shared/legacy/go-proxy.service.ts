@@ -18,6 +18,22 @@ interface LegacyGoProxyShape {
     args: ReadonlyArray<string>,
     opts?: { readonly cwd?: string; readonly env?: Record<string, string> },
   ) => Effect.Effect<void>;
+
+  /**
+   * Like `exec`, but captures the child's stdout and returns it as a string
+   * instead of inheriting stdout. stdin and stderr are still inherited (so the
+   * child's prompts and progress/diagnostics pass straight through), and a
+   * non-zero exit still terminates the process with the same code.
+   *
+   * Used in machine-output mode (`--output-format json|stream-json`) to wrap a
+   * delegated engine's stdout in a structured payload, instead of letting the
+   * child's raw bytes land on stdout and corrupt the JSON envelope (the CLI-1546
+   * "stdout is payload-only in machine mode" invariant).
+   */
+  readonly execCapture: (
+    args: ReadonlyArray<string>,
+    opts?: { readonly cwd?: string; readonly env?: Record<string, string> },
+  ) => Effect.Effect<string>;
 }
 
 export class LegacyGoProxy extends Context.Service<LegacyGoProxy, LegacyGoProxyShape>()(

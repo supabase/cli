@@ -144,6 +144,7 @@ function setup(opts: SetupOpts = {}) {
       Effect.sync(() => {
         proxyCalls.push({ args, env: execOpts?.env });
       }),
+    execCapture: () => Effect.succeed(""),
   });
 
   const loginApi = mockLegacyLoginApi({ gotrueId: "gotrue-user" });
