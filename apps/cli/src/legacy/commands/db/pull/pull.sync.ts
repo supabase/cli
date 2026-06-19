@@ -50,9 +50,18 @@ export function legacyReconcileMigrations(
   let i = 0;
   let j = 0;
   // Matches Go's `strconv.Atoi`: digits only, no empty/whitespace/sign/float. A
-  // non-parseable version is skipped (Go's `Atoi` error → `continue`).
-  const parseVersion = (v: string): number | undefined =>
-    /^\d+$/u.test(v) ? Number(v) : undefined;
+  // non-parseable version is skipped (Go's `Atoi` error → `continue`). Go's `Atoi`
+  // also returns a range error for values above int64 max, which the scan skips
+  // the same way; reject anything above the `MAX` sentinel here so a crafted
+  // 16+-digit version can never exceed it and stall the two-pointer scan (an
+  // exhausted side is pinned at `MAX`, so a parsed value `> MAX` would never
+  // advance). Real 14-digit timestamps are far below `MAX`, so this is unreachable
+  // in normal use — it just keeps a malformed remote-history row from hanging.
+  const parseVersion = (v: string): number | undefined => {
+    if (!/^\d+$/u.test(v)) return undefined;
+    const parsed = Number(v);
+    return parsed > MAX ? undefined : parsed;
+  };
   while (i < remote.length || j < local.length) {
     let remoteTs = MAX;
     if (i < remote.length) {

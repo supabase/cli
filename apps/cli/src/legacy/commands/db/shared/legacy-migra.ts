@@ -1,5 +1,7 @@
 import { Effect, Option } from "effect";
 
+import { LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
+import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import {
   LegacyDbConnection,
   type LegacyDbConnectOptions,
@@ -188,6 +190,8 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
   readonly connectOptions: LegacyDbConnectOptions;
 }) {
   const docker = yield* LegacyDockerRun;
+  const runtimeInfo = yield* RuntimeInfo;
+  const networkIdFlag = yield* LegacyNetworkIdFlag;
   const schema =
     params.schema.length > 0
       ? params.schema
@@ -197,6 +201,17 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
   // Passing the script as a string means command-line args must be set manually
   // via `set --` so migra.sh's `"$@"` loop sees the schema list (Go's `args`).
   const args = `set -- ${schema.join(" ")};`;
+  // Go's bash fallback (`DiffSchemaMigraBash`) routes through `DockerStart`
+  // (`internal/utils/docker.go:266-271`), which appends the Linux
+  // `host.docker.internal:host-gateway` mapping and overrides host networking with
+  // `--network-id` when set. Mirror that here so the fallback reaches the database
+  // on custom-network / `host.docker.internal` setups, matching the primary path.
+  const networkId = Option.getOrUndefined(networkIdFlag);
+  const network =
+    networkId !== undefined && networkId.length > 0
+      ? { _tag: "named" as const, name: networkId }
+      : { _tag: "host" as const };
+  const extraHosts = runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
   const result = yield* docker
     .runCapture({
       image: legacyGetRegistryImageUrl(LEGACY_MIGRA_IMAGE),
@@ -205,8 +220,8 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
       binds: [],
       workingDir: Option.none(),
       securityOpt: [],
-      extraHosts: [],
-      network: { _tag: "host" },
+      extraHosts,
+      network,
     })
     .pipe(
       Effect.mapError(

@@ -53,6 +53,16 @@ describe("legacyReconcileMigrations", () => {
       kind: "in-sync",
     });
   });
+
+  it("skips an out-of-range version instead of hanging the two-pointer scan", () => {
+    // A 17-digit version exceeds Number.MAX_SAFE_INTEGER (the exhausted-side
+    // sentinel); before the range guard the scan stalled forever. Go's Atoi
+    // returns a range error and skips it the same way, so the surviving entries
+    // reconcile normally rather than looping.
+    expect(
+      legacyReconcileMigrations(["20240101000000", "99999999999999999"], ["20240101000000"]),
+    ).toEqual({ kind: "in-sync" });
+  });
 });
 
 describe("legacySuggestMigrationRepair", () => {

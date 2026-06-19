@@ -152,6 +152,26 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           }),
         );
       }
+      // Go runs `ParseDatabaseConfig` in the root PersistentPreRunE for every
+      // `db diff` (`cmd/root.go:118`), before RunE dispatches to RunExplicit
+      // (`cmd/db.go:107`). So an explicit-mode invocation still validates/loads a
+      // changed target flag: `--db-url bad` fails parsing, `--linked` resolves the
+      // linked db config (DNS/pooler), `--local` loads config. The explicit refs
+      // drive the diff, so the resolved config is discarded — this runs purely for
+      // the parity preflight (surfacing a bad/unreachable target the user passed).
+      if (Option.isSome(flags.dbUrl) || Option.isSome(flags.linked) || Option.isSome(flags.local)) {
+        const preflightConnType: LegacyDbConnType = Option.isSome(flags.dbUrl)
+          ? "db-url"
+          : Option.isSome(flags.linked)
+            ? "linked"
+            : "local";
+        yield* resolver.resolve({
+          dbUrl: flags.dbUrl,
+          connType: preflightConnType,
+          dnsResolver,
+          password: Option.none(),
+        });
+      }
       // Go resolves each ref in order (`explicit.go:21-25`); the `linked` branch
       // runs `LoadConfig(ref)` (`explicit.go:78-86`), merging the matching
       // `[remotes.<ref>]` block into the global config so a later `local` ref read

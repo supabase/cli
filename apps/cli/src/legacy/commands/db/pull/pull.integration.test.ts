@@ -14,6 +14,7 @@ import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../../tests/helpe
 import {
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
+  LegacyNetworkIdFlag,
   LegacyYesFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
@@ -184,6 +185,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(LegacyNetworkIdFlag, Option.none()),
     Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
     mockRuntimeInfo(),
     BunServices.layer,

@@ -11,7 +11,10 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
-import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDnsResolverFlag,
+  LegacyNetworkIdFlag,
+} from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -35,6 +38,7 @@ interface SetupOpts {
   readonly targetOverride?: string;
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
+  readonly networkId?: string; // --network-id value forwarded to docker runs
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -141,6 +145,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     proxy,
     mockLegacyCliConfig({ workdir, projectId: Option.some("test") }),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(
+      LegacyNetworkIdFlag,
+      opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
+    ),
     Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
     mockRuntimeInfo(),
     BunServices.layer,
@@ -448,6 +456,24 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("explicit mode still runs the target-flag preflight on a changed --db-url", () => {
+    // Go runs ParseDatabaseConfig in PreRun before RunExplicit (cmd/root.go:118),
+    // so a changed target flag is still validated/loaded even when the explicit
+    // refs drive the diff. The preflight resolves the --db-url target (connType
+    // db-url); a real bad URL would surface the resolver's parse error.
+    const s = setup(tmp.current, { diffSql: "create table p ();\n" });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(
+        flags({
+          from: Option.some("local"),
+          to: Option.some("local"),
+          dbUrl: Option.some("postgresql://x"),
+        }),
+      );
+      expect(s.resolverCalls).toContainEqual(expect.objectContaining({ connType: "db-url" }));
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("fails when --from is set without --to", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
@@ -516,6 +542,25 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags({ schema: ["public"] }));
       expect(s.dockerCalls).toHaveLength(1);
       expect(stdout(s.out)).toBe("create table fb ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("the migra OOM fallback honors --network-id over host networking", () => {
+    // Go's bash fallback routes through DockerStart, which overrides the requested
+    // host network with --network-id when set (internal/utils/docker.go:266-271).
+    const s = setup(tmp.current, {
+      oom: true,
+      diffSql: "create table fb ();\n",
+      isLocal: true,
+      networkId: "my-net",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ schema: ["public"] }));
+      expect(s.dockerCalls).toHaveLength(1);
+      expect((s.dockerCalls[0] as { network: unknown }).network).toEqual({
+        _tag: "named",
+        name: "my-net",
+      });
     }).pipe(Effect.provide(s.layer));
   });
 });
