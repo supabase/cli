@@ -141,7 +141,13 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       );
     }
 
-    const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+    // Config is read lazily per path, NOT unconditionally up front: Go loads config
+    // exactly once in PreRun and, on the linked path, only AFTER resolving the ref —
+    // so it validates the remote-merged config (`config.go` merges `[remotes.<ref>]`
+    // before `Validate`). Reading the base config here would validate fields a
+    // `[remotes.<ref>]` block overrides (db.major_version, deno_version, …) before
+    // the ref is known, failing a linked diff that Go accepts. The delegate paths
+    // forward to the Go child (which loads config itself), so they read nothing.
 
     // Explicit `--from`/`--to` mode (Go's `db.go:102-109`): both required, always
     // pg-delta. Go gates on `len(diffFrom) > 0 || len(diffTo) > 0`, so an empty
@@ -167,7 +173,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // `[remotes.<ref>]` override (`explicit.go:88-126`; the `__catalog` child
       // re-loads from SUPABASE_PROJECT_ID). Undefined until a linked ref resolves,
       // so a `migrations` ref resolved before any linked ref uses base config.
-      let cfg = toml;
+      let cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
       let mergedLinkedRef: string | undefined;
       // Go runs `ParseDatabaseConfig` in the root PersistentPreRunE for every
       // `db diff` (`cmd/root.go:118`), before RunE dispatches to RunExplicit
@@ -358,15 +364,15 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = connToUrl(resolved.conn);
 
-    // Reload config with the resolved linked ref so a matching `[remotes.<ref>]`
+    // Read config with the resolved linked ref so a matching `[remotes.<ref>]`
     // block merges before the engine/format/runtime are read — Go loads config
     // after `LoadProjectRef` on the linked path (`flags/db_url.go:87-97`). The
-    // default `db diff` target is local, which never merges a remote block, so
-    // only the explicitly-linked path passes the ref.
+    // default `db diff` target is local/db-url, which never merges a remote block,
+    // so it reads the base config here (Go's local/direct `LoadConfig`, no ref).
     const cfg =
       connType === "linked" && linkedRef !== undefined
         ? yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef)
-        : toml;
+        : yield* legacyReadDbToml(fs, path, cliConfig.workdir);
     const ctx: LegacyPgDeltaContext = {
       projectId: Option.getOrElse(cliConfig.projectId, () => ""),
       cwd: cliConfig.workdir,

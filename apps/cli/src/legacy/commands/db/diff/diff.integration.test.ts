@@ -337,6 +337,34 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("a delegated --use-pgadmin does not validate the base config first", () => {
+    // The delegate forwards the whole command to the Go child, which loads config
+    // itself (with the linked ref). So the TS path must NOT read/validate the base
+    // config up front — otherwise a project that's only valid after a [remotes.<ref>]
+    // merge (here: base db.major_version=16 is invalid) fails before delegating,
+    // even though Go validates the remote-merged config and succeeds.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 16\n");
+    const s = setup(tmp.current, { isLocal: false, linkedRef: "abcdefghijklmnopqrst" });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true), linked: Option.some(true) }));
+      expect(s.proxyCalls).toHaveLength(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("a native local diff still validates the base config", () => {
+    // Control for the delegate case: the local/db-url native path reads the base
+    // config (Go's local LoadConfig, no remote merge), so an invalid base value
+    // (db.major_version=16) must still fail — matching Go.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 16\n");
+    const s = setup(tmp.current, { diffSql: "create table x ();\n" });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDiff(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("re-quotes a comma-containing schema when delegating the diff", () => {
     // flags.schema holds the single parsed value `tenant,one`; forwarding it raw
     // would let the Go child's pflag StringSlice CSV-split it into two schemas, so
