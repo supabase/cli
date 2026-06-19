@@ -164,13 +164,16 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const proxyCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
-  const proxyCaptureCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> =
-    [];
+  const proxyCaptureCalls: Array<{
+    args: ReadonlyArray<string>;
+    env?: Record<string, string>;
+    stdin?: "inherit" | "ignore";
+  }> = [];
   const proxy = Layer.succeed(LegacyGoProxy, {
     exec: (args, execOpts) => Effect.sync(() => void proxyCalls.push({ args, env: execOpts?.env })),
     execCapture: (args, execOpts) =>
       Effect.sync(() => {
-        proxyCaptureCalls.push({ args, env: execOpts?.env });
+        proxyCaptureCalls.push({ args, env: execOpts?.env, stdin: execOpts?.stdin });
         return opts.delegateStdout ?? "";
       }),
   });
@@ -383,11 +386,15 @@ describe("legacy db pull", () => {
       yield* legacyDbPull(flags());
       expect(s.proxyCalls).toHaveLength(0);
       expect(s.proxyCaptureCalls).toHaveLength(1);
+      // The delegated child runs with a non-TTY stdin so its history-update prompt
+      // takes Go's default (true) without blocking the JSON caller; the child then
+      // updates the history, so the envelope reports remoteHistoryUpdated: true.
+      expect(s.proxyCaptureCalls[0]?.stdin).toBe("ignore");
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({
         declarative: false,
         schemaWritten: null,
-        remoteHistoryUpdated: false,
+        remoteHistoryUpdated: true,
         engine: "migra",
       });
     }).pipe(Effect.provide(s.layer));

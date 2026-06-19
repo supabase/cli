@@ -178,6 +178,14 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // and the trailing `pgDeltaFormatOptions()` see the override. Thread the
       // merged config through the two resolutions to reproduce that cascade.
       let cfg = toml;
+      // Tracks a linked ref resolved earlier in the from→to cascade so a later
+      // `migrations` catalog export merges the same `[remotes.<ref>]` override Go's
+      // sequential `LoadConfig` leaves in the global config (`explicit.go:78-86` →
+      // `config_path.go:10-12`; the `__catalog` child re-runs that load from
+      // SUPABASE_PROJECT_ID). Stays undefined until a linked ref resolves, so a
+      // `migrations` ref resolved BEFORE any linked ref (e.g. `--from migrations
+      // --to linked`) still uses base config — matching Go's resolution order.
+      let mergedLinkedRef: string | undefined;
       const resolveRef = (ref: string) =>
         Effect.gen(function* () {
           switch (legacyClassifyExplicitRef(ref)) {
@@ -199,12 +207,21 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               const ref2 = Option.getOrUndefined(resolved.ref ?? Option.none());
               if (ref2 !== undefined) {
                 linkedRefForCache = ref2;
+                mergedLinkedRef = ref2;
                 cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref2);
               }
               return connToUrl(resolved.conn);
             }
             case "migrations":
-              return yield* seam.exportCatalog({ mode: "migrations", noCache: false });
+              return yield* seam.exportCatalog({
+                mode: "migrations",
+                noCache: false,
+                // Pass the linked ref only if one resolved earlier in the cascade,
+                // so the `__catalog` child merges the same remote override Go's
+                // in-process migrations catalog sees (`explicit.go:88-126`). Absent
+                // otherwise → base config, matching Go's resolution order.
+                ...(mergedLinkedRef !== undefined ? { projectRef: mergedLinkedRef } : {}),
+              });
             case "url":
               return ref;
             default:

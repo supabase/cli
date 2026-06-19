@@ -54,9 +54,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   }> = [];
   const removedContainers: string[] = [];
   const exportCalls: string[] = [];
+  const exportCatalogCalls: Array<{ mode: string; projectRef?: string }> = [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
-    exportCatalog: ({ mode }) => {
+    exportCatalog: ({ mode, projectRef }) => {
       exportCalls.push(mode);
+      exportCatalogCalls.push({ mode, projectRef });
       return Effect.succeed("supabase/.temp/pgdelta/migrations.json");
     },
     execInherit: () => Effect.succeed(0),
@@ -167,6 +169,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     provisionCalls,
     removedContainers,
     exportCalls,
+    exportCatalogCalls,
     edgeCalls,
     resolverCalls,
     proxyCalls,
@@ -463,6 +466,39 @@ describe("legacy db diff", () => {
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("local") }));
       expect(s.exportCalls).toEqual(["migrations"]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "explicit --from linked --to migrations exports the catalog with the linked ref",
+    () => {
+      // Go resolves linked first (LoadConfig merges [remotes.<ref>]), so the later
+      // migrations catalog is built from the remote-merged config (explicit.go).
+      const s = setup(tmp.current, {
+        isLocal: false,
+        linkedRef: "abcdefghijklmnopqrst",
+        diffSql: "create table m ();\n",
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(flags({ from: Option.some("linked"), to: Option.some("migrations") }));
+        const migrations = s.exportCatalogCalls.find((c) => c.mode === "migrations");
+        expect(migrations?.projectRef).toBe("abcdefghijklmnopqrst");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("explicit --from migrations --to linked exports the catalog with base config", () => {
+    // Migrations is resolved BEFORE linked here, so Go's LoadConfig(ref) hasn't run
+    // yet — the catalog must use base config (no ref forwarded), matching order.
+    const s = setup(tmp.current, {
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      diffSql: "create table m ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("linked") }));
+      const migrations = s.exportCatalogCalls.find((c) => c.mode === "migrations");
+      expect(migrations?.projectRef).toBeUndefined();
     }).pipe(Effect.provide(s.layer));
   });
 

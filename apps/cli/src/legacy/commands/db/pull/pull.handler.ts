@@ -264,17 +264,23 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     // machine-output mode the child's stdout is captured and a structured envelope
     // is emitted instead, so scripted callers get valid JSON rather than the Go
     // child's human output on stdout (CLI-1546: stdout is payload-only in machine
-    // mode). The delegated child owns the migration write and history prompt, so
-    // schemaWritten/remoteHistoryUpdated aren't introspectable here.
+    // mode). The child is run with a non-TTY stdin (`"ignore"`) so its
+    // "Update remote migration history table?" prompt (Go's `PromptYesNo`,
+    // `internal/db/pull/pull.go:73`) takes its `true` default without blocking the
+    // JSON caller on interactive input — matching the native machine-mode path,
+    // which also takes the default and updates the history. The child therefore
+    // updates `schema_migrations`, so `remoteHistoryUpdated` is `true`;
+    // `schemaWritten` stays `null` because the child owns the timestamped path and
+    // doesn't surface it on stdout.
     const delegatePull = (engine: "migra" | "pg-delta") =>
       Effect.gen(function* () {
         const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
         if (output.format !== "text") {
-          yield* proxy.execCapture(rebuildDelegateArgs(flags), { env });
+          yield* proxy.execCapture(rebuildDelegateArgs(flags), { env, stdin: "ignore" });
           yield* output.success("Schema pulled.", {
             declarative: false,
             schemaWritten: null,
-            remoteHistoryUpdated: false,
+            remoteHistoryUpdated: true,
             engine,
           });
           return;

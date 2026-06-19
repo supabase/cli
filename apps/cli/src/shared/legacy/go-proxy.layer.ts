@@ -229,14 +229,17 @@ export function makeGoProxyLayer(opts?: {
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
               const env =
                 opts?.env || execOpts?.env ? { ...opts?.env, ...execOpts?.env } : undefined;
-              // Capture stdout (pipe) while keeping stdin/stderr inherited, so the
-              // child's prompts and progress still reach the user but its stdout is
-              // collected for wrapping rather than written to our stdout.
+              // Capture stdout (pipe) while keeping stderr inherited, so the child's
+              // progress still reaches the user but its stdout is collected for
+              // wrapping rather than written to our stdout. stdin defaults to
+              // inherited (interactive); callers pass `"ignore"` to give the child a
+              // non-TTY stdin so it can't block on a prompt before the wrapper emits
+              // its machine-output envelope.
               const command = ChildProcess.make(binary, [...globalArgs, ...args], {
                 cwd: execOpts?.cwd ?? opts?.cwd,
                 env,
                 extendEnv: true,
-                stdin: "inherit",
+                stdin: execOpts?.stdin ?? "inherit",
                 stdout: "pipe",
                 stderr: "inherit",
                 detached: false,

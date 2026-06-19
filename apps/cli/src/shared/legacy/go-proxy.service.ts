@@ -21,9 +21,15 @@ interface LegacyGoProxyShape {
 
   /**
    * Like `exec`, but captures the child's stdout and returns it as a string
-   * instead of inheriting stdout. stdin and stderr are still inherited (so the
-   * child's prompts and progress/diagnostics pass straight through), and a
-   * non-zero exit still terminates the process with the same code.
+   * instead of inheriting stdout. stderr is still inherited (so progress /
+   * diagnostics pass straight through), and a non-zero exit still terminates the
+   * process with the same code.
+   *
+   * `opts.stdin` controls the child's stdin: `"inherit"` (default) keeps the
+   * child interactive (its prompts reach the terminal); `"ignore"` gives it a
+   * non-TTY stdin so prompts (Go's `PromptYesNo`) take their default instead of
+   * blocking — required when a machine-output caller delegates a command that
+   * would otherwise prompt before the JSON envelope is emitted.
    *
    * Used in machine-output mode (`--output-format json|stream-json`) to wrap a
    * delegated engine's stdout in a structured payload, instead of letting the
@@ -32,7 +38,11 @@ interface LegacyGoProxyShape {
    */
   readonly execCapture: (
     args: ReadonlyArray<string>,
-    opts?: { readonly cwd?: string; readonly env?: Record<string, string> },
+    opts?: {
+      readonly cwd?: string;
+      readonly env?: Record<string, string>;
+      readonly stdin?: "inherit" | "ignore";
+    },
   ) => Effect.Effect<string>;
 }
 
