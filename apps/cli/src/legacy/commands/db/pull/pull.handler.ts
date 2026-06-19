@@ -172,7 +172,17 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = connToUrl(resolved.conn);
 
-    const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+    // Reload config with the resolved linked ref so a matching `[remotes.<ref>]`
+    // block merges before the engine/format/runtime/declarative paths are read —
+    // Go loads config after `LoadProjectRef` on the linked path
+    // (`internal/utils/flags/db_url.go:87-97`). `--local`/`--db-url` never merge a
+    // remote block, so only the linked path passes the ref.
+    const toml = yield* legacyReadDbToml(
+      fs,
+      path,
+      cliConfig.workdir,
+      connType === "linked" ? linkedRef : undefined,
+    );
     const ctx: LegacyPgDeltaContext = {
       projectId: Option.getOrElse(cliConfig.projectId, () => ""),
       cwd: cliConfig.workdir,

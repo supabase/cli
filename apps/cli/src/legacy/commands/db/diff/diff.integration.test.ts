@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -211,6 +211,63 @@ describe("legacy db diff", () => {
       expect(s.provisionCalls).toEqual([{ mode: "diff", targetLocal: true, usePgDelta: true }]);
       expect(stderr(s.out)).toContain("Diffing schemas: public");
       expect(stdout(s.out)).toBe("create table p ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("a linked [remotes.<ref>] block enabling pg-delta selects the pg-delta engine", () => {
+    // Go loads the project ref before LoadConfig on the linked path, merging the
+    // matching [remotes.<ref>] block before experimental.pgdelta.enabled is read
+    // (flags/db_url.go:87-97). The default db diff target is local (no merge), so
+    // this only applies with --linked; base config disables pg-delta, the remote
+    // override enables it, so the diff must pick the pg-delta engine.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[experimental.pgdelta]",
+        "enabled = false",
+        "",
+        "[remotes.staging]",
+        'project_id = "abcdefghijklmnopqrst"',
+        "",
+        "[remotes.staging.experimental.pgdelta]",
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    const s = setup(tmp.current, {
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      diffSql: "alter table x;\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ linked: Option.some(true) }));
+      expect(s.provisionCalls[0]?.usePgDelta).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("the base config (default local target) does not merge a remote block", () => {
+    // The default db diff target is local; Go never calls LoadProjectRef for local,
+    // so a [remotes.<ref>] override must be ignored and the base engine (migra) wins.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[experimental.pgdelta]",
+        "enabled = false",
+        "",
+        "[remotes.staging]",
+        'project_id = "abcdefghijklmnopqrst"',
+        "",
+        "[remotes.staging.experimental.pgdelta]",
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    const s = setup(tmp.current, { diffSql: "create table players ();\n" });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags());
+      expect(s.provisionCalls[0]?.usePgDelta).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 

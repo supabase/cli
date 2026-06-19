@@ -45,6 +45,7 @@ interface SetupOpts {
   readonly experimental?: boolean;
   readonly shadowTargetOverride?: string;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
+  readonly resolvedRef?: string;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -116,7 +117,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           database: "postgres",
         },
         isLocal: connType === "local",
-        ref: Option.none(),
+        ref: opts.resolvedRef !== undefined ? Option.some(opts.resolvedRef) : Option.none(),
       }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
@@ -435,6 +436,39 @@ describe("legacy db pull", () => {
       expect(s.historyUpserts.length).toBe(1);
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ remoteHistoryUpdated: true });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("a linked [remotes.<ref>] block enabling pg-delta selects the pg-delta engine", () => {
+    // Go loads the project ref before LoadConfig on the linked path, merging the
+    // matching [remotes.<ref>] block before experimental.pgdelta.enabled is read
+    // (flags/db_url.go:87-97). Base config disables pg-delta; the remote override
+    // enables it, so the migration-style pull must pick the pg-delta engine.
+    seedMigration(tmp.current, "20240101000000");
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[experimental.pgdelta]",
+        "enabled = false",
+        "",
+        "[remotes.staging]",
+        'project_id = "abcdefghijklmnopqrst"',
+        "",
+        "[remotes.staging.experimental.pgdelta]",
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "create table remote ();\n",
+      yes: true,
+      resolvedRef: "abcdefghijklmnopqrst",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ linked: Option.some(true) }));
+      expect(s.provisionCalls[0]?.usePgDelta).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 

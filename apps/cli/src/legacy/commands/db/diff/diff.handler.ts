@@ -110,43 +110,6 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
   // (GET /v1/projects/{ref}) — Go's `ensureProjectGroupsCached` (cmd/root.go:214).
   let linkedRefForCache: string | undefined;
 
-  /** Resolves an explicit `--from`/`--to` ref to a pg-delta SOURCE/TARGET ref. */
-  const resolveExplicitRef = (
-    ref: string,
-    toml: { readonly port: number; readonly password: string },
-  ) =>
-    Effect.gen(function* () {
-      switch (legacyClassifyExplicitRef(ref)) {
-        case "local":
-          return legacyToPostgresURL({
-            host: legacyGetHostname(),
-            port: toml.port,
-            user: "postgres",
-            password: toml.password,
-            database: "postgres",
-          });
-        case "linked": {
-          const resolved = yield* resolver.resolve({
-            dbUrl: Option.none(),
-            connType: "linked",
-            dnsResolver,
-            password: Option.none(),
-          });
-          const ref2 = Option.getOrUndefined(resolved.ref ?? Option.none());
-          if (ref2 !== undefined) linkedRefForCache = ref2;
-          return connToUrl(resolved.conn);
-        }
-        case "migrations":
-          return yield* seam.exportCatalog({ mode: "migrations", noCache: false });
-        case "url":
-          return ref;
-        default:
-          return yield* Effect.fail(
-            new LegacyDbDiffUnknownTargetError({ message: legacyUnknownTargetMessage(ref) }),
-          );
-      }
-    });
-
   yield* Effect.gen(function* () {
     // cobra `MarkFlagsMutuallyExclusive` runs before RunE. The engine group
     // (`use-migra use-pgadmin use-pg-schema use-pg-delta`) and the target group
@@ -176,13 +139,6 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     }
 
     const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-    const ctx: LegacyPgDeltaContext = {
-      projectId: Option.getOrElse(cliConfig.projectId, () => ""),
-      cwd: cliConfig.workdir,
-      npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
-      denoVersion: toml.denoVersion,
-    };
-    const formatOptions = Option.getOrElse(toml.pgDelta.formatOptions, () => "");
 
     // Explicit `--from`/`--to` mode (Go's `db.go:102-109`): both required, always
     // pg-delta. Runs before engine resolution and the shadow path.
@@ -196,19 +152,60 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           }),
         );
       }
-      const sourceRef = yield* resolveExplicitRef(
-        Option.getOrElse(flags.from, () => ""),
-        toml,
-      );
-      const targetRef = yield* resolveExplicitRef(
-        Option.getOrElse(flags.to, () => ""),
-        toml,
-      );
-      const result = yield* legacyDiffPgDelta(ctx, {
+      // Go resolves each ref in order (`explicit.go:21-25`); the `linked` branch
+      // runs `LoadConfig(ref)` (`explicit.go:78-86`), merging the matching
+      // `[remotes.<ref>]` block into the global config so a later `local` ref read
+      // and the trailing `pgDeltaFormatOptions()` see the override. Thread the
+      // merged config through the two resolutions to reproduce that cascade.
+      let cfg = toml;
+      const resolveRef = (ref: string) =>
+        Effect.gen(function* () {
+          switch (legacyClassifyExplicitRef(ref)) {
+            case "local":
+              return legacyToPostgresURL({
+                host: legacyGetHostname(),
+                port: cfg.port,
+                user: "postgres",
+                password: cfg.password,
+                database: "postgres",
+              });
+            case "linked": {
+              const resolved = yield* resolver.resolve({
+                dbUrl: Option.none(),
+                connType: "linked",
+                dnsResolver,
+                password: Option.none(),
+              });
+              const ref2 = Option.getOrUndefined(resolved.ref ?? Option.none());
+              if (ref2 !== undefined) {
+                linkedRefForCache = ref2;
+                cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref2);
+              }
+              return connToUrl(resolved.conn);
+            }
+            case "migrations":
+              return yield* seam.exportCatalog({ mode: "migrations", noCache: false });
+            case "url":
+              return ref;
+            default:
+              return yield* Effect.fail(
+                new LegacyDbDiffUnknownTargetError({ message: legacyUnknownTargetMessage(ref) }),
+              );
+          }
+        });
+      const sourceRef = yield* resolveRef(Option.getOrElse(flags.from, () => ""));
+      const targetRef = yield* resolveRef(Option.getOrElse(flags.to, () => ""));
+      const explicitCtx: LegacyPgDeltaContext = {
+        projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+        cwd: cliConfig.workdir,
+        npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
+        denoVersion: cfg.denoVersion,
+      };
+      const result = yield* legacyDiffPgDelta(explicitCtx, {
         sourceRef,
         targetRef,
         schema: flags.schema,
-        formatOptions,
+        formatOptions: Option.getOrElse(cfg.pgDelta.formatOptions, () => ""),
       });
       // Explicit-mode output: `--output` file (Go's `writeOutput`) or stdout
       // (Go's `fmt.Print`, no trailing newline — pg-delta ends each statement `;\n`).
@@ -249,24 +246,13 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       return;
     }
 
-    // Engine resolution (Go's `db.go:110`): the pg-delta env/config/flag gate.
+    // pgAdmin / pg-schema delegate to the bundled Go binary (Go's `RunPgAdmin` /
+    // `DiffPgSchema` are not ported). They are explicit engine selections that do
+    // not depend on config, so they short-circuit before the target resolve.
+    // Disable the child's telemetry so the single `cli_command_executed` event
+    // comes from this TS command's instrumentation.
     const usePgAdmin = Option.getOrElse(flags.usePgAdmin, () => false);
     const usePgSchema = Option.getOrElse(flags.usePgSchema, () => false);
-    const pgDeltaDefault = legacyShouldUsePgDelta({
-      configEnabled: toml.pgDelta.enabled,
-      usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
-      envEnabled: legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
-    });
-    const useDelta = legacyResolveDiffEngine({
-      useMigraChanged: Option.isSome(flags.useMigra),
-      usePgAdmin,
-      usePgSchema,
-      pgDeltaDefault,
-    });
-
-    // pgAdmin / pg-schema delegate to the bundled Go binary (Go's `RunPgAdmin` /
-    // `DiffPgSchema` are not ported). Disable the child's telemetry so the single
-    // `cli_command_executed` event comes from this TS command's instrumentation.
     if (usePgAdmin) {
       yield* proxy.exec(rebuildDelegateArgs(flags), {
         env: { SUPABASE_TELEMETRY_DISABLED: "1" },
@@ -298,6 +284,37 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     const linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = connToUrl(resolved.conn);
+
+    // Reload config with the resolved linked ref so a matching `[remotes.<ref>]`
+    // block merges before the engine/format/runtime are read — Go loads config
+    // after `LoadProjectRef` on the linked path (`flags/db_url.go:87-97`). The
+    // default `db diff` target is local, which never merges a remote block, so
+    // only the explicitly-linked path passes the ref.
+    const cfg =
+      connType === "linked" && linkedRef !== undefined
+        ? yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef)
+        : toml;
+    const ctx: LegacyPgDeltaContext = {
+      projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+      cwd: cliConfig.workdir,
+      npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
+      denoVersion: cfg.denoVersion,
+    };
+    const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
+
+    // Engine resolution (Go's `db.go:110`): the pg-delta env/config/flag gate,
+    // read from the (possibly remote-merged) config.
+    const pgDeltaDefault = legacyShouldUsePgDelta({
+      configEnabled: cfg.pgDelta.enabled,
+      usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
+      envEnabled: legacyParseBoolEnv(cfg.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
+    });
+    const useDelta = legacyResolveDiffEngine({
+      useMigraChanged: Option.isSome(flags.useMigra),
+      usePgAdmin,
+      usePgSchema,
+      pgDeltaDefault,
+    });
 
     yield* output.raw("Creating shadow database...\n", "stderr");
     const shadow = yield* seam.provisionShadow({
