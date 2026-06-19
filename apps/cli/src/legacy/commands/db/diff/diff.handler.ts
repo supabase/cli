@@ -165,15 +165,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           }),
         );
       }
-      // `cfg` is the config the explicit refs + format options read from. It starts
-      // at the base TOML and is re-merged whenever a linked ref is resolved — first
-      // in the preflight below (a changed top-level `--linked`), then in the from→to
-      // cascade (an explicit `linked` ref). `mergedLinkedRef` tracks the linked ref
-      // resolved so far so a later `migrations` catalog export merges the same
-      // `[remotes.<ref>]` override (`explicit.go:88-126`; the `__catalog` child
-      // re-loads from SUPABASE_PROJECT_ID). Undefined until a linked ref resolves,
-      // so a `migrations` ref resolved before any linked ref uses base config.
-      let cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      // `mergedLinkedRef` tracks the linked ref resolved so far (preflight or
+      // cascade) so the config read below + a later `migrations` catalog export
+      // merge the matching `[remotes.<ref>]` override. Undefined until a linked ref
+      // resolves, so a `migrations` ref resolved before any linked ref uses base.
       let mergedLinkedRef: string | undefined;
       // Go runs `ParseDatabaseConfig` in the root PersistentPreRunE for every
       // `db diff` (`cmd/root.go:118`), before RunE dispatches to RunExplicit
@@ -195,18 +190,21 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           dnsResolver,
           password: Option.none(),
         });
-        // Seed the merged config from a changed `--linked` preflight (stateful in
-        // Go), so explicit `local`/`migrations` refs use the linked overrides even
-        // when neither explicit ref is itself `linked`.
         if (preflightConnType === "linked") {
           const preflightRef = Option.getOrUndefined(preflight.ref ?? Option.none());
           if (preflightRef !== undefined) {
             linkedRefForCache = preflightRef;
             mergedLinkedRef = preflightRef;
-            cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, preflightRef);
           }
         }
       }
+      // Read config once, AFTER the preflight: the `[remotes.<ref>]`-merged config
+      // when a changed `--linked` resolved a ref (so base config isn't validated
+      // before the merge, matching Go's stateful pre-run), else the base config.
+      let cfg =
+        mergedLinkedRef !== undefined
+          ? yield* legacyReadDbToml(fs, path, cliConfig.workdir, mergedLinkedRef)
+          : yield* legacyReadDbToml(fs, path, cliConfig.workdir);
       // Go resolves each ref in order (`explicit.go:21-25`); the `linked` branch
       // runs `LoadConfig(ref)` (`explicit.go:78-86`), re-merging the matching
       // `[remotes.<ref>]` block so a later `local` ref read and the trailing

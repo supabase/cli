@@ -566,6 +566,43 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("explicit --from local --to migrations --linked validates the merged config", () => {
+    // The explicit base config read is deferred until after the linked preflight, so
+    // a base config that's only valid after the [remotes.<ref>] merge (base
+    // major_version=16, override=15) does not fail before the ref is resolved —
+    // matching Go's stateful pre-run (LoadConfig after LoadProjectRef on --linked).
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[db]",
+        "major_version = 16",
+        "",
+        "[remotes.staging]",
+        'project_id = "abcdefghijklmnopqrst"',
+        "",
+        "[remotes.staging.db]",
+        "major_version = 15",
+        "",
+      ].join("\n"),
+    );
+    const s = setup(tmp.current, {
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      diffSql: "create table m ();\n",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDiff(
+        flags({
+          from: Option.some("local"),
+          to: Option.some("migrations"),
+          linked: Option.some(true),
+        }),
+      ).pipe(Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("empty --from/--to (shell vars) fall through to the normal diff", () => {
     // Go gates explicit mode on len(diffFrom)>0 || len(diffTo)>0; `--from "" --to ""`
     // is unset and runs the normal local diff, not an unknown-target error.

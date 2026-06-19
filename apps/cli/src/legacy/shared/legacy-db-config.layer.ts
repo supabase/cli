@@ -332,7 +332,10 @@ export const legacyDbConfigLayer = Layer.effect(
       LegacyPlatformApiFactory
     > =>
       Effect.gen(function* () {
-        const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+        // Linked-path read: merge the `[remotes.<ref>]` override (Go's pooler
+        // resolution runs after LoadConfig(ref) already merged), so this matches the
+        // ref-aware read on the main linked branch rather than validating base config.
+        const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref);
         let connectionString = Option.getOrUndefined(tomlValues.poolerConnectionString);
         if (connectionString === undefined) {
           if (!fetchFromApi) return Option.none();
@@ -406,7 +409,12 @@ export const legacyDbConfigLayer = Layer.effect(
 
     const resolve = (flags: LegacyDbConfigFlags) =>
       Effect.gen(function* () {
-        const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+        // Config is read per branch, NOT unconditionally up front: the linked branch
+        // resolves the ref first and reads the `[remotes.<ref>]`-merged config (below).
+        // A base read here would validate base config (db.major_version, deno_version,
+        // …) before the ref is known, failing a linked run Go accepts (Go validates
+        // the merged config after LoadProjectRef). Only `--db-url`/`--local` read base
+        // config — Go's direct/local `LoadConfig`, which never merges a remote block.
         // Go's `utils.Config.Hostname` (`GetHostname()`): honors
         // `SUPABASE_SERVICES_HOSTNAME` / a tcp `DOCKER_HOST` in dev-container or
         // remote-Docker setups, defaulting to 127.0.0.1.
@@ -414,6 +422,7 @@ export const legacyDbConfigLayer = Layer.effect(
 
         // --db-url (direct) takes precedence.
         if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {
+          const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
           // Go's direct path runs `LoadConfig` before `pgconn.ParseConfig`
           // (`internal/utils/flags/db_url.go:59-68`), so the project `.env*` files
           // populate the environment that the libpq `PG*` fallbacks read. Layer the
@@ -502,6 +511,7 @@ export const legacyDbConfigLayer = Layer.effect(
         }
 
         // --local (default).
+        const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
         return {
           conn: {
             host: localHost,
