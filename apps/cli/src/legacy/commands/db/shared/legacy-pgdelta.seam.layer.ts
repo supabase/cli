@@ -65,6 +65,15 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               // same custom network as the pg-delta containers (LegacyGoProxy forwards
               // it the same way).
               ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
+              // Linked path (e.g. `generate --linked`, `db diff --from linked --to
+              // migrations`): pass the resolved ref as a flag so the catalog merges
+              // the matching `[remotes.<ref>]` override. It MUST be a flag, not
+              // SUPABASE_PROJECT_ID env: the `__catalog` command's group pre-run
+              // calls `flags.LoadConfig` directly without `LoadProjectRef`, so the
+              // env (read only by LoadProjectRef) never reaches the merge — the Go
+              // command seeds `flags.ProjectRef` from `--project-ref` before
+              // LoadConfig instead (mirrors `db __shadow`).
+              ...(projectRef !== undefined ? ["--project-ref", projectRef] : []),
               ...profileArgs,
             ];
             const command = ChildProcess.make(resolved.found, args, {
@@ -75,16 +84,9 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               extendEnv: true,
               // Disable the child's telemetry so the hidden `__catalog` seam
               // doesn't emit its own `cli_command_executed` on top of the user's
-              // TS command (matching the explicit LegacyGoProxy delegates). For
-              // `generate --linked`, also pass the resolved ref as
-              // SUPABASE_PROJECT_ID so the Go config load merges the
-              // `[remotes.<ref>]` override into the platform baseline (viper
-              // AutomaticEnv binds it to `project_id`; `config.go:492-516`).
+              // TS command (matching the explicit LegacyGoProxy delegates).
               // `extendEnv` keeps the rest of the environment.
-              env: {
-                SUPABASE_TELEMETRY_DISABLED: "1",
-                ...(projectRef !== undefined ? { SUPABASE_PROJECT_ID: projectRef } : {}),
-              },
+              env: { SUPABASE_TELEMETRY_DISABLED: "1" },
               detached: false,
             });
             const handle = yield* spawner.spawn(command).pipe(

@@ -47,6 +47,14 @@ var (
 		Use:   "declarative",
 		Short: "Manage declarative database schemas",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// The hidden __catalog seam forwards the resolved linked ref via
+			// --project-ref so the catalog is built from the remote-merged config.
+			// Seed flags.ProjectRef before LoadConfig (which keys the [remotes.<ref>]
+			// merge off Config.ProjectId = flags.ProjectRef); this command never runs
+			// LoadProjectRef, so SUPABASE_PROJECT_ID env alone would not merge.
+			if len(pgdeltaCatalogProjectRef) > 0 {
+				flags.ProjectRef = pgdeltaCatalogProjectRef
+			}
 			if err := flags.LoadConfig(afero.NewOsFs()); err != nil {
 				return err
 			}
