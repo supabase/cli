@@ -274,6 +274,8 @@ func initRealtimeJob(host, jwks string) utils.DockerJob {
 			"DB_PORT=5432",
 			"DB_USER=" + utils.SUPERUSER_ROLE,
 			"DB_PASSWORD=" + utils.Config.Db.Password,
+			"DB_USER_REALTIME=supabase_realtime_admin",
+			"DB_PASS_REALTIME=" + utils.Config.Db.Password,
 			"DB_NAME=postgres",
 			"DB_AFTER_CONNECT_QUERY=SET search_path TO _realtime",
 			"DB_ENC_KEY=" + utils.Config.Realtime.EncryptionKey,

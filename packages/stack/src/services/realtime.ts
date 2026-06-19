@@ -48,6 +48,8 @@ export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceD
       DB_PORT: String(opts.dbPort),
       DB_USER: "postgres",
       DB_PASSWORD: "postgres",
+      DB_USER_REALTIME: "supabase_realtime_admin",
+      DB_PASS_REALTIME: "postgres",
       DB_NAME: "postgres",
       DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
       DB_ENC_KEY: opts.encryptionKey,

@@ -114,7 +114,7 @@ EOSQL
 ${psql} -U supabase_admin -d postgres -c "
 DO \\$\\$
 DECLARE
-  roles text[] := ARRAY['authenticator','supabase_auth_admin','supabase_storage_admin','supabase_functions_admin','supabase_replication_admin','supabase_read_only_user','postgres'];
+  roles text[] := ARRAY['authenticator','supabase_auth_admin','supabase_storage_admin','supabase_functions_admin','supabase_replication_admin','supabase_read_only_user','supabase_realtime_admin','postgres'];
   r text;
 BEGIN
   FOREACH r IN ARRAY roles LOOP
