@@ -338,9 +338,13 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             // declarative branch redirected the target to a second shadow db).
             // The URLs arrive WITHOUT a password — the Go seam prints them via
             // ToPostgresURLWithoutPassword so it never logs a credential to stdout
-            // (CWE-312). The shadow always uses the local Postgres password, so we
-            // re-inject the password resolved from config.toml (the same value Go
-            // used) before handing the URLs to the differ / sql-pg connection.
+            // (CWE-312). The shadow uses the local Postgres password, so we re-inject
+            // the password resolved from config.toml before handing the URLs to the
+            // differ / sql-pg connection. On the linked path the child built the
+            // shadow from the remote-merged config (via --project-ref), so re-read
+            // with the same ref to pick up a `[remotes.<ref>].db.password` override —
+            // otherwise the injected password wouldn't match the shadow's and the
+            // connection would fail auth. Absent (local/db-url) → base config.
             const lines = new TextDecoder().decode(bytes).split(/\r?\n/u);
             const container = (lines[0] ?? "").trim();
             const sourceUrl = (lines[1] ?? "").trim();
@@ -348,7 +352,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             if (container.length === 0 || sourceUrl.length === 0) {
               return yield* Effect.fail(failure());
             }
-            const password = yield* legacyReadDbToml(fs, path, cliConfig.workdir).pipe(
+            const password = yield* legacyReadDbToml(fs, path, cliConfig.workdir, projectRef).pipe(
               Effect.map((toml) => toml.password),
               Effect.mapError(
                 () =>

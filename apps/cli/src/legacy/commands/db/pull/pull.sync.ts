@@ -45,22 +45,25 @@ export function legacyReconcileMigrations(
   remote: ReadonlyArray<string>,
   local: ReadonlyArray<string>,
 ): LegacyMigrationSync {
-  const MAX = Number.MAX_SAFE_INTEGER;
+  // Go's `math.MaxInt` on a 64-bit build == math.MaxInt64; the exhausted side pins
+  // here. Use BigInt so the full int64 range compares EXACTLY — `Number` loses
+  // precision above `Number.MAX_SAFE_INTEGER` (e.g. `Number("9999999999999999")`
+  // rounds to 1e16), which would mis-order versions Go accepts.
+  const MAX = 9223372036854775807n;
   const extraRemote: Array<string> = [];
   const extraLocal: Array<string> = [];
   let i = 0;
   let j = 0;
   // Matches Go's `strconv.Atoi`: digits only, no empty/whitespace/sign/float. A
-  // non-parseable version is skipped (Go's `Atoi` error → `continue`). Go's `Atoi`
-  // also returns a range error for values above int64 max, which the scan skips
-  // the same way; reject anything above the `MAX` sentinel here so a crafted
-  // 16+-digit version can never exceed it and stall the two-pointer scan (an
-  // exhausted side is pinned at `MAX`, so a parsed value `> MAX` would never
-  // advance). Real 14-digit timestamps are far below `MAX`, so this is unreachable
-  // in normal use — it just keeps a malformed remote-history row from hanging.
-  const parseVersion = (v: string): number | undefined => {
+  // non-parseable version is skipped (Go's `Atoi` error → `continue`). On 64-bit
+  // builds `Atoi` parses the full int64 range and returns a range error ONLY for
+  // values above int64 max; reject only those (so e.g. `9999999999999999`, which Go
+  // accepts and surfaces as a conflict, is NOT skipped) while still rejecting
+  // 19+-digit values above the sentinel so they can never exceed the exhausted-side
+  // pin and stall the two-pointer scan.
+  const parseVersion = (v: string): bigint | undefined => {
     if (!/^\d+$/u.test(v)) return undefined;
-    const parsed = Number(v);
+    const parsed = BigInt(v);
     return parsed > MAX ? undefined : parsed;
   };
   while (i < remote.length || j < local.length) {

@@ -515,6 +515,51 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("explicit --from local --to migrations --linked seeds the merged config", () => {
+    // Go's root ParseDatabaseConfig runs LoadProjectRef+LoadConfig for a changed
+    // --linked before RunExplicit, leaving the config remote-merged — so the
+    // migrations catalog (and local refs/format options) use the linked override
+    // even though neither explicit ref is itself `linked`.
+    const s = setup(tmp.current, {
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      diffSql: "create table m ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(
+        flags({
+          from: Option.some("local"),
+          to: Option.some("migrations"),
+          linked: Option.some(true),
+        }),
+      );
+      const migrations = s.exportCatalogCalls.find((c) => c.mode === "migrations");
+      expect(migrations?.projectRef).toBe("abcdefghijklmnopqrst");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("empty --from/--to (shell vars) fall through to the normal diff", () => {
+    // Go gates explicit mode on len(diffFrom)>0 || len(diffTo)>0; `--from "" --to ""`
+    // is unset and runs the normal local diff, not an unknown-target error.
+    const s = setup(tmp.current, { diffSql: "create table e ();\n" });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ from: Option.some(""), to: Option.some("") }));
+      // Reaching the native path proves it didn't enter explicit mode and error.
+      expect(s.provisionCalls).toHaveLength(1);
+      expect(stdout(s.out)).toBe("create table e ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("an explicit --from with an empty --to still errors 'must set both'", () => {
+    const s = setup(tmp.current);
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDiff(
+        flags({ from: Option.some("local"), to: Option.some("") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("explicit mode still runs the target-flag preflight on a changed --db-url", () => {
     // Go runs ParseDatabaseConfig in PreRun before RunExplicit (cmd/root.go:118),
     // so a changed target flag is still validated/loaded even when the explicit

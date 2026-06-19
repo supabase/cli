@@ -70,13 +70,18 @@ describe("legacyReconcileMigrations", () => {
     });
   });
 
-  it("skips an out-of-range version instead of hanging the two-pointer scan", () => {
-    // A 17-digit version exceeds Number.MAX_SAFE_INTEGER (the exhausted-side
-    // sentinel); before the range guard the scan stalled forever. Go's Atoi
-    // returns a range error and skips it the same way, so the surviving entries
-    // reconcile normally rather than looping.
+  it("treats a version within Go's int64 range as a real conflict (BigInt parity)", () => {
+    // 9999999999999999 (~1e16) is above Number.MAX_SAFE_INTEGER but within int64,
+    // so Go's strconv.Atoi accepts it and surfaces it as an extra-remote conflict.
+    // A Number-based parser would skip it (initial pull); BigInt compares exactly.
+    expect(legacyReconcileMigrations(["9999999999999999"], []).kind).toBe("conflict");
+  });
+
+  it("skips a version beyond Go's int64 range instead of hanging the scan", () => {
+    // A 19-digit value exceeds int64 max (9223372036854775807); Go's Atoi returns a
+    // range error and skips it, so the scan can't stall on the exhausted-side pin.
     expect(
-      legacyReconcileMigrations(["20240101000000", "99999999999999999"], ["20240101000000"]),
+      legacyReconcileMigrations(["20240101000000", "9999999999999999999"], ["20240101000000"]),
     ).toEqual({ kind: "in-sync" });
   });
 });

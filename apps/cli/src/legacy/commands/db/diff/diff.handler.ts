@@ -144,9 +144,13 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
 
     // Explicit `--from`/`--to` mode (Go's `db.go:102-109`): both required, always
-    // pg-delta. Runs before engine resolution and the shadow path.
-    const fromSet = Option.isSome(flags.from);
-    const toSet = Option.isSome(flags.to);
+    // pg-delta. Go gates on `len(diffFrom) > 0 || len(diffTo) > 0`, so an empty
+    // value (a shell var expanding to `""`) counts as unset — `--from "" --to ""`
+    // falls through to the normal diff, while `--from x --to ""` still errors.
+    const from = Option.getOrElse(flags.from, () => "");
+    const to = Option.getOrElse(flags.to, () => "");
+    const fromSet = from.length > 0;
+    const toSet = to.length > 0;
     if (fromSet || toSet) {
       if (!fromSet || !toSet) {
         return yield* Effect.fail(
@@ -155,40 +159,52 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           }),
         );
       }
+      // `cfg` is the config the explicit refs + format options read from. It starts
+      // at the base TOML and is re-merged whenever a linked ref is resolved — first
+      // in the preflight below (a changed top-level `--linked`), then in the from→to
+      // cascade (an explicit `linked` ref). `mergedLinkedRef` tracks the linked ref
+      // resolved so far so a later `migrations` catalog export merges the same
+      // `[remotes.<ref>]` override (`explicit.go:88-126`; the `__catalog` child
+      // re-loads from SUPABASE_PROJECT_ID). Undefined until a linked ref resolves,
+      // so a `migrations` ref resolved before any linked ref uses base config.
+      let cfg = toml;
+      let mergedLinkedRef: string | undefined;
       // Go runs `ParseDatabaseConfig` in the root PersistentPreRunE for every
       // `db diff` (`cmd/root.go:118`), before RunE dispatches to RunExplicit
-      // (`cmd/db.go:107`). So an explicit-mode invocation still validates/loads a
-      // changed target flag: `--db-url bad` fails parsing, `--linked` resolves the
-      // linked db config (DNS/pooler), `--local` loads config. The explicit refs
-      // drive the diff, so the resolved config is discarded — this runs purely for
-      // the parity preflight (surfacing a bad/unreachable target the user passed).
+      // (`cmd/db.go:107`). It validates a changed target flag (`--db-url bad` fails
+      // parsing) AND is STATEFUL: a changed `--linked` runs `LoadProjectRef` +
+      // `LoadConfig`, leaving `utils.Config` remote-merged, so the explicit
+      // `local`/`migrations` refs and `pgDeltaFormatOptions()` see the linked
+      // project's `[remotes.<ref>]` overrides (`db_url.go:87-93` →
+      // `config_path.go:11-12`). `--local`/`--db-url` load base config (no merge).
       if (Option.isSome(flags.dbUrl) || Option.isSome(flags.linked) || Option.isSome(flags.local)) {
         const preflightConnType: LegacyDbConnType = Option.isSome(flags.dbUrl)
           ? "db-url"
           : Option.isSome(flags.linked)
             ? "linked"
             : "local";
-        yield* resolver.resolve({
+        const preflight = yield* resolver.resolve({
           dbUrl: flags.dbUrl,
           connType: preflightConnType,
           dnsResolver,
           password: Option.none(),
         });
+        // Seed the merged config from a changed `--linked` preflight (stateful in
+        // Go), so explicit `local`/`migrations` refs use the linked overrides even
+        // when neither explicit ref is itself `linked`.
+        if (preflightConnType === "linked") {
+          const preflightRef = Option.getOrUndefined(preflight.ref ?? Option.none());
+          if (preflightRef !== undefined) {
+            linkedRefForCache = preflightRef;
+            mergedLinkedRef = preflightRef;
+            cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, preflightRef);
+          }
+        }
       }
       // Go resolves each ref in order (`explicit.go:21-25`); the `linked` branch
-      // runs `LoadConfig(ref)` (`explicit.go:78-86`), merging the matching
-      // `[remotes.<ref>]` block into the global config so a later `local` ref read
-      // and the trailing `pgDeltaFormatOptions()` see the override. Thread the
-      // merged config through the two resolutions to reproduce that cascade.
-      let cfg = toml;
-      // Tracks a linked ref resolved earlier in the from→to cascade so a later
-      // `migrations` catalog export merges the same `[remotes.<ref>]` override Go's
-      // sequential `LoadConfig` leaves in the global config (`explicit.go:78-86` →
-      // `config_path.go:10-12`; the `__catalog` child re-runs that load from
-      // SUPABASE_PROJECT_ID). Stays undefined until a linked ref resolves, so a
-      // `migrations` ref resolved BEFORE any linked ref (e.g. `--from migrations
-      // --to linked`) still uses base config — matching Go's resolution order.
-      let mergedLinkedRef: string | undefined;
+      // runs `LoadConfig(ref)` (`explicit.go:78-86`), re-merging the matching
+      // `[remotes.<ref>]` block so a later `local` ref read and the trailing
+      // `pgDeltaFormatOptions()` see the override. Thread the merged config through.
       const resolveRef = (ref: string) =>
         Effect.gen(function* () {
           switch (legacyClassifyExplicitRef(ref)) {
@@ -233,8 +249,8 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               );
           }
         });
-      const sourceRef = yield* resolveRef(Option.getOrElse(flags.from, () => ""));
-      const targetRef = yield* resolveRef(Option.getOrElse(flags.to, () => ""));
+      const sourceRef = yield* resolveRef(from);
+      const targetRef = yield* resolveRef(to);
       const explicitCtx: LegacyPgDeltaContext = {
         projectId: Option.getOrElse(cliConfig.projectId, () => ""),
         cwd: cliConfig.workdir,
