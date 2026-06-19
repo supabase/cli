@@ -1,9 +1,12 @@
 import { Clock, Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDnsResolverFlag,
+  LegacyExperimentalFlag,
+  LegacyYesFlag,
+} from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -89,7 +92,6 @@ const rebuildDelegateArgs = (flags: LegacyDbPullFlags): Array<string> => {
 
 export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: LegacyDbPullFlags) {
   const output = yield* Output;
-  const tty = yield* Tty;
   const resolver = yield* LegacyDbConfigResolver;
   const connection = yield* LegacyDbConnection;
   const seam = yield* LegacyDeclarativeSeam;
@@ -98,6 +100,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const yes = yield* LegacyYesFlag;
+  const experimental = yield* LegacyExperimentalFlag;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
@@ -223,8 +226,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         }
 
         // Go's `EXPERIMENTAL` structured-dump branch depends on unported `pg_dump`
-        // — delegate the whole pull to Go.
-        if (legacyParseBoolEnv(process.env["SUPABASE_EXPERIMENTAL"])) {
+        // — delegate the whole pull to Go. viper resolves `EXPERIMENTAL` from
+        // *either* the global `--experimental` pflag or `SUPABASE_EXPERIMENTAL`
+        // (`cmd/root.go:318-320,327,334`), so honor both forms here; the legacy
+        // root only forwards `--experimental` to Go proxy argv, never into env.
+        if (experimental || legacyParseBoolEnv(process.env["SUPABASE_EXPERIMENTAL"])) {
           yield* proxy.exec(rebuildDelegateArgs(flags), {
             env: { SUPABASE_TELEMETRY_DISABLED: "1" },
           });
@@ -315,19 +321,27 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         );
         yield* output.raw(`Schema written to ${legacyBold(migrationPath)}\n`, "stderr");
 
-        // Prompt to update the remote migration history table (Go default yes;
-        // honored verbatim under `--yes`; non-interactive falls through to the default).
+        // Prompt to update the remote migration history table. Go calls
+        // `PromptYesNo(ctx, "Update remote migration history table?", true)`
+        // (`internal/db/pull/pull.go:73`), which returns the default (`true`) on
+        // `--yes`, on a non-interactive stdin, or on any prompt error
+        // (`internal/utils/console.go:74-82`) — it never fails the command.
         let remoteHistoryUpdated = false;
-        const shouldUpdate = yes
-          ? true
-          : !tty.stdinIsTty
-            ? true
-            : yield* output.promptConfirm("Update remote migration history table?", {
-                defaultValue: true,
-              });
-        if (yes) {
-          yield* output.raw("Update remote migration history table? [Y/n] y\n", "stderr");
-        }
+        const updateHistoryTitle = "Update remote migration history table?";
+        const shouldUpdate = yield* Effect.gen(function* () {
+          // Machine output (json/stream-json) never prompts — the non-text layers
+          // report non-interactive and fail every prompt — so take Go's default.
+          if (output.format !== "text") return true;
+          if (yes) {
+            yield* output.raw(`${updateHistoryTitle} [Y/n] y\n`, "stderr");
+            return true;
+          }
+          // A non-interactive stdin or any prompt error falls back to the default,
+          // matching Go's `PromptYesNo` returning `def` on error/timeout.
+          return yield* output
+            .promptConfirm(updateHistoryTitle, { defaultValue: true })
+            .pipe(Effect.orElseSucceed(() => true));
+        });
         if (shouldUpdate) {
           yield* legacyUpdateMigrationHistory(session, fs, path, migrationPath);
           remoteHistoryUpdated = true;

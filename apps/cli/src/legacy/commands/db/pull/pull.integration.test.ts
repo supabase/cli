@@ -11,7 +11,11 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../../tests/helpers/mocks.ts";
-import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDnsResolverFlag,
+  LegacyExperimentalFlag,
+  LegacyYesFlag,
+} from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -38,6 +42,7 @@ interface SetupOpts {
   readonly edgeStdout?: string; // diff SQL or declarative export JSON
   readonly stdinIsTty?: boolean;
   readonly yes?: boolean;
+  readonly experimental?: boolean;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
 }
 
@@ -133,6 +138,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockLegacyCliConfig({ workdir, projectId: Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
     mockRuntimeInfo(),
@@ -309,7 +315,8 @@ describe("legacy db pull", () => {
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
       stdinIsTty: false,
-      // no --yes: the !tty branch falls through to the default (true).
+      // no --yes: a non-interactive prompt falls back to the default (true),
+      // matching Go's PromptYesNo returning `def` on error/timeout.
     });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags());
@@ -330,6 +337,37 @@ describe("legacy db pull", () => {
       }
       expect(s.proxyCalls).toHaveLength(1);
       expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("the global --experimental flag delegates the structured-dump pull to Go", () => {
+    // viper resolves EXPERIMENTAL from the pflag OR the env var; the flag form
+    // (`supabase --experimental db pull`) must delegate just like the env form.
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      expect(s.proxyCalls).toHaveLength(1);
+      expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("machine output in a TTY without --yes skips the prompt and emits the payload", () => {
+    // Regression: json/stream-json layers fail every prompt as non-interactive,
+    // so the history-update prompt must be skipped (Go default = yes) instead of
+    // failing the command before the structured success payload is emitted.
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      format: "json",
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "create table remote ();\n",
+      stdinIsTty: true,
+      // no --yes
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      expect(s.historyUpserts.length).toBe(1);
+      const success = s.out.messages.find((m) => m.type === "success");
+      expect(success?.data).toMatchObject({ remoteHistoryUpdated: true });
     }).pipe(Effect.provide(s.layer));
   });
 
