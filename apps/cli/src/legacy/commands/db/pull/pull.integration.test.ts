@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -53,6 +53,7 @@ interface SetupOpts {
   // resolvePoolerFallback returns Some(pooler conn) when true, None otherwise.
   readonly poolerAvailable?: boolean;
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
+  readonly catalogStdout?: string; // stdout returned by pg-delta catalog-export runs
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -85,10 +86,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   let edgeRunCount = 0;
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (_runOpts: LegacyEdgeRuntimeRunOpts) => {
+    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
       edgeRunCount += 1;
       if (opts.edgeFailFirstWith !== undefined && edgeRunCount === 1) {
         return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.edgeFailFirstWith }));
+      }
+      // pg-delta catalog exports (debug capture) use a distinct errPrefix; serve
+      // them their own stdout so an empty diff can still capture non-empty catalogs.
+      if (runOpts.errPrefix.includes("catalog")) {
+        return Effect.succeed({ stdout: opts.catalogStdout ?? "", stderr: "" });
       }
       return Effect.succeed({ stdout: opts.edgeStdout ?? "", stderr: "" });
     },
@@ -386,6 +392,64 @@ describe("legacy db pull", () => {
     return Effect.gen(function* () {
       const exit = yield* legacyDbPull(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "an empty pg-delta diff under PGDELTA_DEBUG saves a debug bundle and reports it",
+    () => {
+      // Go saves a debug bundle and embeds its path in the in-sync error when
+      // PGDELTA_DEBUG is set on an empty pg-delta diff (internal/db/pull/pull.go:176-185).
+      seedMigration(tmp.current, "20240101000000");
+      const catalog = JSON.stringify({ tables: [{ schema: "public", name: "t" }] });
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "", // empty diff
+        catalogStdout: catalog, // shadow + remote catalog exports succeed
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        const prev = process.env["PGDELTA_DEBUG"];
+        process.env["PGDELTA_DEBUG"] = "1";
+        try {
+          const error = yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
+            Effect.flip,
+          );
+          expect(error.message).toContain("No schema changes found (debug bundle:");
+        } finally {
+          if (prev === undefined) delete process.env["PGDELTA_DEBUG"];
+          else process.env["PGDELTA_DEBUG"] = prev;
+        }
+        const debugRoot = join(tmp.current, "supabase", ".temp", "pgdelta", "debug");
+        const ids = existsSync(debugRoot) ? readdirSync(debugRoot) : [];
+        expect(ids).toHaveLength(1);
+        const bundleDir = join(debugRoot, ids[0] ?? "");
+        const files = readdirSync(bundleDir);
+        expect(files).toContain("source-catalog.json");
+        expect(files).toContain("target-catalog.json");
+        expect(files).toContain("connection.txt");
+        expect(files).toContain("error.txt");
+        expect(readFileSync(join(bundleDir, "error.txt"), "utf8")).toBe("No schema changes found");
+        // connection.txt is password-redacted (Go's redactPostgresURL → xxxxx).
+        expect(readFileSync(join(bundleDir, "connection.txt"), "utf8")).toContain(
+          "url=postgresql://postgres:xxxxx@",
+        );
+        expect(streamText(s.out, "stderr")).toContain("pg-delta returned 0 statements.");
+        expect(streamText(s.out, "stderr")).toContain("Debug bundle saved to");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("an empty pg-delta diff without PGDELTA_DEBUG writes no debug bundle", () => {
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, { remoteVersions: ["20240101000000"], edgeStdout: "", yes: true });
+    return Effect.gen(function* () {
+      const error = yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
+        Effect.flip,
+      );
+      expect(error.message).toBe("No schema changes found");
+      const debugRoot = join(tmp.current, "supabase", ".temp", "pgdelta", "debug");
+      expect(existsSync(debugRoot) ? readdirSync(debugRoot) : []).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 

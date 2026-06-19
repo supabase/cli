@@ -26,11 +26,12 @@ import {
 } from "../../../shared/legacy-pgdelta.cache.ts";
 import { legacyResolveSmartTargetUrl } from "../declarative.smart-target.ts";
 import {
-  type LegacyDeclarativeDebugBundle,
+  type LegacyDebugBundle,
   legacyCollectMigrationsList,
   legacyDebugBundleMessage,
+  legacyFormatDebugId,
   legacySaveDebugBundle,
-} from "../declarative.debug-bundle.ts";
+} from "../../../shared/legacy-debug-bundle.ts";
 import {
   LegacyDeclarativeApplyError,
   LegacyDeclarativeMutuallyExclusiveFlagsError,
@@ -58,11 +59,9 @@ const DEFAULT_SYNC_NAME = "declarative_sync";
 const formatTimestamp = (millis: number): string =>
   new Date(millis).toISOString().replace(/\D/g, "").slice(0, 14);
 
-/** Go's debug-bundle id layout `20060102-150405` (UTC). */
-const formatDebugId = (millis: number): string => {
-  const digits = new Date(millis).toISOString().replace(/\D/g, "").slice(0, 14);
-  return `${digits.slice(0, 8)}-${digits.slice(8)}`;
-};
+// Go's debug-bundle id layout `20060102-150405` (UTC) — hoisted to
+// `legacy-debug-bundle.ts` and reused by the `db pull` empty-diff bundle.
+const formatDebugId = legacyFormatDebugId;
 
 export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declarative.sync")(
   function* (flags: LegacyDbSchemaDeclarativeSyncFlags) {
@@ -137,7 +136,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // treat the bundle path as empty when the debug directory cannot be created, so
       // an apply failure still surfaces without claiming a bundle was saved
       // (`apps/cli-go/cmd/db_schema_declarative.go:447-461`).
-      const saveApplyDebugBundle = (bundle: LegacyDeclarativeDebugBundle) =>
+      const saveApplyDebugBundle = (bundle: LegacyDebugBundle) =>
         legacySaveDebugBundle(fs, path, cliConfig.workdir, tempDir, migrationsDir, bundle).pipe(
           Effect.matchEffect({
             onFailure: (error) =>

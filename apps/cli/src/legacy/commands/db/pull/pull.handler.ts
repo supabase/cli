@@ -37,11 +37,15 @@ import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
 } from "../shared/legacy-migration-file.ts";
+import { legacyFormatDebugId } from "../shared/legacy-debug-bundle.ts";
 import {
   type LegacyPgDeltaContext,
   legacyDeclarativeExportPgDelta,
   legacyDiffPgDelta,
+  legacyExportCatalogPgDelta,
+  legacyIsPgDeltaDebugEnabled,
 } from "../shared/legacy-pgdelta.ts";
+import { legacySaveEmptyPgDeltaPullDebug } from "./pull.debug.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";
 import {
@@ -396,7 +400,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           usePgDelta: usePgDeltaDiff,
           schema: diffSchema,
         });
-        const out = yield* Effect.gen(function* () {
+        const diffOutcome = yield* Effect.gen(function* () {
           // Use the declarative target override when present (Go substitutes it
           // for the diff target, `diff.go:196-197`); for remote pulls it's
           // undefined, so this is the direct target URL as before.
@@ -412,25 +416,81 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // channels unify into one `Effect` the helper can retry generically.
             Effect.gen(function* () {
               if (usePgDeltaDiff) {
+                // With PGDELTA_DEBUG set, capture the shadow baseline catalog so an
+                // empty diff can be inspected later (Go's DiffDatabase,
+                // `internal/db/diff/diff.go:205-214`); a failed export only warns.
+                const debug = legacyIsPgDeltaDebugEnabled();
+                const sourceCatalog = debug
+                  ? yield* legacyExportCatalogPgDelta(ctx, {
+                      targetRef: shadow.sourceUrl,
+                      role: "postgres",
+                    }).pipe(
+                      Effect.catch((error) =>
+                        output
+                          .raw(
+                            `Warning: failed to export shadow pg-delta catalog: ${error.message}\n`,
+                            "stderr",
+                          )
+                          .pipe(Effect.as(undefined)),
+                      ),
+                    )
+                  : undefined;
                 const result = yield* legacyDiffPgDelta(ctx, {
                   sourceRef: shadow.sourceUrl,
                   targetRef,
                   schema: diffSchema,
                   formatOptions,
                 });
-                return result.sql;
+                return {
+                  sql: result.sql,
+                  capture: debug ? { sourceCatalog, stderr: result.stderr } : undefined,
+                };
               }
-              return yield* legacyDiffMigra(ctx, {
+              const sql = yield* legacyDiffMigra(ctx, {
                 source: shadow.sourceUrl,
                 target: targetRef,
                 schema: diffSchema,
                 connectOptions: { isLocal: resolved.isLocal, dnsResolver },
               });
+              return { sql, capture: undefined };
             }),
           );
         }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
 
+        const out = diffOutcome.sql;
         if (out.trim().length === 0) {
+          // Go saves a pg-delta debug bundle and embeds its path in the in-sync
+          // error when PGDELTA_DEBUG is set (`internal/db/pull/pull.go:176-185`); a
+          // bundle-save failure falls through to the plain in-sync error.
+          if (diffOutcome.capture !== undefined) {
+            const debugDir = yield* legacySaveEmptyPgDeltaPullDebug({
+              ctx,
+              conn: resolved.conn,
+              targetUrl,
+              sourceCatalog: diffOutcome.capture.sourceCatalog,
+              pgDeltaStderr: diffOutcome.capture.stderr,
+              id: legacyFormatDebugId(yield* Clock.currentTimeMillis),
+              fs,
+              path,
+              workdir: cliConfig.workdir,
+            }).pipe(
+              Effect.catch((error) =>
+                output
+                  .raw(
+                    `Warning: failed to save pg-delta debug bundle: ${error.message}\n`,
+                    "stderr",
+                  )
+                  .pipe(Effect.as(undefined)),
+              ),
+            );
+            if (debugDir !== undefined) {
+              return yield* Effect.fail(
+                new LegacyDbPullInSyncError({
+                  message: `No schema changes found (debug bundle: ${debugDir})`,
+                }),
+              );
+            }
+          }
           return yield* Effect.fail(
             new LegacyDbPullInSyncError({ message: "No schema changes found" }),
           );
