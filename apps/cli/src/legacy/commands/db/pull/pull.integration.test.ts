@@ -387,6 +387,26 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect(
+    "a migration name with a path separator fails instead of an empty-version repair",
+    () => {
+      // Go globs `<timestamp>_*.sql` for the repair and fails with ErrNotExist when
+      // the name has a path separator (the file is nested), so the native path must
+      // not silently upsert an empty-version migration-history row.
+      seedMigration(tmp.current, "20240101000000");
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbPull(flags({ name: Option.some("foo/bar") })).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(s.historyUpserts.length).toBe(0);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("machine output in a TTY without --yes skips the prompt and emits the payload", () => {
     // Regression: json/stream-json layers fail every prompt as non-interactive,
     // so the history-update prompt must be skipped (Go default = yes) instead of

@@ -155,30 +155,46 @@ export const legacyUpdateMigrationHistory = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   migrationPath: string,
+  timestamp: string,
 ) =>
   Effect.gen(function* () {
     const output = yield* Output;
-    const content = yield* fs.readFileString(migrationPath);
-    const statements = legacySplitAndTrim(content);
     const match = MIGRATE_FILE_PATTERN.exec(path.basename(migrationPath));
-    const version = match?.[1] ?? "";
-    const name = match?.[2] ?? "";
-    yield* session.exec(SET_LOCK_TIMEOUT);
-    yield* session.exec(CREATE_VERSION_SCHEMA);
-    yield* session.exec(CREATE_VERSION_TABLE);
-    yield* session.exec(ADD_STATEMENTS_COLUMN);
-    yield* session.exec(ADD_NAME_COLUMN);
-    yield* session.query(UPSERT_MIGRATION_VERSION, [version, name, statements]);
+    if (match === null) {
+      // Go resolves the repair file by globbing `<timestamp>_*.sql` and fails
+      // with `os.ErrNotExist` when nothing matches (`repair.GetMigrationFile`,
+      // `internal/migration/repair/repair.go`). A migration name with a path
+      // separator (`supabase db pull foo/bar`) writes a nested file whose
+      // basename doesn't match, so the glob misses — fail rather than upserting
+      // an empty-version migration-history row.
+      return yield* Effect.fail(
+        new LegacyDbPullWriteError({
+          message: `glob supabase/migrations/${timestamp}_*.sql: file does not exist`,
+        }),
+      );
+    }
+    const version = match[1] ?? "";
+    const name = match[2] ?? "";
+    yield* Effect.gen(function* () {
+      const content = yield* fs.readFileString(migrationPath);
+      const statements = legacySplitAndTrim(content);
+      yield* session.exec(SET_LOCK_TIMEOUT);
+      yield* session.exec(CREATE_VERSION_SCHEMA);
+      yield* session.exec(CREATE_VERSION_TABLE);
+      yield* session.exec(ADD_STATEMENTS_COLUMN);
+      yield* session.exec(ADD_NAME_COLUMN);
+      yield* session.query(UPSERT_MIGRATION_VERSION, [version, name, statements]);
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyDbPullWriteError({
+            message: `failed to update migration table: ${cause.message}`,
+          }),
+      ),
+    );
     // Match Go's `repair.UpdateMigrationTable(..., repairAll=false, ...)`, which
     // prints `Repaired migration history: [<version>] => applied` to stderr
     // (`internal/migration/repair/repair.go`). Plain text on stderr, so it does
     // not interfere with machine-output payloads on stdout.
     yield* output.raw(`Repaired migration history: [${version}] => applied\n`, "stderr");
-  }).pipe(
-    Effect.mapError(
-      (cause) =>
-        new LegacyDbPullWriteError({
-          message: `failed to update migration table: ${cause.message}`,
-        }),
-    ),
-  );
+  });

@@ -356,7 +356,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             .pipe(Effect.orElseSucceed(() => true));
         });
         if (shouldUpdate) {
-          yield* legacyUpdateMigrationHistory(session, fs, path, migrationPath);
+          yield* legacyUpdateMigrationHistory(session, fs, path, migrationPath, timestamp);
           remoteHistoryUpdated = true;
         }
 
