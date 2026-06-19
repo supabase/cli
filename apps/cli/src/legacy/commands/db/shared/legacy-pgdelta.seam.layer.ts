@@ -343,8 +343,12 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
         Effect.gen(function* () {
           if (container.length === 0) return;
           // Remove the shadow left running by provisionShadow. Best-effort — a
-          // failure here must never mask the diff result.
-          const command = ChildProcess.make("docker", ["rm", "-f", container], {
+          // failure here must never mask the diff result. `-v` removes the
+          // Postgres anonymous data volume too, matching Go's `DockerRemove`
+          // (`RemoveOptions{RemoveVolumes: true, Force: true}`,
+          // `internal/utils/docker.go:330`); without it every shadow leaves a
+          // dangling volume behind.
+          const command = ChildProcess.make("docker", ["rm", "-f", "-v", container], {
             stdin: "ignore",
             stdout: "ignore",
             stderr: "ignore",
