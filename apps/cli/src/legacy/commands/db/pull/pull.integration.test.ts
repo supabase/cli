@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -263,6 +263,55 @@ describe("legacy db pull", () => {
         existsSync(join(tmp.current, "supabase", "database", "schemas", "public", "t.sql")),
       ).toBe(true);
       expect(s.provisionCalls[0]?.mode).toBe("declarative");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "pull --declarative writes [db.migrations] schema_paths when pg-delta is disabled",
+    () => {
+      // Go's WriteDeclarativeSchemas points schema_paths at the declarative dir when
+      // pg-delta is disabled in config (db pull does not force-enable it), so later
+      // db reset/db diff read the pulled files (declarative.go:260-268).
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\n");
+      const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags({ declarative: Option.some(true) }));
+        const config = readFileSync(join(tmp.current, "supabase", "config.toml"), "utf8");
+        expect(config).toContain("[db.migrations]");
+        expect(config).toContain('schema_paths = [\n  "database",\n]');
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("pull --declarative leaves schema_paths untouched when pg-delta is enabled", () => {
+    // For an enabled config the declarative dir is already the source of truth, so
+    // Go skips the schema_paths rewrite (the gate reads the config value).
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    const original = "[experimental.pgdelta]\nenabled = true\n";
+    writeFileSync(join(tmp.current, "supabase", "config.toml"), original);
+    const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ declarative: Option.some(true) }));
+      const config = readFileSync(join(tmp.current, "supabase", "config.toml"), "utf8");
+      expect(config).toBe(original);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("pull --declarative replaces an existing schema_paths block in place", () => {
+    // Go's regex replace-or-append rewrites a present schema_paths block rather
+    // than appending a duplicate (declarative.go:285-303).
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      '[db.migrations]\nschema_paths = [\n  "schemas/*.sql",\n]\n',
+    );
+    const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ declarative: Option.some(true) }));
+      const config = readFileSync(join(tmp.current, "supabase", "config.toml"), "utf8");
+      expect(config).toContain('schema_paths = [\n  "database",\n]');
+      expect(config).not.toContain("schemas/*.sql");
     }).pipe(Effect.provide(s.layer));
   });
 

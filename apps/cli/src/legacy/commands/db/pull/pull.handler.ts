@@ -23,7 +23,10 @@ import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyWriteDeclarativeSchemas } from "../shared/legacy-pgdelta.write.ts";
+import {
+  legacyUpdateDeclarativeSchemaPathsConfig,
+  legacyWriteDeclarativeSchemas,
+} from "../shared/legacy-pgdelta.write.ts";
 import {
   legacyParseBoolEnv,
   legacyResolvePullDiffEngine,
@@ -264,10 +267,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // Declarative export path (Go's `pullDeclarativePgDelta`).
         if (useDeclarative) {
           yield* output.raw("Preparing declarative schema export using pg-delta...\n", "stderr");
-          const declarativeDir = path.resolve(
-            cliConfig.workdir,
-            legacyResolveDeclarativeDir(path, toml.pgDelta),
-          );
+          const declarativeDirRel = legacyResolveDeclarativeDir(path, toml.pgDelta);
+          const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
           const shadow = yield* seam.provisionShadow({
             mode: "declarative",
             targetLocal: false,
@@ -285,6 +286,23 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, exported).pipe(
             Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
           );
+          // Go's WriteDeclarativeSchemas also points [db.migrations] schema_paths at
+          // the declarative dir, but only when pg-delta is *disabled* in config
+          // (declarative.go:260-268, gated on IsPgDeltaEnabled which reads the config
+          // value). db pull --declarative does not force-enable pg-delta
+          // (cmd/db.go:180-182), so unlike generate/sync this branch is reachable:
+          // without it, subsequent db reset/db diff keep reading supabase/migrations
+          // and ignore the files just pulled.
+          if (!toml.pgDelta.enabled) {
+            yield* legacyUpdateDeclarativeSchemaPathsConfig(
+              fs,
+              path,
+              cliConfig.workdir,
+              declarativeDirRel,
+            ).pipe(
+              Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
+            );
+          }
           yield* output.raw(
             `Declarative schema written to ${legacyBold(declarativeDir)}\n`,
             "stderr",
