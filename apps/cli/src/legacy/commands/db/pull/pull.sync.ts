@@ -1,5 +1,6 @@
 import { Effect, type FileSystem, type Path } from "effect";
 
+import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
 import { legacySplitAndTrim } from "../../../shared/legacy-sql-split.ts";
@@ -156,6 +157,7 @@ export const legacyUpdateMigrationHistory = (
   migrationPath: string,
 ) =>
   Effect.gen(function* () {
+    const output = yield* Output;
     const content = yield* fs.readFileString(migrationPath);
     const statements = legacySplitAndTrim(content);
     const match = MIGRATE_FILE_PATTERN.exec(path.basename(migrationPath));
@@ -167,6 +169,11 @@ export const legacyUpdateMigrationHistory = (
     yield* session.exec(ADD_STATEMENTS_COLUMN);
     yield* session.exec(ADD_NAME_COLUMN);
     yield* session.query(UPSERT_MIGRATION_VERSION, [version, name, statements]);
+    // Match Go's `repair.UpdateMigrationTable(..., repairAll=false, ...)`, which
+    // prints `Repaired migration history: [<version>] => applied` to stderr
+    // (`internal/migration/repair/repair.go`). Plain text on stderr, so it does
+    // not interfere with machine-output payloads on stdout.
+    yield* output.raw(`Repaired migration history: [${version}] => applied\n`, "stderr");
   }).pipe(
     Effect.mapError(
       (cause) =>

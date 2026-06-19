@@ -52,6 +52,11 @@ const connToUrl = (conn: LegacyPgConnInput): string =>
     database: conn.database,
     ...(conn.options !== undefined ? { options: conn.options } : {}),
     ...(conn.runtimeParams !== undefined ? { runtimeParams: conn.runtimeParams } : {}),
+    // Preserve a `--db-url` connect_timeout; Go's ToPostgresURL serializes the
+    // parsed ConnectTimeout (`connect.go`), defaulting to 10 only when unset.
+    ...(conn.connectTimeoutSeconds !== undefined
+      ? { connectTimeoutSeconds: conn.connectTimeoutSeconds }
+      : {}),
   });
 
 /**
@@ -251,10 +256,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       return;
     }
     if (usePgSchema) {
-      yield* output.raw(
-        `${legacyYellow("WARNING:")} --use-pg-schema flag is experimental and may not include all entities, such as views and grants.\n`,
-        "stderr",
-      );
+      // The delegated Go `db diff --use-pg-schema` prints the experimental
+      // warning itself in its RunE (`cmd/db.go`), so don't pre-print it here —
+      // doing so would double the warning. Mirror the --use-pgadmin branch above.
       yield* proxy.exec(rebuildDelegateArgs(flags), {
         env: { SUPABASE_TELEMETRY_DISABLED: "1" },
       });
@@ -310,7 +314,11 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       });
     }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
 
-    const branch = Option.getOrElse(yield* detectGitBranch, () => "main");
+    // Detect the branch from the resolved workdir, not the caller's CWD: Go
+    // chdirs into --workdir in PersistentPreRunE before GetGitBranch
+    // (`cmd/root.go`), so `supabase --workdir … db diff` must report the
+    // project's branch, not the directory the command was invoked from.
+    const branch = Option.getOrElse(yield* detectGitBranch(cliConfig.workdir), () => "main");
     yield* output.raw(
       `Finished ${legacyAqua("supabase db diff")} on branch ${legacyAqua(branch)}.\n\n`,
       "stderr",

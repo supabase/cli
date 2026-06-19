@@ -69,6 +69,11 @@ const connToUrl = (conn: LegacyPgConnInput): string =>
     database: conn.database,
     ...(conn.options !== undefined ? { options: conn.options } : {}),
     ...(conn.runtimeParams !== undefined ? { runtimeParams: conn.runtimeParams } : {}),
+    // Preserve a `--db-url` connect_timeout; Go's ToPostgresURL serializes the
+    // parsed ConnectTimeout (`connect.go`), defaulting to 10 only when unset.
+    ...(conn.connectTimeoutSeconds !== undefined
+      ? { connectTimeoutSeconds: conn.connectTimeoutSeconds }
+      : {}),
   });
 
 /** Rebuilds the `db pull` argv for the Go-delegated branches (initial-migra / EXPERIMENTAL dump). */

@@ -250,11 +250,13 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("warns then delegates --use-pg-schema to the Go binary", () => {
+  it.effect("delegates --use-pg-schema to the Go binary without a duplicate warning", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ usePgSchema: Option.some(true) }));
-      expect(stderr(s.out)).toContain("--use-pg-schema flag is experimental");
+      // The delegated Go `db diff --use-pg-schema` prints the experimental
+      // warning itself; the TS wrapper must not print a second copy.
+      expect(stderr(s.out)).not.toContain("--use-pg-schema flag is experimental");
       expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema"]);
     }).pipe(Effect.provide(s.layer));
   });
