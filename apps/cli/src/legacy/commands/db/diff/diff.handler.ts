@@ -348,7 +348,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     let writtenFile: string | null = null;
     if (out.length < 2) {
       yield* output.raw("No schema changes found\n", "stderr");
-    } else if (Option.isSome(flags.file)) {
+      // Go's `SaveDiff` gates the file write on `len(file) > 0` (`pgadmin.go`), so
+      // an empty `--file=""` (e.g. an unset shell var) falls through to stdout
+      // rather than writing a `<timestamp>_.sql` migration with no name.
+    } else if (Option.isSome(flags.file) && flags.file.value.length > 0) {
       const timestamp = legacyFormatMigrationTimestamp(yield* Clock.currentTimeMillis);
       const migrationPath = legacyGetMigrationPath(
         path,

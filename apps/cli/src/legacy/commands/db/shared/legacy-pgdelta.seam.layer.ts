@@ -2,7 +2,7 @@ import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import { LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
+import { LegacyNetworkIdFlag, LegacyProfileFlag } from "../../../../shared/legacy/global-flags.ts";
 import { resolveBinary } from "../../../../shared/legacy/go-proxy.layer.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -25,6 +25,14 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
   Effect.gen(function* () {
     const cliConfig = yield* LegacyCliConfig;
     const networkId = yield* LegacyNetworkIdFlag;
+    const profile = yield* LegacyProfileFlag;
+    // Forward a flag-selected `--profile` into the hidden seam subprocesses. Go's
+    // root loads the profile before config (`cmd/root.go`) and applies
+    // profile-specific overrides, but a flag-only `--profile snap` isn't in the
+    // child's env (only `SUPABASE_PROFILE` is, via `extendEnv`). Pass the raw flag
+    // token (built-in name or YAML path) so the child re-runs Go's identical
+    // resolution; skip the default so unselected runs are unchanged.
+    const profileArgs = profile !== "supabase" ? ["--profile", profile] : [];
     const spawner = yield* ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -57,6 +65,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               // same custom network as the pg-delta containers (LegacyGoProxy forwards
               // it the same way).
               ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
+              ...profileArgs,
             ];
             const command = ChildProcess.make(resolved.found, args, {
               cwd: cliConfig.workdir,
@@ -230,6 +239,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               "db",
               "start",
               ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
+              ...profileArgs,
             ];
             const startCmd = ChildProcess.make(resolved.found, startArgs, {
               cwd: cliConfig.workdir,
@@ -276,6 +286,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               ...(usePgDelta ? ["--use-pg-delta"] : []),
               ...(schema.length > 0 ? ["--schema", schema.join(",")] : []),
               ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
+              ...profileArgs,
             ];
             const command = ChildProcess.make(resolved.found, args, {
               cwd: cliConfig.workdir,

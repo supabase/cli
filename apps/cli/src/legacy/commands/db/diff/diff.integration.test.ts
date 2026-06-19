@@ -311,6 +311,22 @@ describe("legacy db diff", () => {
   });
 
   it.effect(
+    "an empty --file value prints to stdout instead of writing a nameless migration",
+    () => {
+      // Go's SaveDiff gates the file write on len(file) > 0; an empty --file (e.g.
+      // an unset shell var) falls through to stdout rather than writing
+      // `<timestamp>_.sql`.
+      const s = setup(tmp.current, { diffSql: "create table y ();\n" });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(flags({ file: Option.some("") }));
+        expect(stdout(s.out)).toContain("create table y ();");
+        const migrationsDir = join(tmp.current, "supabase", "migrations");
+        expect(existsSync(migrationsDir) ? readdirSync(migrationsDir) : []).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
     "explicit --output with an empty value prints to stdout instead of writing a file",
     () => {
       // Go gates the file write on len(outputPath) > 0; an empty value falls through
