@@ -65,14 +65,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
 
-  const provisionCalls: Array<{ mode: string; usePgDelta: boolean; targetLocal: boolean }> = [];
+  const provisionCalls: Array<{
+    mode: string;
+    usePgDelta: boolean;
+    targetLocal: boolean;
+    projectRef?: string;
+  }> = [];
   const removedContainers: string[] = [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: () => Effect.succeed("supabase/.temp/pgdelta/x.json"),
     execInherit: () => Effect.succeed(0),
     ensureLocalDatabaseStarted: () => Effect.void,
-    provisionShadow: ({ mode, usePgDelta, targetLocal }) => {
-      provisionCalls.push({ mode, usePgDelta, targetLocal });
+    provisionShadow: ({ mode, usePgDelta, targetLocal, projectRef }) => {
+      provisionCalls.push({ mode, usePgDelta, targetLocal, projectRef });
       return Effect.succeed({
         container: "shadow-1",
         sourceUrl: "postgres://postgres:postgres@127.0.0.1:54320/postgres",
@@ -657,6 +662,9 @@ describe("legacy db pull", () => {
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ linked: Option.some(true) }));
       expect(s.provisionCalls[0]?.usePgDelta).toBe(true);
+      // The resolved ref is forwarded to the shadow so the `db __shadow` child
+      // merges the same `[remotes.<ref>]` override into the shadow baseline.
+      expect(s.provisionCalls[0]?.projectRef).toBe("abcdefghijklmnopqrst");
     }).pipe(Effect.provide(s.layer));
   });
 

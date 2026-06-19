@@ -201,6 +201,7 @@ var (
 	shadowTargetLocal bool
 	shadowUsePgDelta  bool
 	shadowSchema      []string
+	shadowProjectRef  string
 
 	// dbShadowCmd is a hidden seam used by the native-TypeScript db diff/pull
 	// commands to provision the throwaway shadow database that the diff "source"
@@ -229,6 +230,16 @@ var (
 			// password: the native-TS caller injects the config.toml password into
 			// the seam URLs, so the shadow must be created with that same password.
 			fsys := afero.NewOsFs()
+			// On the linked path the native-TS caller passes the resolved project
+			// ref via --project-ref so the shadow is built from the same
+			// remote-merged config the Go monolith uses: LoadConfig seeds
+			// utils.Config.ProjectId from flags.ProjectRef and merges the matching
+			// [remotes.<ref>] block (pkg/config/config.go). Omitted on local/db-url
+			// shadows, which the monolith never remote-merges, so the base config is
+			// used exactly as before.
+			if len(shadowProjectRef) > 0 {
+				flags.ProjectRef = shadowProjectRef
+			}
 			if err := flags.LoadConfig(fsys); err != nil {
 				return err
 			}
@@ -540,6 +551,7 @@ func init() {
 	shadowFlags.BoolVar(&shadowTargetLocal, "target-local", false, "Whether the diff target is the local database (enables the declarative-schema branch).")
 	shadowFlags.BoolVar(&shadowUsePgDelta, "use-pg-delta", false, "Whether pg-delta is the active diff engine (selects the declarative-apply path).")
 	shadowFlags.StringSliceVarP(&shadowSchema, "schema", "s", []string{}, "Comma separated list of schema to include.")
+	shadowFlags.StringVar(&shadowProjectRef, "project-ref", "", "Linked project ref, so the shadow merges the matching [remotes.<ref>] config override.")
 	dbCmd.AddCommand(dbShadowCmd)
 	// Build remote command
 	remoteFlags := dbRemoteCmd.PersistentFlags()

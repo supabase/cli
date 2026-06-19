@@ -266,7 +266,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             }
           }),
         ),
-      provisionShadow: ({ mode, targetLocal, usePgDelta, schema }) =>
+      provisionShadow: ({ mode, targetLocal, usePgDelta, schema, projectRef }) =>
         Effect.scoped(
           Effect.gen(function* () {
             if (!("found" in resolved)) {
@@ -286,6 +286,13 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               ...(usePgDelta ? ["--use-pg-delta"] : []),
               ...(schema.length > 0 ? ["--schema", schema.join(",")] : []),
               ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
+              // Linked path only: pass the resolved ref so the hidden `db __shadow`
+              // child's LoadConfig merges the matching `[remotes.<ref>]` override
+              // into the shadow baseline (db.major_version, service enables, vault),
+              // matching the Go monolith which builds the shadow from the
+              // remote-merged config. A flag (not env) keeps the Go-proxy channel
+              // parity and avoids over-merging on local/db-url shadows.
+              ...(projectRef !== undefined ? ["--project-ref", projectRef] : []),
               ...profileArgs,
             ];
             const command = ChildProcess.make(resolved.found, args, {

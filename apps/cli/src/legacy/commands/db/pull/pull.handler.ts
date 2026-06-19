@@ -300,6 +300,9 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             targetLocal: false,
             usePgDelta: true,
             schema: flags.schema,
+            // Linked path only: merge the same `[remotes.<ref>]` override into the
+            // shadow baseline (Go builds the shadow from the remote-merged config).
+            projectRef: connType === "linked" ? linkedRef : undefined,
           });
           const exported = yield* withPoolerFallback(targetUrl, (targetRef) =>
             legacyDeclarativeExportPgDelta(ctx, {
@@ -399,6 +402,9 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           targetLocal: resolved.isLocal,
           usePgDelta: usePgDeltaDiff,
           schema: diffSchema,
+          // Linked path only: merge the same `[remotes.<ref>]` override into the
+          // shadow baseline (Go builds the shadow from the remote-merged config).
+          projectRef: connType === "linked" ? linkedRef : undefined,
         });
         const diffOutcome = yield* Effect.gen(function* () {
           // Use the declarative target override when present (Go substitutes it

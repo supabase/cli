@@ -46,7 +46,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
 
-  const provisionCalls: Array<{ mode: string; targetLocal: boolean; usePgDelta: boolean }> = [];
+  const provisionCalls: Array<{
+    mode: string;
+    targetLocal: boolean;
+    usePgDelta: boolean;
+    projectRef?: string;
+  }> = [];
   const removedContainers: string[] = [];
   const exportCalls: string[] = [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
@@ -56,8 +61,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
     execInherit: () => Effect.succeed(0),
     ensureLocalDatabaseStarted: () => Effect.void,
-    provisionShadow: ({ mode, targetLocal, usePgDelta }) => {
-      provisionCalls.push({ mode, targetLocal, usePgDelta });
+    provisionShadow: ({ mode, targetLocal, usePgDelta, projectRef }) => {
+      provisionCalls.push({ mode, targetLocal, usePgDelta, projectRef });
       return Effect.succeed({
         container: "shadow-1",
         sourceUrl: "postgres://postgres:postgres@127.0.0.1:54320/postgres",
@@ -260,6 +265,9 @@ describe("legacy db diff", () => {
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ linked: Option.some(true) }));
       expect(s.provisionCalls[0]?.usePgDelta).toBe(true);
+      // The shadow is provisioned with the resolved ref so the `db __shadow` child
+      // merges the same `[remotes.<ref>]` override into the shadow baseline.
+      expect(s.provisionCalls[0]?.projectRef).toBe("abcdefghijklmnopqrst");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -285,6 +293,8 @@ describe("legacy db diff", () => {
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags());
       expect(s.provisionCalls[0]?.usePgDelta).toBe(false);
+      // The local default never passes a ref, so the shadow uses base config.
+      expect(s.provisionCalls[0]?.projectRef).toBeUndefined();
     }).pipe(Effect.provide(s.layer));
   });
 

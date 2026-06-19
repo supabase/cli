@@ -86,6 +86,13 @@ interface LegacyDeclarativeSeamShape {
     readonly targetLocal: boolean;
     readonly usePgDelta: boolean;
     readonly schema: ReadonlyArray<string>;
+    /**
+     * Resolved linked project ref, passed ONLY on the `--linked` path so the
+     * shadow merges the matching `[remotes.<ref>]` config override (Go builds the
+     * shadow from the already-remote-merged global config on the linked path).
+     * Omitted for local/db-url shadows, which Go never remote-merges.
+     */
+    readonly projectRef?: string;
   }) => Effect.Effect<LegacyShadowSource, LegacyDeclarativeShadowDbError>;
   /**
    * Removes a shadow database container left running by `provisionShadow`

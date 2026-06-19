@@ -359,6 +359,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       targetLocal: resolved.isLocal,
       usePgDelta: useDelta,
       schema: flags.schema,
+      // Linked path only: the shadow merges the same `[remotes.<ref>]` override
+      // the engine/format read above (Go builds the shadow from the remote-merged
+      // config). Default `db diff` is local, which never merges a remote block.
+      projectRef: connType === "linked" ? linkedRef : undefined,
     });
 
     const out = yield* Effect.gen(function* () {
