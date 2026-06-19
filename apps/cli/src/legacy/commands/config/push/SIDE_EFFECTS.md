@@ -64,7 +64,7 @@ when its local gate is off.
 | ---- | ------------------------------------------------------------------------------------- |
 | `0`  | success, **including** declining a confirmation prompt (Go returns nil and continues) |
 | `1`  | malformed `config.toml`                                                               |
-| `1`  | a `[remotes.*]` block targets the project ref (unsupported — see Known Gaps)          |
+| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref              |
 | `1`  | list-addons failure (network or non-200)                                              |
 | `1`  | any per-service read/update failure (network or unexpected status)                    |
 
@@ -72,7 +72,9 @@ when its local gate is off.
 
 ### `--output-format text` (Go CLI compatible)
 
-All diagnostics on **stderr**, no stdout. `Pushing config to project: <ref>`, then
+All diagnostics on **stderr**, no stdout. When a `[remotes.<name>]` block matches the
+target ref, `Loading config override: [remotes.<name>]` prints first. Then
+`Pushing config to project: <ref>`, then
 per service either `Remote <X> config is up to date.` or
 `Updating <X> service with config: <unified diff>`; experimental prints
 `Enabling webhooks for project: <ref>`. Confirmations render `<title> [Y/n] `
@@ -108,7 +110,7 @@ keys mirror `config.toml` paths.
 
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.
 - Diff bytes are byte-for-byte identical to the Go CLI (BurntSushi TOML encoder + anchored diff ports).
-- Optional `*pointer` sections (`db.ssl_enforcement`, `storage.image_transformation`, `storage.s3_protocol`) are decoded as defaulted-present by `@supabase/config`; their true presence is recovered from the raw `config.toml` so they are skipped when absent, matching Go's nil-pointer behaviour.
+- Optional `*pointer` sections (`db.ssl_enforcement`, `storage.image_transformation`, `storage.s3_protocol`) are decoded as defaulted-present by `@supabase/config`; their true presence is recovered from the raw (merged) config document so they are skipped when absent, matching Go's nil-pointer behaviour.
+- **`[remotes.*]` overrides are merged before push.** When a `[remotes.<name>]` block declares `project_id == <ref>`, `@supabase/config` merges that block's subtree over the base config at the raw (pre-decode) level — Go's `mergeRemoteConfig` (`apps/cli-go/pkg/config/config.go:550`) — so only the keys the block declares override the base. `Loading config override: [remotes.<name>]` prints to stderr. Two remotes sharing the target `project_id` abort with Go's `duplicate project_id for [remotes.<b>] and [remotes.<a>]` message.
 - KNOWN GAPS:
-  - **`[remotes.*]` overrides are not yet supported.** Faithful subset merging (Go's `mergeRemoteConfig`) requires a raw-TOML subtree merge; applying the decoded remote section verbatim would reset every non-overridden field to its schema default and silently corrupt the remote. Until the merge is implemented, `config push` **aborts with exit 1** (before any network call) when a `[remotes.<name>]` block declares `project_id == <ref>`, rather than pushing wrong values. Go-tested paths have no `[remotes.*]`.
   - **`encrypted:` (dotenvx) secret decryption is not reproduced.** The Go CLI decrypts `encrypted:` values before hashing and pushes the plaintext; we cannot decrypt here. Rather than push the ciphertext (which would overwrite the remote secret with garbage), `encrypted:` values are treated as unresolved — exactly like `env()` refs: they hash to `""`, so the empty hash gates them out of both the diff and the update body and the remote secret is left untouched.

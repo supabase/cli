@@ -22,6 +22,11 @@ export interface HarnessOptions {
   /** Set as SUPABASE_PROJECT_ID in the subprocess env. Storage commands read
    *  this via viper (no --project-ref flag) for config validation in --local mode. */
   projectId?: string;
+  /** Profile `project_host` — the domain the CLI derives per-project hosts from
+   *  (storage `<ref>.<host>`, db `db.<ref>.<host>`, etc.). Defaults to "localhost"
+   *  for replay/mock runs; live mode sets the real target host (e.g. supabase.red)
+   *  so host-derived commands like `storage --linked` reach the real endpoint. */
+  projectHost?: string;
 }
 
 export interface CLIHarness {
@@ -175,7 +180,7 @@ export async function exec(
         `name: test`,
         `api_url: "${url}"`,
         `dashboard_url: "${url}"`,
-        `project_host: localhost`,
+        `project_host: ${harness.options.projectHost ?? "localhost"}`,
       ].join("\n"),
     );
     env["SUPABASE_PROFILE"] = profilePath;

@@ -1,5 +1,6 @@
 export { ProjectConfigSchema, type ProjectConfig, type ProjectConfigJson } from "./base.ts";
 export {
+  DuplicateRemoteProjectIdError,
   MissingProjectConfigValueError,
   ProjectConfigParseError,
   ProjectEnvParseError,

@@ -2,10 +2,16 @@ node_modules
 dist
 coverage/
 .env
+.env.*
+!.env.example
 .claude/
 .agents/.repos/effect-v3
 .worktrees/
 .supabase/
+# Stray `supabase` project dir created by running the CLI at the repo root
+# (e.g. supabase/.temp/linked-project.json). This monorepo has no top-level
+# Supabase project — real fixtures live under apps/cli-e2e/fixtures/.
+/supabase/
 .idea/
 
 # Local dev registry (verdaccio storage, generated config, auth tokens)

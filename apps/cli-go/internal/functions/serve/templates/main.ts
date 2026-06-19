@@ -1,6 +1,5 @@
 import { STATUS_CODE, STATUS_TEXT } from "https://deno.land/std/http/status.ts";
 import * as posix from "https://deno.land/std/path/posix/mod.ts";
-
 import * as jose from "jsr:@panva/jose@6";
 
 const SB_SPECIFIC_ERROR_CODE = {
@@ -145,18 +144,24 @@ async function isValidLegacyJWT(jwtSecret: string, jwt: string): Promise<boolean
   return true;
 }
 
-// Lazy-loading JWKs
-let jwks = (() => {
+let jwks: any | undefined;
+
+function getJwks(jose: any) {
+  if (jwks !== undefined) {
+    return jwks;
+  }
   try {
     // using injected JWKS from cli
-    return jose.createLocalJWKSet(JSON.parse(Deno.env.get('SUPABASE_JWKS')));
+    jwks = jose.createLocalJWKSet(JSON.parse(Deno.env.get('SUPABASE_JWKS')));
   } catch (error) {
-    return null
+    jwks = null;
   }
-})();
+  return jwks;
+}
 
 async function isValidJWT(jwksUrl: URL, jwt: string): Promise<boolean> {
   try {
+    jwks = getJwks(jose);
     if (!jwks) {
       // Loading from remote-url on fly
       jwks = jose.createRemoteJWKSet(new URL(jwksUrl));

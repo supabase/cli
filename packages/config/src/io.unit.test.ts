@@ -813,3 +813,243 @@ port = "env(SUPABASE_DB_PORT_TEST)"
     }
   });
 });
+
+describe("config io [remotes.*] merge", () => {
+  async function writeTomlProject(toml: string): Promise<string> {
+    const cwd = makeTempProject();
+    await mkdir(join(cwd, "supabase"), { recursive: true });
+    await writeFile(join(cwd, "supabase", "config.toml"), toml);
+    return cwd;
+  }
+
+  const BASE_WITH_REMOTES = `project_id = "baseref"
+
+[api]
+enabled = true
+schemas = ["public", "custom_base"]
+max_rows = 123
+
+[db]
+major_version = 15
+
+[remotes.preview]
+project_id = "previewref"
+[remotes.preview.api]
+schemas = ["remote_only"]
+max_rows = 999
+
+[remotes.staging]
+project_id = "stagingref"
+[remotes.staging.api]
+enabled = false
+`;
+
+  test("merges the matching remote subtree over the base before decode", async () => {
+    const cwd = await writeTomlProject(BASE_WITH_REMOTES);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      expect(loaded!.appliedRemote).toBe("preview");
+      // remote block's project_id overrides the base
+      expect(loaded!.config.project_id).toBe("previewref");
+      // remote scalar wins
+      expect(loaded!.config.api.max_rows).toBe(999);
+      // array replaced wholesale (not element-merged)
+      expect(loaded!.config.api.schemas).toEqual(["remote_only"]);
+      // base-only sibling under the same table survives
+      expect(loaded!.config.api.enabled).toBe(true);
+      // a non-matching remote ([remotes.staging]) is not applied
+      expect(loaded!.config.db.major_version).toBe(15);
+      // remotes are stripped from the merged document before decode
+      expect(loaded!.document?.remotes).toBeUndefined();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("loads the base config verbatim when no remote matches", async () => {
+    const cwd = await writeTomlProject(BASE_WITH_REMOTES);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "unknownref" }));
+      expect(loaded!.appliedRemote).toBeUndefined();
+      expect(loaded!.config.project_id).toBe("baseref");
+      expect(loaded!.config.api.max_rows).toBe(123);
+      expect(loaded!.config.api.schemas).toEqual(["public", "custom_base"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("does not merge remotes when no projectRef is requested", async () => {
+    const cwd = await writeTomlProject(BASE_WITH_REMOTES);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.appliedRemote).toBeUndefined();
+      expect(loaded!.config.api.max_rows).toBe(123);
+      expect(Object.keys(loaded!.config.remotes)).toEqual(["preview", "staging"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects duplicate project_id across remotes with Go's message", async () => {
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.a]
+project_id = "dupref"
+
+[remotes.b]
+project_id = "dupref"
+`);
+    try {
+      const message = await Effect.runPromise(
+        loadProjectConfig(cwd, { projectRef: "dupref" }).pipe(
+          Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
+            Effect.succeed(error.message),
+          ),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects duplicate project_id among remotes that do not match projectRef", async () => {
+    // Go builds the duplicate map across all [remotes.*] blocks before applying the
+    // matching override, so a clash between two non-target remotes still fails even
+    // though neither shares projectRef (config.go:503-518).
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.target]
+project_id = "previewref"
+
+[remotes.a]
+project_id = "dupref"
+
+[remotes.b]
+project_id = "dupref"
+`);
+    try {
+      const message = await Effect.runPromise(
+        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
+          Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
+            Effect.succeed(error.message),
+          ),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects two remotes that both omit project_id", async () => {
+    // A missing project_id reads as "" (Go's viper.GetString), so two remotes that
+    // both omit it collide on the empty key.
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.a]
+[remotes.a.api]
+max_rows = 1
+
+[remotes.b]
+[remotes.b.api]
+max_rows = 2
+`);
+    try {
+      const message = await Effect.runPromise(
+        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
+          Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
+            Effect.succeed(error.message),
+          ),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("the merged document carries pointer sections introduced by the remote", async () => {
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.preview]
+project_id = "previewref"
+[remotes.preview.db.ssl_enforcement]
+enabled = true
+`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      // `legacyPresenceIn` reads `document` to detect optional pointer sections;
+      // a remote-introduced `db.ssl_enforcement` must be present there.
+      const db = loaded!.document?.db;
+      expect(typeof db === "object" && db !== null && "ssl_enforcement" in db).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("forces db.seed.enabled false when the matching remote omits it", async () => {
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[db.seed]
+enabled = true
+
+[remotes.preview]
+project_id = "previewref"
+[remotes.preview.api]
+max_rows = 5
+`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      expect(loaded!.config.db.seed.enabled).toBe(false);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves db.seed.enabled when the matching remote sets it", async () => {
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.preview]
+project_id = "previewref"
+[remotes.preview.db.seed]
+enabled = true
+`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      expect(loaded!.config.db.seed.enabled).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves env() references inside the matching remote before merge", async () => {
+    const previous = process.env.SUPABASE_REMOTE_MAX_ROWS_TEST;
+    process.env.SUPABASE_REMOTE_MAX_ROWS_TEST = "777";
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[api]
+max_rows = 1
+
+[remotes.preview]
+project_id = "previewref"
+[remotes.preview.api]
+max_rows = "env(SUPABASE_REMOTE_MAX_ROWS_TEST)"
+`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      expect(loaded!.config.api.max_rows).toBe(777);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SUPABASE_REMOTE_MAX_ROWS_TEST;
+      } else {
+        process.env.SUPABASE_REMOTE_MAX_ROWS_TEST = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+});

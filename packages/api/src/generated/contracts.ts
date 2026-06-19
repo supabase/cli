@@ -327,6 +327,7 @@ export const V1ApplyProjectAddonInput = Schema.Struct({
     "auth_mfa_phone",
     "auth_mfa_web_authn",
     "log_drain",
+    "etl_pipeline",
   ]),
 });
 export const V1AuthorizeJitAccessInput = Schema.Struct({
@@ -711,7 +712,7 @@ export const V1CreateAProjectInput = Schema.Struct({
   ),
   high_availability: Schema.optionalKey(
     Schema.Boolean.annotate({
-      description: "Whether to enable high availability for the project.",
+      description: "[Experimental] Whether to enable high availability for the project.",
     }),
   ),
 });
@@ -3757,6 +3758,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
         "auth_mfa_phone",
         "auth_mfa_web_authn",
         "log_drain",
+        "etl_pipeline",
       ]),
       variant: Schema.Struct({
         id: Schema.Union(
@@ -3787,6 +3789,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
             Schema.Literal("auth_mfa_phone_default"),
             Schema.Literal("auth_mfa_web_authn_default"),
             Schema.Literal("log_drain_default"),
+            Schema.Literal("etl_pipeline_default"),
           ],
           { mode: "oneOf" },
         ),
@@ -3813,6 +3816,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
         "auth_mfa_phone",
         "auth_mfa_web_authn",
         "log_drain",
+        "etl_pipeline",
       ]),
       name: Schema.String,
       variants: Schema.Array(
@@ -3845,6 +3849,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
               Schema.Literal("auth_mfa_phone_default"),
               Schema.Literal("auth_mfa_web_authn_default"),
               Schema.Literal("log_drain_default"),
+              Schema.Literal("etl_pipeline_default"),
             ],
             { mode: "oneOf" },
           ),

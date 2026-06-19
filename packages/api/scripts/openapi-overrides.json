@@ -585,14 +585,6 @@
     ]
   },
   {
-    "op": "add",
-    "path": "/components/schemas/V1CreateProjectBody/properties/high_availability",
-    "value": {
-      "type": "boolean",
-      "description": "Whether to enable high availability for the project."
-    }
-  },
-  {
     "op": "replace",
     "path": "/components/schemas/FunctionResponse/properties/import_map_path",
     "value": {

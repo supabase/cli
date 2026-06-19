@@ -7,14 +7,11 @@ import { FunctionResponse, operationDefinitions, type ApiClient } from "@supabas
 import {
   inferFunctionsManifest,
   loadProjectConfig,
-  type LoadedProjectConfig,
-  type ProjectConfig,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config";
 import { Duration, Effect, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import * as SmolToml from "smol-toml";
 import { Output } from "../output/output.service.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import { invalidFunctionSlugDetail, validateFunctionSlugMessage } from "./functions.shared.ts";
@@ -161,18 +158,6 @@ function mapTransportError(prefix: string, error: unknown): Error {
 
 function withOptional(key: string, value: unknown) {
   return value === undefined ? {} : { [key]: value };
-}
-
-type RawConfigDocument = Record<string, unknown>;
-
-function asRecord(value: unknown): RawConfigDocument | undefined {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as RawConfigDocument)
-    : undefined;
-}
-
-function hasOwn(value: object, key: string) {
-  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function validateDeploySlug(slug: string): Effect.Effect<void, InvalidFunctionDeploySlugError> {
@@ -1941,76 +1926,6 @@ function resolveEdgeRuntimeVersion(
   );
 }
 
-function parseProjectConfigDocument(path: string, content: string): unknown {
-  return path.endsWith(".json") ? JSON.parse(content) : SmolToml.parse(content);
-}
-
-function mergeFunctionConfigByPresence(
-  base: ManifestFunctionConfig,
-  remote: ManifestFunctionConfig,
-  raw: RawConfigDocument,
-): ManifestFunctionConfig {
-  return {
-    enabled: hasOwn(raw, "enabled") ? remote.enabled : base.enabled,
-    verify_jwt: hasOwn(raw, "verify_jwt") ? remote.verify_jwt : base.verify_jwt,
-    import_map: hasOwn(raw, "import_map") ? remote.import_map : base.import_map,
-    entrypoint: hasOwn(raw, "entrypoint") ? remote.entrypoint : base.entrypoint,
-    static_files: hasOwn(raw, "static_files") ? remote.static_files : base.static_files,
-    env: hasOwn(raw, "env") ? remote.env : base.env,
-  };
-}
-
-async function configForProjectRef(
-  loadedConfig: LoadedProjectConfig,
-  projectRef: string,
-): Promise<ProjectConfig> {
-  const matchedRemoteNames = Object.entries(loadedConfig.config.remotes)
-    .filter(([, candidate]) => candidate.project_id === projectRef)
-    .map(([name]) => name);
-  if (matchedRemoteNames.length === 0) {
-    return loadedConfig.config;
-  }
-  if (matchedRemoteNames.length > 1) {
-    throw new Error(
-      `duplicate project_id for [remotes.${matchedRemoteNames[1]}] and ${matchedRemoteNames[0]}`,
-    );
-  }
-  const matchedRemoteName = matchedRemoteNames[0]!;
-
-  const rawDocument = parseProjectConfigDocument(
-    loadedConfig.path,
-    await readFile(loadedConfig.path, "utf8"),
-  );
-  const rawRemote = asRecord(asRecord(asRecord(rawDocument)?.remotes)?.[matchedRemoteName]);
-  const remote = loadedConfig.config.remotes[matchedRemoteName]!;
-  const functions = { ...loadedConfig.config.functions };
-  const rawFunctions = asRecord(rawRemote?.functions);
-
-  for (const [slug, rawFunction] of Object.entries(rawFunctions ?? {})) {
-    const rawFunctionRecord = asRecord(rawFunction);
-    if (rawFunctionRecord === undefined) {
-      continue;
-    }
-    functions[slug] = mergeFunctionConfigByPresence(
-      functions[slug] ?? defaultManifestFunctionConfig,
-      remote.functions[slug] ?? defaultManifestFunctionConfig,
-      rawFunctionRecord,
-    );
-  }
-
-  return {
-    ...loadedConfig.config,
-    project_id: projectRef,
-    edge_runtime: hasOwn(rawRemote?.edge_runtime ?? {}, "deno_version")
-      ? {
-          ...loadedConfig.config.edge_runtime,
-          deno_version: remote.edge_runtime.deno_version,
-        }
-      : loadedConfig.config.edge_runtime,
-    functions,
-  };
-}
-
 const pruneFunctions = Effect.fnUntraced(function* (
   projectRef: string,
   configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
@@ -2100,11 +2015,11 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     const debugEnabled = hasGlobalLongFlag(dependencies.rawArgs, "debug");
     const projectRef =
       preResolvedProjectRef ?? (yield* dependencies.resolveProjectRef(flags.projectRef));
-    const loadedConfig = yield* loadProjectConfig(dependencies.projectRoot);
-    const deployConfig =
-      loadedConfig === null
-        ? undefined
-        : yield* Effect.promise(() => configForProjectRef(loadedConfig, projectRef));
+    // `@supabase/config` merges the matching `[remotes.*]` block over the base
+    // config (Go's `loadFromFile` with `Config.ProjectId` set), so the resolved
+    // config already reflects any remote function/edge_runtime overrides.
+    const loadedConfig = yield* loadProjectConfig(dependencies.projectRoot, { projectRef });
+    const deployConfig = loadedConfig?.config;
     const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
       deployConfig?.edge_runtime.deno_version,
       dependencies.edgeRuntimeVersion,
