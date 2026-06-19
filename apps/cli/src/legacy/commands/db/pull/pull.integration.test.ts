@@ -564,6 +564,31 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("an experimental pull in json mode reports no remote-history repair", () => {
+    // Go's structured-dump path returns before writing a migration or touching
+    // schema_migrations (pull.go:49-61), so the envelope must not claim a repair.
+    const s = setup(tmp.current, { experimental: true, format: "json" });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      expect(s.proxyCaptureCalls).toHaveLength(1);
+      const success = s.out.messages.find((m) => m.type === "success");
+      expect(success?.data).toMatchObject({ remoteHistoryUpdated: false });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("re-quotes a comma-containing schema when delegating the pull", () => {
+    // flags.schema holds the single parsed value `tenant,one`; forwarding it raw
+    // would let the Go child's pflag StringSlice CSV-split it into two schemas, so
+    // it must be re-encoded as a quoted CSV field.
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ schema: ["tenant,one"] }));
+      const args = s.proxyCalls[0]?.args ?? [];
+      const idx = args.indexOf("--schema");
+      expect(args[idx + 1]).toBe('"tenant,one"');
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("a project supabase/.env enabling pg-delta selects the pg-delta engine", () => {
     // Go loads supabase/.env via godotenv before reading EXPERIMENTAL_PG_DELTA
     // (config.go), so a project .env must select pg-delta even when the shell

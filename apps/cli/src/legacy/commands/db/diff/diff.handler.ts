@@ -12,6 +12,7 @@ import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.ser
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
+import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
 import { legacyFindDropStatements } from "../../../shared/legacy-sql-split.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -90,7 +91,9 @@ const rebuildDelegateArgs = (flags: LegacyDbDiffFlags): Array<string> => {
   pushTarget("local", flags.local);
   if (Option.isSome(flags.file)) args.push("--file", flags.file.value);
   if (Option.isSome(flags.output)) args.push("--output", flags.output.value);
-  for (const s of flags.schema) args.push("--schema", s);
+  // Re-encode each parsed schema as a CSV field so the Go child's pflag StringSlice
+  // CSV parse doesn't re-split a comma-containing schema (e.g. `"tenant,one"`).
+  for (const s of flags.schema) args.push("--schema", legacySchemaToCsvField(s));
   return args;
 };
 

@@ -337,6 +337,19 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("re-quotes a comma-containing schema when delegating the diff", () => {
+    // flags.schema holds the single parsed value `tenant,one`; forwarding it raw
+    // would let the Go child's pflag StringSlice CSV-split it into two schemas, so
+    // it must be re-encoded as a quoted CSV field.
+    const s = setup(tmp.current);
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true), schema: ["tenant,one"] }));
+      const args = s.proxyCalls[0]?.args ?? [];
+      const idx = args.indexOf("--schema");
+      expect(args[idx + 1]).toBe('"tenant,one"');
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("delegates --use-pg-schema to the Go binary without a duplicate warning", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {

@@ -2,6 +2,7 @@ import { Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyBold } from "../../../shared/legacy-colors.ts";
+import type { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
 import { legacySplitAndTrim } from "../../../shared/legacy-sql-split.ts";
 import { LegacyMigrationsReadError } from "../shared/legacy-pgdelta.errors.ts";
@@ -119,19 +120,34 @@ export function legacySuggestMigrationRepair(
 
 /**
  * Lists the remote project's applied migration versions. Mirrors Go's
- * `migration.ListRemoteMigrations` (`pkg/migration/list.go:18`): an undefined
- * history table means the remote has no migrations, so it returns `[]` rather
- * than failing.
+ * `migration.ListRemoteMigrations` (`pkg/migration/list.go:18-31`): ONLY a missing
+ * history table (`pgerrcode.UndefinedTable` = `42P01`) means the remote has no
+ * migrations and returns `[]`; any other error (e.g. a malformed table missing the
+ * `version` column, `42703`) propagates rather than being silently treated as an
+ * initial pull. We match the SQLSTATE like Go; if the driver didn't surface a code,
+ * fall back to a message check that matches a missing relation but NOT a missing
+ * column.
  */
 export const legacyListRemoteMigrations = (session: LegacyDbSession) =>
   session.query(LIST_MIGRATION_VERSION).pipe(
     Effect.map((rows) => rows.map((row) => String(row["version"]))),
     Effect.catch((error) =>
-      /does not exist/iu.test(error.message)
+      legacyIsUndefinedTableError(error)
         ? Effect.succeed<ReadonlyArray<string>>([])
         : Effect.fail(new LegacyMigrationsReadError({ message: error.message })),
     ),
   );
+
+/** Whether a query error is Postgres `undefined_table` (42P01), matching Go's `pgerrcode.UndefinedTable`. */
+const legacyIsUndefinedTableError = (error: LegacyDbExecError): boolean => {
+  if (error.code !== undefined) return error.code === "42P01";
+  // No SQLSTATE surfaced: a relation-not-exist message counts, a column-not-exist
+  // one does not (Postgres phrases an undefined column as `column "x" does not exist`).
+  return (
+    /relation .* does not exist/iu.test(error.message) &&
+    !/column .* does not exist/iu.test(error.message)
+  );
+};
 
 /**
  * Loads the local migration versions (the `<timestamp>` prefixes). Mirrors Go's

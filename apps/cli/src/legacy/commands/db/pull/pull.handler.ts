@@ -21,6 +21,7 @@ import {
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
+import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -103,7 +104,9 @@ const rebuildDelegateArgs = (flags: LegacyDbPullFlags): Array<string> => {
   pushBool("declarative", flags.declarative);
   pushBool("use-pg-delta", flags.usePgDelta);
   if (Option.isSome(flags.diffEngine)) args.push("--diff-engine", flags.diffEngine.value);
-  for (const s of flags.schema) args.push("--schema", s);
+  // Re-encode each parsed schema as a CSV field so the Go child's pflag StringSlice
+  // CSV parse doesn't re-split a comma-containing schema (e.g. `"tenant,one"`).
+  for (const s of flags.schema) args.push("--schema", legacySchemaToCsvField(s));
   if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
   pushTarget("linked", flags.linked);
   pushTarget("local", flags.local);
@@ -264,15 +267,19 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     // machine-output mode the child's stdout is captured and a structured envelope
     // is emitted instead, so scripted callers get valid JSON rather than the Go
     // child's human output on stdout (CLI-1546: stdout is payload-only in machine
-    // mode). The child is run with a non-TTY stdin (`"ignore"`) so its
-    // "Update remote migration history table?" prompt (Go's `PromptYesNo`,
+    // mode). The child is run with a non-TTY stdin (`"ignore"`) so the migration
+    // path's "Update remote migration history table?" prompt (Go's `PromptYesNo`,
     // `internal/db/pull/pull.go:73`) takes its `true` default without blocking the
-    // JSON caller on interactive input — matching the native machine-mode path,
-    // which also takes the default and updates the history. The child therefore
-    // updates `schema_migrations`, so `remoteHistoryUpdated` is `true`;
-    // `schemaWritten` stays `null` because the child owns the timestamped path and
-    // doesn't surface it on stdout.
-    const delegatePull = (engine: "migra" | "pg-delta") =>
+    // JSON caller. `remoteHistoryUpdated` is passed per call site because the two
+    // delegated Go paths differ: the initial-migra path prompts + calls
+    // `repair.UpdateMigrationTable` (so `true`), while the EXPERIMENTAL structured
+    // dump returns before writing a migration or touching `schema_migrations`
+    // (`pull.go:49-61`, so `false`). `schemaWritten` stays `null` — the child owns
+    // the write and doesn't surface the path on stdout.
+    const delegatePull = (
+      engine: "migra" | "pg-delta",
+      opts: { readonly remoteHistoryUpdated: boolean },
+    ) =>
       Effect.gen(function* () {
         const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
         if (output.format !== "text") {
@@ -280,7 +287,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           yield* output.success("Schema pulled.", {
             declarative: false,
             schemaWritten: null,
-            remoteHistoryUpdated: true,
+            remoteHistoryUpdated: opts.remoteHistoryUpdated,
             engine,
           });
           return;
@@ -361,7 +368,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // (`cmd/root.go:318-320,327,334`), so honor both forms here; the legacy
         // root only forwards `--experimental` to Go proxy argv, never into env.
         if (experimental || legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL"))) {
-          yield* delegatePull(usePgDeltaDiff ? "pg-delta" : "migra");
+          // Go's structured-dump path returns before writing a migration or
+          // touching schema_migrations (`pull.go:49-61`), so no history repair.
+          yield* delegatePull(usePgDeltaDiff ? "pg-delta" : "migra", {
+            remoteHistoryUpdated: false,
+          });
           return;
         }
 
@@ -387,7 +398,9 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         }
         if (sync.kind === "missing" && !usePgDeltaDiff) {
           // Initial pull with the migra engine needs `pg_dump` — delegate to Go.
-          yield* delegatePull("migra");
+          // Go's migration path prompts + updates schema_migrations on the non-TTY
+          // default (`pull.go:73-76`), so the history is repaired.
+          yield* delegatePull("migra", { remoteHistoryUpdated: true });
           return;
         }
 

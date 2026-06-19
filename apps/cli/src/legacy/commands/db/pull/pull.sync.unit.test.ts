@@ -1,6 +1,22 @@
+import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { legacyReconcileMigrations, legacySuggestMigrationRepair } from "./pull.sync.ts";
+import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
+import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
+import {
+  legacyListRemoteMigrations,
+  legacyReconcileMigrations,
+  legacySuggestMigrationRepair,
+} from "./pull.sync.ts";
+
+/** Minimal session whose `query` fails with the given error. */
+const failingSession = (error: LegacyDbExecError): LegacyDbSession => ({
+  exec: () => Effect.die("unused"),
+  query: () => Effect.fail(error),
+  extensionExists: () => Effect.die("unused"),
+  copyToCsv: () => Effect.die("unused"),
+  queryRaw: () => Effect.die("unused"),
+});
 
 // Strip ANSI so the bold repair suggestions compare regardless of TTY colour.
 // eslint-disable-next-line no-control-regex
@@ -62,6 +78,42 @@ describe("legacyReconcileMigrations", () => {
     expect(
       legacyReconcileMigrations(["20240101000000", "99999999999999999"], ["20240101000000"]),
     ).toEqual({ kind: "in-sync" });
+  });
+});
+
+describe("legacyListRemoteMigrations (suppress only undefined_table, like Go)", () => {
+  const run = (error: LegacyDbExecError) =>
+    Effect.runPromiseExit(legacyListRemoteMigrations(failingSession(error)));
+
+  it("treats a missing history table (42P01) as an empty history", async () => {
+    const exit = await run(
+      new LegacyDbExecError({
+        message: 'relation "supabase_migrations.schema_migrations" does not exist',
+        code: "42P01",
+      }),
+    );
+    expect(exit).toStrictEqual(Exit.succeed([]));
+  });
+
+  it("propagates a malformed table (undefined column 42703) instead of swallowing it", async () => {
+    const exit = await run(
+      new LegacyDbExecError({ message: 'column "version" does not exist', code: "42703" }),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+  });
+
+  it("falls back to a relation-not-exist message when no SQLSTATE is surfaced", async () => {
+    const exit = await run(
+      new LegacyDbExecError({
+        message: 'relation "supabase_migrations.schema_migrations" does not exist',
+      }),
+    );
+    expect(exit).toStrictEqual(Exit.succeed([]));
+  });
+
+  it("does not swallow a column-not-exist message when no SQLSTATE is surfaced", async () => {
+    const exit = await run(new LegacyDbExecError({ message: 'column "version" does not exist' }));
+    expect(Exit.isFailure(exit)).toBe(true);
   });
 });
 

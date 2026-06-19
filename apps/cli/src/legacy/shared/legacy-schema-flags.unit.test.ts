@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { legacyParseSchemaFlags, LegacySchemaFlagParseError } from "./legacy-schema-flags.ts";
+import {
+  legacyParseSchemaFlags,
+  LegacySchemaFlagParseError,
+  legacySchemaToCsvField,
+} from "./legacy-schema-flags.ts";
 
 describe("legacyParseSchemaFlags (pflag StringSlice CSV parity)", () => {
   it("splits unquoted comma-separated values", () => {
@@ -68,5 +72,36 @@ describe("legacyParseSchemaFlags (pflag StringSlice CSV parity)", () => {
   it("throws on the first malformed value in a multi-value list", () => {
     // The valid "public" comes before the malformed one; the error is still thrown
     expect(() => legacyParseSchemaFlags(["public", '"broken'])).toThrow(LegacySchemaFlagParseError);
+  });
+});
+
+describe("legacySchemaToCsvField (inverse — re-encode one value as a CSV field)", () => {
+  it("leaves a plain value unquoted", () => {
+    expect(legacySchemaToCsvField("public")).toBe("public");
+  });
+
+  it("leaves the empty string unquoted (Go csv.Writer)", () => {
+    expect(legacySchemaToCsvField("")).toBe("");
+  });
+
+  it("quotes a value containing a comma", () => {
+    expect(legacySchemaToCsvField("tenant,one")).toBe('"tenant,one"');
+  });
+
+  it("quotes and doubles an embedded quote", () => {
+    expect(legacySchemaToCsvField('a"b')).toBe('"a""b"');
+  });
+
+  it("quotes a value with a leading space", () => {
+    expect(legacySchemaToCsvField(" leading")).toBe('" leading"');
+  });
+
+  it("round-trips through the parser for awkward values", () => {
+    // parse(encode(x)) === [x] for the cases a delegated child would otherwise split.
+    for (const value of ["public", "tenant,one", 'a"b', " leading", "a,b,c", ""]) {
+      expect(legacyParseSchemaFlags([legacySchemaToCsvField(value)])).toEqual(
+        value === "" ? [] : [value],
+      );
+    }
   });
 });
