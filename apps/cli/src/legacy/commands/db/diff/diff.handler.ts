@@ -243,7 +243,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     const pgDeltaDefault = legacyShouldUsePgDelta({
       configEnabled: toml.pgDelta.enabled,
       usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
-      envEnabled: legacyParseBoolEnv(process.env["SUPABASE_EXPERIMENTAL_PG_DELTA"]),
+      envEnabled: legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
     });
     const useDelta = legacyResolveDiffEngine({
       useMigraChanged: Option.isSome(flags.useMigra),

@@ -43,6 +43,7 @@ interface SetupOpts {
   readonly stdinIsTty?: boolean;
   readonly yes?: boolean;
   readonly experimental?: boolean;
+  readonly shadowTargetOverride?: string;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
 }
 
@@ -54,18 +55,18 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
 
-  const provisionCalls: Array<{ mode: string; usePgDelta: boolean }> = [];
+  const provisionCalls: Array<{ mode: string; usePgDelta: boolean; targetLocal: boolean }> = [];
   const removedContainers: string[] = [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: () => Effect.succeed("supabase/.temp/pgdelta/x.json"),
     execInherit: () => Effect.succeed(0),
     ensureLocalDatabaseStarted: () => Effect.void,
-    provisionShadow: ({ mode, usePgDelta }) => {
-      provisionCalls.push({ mode, usePgDelta });
+    provisionShadow: ({ mode, usePgDelta, targetLocal }) => {
+      provisionCalls.push({ mode, usePgDelta, targetLocal });
       return Effect.succeed({
         container: "shadow-1",
         sourceUrl: "postgres://postgres:postgres@127.0.0.1:54320/postgres",
-        targetUrlOverride: undefined,
+        targetUrlOverride: opts.shadowTargetOverride,
       });
     },
     removeShadowContainer: (container) =>
@@ -105,16 +106,16 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const resolver = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: () =>
+    resolve: ({ connType }) =>
       Effect.succeed({
         conn: {
-          host: "db.remote",
+          host: connType === "local" ? "127.0.0.1" : "db.remote",
           port: 5432,
           user: "postgres",
           password: "x",
           database: "postgres",
         },
-        isLocal: false,
+        isLocal: connType === "local",
         ref: Option.none(),
       }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
@@ -348,6 +349,41 @@ describe("legacy db pull", () => {
       yield* legacyDbPull(flags());
       expect(s.proxyCalls).toHaveLength(1);
       expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("a project supabase/.env enabling pg-delta selects the pg-delta engine", () => {
+    // Go loads supabase/.env via godotenv before reading EXPERIMENTAL_PG_DELTA
+    // (config.go), so a project .env must select pg-delta even when the shell
+    // env doesn't set it. The handler reads it via toml.envLookup, not process.env.
+    seedMigration(tmp.current, "20240101000000");
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "create table remote ();\n",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      expect(s.provisionCalls[0]?.usePgDelta).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("db pull --local provisions a local-target shadow and uses the target override", () => {
+    // Go derives the shadow targetLocal from utils.IsLocalDatabase and substitutes
+    // the declarative contrib_regression target override (diff.go:190,196-197);
+    // the native handler must pass targetLocal and honor shadow.targetUrlOverride.
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "create table remote ();\n",
+      yes: true,
+      shadowTargetOverride: "postgres://postgres:postgres@127.0.0.1:54320/contrib_regression",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ local: Option.some(true) }));
+      expect(s.provisionCalls[0]?.targetLocal).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 

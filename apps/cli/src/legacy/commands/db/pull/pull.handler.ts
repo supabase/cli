@@ -179,7 +179,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       pgDeltaDefault: legacyShouldUsePgDelta({
         configEnabled: toml.pgDelta.enabled,
         usePgDeltaFlag: false,
-        envEnabled: legacyParseBoolEnv(process.env["SUPABASE_EXPERIMENTAL_PG_DELTA"]),
+        envEnabled: legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
       }),
     });
 
@@ -235,7 +235,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // *either* the global `--experimental` pflag or `SUPABASE_EXPERIMENTAL`
         // (`cmd/root.go:318-320,327,334`), so honor both forms here; the legacy
         // root only forwards `--experimental` to Go proxy argv, never into env.
-        if (experimental || legacyParseBoolEnv(process.env["SUPABASE_EXPERIMENTAL"])) {
+        if (experimental || legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL"))) {
           yield* proxy.exec(rebuildDelegateArgs(flags), {
             env: { SUPABASE_TELEMETRY_DISABLED: "1" },
           });
@@ -280,11 +280,19 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         yield* output.raw("Creating shadow database...\n", "stderr");
         const shadow = yield* seam.provisionShadow({
           mode: "diff",
-          targetLocal: false,
+          // Mirror Go's `DiffDatabase` → `PrepareShadowSource(ctx, schema,
+          // utils.IsLocalDatabase(config), …)` (`internal/db/diff/diff.go:190`):
+          // a local target with declarative schema files gets a second
+          // `contrib_regression` shadow returned as the target override.
+          targetLocal: resolved.isLocal,
           usePgDelta: usePgDeltaDiff,
           schema: diffSchema,
         });
         const out = yield* Effect.gen(function* () {
+          // Use the declarative target override when present (Go substitutes it
+          // for the diff target, `diff.go:196-197`); for remote pulls it's
+          // undefined, so this is the direct target URL as before.
+          const target = shadow.targetUrlOverride ?? targetUrl;
           yield* output.raw(
             diffSchema.length > 0
               ? `Diffing schemas: ${diffSchema.join(",")}\n`
@@ -294,7 +302,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           if (usePgDeltaDiff) {
             const result = yield* legacyDiffPgDelta(ctx, {
               sourceRef: shadow.sourceUrl,
-              targetRef: targetUrl,
+              targetRef: target,
               schema: diffSchema,
               formatOptions,
             });
@@ -302,7 +310,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           }
           return yield* legacyDiffMigra(ctx, {
             source: shadow.sourceUrl,
-            target: targetUrl,
+            target,
             schema: diffSchema,
             connectOptions: { isLocal: resolved.isLocal, dnsResolver },
           });
