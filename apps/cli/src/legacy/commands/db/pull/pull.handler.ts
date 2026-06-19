@@ -8,7 +8,8 @@ import {
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
+import { legacyAqua, legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
+import { legacyIsIPv6ConnectivityError } from "../../../shared/legacy-connect-errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
   LegacyDbConnection,
@@ -191,6 +192,57 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     };
     const formatOptions = Option.getOrElse(toml.pgDelta.formatOptions, () => "");
 
+    // Container-level pooler fallback (Go's `PoolerFallbackConfig`,
+    // `internal/db/dump/pooler_fallback.go`, wired into `diffRemoteSchema` and
+    // `pullDeclarativePgDelta`, `internal/db/pull/pull.go`). A linked pull can reach
+    // the direct host from the CLI process (so the resolver returned the direct
+    // conn) yet fail from inside the edge-runtime container on an IPv6-only Docker
+    // network. When the differ/export error classifies as an IPv6 connectivity
+    // failure, retry once through the project's IPv4 transaction pooler, reusing the
+    // same shadow source. Gated to the `--linked` path with a direct
+    // `db.<ref>.<host>` connection (Go's `PoolerFallbackEligible` +
+    // `ProjectRefFromDirectDbHost`). The error message embeds the container stderr
+    // (edge-runtime/migra errors wrap it), which is what Go classifies.
+    const withPoolerFallback = <A, E extends { readonly message: string }, R>(
+      directTarget: string,
+      attempt: (targetRef: string) => Effect.Effect<A, E, R>,
+    ) =>
+      attempt(directTarget).pipe(
+        Effect.catch((error) =>
+          Effect.gen(function* () {
+            if (
+              connType === "linked" &&
+              !resolved.isLocal &&
+              resolved.conn.host.startsWith("db.") &&
+              resolved.conn.host.endsWith(`.${cliConfig.projectHost}`) &&
+              legacyIsIPv6ConnectivityError(error.message)
+            ) {
+              // Go's `PoolerFallbackConfig` returns `ok=false` on ANY resolution
+              // error and the caller then surfaces the ORIGINAL diff error, so a
+              // resolution failure is treated as "no fallback" (re-fail original).
+              const pooler = yield* resolver
+                .resolvePoolerFallback({
+                  dbUrl: flags.dbUrl,
+                  connType: "linked",
+                  dnsResolver,
+                  password: flags.password ?? Option.none(),
+                })
+                .pipe(Effect.orElseSucceed(() => Option.none()));
+              if (Option.isSome(pooler)) {
+                yield* output.raw(
+                  `${legacyYellow(
+                    `Warning: Direct connection to ${resolved.conn.host} is unavailable because this environment does not support IPv6.\nRetrying via the IPv4 connection pooler.`,
+                  )}\n`,
+                  "stderr",
+                );
+                return yield* attempt(connToUrl(pooler.value));
+              }
+            }
+            return yield* Effect.fail(error);
+          }),
+        ),
+      );
+
     const usePgDeltaDiff = legacyResolvePullDiffEngine({
       engineFlagChanged: Option.isSome(flags.diffEngine),
       engine: Option.getOrElse(flags.diffEngine, () => "migra"),
@@ -222,12 +274,14 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             usePgDelta: true,
             schema: flags.schema,
           });
-          const exported = yield* legacyDeclarativeExportPgDelta(ctx, {
-            sourceRef: shadow.sourceUrl,
-            targetRef: targetUrl,
-            schema: flags.schema,
-            formatOptions,
-          }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
+          const exported = yield* withPoolerFallback(targetUrl, (targetRef) =>
+            legacyDeclarativeExportPgDelta(ctx, {
+              sourceRef: shadow.sourceUrl,
+              targetRef,
+              schema: flags.schema,
+              formatOptions,
+            }),
+          ).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
           yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, exported).pipe(
             Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
           );
@@ -317,21 +371,27 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               : "Diffing schemas...\n",
             "stderr",
           );
-          if (usePgDeltaDiff) {
-            const result = yield* legacyDiffPgDelta(ctx, {
-              sourceRef: shadow.sourceUrl,
-              targetRef: target,
-              schema: diffSchema,
-              formatOptions,
-            });
-            return result.sql;
-          }
-          return yield* legacyDiffMigra(ctx, {
-            source: shadow.sourceUrl,
-            target,
-            schema: diffSchema,
-            connectOptions: { isLocal: resolved.isLocal, dnsResolver },
-          });
+          return yield* withPoolerFallback(target, (targetRef) =>
+            // Wrap the engine choice in a gen so both branches' error/requirement
+            // channels unify into one `Effect` the helper can retry generically.
+            Effect.gen(function* () {
+              if (usePgDeltaDiff) {
+                const result = yield* legacyDiffPgDelta(ctx, {
+                  sourceRef: shadow.sourceUrl,
+                  targetRef,
+                  schema: diffSchema,
+                  formatOptions,
+                });
+                return result.sql;
+              }
+              return yield* legacyDiffMigra(ctx, {
+                source: shadow.sourceUrl,
+                target: targetRef,
+                schema: diffSchema,
+                connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+              });
+            }),
+          );
         }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
 
         if (out.trim().length === 0) {

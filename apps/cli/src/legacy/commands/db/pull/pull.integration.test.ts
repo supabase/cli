@@ -21,6 +21,7 @@ import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
+import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
 import {
   type LegacyEdgeRuntimeRunOpts,
   LegacyEdgeRuntimeScript,
@@ -46,6 +47,11 @@ interface SetupOpts {
   readonly shadowTargetOverride?: string;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly resolvedRef?: string;
+  // Fail the first edge-runtime run with this message (the second succeeds with
+  // `edgeStdout`), to exercise the pooler-fallback retry.
+  readonly edgeFailFirstWith?: string;
+  // resolvePoolerFallback returns Some(pooler conn) when true, None otherwise.
+  readonly poolerAvailable?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -76,9 +82,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
+  let edgeRunCount = 0;
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (_runOpts: LegacyEdgeRuntimeRunOpts) =>
-      Effect.succeed({ stdout: opts.edgeStdout ?? "", stderr: "" }),
+    run: (_runOpts: LegacyEdgeRuntimeRunOpts) => {
+      edgeRunCount += 1;
+      if (opts.edgeFailFirstWith !== undefined && edgeRunCount === 1) {
+        return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.edgeFailFirstWith }));
+      }
+      return Effect.succeed({ stdout: opts.edgeStdout ?? "", stderr: "" });
+    },
   });
 
   const docker = Layer.succeed(LegacyDockerRun, {
@@ -106,11 +118,14 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     connect: () => Effect.succeed(session),
   });
 
+  const poolerFallbackCalls: unknown[] = [];
   const resolver = Layer.succeed(LegacyDbConfigResolver, {
     resolve: ({ connType }) =>
       Effect.succeed({
         conn: {
-          host: connType === "local" ? "127.0.0.1" : "db.remote",
+          // A direct `db.<ref>.<projectHost>` host so the pooler-fallback gate
+          // (Go's ProjectRefFromDirectDbHost) matches on the linked path.
+          host: connType === "local" ? "127.0.0.1" : "db.abcdefghijklmnopqrst.supabase.co",
           port: 5432,
           user: "postgres",
           password: "x",
@@ -119,7 +134,20 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         isLocal: connType === "local",
         ref: opts.resolvedRef !== undefined ? Option.some(opts.resolvedRef) : Option.none(),
       }),
-    resolvePoolerFallback: () => Effect.succeed(Option.none()),
+    resolvePoolerFallback: (resolveFlags) => {
+      poolerFallbackCalls.push(resolveFlags);
+      return Effect.succeed(
+        opts.poolerAvailable === true
+          ? Option.some({
+              host: "aws-0-us-east-1.pooler.supabase.com",
+              port: 6543,
+              user: "postgres",
+              password: "x",
+              database: "postgres",
+            })
+          : Option.none(),
+      );
+    },
   });
 
   const proxyCalls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
@@ -147,7 +175,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     BunServices.layer,
   );
 
-  return { layer, out, provisionCalls, removedContainers, proxyCalls, historyUpserts, execLog };
+  return {
+    layer,
+    out,
+    provisionCalls,
+    removedContainers,
+    proxyCalls,
+    historyUpserts,
+    execLog,
+    poolerFallbackCalls,
+    get edgeRunCount() {
+      return edgeRunCount;
+    },
+  };
 }
 
 const flags = (over: Partial<LegacyDbPullFlags> = {}): LegacyDbPullFlags => ({
@@ -469,6 +509,86 @@ describe("legacy db pull", () => {
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ linked: Option.some(true) }));
       expect(s.provisionCalls[0]?.usePgDelta).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("retries the migration-style diff through the IPv4 pooler on an IPv6 error", () => {
+    // Go wraps the linked diff with PoolerFallbackConfig and retries against the
+    // IPv4 pooler when the direct host is unreachable over IPv6 from the container
+    // (internal/db/pull/pull.go, diffRemoteSchema). The first edge run fails with
+    // an IPv6 connectivity error; the retry succeeds and the migration is written.
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeFailFirstWith: "error diffing schema:\nfailed to connect: network is unreachable",
+      edgeStdout: "create table remote ();\n",
+      yes: true,
+      poolerAvailable: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(
+        flags({ linked: Option.some(true), diffEngine: Option.some("pg-delta") }),
+      );
+      expect(streamText(s.out, "stderr")).toContain("does not support IPv6");
+      expect(streamText(s.out, "stderr")).toContain("Retrying via the IPv4 connection pooler");
+      expect(s.edgeRunCount).toBe(2);
+      expect(streamText(s.out, "stderr")).toContain("Schema written to");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("retries the declarative export through the IPv4 pooler on an IPv6 error", () => {
+    // Go's pullDeclarativePgDelta retries DeclarativeExportPgDelta through the
+    // pooler in the same IPv6 scenario (internal/db/pull/pull.go).
+    const s = setup(tmp.current, {
+      edgeFailFirstWith: "error exporting declarative schema:\nnetwork is unreachable",
+      edgeStdout: EXPORT_JSON,
+      poolerAvailable: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ linked: Option.some(true), declarative: Option.some(true) }));
+      expect(streamText(s.out, "stderr")).toContain("Retrying via the IPv4 connection pooler");
+      expect(s.edgeRunCount).toBe(2);
+      expect(streamText(s.out, "stderr")).toContain("Declarative schema written to");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("an IPv6 diff error with no pooler available surfaces the original error", () => {
+    // Go's PoolerFallbackConfig returns ok=false when the pooler can't be resolved,
+    // and the caller surfaces the ORIGINAL diff error rather than a retry error.
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeFailFirstWith: "error diffing schema:\nnetwork is unreachable",
+      yes: true,
+      poolerAvailable: false,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPull(
+        flags({ linked: Option.some(true), diffEngine: Option.some("pg-delta") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(streamText(s.out, "stderr")).not.toContain("Retrying via the IPv4 connection pooler");
+      expect(s.edgeRunCount).toBe(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("a non-IPv6 diff error is not retried through the pooler", () => {
+    // Only IPv6 connectivity errors are eligible; any other failure surfaces as-is
+    // without consulting the pooler (Go's IsIPv6ConnectivityError gate).
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeFailFirstWith: 'error diffing schema:\nsyntax error at or near "foo"',
+      yes: true,
+      poolerAvailable: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPull(
+        flags({ linked: Option.some(true), diffEngine: Option.some("pg-delta") }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(s.poolerFallbackCalls).toHaveLength(0);
+      expect(s.edgeRunCount).toBe(1);
     }).pipe(Effect.provide(s.layer));
   });
 
