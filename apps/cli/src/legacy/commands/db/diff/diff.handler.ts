@@ -68,17 +68,26 @@ const connToUrl = (conn: LegacyPgConnInput): string =>
 const rebuildDelegateArgs = (flags: LegacyDbDiffFlags): Array<string> => {
   const args = ["db", "diff"];
   const pushBool = (name: string, value: Option.Option<boolean>) => {
-    // Only forward an explicitly-true boolean — a `Some(false)` equals the cobra
-    // default, so emitting `--flag=false` would just add noise.
+    // Engine flags act on their value, so only an explicitly-true one is
+    // meaningful; `Some(false)` equals the cobra default.
     if (Option.isSome(value) && value.value) args.push(`--${name}`);
+  };
+  const pushTarget = (name: string, value: Option.Option<boolean>) => {
+    // Target flags (linked/local) are *selectors*: Go's ParseDatabaseConfig keys
+    // off `flag.Changed` before the value (`internal/utils/flags/db_url.go`), so a
+    // Changed-but-false flag still selects that target. Forward whenever `Some`
+    // (emitting `--flag=false` for `Some(false)`) so the child's `flag.Changed`
+    // matches the parent's `Option.isSome`; otherwise the child falls through to a
+    // different default target than the one the native path resolved.
+    if (Option.isSome(value)) args.push(value.value ? `--${name}` : `--${name}=false`);
   };
   pushBool("use-migra", flags.useMigra);
   pushBool("use-pgadmin", flags.usePgAdmin);
   pushBool("use-pg-schema", flags.usePgSchema);
   pushBool("use-pg-delta", flags.usePgDelta);
   if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
-  pushBool("linked", flags.linked);
-  pushBool("local", flags.local);
+  pushTarget("linked", flags.linked);
+  pushTarget("local", flags.local);
   if (Option.isSome(flags.file)) args.push("--file", flags.file.value);
   if (Option.isSome(flags.output)) args.push("--output", flags.output.value);
   for (const s of flags.schema) args.push("--schema", s);
@@ -203,7 +212,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       });
       // Explicit-mode output: `--output` file (Go's `writeOutput`) or stdout
       // (Go's `fmt.Print`, no trailing newline — pg-delta ends each statement `;\n`).
-      if (Option.isSome(flags.output)) {
+      // Go gates the file write on `len(outputPath) > 0` (`explicit.go`), so an
+      // empty value (`--output="$OUT"` with OUT unset) falls through to stdout
+      // rather than writing SQL into the project directory.
+      if (Option.isSome(flags.output) && flags.output.value.length > 0) {
         const target = path.resolve(cliConfig.workdir, flags.output.value);
         // Create parent dirs first, matching Go's `writeOutput` → `utils.WriteFile`
         // (`internal/db/diff/explicit.go`, `internal/utils/misc.go`), so a nested

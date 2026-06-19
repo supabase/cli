@@ -64,12 +64,18 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               stdout: "pipe",
               stderr: "inherit",
               extendEnv: true,
-              // For `generate --linked`, pass the resolved ref as SUPABASE_PROJECT_ID
-              // so the Go config load merges the `[remotes.<ref>]` override into the
-              // platform baseline (viper AutomaticEnv binds it to `project_id`;
-              // `config.go:492-516`), matching the monolith. `extendEnv` keeps the
-              // rest of the environment.
-              ...(projectRef !== undefined ? { env: { SUPABASE_PROJECT_ID: projectRef } } : {}),
+              // Disable the child's telemetry so the hidden `__catalog` seam
+              // doesn't emit its own `cli_command_executed` on top of the user's
+              // TS command (matching the explicit LegacyGoProxy delegates). For
+              // `generate --linked`, also pass the resolved ref as
+              // SUPABASE_PROJECT_ID so the Go config load merges the
+              // `[remotes.<ref>]` override into the platform baseline (viper
+              // AutomaticEnv binds it to `project_id`; `config.go:492-516`).
+              // `extendEnv` keeps the rest of the environment.
+              env: {
+                SUPABASE_TELEMETRY_DISABLED: "1",
+                ...(projectRef !== undefined ? { SUPABASE_PROJECT_ID: projectRef } : {}),
+              },
               detached: false,
             });
             const handle = yield* spawner.spawn(command).pipe(
@@ -277,6 +283,11 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               stdout: "pipe",
               stderr: "inherit",
               extendEnv: true,
+              // Disable the child's telemetry so the hidden `db __shadow` seam
+              // doesn't record its own `cli_command_executed` (and run Go post-run
+              // work) on top of the user's TS command, matching the explicit
+              // LegacyGoProxy delegates which set the same env.
+              env: { SUPABASE_TELEMETRY_DISABLED: "1" },
               detached: false,
             });
             const handle = yield* spawner.spawn(command).pipe(

@@ -81,16 +81,24 @@ const rebuildDelegateArgs = (flags: LegacyDbPullFlags): Array<string> => {
   const args = ["db", "pull"];
   if (Option.isSome(flags.name)) args.push(flags.name.value);
   const pushBool = (name: string, value: Option.Option<boolean>) => {
-    // Only forward an explicitly-true boolean (a `Some(false)` equals the default).
+    // Engine/output flags act on their value; `Some(false)` equals the default.
     if (Option.isSome(value) && value.value) args.push(`--${name}`);
+  };
+  const pushTarget = (name: string, value: Option.Option<boolean>) => {
+    // Target flags (linked/local) are selectors: Go's ParseDatabaseConfig keys off
+    // `flag.Changed` before the value (`internal/utils/flags/db_url.go`), so a
+    // Changed-but-false flag still selects that target. Forward whenever `Some`
+    // so the delegated child resolves the same target the native path did, instead
+    // of falling through to a different default.
+    if (Option.isSome(value)) args.push(value.value ? `--${name}` : `--${name}=false`);
   };
   pushBool("declarative", flags.declarative);
   pushBool("use-pg-delta", flags.usePgDelta);
   if (Option.isSome(flags.diffEngine)) args.push("--diff-engine", flags.diffEngine.value);
   for (const s of flags.schema) args.push("--schema", s);
   if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
-  pushBool("linked", flags.linked);
-  pushBool("local", flags.local);
+  pushTarget("linked", flags.linked);
+  pushTarget("local", flags.local);
   if (Option.isSome(flags.password)) args.push("--password", flags.password.value);
   return args;
 };

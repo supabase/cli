@@ -341,6 +341,17 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("forwards an explicit --local=false target flag to the delegated pull", () => {
+    // Target flags are selectors keyed on flag.Changed in Go; dropping Some(false)
+    // would make the delegated child default to linked instead of the local target
+    // the native path selected.
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ local: Option.some(false) }));
+      expect(s.proxyCalls[0]?.args).toContain("--local=false");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("the global --experimental flag delegates the structured-dump pull to Go", () => {
     // viper resolves EXPERIMENTAL from the pflag OR the env var; the flag form
     // (`supabase --experimental db pull`) must delegate just like the env form.

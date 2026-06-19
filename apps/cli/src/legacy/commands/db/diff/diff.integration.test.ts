@@ -299,6 +299,33 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("forwards an explicit --linked=false target flag to the delegated child", () => {
+    // Target flags are selectors keyed on flag.Changed in Go; dropping Some(false)
+    // would make the child default to local instead of the linked target the
+    // native path selected.
+    const s = setup(tmp.current);
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true), linked: Option.some(false) }));
+      expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pgadmin", "--linked=false"]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "explicit --output with an empty value prints to stdout instead of writing a file",
+    () => {
+      // Go gates the file write on len(outputPath) > 0; an empty value falls through
+      // to stdout rather than writing SQL into the project directory.
+      const s = setup(tmp.current, { diffSql: "create table z ();\n" });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(
+          flags({ from: Option.some("local"), to: Option.some("local"), output: Option.some("") }),
+        );
+        // Reaching stdout proves it didn't try to write SQL to the resolved workdir.
+        expect(stdout(s.out)).toBe("create table z ();\n");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("explicit --from migrations resolves a shadow catalog via the seam", () => {
     const s = setup(tmp.current, { diffSql: "create table m ();\n" });
     return Effect.gen(function* () {
