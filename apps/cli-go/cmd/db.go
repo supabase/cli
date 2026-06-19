@@ -220,13 +220,25 @@ var (
 		Hidden: true,
 		Short:  "Internal: provision a shadow database for the native db diff/pull commands",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// The hidden __shadow command carries none of the db-url/local/linked
+			// target flags, so the root PersistentPreRunE's ParseDatabaseConfig
+			// never loads supabase/config.toml (it only loads when a target flag
+			// is set, internal/utils/flags/db_url.go:46-90). Load it explicitly so
+			// the shadow is provisioned from the project's [db] settings — shadow
+			// port, Postgres version, service baseline, and especially the
+			// password: the native-TS caller injects the config.toml password into
+			// the seam URLs, so the shadow must be created with that same password.
+			fsys := afero.NewOsFs()
+			if err := flags.LoadConfig(fsys); err != nil {
+				return err
+			}
 			var src diff.ShadowSource
 			var err error
 			switch shadowMode {
 			case "declarative":
 				src, err = diff.PrepareRawShadow(cmd.Context())
 			case "diff", "":
-				src, err = diff.PrepareShadowSource(cmd.Context(), shadowSchema, shadowTargetLocal, shadowUsePgDelta, afero.NewOsFs())
+				src, err = diff.PrepareShadowSource(cmd.Context(), shadowSchema, shadowTargetLocal, shadowUsePgDelta, fsys)
 			default:
 				return fmt.Errorf("unknown shadow mode: %s", shadowMode)
 			}

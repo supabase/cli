@@ -205,6 +205,12 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // (Go's `fmt.Print`, no trailing newline — pg-delta ends each statement `;\n`).
       if (Option.isSome(flags.output)) {
         const target = path.resolve(cliConfig.workdir, flags.output.value);
+        // Create parent dirs first, matching Go's `writeOutput` → `utils.WriteFile`
+        // (`internal/db/diff/explicit.go`, `internal/utils/misc.go`), so a nested
+        // `--output tmp/diff.sql` doesn't fail when `tmp/` doesn't exist yet.
+        yield* fs
+          .makeDirectory(path.dirname(target), { recursive: true })
+          .pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
         yield* fs
           .writeFileString(target, result.sql)
           .pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
