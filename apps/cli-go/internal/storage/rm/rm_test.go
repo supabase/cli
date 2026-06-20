@@ -129,12 +129,12 @@ func TestStorageRM(t *testing.T) {
 			Delete("/storage/v1/object/private").
 			JSON(storage.DeleteObjectsRequest{Prefixes: prefixes[:1000]}).
 			Reply(http.StatusOK).
-			JSON(deleteObjectsResponse("private", prefixes[:1000]))
+			JSON(deleteObjectsResponse(prefixes[:1000]))
 		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
 			Delete("/storage/v1/object/private").
 			JSON(storage.DeleteObjectsRequest{Prefixes: prefixes[1000:]}).
 			Reply(http.StatusOK).
-			JSON(deleteObjectsResponse("private", prefixes[1000:]))
+			JSON(deleteObjectsResponse(prefixes[1000:]))
 		// Run test
 		paths := storageURLs("private", prefixes)
 		err := Run(context.Background(), paths, false, fsys)
@@ -315,12 +315,12 @@ func TestRemoveAll(t *testing.T) {
 			Delete("/storage/v1/object/private").
 			JSON(storage.DeleteObjectsRequest{Prefixes: files[:1000]}).
 			Reply(http.StatusOK).
-			JSON(deleteObjectsResponse("private", files[:1000]))
+			JSON(deleteObjectsResponse(files[:1000]))
 		gock.New("http://127.0.0.1").
 			Delete("/storage/v1/object/private").
 			JSON(storage.DeleteObjectsRequest{Prefixes: files[1000:]}).
 			Reply(http.StatusOK).
-			JSON(deleteObjectsResponse("private", files[1000:]))
+			JSON(deleteObjectsResponse(files[1000:]))
 		// Run test
 		err := RemoveStoragePathAll(context.Background(), mockApi, "private", "tmp/")
 		// Check error
@@ -424,11 +424,11 @@ func objectResponses(files []string) []storage.ObjectResponse {
 	return objects
 }
 
-func deleteObjectsResponse(bucket string, prefixes []string) []storage.DeleteObjectsResponse {
+func deleteObjectsResponse(prefixes []string) []storage.DeleteObjectsResponse {
 	objects := make([]storage.DeleteObjectsResponse, len(prefixes))
 	for i, prefix := range prefixes {
 		objects[i] = storage.DeleteObjectsResponse{
-			BucketId: bucket,
+			BucketId: "private",
 			Name:     prefix,
 		}
 	}
