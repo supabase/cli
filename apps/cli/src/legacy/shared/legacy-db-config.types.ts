@@ -32,6 +32,13 @@ export interface LegacyDbConfigFlags {
    * flag (e.g. `test db`) omit it; the resolver then falls back to env only.
    */
   readonly password?: Option.Option<string>;
+  /**
+   * Optional explicit linked project ref override. Commands such as
+   * `gen types --project-id <ref>` need the linked DB resolver's temp-role and
+   * pooler fallback behavior without requiring the current workdir to be linked.
+   * Absent for the normal `--linked` path, which still reads `.temp/project-ref`.
+   */
+  readonly linkedProjectRef?: Option.Option<string>;
 }
 
 /**

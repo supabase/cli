@@ -7,6 +7,9 @@ import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
+import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import {
   LegacyIdentityStitch,
@@ -43,8 +46,16 @@ export const legacyGenTypesRuntimeLayer = (() => {
     Layer.provide(legacyDebugLoggerLayer),
     Layer.provide(legacyIdentityStitchLayer),
   );
+  const dbConfig = legacyDbConfigLayer.pipe(
+    Layer.provide(cliConfig),
+    Layer.provide(legacyDbConnectionLayer),
+    Layer.provide(legacyDebugLoggerLayer),
+    Layer.provide(legacyIdentityStitchLayer),
+  );
 
   const built = Layer.mergeAll(
+    dbConfig,
+    legacyDbConnectionLayer,
     cliConfig,
     platformApiFactory,
     legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
@@ -77,6 +88,7 @@ type LegacyGenTypesServices =
   | LegacyPlatformApiFactory
   | LegacyCliConfig
   | LegacyProjectRefResolver
+  | LegacyDbConfigResolver
   | LegacyLinkedProjectCache
   | LegacyTelemetryState
   | LegacyIdentityStitch

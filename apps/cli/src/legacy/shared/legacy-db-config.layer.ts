@@ -468,7 +468,7 @@ export const legacyDbConfigLayer = Layer.effect(
             // workdir fails with ErrNotLinked, a bad ref with the invalid-ref error, and an
             // unreadable ref file surfaces the filesystem problem — matching Go for every
             // caller of this resolver (`test db --linked`, dump, declarative).
-            const ref = yield* projectRef.loadProjectRef(Option.none());
+            const ref = yield* projectRef.loadProjectRef(flags.linkedProjectRef ?? Option.none());
             // Go's `ParseDatabaseConfig` runs `LoadProjectRef` → `LoadConfig` →
             // `NewDbConfigWithPassword` (`internal/utils/flags/db_url.go:81-92`), so
             // the `[remotes.<ref>]`-merged config (e.g. an unsupported remote
@@ -527,7 +527,7 @@ export const legacyDbConfigLayer = Layer.effect(
         if (flags.connType !== "linked") return Option.none<LegacyPgConnInput>();
         return yield* Effect.gen(function* () {
           const projectRef = yield* LegacyProjectRefResolver;
-          const refOpt = yield* projectRef.resolveOptional(Option.none());
+          const refOpt = yield* projectRef.resolveOptional(flags.linkedProjectRef ?? Option.none());
           if (Option.isNone(refOpt)) return Option.none<LegacyPgConnInput>();
           const ref = refOpt.value;
           if (!PROJECT_REF_PATTERN.test(ref)) return Option.none<LegacyPgConnInput>();

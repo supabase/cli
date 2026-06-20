@@ -1,7 +1,11 @@
 import { loadProjectConfig } from "@supabase/config";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
-import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDebugFlag,
+  LegacyDnsResolverFlag,
+  LegacyNetworkIdFlag,
+} from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
@@ -10,6 +14,8 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacyTempPaths } from "../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -18,8 +24,8 @@ import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from 
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
 import {
-  buildPostgresUrl,
   defaultSchemas,
+  buildPostgresUrl,
   localDbContainerId,
   localDbPassword,
   localNetworkId,
@@ -37,13 +43,6 @@ const mapProjectTypesError = mapLegacyHttpError({
   statusMessage: (_status, body) => `failed to retrieve generated types: ${body}`,
 });
 
-const mapProjectLoginRoleError = mapLegacyHttpError({
-  networkError: LegacyGenTypesNetworkError,
-  statusError: LegacyGenTypesUnexpectedStatusError,
-  networkMessage: (cause) => `failed to initialise login role: ${cause}`,
-  statusMessage: (status, body) => `unexpected login role status ${status}: ${body}`,
-});
-
 const mapProjectDatabaseHostError = mapLegacyHttpError({
   networkError: LegacyGenTypesNetworkError,
   statusError: LegacyGenTypesUnexpectedStatusError,
@@ -51,12 +50,20 @@ const mapProjectDatabaseHostError = mapLegacyHttpError({
   statusMessage: (status, body) => `unexpected project database config status ${status}: ${body}`,
 });
 
-function parseProjectDatabaseHost(host: string) {
-  const parsed = new URL(`postgresql://${host}`);
-  return {
-    host: parsed.hostname,
-    port: parsed.port.length > 0 ? Number.parseInt(parsed.port, 10) : 5432,
-  };
+const mapBranchDatabaseConfigError = mapLegacyHttpError({
+  networkError: LegacyGenTypesNetworkError,
+  statusError: LegacyGenTypesUnexpectedStatusError,
+  networkMessage: (cause) => `failed to get preview branch database config: ${cause}`,
+  statusMessage: (status, body) =>
+    `unexpected preview branch database config status ${status}: ${body}`,
+});
+
+function isPreviewBranchNotFound(cause: unknown) {
+  return (
+    cause instanceof LegacyGenTypesUnexpectedStatusError &&
+    cause.status === 404 &&
+    cause.body.includes("Preview branch not found")
+  );
 }
 
 function ensureMutuallyExclusive(
@@ -188,12 +195,14 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const path = yield* Path.Path;
   const stdio = yield* Stdio.Stdio;
   const networkId = yield* LegacyNetworkIdFlag;
+  const dnsResolver = yield* LegacyDnsResolverFlag;
   const debug = yield* LegacyDebugFlag;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const rawArgs = yield* stdio.args;
   const platformApi = yield* LegacyPlatformApiFactory;
   const projectRef = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const dbConfig = yield* LegacyDbConfigResolver;
 
   yield* ensureMutuallyExclusive(
     ["local", "linked", "project-id", "db-url"],
@@ -204,34 +213,6 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       ...(Option.isSome(flags.dbUrl) ? ["db-url"] : []),
     ],
   );
-  yield* ensureMutuallyExclusive(
-    ["linked", "project-id", "swift-access-control"],
-    [
-      ...(flags.linked ? ["linked"] : []),
-      ...(Option.isSome(flags.projectId) ? ["project-id"] : []),
-      ...(hasExplicitLongFlag(rawArgs, "swift-access-control") ? ["swift-access-control"] : []),
-    ],
-  );
-  yield* ensureMutuallyExclusive(
-    ["linked", "project-id", "postgrest-v9-compat"],
-    [
-      ...(flags.linked ? ["linked"] : []),
-      ...(Option.isSome(flags.projectId) ? ["project-id"] : []),
-      ...(flags.postgrestV9Compat ? ["postgrest-v9-compat"] : []),
-    ],
-  );
-  yield* ensureMutuallyExclusive(
-    ["linked", "project-id", "query-timeout"],
-    [
-      ...(flags.linked ? ["linked"] : []),
-      ...(Option.isSome(flags.projectId) ? ["project-id"] : []),
-      ...(hasExplicitLongFlag(rawArgs, "query-timeout") ? ["query-timeout"] : []),
-    ],
-  );
-
-  if (flags.postgrestV9Compat && Option.isNone(flags.dbUrl)) {
-    return yield* Effect.fail(new Error("--postgrest-v9-compat must used together with --db-url"));
-  }
   const legacyLang = findLegacyPositionalLanguage(rawArgs);
   if (
     Option.isSome(legacyLang) &&
@@ -247,6 +228,23 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const queryTimeoutSeconds = yield* parseQueryTimeoutSeconds(flags.queryTimeout);
   const lang = flags.lang;
   const swiftAccessControl = flags.swiftAccessControl;
+  const usesPgMeta = flags.local || Option.isSome(flags.dbUrl) || flags.lang !== "typescript";
+
+  if (hasExplicitLongFlag(rawArgs, "swift-access-control") && lang !== "swift") {
+    return yield* Effect.fail(
+      new Error("--swift-access-control can only be used with --lang swift"),
+    );
+  }
+  if (flags.postgrestV9Compat && !usesPgMeta) {
+    return yield* Effect.fail(
+      new Error("--postgrest-v9-compat can only be used with pg-meta type generation"),
+    );
+  }
+  if (hasExplicitLongFlag(rawArgs, "query-timeout") && !usesPgMeta) {
+    return yield* Effect.fail(
+      new Error("--query-timeout can only be used with pg-meta type generation"),
+    );
+  }
 
   const loadConfig = () => loadProjectConfig(cliConfig.workdir);
 
@@ -255,27 +253,32 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       const api = yield* platformApi.make;
 
       if (lang !== "typescript") {
-        const project = yield* api.v1
-          .getProject({ ref: projectRef })
-          .pipe(Effect.catch(mapProjectDatabaseHostError));
-        const target = parseProjectDatabaseHost(project.database.host);
-        yield* output.raw("Initialising login role...\n", "stderr");
-        const role = yield* api.v1
-          .createLoginRole({ ref: projectRef, read_only: false })
-          .pipe(Effect.catch(mapProjectLoginRoleError));
+        const projectResult = yield* api.v1.getProject({ ref: projectRef }).pipe(
+          Effect.catch(mapProjectDatabaseHostError),
+          Effect.as("project" as const),
+          Effect.catch((cause) =>
+            isPreviewBranchNotFound(cause)
+              ? runPreviewBranchTypes(projectRef, includedSchemas).pipe(
+                  Effect.as("branch" as const),
+                )
+              : Effect.fail(cause),
+          ),
+        );
+        if (projectResult === "branch") return;
 
+        const resolved = yield* dbConfig.resolve({
+          dbUrl: Option.none(),
+          connType: "linked",
+          dnsResolver,
+          linkedProjectRef: Option.some(projectRef),
+        });
+        const conn = resolved.conn;
         yield* runPgMeta({
-          url: buildPostgresUrl({
-            host: target.host,
-            port: target.port,
-            user: role.role,
-            password: role.password,
-            database: "postgres",
-          }),
-          host: target.host,
-          port: target.port,
-          probeHost: target.host,
-          probePort: target.port,
+          url: legacyToPostgresURL(conn),
+          host: conn.host,
+          port: conn.port,
+          probeHost: conn.host,
+          probePort: conn.port,
           networkMode: "host",
           includedSchemas: includedSchemas.join(","),
           postgrestV9Compat: flags.postgrestV9Compat,
@@ -292,6 +295,35 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
 
       yield* output.raw(response.types);
     }).pipe(Effect.ensuring(linkedProjectCache.cache(projectRef)));
+
+  const runPreviewBranchTypes = (branchRef: string, includedSchemas: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const api = yield* platformApi.make;
+      const branch = yield* api.v1
+        .getABranchConfig({ branch_id_or_ref: branchRef })
+        .pipe(Effect.catch(mapBranchDatabaseConfigError));
+
+      if (branch.db_user === undefined || branch.db_pass === undefined) {
+        return yield* Effect.fail(new Error("Preview branch database credentials are unavailable"));
+      }
+
+      yield* runPgMeta({
+        url: legacyToPostgresURL({
+          host: branch.db_host,
+          port: branch.db_port,
+          user: branch.db_user,
+          password: branch.db_pass,
+          database: "postgres",
+        }),
+        host: branch.db_host,
+        port: branch.db_port,
+        probeHost: branch.db_host,
+        probePort: branch.db_port,
+        networkMode: "host",
+        includedSchemas: includedSchemas.join(","),
+        postgrestV9Compat: flags.postgrestV9Compat,
+      });
+    });
 
   const runPgMeta = (input: {
     readonly url: string;
