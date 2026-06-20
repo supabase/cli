@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
@@ -6,14 +7,23 @@ import {
   makeTempStackProject,
   runSupabase,
 } from "../../../../../tests/helpers/cli.ts";
+import { localDbContainerId, localNetworkId } from "../../../shared/legacy-docker-ids.ts";
 
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
 type TypegenLang = (typeof TYPEGEN_LANGS)[number];
 
-const LOCAL_STACK_TIMEOUT_MS = 120_000;
+const LOCAL_POSTGRES_IMAGE = "public.ecr.aws/supabase/postgres:17.6.1.136";
+const LOCAL_POSTGRES_TIMEOUT_MS = 120_000;
 const TYPEGEN_TIMEOUT_MS = 90_000;
 const REMOTE_E2E_FLAG = "SUPABASE_TYPEGEN_E2E_REMOTE";
 const REMOTE_PROJECT_REF_ENV = "SUPABASE_TEST_PROJECT_REF";
+const OUTPUT_TAIL_LENGTH = 4_000;
+
+interface CommandResult {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
+}
 
 function tokenlessEnv(profilePath: string) {
   return {
@@ -39,17 +49,22 @@ async function writeOfflineProfile(projectDir: string): Promise<string> {
   return profilePath;
 }
 
-async function useIsolatedDbPorts(
-  projectDir: string,
-  ports: { dbPort: number; shadowPort: number },
-) {
-  const configPath = join(projectDir, "supabase", "config.toml");
-  const config = await readFile(configPath, "utf8");
+async function writeLocalConfig(projectDir: string, projectId: string, dbPort: number) {
+  const supabaseDir = join(projectDir, "supabase");
+  await mkdir(supabaseDir, { recursive: true });
   await writeFile(
-    configPath,
-    config
-      .replace("port = 54322", `port = ${ports.dbPort}`)
-      .replace("shadow_port = 54320", `shadow_port = ${ports.shadowPort}`),
+    join(supabaseDir, "config.toml"),
+    [
+      `project_id = "${projectId}"`,
+      "",
+      "[api]",
+      'schemas = ["public"]',
+      "",
+      "[db]",
+      `port = ${dbPort}`,
+      "major_version = 17",
+      "",
+    ].join("\n"),
   );
 }
 
@@ -62,6 +77,188 @@ function expectSucceeded(
   result: { stdout: string; stderr: string; exitCode: number },
 ) {
   expect(result.exitCode, `${command}\n${combinedOutput(result)}`).toBe(0);
+}
+
+function outputTail(output: string) {
+  return output.length > OUTPUT_TAIL_LENGTH
+    ? output.slice(output.length - OUTPUT_TAIL_LENGTH)
+    : output;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function runCommand(
+  command: string,
+  args: ReadonlyArray<string>,
+  options: { readonly timeoutMs?: number } = {},
+): Promise<CommandResult> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    const timer =
+      options.timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            child.kill("SIGKILL");
+          }, options.timeoutMs);
+
+    child.stdout?.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+    child.stderr?.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      resolve({ stdout, stderr: `${stderr}${String(error)}`, exitCode: 1 });
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      resolve({
+        stdout,
+        stderr: timedOut ? `${stderr}\nTimed out after ${options.timeoutMs}ms` : stderr,
+        exitCode: code ?? 1,
+      });
+    });
+  });
+}
+
+function runDocker(args: ReadonlyArray<string>, options?: { readonly timeoutMs?: number }) {
+  return runCommand("docker", args, options);
+}
+
+async function expectDockerSucceeded(args: ReadonlyArray<string>, timeoutMs?: number) {
+  const result = await runDocker(args, { timeoutMs });
+  expectSucceeded(`docker ${args.join(" ")}`, result);
+  return result;
+}
+
+async function waitForLocalPostgres(containerName: string) {
+  const startedAt = Date.now();
+  let lastResult: CommandResult = { stdout: "", stderr: "", exitCode: 1 };
+  let consecutiveReadyChecks = 0;
+  while (Date.now() - startedAt < LOCAL_POSTGRES_TIMEOUT_MS) {
+    lastResult = await runDocker(
+      [
+        "exec",
+        "-e",
+        "PGPASSWORD=postgres",
+        containerName,
+        "psql",
+        "-U",
+        "postgres",
+        "-d",
+        "postgres",
+        "-tAc",
+        "select 1",
+      ],
+      { timeoutMs: 5_000 },
+    );
+    if (lastResult.exitCode === 0 && lastResult.stdout.trim() === "1") {
+      consecutiveReadyChecks += 1;
+    } else {
+      consecutiveReadyChecks = 0;
+    }
+    if (consecutiveReadyChecks >= 2) {
+      return;
+    }
+    await sleep(1_000);
+  }
+
+  const logs = await runDocker(["logs", containerName], { timeoutMs: 10_000 });
+  throw new Error(
+    [
+      `Timed out waiting for ${containerName}`,
+      outputTail(combinedOutput(lastResult)),
+      outputTail(combinedOutput(logs)),
+    ].join("\n"),
+  );
+}
+
+async function startLocalPostgres(input: { readonly projectId: string; readonly dbPort: number }) {
+  const containerName = localDbContainerId(input.projectId);
+  const networkName = localNetworkId(input.projectId);
+
+  await expectDockerSucceeded(["network", "create", networkName], 30_000);
+  await expectDockerSucceeded(
+    [
+      "run",
+      "--detach",
+      "--rm",
+      "--name",
+      containerName,
+      "--network",
+      networkName,
+      "--network-alias",
+      "db",
+      "-p",
+      `${input.dbPort}:5432`,
+      "-e",
+      "POSTGRES_PASSWORD=postgres",
+      LOCAL_POSTGRES_IMAGE,
+      "postgres",
+      "-D",
+      "/etc/postgresql",
+      "-c",
+      "wal_level=logical",
+      "-c",
+      "max_wal_senders=5",
+      "-c",
+      "max_replication_slots=5",
+    ],
+    LOCAL_POSTGRES_TIMEOUT_MS,
+  );
+  await waitForLocalPostgres(containerName);
+
+  return { containerName, networkName };
+}
+
+async function seedSmokeTable(containerName: string) {
+  await expectDockerSucceeded(
+    [
+      "exec",
+      "-e",
+      "PGPASSWORD=postgres",
+      containerName,
+      "psql",
+      "-U",
+      "postgres",
+      "-d",
+      "postgres",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-c",
+      [
+        "create table if not exists public.typegen_smoke (",
+        "id bigint generated by default as identity primary key,",
+        "name text not null,",
+        "is_active boolean not null default true,",
+        "created_at timestamptz not null default now()",
+        ");",
+      ].join(" "),
+    ],
+    30_000,
+  );
+}
+
+async function cleanupLocalPostgres(input: {
+  readonly containerName: string;
+  readonly networkName: string;
+}) {
+  await runDocker(["rm", "-f", input.containerName], { timeoutMs: 30_000 });
+  await runDocker(["network", "rm", input.networkName], { timeoutMs: 30_000 });
 }
 
 function expectNoRemoteAuthPath(result: { stdout: string; stderr: string }) {
@@ -100,61 +297,23 @@ function expectLocalSmokeTable(lang: TypegenLang, stdout: string) {
 describe("legacy gen types e2e", () => {
   test(
     "generates all supported languages from a tokenless local stack",
-    { timeout: LOCAL_STACK_TIMEOUT_MS + TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length },
+    { timeout: LOCAL_POSTGRES_TIMEOUT_MS + TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length },
     async () => {
       const home = makeTempHome();
       const project = await makeTempStackProject("supabase-typegen-local-e2e-");
+      const projectId = `typegen${project.ports.dbPort}`;
       const profilePath = await writeOfflineProfile(project.dir);
       const env = tokenlessEnv(profilePath);
-      let initialized = false;
+      const localPostgres = {
+        containerName: localDbContainerId(projectId),
+        networkName: localNetworkId(projectId),
+      };
 
       try {
-        const init = await runSupabase(["init"], {
-          cwd: project.dir,
-          home: home.dir,
-          env,
-          entrypoint: "legacy",
-        });
-        expectSucceeded("supabase init", init);
-        initialized = true;
-
-        await useIsolatedDbPorts(project.dir, {
-          dbPort: project.ports.dbPort,
-          shadowPort: project.ports.postgrestAdminPort,
-        });
-
-        const start = await runSupabase(["db", "start"], {
-          cwd: project.dir,
-          home: home.dir,
-          env,
-          entrypoint: "legacy",
-          exitTimeoutMs: LOCAL_STACK_TIMEOUT_MS,
-        });
-        expectSucceeded("supabase db start", start);
-        expectNoRemoteAuthPath(start);
-
-        const seed = await runSupabase(
-          [
-            "db",
-            "query",
-            [
-              "create table if not exists public.typegen_smoke (",
-              "id bigint generated by default as identity primary key,",
-              "name text not null,",
-              "is_active boolean not null default true,",
-              "created_at timestamptz not null default now()",
-              ");",
-            ].join(" "),
-          ],
-          {
-            cwd: project.dir,
-            home: home.dir,
-            env,
-            entrypoint: "legacy",
-          },
-        );
-        expectSucceeded("supabase db query", seed);
-        expectNoRemoteAuthPath(seed);
+        await writeLocalConfig(project.dir, projectId, project.ports.dbPort);
+        await cleanupLocalPostgres(localPostgres);
+        await startLocalPostgres({ projectId, dbPort: project.ports.dbPort });
+        await seedSmokeTable(localPostgres.containerName);
 
         for (const lang of TYPEGEN_LANGS) {
           const result = await runSupabase(
@@ -173,15 +332,7 @@ describe("legacy gen types e2e", () => {
           expectLocalSmokeTable(lang, result.stdout);
         }
       } finally {
-        if (initialized) {
-          await runSupabase(["stop", "--no-backup"], {
-            cwd: project.dir,
-            home: home.dir,
-            env,
-            entrypoint: "legacy",
-            exitTimeoutMs: 30_000,
-          });
-        }
+        await cleanupLocalPostgres(localPostgres);
       }
     },
   );
