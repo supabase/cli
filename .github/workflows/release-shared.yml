@@ -116,17 +116,6 @@ jobs:
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
-      # Register the QEMU binfmt handlers BEFORE restarting Docker below.
-      # binfmt_misc registrations live in the host kernel, but containerd
-      # snapshots the set of emulated platforms at daemon startup. If QEMU is
-      # installed after the restart, containerd never sees the arm64 handler
-      # and every `docker run --platform linux/arm64` dies with
-      # "exec /bin/sh: exec format error". Installing first, restarting second
-      # guarantees the restarted daemon discovers linux/arm64.
-      - name: Setup QEMU for cross-platform Docker
-        if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
-
       # Docker's classic image store keeps a single platform manifest per
       # tag, so pulling `alpine:3.21` for amd64 and again for arm64 leaves
       # only the most recent one in the local store — and `docker save`
@@ -140,13 +129,40 @@ jobs:
           echo '{"features":{"containerd-snapshotter":true}}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
           docker info --format '{{.DriverStatus}}'
-          # Fail fast with a clear message if the restarted daemon did not pick
-          # up the arm64 emulator, rather than surfacing later as opaque
-          # "exec format error" lines in the smoke tests. Reads the kernel
-          # binfmt_misc state directly — no image pull, no network.
-          echo "::group::Verify linux/arm64 binfmt handler is registered and enabled"
+
+      # The host's binfmt_misc must be mounted BEFORE installing QEMU. On cold
+      # Blacksmith VMs it is not mounted by default; the privileged
+      # tonistiigi/binfmt installer that setup-qemu-action runs then registers
+      # the qemu interpreters inside its own mount namespace — it prints
+      # "installing: arm64 OK" but the handlers vanish when the container exits,
+      # so the host kernel never gains arm64 emulation and every
+      # `docker run --platform linux/arm64` dies with "exec format error".
+      # Warm/reused VMs already had it mounted, which is why this only failed
+      # intermittently (on cache-miss, i.e. cold-VM, runs). Mount it on the host
+      # after the docker restart so the registration lands in the host kernel
+      # and persists through to the smoke tests.
+      - name: Ensure binfmt_misc is mounted on the host
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          if ! mountpoint -q /proc/sys/fs/binfmt_misc; then
+            sudo modprobe binfmt_misc || true
+            sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
+          fi
+          mountpoint /proc/sys/fs/binfmt_misc
+
+      - name: Setup QEMU for cross-platform Docker
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+
+      - name: Verify linux/arm64 emulation is registered
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          # Fail fast with a clear message instead of opaque "exec format error"
+          # lines in the smoke tests if the qemu-aarch64 handler did not land in
+          # the host kernel. Reads binfmt_misc directly — no image pull, no network.
           grep -q enabled /proc/sys/fs/binfmt_misc/qemu-aarch64
-          echo "::endgroup::"
 
       # Cache the smoke-test base images across runs. Without this, eight
       # parallel `docker run` calls in smoke-test-linux.ts race on first-time
