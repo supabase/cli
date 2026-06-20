@@ -116,6 +116,17 @@ jobs:
           enableCrossOsArchive: true
           fail-on-cache-miss: true
 
+      # Register the QEMU binfmt handlers BEFORE restarting Docker below.
+      # binfmt_misc registrations live in the host kernel, but containerd
+      # snapshots the set of emulated platforms at daemon startup. If QEMU is
+      # installed after the restart, containerd never sees the arm64 handler
+      # and every `docker run --platform linux/arm64` dies with
+      # "exec /bin/sh: exec format error". Installing first, restarting second
+      # guarantees the restarted daemon discovers linux/arm64.
+      - name: Setup QEMU for cross-platform Docker
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+
       # Docker's classic image store keeps a single platform manifest per
       # tag, so pulling `alpine:3.21` for amd64 and again for arm64 leaves
       # only the most recent one in the local store — and `docker save`
@@ -129,10 +140,13 @@ jobs:
           echo '{"features":{"containerd-snapshotter":true}}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
           docker info --format '{{.DriverStatus}}'
-
-      - name: Setup QEMU for cross-platform Docker
-        if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+          # Fail fast with a clear message if the restarted daemon did not pick
+          # up the arm64 emulator, rather than surfacing later as opaque
+          # "exec format error" lines in the smoke tests. Reads the kernel
+          # binfmt_misc state directly — no image pull, no network.
+          echo "::group::Verify linux/arm64 binfmt handler is registered and enabled"
+          grep -q enabled /proc/sys/fs/binfmt_misc/qemu-aarch64
+          echo "::endgroup::"
 
       # Cache the smoke-test base images across runs. Without this, eight
       # parallel `docker run` calls in smoke-test-linux.ts race on first-time
