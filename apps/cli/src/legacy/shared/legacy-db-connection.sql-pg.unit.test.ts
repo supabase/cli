@@ -108,10 +108,10 @@ describe("legacyMergedConnectionOptions", () => {
 });
 
 describe("legacySslOptionFor", () => {
-  it("returns undefined for local connections regardless of sslmode", () => {
-    expect(legacySslOptionFor(undefined, true, undefined)).toBeUndefined();
-    expect(legacySslOptionFor("verify-full", true, undefined)).toBeUndefined();
-    expect(legacySslOptionFor("disable", true, undefined)).toBeUndefined();
+  it("returns ssl=false for local connections regardless of sslmode or PGSSLMODE", () => {
+    expect(legacySslOptionFor(undefined, true, undefined)).toBe(false);
+    expect(legacySslOptionFor("verify-full", true, undefined)).toBe(false);
+    expect(legacySslOptionFor("disable", true, undefined)).toBe(false);
   });
 
   it("uses TLS without verification for remote connections by default", () => {
@@ -194,7 +194,7 @@ describe("legacySslOptionFor", () => {
 
 describe("legacySslConfigsFor (pgconn fallback list)", () => {
   it("local connections try a single plaintext (no-TLS) config", () => {
-    expect(legacySslConfigsFor(undefined, true, undefined)).toEqual([undefined]);
+    expect(legacySslConfigsFor(undefined, true, undefined)).toEqual([false]);
   });
 
   it("disable is plaintext only", () => {
@@ -260,9 +260,9 @@ describe("legacySslConfigsFor (pgconn fallback list)", () => {
     // plaintext even though the host is not the local services hostname (isLocal=false).
     expect(
       legacySslConfigsFor("require", false, undefined, undefined, "/var/run/postgresql"),
-    ).toEqual([undefined]);
+    ).toEqual([false]);
     expect(legacySslConfigsFor("verify-full", false, undefined, "ca", "/tmp/.s.PGSQL")).toEqual([
-      undefined,
+      false,
     ]);
     // A non-socket host still follows the normal sslmode fallback list.
     expect(legacySslConfigsFor("require", false, undefined, undefined, "db.example.com")).toEqual([

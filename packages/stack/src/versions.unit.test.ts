@@ -77,7 +77,7 @@ describe("normalizeServiceVersion", () => {
   });
 
   it("ensures v prefix for services whose defaults start with v", () => {
-    expect(normalizeServiceVersion("mailpit", "1.22.3")).toBe("v1.22.3");
+    expect(normalizeServiceVersion("mailpit", "1.30.2")).toBe("v1.30.2");
     expect(normalizeServiceVersion("imgproxy", "3.8.0")).toBe("v3.8.0");
   });
 
