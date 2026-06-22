@@ -29,6 +29,9 @@ interface LegacyFunctionRecord {
 
 type Functions = ReadonlyArray<LegacyFunctionRecord>;
 
+const INVALID_FIELD = Symbol("invalid function field");
+type InvalidField = typeof INVALID_FIELD;
+
 class LegacyFunctionsListNetworkError extends Data.TaggedError("LegacyFunctionsListNetworkError")<{
   readonly message: string;
 }> {}
@@ -82,32 +85,47 @@ function renderFunctionsTable(functions: Functions): string {
   );
 }
 
-function readOptionalBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
-  const value = record[key];
-  return typeof value === "boolean" ? value : undefined;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
+function readOptionalBoolean(
+  record: Record<string, unknown>,
+  key: string,
+): boolean | undefined | InvalidField {
   const value = record[key];
-  return typeof value === "string" ? value : undefined;
+  if (value === undefined || value === null) return undefined;
+  return typeof value === "boolean" ? value : INVALID_FIELD;
+}
+
+function readOptionalString(
+  record: Record<string, unknown>,
+  key: string,
+): string | undefined | InvalidField {
+  const value = record[key];
+  if (value === undefined || value === null) return undefined;
+  return typeof value === "string" ? value : INVALID_FIELD;
 }
 
 function readOptionalNullableString(
   record: Record<string, unknown>,
   key: string,
-): string | null | undefined {
+): string | null | undefined | InvalidField {
   const value = record[key];
-  return value === null || typeof value === "string" ? value : undefined;
+  if (value === undefined) return undefined;
+  return value === null || typeof value === "string" ? value : INVALID_FIELD;
 }
 
-function readRequiredString(record: Record<string, unknown>, key: string): string | undefined {
+function readGoString(record: Record<string, unknown>, key: string): string | InvalidField {
   const value = record[key];
-  return typeof value === "string" ? value : undefined;
+  if (value === undefined || value === null) return "";
+  return typeof value === "string" ? value : INVALID_FIELD;
 }
 
-function readRequiredNumber(record: Record<string, unknown>, key: string): number | undefined {
+function readGoInteger(record: Record<string, unknown>, key: string): number | InvalidField {
   const value = record[key];
-  return typeof value === "number" ? value : undefined;
+  if (value === undefined || value === null) return 0;
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : INVALID_FIELD;
 }
 
 function readRequiredFunctionFields(
@@ -118,21 +136,21 @@ function readRequiredFunctionFields(
       "verify_jwt" | "import_map" | "entrypoint_path" | "import_map_path" | "ezbr_sha256"
     >
   | undefined {
-  const id = readRequiredString(record, "id");
-  const slug = readRequiredString(record, "slug");
-  const name = readRequiredString(record, "name");
-  const status = readRequiredString(record, "status");
-  const version = readRequiredNumber(record, "version");
-  const createdAt = readRequiredNumber(record, "created_at");
-  const updatedAt = readRequiredNumber(record, "updated_at");
+  const id = readGoString(record, "id");
+  const slug = readGoString(record, "slug");
+  const name = readGoString(record, "name");
+  const status = readGoString(record, "status");
+  const version = readGoInteger(record, "version");
+  const createdAt = readGoInteger(record, "created_at");
+  const updatedAt = readGoInteger(record, "updated_at");
   if (
-    id === undefined ||
-    slug === undefined ||
-    name === undefined ||
-    status === undefined ||
-    version === undefined ||
-    createdAt === undefined ||
-    updatedAt === undefined
+    id === INVALID_FIELD ||
+    slug === INVALID_FIELD ||
+    name === INVALID_FIELD ||
+    status === INVALID_FIELD ||
+    version === INVALID_FIELD ||
+    createdAt === INVALID_FIELD ||
+    updatedAt === INVALID_FIELD
   ) {
     return undefined;
   }
@@ -153,21 +171,34 @@ function parseFunctionsResponse(value: unknown): Functions | undefined {
   }
   const functions: LegacyFunctionRecord[] = [];
   for (const item of value) {
-    if (typeof item !== "object" || item === null) {
+    if (!isRecord(item)) {
       return undefined;
     }
-    const record = item as Record<string, unknown>;
-    const required = readRequiredFunctionFields(record);
+    const required = readRequiredFunctionFields(item);
     if (required === undefined) {
+      return undefined;
+    }
+    const verifyJwt = readOptionalBoolean(item, "verify_jwt");
+    const importMap = readOptionalBoolean(item, "import_map");
+    const entrypointPath = readOptionalString(item, "entrypoint_path");
+    const importMapPath = readOptionalNullableString(item, "import_map_path");
+    const ezbrSha256 = readOptionalString(item, "ezbr_sha256");
+    if (
+      verifyJwt === INVALID_FIELD ||
+      importMap === INVALID_FIELD ||
+      entrypointPath === INVALID_FIELD ||
+      importMapPath === INVALID_FIELD ||
+      ezbrSha256 === INVALID_FIELD
+    ) {
       return undefined;
     }
     functions.push({
       ...required,
-      verify_jwt: readOptionalBoolean(record, "verify_jwt"),
-      import_map: readOptionalBoolean(record, "import_map"),
-      entrypoint_path: readOptionalString(record, "entrypoint_path"),
-      import_map_path: readOptionalNullableString(record, "import_map_path"),
-      ezbr_sha256: readOptionalString(record, "ezbr_sha256"),
+      verify_jwt: verifyJwt,
+      import_map: importMap,
+      entrypoint_path: entrypointPath,
+      import_map_path: importMapPath,
+      ezbr_sha256: ezbrSha256,
     });
   }
   return functions;
@@ -177,8 +208,9 @@ function decodeFunctionsResponse(
   rawBody: string,
 ): Effect.Effect<Functions, LegacyFunctionsListNetworkError> {
   return Effect.gen(function* () {
+    const parse = (): unknown => JSON.parse(rawBody);
     const parsed = yield* Effect.try({
-      try: () => JSON.parse(rawBody) as unknown,
+      try: parse,
       catch: (cause) =>
         new LegacyFunctionsListNetworkError({
           message: `failed to list functions: ${String(cause)}`,

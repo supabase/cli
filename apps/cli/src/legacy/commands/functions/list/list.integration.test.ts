@@ -43,6 +43,16 @@ const HTML_FUNCTION: Functions[number] = {
   name: "<Hello>&World>",
 };
 
+const INVALID_OPTIONAL_FUNCTION = {
+  ...SAMPLE_FUNCTION,
+  verify_jwt: "true",
+};
+
+const NON_INTEGER_FUNCTION = {
+  ...SAMPLE_FUNCTION,
+  version: 1.5,
+};
+
 const UNKNOWN_STATUS_FUNCTION = {
   ...SAMPLE_FUNCTION,
   status: "PAUSED_FOR_REBALANCE",
@@ -170,6 +180,17 @@ describe("legacy functions list integration", () => {
     return Effect.gen(function* () {
       yield* legacyFunctionsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain('"name": "\\u003cHello\\u003e\\u0026World\\u003e"');
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("preserves Go zero values for omitted non-pointer fields", () => {
+    const { layer, out } = setup({ goOutput: "json", response: [{}] });
+    return Effect.gen(function* () {
+      yield* legacyFunctionsList({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain('"created_at": 0');
+      expect(out.stdoutText).toContain('"id": ""');
+      expect(out.stdoutText).toContain('"status": ""');
+      expect(out.stdoutText).toContain('"version": 0');
     }).pipe(Effect.provide(layer));
   });
 
@@ -327,6 +348,32 @@ Name = "Hello World"`);
         const json = JSON.stringify(exit.cause);
         expect(json).toContain("LegacyFunctionsListNetworkError");
         expect(json).toContain("failed to list functions:");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails on invalid optional field types", () => {
+    const { layer } = setup({ response: [INVALID_OPTIONAL_FUNCTION] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = JSON.stringify(exit.cause);
+        expect(json).toContain("LegacyFunctionsListNetworkError");
+        expect(json).toContain("failed to list functions");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails on non-integer numeric fields", () => {
+    const { layer } = setup({ response: [NON_INTEGER_FUNCTION] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = JSON.stringify(exit.cause);
+        expect(json).toContain("LegacyFunctionsListNetworkError");
+        expect(json).toContain("failed to list functions");
       }
     }).pipe(Effect.provide(layer));
   });
