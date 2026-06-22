@@ -73,3 +73,32 @@ export function legacyParseBoolEnv(raw: string | undefined): boolean {
       return false;
   }
 }
+
+/**
+ * Resolves `db pull` declarative mode from the raw argv, replicating pflag's
+ * single-variable, last-occurrence-wins binding. Go binds BOTH `--declarative`
+ * and the deprecated alias `--use-pg-delta` to the same `useDeclarative`
+ * variable (`apps/cli-go/cmd/db.go:534-535`), so when both appear the LAST
+ * occurrence in argv wins — e.g. `db pull --declarative --use-pg-delta=false`
+ * ends in migration mode (`false`), and `--use-pg-delta --declarative=false`
+ * likewise. OR-ing the two parsed booleans would instead take the declarative
+ * export path for either invocation, diverging from Go.
+ *
+ * pflag bool flags are switches: a bare `--declarative` is `true`; `--flag=value`
+ * parses `value` via `strconv.ParseBool` (same true-set as viper above). A
+ * space-separated token after a bool flag is NOT consumed (it falls through as a
+ * positional), so only the `=value` form carries a value. Tokens after the `--`
+ * argv terminator are positionals, not flags. Returns `undefined` when neither
+ * flag is present so the caller falls back to the Go default (`false`).
+ */
+export function legacyResolveDeclarativeFromArgs(args: ReadonlyArray<string>): boolean | undefined {
+  const FLAG_PATTERN = /^--(?:declarative|use-pg-delta)(?:=(.*))?$/u;
+  let result: boolean | undefined;
+  for (const arg of args) {
+    if (arg === "--") break;
+    const match = FLAG_PATTERN.exec(arg);
+    if (match === null) continue;
+    result = match[1] === undefined ? true : legacyParseBoolEnv(match[1]);
+  }
+  return result;
+}

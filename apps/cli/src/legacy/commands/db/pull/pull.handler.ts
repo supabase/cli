@@ -5,6 +5,7 @@ import {
   LegacyExperimentalFlag,
   LegacyYesFlag,
 } from "../../../../shared/legacy/global-flags.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
@@ -30,6 +31,7 @@ import {
 } from "../shared/legacy-pgdelta.write.ts";
 import {
   legacyParseBoolEnv,
+  legacyResolveDeclarativeFromArgs,
   legacyResolvePullDiffEngine,
   legacyShouldUsePgDelta,
 } from "../shared/legacy-diff-engine.ts";
@@ -128,16 +130,25 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
+  const cliArgs = yield* CliArgs;
 
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
     const name = Option.getOrElse(flags.name, () => "remote_schema");
-    // `--declarative` and the deprecated `--use-pg-delta` both select declarative
-    // output (Go binds both to `useDeclarative`, `cmd/db.go:464-465`).
+    // `--declarative` and the deprecated `--use-pg-delta` both bind to the same
+    // `useDeclarative` variable in Go (`cmd/db.go:534-535`), so when BOTH are
+    // passed the LAST occurrence in argv wins (e.g. `--declarative
+    // --use-pg-delta=false` => migration mode). The parsed Options don't carry
+    // order, so for the both-present case we replay pflag's last-occurrence rule
+    // off the raw argv; OR-ing the two would instead diverge on conflicting
+    // values. When only one (or neither) is present, its Option value already
+    // equals its argv value, so the OR is exact.
     const useDeclarative =
-      Option.getOrElse(flags.declarative, () => false) ||
-      Option.getOrElse(flags.usePgDelta, () => false);
+      Option.isSome(flags.declarative) && Option.isSome(flags.usePgDelta)
+        ? (legacyResolveDeclarativeFromArgs(cliArgs.args) ?? false)
+        : Option.getOrElse(flags.declarative, () => false) ||
+          Option.getOrElse(flags.usePgDelta, () => false);
     if (Option.isSome(flags.usePgDelta)) {
       yield* output.raw(`${DEPRECATION_LINE}\n`, "stderr");
     }

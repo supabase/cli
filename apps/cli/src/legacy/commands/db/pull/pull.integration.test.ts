@@ -17,6 +17,7 @@ import {
   LegacyNetworkIdFlag,
   LegacyYesFlag,
 } from "../../../../shared/legacy/global-flags.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -55,6 +56,10 @@ interface SetupOpts {
   readonly poolerAvailable?: boolean;
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
   readonly catalogStdout?: string; // stdout returned by pg-delta catalog-export runs
+  // Raw argv seen by the handler (CliArgs). Only consulted when both
+  // `--declarative` and `--use-pg-delta` are present, to replay pflag's
+  // last-occurrence-wins ordering; defaults to empty.
+  readonly args?: ReadonlyArray<string>;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -195,6 +200,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyNetworkIdFlag, Option.none()),
     Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
+    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     mockRuntimeInfo(),
     BunServices.layer,
   );
@@ -351,6 +357,60 @@ describe("legacy db pull", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
+
+  it.effect(
+    "--declarative --use-pg-delta=false stays in migration mode (Go last-occurrence-wins)",
+    () => {
+      // Go binds both flags to one variable, so the last occurrence wins: this
+      // invocation ends false => migration mode + history repair, NOT declarative
+      // export. OR-ing the two parsed flags would wrongly take the declarative path.
+      seedMigration(tmp.current, "20240101000000");
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+        args: ["db", "pull", "--declarative", "--use-pg-delta=false"],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(
+          flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }),
+        );
+        expect(s.provisionCalls[0]?.mode).toBe("diff");
+        expect(s.historyUpserts.length).toBe(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "--use-pg-delta --declarative=false stays in migration mode (Go last-occurrence-wins)",
+    () => {
+      seedMigration(tmp.current, "20240101000000");
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+        args: ["db", "pull", "--use-pg-delta", "--declarative=false"],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(
+          flags({ declarative: Option.some(false), usePgDelta: Option.some(true) }),
+        );
+        expect(s.provisionCalls[0]?.mode).toBe("diff");
+        expect(s.historyUpserts.length).toBe(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("--declarative --use-pg-delta (both true) takes the declarative export path", () => {
+    const s = setup(tmp.current, {
+      edgeStdout: EXPORT_JSON,
+      args: ["db", "pull", "--declarative", "--use-pg-delta"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ declarative: Option.some(true), usePgDelta: Option.some(true) }));
+      expect(s.provisionCalls[0]?.mode).toBe("declarative");
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect("a migration-history conflict fails with the repair suggestion", () => {
     seedMigration(tmp.current, "20240102000000");

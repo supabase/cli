@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   legacyParseBoolEnv,
+  legacyResolveDeclarativeFromArgs,
   legacyResolveDiffEngine,
   legacyResolvePullDiffEngine,
   legacyShouldUsePgDelta,
@@ -98,5 +99,38 @@ describe("legacyParseBoolEnv", () => {
       expect(legacyParseBoolEnv(v)).toBe(false);
     }
     expect(legacyParseBoolEnv(undefined)).toBe(false);
+  });
+});
+
+describe("legacyResolveDeclarativeFromArgs", () => {
+  it("returns undefined when neither flag is present", () => {
+    expect(legacyResolveDeclarativeFromArgs(["db", "pull"])).toBeUndefined();
+    expect(legacyResolveDeclarativeFromArgs([])).toBeUndefined();
+  });
+
+  it("treats a bare flag as true", () => {
+    expect(legacyResolveDeclarativeFromArgs(["db", "pull", "--declarative"])).toBe(true);
+    expect(legacyResolveDeclarativeFromArgs(["db", "pull", "--use-pg-delta"])).toBe(true);
+  });
+
+  it("parses an =value with strconv.ParseBool semantics", () => {
+    expect(legacyResolveDeclarativeFromArgs(["--declarative=false"])).toBe(false);
+    expect(legacyResolveDeclarativeFromArgs(["--declarative=true"])).toBe(true);
+    expect(legacyResolveDeclarativeFromArgs(["--use-pg-delta=0"])).toBe(false);
+    expect(legacyResolveDeclarativeFromArgs(["--use-pg-delta=1"])).toBe(true);
+  });
+
+  it("lets the last occurrence win across both flag names (pflag single-variable bind)", () => {
+    expect(legacyResolveDeclarativeFromArgs(["--declarative", "--use-pg-delta=false"])).toBe(false);
+    expect(legacyResolveDeclarativeFromArgs(["--use-pg-delta", "--declarative=false"])).toBe(false);
+    expect(legacyResolveDeclarativeFromArgs(["--declarative=false", "--use-pg-delta"])).toBe(true);
+    expect(legacyResolveDeclarativeFromArgs(["--use-pg-delta=false", "--declarative"])).toBe(true);
+  });
+
+  it("ignores tokens after the `--` argv terminator", () => {
+    expect(legacyResolveDeclarativeFromArgs(["--declarative", "--", "--use-pg-delta=false"])).toBe(
+      true,
+    );
+    expect(legacyResolveDeclarativeFromArgs(["--", "--declarative"])).toBeUndefined();
   });
 });
