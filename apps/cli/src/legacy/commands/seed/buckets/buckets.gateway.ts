@@ -229,7 +229,10 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
 
   // Sends a request and returns the response body text, reproducing the Go
   // fetcher's error shapes (`pkg/fetcher/http.go`): transport failure →
-  // network error; non-2xx → `Error status <d>: <body>` status error.
+  // network error; non-200 → `Error status <d>: <body>` status error. Go's
+  // service gateway installs `WithExpectedStatus(http.StatusOK)`
+  // (`pkg/fetcher/gateway.go:17`), so only exactly 200 is a success — a 201/204
+  // from an incompatible route is an error, not a silent pass.
   const send = Effect.fnUntraced(function* (req: HttpClientRequest.HttpClientRequest) {
     const { status, body } = yield* Effect.gen(function* () {
       const response = yield* httpClient.execute(req);
@@ -243,7 +246,7 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
           }),
       ),
     );
-    if (status < 200 || status >= 300) {
+    if (status !== 200) {
       return yield* Effect.fail(
         new LegacySeedStorageStatusError({
           status,

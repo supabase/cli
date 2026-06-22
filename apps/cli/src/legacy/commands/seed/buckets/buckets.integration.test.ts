@@ -743,6 +743,22 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("treats a non-200 2xx gateway response as an error (Go expects exactly 200)", () => {
+    const { layer } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.images]\npublic = true\n",
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        // Go's gateway uses WithExpectedStatus(200); a 201 is an error.
+        { method: "POST", match: "/storage/v1/bucket", status: 201, body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("Error status 201");
+    });
+  });
+
   it.live("builds an https base URL with a host override when tls is enabled", () => {
     const previousHost = process.env["SUPABASE_SERVICES_HOSTNAME"];
     process.env["SUPABASE_SERVICES_HOSTNAME"] = "docker.host";
@@ -881,6 +897,30 @@ describe("legacy seed buckets", () => {
       });
     },
   );
+
+  it.live("follows a symlinked objects_path root and uploads its files (Go fs.WalkDir)", () => {
+    // Go's `io/fs.WalkDir` follows a symlinked ROOT ("if root itself is a
+    // symbolic link, its target will be walked"); only NESTED symlinks are
+    // skipped. fs.stat on the root follows the link, so the target dir is walked.
+    mkdirSync(join(tmp.current, "supabase", "real-assets"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "real-assets", "a.txt"), "hello");
+    symlinkSync("./real-assets", join(tmp.current, "supabase", "linked-assets"));
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./linked-assets"\n',
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/object/", body: {} },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Uploading: supabase/linked-assets/a.txt => images/a.txt");
+      const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
+      expect(uploads).toHaveLength(1);
+    });
+  });
 
   it.live("--yes overwrites an existing bucket and echoes Go's prompt line", () => {
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
