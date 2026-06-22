@@ -15,9 +15,13 @@
 
 ## API Routes
 
-| Method | Path                          | Auth         | Request body | Response (used fields)                      |
-| ------ | ----------------------------- | ------------ | ------------ | ------------------------------------------- |
-| `GET`  | `/v1/projects/{ref}/api-keys` | Bearer token | none         | `[{name: string, api_key: string \| null}]` |
+| Method | Path                                        | Auth         | Request body | Response (used fields)                      |
+| ------ | ------------------------------------------- | ------------ | ------------ | ------------------------------------------- |
+| `GET`  | `/v1/projects/{ref}/api-keys[?reveal=true]` | Bearer token | none         | `[{name: string, api_key: string \| null}]` |
+
+The `reveal=true` query param is sent only when `--reveal` is passed; it instructs the
+Management API to return the full secret keys (`sb_secret_...`) in `api_key` instead of
+`null`. Without `--reveal` the param is omitted entirely (default request).
 
 ## Environment Variables
 
@@ -28,9 +32,10 @@
 
 ## Flags
 
-| Flag            | Type   | Required | Description                                                                 |
-| --------------- | ------ | -------- | --------------------------------------------------------------------------- |
-| `--project-ref` | string | no       | Project ref of the Supabase project (resolved from linked config if absent) |
+| Flag            | Type    | Required | Description                                                                 |
+| --------------- | ------- | -------- | --------------------------------------------------------------------------- |
+| `--project-ref` | string  | no       | Project ref of the Supabase project (resolved from linked config if absent) |
+| `--reveal`      | boolean | no       | Reveal the secret API keys in full (sends `reveal=true`); default redacted  |
 
 ## Exit Codes
 
@@ -44,9 +49,9 @@
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                             |
-| ---------------------- | ------------------------------------------ | ----------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` is telemetry-safe) |
+| Event                  | When                                       | Notable properties / groups                                                                                                            |
+| ---------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` is telemetry-safe; `--reveal`'s boolean value is logged but never the key values) |
 
 ## Output
 
@@ -95,7 +100,9 @@ On failure, an `error` event is emitted instead:
 ## Notes
 
 - API keys with null values (redacted by the API) render as `******` in text mode and
-  in the toml/env env map; the json/yaml encodings preserve the raw `null`.
+  in the toml/env env map; the json/yaml encodings preserve the raw `null`. Passing
+  `--reveal` makes the API return the secret values, so they print in full across all
+  formats (issue #4775). This is a TS-only flag with no Go CLI equivalent.
 - The `--project-ref` flag is optional when the CLI is linked to a project via `supabase link`.
   When omitted, the ref is resolved flag → env → `.temp/project-ref` → prompt on a TTY,
   failing with a not-linked error otherwise.
