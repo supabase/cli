@@ -29,6 +29,11 @@ type MigrationFile struct {
 var (
 	migrateFilePattern = regexp.MustCompile(`^([0-9]+)_(.*)\.sql$`)
 	typeNamePattern    = regexp.MustCompile(`type "([^"]+)" does not exist`)
+	createIndexPattern = regexp.MustCompile(`^CREATE\s+(UNIQUE\s+)?INDEX\s+CONCURRENTLY(\s|\z)`)
+	reindexPattern     = regexp.MustCompile(`^REINDEX(\s|\().*\sCONCURRENTLY(\s|\z)`)
+	vacuumPattern      = regexp.MustCompile(`^VACUUM(\s|\(|\z)`)
+	alterSystemPattern = regexp.MustCompile(`^ALTER\s+SYSTEM(\s|\z)`)
+	clusterPattern     = regexp.MustCompile(`^CLUSTER(\s|\z)`)
 )
 
 func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
@@ -73,12 +78,36 @@ func NewMigrationFromReader(sql io.Reader) (*MigrationFile, error) {
 }
 
 func isPipelineIncompatible(sql string) bool {
-	upper := strings.ToUpper(strings.TrimSpace(sql))
-	return strings.Contains(upper, "INDEX CONCURRENTLY") ||
-		strings.Contains(upper, "REINDEX CONCURRENTLY") ||
-		strings.HasPrefix(upper, "VACUUM ") ||
-		strings.HasPrefix(upper, "ALTER SYSTEM") ||
-		strings.HasPrefix(upper, "CLUSTER ")
+	upper := strings.ToUpper(trimLeadingSQLComments(sql))
+	return createIndexPattern.MatchString(upper) ||
+		reindexPattern.MatchString(upper) ||
+		vacuumPattern.MatchString(upper) ||
+		alterSystemPattern.MatchString(upper) ||
+		clusterPattern.MatchString(upper)
+}
+
+func trimLeadingSQLComments(sql string) string {
+	trimmed := strings.TrimLeftFunc(sql, func(r rune) bool {
+		return r == '\ufeff' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	})
+	for {
+		switch {
+		case strings.HasPrefix(trimmed, "--"):
+			if idx := strings.IndexByte(trimmed, '\n'); idx >= 0 {
+				trimmed = strings.TrimLeft(trimmed[idx+1:], " \t\n\r")
+				continue
+			}
+			return ""
+		case strings.HasPrefix(trimmed, "/*"):
+			if idx := strings.Index(trimmed, "*/"); idx >= 0 {
+				trimmed = strings.TrimLeft(trimmed[idx+2:], " \t\n\r")
+				continue
+			}
+			return trimmed
+		default:
+			return strings.TrimSpace(trimmed)
+		}
+	}
 }
 
 func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
@@ -128,7 +157,7 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 			if err := flushBatch(); err != nil {
 				return err
 			}
-			if _, err := conn.Exec(ctx, line); err != nil {
+			if _, err := conn.PgConn().Exec(ctx, line).ReadAll(); err != nil {
 				return formatError(err, executed)
 			}
 			executed++
@@ -143,6 +172,7 @@ func (m *MigrationFile) ExecBatch(ctx context.Context, conn *pgx.Conn) error {
 		if err := m.insertVersionSQL(conn, batch); err != nil {
 			return err
 		}
+		batchSize++
 	}
 
 	return flushBatch()

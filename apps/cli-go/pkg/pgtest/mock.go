@@ -92,6 +92,12 @@ func (r *MockConn) Query(sql string, args ...any) *MockConn {
 	return r
 }
 
+// SimpleQuery adds a simple-protocol query to the mock connection.
+func (r *MockConn) SimpleQuery(sql string) *MockConn {
+	r.script.Steps = append(r.script.Steps, ExpectSimpleQuery(sql))
+	return r
+}
+
 func (r *MockConn) encodeValueArg(v any) (value []byte, oid uint32) {
 	if v == nil {
 		return nil, pgtype.TextArrayOID

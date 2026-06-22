@@ -12,16 +12,27 @@ import (
 var ci = pgtype.NewConnInfo()
 
 type extendedQueryStep struct {
-	sql    string
-	params [][]byte
-	oids   []uint32
-	reply  pgmock.Script
+	sql        string
+	params     [][]byte
+	oids       []uint32
+	simpleOnly bool
+	reply      pgmock.Script
 }
 
 func (e *extendedQueryStep) Step(backend *pgproto3.Backend) error {
 	msg, err := getFrontendMessage(backend)
 	if err != nil {
 		return err
+	}
+
+	// Handle simple query
+	want := &pgproto3.Query{String: e.sql}
+	if m, ok := msg.(*pgproto3.Query); ok && reflect.DeepEqual(m, want) {
+		e.reply.Steps = append(e.reply.Steps, pgmock.SendMessage(&pgproto3.ReadyForQuery{TxStatus: 'I'}))
+		return e.reply.Run(backend)
+	}
+	if e.simpleOnly {
+		return errors.Errorf("expected => %#v\nactual => %#v", want, msg)
 	}
 
 	// Handle prepared statements, name can be dynamic: lrupsc_5_0
@@ -75,19 +86,17 @@ func (e *extendedQueryStep) Step(backend *pgproto3.Backend) error {
 		return e.reply.Run(backend)
 	}
 
-	// Handle simple query
-	want := &pgproto3.Query{String: e.sql}
-	if m, ok := msg.(*pgproto3.Query); ok && reflect.DeepEqual(m, want) {
-		e.reply.Steps = append(e.reply.Steps, pgmock.SendMessage(&pgproto3.ReadyForQuery{TxStatus: 'I'}))
-		return e.reply.Run(backend)
-	}
-
 	return errors.Errorf("expected => %#v\nactual => %#v", want, msg)
 }
 
 // Expects a SQL query in any form: simple, prepared, or anonymous.
 func ExpectQuery(sql string, params [][]byte, oids []uint32) pgmock.Step {
 	return &extendedQueryStep{sql: sql, params: params, oids: oids}
+}
+
+// ExpectSimpleQuery expects SQL through the simple query protocol.
+func ExpectSimpleQuery(sql string) pgmock.Step {
+	return &extendedQueryStep{sql: sql, simpleOnly: true}
 }
 
 type terminateStep struct{}

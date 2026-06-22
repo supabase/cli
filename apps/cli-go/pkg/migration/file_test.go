@@ -59,6 +59,73 @@ func TestMigrationFile(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("executes pipeline incompatible statements outside batch", func(t *testing.T) {
+		migration := MigrationFile{
+			Statements: []string{
+				"create table public.widgets(id bigint primary key)",
+				"CREATE UNIQUE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)",
+				"alter table public.widgets enable row level security",
+			},
+			Version: "20260101000000",
+			Name:    "create_widgets",
+		}
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(migration.Statements[0]).
+			Reply("CREATE TABLE").
+			SimpleQuery(migration.Statements[1]).
+			Reply("CREATE INDEX").
+			Query(migration.Statements[2]).
+			Reply("ALTER TABLE").
+			Query(INSERT_MIGRATION_VERSION, migration.Version, migration.Name, migration.Statements).
+			Reply("INSERT 0 1")
+		// Run test
+		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
+		// Check error
+		assert.NoError(t, err)
+	})
+
+	t.Run("records migration version when file has no statements", func(t *testing.T) {
+		migration := MigrationFile{
+			Version: "20260101000000",
+			Name:    "empty_migration",
+		}
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(INSERT_MIGRATION_VERSION, migration.Version, migration.Name, migration.Statements).
+			Reply("INSERT 0 1")
+		// Run test
+		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
+		// Check error
+		assert.NoError(t, err)
+	})
+
+	t.Run("reports pipeline incompatible statement errors with statement index", func(t *testing.T) {
+		migration := MigrationFile{
+			Statements: []string{
+				"create table public.widgets(id bigint primary key)",
+				"CREATE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)",
+				"alter table public.widgets enable row level security",
+			},
+			Version: "20260101000000",
+			Name:    "create_widgets",
+		}
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(migration.Statements[0]).
+			Reply("CREATE TABLE").
+			SimpleQuery(migration.Statements[1]).
+			ReplyError("25001", "CREATE INDEX CONCURRENTLY cannot be executed within a pipeline")
+		// Run test
+		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
+		// Check error
+		assert.ErrorContains(t, err, "ERROR: CREATE INDEX CONCURRENTLY cannot be executed within a pipeline (SQLSTATE 25001)")
+		assert.ErrorContains(t, err, "At statement: 1\nCREATE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)")
+	})
+
 	t.Run("throws error on insert failure", func(t *testing.T) {
 		migration := MigrationFile{
 			Statements: []string{"create schema public"},
@@ -150,6 +217,86 @@ func TestExtractTypeName(t *testing.T) {
 		result := extractTypeName(`type "type123" does not exist`)
 		assert.Equal(t, "type123", result)
 	})
+}
+
+func TestIsPipelineIncompatible(t *testing.T) {
+	cases := []struct {
+		name string
+		sql  string
+		want bool
+	}{
+		{
+			name: "create index concurrently",
+			sql:  "CREATE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)",
+			want: true,
+		},
+		{
+			name: "create unique index concurrently",
+			sql:  "CREATE UNIQUE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)",
+			want: true,
+		},
+		{
+			name: "create index concurrently after comments",
+			sql:  "-- cannot run in a transaction\n/* generated */\nCREATE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)",
+			want: true,
+		},
+		{
+			name: "reindex table concurrently",
+			sql:  "REINDEX TABLE CONCURRENTLY public.widgets",
+			want: true,
+		},
+		{
+			name: "reindex with options concurrently",
+			sql:  "REINDEX (VERBOSE) INDEX CONCURRENTLY widgets_id_idx",
+			want: true,
+		},
+		{
+			name: "vacuum bare",
+			sql:  "VACUUM",
+			want: true,
+		},
+		{
+			name: "vacuum with options",
+			sql:  "VACUUM (ANALYZE) public.widgets",
+			want: true,
+		},
+		{
+			name: "alter system",
+			sql:  "ALTER SYSTEM SET log_statement = 'all'",
+			want: true,
+		},
+		{
+			name: "cluster",
+			sql:  "CLUSTER public.widgets USING widgets_id_idx",
+			want: true,
+		},
+		{
+			name: "ordinary create index",
+			sql:  "CREATE INDEX widgets_id_idx ON public.widgets(id)",
+			want: false,
+		},
+		{
+			name: "concurrently in string literal",
+			sql:  "SELECT 'CREATE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)'",
+			want: false,
+		},
+		{
+			name: "concurrently in leading comment only",
+			sql:  "-- CREATE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)\nSELECT 1",
+			want: false,
+		},
+		{
+			name: "word prefix",
+			sql:  "VACUUMING public.widgets",
+			want: false,
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isPipelineIncompatible(tt.sql))
+		})
+	}
 }
 
 func TestIsSchemaQualified(t *testing.T) {
