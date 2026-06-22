@@ -1254,7 +1254,7 @@ export const runChildProcess = Effect.fnUntraced(function* (
       stdout: opts.stdout ?? "pipe",
       stderr: opts.stderr ?? "pipe",
       env: opts.env,
-      extendEnv: opts.extendEnv ?? false,
+      extendEnv: opts.extendEnv ?? command === "docker",
     }),
   );
 

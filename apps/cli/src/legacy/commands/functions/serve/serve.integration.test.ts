@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -137,6 +137,7 @@ interface LogProcessBehavior {
   readonly stdout?: string;
   readonly stderr?: string;
   readonly pending?: boolean;
+  readonly onSpawn?: () => void;
 }
 
 function baseFlags(overrides: Partial<LegacyFunctionsServeFlags> = {}): LegacyFunctionsServeFlags {
@@ -273,6 +274,7 @@ function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
           spawned.push(record);
           const behavior = behaviors[Math.min(index, behaviors.length - 1)] ?? {};
           index += 1;
+          behavior.onSpawn?.();
 
           return ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1_000 + spawned.length),
@@ -528,10 +530,26 @@ describe("legacy functions serve integration", () => {
       throw new Error(`unexpected docker args: ${args.join(" ")}`);
     };
 
+    let multilineEnvDirWhenLogsStarted: string | undefined;
+    let multilineEnvDirExistedWhenLogsStarted = false;
     const childSpawner = mockDockerLogSpawner([
       {
         exitCode: 1,
         stderr: "error running container: exit 1",
+        onSpawn: () => {
+          const dockerRun = deployMockState.runCalls.find(
+            (call) => call.command === "docker" && call.args[0] === "run",
+          );
+          if (dockerRun === undefined) {
+            throw new Error("expected docker run call before docker logs spawn");
+          }
+          multilineEnvDirWhenLogsStarted = extractFlagValues(dockerRun.args, "-v")
+            .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro"))
+            ?.slice(0, -":/root/.supabase/multiline-env:ro".length);
+          multilineEnvDirExistedWhenLogsStarted =
+            multilineEnvDirWhenLogsStarted !== undefined &&
+            existsSync(multilineEnvDirWhenLogsStarted);
+        },
       },
     ]);
 
@@ -601,6 +619,12 @@ describe("legacy functions serve integration", () => {
       expect(script).not.toContain(multilineValue);
       expect(script).not.toContain("EOF_ENV_0");
       expect(files?.["env-0"]).toBe(multilineValue);
+      expect(multilineEnvDirWhenLogsStarted).toBeDefined();
+      if (multilineEnvDirWhenLogsStarted === undefined) {
+        throw new Error("expected multiline env dir when docker logs started");
+      }
+      expect(multilineEnvDirExistedWhenLogsStarted).toBe(true);
+      expect(existsSync(multilineEnvDirWhenLogsStarted)).toBe(false);
     });
   });
 

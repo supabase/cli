@@ -166,6 +166,7 @@ interface WatchSpec {
 
 interface StartedRuntime {
   readonly containerId: string;
+  readonly cleanup: Effect.Effect<void>;
   readonly watchSpecs: ReadonlyArray<WatchSpec>;
 }
 
@@ -1316,27 +1317,27 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       ),
     ];
 
+    const cleanupRuntimeArtifacts =
+      dockerEnvFile === undefined
+        ? dockerMultilineEnvScript === undefined
+          ? Effect.void
+          : Effect.tryPromise(() => dockerMultilineEnvScript.cleanup()).pipe(Effect.orDie)
+        : Effect.tryPromise(() => dockerEnvFile.cleanup()).pipe(
+            Effect.andThen(
+              dockerMultilineEnvScript === undefined
+                ? Effect.void
+                : Effect.tryPromise(() => dockerMultilineEnvScript.cleanup()).pipe(Effect.orDie),
+            ),
+            Effect.orDie,
+          );
+
     yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
     const result = yield* runChildProcess("docker", command, {
       stdout: "pipe",
       stderr: "pipe",
-    }).pipe(
-      Effect.ensuring(
-        dockerEnvFile === undefined
-          ? dockerMultilineEnvScript === undefined
-            ? Effect.void
-            : Effect.tryPromise(() => dockerMultilineEnvScript.cleanup()).pipe(Effect.orDie)
-          : Effect.tryPromise(() => dockerEnvFile.cleanup()).pipe(
-              Effect.andThen(
-                dockerMultilineEnvScript === undefined
-                  ? Effect.void
-                  : Effect.tryPromise(() => dockerMultilineEnvScript.cleanup()),
-              ),
-              Effect.orDie,
-            ),
-      ),
-    );
+    });
     if (result.exitCode !== 0) {
+      yield* cleanupRuntimeArtifacts;
       const message =
         result.stderr.trim() || result.stdout.trim() || "failed to start edge runtime";
       return yield* Effect.fail(new Error(message));
@@ -1346,6 +1347,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
 
     return {
       containerId,
+      cleanup: cleanupRuntimeArtifacts,
       watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...functionBinds])),
     } satisfies StartedRuntime;
   }).pipe(Effect.onInterrupt(() => bestEffortRemoveContainer(containerId)));
@@ -1391,7 +1393,11 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
           waitForRestartSignal(started.watchSpecs).pipe(Effect.as("restart" as const)),
         ),
         streamContainerLogs(started.containerId).pipe(Effect.as("logs" as const)),
-      ).pipe(Effect.ensuring(bestEffortRemoveContainer(started.containerId)));
+      ).pipe(
+        Effect.ensuring(
+          bestEffortRemoveContainer(started.containerId).pipe(Effect.ensuring(started.cleanup)),
+        ),
+      );
 
       if (outcome === "shutdown") {
         yield* writeStoppedServingMessage();
@@ -1400,5 +1406,5 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
     }
   });
 
-  yield* loop;
+  yield* Effect.scoped(loop);
 });
