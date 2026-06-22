@@ -81,6 +81,7 @@ const dockerLogDiagnosticTailLength = 4_096;
 const remoteJwksTimeoutMs = 10_000;
 const legacyDefaultEdgeRuntimeVersion = "v1.74.1";
 const clerkDomainPattern = /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/;
+const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const serveMainTypecheckPreamble = "declare const Deno: any;\ndeclare const EdgeRuntime: any;\n\n";
 const serveMainSourcePath = new URL("./serve.main.ts", import.meta.url);
 let cachedLegacyFunctionsServeMainTemplate: string | undefined;
@@ -832,6 +833,9 @@ async function writeDockerMultilineEnvScript(
   const hostEnvDir = join(dir, "values");
   const script = env
     .map(([name], index) => {
+      if (!shellVariableNamePattern.test(name)) {
+        throw new Error(`invalid multiline environment variable name for shell export: ${name}`);
+      }
       const valueFile = `env-${index}`;
       return `export ${name}="$(cat ${join(envDir, valueFile).replaceAll("\\", "/")})"`;
     })
@@ -862,6 +866,14 @@ function partitionDockerEnvEntries(env: Readonly<Record<string, string>>) {
   }
 
   return { singleLine, multiline } as const;
+}
+
+function validateDockerMultilineEnvNames(env: ReadonlyArray<readonly [string, string]>) {
+  for (const [name] of env) {
+    if (!shellVariableNamePattern.test(name)) {
+      throw new Error(`invalid multiline environment variable name for shell export: ${name}`);
+    }
+  }
 }
 
 async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyArray<WatchSpec>> {
@@ -1213,6 +1225,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       for (const bind of yield* Effect.promise(() =>
         buildDockerBinds(projectId, functionsDir, functionsDir, config, {
           additionalModuleRoots: [input.dependencies.flagCwd],
+          skipMissingImportMapTargets: true,
           onWarning: async (message) => {
             bindWarnings.push(message);
           },
@@ -1265,10 +1278,14 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     const { singleLine: singleLineDockerEnv, multiline: multilineDockerEnv } =
       partitionDockerEnvEntries(dockerEnv);
     const dockerEnvFile = yield* Effect.tryPromise(() => writeDockerEnvFile(singleLineDockerEnv));
+    yield* Effect.try({
+      try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    });
     const multilineEnvDir = "/root/.supabase/multiline-env";
     const dockerMultilineEnvScript = yield* Effect.tryPromise(() =>
       writeDockerMultilineEnvScript(multilineDockerEnv, multilineEnvDir),
-    );
+    ).pipe(Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))));
 
     const labels = dockerProjectLabels(projectId);
     const runtimeCommand = [
@@ -1335,7 +1352,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     const result = yield* runChildProcess("docker", command, {
       stdout: "pipe",
       stderr: "pipe",
-    });
+    }).pipe(Effect.onInterrupt(() => cleanupRuntimeArtifacts));
     if (result.exitCode !== 0) {
       yield* cleanupRuntimeArtifacts;
       const message =

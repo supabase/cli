@@ -1055,6 +1055,7 @@ export async function buildDockerBinds(
   options: {
     readonly additionalModuleRoots?: ReadonlyArray<string>;
     readonly onWarning?: (message: string) => Promise<void>;
+    readonly skipMissingImportMapTargets?: boolean;
   } = {},
 ) {
   const hostFunctionsDir = resolve(functionsDir);
@@ -1112,18 +1113,33 @@ export async function buildDockerBinds(
     options.onWarning ?? (async () => {}),
   );
   await forEachLocalImportMapTarget(importMap, async (target) => {
-    await appendBindWithinRoots(importMapAllowedRoots, target);
-    if ((await stat(target)).isDirectory()) {
-      return;
+    try {
+      await appendBindWithinRoots(importMapAllowedRoots, target);
+      if ((await stat(target)).isDirectory()) {
+        return;
+      }
+      await walkLocalImportMapTargetImports(
+        importMap,
+        target,
+        importMapAllowedRoots,
+        projectRoot,
+        appendImportMapBind,
+        async () => {},
+      );
+    } catch (error) {
+      if (
+        options.skipMissingImportMapTargets === true &&
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        await (options.onWarning ?? (async () => {}))(
+          `WARN: Skipping missing import map target: ${target}\n`,
+        );
+        return;
+      }
+      throw error;
     }
-    await walkLocalImportMapTargetImports(
-      importMap,
-      target,
-      importMapAllowedRoots,
-      projectRoot,
-      appendImportMapBind,
-      async () => {},
-    );
   });
   for (const pattern of config.staticFiles) {
     let files: ReadonlyArray<string>;

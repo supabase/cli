@@ -628,6 +628,112 @@ describe("legacy functions serve integration", () => {
     });
   });
 
+  it.live("fails before startup when a multiline env name is not a shell identifier", () => {
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() =>
+        writeProjectFile(
+          join("supabase", "functions", ".env"),
+          ['FOO.BAR="line-1\nline-2"', ""].join("\n"),
+        ),
+      );
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain("invalid multiline environment variable name");
+        expect(error.message).toContain("FOO.BAR");
+      }
+      expect(
+        deployMockState.runCalls.filter(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        ),
+      ).toHaveLength(0);
+    });
+  });
+
+  it.live("skips missing unused import map targets during serve startup", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "run") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "exec") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    const childSpawner = mockDockerLogSpawner([
+      {
+        exitCode: 1,
+        stderr: "error running container: exit 1",
+      },
+    ]);
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(
+          [
+            'project_id = "test-project"',
+            "[functions.hello]",
+            'entrypoint = "./functions/hello/index.ts"',
+            'import_map = "./functions/hello/deno.json"',
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile(
+          "hello",
+          "deno.json",
+          JSON.stringify({
+            imports: {
+              "unused-alias/": "../missing-shared/",
+            },
+          }),
+        ),
+      );
+
+      const { layer } = setupServe({ childSpawner });
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain("error running container: exit 1");
+      }
+      expect(
+        deployMockState.runCalls.some(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        ),
+      ).toBe(true);
+    });
+  });
+
   it.live("restarts the runtime when watched files change", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
