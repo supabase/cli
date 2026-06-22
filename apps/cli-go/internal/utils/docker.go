@@ -197,9 +197,6 @@ func GetRegistryImageUrl(imageName string) string {
 	if registry == "docker.io" {
 		return imageName
 	}
-	if registry == "ghcr.io" && strings.HasPrefix(imageName, "supabase/logflare:") {
-		return imageName
-	}
 	// Configure mirror registry
 	parts := strings.Split(imageName, "/")
 	imageName = parts[len(parts)-1]

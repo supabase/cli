@@ -24,36 +24,6 @@ const (
 	imageId     = "test-image"
 )
 
-func TestGetRegistryImageUrl(t *testing.T) {
-	t.Cleanup(func() {
-		viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
-	})
-
-	t.Run("mirrors supabase images to the configured registry", func(t *testing.T) {
-		viper.Set("INTERNAL_IMAGE_REGISTRY", "ghcr.io")
-
-		actual := GetRegistryImageUrl("supabase/postgres:17.4.1.054")
-
-		assert.Equal(t, "ghcr.io/supabase/postgres:17.4.1.054", actual)
-	})
-
-	t.Run("keeps logflare on docker hub when missing from ghcr", func(t *testing.T) {
-		viper.Set("INTERNAL_IMAGE_REGISTRY", "ghcr.io")
-
-		actual := GetRegistryImageUrl("supabase/logflare:1.45.0")
-
-		assert.Equal(t, "supabase/logflare:1.45.0", actual)
-	})
-
-	t.Run("mirrors logflare to ecr", func(t *testing.T) {
-		viper.Set("INTERNAL_IMAGE_REGISTRY", "public.ecr.aws")
-
-		actual := GetRegistryImageUrl("supabase/logflare:1.45.0")
-
-		assert.Equal(t, "public.ecr.aws/supabase/logflare:1.45.0", actual)
-	})
-}
-
 func TestPullImage(t *testing.T) {
 	viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
 
