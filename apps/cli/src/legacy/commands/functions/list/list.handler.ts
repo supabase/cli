@@ -70,18 +70,46 @@ function renderFunctionsTable(functions: Functions): string {
 function toGoYamlFunction(function_: Functions[number]) {
   return {
     createdat: function_.created_at,
-    entrypointpath: function_.entrypoint_path,
+    entrypointpath: function_.entrypoint_path ?? null,
     ezbrsha256: function_.ezbr_sha256 ?? null,
     id: function_.id,
-    importmap: function_.import_map,
-    importmappath: function_.import_map_path,
+    importmap: function_.import_map ?? null,
+    importmappath: function_.import_map_path ?? null,
     name: function_.name,
     slug: function_.slug,
     status: function_.status,
     updatedat: function_.updated_at,
-    verifyjwt: function_.verify_jwt,
+    verifyjwt: function_.verify_jwt ?? null,
     version: function_.version,
   };
+}
+
+function toGoJsonFunction(function_: Functions[number]) {
+  const goFunction: Record<string, unknown> = {
+    created_at: function_.created_at,
+    id: function_.id,
+    name: function_.name,
+    slug: function_.slug,
+    status: function_.status,
+    updated_at: function_.updated_at,
+    version: function_.version,
+  };
+  if (function_.entrypoint_path != null) {
+    goFunction.entrypoint_path = function_.entrypoint_path;
+  }
+  if (function_.ezbr_sha256 != null) {
+    goFunction.ezbr_sha256 = function_.ezbr_sha256;
+  }
+  if (function_.import_map != null) {
+    goFunction.import_map = function_.import_map;
+  }
+  if (function_.import_map_path != null) {
+    goFunction.import_map_path = function_.import_map_path;
+  }
+  if (function_.verify_jwt != null) {
+    goFunction.verify_jwt = function_.verify_jwt;
+  }
+  return goFunction;
 }
 
 function toGoTomlFunction(function_: Functions[number]) {
@@ -141,7 +169,7 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
       });
     }
     if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(functions));
+      yield* output.raw(encodeGoJson(functions.map(toGoJsonFunction)));
       return;
     }
     if (goFmt === "yaml") {
@@ -150,6 +178,10 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
     }
     if (goFmt === "toml") {
       yield* output.raw(encodeToml({ functions: functions.map(toGoTomlFunction) }) + "\n");
+      return;
+    }
+    if (goFmt === "pretty") {
+      yield* output.raw(renderFunctionsTable(functions));
       return;
     }
 

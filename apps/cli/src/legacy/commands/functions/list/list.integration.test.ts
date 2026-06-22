@@ -37,6 +37,15 @@ const PIPE_FUNCTION: Functions[number] = {
   slug: "hello|world",
 };
 
+const NIL_OPTIONALS_FUNCTION: Functions[number] = {
+  ...SAMPLE_FUNCTION,
+  entrypoint_path: undefined,
+  ezbr_sha256: undefined,
+  import_map: undefined,
+  import_map_path: null,
+  verify_jwt: undefined,
+};
+
 const tempRoot = useLegacyTempWorkdir("supabase-functions-list-int-");
 
 interface SetupOpts {
@@ -141,6 +150,7 @@ describe("legacy functions list integration", () => {
       expect(out.stdoutText.startsWith("[\n  {\n")).toBe(true);
       expect(out.stdoutText.endsWith("]\n")).toBe(true);
       expect(out.stdoutText).toContain('"created_at": 1687423025152');
+      expect(out.stdoutText).not.toContain('"import_map_path": null');
     }).pipe(Effect.provide(layer));
   });
 
@@ -153,6 +163,18 @@ describe("legacy functions list integration", () => {
       expect(out.stdoutText).toContain("verifyjwt: true");
       expect(out.stdoutText).not.toContain("created_at:");
       expect(out.stdoutText).not.toContain("entrypoint_path:");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("preserves nil optional fields as null in YAML output", () => {
+    const { layer, out } = setup({ goOutput: "yaml", response: [NIL_OPTIONALS_FUNCTION] });
+    return Effect.gen(function* () {
+      yield* legacyFunctionsList({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain("entrypointpath: null");
+      expect(out.stdoutText).toContain("ezbrsha256: null");
+      expect(out.stdoutText).toContain("importmap: null");
+      expect(out.stdoutText).toContain("importmappath: null");
+      expect(out.stdoutText).toContain("verifyjwt: null");
     }).pipe(Effect.provide(layer));
   });
 
@@ -188,6 +210,16 @@ describe("legacy functions list integration", () => {
       yield* legacyFunctionsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("Hello World");
       expect(out.stdoutText).toContain("UPDATED_AT (UTC)");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("lets --output pretty win over --output-format json", () => {
+    const { layer, out } = setup({ format: "json", goOutput: "pretty" });
+    return Effect.gen(function* () {
+      yield* legacyFunctionsList({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain("Hello World");
+      expect(out.stdoutText).toContain("UPDATED_AT (UTC)");
+      expect(out.messages.find((message) => message.type === "success")).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
