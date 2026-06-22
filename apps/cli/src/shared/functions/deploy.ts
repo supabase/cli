@@ -269,7 +269,7 @@ function dockerBindHostPath(bind: string) {
 function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
   return dockerNpmEnvNames.flatMap((name) => {
     const value = env[name];
-    return value === undefined || value === "" ? [] : [`${name}=${value}`];
+    return value === undefined || value === "" ? [] : [name];
   });
 }
 

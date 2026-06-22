@@ -1280,11 +1280,9 @@ describe("functions deploy", () => {
       );
 
       expect(forwardedEnv).toEqual(
-        expect.arrayContaining([
-          "NPM_CONFIG_REGISTRY=https://npm.pkg.github.com",
-          "NPM_AUTH_TOKEN=test-token",
-        ]),
+        expect.arrayContaining(["NPM_CONFIG_REGISTRY", "NPM_AUTH_TOKEN"]),
       );
+      expect(forwardedEnv).not.toContain("NPM_AUTH_TOKEN=test-token");
     }).pipe(Effect.ensuring(Effect.all([cleanupTempDir(tempDir), restoreEnv])));
   });
 
