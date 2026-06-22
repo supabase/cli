@@ -189,8 +189,9 @@ export function legacyBuildConnectionUrl(
  * `apps/cli-go/internal/utils/connect.go`:
  *
  * - **Local** (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`) → no TLS;
- *   return `undefined` so `pg` stays in plaintext mode. `sslmode` is ignored,
- *   matching Go, which overwrites the local config unconditionally.
+ *   return `false` so `pg` stays in plaintext mode even when `PGSSLMODE` is set
+ *   in the environment. `sslmode` is ignored, matching Go, which overwrites the
+ *   local config unconditionally.
  * - **Remote** maps the URL's `sslmode` to the *primary* config pgconn would try
  *   (`config.go:772-780`'s fallback list), since the `pg` driver carries a single
  *   `ssl` option and cannot replay pgconn's TLS↔plaintext fallback:
@@ -222,7 +223,7 @@ export function legacySslOptionFor(
   caCert?: string,
   clientCert?: LegacyClientCert,
 ): boolean | ConnectionOptions | undefined {
-  if (isLocal) return undefined;
+  if (isLocal) return false;
   if (sslmode === "disable" || sslmode === "allow") return false;
   const sni = servername !== undefined ? { servername } : {};
   // A configured `sslrootcert` pins the server CA (pgconn loads it into RootCAs);
@@ -292,12 +293,12 @@ export function legacySslConfigsFor(
   host?: string,
   clientCert?: LegacyClientCert,
 ): Array<boolean | ConnectionOptions | undefined> {
-  if (isLocal) return [undefined];
+  if (isLocal) return [false];
   // pgconn skips TLS entirely for a unix-socket host (`NetworkAddress == "unix"`)
   // regardless of `sslmode`, so a socket DSN connects in plaintext; never send an
   // SSL negotiation over the socket. Independent of the local/remote flag because a
   // socket path is not the local services hostname (so `isLocal` is `false`).
-  if (host !== undefined && legacyIsUnixSocketHost(host)) return [undefined];
+  if (host !== undefined && legacyIsUnixSocketHost(host)) return [false];
   if (sslmode === "disable") return [false];
   if (sslmode === "allow")
     return [false, legacySslOptionFor("require", false, servername, caCert, clientCert)];
