@@ -1,4 +1,4 @@
-import type { V1ListAllFunctionsOutput } from "@supabase/api/effect";
+import { operationDefinitions } from "@supabase/api/effect";
 import { Data, Effect, Option } from "effect";
 
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -7,12 +7,27 @@ import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts"
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
 import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
-import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import type { LegacyFunctionsListFlags } from "./list.command.ts";
 
-type Functions = typeof V1ListAllFunctionsOutput.Type;
+interface LegacyFunctionRecord {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly status: string;
+  readonly version: number;
+  readonly created_at: number;
+  readonly updated_at: number;
+  readonly verify_jwt?: boolean;
+  readonly import_map?: boolean;
+  readonly entrypoint_path?: string;
+  readonly import_map_path?: string | null;
+  readonly ezbr_sha256?: string;
+}
+
+type Functions = ReadonlyArray<LegacyFunctionRecord>;
 
 class LegacyFunctionsListNetworkError extends Data.TaggedError("LegacyFunctionsListNetworkError")<{
   readonly message: string;
@@ -67,6 +82,70 @@ function renderFunctionsTable(functions: Functions): string {
   );
 }
 
+function readOptionalBoolean(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readOptionalString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function readOptionalNullableString(
+  record: Record<string, unknown>,
+  key: string,
+): string | null | undefined {
+  const value = record[key];
+  return value === null || typeof value === "string" ? value : undefined;
+}
+
+function parseFunctionsResponse(value: unknown): Functions | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const functions: LegacyFunctionRecord[] = [];
+  for (const item of value) {
+    if (typeof item !== "object" || item === null) {
+      return undefined;
+    }
+    const record = item as Record<string, unknown>;
+    const id = record.id;
+    const slug = record.slug;
+    const name = record.name;
+    const status = record.status;
+    const version = record.version;
+    const createdAt = record.created_at;
+    const updatedAt = record.updated_at;
+    if (
+      typeof id !== "string" ||
+      typeof slug !== "string" ||
+      typeof name !== "string" ||
+      typeof status !== "string" ||
+      typeof version !== "number" ||
+      typeof createdAt !== "number" ||
+      typeof updatedAt !== "number"
+    ) {
+      return undefined;
+    }
+    functions.push({
+      id,
+      slug,
+      name,
+      status,
+      version,
+      created_at: createdAt,
+      updated_at: updatedAt,
+      verify_jwt: readOptionalBoolean(record, "verify_jwt"),
+      import_map: readOptionalBoolean(record, "import_map"),
+      entrypoint_path: readOptionalString(record, "entrypoint_path"),
+      import_map_path: readOptionalNullableString(record, "import_map_path"),
+      ezbr_sha256: readOptionalString(record, "ezbr_sha256"),
+    });
+  }
+  return functions;
+}
+
 function toGoYamlFunction(function_: Functions[number]) {
   return {
     createdat: function_.created_at,
@@ -85,7 +164,7 @@ function toGoYamlFunction(function_: Functions[number]) {
 }
 
 function toGoJsonFunction(function_: Functions[number]) {
-  const goFunction: Record<string, unknown> = {
+  return {
     created_at: function_.created_at,
     id: function_.id,
     name: function_.name,
@@ -93,51 +172,29 @@ function toGoJsonFunction(function_: Functions[number]) {
     status: function_.status,
     updated_at: function_.updated_at,
     version: function_.version,
+    ...(function_.entrypoint_path != null ? { entrypoint_path: function_.entrypoint_path } : {}),
+    ...(function_.ezbr_sha256 != null ? { ezbr_sha256: function_.ezbr_sha256 } : {}),
+    ...(function_.import_map != null ? { import_map: function_.import_map } : {}),
+    ...(function_.import_map_path != null ? { import_map_path: function_.import_map_path } : {}),
+    ...(function_.verify_jwt != null ? { verify_jwt: function_.verify_jwt } : {}),
   };
-  if (function_.entrypoint_path != null) {
-    goFunction.entrypoint_path = function_.entrypoint_path;
-  }
-  if (function_.ezbr_sha256 != null) {
-    goFunction.ezbr_sha256 = function_.ezbr_sha256;
-  }
-  if (function_.import_map != null) {
-    goFunction.import_map = function_.import_map;
-  }
-  if (function_.import_map_path != null) {
-    goFunction.import_map_path = function_.import_map_path;
-  }
-  if (function_.verify_jwt != null) {
-    goFunction.verify_jwt = function_.verify_jwt;
-  }
-  return goFunction;
 }
 
 function toGoTomlFunction(function_: Functions[number]) {
-  const goFunction: Record<string, unknown> = {
+  return {
     CreatedAt: function_.created_at,
+    ...(function_.entrypoint_path != null ? { EntrypointPath: function_.entrypoint_path } : {}),
+    ...(function_.ezbr_sha256 != null ? { EzbrSha256: function_.ezbr_sha256 } : {}),
     Id: function_.id,
+    ...(function_.import_map != null ? { ImportMap: function_.import_map } : {}),
+    ...(function_.import_map_path != null ? { ImportMapPath: function_.import_map_path } : {}),
     Name: function_.name,
     Slug: function_.slug,
     Status: function_.status,
     UpdatedAt: function_.updated_at,
+    ...(function_.verify_jwt != null ? { VerifyJwt: function_.verify_jwt } : {}),
     Version: function_.version,
   };
-  if (function_.entrypoint_path != null) {
-    goFunction.EntrypointPath = function_.entrypoint_path;
-  }
-  if (function_.ezbr_sha256 != null) {
-    goFunction.EzbrSha256 = function_.ezbr_sha256;
-  }
-  if (function_.import_map != null) {
-    goFunction.ImportMap = function_.import_map;
-  }
-  if (function_.import_map_path != null) {
-    goFunction.ImportMapPath = function_.import_map_path;
-  }
-  if (function_.verify_jwt != null) {
-    goFunction.VerifyJwt = function_.verify_jwt;
-  }
-  return goFunction;
 }
 
 export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* (
@@ -155,10 +212,34 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
   yield* Effect.gen(function* () {
     const fetching =
       output.format === "text" ? yield* output.task("Fetching functions...") : undefined;
-    const functions: Functions = yield* api.v1.listAllFunctions({ ref }).pipe(
+    const response = yield* api.executeRaw(operationDefinitions.v1ListAllFunctions, { ref }).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(mapListError),
     );
+    if (response.status !== 200) {
+      const body = sanitizeLegacyErrorBody(
+        yield* response.text.pipe(Effect.orElseSucceed(() => "")),
+      );
+      yield* fetching?.fail() ?? Effect.void;
+      return yield* new LegacyFunctionsListUnexpectedStatusError({
+        status: response.status,
+        body,
+        message: `unexpected list functions status ${response.status}: ${body}`,
+      });
+    }
+    const parsed = yield* response.json.pipe(
+      Effect.tapError(() => fetching?.fail() ?? Effect.void),
+      Effect.orElseSucceed(() => undefined),
+    );
+    const functions = parseFunctionsResponse(parsed);
+    if (functions === undefined) {
+      yield* fetching?.fail() ?? Effect.void;
+      return yield* new LegacyFunctionsListUnexpectedStatusError({
+        status: response.status,
+        body: "",
+        message: "unexpected list functions status 200: failed to decode response body",
+      });
+    }
     yield* fetching?.clear() ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);

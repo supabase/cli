@@ -37,6 +37,11 @@ const PIPE_FUNCTION: Functions[number] = {
   slug: "hello|world",
 };
 
+const UNKNOWN_STATUS_FUNCTION: Functions[number] = {
+  ...SAMPLE_FUNCTION,
+  status: "PAUSED_FOR_REBALANCE",
+};
+
 const NIL_OPTIONALS_FUNCTION: Functions[number] = {
   ...SAMPLE_FUNCTION,
   entrypoint_path: undefined,
@@ -182,10 +187,12 @@ describe("legacy functions list integration", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* legacyFunctionsList({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain("[[functions]]");
-      expect(out.stdoutText).toContain("CreatedAt = 1687423025152");
-      expect(out.stdoutText).toContain('EntrypointPath = "functions/hello-world/index.ts"');
-      expect(out.stdoutText).toContain('Name = "Hello World"');
+      expect(out.stdoutText).toContain(`[[functions]]
+CreatedAt = 1687423025152
+EntrypointPath = "functions/hello-world/index.ts"
+Id = "11111111-2222-3333-4444-555555555555"
+ImportMap = false
+Name = "Hello World"`);
       expect(out.stdoutText).not.toContain("created_at");
       expect(out.stdoutText).not.toContain("entrypoint_path");
     }).pipe(Effect.provide(layer));
@@ -238,6 +245,14 @@ describe("legacy functions list integration", () => {
       yield* legacyFunctionsList({ projectRef: Option.none() });
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.url).toContain(`/v1/projects/${LEGACY_VALID_REF}/functions`);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("accepts unknown future function status strings", () => {
+    const { layer, out } = setup({ response: [UNKNOWN_STATUS_FUNCTION] });
+    return Effect.gen(function* () {
+      yield* legacyFunctionsList({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain("PAUSED_FOR_REBALANCE");
     }).pipe(Effect.provide(layer));
   });
 
