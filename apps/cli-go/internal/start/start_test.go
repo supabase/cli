@@ -249,7 +249,7 @@ func TestDatabaseStart(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(storage.ListVectorBucketsResponse{})
 		// Run test
-		err = run(ctx, fsys, []string{}, pgconn.Config{Host: utils.DbId}, conn.Intercept)
+		err = run(ctx, fsys, []string{}, pgconn.Config{Host: utils.DbId}, false, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -301,7 +301,7 @@ func TestDatabaseStart(t *testing.T) {
 		// Run test
 		exclude := ExcludableContainers()
 		exclude = append(exclude, "invalid", exclude[0])
-		err := run(context.Background(), fsys, exclude, pgconn.Config{Host: utils.DbId})
+		err := run(context.Background(), fsys, exclude, pgconn.Config{Host: utils.DbId}, false)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())

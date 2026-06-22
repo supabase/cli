@@ -10,6 +10,9 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
+  reveal: Flag.boolean("reveal").pipe(
+    Flag.withDescription("Reveal the secret API keys in full (e.g. sb_secret_...)."),
+  ),
 };
 export type LegacyProjectsApiKeysFlags = CliCommand.Command.Config.Infer<typeof config>;
 
@@ -21,9 +24,16 @@ export const legacyProjectsApiKeysCommand = Command.make("api-keys", config).pip
       command: "supabase projects api-keys --project-ref abcdefghijklmnopqrst",
       description: "List all API keys for a project",
     },
+    {
+      command: "supabase projects api-keys --reveal --output json",
+      description: "List API keys with the secret keys revealed in full",
+    },
   ]),
   Command.withHandler((flags) =>
     legacyProjectsApiKeys(flags).pipe(
+      // `reveal` is intentionally not in `safeFlags`: it is a boolean flag, and
+      // boolean values are always logged verbatim by the instrumentation. Only
+      // string flags Go marks with `markFlagTelemetrySafe` belong in `safeFlags`.
       withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
       withJsonErrorHandling,
     ),

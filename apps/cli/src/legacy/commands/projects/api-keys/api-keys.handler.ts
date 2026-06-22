@@ -35,7 +35,7 @@ export const legacyProjectsApiKeys = Effect.fn("legacy.projects.api-keys")(funct
   yield* Effect.gen(function* () {
     const fetching =
       output.format === "text" ? yield* output.task("Fetching API keys...") : undefined;
-    const keys: ApiKeys = yield* legacyGetProjectApiKeys(ref).pipe(
+    const keys: ApiKeys = yield* legacyGetProjectApiKeys(ref, flags.reveal).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
     );
     yield* fetching?.clear() ?? Effect.void;

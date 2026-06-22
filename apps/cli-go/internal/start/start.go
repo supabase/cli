@@ -70,7 +70,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		Password: utils.Config.Db.Password,
 		Database: "postgres",
 	}
-	if err := run(ctx, fsys, excludedContainers, dbConfig); err != nil {
+	if err := run(ctx, fsys, excludedContainers, dbConfig, ignoreHealthCheck); err != nil {
 		if ignoreHealthCheck && start.IsUnhealthyError(err) {
 			fmt.Fprintln(os.Stderr, err)
 		} else {
@@ -215,7 +215,7 @@ func pullImagesUsingCompose(ctx context.Context, project types.Project) error {
 	return service.Pull(ctx, &project, api.PullOptions{IgnoreFailures: true})
 }
 
-func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, options ...func(*pgx.ConnConfig)) error {
+func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, ignoreHealthCheck bool, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
 		excluded[name] = true
@@ -1214,17 +1214,21 @@ EOF
 	}
 
 	fmt.Fprintln(os.Stderr, "Waiting for health checks...")
-	if utils.NoBackupVolume && slices.Contains(started, utils.StorageId) {
-		if err := start.WaitForHealthyService(ctx, serviceTimeout, utils.StorageId); err != nil {
-			return err
+	if err := start.WaitForHealthyService(ctx, serviceTimeout, started...); err != nil {
+		if ignoreHealthCheck && utils.NoBackupVolume && slices.Contains(started, utils.StorageId) {
+			if storageErr := start.WaitForHealthyService(ctx, serviceTimeout, utils.StorageId); storageErr == nil {
+				if seedErr := buckets.Run(ctx, "", false, fsys); seedErr != nil {
+					return seedErr
+				}
+			}
 		}
+		return err
+	}
+	if utils.NoBackupVolume && slices.Contains(started, utils.StorageId) {
 		// Disable prompts when seeding
 		if err := buckets.Run(ctx, "", false, fsys); err != nil {
 			return err
 		}
-	}
-	if err := start.WaitForHealthyService(ctx, serviceTimeout, started...); err != nil {
-		return err
 	}
 	_ = phtelemetry.FromContext(ctx).Capture(ctx, phtelemetry.EventStackStarted, nil, nil)
 	return nil
