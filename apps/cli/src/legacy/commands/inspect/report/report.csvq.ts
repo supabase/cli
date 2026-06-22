@@ -10,7 +10,7 @@ import { Option } from "effect";
  * the rule evaluator turns into the rule's STATUS cell, matching Go — a per-rule
  * csvq error becomes the cell rather than failing the command):
  *
- *   SELECT <agg|column> [AS <ident>]
+ *   SELECT <agg|expr> [AS <ident>]
  *   FROM `<file>.csv` [<alias>]
  *   [WHERE <condition>]
  *   [;]
@@ -24,9 +24,12 @@ import { Option } from "effect";
  *   not       := NOT not | predicate
  *   predicate := '(' condition ')' | comparison
  *   comparison:= arith ( (op arith) | (IS [NOT] NULL) )?
+ *   expr      := concat
+ *   concat    := arith ('||' arith)*
  *   arith     := term (('+'|'-') term)*
  *   term      := factor (('*'|'/') factor)*
- *   factor    := number | string | colRef | '(' arith ')'
+ *   factor    := number | string | colRef | FLOAT '(' expr ')'
+ *              | REPLACE '(' expr ',' string ',' string ')' | '(' expr ')'
  *   colRef    := ident ('.' ident)?    (the alias prefix is ignored — single table)
  *
  * csvq value semantics replicated for parity:
@@ -214,6 +217,11 @@ function tokenize(sql: string): Array<Token> {
       i += 2;
       continue;
     }
+    if (two === "||") {
+      tokens.push({ t: "op", v: two });
+      i += 2;
+      continue;
+    }
     if (
       ch === "=" ||
       ch === "<" ||
@@ -246,7 +254,14 @@ type ValNode =
   | { readonly k: "num"; readonly n: number }
   | { readonly k: "str"; readonly s: string }
   | { readonly k: "col"; readonly name: string }
-  | { readonly k: "binop"; readonly op: string; readonly l: ValNode; readonly r: ValNode };
+  | { readonly k: "binop"; readonly op: string; readonly l: ValNode; readonly r: ValNode }
+  | { readonly k: "float"; readonly e: ValNode }
+  | {
+      readonly k: "replace";
+      readonly e: ValNode;
+      readonly search: string;
+      readonly replacement: string;
+    };
 
 type CondNode =
   | { readonly k: "or"; readonly l: CondNode; readonly r: CondNode }
@@ -264,7 +279,7 @@ interface AggNode {
 
 interface SelectStmt {
   readonly agg?: AggNode;
-  readonly column?: string; // plain (non-aggregate) column select
+  readonly expr?: ValNode; // plain (non-aggregate) scalar expression
   readonly table: string;
   readonly where?: CondNode;
 }
@@ -314,7 +329,7 @@ class Parser {
 
   parse(): SelectStmt {
     this.expectKeyword("SELECT");
-    const { agg, column } = this.parseSelectExpr();
+    const { agg, expr } = this.parseSelectExpr();
     // optional `AS <ident>`
     if (this.eatKeyword("AS")) {
       const tok = this.next();
@@ -337,10 +352,10 @@ class Parser {
     if (this.peek().t !== "eof") {
       throw new LegacyInspectCsvqError("unexpected trailing tokens");
     }
-    return { agg, column, table: tableTok.v, where };
+    return { agg, expr, table: tableTok.v, where };
   }
 
-  private parseSelectExpr(): { agg?: AggNode; column?: string } {
+  private parseSelectExpr(): { agg?: AggNode; expr?: ValNode } {
     const tok = this.peek();
     if (
       tok.t === "ident" &&
@@ -350,9 +365,7 @@ class Parser {
     ) {
       return { agg: this.parseAgg() };
     }
-    // plain column reference
-    const col = this.parseColRef();
-    return { column: col };
+    return { expr: this.parseValueExpr() };
   }
 
   private parseAgg(): AggNode {
@@ -419,7 +432,7 @@ class Parser {
       this.expectPunct(")");
       return cond;
     }
-    const left = this.parseArith();
+    const left = this.parseValueExpr();
     if (this.eatKeyword("IS")) {
       const negated = this.eatKeyword("NOT");
       this.expectKeyword("NULL");
@@ -428,12 +441,23 @@ class Parser {
     const opTok = this.peek();
     if (opTok.t === "op" && ["=", "<>", "!=", "<", ">", "<=", ">="].includes(opTok.v)) {
       this.pos++;
-      const right = this.parseArith();
+      const right = this.parseValueExpr();
       return { k: "cmp", op: opTok.v, l: left, r: right };
     }
     throw new LegacyInspectCsvqError("expected a comparison operator");
   }
 
+  private parseValueExpr(): ValNode {
+    return this.parseConcat();
+  }
+  private parseConcat(): ValNode {
+    let left = this.parseArith();
+    while (this.peek().t === "op" && (this.peek() as { v: string }).v === "||") {
+      const op = (this.next() as { v: string }).v;
+      left = { k: "binop", op, l: left, r: this.parseArith() };
+    }
+    return left;
+  }
   private parseArith(): ValNode {
     let left = this.parseTerm();
     while (
@@ -468,11 +492,36 @@ class Parser {
     }
     if (tok.t === "punct" && tok.v === "(") {
       this.pos++;
-      const inner = this.parseArith();
+      const inner = this.parseValueExpr();
       this.expectPunct(")");
       return inner;
     }
     if (tok.t === "ident") {
+      const next = this.tokens[this.pos + 1];
+      if (next?.t === "punct" && next.v === "(") {
+        const fn = tok.v.toUpperCase();
+        if (fn === "FLOAT") {
+          this.pos += 2;
+          const e = this.parseValueExpr();
+          this.expectPunct(")");
+          return { k: "float", e };
+        }
+        if (fn === "REPLACE") {
+          this.pos += 2;
+          const e = this.parseValueExpr();
+          this.expectPunct(",");
+          const search = this.next();
+          if (search.t !== "str")
+            throw new LegacyInspectCsvqError("REPLACE search must be a string");
+          this.expectPunct(",");
+          const replacement = this.next();
+          if (replacement.t !== "str") {
+            throw new LegacyInspectCsvqError("REPLACE replacement must be a string");
+          }
+          this.expectPunct(")");
+          return { k: "replace", e, search: search.v, replacement: replacement.v };
+        }
+      }
       return { k: "col", name: this.parseColRef() };
     }
     throw new LegacyInspectCsvqError("expected a value");
@@ -524,6 +573,13 @@ function evalVal(node: ValNode, table: LegacyCsvTable, row: ReadonlyArray<string
       return { kind: "str", s: row[index] ?? "" };
     }
     case "binop": {
+      if (node.op === "||") {
+        return {
+          kind: "str",
+          s:
+            toStringValue(evalVal(node.l, table, row)) + toStringValue(evalVal(node.r, table, row)),
+        };
+      }
       const l = toNumber(evalVal(node.l, table, row));
       const r = toNumber(evalVal(node.r, table, row));
       if (l === undefined || r === undefined) return NULL_VALUE;
@@ -539,6 +595,14 @@ function evalVal(node: ValNode, table: LegacyCsvTable, row: ReadonlyArray<string
         default:
           throw new LegacyInspectCsvqError(`unsupported operator: ${node.op}`);
       }
+    }
+    case "float": {
+      const n = Number(toStringValue(evalVal(node.e, table, row)));
+      return Number.isFinite(n) ? { kind: "num", n } : NULL_VALUE;
+    }
+    case "replace": {
+      const value = toStringValue(evalVal(node.e, table, row));
+      return { kind: "str", s: value.replaceAll(node.search, node.replacement) };
     }
   }
 }
@@ -683,6 +747,9 @@ export function legacyEvalCsvqScalar(
   query: string,
   provider: LegacyCsvTableProvider,
 ): Option.Option<string> {
+  const duplicateIndexes = evalDuplicateIndexesQuery(query, provider);
+  if (duplicateIndexes !== undefined) return duplicateIndexes;
+
   const stmt = new Parser(tokenize(query)).parse();
   const table = provider(stmt.table);
   if (table === undefined) {
@@ -692,8 +759,38 @@ export function legacyEvalCsvqScalar(
   if (stmt.agg !== undefined) {
     return evalAggregate(stmt.agg, table, rows);
   }
-  // Plain column select: first matched row's cell, or none (ErrNoRows).
-  const index = columnIndex(table, stmt.column!);
+  // Plain scalar select: first matched row's expression, or none (ErrNoRows).
   const first = rows[0];
-  return first === undefined ? Option.none() : Option.some(first[index] ?? "");
+  return first === undefined
+    ? Option.none()
+    : Option.some(toStringValue(evalVal(stmt.expr!, table, first)));
+}
+
+const DUPLICATE_INDEXES_QUERY =
+  "SELECT LISTAGG(i.name, ',') AS match FROM `index_stats.csv` AS i JOIN (SELECT `table`, columns FROM `index_stats.csv` GROUP BY `table`, columns HAVING COUNT(*) > 1) AS d ON i.`table` = d.`table` AND i.columns = d.columns";
+
+function evalDuplicateIndexesQuery(
+  query: string,
+  provider: LegacyCsvTableProvider,
+): Option.Option<string> | undefined {
+  if (query.trim().replace(/;$/, "") !== DUPLICATE_INDEXES_QUERY) return undefined;
+  const table = provider("index_stats.csv");
+  if (table === undefined) {
+    throw new LegacyInspectCsvqError("table not found: index_stats.csv");
+  }
+  const nameIndex = columnIndex(table, "name");
+  const tableIndex = columnIndex(table, "table");
+  const columnsIndex = columnIndex(table, "columns");
+  const groups = new Map<string, number>();
+  for (const row of table.rows) {
+    const key = `${row[tableIndex] ?? ""}\u0000${row[columnsIndex] ?? ""}`;
+    groups.set(key, (groups.get(key) ?? 0) + 1);
+  }
+  const matches = table.rows
+    .filter((row) => {
+      const key = `${row[tableIndex] ?? ""}\u0000${row[columnsIndex] ?? ""}`;
+      return (groups.get(key) ?? 0) > 1;
+    })
+    .map((row) => row[nameIndex] ?? "");
+  return matches.length === 0 ? Option.none() : Option.some(matches.join(","));
 }

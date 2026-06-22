@@ -95,9 +95,9 @@ When a rule's csvq query cannot be evaluated (unsupported grammar, unknown table
 or unknown column — e.g. a typo in a custom `config.toml` rule), the **error
 message is shown verbatim as that rule's STATUS cell** and the command continues;
 it does not fail. This matches Go, where csvq's own error string becomes the cell.
-Note: the default rule "No large tables waiting on autovacuum" references a `tbl`
-column that `vacuum_stats` does not emit, so its STATUS shows an unknown-column
-error on real data — a pre-existing Go quirk preserved verbatim for parity.
+When a rule's match list is longer than 20 characters, the MATCHES cell is
+summarized as `<n> matches`, where `<n>` is derived from the comma-separated match
+count.
 
 ### `--output-format json` / `stream-json` (TS-extra; Go has no machine output)
 

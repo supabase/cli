@@ -291,6 +291,17 @@ function isContainedInAnyPath(roots: ReadonlyArray<string>, candidate: string) {
   return roots.some((root) => isContainedPath(root, candidate));
 }
 
+async function realpathIfExists(pathname: string) {
+  try {
+    return await realpath(resolve(pathname));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return resolve(pathname);
+    }
+    throw error;
+  }
+}
+
 function humanSize(bytes: number) {
   if (bytes < 1000) {
     return `${bytes} B`;
@@ -664,7 +675,7 @@ async function walkImportPaths(
       }
 
       const resolvedModule = resolve(modulePath);
-      const containmentPath = await realpath(resolvedModule).catch(() => resolvedModule);
+      const containmentPath = await realpathIfExists(resolvedModule);
       if (!isContainedInAnyPath(allowedRoots, containmentPath)) {
         await onWarning(`WARN: Skipping import path outside project root: ${modulePath}\n`);
         continue;
@@ -1081,6 +1092,17 @@ async function buildDockerBinds(
   );
   await forEachLocalImportMapTarget(importMap, async (target) => {
     await appendBindWithinRoots(importMapAllowedRoots, target);
+    if ((await stat(target)).isDirectory()) {
+      return;
+    }
+    await walkLocalImportMapTargetImports(
+      importMap,
+      target,
+      importMapAllowedRoots,
+      projectRoot,
+      appendImportMapBind,
+      async () => {},
+    );
   });
   for (const pattern of config.staticFiles) {
     let files: ReadonlyArray<string>;

@@ -117,6 +117,8 @@ func printSummary(ctx context.Context, outDir string) error {
 		}
 		if !match.Valid {
 			match.String = "-"
+		} else if len(match.String) > 20 {
+			match.String = fmt.Sprintf("%d matches", strings.Count(match.String, ",")+1)
 		}
 		table += fmt.Sprintf("|`%s`|`%s`|`%s`|\n", r.Name, status, match.String)
 	}

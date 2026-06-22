@@ -343,9 +343,9 @@ function resolveDockerOutputPath(args: ReadonlyArray<string>): string {
   throw new Error(`unable to resolve host output path for ${dockerOutputPath}`);
 }
 
-async function dockerBindSpec(hostPath: string, mode: "ro" | "rw") {
-  const resolved = await realpath(hostPath);
-  return `${resolved}:${resolved.replaceAll("\\", "/").replace(/^[A-Za-z]:/, "")}:${mode}`;
+async function expectedDockerBind(pathname: string, mode: "ro" | "rw" = "ro") {
+  const hostPath = await realpath(pathname);
+  return `${hostPath}:${hostPath.replaceAll("\\", "/").replace(/^[A-Za-z]:/, "")}:${mode}`;
 }
 
 function mockChildProcessSpawner(
@@ -1214,7 +1214,7 @@ describe("functions deploy", () => {
       expect(child.spawned.at(-1)?.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.68.4");
       expect(child.spawned.at(-1)?.args).toContain(
         yield* Effect.promise(() =>
-          dockerBindSpec(join(tempDir, "supabase", "custom_import_map.json"), "ro"),
+          expectedDockerBind(join(tempDir, "supabase", "custom_import_map.json")),
         ),
       );
       expect(out.stderrText).toContain("Bundling Function: hello-world\n");
@@ -1575,7 +1575,7 @@ describe("functions deploy", () => {
 
       expect(child.spawned).toHaveLength(4);
       expect(child.spawned.at(-1)?.args).toContain(
-        yield* Effect.promise(() => dockerBindSpec(staticFile, "ro")),
+        yield* Effect.promise(() => expectedDockerBind(staticFile)),
       );
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });

@@ -5,6 +5,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 
+import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
 import { legacyResolveDbImage } from "./legacy-db-image.ts";
 
 const withTemp = () => mkdtempSync(join(tmpdir(), "legacy-db-image-"));
@@ -22,7 +23,7 @@ describe("legacyResolveDbImage", () => {
     return Effect.gen(function* () {
       expect(yield* resolve(dir, 14)).toBe("supabase/postgres:14.1.0.89");
       expect(yield* resolve(dir, 15)).toBe("supabase/postgres:15.8.1.085");
-      expect(yield* resolve(dir, 17)).toBe("supabase/postgres:17.6.1.136");
+      expect(yield* resolve(dir, 17)).toBe(dockerfileServiceImage("pg"));
       rmSync(dir, { recursive: true, force: true });
     });
   });
