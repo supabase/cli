@@ -14,11 +14,11 @@ describe("service version overrides", () => {
   test("parses and normalizes repeated flag overrides", async () => {
     await expect(
       Effect.runPromise(
-        parseServiceVersionOverrides(["postgrest=v14.5", "mailpit=1.22.3", "auth=2.180.0"]),
+        parseServiceVersionOverrides(["postgrest=v14.5", "mailpit=1.30.2", "auth=2.180.0"]),
       ),
     ).resolves.toEqual({
       postgrest: "14.5",
-      mailpit: "v1.22.3",
+      mailpit: "v1.30.2",
       auth: "2.180.0",
     });
   });

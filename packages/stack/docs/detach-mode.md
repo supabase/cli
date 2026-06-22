@@ -94,7 +94,7 @@ Project-scoped service version state such as `.supabase/project.json` and
     "realtime": "2.34.47",
     "storage": "1.43.3",
     "imgproxy": "v3.8.0",
-    "mailpit": "v1.22.3",
+    "mailpit": "v1.30.2",
     "pgmeta": "0.95.2",
     "studio": "2026.02.16-sha-26c615c",
     "analytics": "1.33.3",
