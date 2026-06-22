@@ -173,6 +173,32 @@ function parseFunctionsResponse(value: unknown): Functions | undefined {
   return functions;
 }
 
+function decodeFunctionsResponse(
+  rawBody: string,
+): Effect.Effect<Functions, LegacyFunctionsListNetworkError> {
+  return Effect.gen(function* () {
+    const parsed = yield* Effect.try({
+      try: () => JSON.parse(rawBody) as unknown,
+      catch: (cause) =>
+        new LegacyFunctionsListNetworkError({
+          message: `failed to list functions: ${String(cause)}`,
+        }),
+    });
+    const functions = parseFunctionsResponse(parsed);
+    if (functions === undefined) {
+      return yield* new LegacyFunctionsListNetworkError({
+        message:
+          "failed to list functions: response body did not match the expected function array shape",
+      });
+    }
+    return functions;
+  });
+}
+
+function escapeGoJsonHtmlChars(text: string): string {
+  return text.replaceAll("<", "\\u003c").replaceAll(">", "\\u003e").replaceAll("&", "\\u0026");
+}
+
 function baseFunctionFields(function_: Functions[number]) {
   return {
     id: function_.id,
@@ -275,19 +301,16 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
         message: `unexpected list functions status ${response.status}: ${body}`,
       });
     }
-    const parsed = yield* response.json.pipe(
+    const rawBody = yield* response.text.pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
-      Effect.orElseSucceed(() => undefined),
+      Effect.catch(
+        (cause) =>
+          new LegacyFunctionsListNetworkError({ message: `failed to list functions: ${cause}` }),
+      ),
     );
-    const functions = parseFunctionsResponse(parsed);
-    if (functions === undefined) {
-      yield* fetching?.fail() ?? Effect.void;
-      return yield* new LegacyFunctionsListUnexpectedStatusError({
-        status: response.status,
-        body: "",
-        message: "unexpected list functions status 200: failed to decode response body",
-      });
-    }
+    const functions = yield* decodeFunctionsResponse(rawBody).pipe(
+      Effect.tapError(() => fetching?.fail() ?? Effect.void),
+    );
     yield* fetching?.clear() ?? Effect.void;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
@@ -298,7 +321,7 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
       });
     }
     if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(functions.map(toGoJsonFunction)));
+      yield* output.raw(escapeGoJsonHtmlChars(encodeGoJson(functions.map(toGoJsonFunction))));
       return;
     }
     if (goFmt === "yaml") {

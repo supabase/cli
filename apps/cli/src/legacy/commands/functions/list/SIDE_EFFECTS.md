@@ -21,6 +21,7 @@
 | Method | Path                           | Auth         | Request body | Response (used fields)                                 |
 | ------ | ------------------------------ | ------------ | ------------ | ------------------------------------------------------ |
 | `GET`  | `/v1/projects/{ref}/functions` | Bearer token | none         | `[{id, name, slug, status, version, updated_at, ...}]` |
+| `GET`  | `/v1/projects/{ref}`           | Bearer token | none         | linked project metadata used by the post-run cache     |
 
 ## Environment Variables
 

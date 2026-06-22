@@ -1,6 +1,7 @@
 import type { V1ListAllFunctionsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
   LEGACY_VALID_REF,
@@ -35,6 +36,11 @@ const PIPE_FUNCTION: Functions[number] = {
   ...SAMPLE_FUNCTION,
   name: "Hello|World",
   slug: "hello|world",
+};
+
+const HTML_FUNCTION: Functions[number] = {
+  ...SAMPLE_FUNCTION,
+  name: "<Hello>&World>",
 };
 
 const UNKNOWN_STATUS_FUNCTION = {
@@ -156,6 +162,14 @@ describe("legacy functions list integration", () => {
       expect(out.stdoutText.endsWith("]\n")).toBe(true);
       expect(out.stdoutText).toContain('"created_at": 1687423025152');
       expect(out.stdoutText).not.toContain('"import_map_path": null');
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("escapes html-sensitive characters in Go JSON output", () => {
+    const { layer, out } = setup({ goOutput: "json", response: [HTML_FUNCTION] });
+    return Effect.gen(function* () {
+      yield* legacyFunctionsList({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain('"name": "\\u003cHello\\u003e\\u0026World\\u003e"');
     }).pipe(Effect.provide(layer));
   });
 
@@ -286,6 +300,33 @@ Name = "Hello World"`);
         const json = JSON.stringify(exit.cause);
         expect(json).toContain("LegacyFunctionsListNetworkError");
         expect(json).toContain("failed to list functions");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("surfaces malformed 200 JSON bodies as failed to list functions", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response("{", {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        ),
+    });
+    const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = JSON.stringify(exit.cause);
+        expect(json).toContain("LegacyFunctionsListNetworkError");
+        expect(json).toContain("failed to list functions:");
       }
     }).pipe(Effect.provide(layer));
   });
