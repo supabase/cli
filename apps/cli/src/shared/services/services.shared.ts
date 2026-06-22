@@ -3,8 +3,14 @@ import { makeApiClient, type ApiClient } from "@supabase/api/effect";
 import { Data, Duration, Effect, Exit, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import serviceImagesDockerfile from "../../../../cli-go/pkg/config/templates/Dockerfile" with { type: "text" };
 import { renderGlamourTable } from "../../legacy/output/legacy-glamour-table.ts";
+import {
+  dockerfileServiceImages,
+  parseDockerfileServiceImages,
+  type DockerfileImageSpec,
+} from "./dockerfile-images.ts";
+
+export { parseDockerfileServiceImages } from "./dockerfile-images.ts";
 
 export type RemoteServiceName = "postgres" | "auth" | "postgrest" | "storage";
 export type OptionalRemoteServiceName = Exclude<RemoteServiceName, "postgres">;
@@ -18,11 +24,6 @@ const PROJECT_REF_PATTERN = /^[a-z]{20}$/;
 interface ServiceImageSpec {
   readonly image: string;
   readonly remoteService: RemoteServiceName | undefined;
-}
-
-interface DockerfileImageSpec {
-  readonly alias: string;
-  readonly image: string;
 }
 
 interface ServiceImageAliasSpec {
@@ -43,36 +44,10 @@ const SERVICE_IMAGE_ALIASES: ReadonlyArray<ServiceImageAliasSpec> = [
   { alias: "supavisor", remoteService: undefined },
 ];
 
-const FROM_LINE_PATTERN = /^FROM\s+(.+):([^:\s]+)\s+AS\s+([^\s#]+)/i;
-
-export function parseDockerfileServiceImages(
-  dockerfile: string,
-): ReadonlyArray<DockerfileImageSpec> {
-  return dockerfile
-    .split("\n")
-    .map((line) => line.trim())
-    .flatMap((line) => {
-      const match = FROM_LINE_PATTERN.exec(line);
-      if (match === null) {
-        return [];
-      }
-
-      const [, repository, tag, alias] = match;
-      if (repository === undefined || tag === undefined || alias === undefined) {
-        return [];
-      }
-
-      return [{ alias, image: `${repository}:${tag}` }];
-    });
-}
-
-export function localServiceImagesFromDockerfile(
-  dockerfile: string,
+function localServiceImagesFromSpecs(
+  specs: ReadonlyArray<DockerfileImageSpec>,
 ): ReadonlyArray<ServiceImageSpec> {
-  const imagesByAlias = new Map(
-    parseDockerfileServiceImages(dockerfile).map((service) => [service.alias, service.image]),
-  );
-
+  const imagesByAlias = new Map(specs.map((service) => [service.alias, service.image]));
   return SERVICE_IMAGE_ALIASES.map((service) => {
     const image = imagesByAlias.get(service.alias);
     if (image === undefined) {
@@ -86,7 +61,13 @@ export function localServiceImagesFromDockerfile(
   });
 }
 
-const LOCAL_SERVICE_IMAGES = localServiceImagesFromDockerfile(serviceImagesDockerfile);
+export function localServiceImagesFromDockerfile(
+  dockerfile: string,
+): ReadonlyArray<ServiceImageSpec> {
+  return localServiceImagesFromSpecs(parseDockerfileServiceImages(dockerfile));
+}
+
+const LOCAL_SERVICE_IMAGES = localServiceImagesFromSpecs(dockerfileServiceImages);
 
 const TABLE_HEADERS = ["SERVICE IMAGE", "LOCAL", "LINKED"] as const;
 
