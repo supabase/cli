@@ -44,3 +44,13 @@ export class LegacySeedMutuallyExclusiveFlagsError extends Data.TaggedError(
 )<{
   readonly message: string;
 }> {}
+
+/**
+ * Raised on `--linked` when the project's api-keys response yields no keys,
+ * mirroring Go's `tenant.GetApiKeys` → `errMissingKey` ("Anon key not found.",
+ * `apps/cli-go/internal/utils/tenant/client.go:16,80-82`), which aborts before
+ * the remote Storage client is built. Message matches Go verbatim.
+ */
+export class LegacySeedMissingApiKeyError extends Data.TaggedError("LegacySeedMissingApiKeyError")<{
+  readonly message: string;
+}> {}

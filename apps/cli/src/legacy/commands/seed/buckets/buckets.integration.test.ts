@@ -289,6 +289,24 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("treats a null vectorBuckets list as empty (Go nil slice)", () => {
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.vector]\nenabled = true\n[storage.vector.buckets.documents-openai]\n",
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        // Go decodes `{"vectorBuckets": null}` into a nil slice → empty, not an error.
+        { method: "POST", match: VECTOR_LIST, body: { vectorBuckets: null } },
+        { method: "POST", match: VECTOR_CREATE, body: {} },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Creating vector bucket: documents-openai");
+      expect(requests.some((r) => r.url.includes(VECTOR_CREATE))).toBe(true);
+    });
+  });
+
   it.live("prunes a stale vector bucket when the prompt is accepted", () => {
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.vector]\nenabled = true\n[storage.vector.buckets.keep-vec]\n",
@@ -1046,6 +1064,26 @@ describe("legacy seed buckets", () => {
         requests.some((r) => r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)),
       ).toBe(true);
       expect(requests.some((r) => r.headers["apikey"] === "remote-service-role-key")).toBe(true);
+    });
+  });
+
+  it.live("--linked fails before any Storage call when the api-keys list is empty", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.test]\npublic = true\n",
+      projectRef: LEGACY_VALID_REF,
+      apiKeys: [],
+      args: ["seed", "buckets", "--linked"],
+      routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets({ linked: true, local: false }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      // Go's tenant.GetApiKeys → errMissingKey, before NewStorageAPI.
+      expect(JSON.stringify(exit)).toContain("Anon key not found.");
+      expect(requests.some((r) => r.url.includes("/storage/v1/"))).toBe(false);
     });
   });
 

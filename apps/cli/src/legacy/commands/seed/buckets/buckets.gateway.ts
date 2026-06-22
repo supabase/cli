@@ -163,7 +163,9 @@ const decodeVectorBucketNames = (
       return yield* Effect.fail(failParse("expected a vector bucket list object"));
     }
     const list = root["vectorBuckets"];
-    if (list === undefined) return [];
+    // Absent or null → empty: Go decodes `{"vectorBuckets": null}` (and the
+    // zero `ListVectorBucketsResponse{}`) into a nil slice, i.e. no buckets.
+    if (list === undefined || list === null) return [];
     if (!Array.isArray(list)) {
       return yield* Effect.fail(failParse("vectorBuckets must be an array"));
     }

@@ -31,6 +31,7 @@ import {
 } from "./buckets.gateway.ts";
 import {
   LegacySeedConfigLoadError,
+  LegacySeedMissingApiKeyError,
   LegacySeedMutuallyExclusiveFlagsError,
   LegacySeedStorageNetworkError,
   LegacySeedStorageStatusError,
@@ -319,10 +320,18 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     } else {
       baseUrl = `https://${projectRef}.${cliConfig.projectHost}`;
       const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
-      apiKey =
-        envKey !== undefined && envKey.length > 0
-          ? envKey
-          : legacyExtractServiceKeys(yield* legacyGetProjectApiKeys(projectRef, true)).serviceRole;
+      if (envKey !== undefined && envKey.length > 0) {
+        apiKey = envKey;
+      } else {
+        const keys = legacyExtractServiceKeys(yield* legacyGetProjectApiKeys(projectRef, true));
+        // Go's tenant.GetApiKeys fails with errMissingKey ("Anon key not found.")
+        // when the api-keys response yields nothing, before building the remote
+        // Storage client (`internal/utils/tenant/client.go:24-26,80-82`).
+        if (keys.anon === "" && keys.serviceRole === "") {
+          return yield* new LegacySeedMissingApiKeyError({ message: "Anon key not found." });
+        }
+        apiKey = keys.serviceRole;
+      }
     }
 
     // All gateway operations are wrapped in a CA-aware fetch context when
