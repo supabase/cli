@@ -177,6 +177,17 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
       return;
     }
 
+    // 3a. Resolve + validate every bucket's props up front (Go parses sizes at
+    // config-load, before NewStorageAPI), so an invalid/omitted file_size_limit
+    // is settled before any Storage list/create/update.
+    const bucketPropsByName = new Map<string, LegacyUpsertBucketProps>();
+    for (const [name, bucket] of Object.entries(bucketsConfig)) {
+      bucketPropsByName.set(
+        name,
+        yield* computeBucketProps(loaded.document, name, bucket, config.storage.file_size_limit),
+      );
+    }
+
     // 4. Build the Storage service-gateway client (local or remote).
     let baseUrl: string;
     let apiKey: string;
@@ -215,7 +226,7 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
       const summary = emptySummary();
 
       // 5. Upsert configured buckets.
-      yield* upsertBuckets(output, yes, gateway, bucketsConfig, loaded.document, summary);
+      yield* upsertBuckets(output, yes, gateway, bucketPropsByName, summary);
 
       // 6. Upsert analytics buckets (remote --linked only).
       if (config.storage.analytics.enabled && projectRef !== "") {
@@ -338,25 +349,71 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * recover presence from the raw (post-`env()`) document.
  */
 function bucketHasPublicKey(document: Record<string, unknown> | undefined, name: string): boolean {
+  return bucketHasKey(document, name, "public");
+}
+
+/**
+ * Whether the bucket's TOML entry explicitly declares `file_size_limit`. Absent
+ * decodes to the bucket schema default (`50MiB`), losing the "omitted" signal Go
+ * relies on to inherit the storage-level limit, so recover presence from the raw
+ * (post-`env()`) document — same approach as `bucketHasPublicKey`.
+ */
+function bucketHasFileSizeLimit(
+  document: Record<string, unknown> | undefined,
+  name: string,
+): boolean {
+  return bucketHasKey(document, name, "file_size_limit");
+}
+
+function bucketHasKey(
+  document: Record<string, unknown> | undefined,
+  name: string,
+  key: string,
+): boolean {
   if (document === undefined) return false;
   const storage = document["storage"];
   if (!isRecord(storage)) return false;
   const buckets = storage["buckets"];
   if (!isRecord(buckets)) return false;
   const bucket = buckets[name];
-  return isRecord(bucket) && "public" in bucket;
+  return isRecord(bucket) && key in bucket;
 }
 
-function bucketProps(
+/**
+ * Resolve a bucket's create/update props, mirroring Go's `config.resolve()`
+ * (`apps/cli-go/pkg/config/config.go:753-756`) + the `sizeInBytes` decode that
+ * happens at config-load **before** `NewStorageAPI`:
+ *  - an omitted or zero `file_size_limit` inherits the storage-level limit;
+ *  - the size is parsed up front, so an invalid value fails (mapped to a
+ *    config-load error) before any Storage list/create/update side effect — Go
+ *    rejects the same config during `LoadConfig`.
+ */
+const computeBucketProps = Effect.fnUntraced(function* (
+  document: Record<string, unknown> | undefined,
+  name: string,
   bucket: BucketsConfig[string],
-  publicWasSet: boolean,
-): LegacyUpsertBucketProps {
+  storageFileSizeLimit: string,
+) {
+  const parseSize = (value: string) =>
+    Effect.try({
+      try: () => legacyParseFileSizeLimit(value),
+      catch: (cause) =>
+        new LegacySeedConfigLoadError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+
+  const bucketBytes = bucketHasFileSizeLimit(document, name)
+    ? yield* parseSize(bucket.file_size_limit)
+    : 0;
+  const fileSizeLimit = bucketBytes === 0 ? yield* parseSize(storageFileSizeLimit) : bucketBytes;
+
   return {
-    public: publicWasSet ? bucket.public : undefined,
-    fileSizeLimit: legacyParseFileSizeLimit(bucket.file_size_limit),
+    public: bucketHasPublicKey(document, name) ? bucket.public : undefined,
+    fileSizeLimit,
     allowedMimeTypes: bucket.allowed_mime_types,
-  };
-}
+  } satisfies LegacyUpsertBucketProps;
+});
 
 /**
  * Confirm-or-default prompt mirroring Go's `console.PromptYesNo`
@@ -383,20 +440,20 @@ const promptYesNo = Effect.fnUntraced(function* (
     .pipe(Effect.catchTag("NonInteractiveError", () => Effect.succeed(defaultValue)));
 });
 
-// Port of `pkg/storage/batch.go:UpsertBuckets`.
+// Port of `pkg/storage/batch.go:UpsertBuckets`. `propsByName` is precomputed and
+// size-validated before this runs (Go parses sizes at config-load, before any
+// Storage call).
 const upsertBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
   yes: boolean,
   gateway: LegacyStorageGateway,
-  bucketsConfig: BucketsConfig,
-  document: Record<string, unknown> | undefined,
+  propsByName: ReadonlyMap<string, LegacyUpsertBucketProps>,
   summary: SeedSummary,
 ) {
   const existing = yield* gateway.listBuckets();
   const byName = new Map(existing.map((b) => [b.name, b.id]));
 
-  for (const [name, bucket] of Object.entries(bucketsConfig)) {
-    const props = bucketProps(bucket, bucketHasPublicKey(document, name));
+  for (const [name, props] of propsByName) {
     const bucketId = byName.get(name);
     if (bucketId !== undefined) {
       const overwrite = yield* promptYesNo(

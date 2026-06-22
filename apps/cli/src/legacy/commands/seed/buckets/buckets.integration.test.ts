@@ -80,12 +80,31 @@ function setupLegacySeedBuckets(
     promptConfirmFail: opts.promptConfirmFail,
   });
 
-  const requests: Array<{ method: string; url: string; headers: Record<string, string> }> = [];
+  const requests: Array<{
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+    body: unknown;
+  }> = [];
   const routes = opts.routes ?? [];
   const httpLayer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
-      requests.push({ method: request.method, url: request.url, headers: { ...request.headers } });
+      const reqBody = request.body;
+      let body: unknown;
+      if (reqBody._tag === "Uint8Array") {
+        try {
+          body = JSON.parse(new TextDecoder().decode(reqBody.body));
+        } catch {
+          body = undefined;
+        }
+      }
+      requests.push({
+        method: request.method,
+        url: request.url,
+        headers: { ...request.headers },
+        body,
+      });
       const route = routes.find(
         (r) => r.method === request.method && request.url.includes(r.match),
       );
@@ -515,6 +534,53 @@ describe("legacy seed buckets", () => {
       );
       // Validation fails before any Storage call.
       expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("fails on an invalid bucket file_size_limit before any Storage call", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      // First bucket is valid; the second has an unparseable size. Go parses all
+      // sizes at config-load before NewStorageAPI, so nothing is mutated.
+      toml: [
+        "[storage.buckets.ok]",
+        "public = true",
+        "[storage.buckets.bad]",
+        'file_size_limit = "not-a-size"',
+      ].join("\n"),
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: {} },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("invalid size");
+      // No list/create happened — validation precedes every Storage side effect.
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("inherits the storage-level file_size_limit when a bucket omits it", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      // Custom storage-level limit; the bucket omits file_size_limit, so Go's
+      // resolve() copies the storage-level value (5MiB) into the bucket.
+      toml: '[storage]\nfile_size_limit = "5MiB"\n[storage.buckets.media]\npublic = true\n',
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "media" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const create = requests.find(
+        (r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket"),
+      );
+      // 5MiB = 5 * 1024 * 1024 (not the 50MiB bucket schema default).
+      expect((create?.body as { file_size_limit?: number } | undefined)?.file_size_limit).toBe(
+        5 * 1024 * 1024,
+      );
     });
   });
 

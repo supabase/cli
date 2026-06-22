@@ -45,8 +45,11 @@ header is also sent, except when the key is an opaque `sb_...` key, which Go's
 | `POST`   | `/storage/v1/iceberg/bucket`            | service-role | `{bucketName}`                                                                          | — (created)                            |
 | `DELETE` | `/storage/v1/iceberg/bucket/{name}`     | service-role | none                                                                                    | — (pruned)                             |
 
-`file_size_limit` is omitted from the body when `0`; `allowed_mime_types` is
-omitted when empty (Go `omitempty`).
+A bucket that omits `file_size_limit` (or sets it to `0`) inherits the
+storage-level `[storage].file_size_limit` (Go `config.go:753-756`). All bucket
+sizes are parsed up front, so an invalid value fails before any Storage call.
+`file_size_limit` is omitted from the body when the resolved value is `0`;
+`allowed_mime_types` is omitted when empty (Go `omitempty`).
 
 Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 `[storage.analytics].enabled = true` AND `--linked` is passed.
