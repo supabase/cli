@@ -7,10 +7,11 @@ stack is used; with `--linked` the remote project is used.
 
 ## Files Read
 
-| Path                                   | Format      | When                                                                                                                                                                              |
-| -------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`       | TOML        | always, to read `[storage.buckets]` / `[storage.vector]` config                                                                                                                   |
-| `<workdir>/supabase/<objects_path>/**` | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively; a relative `objects_path` resolves under `supabase/` (Go `config.go:757-759`), an absolute path is used as-is |
+| Path                                     | Format      | When                                                                                                                                                                                                                                                                        |
+| ---------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`         | TOML        | always, to read `[storage.buckets]` / `[storage.vector]` config                                                                                                                                                                                                             |
+| `<workdir>/supabase/<objects_path>/**`   | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively; a relative `objects_path` resolves under `supabase/` (Go `config.go:757-759`), an absolute path is used as-is                                                                                           |
+| `<workdir>/supabase/<api.tls.cert_path>` | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.cert_path` is set; the file is read to obtain the CA certificate for trusting the local Kong HTTPS gateway. If `cert_path` is not set, the embedded `kong.local.crt` constant is used instead (no file read). |
 
 ## Files Written
 
@@ -142,3 +143,11 @@ configured`, or a 404 on `ListVectorBuckets`), a WARNING is printed and object
   objects are uploaded with `x-upsert: true`.
 - **Content-Type** for uploaded objects is derived from the file extension — a
   best-effort approximation of Go's `http.DetectContentType` + `mime.TypeByExtension`.
+- **Local Kong TLS.** When `[api.tls] enabled = true` for a local stack, all
+  HTTPS storage gateway calls trust the Kong CA. The CA is the embedded
+  `kong.local.crt` constant (from `apps/cli-go/pkg/config/templates/certs/kong.local.crt`)
+  unless `api.tls.cert_path` is set, in which case that file is read from
+  `<workdir>/supabase/<cert_path>` (or an absolute path as-is). This mirrors
+  Go's `newLocalClient` (`apps/cli-go/internal/storage/client/api.go:30-37`) and
+  `config.go:845-851`. The CA is injected into Bun's `fetch` via
+  `tls: { ca: <pem> }` — no system trust store modification.

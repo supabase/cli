@@ -1,6 +1,7 @@
-import { loadProjectConfig } from "@supabase/config";
+import { KONG_LOCAL_CA_CERT, loadProjectConfig } from "@supabase/config";
 import { defaultJwtSecret, generateJwt } from "@supabase/stack/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 import type { PlatformError } from "effect/PlatformError";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
@@ -38,6 +39,52 @@ import type { LegacyBucketsFlags } from "./buckets.command.ts";
 
 const CONFIG_PATH = "supabase/config.toml";
 const UPLOAD_CONCURRENCY = 5;
+
+/**
+ * Builds a `typeof globalThis.fetch` that injects `tls.ca` into every request,
+ * trusting the provided CA PEM for HTTPS connections to the local Kong gateway.
+ *
+ * Mirrors Go's `newLocalClient` (`apps/cli-go/internal/storage/client/api.go:30-37`),
+ * which appends `utils.Config.Api.Tls.CertContent` to the TLS cert pool.
+ *
+ * Bun's fetch accepts `{ tls: { ca: string } }` in the same position as
+ * `BunFetchRequestInit.tls`; the `ca` field is Bun-specific and is typed via
+ * `BunFetchRequestInit` (a Bun global). No `as` cast is needed: the init object
+ * is typed as `BunFetchRequestInit` which extends the standard `RequestInit`.
+ */
+function legacyKongCaFetch(ca: string): typeof globalThis.fetch {
+  const fetchImpl = async (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ): Promise<Response> => {
+    const caInit: BunFetchRequestInit = { ...init, tls: { ca } };
+    return globalThis.fetch(input, caInit);
+  };
+  // Attach `preconnect` so the override is structurally complete as
+  // `typeof globalThis.fetch` — mirrors the same pattern in legacy-http-dns.ts.
+  return Object.assign(fetchImpl, { preconnect: globalThis.fetch.preconnect });
+}
+
+/**
+ * Resolves the CA PEM to trust for the local Kong TLS gateway:
+ *  - if `api.tls.cert_path` is set → read that file (resolved against the
+ *    supabase dir, mirroring Go `config.go:795-800,845-851`);
+ *  - otherwise → the embedded `KONG_LOCAL_CA_CERT` constant.
+ *
+ * Only called when `projectRef === ""` (local) AND `config.api.tls.enabled`.
+ */
+const resolveLocalKongCa = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  certPath: string | undefined,
+) {
+  if (certPath !== undefined && certPath.length > 0) {
+    const abs = path.isAbsolute(certPath) ? certPath : path.join(workdir, "supabase", certPath);
+    return yield* fs.readFileString(abs);
+  }
+  return KONG_LOCAL_CA_CERT;
+});
 
 type StorageError = LegacySeedStorageNetworkError | LegacySeedStorageStatusError;
 
@@ -133,6 +180,14 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     // 4. Build the Storage service-gateway client (local or remote).
     let baseUrl: string;
     let apiKey: string;
+    // When local + TLS, resolve the CA cert to inject into fetch calls so Kong's
+    // self-signed certificate is trusted. Mirrors Go's `newLocalClient`
+    // (`apps/cli-go/internal/storage/client/api.go:30-37`).
+    const localTls = projectRef === "" && config.api.tls.enabled;
+    const localKongCa = localTls
+      ? yield* resolveLocalKongCa(fs, path, cliConfig.workdir, config.api.tls.cert_path)
+      : undefined;
+
     if (projectRef === "") {
       baseUrl = resolveLocalBaseUrl(config);
       apiKey = yield* resolveLocalServiceRoleKey(config.auth);
@@ -144,44 +199,59 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
           ? envKey
           : legacyExtractServiceKeys(yield* legacyGetProjectApiKeys(projectRef, true)).serviceRole;
     }
-    const gateway = yield* makeLegacyStorageGateway({
-      baseUrl,
-      apiKey,
-      userAgent: cliConfig.userAgent,
+
+    // All gateway operations are wrapped in a CA-aware fetch context when
+    // running against a local TLS stack. `FetchHttpClient.Fetch` is read per
+    // request from the fiber context (`fiber.getRef(Fetch)` in FetchHttpClient),
+    // so `Effect.provideService` at this scope correctly overrides it for every
+    // HTTP call the gateway makes.
+    const gatewayOps = Effect.gen(function* () {
+      const gateway = yield* makeLegacyStorageGateway({
+        baseUrl,
+        apiKey,
+        userAgent: cliConfig.userAgent,
+      });
+
+      const summary = emptySummary();
+
+      // 5. Upsert configured buckets.
+      yield* upsertBuckets(output, yes, gateway, bucketsConfig, loaded.document, summary);
+
+      // 6. Upsert analytics buckets (remote --linked only).
+      if (config.storage.analytics.enabled && projectRef !== "") {
+        yield* output.raw("Updating analytics buckets...\n", "stderr");
+        yield* upsertAnalyticsBuckets(
+          output,
+          yes,
+          gateway,
+          Object.keys(config.storage.analytics.buckets),
+          summary,
+        );
+      }
+
+      // 7. Upsert vector buckets (local), with graceful skip on unavailability.
+      if (vectorEnabled && hasVectorBuckets) {
+        yield* output.raw("Updating vector buckets...\n", "stderr");
+        yield* upsertVectorBuckets(output, yes, gateway, vectorBucketNames, summary).pipe(
+          Effect.catch((error) => handleVectorError(output, error, summary)),
+        );
+      }
+
+      // 8. Upload objects for each bucket with a configured objects_path.
+      yield* uploadObjects(fs, path, output, gateway, cliConfig.workdir, bucketsConfig, summary);
+
+      // 9. Machine-readable summary (Go has none; text mode emits nothing extra).
+      if (output.format !== "text") {
+        yield* output.success("", { ...summary });
+      }
     });
 
-    const summary = emptySummary();
-
-    // 5. Upsert configured buckets.
-    yield* upsertBuckets(output, yes, gateway, bucketsConfig, loaded.document, summary);
-
-    // 6. Upsert analytics buckets (remote --linked only).
-    if (config.storage.analytics.enabled && projectRef !== "") {
-      yield* output.raw("Updating analytics buckets...\n", "stderr");
-      yield* upsertAnalyticsBuckets(
-        output,
-        yes,
-        gateway,
-        Object.keys(config.storage.analytics.buckets),
-        summary,
-      );
-    }
-
-    // 7. Upsert vector buckets (local), with graceful skip on unavailability.
-    if (vectorEnabled && hasVectorBuckets) {
-      yield* output.raw("Updating vector buckets...\n", "stderr");
-      yield* upsertVectorBuckets(output, yes, gateway, vectorBucketNames, summary).pipe(
-        Effect.catch((error) => handleVectorError(output, error, summary)),
-      );
-    }
-
-    // 8. Upload objects for each bucket with a configured objects_path.
-    yield* uploadObjects(fs, path, output, gateway, cliConfig.workdir, bucketsConfig, summary);
-
-    // 9. Machine-readable summary (Go has none; text mode emits nothing extra).
-    if (output.format !== "text") {
-      yield* output.success("", { ...summary });
-    }
+    // Provide a CA-trusting fetch for all gateway HTTP calls when local + TLS.
+    yield* localKongCa !== undefined
+      ? gatewayOps.pipe(
+          Effect.provideService(FetchHttpClient.Fetch, legacyKongCaFetch(localKongCa)),
+        )
+      : gatewayOps;
   }).pipe(Effect.ensuring(telemetryState.flush));
 });
 

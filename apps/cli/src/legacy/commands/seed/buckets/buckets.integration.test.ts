@@ -973,4 +973,62 @@ describe("legacy seed buckets", () => {
       expect(Exit.isFailure(exit)).toBe(true);
     });
   });
+
+  it.live("succeeds on the TLS local path and uses an https base URL", () => {
+    // The integration harness mocks HttpClient.HttpClient directly (bypassing fetch),
+    // so real TLS cert verification cannot be exercised here. This test confirms
+    // the TLS code path (embedded CA resolution + FetchHttpClient.Fetch override)
+    // does not throw, and that the gateway is called with https:// URLs — matching
+    // the existing "builds an https base URL" test but going through the full
+    // CA-resolution branch in the handler.
+    const previousHost = process.env["SUPABASE_SERVICES_HOSTNAME"];
+    process.env["SUPABASE_SERVICES_HOSTNAME"] = "localhost";
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[api]\nport = 54321\n[api.tls]\nenabled = true\n[storage.buckets.images]\npublic = true\n",
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.every((r) => r.url.startsWith("https://localhost:54321"))).toBe(true);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previousHost === undefined) {
+            delete process.env["SUPABASE_SERVICES_HOSTNAME"];
+          } else {
+            process.env["SUPABASE_SERVICES_HOSTNAME"] = previousHost;
+          }
+        }),
+      ),
+    );
+  });
+
+  it.live("reads a custom cert_path from disk when api.tls.cert_path is set", () => {
+    // Writes a dummy CA PEM to disk and configures cert_path to point to it.
+    // The integration harness mocks HttpClient so the CA content is not actually
+    // used for TLS, but this test exercises the fs.readFileString code path in
+    // resolveLocalKongCa and confirms the handler does not fail when cert_path
+    // is set to a readable file.
+    const certContent = "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n";
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "custom-ca.crt"), certContent);
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[api]\nport = 54321\n[api.tls]\nenabled = true\ncert_path = "custom-ca.crt"\n[storage.buckets.docs]\npublic = false\n',
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "docs" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(
+        requests.some((r) => r.method === "POST" && r.url.includes("/storage/v1/bucket")),
+      ).toBe(true);
+    });
+  });
 });
