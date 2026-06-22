@@ -115,7 +115,8 @@
       "src/shared/telemetry/event-catalog.ts"
     ],
     "ignoreBinaries": [
-      "nx"
+      "nx",
+      "mkfifo"
     ],
     "ignoreDependencies": [
       "@parcel/watcher-darwin-arm64",

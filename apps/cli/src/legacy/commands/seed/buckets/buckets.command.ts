@@ -1,6 +1,10 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { legacyBuckets } from "./buckets.handler.ts";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { legacySeedRuntimeLayer } from "../seed.layers.ts";
+import { legacySeedBuckets } from "./buckets.handler.ts";
 
 const config = {
   linked: Flag.boolean("linked").pipe(Flag.withDescription("Seeds the linked project.")),
@@ -12,5 +16,11 @@ export type LegacyBucketsFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const legacyBucketsCommand = Command.make("buckets", config).pipe(
   Command.withDescription("Seed buckets declared in [storage.buckets]."),
   Command.withShortDescription("Seed buckets declared in [storage.buckets]"),
-  Command.withHandler((flags) => legacyBuckets(flags)),
+  Command.withHandler((flags) =>
+    legacySeedBuckets(flags).pipe(
+      withLegacyCommandInstrumentation({ flags }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacySeedRuntimeLayer(["seed", "buckets"])),
 );

@@ -5,6 +5,10 @@
  * implements `MarshalText`, so BurntSushi emits a quoted human-readable size,
  * e.g. `"5MiB"`).
  *
+ * Shared across the legacy shell: `config push` (storage/auth/api/db diffing)
+ * and `seed buckets` (which converts each `[storage.buckets.*].file_size_limit`
+ * string to the int64 byte count Go sends in the create/update bucket body).
+ *
  * @see github.com/docker/go-units@v0.5.0/size.go
  */
 
