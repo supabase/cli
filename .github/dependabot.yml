@@ -65,6 +65,17 @@ updates:
       - dependency-name: "axllent/mailpit"
       - dependency-name: "darthsim/imgproxy"
       - dependency-name: "timberio/vector"
+      # Held back: v2.109.0+ adds a setup_supabase_realtime_admin migration
+      # that fails against the CLI's local Postgres and breaks `supabase start`.
+      # Remove once the CLI's local stack is compatible with the new migration.
+      - dependency-name: "supabase/realtime"
+        versions:
+          - ">= 2.109.0"
+      # Held back: 1.45.0 is not mirrored to the ghcr registry CI pulls from
+      # ("manifest unknown"). Remove once a mirrored tag is available.
+      - dependency-name: "supabase/logflare"
+        versions:
+          - ">= 1.45.0"
     cooldown:
       default-days: 7
       exclude:
