@@ -582,6 +582,21 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("rejects a malformed file_size_limit numeral (Go strconv.ParseFloat)", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      // JS parseFloat would parse "1.2.3" as 1.2; Go's strconv.ParseFloat rejects
+      // the whole config before NewStorageAPI.
+      toml: '[storage.buckets.media]\npublic = true\nfile_size_limit = "1.2.3MiB"\n',
+      routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("invalid size");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
   it.live("fails on an invalid storage-level file_size_limit (only vector buckets)", () => {
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       // No storage buckets inherit it, only a vector bucket is configured — Go
@@ -838,6 +853,34 @@ describe("legacy seed buckets", () => {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.every((r) => r.url.startsWith("https://docker.host:7654"))).toBe(true);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previousHost === undefined) {
+            delete process.env["SUPABASE_SERVICES_HOSTNAME"];
+          } else {
+            process.env["SUPABASE_SERVICES_HOSTNAME"] = previousHost;
+          }
+        }),
+      ),
+    );
+  });
+
+  it.live("brackets an IPv6 local host when building the gateway URL", () => {
+    const previousHost = process.env["SUPABASE_SERVICES_HOSTNAME"];
+    process.env["SUPABASE_SERVICES_HOSTNAME"] = "::1";
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // Go's net.JoinHostPort brackets IPv6: http://[::1]:54321, not http://::1:54321.
+      expect(requests.every((r) => r.url.startsWith("http://[::1]:54321"))).toBe(true);
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {

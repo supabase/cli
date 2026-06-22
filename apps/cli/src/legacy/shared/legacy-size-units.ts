@@ -46,6 +46,14 @@ export function ramInBytes(sizeStr: string): number {
     num = sizeStr.slice(0, sep);
     sfx = sizeStr.slice(sep + 1);
   }
+  // Go's `RAMInBytes` parses the numeric part with `strconv.ParseFloat`, which
+  // requires the WHOLE string to be a valid number. JS `Number.parseFloat`
+  // silently parses a valid prefix (e.g. `1.2.3` → 1.2, `1 2` → 1), so validate
+  // the numeric part strictly first — a single decimal, no extra dots/spaces —
+  // matching Go's reject-the-whole-config behaviour.
+  if (!/^\d+(\.\d+)?$/.test(num)) {
+    throw new Error(`invalid size: '${sizeStr}'`);
+  }
   const size = Number.parseFloat(num);
   if (Number.isNaN(size)) {
     throw new Error(`invalid size: '${sizeStr}'`);

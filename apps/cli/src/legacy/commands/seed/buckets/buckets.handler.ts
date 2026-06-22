@@ -419,7 +419,13 @@ function resolveLocalBaseUrl(config: {
   }
   const host = legacyGetHostname();
   const scheme = config.api.tls.enabled ? "https" : "http";
-  return `${scheme}://${host}:${config.api.port}`;
+  // Go builds the host:port with net.JoinHostPort (config.go:636-638), which
+  // brackets an IPv6 host (e.g. `::1` → `[::1]:54321`); a bare `::1:54321` is an
+  // invalid URL. legacyGetHostname returns the unbracketed host, so bracket here.
+  const hostPort = host.includes(":")
+    ? `[${host}]:${config.api.port}`
+    : `${host}:${config.api.port}`;
+  return `${scheme}://${hostPort}`;
 }
 
 /**
