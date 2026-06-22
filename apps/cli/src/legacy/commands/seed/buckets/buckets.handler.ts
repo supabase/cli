@@ -399,16 +399,33 @@ const uploadObjects = Effect.fnUntraced(function* (
     if (objectsPath.length === 0) {
       continue;
     }
-    const absRoot = path.resolve(workdir, objectsPath);
-    const files = yield* collectFiles(fs, path, output, absRoot, objectsPath);
+    // Go resolves a relative bucket objects_path against SupabaseDirPath (the
+    // `supabase/` dir) at config-resolve time (`pkg/config/config.go:757-759`);
+    // absolute paths are left untouched. `@supabase/config` doesn't reproduce
+    // this and `workdir` is the project root, so apply the `supabase/` prefix
+    // here. `displayRoot` (workdir-relative) drives the `Uploading:` stderr and
+    // the destination key so both stay byte-identical to Go.
+    const displayRoot = path.isAbsolute(objectsPath)
+      ? objectsPath
+      : path.join("supabase", objectsPath);
+    const absRoot = path.isAbsolute(objectsPath)
+      ? objectsPath
+      : path.join(workdir, "supabase", objectsPath);
+    const files = yield* collectFiles(fs, path, output, absRoot, displayRoot);
     yield* Effect.forEach(
       files,
       (file) =>
         Effect.gen(function* () {
-          const dstPath = legacyBucketObjectKey(name, objectsPath, file.displayPath);
+          const dstPath = legacyBucketObjectKey(name, displayRoot, file.displayPath);
           yield* output.raw(`Uploading: ${file.displayPath} => ${dstPath}\n`, "stderr");
-          const bytes = yield* fs.readFile(file.absPath);
-          yield* gateway.uploadObject(dstPath, bytes, legacyContentTypeForPath(file.absPath));
+          // Stream the file into the request body — Go opens the file and streams
+          // the io.Reader (`pkg/storage/objects.go:94-127`) rather than buffering
+          // each object fully into memory.
+          yield* gateway.uploadObject(
+            dstPath,
+            file.absPath,
+            legacyContentTypeForPath(file.absPath),
+          );
           summary.objects_uploaded.push(dstPath);
         }),
       { concurrency: UPLOAD_CONCURRENCY },

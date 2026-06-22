@@ -6,10 +6,10 @@ Seeds the **local** Supabase Storage stack from `[storage.buckets]` and
 
 ## Files Read
 
-| Path                                 | Format      | When                                                               |
-| ------------------------------------ | ----------- | ------------------------------------------------------------------ |
-| `<workdir>/supabase/config.toml`     | TOML        | always, to read `[storage.buckets]` / `[storage.vector]` config    |
-| `<workdir>/<bucket>.objects_path/**` | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively |
+| Path                                   | Format      | When                                                                                                                                                                              |
+| -------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`       | TOML        | always, to read `[storage.buckets]` / `[storage.vector]` config                                                                                                                   |
+| `<workdir>/supabase/<objects_path>/**` | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively; a relative `objects_path` resolves under `supabase/` (Go `config.go:757-759`), an absolute path is used as-is |
 
 ## Files Written
 

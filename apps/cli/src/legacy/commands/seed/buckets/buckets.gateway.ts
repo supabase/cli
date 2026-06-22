@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, FileSystem } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -60,7 +60,7 @@ export interface LegacyStorageGateway {
   ) => Effect.Effect<void, LegacySeedStorageNetworkError | LegacySeedStorageStatusError>;
   readonly uploadObject: (
     remotePath: string,
-    bytes: Uint8Array,
+    absPath: string,
     contentType: string,
   ) => Effect.Effect<void, LegacySeedStorageNetworkError | LegacySeedStorageStatusError>;
 }
@@ -99,6 +99,7 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
   readonly userAgent: string;
 }) {
   const httpClient = yield* HttpClient.HttpClient;
+  const fs = yield* FileSystem.FileSystem;
 
   // Go's `withAuthToken` (`pkg/fetcher/gateway.go:22`) gates the bearer header on
   // a plain `sb_` prefix check: opaque `sb_...` keys are not JWTs, so only the
@@ -198,13 +199,27 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
           HttpClientRequest.bodyJsonUnsafe({ vectorBucketName: name }),
         ),
       ).pipe(Effect.asVoid),
-    uploadObject: (remotePath, bytes, contentType) => {
+    uploadObject: (remotePath, absPath, contentType) => {
       const trimmed = remotePath.startsWith("/") ? remotePath.slice(1) : remotePath;
       const req = withAuth(HttpClientRequest.post(url(`/storage/v1/object/${trimmed}`))).pipe(
         HttpClientRequest.setHeader("Cache-Control", "max-age=3600"),
         HttpClientRequest.setHeader("x-upsert", "true"),
       );
-      return send(HttpClientRequest.bodyUint8Array(req, bytes, contentType)).pipe(Effect.asVoid);
+      // `bodyFile` stats the file for Content-Length and streams it via
+      // FileSystem rather than buffering — the analogue of Go's open-and-stream
+      // upload. The captured FileSystem is supplied here so the gateway's public
+      // Effect type stays free of a service requirement.
+      return HttpClientRequest.bodyFile(req, absPath, { contentType }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.mapError(
+          (cause) =>
+            new LegacySeedStorageNetworkError({
+              message: `failed to execute http request: ${cause}`,
+            }),
+        ),
+        Effect.flatMap(send),
+        Effect.asVoid,
+      );
     },
   };
 

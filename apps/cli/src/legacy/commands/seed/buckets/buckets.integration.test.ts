@@ -284,10 +284,11 @@ describe("legacy seed buckets", () => {
 
   it.live("uploads objects from a bucket's objects_path", () => {
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      // Relative objects_path resolves under supabase/ (Go config.go:757-759).
       toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
       files: {
-        "assets/a.txt": "hello",
-        "assets/sub/b.txt": "world",
+        "supabase/assets/a.txt": "hello",
+        "supabase/assets/sub/b.txt": "world",
       },
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
@@ -298,10 +299,32 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(out.stderrText).toContain("Uploading: assets/a.txt => images/a.txt");
-      expect(out.stderrText).toContain("Uploading: assets/sub/b.txt => images/sub/b.txt");
+      expect(out.stderrText).toContain("Uploading: supabase/assets/a.txt => images/a.txt");
+      expect(out.stderrText).toContain("Uploading: supabase/assets/sub/b.txt => images/sub/b.txt");
       const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
       expect(uploads).toHaveLength(2);
+    });
+  });
+
+  it.live("resolves an absolute objects_path as-is (Go IsAbs guard)", () => {
+    const absRoot = join(tmp.current, "external-assets");
+    mkdirSync(absRoot, { recursive: true });
+    writeFileSync(join(absRoot, "a.txt"), "hello");
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      // An absolute objects_path is left untouched — no supabase/ prefix.
+      toml: `[storage.buckets.images]\npublic = true\nobjects_path = "${absRoot}"\n`,
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/object/", body: {} },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain(`Uploading: ${join(absRoot, "a.txt")} => images/a.txt`);
+      const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
+      expect(uploads).toHaveLength(1);
     });
   });
 
@@ -598,9 +621,9 @@ describe("legacy seed buckets", () => {
 
   it.live("skips non-regular files during the object walk", () => {
     // A FIFO is neither a regular file nor a directory, exercising the skip path.
-    mkdirSync(join(tmp.current, "assets"), { recursive: true });
-    writeFileSync(join(tmp.current, "assets", "a.txt"), "hello");
-    execFileSync("mkfifo", [join(tmp.current, "assets", "pipe")]);
+    mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
+    execFileSync("mkfifo", [join(tmp.current, "supabase", "assets", "pipe")]);
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
       routes: [
@@ -612,16 +635,16 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(out.stderrText).toContain("Skipping non-regular file: assets/pipe");
+      expect(out.stderrText).toContain("Skipping non-regular file: supabase/assets/pipe");
       const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
       expect(uploads).toHaveLength(1);
     });
   });
 
   it.live("skips a dangling symlink without failing (Go isUploadableEntry parity)", () => {
-    mkdirSync(join(tmp.current, "assets"), { recursive: true });
-    writeFileSync(join(tmp.current, "assets", "a.txt"), "hello");
-    symlinkSync("./does-not-exist", join(tmp.current, "assets", "dangling"));
+    mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
+    symlinkSync("./does-not-exist", join(tmp.current, "supabase", "assets", "dangling"));
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
       routes: [
@@ -633,8 +656,8 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(out.stderrText).toContain("Skipping non-regular file: assets/dangling");
-      expect(out.stderrText).toContain("Uploading: assets/a.txt => images/a.txt");
+      expect(out.stderrText).toContain("Skipping non-regular file: supabase/assets/dangling");
+      expect(out.stderrText).toContain("Uploading: supabase/assets/a.txt => images/a.txt");
       const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
       expect(uploads).toHaveLength(1);
     });
@@ -643,10 +666,10 @@ describe("legacy seed buckets", () => {
   it.live(
     "does not descend into a symlinked directory (Go does not follow nested symlinks)",
     () => {
-      mkdirSync(join(tmp.current, "assets", "realdir"), { recursive: true });
-      writeFileSync(join(tmp.current, "assets", "a.txt"), "hello");
-      writeFileSync(join(tmp.current, "assets", "realdir", "c.txt"), "world");
-      symlinkSync("./realdir", join(tmp.current, "assets", "linkdir"));
+      mkdirSync(join(tmp.current, "supabase", "assets", "realdir"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
+      writeFileSync(join(tmp.current, "supabase", "assets", "realdir", "c.txt"), "world");
+      symlinkSync("./realdir", join(tmp.current, "supabase", "assets", "linkdir"));
       const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
         toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
         routes: [
@@ -661,9 +684,11 @@ describe("legacy seed buckets", () => {
           Effect.exit,
         );
         expect(Exit.isSuccess(exit)).toBe(true);
-        expect(out.stderrText).toContain("Skipping non-regular file: assets/linkdir");
-        expect(out.stderrText).toContain("Uploading: assets/realdir/c.txt => images/realdir/c.txt");
-        expect(out.stderrText).not.toContain("assets/linkdir/c.txt");
+        expect(out.stderrText).toContain("Skipping non-regular file: supabase/assets/linkdir");
+        expect(out.stderrText).toContain(
+          "Uploading: supabase/assets/realdir/c.txt => images/realdir/c.txt",
+        );
+        expect(out.stderrText).not.toContain("supabase/assets/linkdir/c.txt");
         const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
         expect(uploads).toHaveLength(2);
       });
