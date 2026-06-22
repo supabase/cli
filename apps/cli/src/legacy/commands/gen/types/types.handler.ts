@@ -58,12 +58,13 @@ const mapBranchDatabaseConfigError = mapLegacyHttpError({
     `unexpected preview branch database config status ${status}: ${body}`,
 });
 
-function isPreviewBranchNotFound(cause: unknown) {
-  return (
-    cause instanceof LegacyGenTypesUnexpectedStatusError &&
-    cause.status === 404 &&
-    cause.body.includes("Preview branch not found")
-  );
+// A 404 from `GET /v1/projects/{ref}` means the ref is a preview branch rather
+// than a project, so fall back to the branch config endpoint. Mirror the link
+// handler, which treats *any* 404 as the branch case
+// (`link.handler.ts:46-50` / Go's `checkRemoteProjectStatus`); do not narrow on
+// the response body, since the Management API's 404 wording is not guaranteed.
+function isProjectNotFound(cause: unknown) {
+  return cause instanceof LegacyGenTypesUnexpectedStatusError && cause.status === 404;
 }
 
 function ensureMutuallyExclusive(
@@ -257,7 +258,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           Effect.catch(mapProjectDatabaseHostError),
           Effect.as("project" as const),
           Effect.catch((cause) =>
-            isPreviewBranchNotFound(cause)
+            isProjectNotFound(cause)
               ? runPreviewBranchTypes(projectRef, includedSchemas).pipe(
                   Effect.as("branch" as const),
                 )

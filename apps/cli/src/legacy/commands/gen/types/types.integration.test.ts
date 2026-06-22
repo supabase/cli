@@ -1021,6 +1021,57 @@ describe("legacy gen types", () => {
     }),
   );
 
+  it.live("falls back to preview branch config for any project 404 body", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const { layer, api, dbConfig } = setup({
+            args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
+            childStdout: ["class PublicMovies(BaseModel):"],
+            // The Management API's 404 wording is not guaranteed; a generic body
+            // must still route to the branch config endpoint.
+            getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
+            getABranchConfig: ({ branch_id_or_ref }) =>
+              Effect.succeed({
+                ref: branch_id_or_ref,
+                postgres_version: "15.1",
+                postgres_engine: "15",
+                release_channel: "ga",
+                status: "ACTIVE_HEALTHY",
+                db_host: "127.0.0.1",
+                db_port: port,
+                db_user: "branch_user",
+                db_pass: "branch-password",
+                jwt_secret: "secret",
+              }),
+            onSpawn: docker.onSpawn,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                projectId: Option.some(LEGACY_VALID_REF),
+                lang: "python",
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(api.requests).toContainEqual({
+            method: "getABranchConfig",
+            input: { branch_id_or_ref: LEGACY_VALID_REF },
+          });
+          expect(dbConfig.resolves).toHaveLength(0);
+          expect(
+            docker.env.has(
+              `PG_META_DB_URL=postgresql://branch_user:branch-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
+            ),
+          ).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
   it.live("fails clearly when preview branch config does not include DB credentials", () => {
     const { layer } = setup({
       args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
