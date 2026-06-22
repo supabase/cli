@@ -32,7 +32,6 @@ import {
 import {
   LegacySeedConfigLoadError,
   LegacySeedMissingApiKeyError,
-  LegacySeedMutuallyExclusiveFlagsError,
   LegacySeedStorageNetworkError,
   LegacySeedStorageStatusError,
 } from "./buckets.errors.ts";
@@ -227,14 +226,6 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
-    // 0. Reproduce cobra's MarkFlagsMutuallyExclusive("local", "linked").
-    const setFlags = legacySeedChangedTargetFlags(cliArgs.args);
-    if (setFlags.length > 1) {
-      return yield* new LegacySeedMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
-      });
-    }
-
     // 1. Resolve the project ref for --linked BEFORE loading config, so that
     // the matching `[remotes.<name>]` override (whose `project_id == ref`) is
     // merged over the base config by `loadProjectConfig`. Mirrors Go's
@@ -242,8 +233,10 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     // (`apps/cli-go/pkg/config/config.go:505-518`).
     // Go selects the target from `flag.Changed`, not the flag value
     // (`internal/utils/flags/db_url.go:46-63`): `--linked` is the linked path
-    // whenever it's *set*, even `--linked=false`. Use the same changed-flag set
-    // as the mutual-exclusivity check, not `flags.linked`'s parsed value.
+    // whenever it's *set*, even `--linked=false`. Use the changed-flag set
+    // (the `--local`/`--linked` mutual-exclusivity is enforced before
+    // instrumentation in `buckets.command.ts`), not `flags.linked`'s value.
+    const setFlags = legacySeedChangedTargetFlags(cliArgs.args);
     const projectRefResolver = yield* LegacyProjectRefResolver;
     const projectRef = setFlags.includes("linked")
       ? yield* projectRefResolver.loadProjectRef(Option.none())
@@ -311,21 +304,6 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     // 4. Build the Storage service-gateway client (local or remote).
     let baseUrl: string;
     let apiKey: string;
-    // When local + TLS, validate cert/key pairing and resolve the CA cert to
-    // inject into fetch calls so Kong's self-signed certificate is trusted.
-    // Mirrors Go's `(*api).Validate` + `newLocalClient`
-    // (`apps/cli-go/pkg/config/config.go:845-861`,
-    //  `apps/cli-go/internal/storage/client/api.go:30-37`).
-    const localTls = projectRef === "" && config.api.tls.enabled;
-    const localKongCa = localTls
-      ? yield* validateLocalKongTls(
-          fs,
-          path,
-          cliConfig.workdir,
-          config.api.tls.cert_path,
-          config.api.tls.key_path,
-        )
-      : undefined;
 
     if (projectRef === "") {
       baseUrl = resolveLocalBaseUrl(config);
@@ -344,6 +322,30 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
           return yield* new LegacySeedMissingApiKeyError({ message: "Anon key not found." });
         }
         apiKey = keys.serviceRole;
+      }
+    }
+
+    // Kong CA trust for the LOCAL path. Go's `newLocalClient` installs
+    // `status.NewKongClient` unconditionally (`internal/storage/client/api.go:30-37`)
+    // — its embedded CA only matters for https — and `(*api).Validate` reads
+    // `cert_path` and validates the cert/key pairing only when `api.tls.enabled`
+    // (`config.go:845-861`). So: validate (and resolve a cert_path CA) when
+    // tls is enabled; inject the CA whenever the resolved local URL is https
+    // (covering an explicit `https` `api.external_url` with `tls.enabled` false →
+    // embedded CA), and never for the remote `--linked` host.
+    let localKongCa: string | undefined;
+    if (projectRef === "") {
+      const validatedCa = config.api.tls.enabled
+        ? yield* validateLocalKongTls(
+            fs,
+            path,
+            cliConfig.workdir,
+            config.api.tls.cert_path,
+            config.api.tls.key_path,
+          )
+        : undefined;
+      if (baseUrl.startsWith("https:")) {
+        localKongCa = validatedCa ?? KONG_LOCAL_CA_CERT;
       }
     }
 

@@ -1,7 +1,10 @@
+import { Effect } from "effect";
+
 import {
   VALUE_CONSUMING_LONG_FLAGS,
   VALUE_CONSUMING_SHORT_FLAGS,
 } from "../../../shared/legacy-db-target-flags.ts";
+import { LegacySeedMutuallyExclusiveFlagsError } from "./buckets.errors.ts";
 
 /**
  * Detects which of `--local` / `--linked` were explicitly set on the command
@@ -55,3 +58,20 @@ export function legacySeedChangedTargetFlags(args: ReadonlyArray<string>): Reado
   if (local) setFlags.push("local");
   return setFlags;
 }
+
+/**
+ * Reproduce cobra's `MarkFlagsMutuallyExclusive("local", "linked")`
+ * (`apps/cli-go/cmd/seed.go:32`). Go rejects this at flag validation — before
+ * `RunE`/`PersistentPostRun` — so it must NOT emit `cli_command_executed`; the
+ * command calls this BEFORE `withLegacyCommandInstrumentation`.
+ */
+export const legacyAssertSeedTargetsExclusive = Effect.fnUntraced(function* (
+  args: ReadonlyArray<string>,
+) {
+  const setFlags = legacySeedChangedTargetFlags(args);
+  if (setFlags.length > 1) {
+    return yield* new LegacySeedMutuallyExclusiveFlagsError({
+      message: `if any flags in the group [linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
+    });
+  }
+});

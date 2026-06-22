@@ -219,20 +219,11 @@ describe("legacy seed buckets", () => {
     });
   });
 
-  it.live("rejects passing both --local and --linked", () => {
-    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
-      toml: 'project_id = "test"\n',
-      args: ["seed", "buckets", "--local", "--linked"],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
-        "if any flags in the group [linked local] are set none of the others can be; [linked local] were all set",
-      );
-      expect(requests).toHaveLength(0);
-    });
-  });
+  // --local/--linked mutual exclusivity is enforced at the command level, before
+  // instrumentation (so it doesn't emit telemetry, matching Go's flag-validation
+  // rejection). It's covered by `legacyAssertSeedTargetsExclusive` in
+  // buckets.flags.unit.test.ts rather than here, since the handler no longer
+  // performs the check.
 
   it.live("creates a new bucket and updates an existing one (overwrite default yes)", () => {
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
@@ -882,6 +873,31 @@ describe("legacy seed buckets", () => {
       expect(JSON.stringify(exit)).toContain("Error status 201");
     });
   });
+
+  it.live(
+    "trusts the Kong CA for an explicit https external_url even when tls.enabled is false",
+    () => {
+      // Go installs status.NewKongClient unconditionally for the local client, so
+      // an https external_url with tls.enabled false/omitted still trusts the
+      // embedded CA. The handler must take the CA-injection path (no validation,
+      // no error) here, not skip it on `tls.enabled`.
+      const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: '[api]\nexternal_url = "https://127.0.0.1:54321"\n[storage.buckets.images]\npublic = true\n',
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(requests.every((r) => r.url.startsWith("https://127.0.0.1:54321"))).toBe(true);
+      });
+    },
+  );
 
   it.live("builds an https base URL with a host override when tls is enabled", () => {
     const previousHost = process.env["SUPABASE_SERVICES_HOSTNAME"];
