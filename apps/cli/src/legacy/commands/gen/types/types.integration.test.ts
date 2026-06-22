@@ -852,6 +852,9 @@ describe("legacy gen types", () => {
             ).toBe(true);
             expect(dbConfig.resolves).toHaveLength(1);
             expect(dbConfig.resolves[0]?.connType).toBe("linked");
+            // --project-id is an ad-hoc remote ref: the resolver must not inherit
+            // the workdir's ambient password / saved pooler URL.
+            expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(true);
             const linkedProjectRef = dbConfig.resolves[0]?.linkedProjectRef;
             expect(
               linkedProjectRef !== undefined ? Option.getOrUndefined(linkedProjectRef) : undefined,
@@ -865,6 +868,41 @@ describe("legacy gen types", () => {
       }),
     );
   }
+
+  it.live("resolves the linked workdir DB without ad-hoc project-ref semantics", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const docker = captureDockerRun();
+          const { layer, dbConfig } = setup({
+            args: ["gen", "types", "--lang", "go", "--linked"],
+            projectId: Option.some(LEGACY_VALID_REF),
+            childStdout: ["type PublicMovies struct {}"],
+            dbConfigResolve: () =>
+              Effect.succeed(
+                remoteResolvedConfig({
+                  host: "127.0.0.1",
+                  port,
+                  user: "postgres",
+                  password: "workdir-password",
+                  database: "postgres",
+                }),
+              ),
+            onSpawn: docker.onSpawn,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(defaultFlags({ linked: true, lang: "go" })).pipe(Effect.provide(layer)),
+          );
+
+          expect(dbConfig.resolves).toHaveLength(1);
+          expect(dbConfig.resolves[0]?.connType).toBe("linked");
+          // --linked is the workdir's own project: keep workdir-scoped credentials.
+          expect(dbConfig.resolves[0]?.adHocProjectRef).toBe(false);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
 
   it.live("preserves resolver URL options for remote non-TypeScript typegen", () =>
     Effect.tryPromise({

@@ -326,6 +326,10 @@ export const legacyDbConfigLayer = Layer.effect(
       // the resolve-time IPv6 path (`NewDbConfigWithPassword` → `GetPoolerConfig`) uses
       // the saved URL only and errors otherwise, so this defaults off.
       fetchFromApi = false,
+      // For an ad-hoc `--project-id` ref the saved `.temp/pooler-url` belongs to the
+      // (possibly different) linked workdir, so ignore it and resolve the pooler for
+      // `ref` from the Management API instead.
+      ignoreSavedUrl = false,
     ): Effect.Effect<
       Option.Option<LegacyPgConnInput>,
       LegacyDbConfigError,
@@ -333,7 +337,9 @@ export const legacyDbConfigLayer = Layer.effect(
     > =>
       Effect.gen(function* () {
         const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-        let connectionString = Option.getOrUndefined(tomlValues.poolerConnectionString);
+        let connectionString = ignoreSavedUrl
+          ? undefined
+          : Option.getOrUndefined(tomlValues.poolerConnectionString);
         if (connectionString === undefined) {
           if (!fetchFromApi) return Option.none();
           // No saved pooler URL → fetch the primary pooler config from the Management
@@ -368,11 +374,17 @@ export const legacyDbConfigLayer = Layer.effect(
       ref: string,
       dnsResolver: "native" | "https",
       passwordFlag: Option.Option<string>,
+      adHocProjectRef = false,
     ): Effect.Effect<LegacyPgConnInput, LegacyDbConfigError, LegacyPlatformApiFactory> =>
       Effect.gen(function* () {
         // Read lazily (per invocation) rather than at layer build, so tests and
-        // env-substitution see the current value.
-        const dbPassword = yield* resolveDbPassword(passwordFlag);
+        // env-substitution see the current value. For an ad-hoc `--project-id` ref,
+        // honor only an explicit `--password` flag and ignore the ambient
+        // `SUPABASE_DB_PASSWORD` (which belongs to the current workdir, not this ref),
+        // so we always mint a temporary login role instead of leaking it.
+        const dbPassword = adHocProjectRef
+          ? (Option.getOrUndefined(passwordFlag) ?? "")
+          : yield* resolveDbPassword(passwordFlag);
         const host = `db.${ref}.${cliConfig.projectHost}`;
         const base: LegacyPgConnInput = {
           host,
@@ -391,8 +403,17 @@ export const legacyDbConfigLayer = Layer.effect(
           return yield* initLoginRole(ref, base);
         }
 
-        // Direct host unreachable (IPv6-only network) → try the pooler.
-        const poolerConn = yield* resolvePoolerConn(ref, dnsResolver, base.password);
+        // Direct host unreachable (IPv6-only network) → try the pooler. For an ad-hoc
+        // `--project-id` ref the command already holds a Management API token, so fall
+        // back to the API pooler config (and ignore the workdir's saved pooler URL)
+        // rather than failing with the IPv6 "run supabase link" suggestion.
+        const poolerConn = yield* resolvePoolerConn(
+          ref,
+          dnsResolver,
+          base.password,
+          adHocProjectRef,
+          adHocProjectRef,
+        );
         if (Option.isNone(poolerConn)) {
           return yield* Effect.fail(
             new Errors.LegacyDbConfigIpv6Error({
@@ -483,6 +504,7 @@ export const legacyDbConfigLayer = Layer.effect(
               ref,
               flags.dnsResolver,
               flags.password ?? Option.none(),
+              flags.adHocProjectRef ?? false,
             );
             // NB: the linked-project telemetry cache (GET /v1/projects/{ref}) is NOT
             // issued here. Go caches it in `PersistentPostRun`

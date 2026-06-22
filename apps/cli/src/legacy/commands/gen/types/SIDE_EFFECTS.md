@@ -21,16 +21,24 @@ passed via `docker run --env KEY=VALUE` arguments, mirroring Go's
 
 ## API Routes
 
-| Method | Path                                  | Auth         | Request body           | Response (used fields)           |
-| ------ | ------------------------------------- | ------------ | ---------------------- | -------------------------------- |
-| `GET`  | `/v1/projects/{ref}/types/typescript` | Bearer token | none                   | TypeScript type definitions text |
-| `GET`  | `/v1/projects/{ref}`                  | Bearer token | none                   | `database.host`                  |
-| `POST` | `/v1/projects/{ref}/cli/login-role`   | Bearer token | `{ read_only: false }` | temporary `role` and `password`  |
+| Method | Path                                        | Auth         | Request body           | Response (used fields)                     |
+| ------ | ------------------------------------------- | ------------ | ---------------------- | ------------------------------------------ |
+| `GET`  | `/v1/projects/{ref}/types/typescript`       | Bearer token | none                   | TypeScript type definitions text           |
+| `GET`  | `/v1/projects/{ref}`                        | Bearer token | none                   | (presence only; `404` ⇒ branch ref)        |
+| `GET`  | `/v1/branches/{branch_id_or_ref}`           | Bearer token | none                   | `db_host`, `db_port`, `db_user`, `db_pass` |
+| `POST` | `/v1/projects/{ref}/cli/login-role`         | Bearer token | `{ read_only: false }` | temporary `role` and `password`            |
+| `GET`  | `/v1/projects/{ref}/config/database/pooler` | Bearer token | none                   | primary pooler `connection_string`         |
 
 The TypeScript endpoint is called for `--linked`, `--project-id`, and the implicit
 linked-project fallback when `--lang=typescript`. For other languages on those
-project-ref paths, the project endpoint supplies the database host and the login-role
-endpoint supplies temporary credentials for pg-meta.
+project-ref paths, the project endpoint is probed first: a `404` means the ref is a
+preview branch (any 404 body), so the branch endpoint supplies the branch database
+host/port and credentials for pg-meta. Otherwise the database connection is resolved
+for the ref and the login-role endpoint supplies temporary credentials for pg-meta.
+On an IPv4-only network where the direct database host is unreachable, an explicit
+`--project-id` ref additionally fetches the primary pooler config for that ref to
+build an IPv4 connection (the saved workdir `.temp/pooler-url` is ignored because the
+ref may differ from the linked workdir).
 `--local` and `--db-url` do not call the Management API.
 
 ## Subprocesses
@@ -45,14 +53,14 @@ detect TLS support before launching pg-meta (mirrors Go's `isRequireSSL`).
 
 ## Environment Variables
 
-| Variable                           | Purpose                                                           | Required?                                               |
-| ---------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`            | auth token for linked/project-id mode                             | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`                 | override Management API base URL                                  | no (defaults to `https://api.supabase.com`)             |
-| `SUPABASE_DB_PASSWORD`             | local database password for `--local`                             | no (defaults to `postgres`)                             |
-| `SUPABASE_SERVICES_HOSTNAME`       | host used for the local TLS probe                                 | no (defaults to `127.0.0.1`)                            |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | pg-meta image registry override (`docker.io` → Docker Hub)        | no (defaults to the ECR registry)                       |
-| `SUPABASE_CA_SKIP_VERIFY`          | when `true`, prints a TLS-verification-disabled warning to stderr | no                                                      |
+| Variable                           | Purpose                                                            | Required?                                                                                                     |
+| ---------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`            | auth token for linked/project-id mode                              | no (falls back to keyring → `~/.supabase/access-token`)                                                       |
+| `SUPABASE_API_URL`                 | override Management API base URL                                   | no (defaults to `https://api.supabase.com`)                                                                   |
+| `SUPABASE_DB_PASSWORD`             | database password for `--local` and the `--linked` workdir project | no (defaults to `postgres`; **ignored** for ad-hoc `--project-id`, which always mints a temporary login role) |
+| `SUPABASE_SERVICES_HOSTNAME`       | host used for the local TLS probe                                  | no (defaults to `127.0.0.1`)                                                                                  |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | pg-meta image registry override (`docker.io` → Docker Hub)         | no (defaults to the ECR registry)                                                                             |
+| `SUPABASE_CA_SKIP_VERIFY`          | when `true`, prints a TLS-verification-disabled warning to stderr  | no                                                                                                            |
 
 ## Exit Codes
 

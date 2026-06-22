@@ -249,7 +249,13 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
 
   const loadConfig = () => loadProjectConfig(cliConfig.workdir);
 
-  const runProjectTypes = (projectRef: string, includedSchemas: ReadonlyArray<string>) =>
+  const runProjectTypes = (
+    projectRef: string,
+    includedSchemas: ReadonlyArray<string>,
+    // True for an explicit `--project-id <ref>` (an ad-hoc remote project that may
+    // differ from the current workdir); false for `--linked` / the linked fallback.
+    adHocProjectRef: boolean,
+  ) =>
     Effect.gen(function* () {
       const api = yield* platformApi.make;
 
@@ -272,6 +278,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           connType: "linked",
           dnsResolver,
           linkedProjectRef: Option.some(projectRef),
+          adHocProjectRef,
         });
         const conn = resolved.conn;
         yield* runPgMeta({
@@ -517,6 +524,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       yield* runProjectTypes(
         ref,
         schemas.length > 0 ? schemas : defaultSchemas(loaded?.config.api.schemas),
+        false,
       );
       return;
     }
@@ -527,6 +535,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       yield* runProjectTypes(
         ref,
         schemas.length > 0 ? schemas : defaultSchemas(loaded?.config.api.schemas),
+        true,
       );
       return;
     }
@@ -548,6 +557,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     yield* runProjectTypes(
       resolvedRef,
       schemas.length > 0 ? schemas : defaultSchemas(loaded?.config.api.schemas),
+      false,
     );
   }).pipe(Effect.ensuring(telemetryState.flush));
 });
