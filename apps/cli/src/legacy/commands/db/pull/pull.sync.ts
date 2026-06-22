@@ -188,20 +188,27 @@ export const legacyUpdateMigrationHistory = (
   Effect.gen(function* () {
     const output = yield* Output;
     const match = MIGRATE_FILE_PATTERN.exec(path.basename(migrationPath));
-    if (match === null) {
-      // Go resolves the repair file by globbing `<timestamp>_*.sql` and fails
-      // with `os.ErrNotExist` when nothing matches (`repair.GetMigrationFile`,
-      // `internal/migration/repair/repair.go`). A migration name with a path
-      // separator (`supabase db pull foo/bar`) writes a nested file whose
-      // basename doesn't match, so the glob misses — fail rather than upserting
-      // an empty-version migration-history row.
+    if (match === null || match[1] !== timestamp) {
+      // Go resolves the repair file by globbing `<timestamp>_*.sql` against the
+      // migrations dir and fails with `os.ErrNotExist` when nothing matches
+      // (`repair.GetMigrationFile`, `internal/migration/repair/repair.go:90-99`).
+      // The glob is anchored on the GENERATED `timestamp` and `*` never crosses a
+      // path separator, so a migration name with a separator (`supabase db pull
+      // dir/...`) writes a nested file the glob can't reach — even when the nested
+      // basename is itself a valid migration filename (`dir/20250101000000_backfill`
+      // → basename `20250101000000_backfill.sql`, which DOES match the regex but
+      // carries the user's nested timestamp, not the generated one). Require the
+      // basename to both match the pattern AND carry the generated timestamp,
+      // mirroring Go's anchored glob, rather than trusting `path.basename`.
       return yield* Effect.fail(
         new LegacyDbPullWriteError({
           message: `glob supabase/migrations/${timestamp}_*.sql: file does not exist`,
         }),
       );
     }
-    const version = match[1] ?? "";
+    // Guarded above: match[1] === timestamp, so use the generated timestamp
+    // directly (avoids re-deriving a `string | undefined` from the regex group).
+    const version = timestamp;
     const name = match[2] ?? "";
     yield* Effect.gen(function* () {
       const content = yield* fs.readFileString(migrationPath);

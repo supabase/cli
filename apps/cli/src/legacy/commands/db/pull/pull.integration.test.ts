@@ -644,6 +644,30 @@ describe("legacy db pull", () => {
     },
   );
 
+  it.effect(
+    "a migration name whose nested basename is itself a valid migration filename still fails",
+    () => {
+      // `dir/20250101000000_backfill` writes a nested file whose basename
+      // (`20250101000000_backfill.sql`) matches the migration regex, but Go's
+      // repair glob `<generated>_*.sql` never crosses the `/`, so it misses and
+      // fails. Anchoring on the generated timestamp must reject this rather than
+      // upserting the user's nested timestamp as applied.
+      seedMigration(tmp.current, "20240101000000");
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbPull(
+          flags({ name: Option.some("dir/20250101000000_backfill") }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(s.historyUpserts.length).toBe(0);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("machine output in a TTY without --yes skips the prompt and emits the payload", () => {
     // Regression: json/stream-json layers fail every prompt as non-interactive,
     // so the history-update prompt must be skipped (Go default = yes) instead of
