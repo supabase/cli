@@ -4,22 +4,28 @@ import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
+  LEGACY_VALID_REF,
   legacyJsonResponse,
   legacyTransportFailure,
   mockLegacyCliConfig,
+  mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
+import { LegacyProjectRefResolver } from "../../../../legacy/config/legacy-project-ref.service.ts";
+import { LegacyProjectNotLinkedError } from "../../../../legacy/config/legacy-project-ref.errors.ts";
 import { legacySeedBuckets } from "./buckets.handler.ts";
 import type { LegacyBucketsFlags } from "./buckets.command.ts";
+import { LegacyPlatformApi } from "../../../../legacy/auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../../../../legacy/auth/legacy-platform-api-factory.service.ts";
 
 interface MockRoute {
   readonly method: string;
@@ -44,6 +50,17 @@ function setupLegacySeedBuckets(
     readonly promptConfirmFail?: boolean;
     readonly args?: ReadonlyArray<string>;
     readonly yes?: boolean;
+    /** Project ref returned by loadProjectRef for --linked tests. */
+    readonly projectRef?: string;
+    /** API keys response for Management API mock. */
+    readonly apiKeys?: ReadonlyArray<{
+      name: string;
+      api_key?: string | null;
+      type?: string | null;
+      secret_jwt_template?: Record<string, unknown> | null;
+    }>;
+    /** When true, loadProjectRef fails with LegacyProjectNotLinkedError. */
+    readonly linkedFails?: boolean;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -84,6 +101,50 @@ function setupLegacySeedBuckets(
 
   const telemetry = mockLegacyTelemetryStateTracked();
 
+  const projectRefRef = opts.projectRef ?? LEGACY_VALID_REF;
+  const projectRefLayer = Layer.succeed(LegacyProjectRefResolver, {
+    resolve: () =>
+      opts.linkedFails === true
+        ? Effect.fail(
+            new LegacyProjectNotLinkedError({
+              message: "Cannot find project ref. Have you run supabase link?",
+            }),
+          )
+        : Effect.succeed(projectRefRef),
+    resolveForLink: () =>
+      opts.linkedFails === true
+        ? Effect.fail(
+            new LegacyProjectNotLinkedError({
+              message: "Cannot find project ref. Have you run supabase link?",
+            }),
+          )
+        : Effect.succeed(projectRefRef),
+    resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),
+    loadProjectRef: () =>
+      opts.linkedFails === true
+        ? Effect.fail(
+            new LegacyProjectNotLinkedError({
+              message: "Cannot find project ref. Have you run supabase link?",
+            }),
+          )
+        : Effect.succeed(projectRefRef),
+    promptProjectRef: () => Effect.succeed(projectRefRef),
+  });
+
+  const defaultApiKeys = [
+    {
+      name: "service_role",
+      api_key: "test-service-role-key",
+      type: "secret",
+      secret_jwt_template: { role: "service_role" },
+    },
+  ];
+  const managementApi = mockLegacyPlatformApiService({
+    v1: {
+      getProjectApiKeys: () => Effect.succeed(opts.apiKeys ?? defaultApiKeys),
+    },
+  });
+
   const layer = Layer.mergeAll(
     out.layer,
     httpLayer,
@@ -92,6 +153,10 @@ function setupLegacySeedBuckets(
     BunServices.layer,
     Layer.succeed(CliArgs, { args: opts.args ?? ["seed", "buckets"] }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    projectRefLayer,
+    Layer.succeed(LegacyPlatformApiFactory, {
+      make: LegacyPlatformApi.pipe(Effect.provide(managementApi.layer)),
+    }),
   );
 
   return { layer, out, requests, telemetry };
@@ -738,6 +803,174 @@ describe("legacy seed buckets", () => {
       // Bucket name + config path are bold-rendered, so assert the stable suffix.
       expect(out.stderrText).toContain("Do you want to prune it? [y/N] y");
       expect(requests.some((r) => r.url.endsWith(VECTOR_DELETE))).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // --linked remote path tests
+  // ---------------------------------------------------------------------------
+
+  it.live("--linked seeds the remote storage project", () => {
+    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.test]\npublic = true\n",
+      projectRef: LEGACY_VALID_REF,
+      apiKeys: [
+        {
+          name: "service_role",
+          api_key: "remote-service-role-key",
+          type: "secret",
+          secret_jwt_template: { role: "service_role" },
+        },
+      ],
+      args: ["seed", "buckets", "--linked"],
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Creating Storage bucket: test");
+      expect(
+        requests.some((r) => r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)),
+      ).toBe(true);
+      expect(requests.some((r) => r.headers["apikey"] === "remote-service-role-key")).toBe(true);
+    });
+  });
+
+  it.live("--linked uses SUPABASE_AUTH_SERVICE_ROLE_KEY env var when set", () => {
+    const prevKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
+    process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = "env-service-role-key";
+    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.test]\npublic = true\n",
+      projectRef: LEGACY_VALID_REF,
+      args: ["seed", "buckets", "--linked"],
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.every((r) => r.headers["apikey"] === "env-service-role-key")).toBe(true);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prevKey === undefined) {
+            delete process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
+          } else {
+            process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = prevKey;
+          }
+        }),
+      ),
+    );
+  });
+
+  it.live("upserts analytics buckets when analytics.enabled and --linked", () => {
+    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: [
+        "[storage.analytics]",
+        "enabled = true",
+        "[storage.analytics.buckets.analytics-bucket]",
+        "[storage.buckets.test]",
+        "public = true",
+      ].join("\n"),
+      projectRef: LEGACY_VALID_REF,
+      args: ["seed", "buckets", "--linked"],
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+        { method: "GET", match: "/storage/v1/iceberg/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/iceberg/bucket", body: {} },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Updating analytics buckets...");
+      expect(out.stderrText).toContain("Creating analytics bucket: analytics-bucket");
+      expect(
+        requests.some((r) => r.method === "POST" && r.url.includes("/storage/v1/iceberg/bucket")),
+      ).toBe(true);
+    });
+  });
+
+  it.live("does not upsert analytics buckets on local runs", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: [
+        "[storage.analytics]",
+        "enabled = true",
+        "[storage.analytics.buckets.analytics-bucket]",
+        "[storage.buckets.test]",
+        "public = true",
+      ].join("\n"),
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.every((r) => !r.url.includes("/iceberg/"))).toBe(true);
+    });
+  });
+
+  it.live("prunes a stale analytics bucket when the prompt is accepted", () => {
+    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: [
+        "[storage.analytics]",
+        "enabled = true",
+        "[storage.analytics.buckets.keep-analytics]",
+        "[storage.buckets.test]",
+        "public = true",
+      ].join("\n"),
+      projectRef: LEGACY_VALID_REF,
+      args: ["seed", "buckets", "--linked"],
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+        {
+          method: "GET",
+          match: "/storage/v1/iceberg/bucket",
+          body: [
+            { name: "keep-analytics", id: "keep-analytics" },
+            { name: "stale-analytics", id: "stale-analytics" },
+          ],
+        },
+        { method: "DELETE", match: "/storage/v1/iceberg/bucket/stale-analytics", body: {} },
+      ],
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Pruning analytics bucket: stale-analytics");
+      expect(
+        requests.some(
+          (r) => r.method === "DELETE" && r.url.includes("/iceberg/bucket/stale-analytics"),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it.live("--linked fails when the project is not linked", () => {
+    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const { layer } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.test]\npublic = true\n",
+      linkedFails: true,
+      args: ["seed", "buckets", "--linked"],
+      routes: [],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
     });
   });
 });

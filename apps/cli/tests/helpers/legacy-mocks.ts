@@ -470,6 +470,9 @@ export interface MockLegacyPlatformApiResult {
   // still recording requests into the shared `requests` array.
   readonly httpClientLayer: Layer.Layer<HttpClient.HttpClient>;
   readonly requests: ReadonlyArray<LegacyRecordedRequest>;
+  // Wraps `layer` in a `LegacyPlatformApiFactory` for commands that switched
+  // from yielding `LegacyPlatformApi` directly to the lazy factory shape.
+  readonly factoryLayer: Layer.Layer<LegacyPlatformApiFactory>;
 }
 
 export function mockLegacyPlatformApi(
@@ -529,7 +532,11 @@ export function mockLegacyPlatformApi(
     }),
   ).pipe(Layer.provide(httpClientLayer));
 
-  return { layer, httpClientLayer, requests };
+  const factoryLayer = Layer.succeed(LegacyPlatformApiFactory, {
+    make: LegacyPlatformApi.pipe(Effect.provide(layer)),
+  });
+
+  return { layer, httpClientLayer, requests, factoryLayer };
 }
 
 // ---------------------------------------------------------------------------
@@ -683,9 +690,14 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
     ),
   );
 
+  const topLevelFactory = Layer.succeed(LegacyPlatformApiFactory, {
+    make: LegacyPlatformApi.pipe(Effect.provide(opts.api.layer)),
+  });
+
   return Layer.mergeAll(
     opts.out.layer,
     opts.api.layer,
+    topLevelFactory,
     opts.cliConfig,
     tty,
     processControl,

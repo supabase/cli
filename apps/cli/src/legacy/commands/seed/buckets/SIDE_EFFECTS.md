@@ -1,8 +1,9 @@
 # `supabase seed buckets`
 
-Seeds the **local** Supabase Storage stack from `[storage.buckets]` and
+Seeds Supabase Storage buckets from `[storage.buckets]` and
 `[storage.vector]` in `supabase/config.toml`. Port of
-`apps/cli-go/internal/seed/buckets/buckets.go`.
+`apps/cli-go/internal/seed/buckets/buckets.go`. Without `--linked` the local
+stack is used; with `--linked` the remote project is used.
 
 ## Files Read
 
@@ -19,34 +20,49 @@ Seeds the **local** Supabase Storage stack from `[storage.buckets]` and
 
 ## API Routes
 
-All routes target the local **Storage service gateway** (Kong) at
-`api.external_url` (default `http://<host>:54321`, where `<host>` follows Go's
-`utils.GetHostname`: `SUPABASE_SERVICES_HOSTNAME` → TCP `DOCKER_HOST` → `127.0.0.1`).
-Auth: an `apikey` header set to the local service-role key
-(`auth.service_role_key`, or a JWT signed from `auth.jwt_secret`); an
-`Authorization: Bearer <key>` header is also sent, except when the key is an
-opaque `sb_...` key, which Go's `withAuthToken` (`pkg/fetcher/gateway.go:22`)
-treats as a non-JWT and omits.
+### Storage gateway routes (local and remote)
 
-| Method | Path                                    | Auth         | Request body                                                                            | Response (used fields)                 |
-| ------ | --------------------------------------- | ------------ | --------------------------------------------------------------------------------------- | -------------------------------------- |
-| `GET`  | `/storage/v1/bucket`                    | service-role | none                                                                                    | `[{name, id}]`                         |
-| `POST` | `/storage/v1/bucket`                    | service-role | `{name, public, file_size_limit?, allowed_mime_types?}`                                 | — (created)                            |
-| `PUT`  | `/storage/v1/bucket/{id}`               | service-role | `{public, file_size_limit?, allowed_mime_types?}`                                       | — (updated)                            |
-| `POST` | `/storage/v1/vector/ListVectorBuckets`  | service-role | `{}`                                                                                    | `{vectorBuckets:[{vectorBucketName}]}` |
-| `POST` | `/storage/v1/vector/CreateVectorBucket` | service-role | `{vectorBucketName}`                                                                    | — (created)                            |
-| `POST` | `/storage/v1/vector/DeleteVectorBucket` | service-role | `{vectorBucketName}`                                                                    | — (pruned)                             |
-| `POST` | `/storage/v1/object/{bucket}/{key}`     | service-role | raw file bytes; headers `Content-Type`, `Cache-Control: max-age=3600`, `x-upsert: true` | — (uploaded)                           |
+**Local:** `api.external_url` (default `http://<host>:54321`, where `<host>` follows Go's
+`utils.GetHostname`: `SUPABASE_SERVICES_HOSTNAME` → TCP `DOCKER_HOST` → `127.0.0.1`).
+
+**Remote (`--linked`):** `https://<ref>.<projectHost>` (default host: `supabase.co`).
+
+Auth: an `apikey` header set to the service-role key; an `Authorization: Bearer <key>`
+header is also sent, except when the key is an opaque `sb_...` key, which Go's
+`withAuthToken` (`pkg/fetcher/gateway.go:22`) treats as a non-JWT and omits.
+
+| Method   | Path                                    | Auth         | Request body                                                                            | Response (used fields)                 |
+| -------- | --------------------------------------- | ------------ | --------------------------------------------------------------------------------------- | -------------------------------------- |
+| `GET`    | `/storage/v1/bucket`                    | service-role | none                                                                                    | `[{name, id}]`                         |
+| `POST`   | `/storage/v1/bucket`                    | service-role | `{name, public, file_size_limit?, allowed_mime_types?}`                                 | — (created)                            |
+| `PUT`    | `/storage/v1/bucket/{id}`               | service-role | `{public, file_size_limit?, allowed_mime_types?}`                                       | — (updated)                            |
+| `POST`   | `/storage/v1/vector/ListVectorBuckets`  | service-role | `{}`                                                                                    | `{vectorBuckets:[{vectorBucketName}]}` |
+| `POST`   | `/storage/v1/vector/CreateVectorBucket` | service-role | `{vectorBucketName}`                                                                    | — (created)                            |
+| `POST`   | `/storage/v1/vector/DeleteVectorBucket` | service-role | `{vectorBucketName}`                                                                    | — (pruned)                             |
+| `POST`   | `/storage/v1/object/{bucket}/{key}`     | service-role | raw file bytes; headers `Content-Type`, `Cache-Control: max-age=3600`, `x-upsert: true` | — (uploaded)                           |
+| `GET`    | `/storage/v1/iceberg/bucket`            | service-role | none                                                                                    | `[{name, id, created_at, updated_at}]` |
+| `POST`   | `/storage/v1/iceberg/bucket`            | service-role | `{bucketName}`                                                                          | — (created)                            |
+| `DELETE` | `/storage/v1/iceberg/bucket/{name}`     | service-role | none                                                                                    | — (pruned)                             |
 
 `file_size_limit` is omitted from the body when `0`; `allowed_mime_types` is
 omitted when empty (Go `omitempty`).
 
+Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
+`[storage.analytics].enabled = true` AND `--linked` is passed.
+
+### Management API routes (remote `--linked` only, when env var not set)
+
+| Method | Path                                      | When                                        | Response (used fields)                         |
+| ------ | ----------------------------------------- | ------------------------------------------- | ---------------------------------------------- |
+| `GET`  | `/v1/projects/{ref}/api-keys?reveal=true` | `SUPABASE_AUTH_SERVICE_ROLE_KEY` is not set | `[{name, api_key, type, secret_jwt_template}]` |
+
 ## Environment Variables
 
-| Variable                     | Purpose                                                                                        | Required? |
-| ---------------------------- | ---------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_SERVICES_HOSTNAME` | override the local services host (highest precedence)                                          | no        |
-| `DOCKER_HOST`                | when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1` | no        |
+| Variable                         | Purpose                                                                                        | Required? |
+| -------------------------------- | ---------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_SERVICES_HOSTNAME`     | override the local services host (highest precedence)                                          | no        |
+| `DOCKER_HOST`                    | when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1` | no        |
+| `SUPABASE_AUTH_SERVICE_ROLE_KEY` | when set, used as the service-role key for `--linked` (skips Management API key fetch)         | no        |
 
 ## Exit Codes
 
@@ -76,6 +92,10 @@ All progress is written to **stderr** (stdout stays empty), byte-matching Go:
 ```
 Creating Storage bucket: <name>
 Updating Storage bucket: <id>
+Updating analytics buckets...
+Bucket already exists: <name>
+Creating analytics bucket: <name>
+Pruning analytics bucket: <name>
 Updating vector buckets...
 Bucket already exists: <name>
 Creating vector bucket: <name>
@@ -106,12 +126,14 @@ stdout and a terminal `result`/`error` event is emitted.
 
 ## Notes
 
-- **Local-only.** Go's `seed` command defines no `--project-ref` flag, so
-  `flags.ParseProjectRef` never runs and the project ref is always empty. The
-  remote client factory, service-role-key resolution via the Management API, and
-  analytics-bucket upsert (gated on a non-empty ref) are therefore unreachable
-  and are not implemented. `--linked` and `--local` are accepted for CLI-surface
-  parity but both seed the local stack identically.
+- **Remote (`--linked`).** When `--linked` is passed, the command seeds the
+  linked remote project. The remote base URL is `https://<ref>.<projectHost>`
+  (default: `supabase.co`). The service-role key is read from
+  `SUPABASE_AUTH_SERVICE_ROLE_KEY` if set; otherwise fetched via
+  `GET /v1/projects/{ref}/api-keys?reveal=true`.
+- **Analytics buckets.** Analytics bucket upsert (`/storage/v1/iceberg/...`) is
+  gated on `[storage.analytics].enabled = true` AND `--linked`. It is never
+  reached for local runs. Errors from analytics routes propagate (no graceful skip).
 - **Vector graceful skip.** When vector buckets are configured but the local
   service does not support them (`FeatureNotEnabled`, `Vector service not
 configured`, or a 404 on `ListVectorBuckets`), a WARNING is printed and object

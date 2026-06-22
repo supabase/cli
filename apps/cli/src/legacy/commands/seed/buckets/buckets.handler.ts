@@ -1,11 +1,14 @@
 import { loadProjectConfig } from "@supabase/config";
 import { defaultJwtSecret, generateJwt } from "@supabase/stack/effect";
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { legacyGetProjectApiKeys } from "../../../shared/legacy-get-api-keys.ts";
+import { legacyExtractServiceKeys } from "../../../shared/legacy-tenant-keys.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacySeedChangedTargetFlags } from "./buckets.flags.ts";
 import { legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
@@ -52,6 +55,8 @@ interface SeedSummary {
   readonly vector_pruned: Array<string>;
   vector_skipped: boolean;
   readonly objects_uploaded: Array<string>;
+  readonly analytics_created: Array<string>;
+  readonly analytics_pruned: Array<string>;
 }
 
 function emptySummary(): SeedSummary {
@@ -63,19 +68,21 @@ function emptySummary(): SeedSummary {
     vector_pruned: [],
     vector_skipped: false,
     objects_uploaded: [],
+    analytics_created: [],
+    analytics_pruned: [],
   };
 }
 
 /**
- * `supabase seed buckets` — seeds the **local** Storage stack from
+ * `supabase seed buckets` — seeds Storage buckets from
  * `[storage.buckets]` / `[storage.vector]` in `supabase/config.toml`.
  *
- * Port of `apps/cli-go/internal/seed/buckets/buckets.go`. Local-only: Go's
- * `seed` command never resolves a project ref (see `seed.layers.ts`), so the
- * remote / analytics paths are unreachable and omitted.
+ * Port of `apps/cli-go/internal/seed/buckets/buckets.go`. When `--linked` is
+ * passed, the remote Storage gateway is used with the project's service-role key;
+ * otherwise the local stack is used.
  */
 export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
-  _flags: LegacyBucketsFlags,
+  flags: LegacyBucketsFlags,
 ) {
   const output = yield* Output;
   const cliConfig = yield* LegacyCliConfig;
@@ -114,14 +121,29 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     const vectorBucketNames = Object.keys(config.storage.vector.buckets);
     const hasVectorBuckets = vectorBucketNames.length > 0;
 
-    // 2. Short-circuit: nothing to seed (projectRef is always empty locally).
-    if (bucketNames.length === 0 && !hasVectorBuckets) {
+    // 2. Resolve the project ref for --linked.
+    const projectRefResolver = yield* LegacyProjectRefResolver;
+    const projectRef = flags.linked ? yield* projectRefResolver.loadProjectRef(Option.none()) : "";
+
+    // 3. Short-circuit: nothing to seed (ref present → never short-circuits).
+    if (projectRef === "" && bucketNames.length === 0 && !hasVectorBuckets) {
       return;
     }
 
-    // 3. Build the local Storage service-gateway client.
-    const baseUrl = resolveLocalBaseUrl(config);
-    const apiKey = yield* resolveLocalServiceRoleKey(config.auth);
+    // 4. Build the Storage service-gateway client (local or remote).
+    let baseUrl: string;
+    let apiKey: string;
+    if (projectRef === "") {
+      baseUrl = resolveLocalBaseUrl(config);
+      apiKey = yield* resolveLocalServiceRoleKey(config.auth);
+    } else {
+      baseUrl = `https://${projectRef}.${cliConfig.projectHost}`;
+      const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
+      apiKey =
+        envKey !== undefined && envKey.length > 0
+          ? envKey
+          : legacyExtractServiceKeys(yield* legacyGetProjectApiKeys(projectRef, true)).serviceRole;
+    }
     const gateway = yield* makeLegacyStorageGateway({
       baseUrl,
       apiKey,
@@ -130,10 +152,22 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
 
     const summary = emptySummary();
 
-    // 4. Upsert configured buckets.
+    // 5. Upsert configured buckets.
     yield* upsertBuckets(output, yes, gateway, bucketsConfig, loaded.document, summary);
 
-    // 5. Upsert vector buckets (local), with graceful skip on unavailability.
+    // 6. Upsert analytics buckets (remote --linked only).
+    if (config.storage.analytics.enabled && projectRef !== "") {
+      yield* output.raw("Updating analytics buckets...\n", "stderr");
+      yield* upsertAnalyticsBuckets(
+        output,
+        yes,
+        gateway,
+        Object.keys(config.storage.analytics.buckets),
+        summary,
+      );
+    }
+
+    // 7. Upsert vector buckets (local), with graceful skip on unavailability.
     if (vectorEnabled && hasVectorBuckets) {
       yield* output.raw("Updating vector buckets...\n", "stderr");
       yield* upsertVectorBuckets(output, yes, gateway, vectorBucketNames, summary).pipe(
@@ -141,10 +175,10 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
       );
     }
 
-    // 6. Upload objects for each bucket with a configured objects_path.
+    // 8. Upload objects for each bucket with a configured objects_path.
     yield* uploadObjects(fs, path, output, gateway, cliConfig.workdir, bucketsConfig, summary);
 
-    // 7. Machine-readable summary (Go has none; text mode emits nothing extra).
+    // 9. Machine-readable summary (Go has none; text mode emits nothing extra).
     if (output.format !== "text") {
       yield* output.success("", { ...summary });
     }
@@ -352,6 +386,45 @@ const upsertVectorBuckets = Effect.fnUntraced(function* (
     yield* output.raw(`Pruning vector bucket: ${name}\n`, "stderr");
     yield* gateway.deleteVectorBucket(name);
     summary.vector_pruned.push(name);
+  }
+});
+
+// Port of `pkg/storage/analytics.go:UpsertAnalyticsBuckets`.
+const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
+  output: typeof Output.Service,
+  yes: boolean,
+  gateway: LegacyStorageGateway,
+  configuredNames: ReadonlyArray<string>,
+  summary: SeedSummary,
+) {
+  const existing = yield* gateway.listAnalyticsBuckets();
+  const existingSet = new Set(existing);
+  const configuredSet = new Set(configuredNames);
+  const toDelete = existing.filter((name) => !configuredSet.has(name));
+
+  for (const name of configuredNames) {
+    if (existingSet.has(name)) {
+      yield* output.raw(`Bucket already exists: ${name}\n`, "stderr");
+      continue;
+    }
+    yield* output.raw(`Creating analytics bucket: ${name}\n`, "stderr");
+    yield* gateway.createAnalyticsBucket(name);
+    summary.analytics_created.push(name);
+  }
+
+  for (const name of toDelete) {
+    const prune = yield* promptYesNo(
+      output,
+      yes,
+      `Bucket ${legacyBold(name)} not found in ${legacyBold(CONFIG_PATH)}. Do you want to prune it?`,
+      false,
+    );
+    if (!prune) {
+      continue;
+    }
+    yield* output.raw(`Pruning analytics bucket: ${name}\n`, "stderr");
+    yield* gateway.deleteAnalyticsBucket(name);
+    summary.analytics_pruned.push(name);
   }
 });
 

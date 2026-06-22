@@ -63,6 +63,16 @@ export interface LegacyStorageGateway {
     absPath: string,
     contentType: string,
   ) => Effect.Effect<void, LegacySeedStorageNetworkError | LegacySeedStorageStatusError>;
+  readonly listAnalyticsBuckets: () => Effect.Effect<
+    ReadonlyArray<string>,
+    LegacySeedStorageNetworkError | LegacySeedStorageStatusError
+  >;
+  readonly createAnalyticsBucket: (
+    name: string,
+  ) => Effect.Effect<void, LegacySeedStorageNetworkError | LegacySeedStorageStatusError>;
+  readonly deleteAnalyticsBucket: (
+    name: string,
+  ) => Effect.Effect<void, LegacySeedStorageNetworkError | LegacySeedStorageStatusError>;
 }
 
 function readString(obj: unknown, key: string): string {
@@ -198,6 +208,24 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
         withAuth(HttpClientRequest.post(url("/storage/v1/vector/DeleteVectorBucket"))).pipe(
           HttpClientRequest.bodyJsonUnsafe({ vectorBucketName: name }),
         ),
+      ).pipe(Effect.asVoid),
+    listAnalyticsBuckets: () =>
+      send(withAuth(HttpClientRequest.get(url("/storage/v1/iceberg/bucket")))).pipe(
+        Effect.map((body) => {
+          const parsed: unknown = JSON.parse(body);
+          if (!Array.isArray(parsed)) return [];
+          return parsed.map((entry) => readString(entry, "name"));
+        }),
+      ),
+    createAnalyticsBucket: (name) =>
+      send(
+        withAuth(HttpClientRequest.post(url("/storage/v1/iceberg/bucket"))).pipe(
+          HttpClientRequest.bodyJsonUnsafe({ bucketName: name }),
+        ),
+      ).pipe(Effect.asVoid),
+    deleteAnalyticsBucket: (name) =>
+      send(
+        withAuth(HttpClientRequest.make("DELETE")(url(`/storage/v1/iceberg/bucket/${name}`))),
       ).pipe(Effect.asVoid),
     uploadObject: (remotePath, absPath, contentType) => {
       const trimmed = remotePath.startsWith("/") ? remotePath.slice(1) : remotePath;

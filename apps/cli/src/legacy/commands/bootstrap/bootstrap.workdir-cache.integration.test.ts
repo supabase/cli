@@ -149,6 +149,7 @@ describe("legacy bootstrap linked-project cache location", () => {
         BunServices.layer,
         out.layer,
         api.layer,
+        api.factoryLayer,
         api.httpClientLayer,
         configLayer,
         cacheLayer,
