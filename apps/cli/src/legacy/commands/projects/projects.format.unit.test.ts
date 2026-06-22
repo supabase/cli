@@ -84,6 +84,26 @@ describe("apiKeyValue / apiKeysToEnv", () => {
       SUPABASE_SERVICE_ROLE_KEY: "******",
     });
   });
+
+  it("adds SUPABASE_PUBLISHABLE_KEY for publishable keys", () => {
+    expect(
+      apiKeysToEnv([
+        {
+          name: "default",
+          type: "publishable",
+          api_key: "sb_publishable_test",
+        },
+        {
+          name: "default",
+          type: "secret",
+          api_key: "sb_secret_test",
+        },
+      ]),
+    ).toEqual({
+      SUPABASE_DEFAULT_KEY: "sb_secret_test",
+      SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+    });
+  });
 });
 
 describe("generateDbPassword", () => {

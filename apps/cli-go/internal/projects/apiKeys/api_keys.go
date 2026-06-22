@@ -51,11 +51,20 @@ func RunGetApiKeys(ctx context.Context, projectRef string) ([]api.ApiKeyResponse
 func ToEnv(keys []api.ApiKeyResponse) map[string]string {
 	envs := make(map[string]string, len(keys))
 	for _, entry := range keys {
-		name := strings.ToUpper(entry.Name)
-		key := fmt.Sprintf("SUPABASE_%s_KEY", name)
+		key := fmt.Sprintf("SUPABASE_%s_KEY", envSuffix(entry))
 		envs[key] = toValue(entry.ApiKey)
 	}
 	return envs
+}
+
+// envSuffix maps an API key to the middle part of SUPABASE_<SUFFIX>_KEY.
+// Publishable keys named "default" become PUBLISHABLE (not DEFAULT) to avoid
+// colliding with the default secret key.
+func envSuffix(entry api.ApiKeyResponse) string {
+	if t, err := entry.Type.Get(); err == nil && t == api.ApiKeyResponseTypePublishable && entry.Name == "default" {
+		return "PUBLISHABLE"
+	}
+	return strings.ToUpper(entry.Name)
 }
 
 func toValue(v nullable.Nullable[string]) string {

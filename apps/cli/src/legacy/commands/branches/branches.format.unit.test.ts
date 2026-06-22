@@ -128,6 +128,46 @@ describe("apiKeysToEnv", () => {
     });
   });
 
+  it("adds SUPABASE_PUBLISHABLE_KEY for publishable keys", () => {
+    expect(
+      apiKeysToEnv([
+        {
+          name: "default",
+          type: "publishable",
+          api_key: "sb_publishable_test",
+        },
+        {
+          name: "default",
+          type: "secret",
+          api_key: "sb_secret_test",
+        },
+      ]),
+    ).toEqual({
+      SUPABASE_DEFAULT_KEY: "sb_secret_test",
+      SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+    });
+  });
+
+  it("maps default publishable to SUPABASE_PUBLISHABLE_KEY alongside custom names", () => {
+    expect(
+      apiKeysToEnv([
+        {
+          name: "mobile",
+          type: "publishable",
+          api_key: "sb_publishable_mobile",
+        },
+        {
+          name: "default",
+          type: "publishable",
+          api_key: "sb_publishable_default",
+        },
+      ]),
+    ).toEqual({
+      SUPABASE_MOBILE_KEY: "sb_publishable_mobile",
+      SUPABASE_PUBLISHABLE_KEY: "sb_publishable_default",
+    });
+  });
+
   it("masks null/undefined api_key as ******", () => {
     expect(apiKeysToEnv([{ name: "anon", api_key: null }])).toEqual({
       SUPABASE_ANON_KEY: "******",
