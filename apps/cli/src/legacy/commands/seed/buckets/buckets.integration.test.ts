@@ -1073,17 +1073,16 @@ describe("legacy seed buckets", () => {
     );
   });
 
-  it.live("reads a custom cert_path from disk when api.tls.cert_path is set", () => {
-    // Writes a dummy CA PEM to disk and configures cert_path to point to it.
-    // The integration harness mocks HttpClient so the CA content is not actually
-    // used for TLS, but this test exercises the fs.readFileString code path in
-    // resolveLocalKongCa and confirms the handler does not fail when cert_path
-    // is set to a readable file.
+  it.live("reads cert_path and key_path from disk when both api.tls paths are set", () => {
+    // Writes a dummy CA PEM and key to disk. Both must be present and readable
+    // for the handler to succeed (Go validateLocalKongTls parity).
     const certContent = "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n";
+    const keyContent = "-----BEGIN PRIVATE KEY-----\nZHVtbXk=\n-----END PRIVATE KEY-----\n";
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "custom-ca.crt"), certContent);
+    writeFileSync(join(tmp.current, "supabase", "custom-ca.key"), keyContent);
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
-      toml: '[api]\nport = 54321\n[api.tls]\nenabled = true\ncert_path = "custom-ca.crt"\n[storage.buckets.docs]\npublic = false\n',
+      toml: '[api]\nport = 54321\n[api.tls]\nenabled = true\ncert_path = "custom-ca.crt"\nkey_path = "custom-ca.key"\n[storage.buckets.docs]\npublic = false\n',
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/bucket", body: { name: "docs" } },
@@ -1095,6 +1094,294 @@ describe("legacy seed buckets", () => {
       expect(
         requests.some((r) => r.method === "POST" && r.url.includes("/storage/v1/bucket")),
       ).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Fix 1 — --linked merges [remotes.*] config overrides
+  // ---------------------------------------------------------------------------
+
+  it.live("--linked merges [remotes.*] storage config override before seeding", () => {
+    // The base config has [storage.buckets.base] with public=true; the remote block
+    // overrides it to public=false and adds [storage.buckets.remote]. Both buckets
+    // appear after the merge (Go's mergeRemoteConfig merges subtrees recursively;
+    // it does not wholesale replace [storage.buckets]).
+    const remoteRef = LEGACY_VALID_REF; // "abcdefghijklmnopqrst"
+    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: [
+        'project_id = "test"',
+        "[storage.buckets.base]",
+        "public = true",
+        `[remotes.production]`,
+        `project_id = "${remoteRef}"`,
+        "[remotes.production.storage.buckets.base]",
+        "public = false",
+        "[remotes.production.storage.buckets.remote]",
+        "public = false",
+      ].join("\n"),
+      projectRef: remoteRef,
+      args: ["seed", "buckets", "--linked"],
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: {} },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // Both base and remote are present after the merge; the remote override
+      // changed base.public from true → false (but both are still seeded).
+      expect(out.stderrText).toContain("Creating Storage bucket: base");
+      expect(out.stderrText).toContain("Creating Storage bucket: remote");
+      // Two POST /bucket calls — both buckets seeded.
+      expect(
+        requests.filter((r) => r.method === "POST" && r.url.includes("/storage/v1/bucket")),
+      ).toHaveLength(2);
+    });
+  });
+
+  it.live("local run uses base config (no [remotes.*] merge)", () => {
+    // Without --linked, the base [storage.buckets.base] is used verbatim.
+    const remoteRef = LEGACY_VALID_REF;
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: [
+        'project_id = "test"',
+        "[storage.buckets.base]",
+        "public = true",
+        "[remotes.production]",
+        `project_id = "${remoteRef}"`,
+        "[remotes.production.storage.buckets.remote]",
+        "public = false",
+      ].join("\n"),
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "base" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Creating Storage bucket: base");
+      expect(out.stderrText).not.toContain("Creating Storage bucket: remote");
+      expect(
+        requests.some((r) => r.method === "POST" && r.url.includes("/storage/v1/bucket")),
+      ).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Fix 2 — validate bucket names up front
+  // ---------------------------------------------------------------------------
+
+  it.live("fails with exact error message on an invalid bucket name", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      // "good-name" is valid; "bad/name" contains "/" which is not in Go's allowed set.
+      toml: [
+        "[storage.buckets.good-name]",
+        "public = true",
+        '[storage.buckets."bad/name"]',
+        "public = false",
+      ].join("\n"),
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: {} },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      // JSON.stringify escapes backslashes once more, so \\w in the message
+      // becomes \\\\w in the JSON string — use the double-escaped form.
+      expect(JSON.stringify(exit)).toContain(
+        "Invalid Bucket name: bad/name. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (^(\\\\w|!|-|\\\\.|\\\\*|'|\\\\(|\\\\)| |&|\\\\$|@|=|;|:|\\\\+|,|\\\\?)*$)",
+      );
+      // Validation fails before any Storage call.
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("accepts valid bucket names that use allowed special characters", () => {
+    // Bucket names with spaces, dots, underscores, etc. are valid per Go's regex.
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: [
+        '[storage.buckets."my.bucket"]',
+        "public = true",
+        '[storage.buckets."my-bucket"]',
+        "public = true",
+        '[storage.buckets."my_bucket"]',
+        "public = true",
+      ].join("\n"),
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: {} },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.filter((r) => r.method === "POST")).toHaveLength(3);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Fix 3 — SUPABASE_AUTH_JWT_SECRET / SUPABASE_AUTH_SERVICE_ROLE_KEY for local
+  // ---------------------------------------------------------------------------
+
+  it.live("local run: SUPABASE_AUTH_JWT_SECRET overrides auth.jwt_secret", () => {
+    const prevJwt = process.env["SUPABASE_AUTH_JWT_SECRET"];
+    const prevKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
+    // Use a custom secret; the derived JWT will differ from the default secret's JWT.
+    process.env["SUPABASE_AUTH_JWT_SECRET"] = "custom-jwt-secret-at-least-32-chars-long!";
+    delete process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: [
+        "[auth]",
+        'jwt_secret = "toml-secret-should-be-ignored-when-env-set-xxxxx"',
+        "[storage.buckets.media]",
+        "public = true",
+      ].join("\n"),
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "media" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // A derived JWT is sent (not opaque sb_ key), so Authorization is present.
+      expect(
+        requests.every((r) => (r.headers["authorization"] ?? "").startsWith("Bearer ey")),
+      ).toBe(true);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prevJwt === undefined) {
+            delete process.env["SUPABASE_AUTH_JWT_SECRET"];
+          } else {
+            process.env["SUPABASE_AUTH_JWT_SECRET"] = prevJwt;
+          }
+          if (prevKey === undefined) {
+            delete process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
+          } else {
+            process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = prevKey;
+          }
+        }),
+      ),
+    );
+  });
+
+  it.live("local run: SUPABASE_AUTH_SERVICE_ROLE_KEY overrides auth.service_role_key", () => {
+    const prevJwt = process.env["SUPABASE_AUTH_JWT_SECRET"];
+    const prevKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
+    process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = "env-local-service-role-key";
+    delete process.env["SUPABASE_AUTH_JWT_SECRET"];
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: [
+        "[auth]",
+        'service_role_key = "toml-key-should-be-ignored"',
+        "[storage.buckets.media]",
+        "public = true",
+      ].join("\n"),
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "media" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.every((r) => r.headers["apikey"] === "env-local-service-role-key")).toBe(
+        true,
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prevJwt === undefined) {
+            delete process.env["SUPABASE_AUTH_JWT_SECRET"];
+          } else {
+            process.env["SUPABASE_AUTH_JWT_SECRET"] = prevJwt;
+          }
+          if (prevKey === undefined) {
+            delete process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
+          } else {
+            process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = prevKey;
+          }
+        }),
+      ),
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Fix 5 — validate api.tls cert/key pairing before seeding
+  // ---------------------------------------------------------------------------
+
+  it.live("fails when cert_path is set but key_path is missing", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "custom-ca.crt"),
+      "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n",
+    );
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[api.tls]\nenabled = true\ncert_path = "custom-ca.crt"\n[storage.buckets.docs]\npublic = false\n',
+      routes: [],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("Missing required field in config: api.tls.key_path");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("fails when key_path is set but cert_path is missing", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "custom-ca.key"),
+      "-----BEGIN PRIVATE KEY-----\nZHVtbXk=\n-----END PRIVATE KEY-----\n",
+    );
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[api.tls]\nenabled = true\nkey_path = "custom-ca.key"\n[storage.buckets.docs]\npublic = false\n',
+      routes: [],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("Missing required field in config: api.tls.cert_path");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("fails when cert_path points to an unreadable file", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[api.tls]\nenabled = true\ncert_path = "missing-cert.crt"\nkey_path = "missing-key.key"\n[storage.buckets.docs]\npublic = false\n',
+      routes: [],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("failed to read TLS cert:");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("fails when key_path points to an unreadable file", () => {
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    // cert is readable, key is missing.
+    writeFileSync(
+      join(tmp.current, "supabase", "custom-ca.crt"),
+      "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n",
+    );
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[api.tls]\nenabled = true\ncert_path = "custom-ca.crt"\nkey_path = "missing-key.key"\n[storage.buckets.docs]\npublic = false\n',
+      routes: [],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("failed to read TLS key:");
+      expect(requests).toHaveLength(0);
     });
   });
 });

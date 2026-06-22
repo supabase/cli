@@ -15,7 +15,7 @@ const makeProjectConfigStore = Effect.gen(function* () {
     );
 
   return ProjectConfigStore.of({
-    load: (cwd) => providePlatform(loadProjectConfig(cwd)),
+    load: (cwd, options) => providePlatform(loadProjectConfig(cwd, options)),
     loadFile: (filePath) => providePlatform(loadProjectConfigFile(filePath)),
     save: (options) => providePlatform(saveProjectConfig(options)),
   });

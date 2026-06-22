@@ -1,4 +1,8 @@
-import { KONG_LOCAL_CA_CERT, loadProjectConfig } from "@supabase/config";
+import {
+  KONG_LOCAL_CA_CERT,
+  loadProjectConfig,
+  type LoadProjectConfigOptions,
+} from "@supabase/config";
 import { defaultJwtSecret, generateJwt } from "@supabase/stack/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -66,24 +70,96 @@ function legacyKongCaFetch(ca: string): typeof globalThis.fetch {
 }
 
 /**
- * Resolves the CA PEM to trust for the local Kong TLS gateway:
- *  - if `api.tls.cert_path` is set → read that file (resolved against the
- *    supabase dir, mirroring Go `config.go:795-800,845-851`);
- *  - otherwise → the embedded `KONG_LOCAL_CA_CERT` constant.
+ * Validates and resolves the local Kong TLS configuration, mirroring Go's
+ * `(*api).Validate` (`apps/cli-go/pkg/config/config.go:845-861`) which runs at
+ * config-load before `NewStorageAPI`:
+ *  1. `cert_path` set, `key_path` empty → error
+ *  2. `cert_path` set, unreadable → error
+ *  3. `key_path` set, `cert_path` empty → error
+ *  4. `key_path` set, unreadable → error
+ *  5. Both set and readable → returns the CA PEM (cert content)
+ *  6. Neither set → returns the embedded `KONG_LOCAL_CA_CERT`
+ *
+ * The CLI only uses the CA cert for trusting the Kong gateway, but Go also reads
+ * the key purely to validate the pairing, so we mirror that behaviour.
+ *
+ * // TODO: broader `@supabase/config` gap — `packages/config/src/api.ts` models
+ * // `tls.cert_path` / `tls.key_path` but has no pairing or readability validation.
+ * // Once @supabase/config adds `(*api).Validate`, this helper can be removed and
+ * // the error mapping moved to the `ProjectConfigParseError` catch above.
  *
  * Only called when `projectRef === ""` (local) AND `config.api.tls.enabled`.
  */
-const resolveLocalKongCa = Effect.fnUntraced(function* (
+const validateLocalKongTls = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   certPath: string | undefined,
+  keyPath: string | undefined,
 ) {
-  if (certPath !== undefined && certPath.length > 0) {
-    const abs = path.isAbsolute(certPath) ? certPath : path.join(workdir, "supabase", certPath);
-    return yield* fs.readFileString(abs);
+  const hasCert = certPath !== undefined && certPath.length > 0;
+  const hasKey = keyPath !== undefined && keyPath.length > 0;
+
+  if (hasCert && !hasKey) {
+    return yield* new LegacySeedConfigLoadError({
+      message: "Missing required field in config: api.tls.key_path",
+    });
   }
+  if (hasKey && !hasCert) {
+    return yield* new LegacySeedConfigLoadError({
+      message: "Missing required field in config: api.tls.cert_path",
+    });
+  }
+
+  if (hasCert) {
+    const absCert = path.isAbsolute(certPath) ? certPath : path.join(workdir, "supabase", certPath);
+    const certContent = yield* fs.readFileString(absCert).pipe(
+      Effect.catchTag(
+        "PlatformError",
+        (cause) =>
+          new LegacySeedConfigLoadError({
+            message: `failed to read TLS cert: ${String(cause.cause ?? cause)}`,
+          }),
+      ),
+    );
+    // keyPath is non-empty here because hasKey === true (cert+key both present)
+    const absKey = path.isAbsolute(keyPath!) ? keyPath! : path.join(workdir, "supabase", keyPath!);
+    yield* fs.readFileString(absKey).pipe(
+      Effect.catchTag(
+        "PlatformError",
+        (cause) =>
+          new LegacySeedConfigLoadError({
+            message: `failed to read TLS key: ${String(cause.cause ?? cause)}`,
+          }),
+      ),
+    );
+    return certContent;
+  }
+
   return KONG_LOCAL_CA_CERT;
+});
+
+/**
+ * Mirrors Go's `ValidateBucketName` regex (`apps/cli-go/pkg/config/config.go:1382`).
+ * Used to validate `[storage.buckets]` names before any Storage API call, matching
+ * Go's config-load-time check (`config.go:899-903`). Vector and analytics names are
+ * NOT validated here — Go only validates `[storage.buckets]`.
+ */
+const LEGACY_BUCKET_NAME_PATTERN = /^(?:[0-9A-Za-z_]|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
+
+/**
+ * Verbatim Go regex literal (`config.go:1382`) — used in the error message so it
+ * is byte-identical to Go's output. Do NOT derive from `LEGACY_BUCKET_NAME_PATTERN.source`.
+ */
+const LEGACY_BUCKET_NAME_PATTERN_SOURCE =
+  "^(\\w|!|-|\\.|\\*|'|\\(|\\)| |&|\\$|@|=|;|:|\\+|,|\\?)*$";
+
+const legacyValidateBucketName = Effect.fnUntraced(function* (name: string) {
+  if (!LEGACY_BUCKET_NAME_PATTERN.test(name)) {
+    return yield* new LegacySeedConfigLoadError({
+      message: `Invalid Bucket name: ${name}. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (${LEGACY_BUCKET_NAME_PATTERN_SOURCE})`,
+    });
+  }
 });
 
 type StorageError = LegacySeedStorageNetworkError | LegacySeedStorageStatusError;
@@ -148,8 +224,19 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
       });
     }
 
-    // 1. Load config.toml. A parse failure aborts before any network call.
-    const loaded = yield* loadProjectConfig(cliConfig.workdir).pipe(
+    // 1. Resolve the project ref for --linked BEFORE loading config, so that
+    // the matching `[remotes.<name>]` override (whose `project_id == ref`) is
+    // merged over the base config by `loadProjectConfig`. Mirrors Go's
+    // `Config.ProjectId = ProjectRef` → `config.Load` sequence
+    // (`apps/cli-go/pkg/config/config.go:505-518`).
+    const projectRefResolver = yield* LegacyProjectRefResolver;
+    const projectRef = flags.linked ? yield* projectRefResolver.loadProjectRef(Option.none()) : "";
+
+    // 2. Load config.toml, passing projectRef so `[remotes.*]` overrides are
+    // merged for --linked. A parse failure aborts before any network call.
+    const loadOptions: LoadProjectConfigOptions | undefined =
+      projectRef !== "" ? { projectRef } : undefined;
+    const loaded = yield* loadProjectConfig(cliConfig.workdir, loadOptions).pipe(
       Effect.catchTag(
         "ProjectConfigParseError",
         (cause) =>
@@ -168,16 +255,18 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     const vectorBucketNames = Object.keys(config.storage.vector.buckets);
     const hasVectorBuckets = vectorBucketNames.length > 0;
 
-    // 2. Resolve the project ref for --linked.
-    const projectRefResolver = yield* LegacyProjectRefResolver;
-    const projectRef = flags.linked ? yield* projectRefResolver.loadProjectRef(Option.none()) : "";
-
     // 3. Short-circuit: nothing to seed (ref present → never short-circuits).
     if (projectRef === "" && bucketNames.length === 0 && !hasVectorBuckets) {
       return;
     }
 
-    // 3a. Resolve + validate every bucket's props up front (Go parses sizes at
+    // 3a. Validate bucket names up front (Go ValidateBucketName, config.go:899-903),
+    // before `computeBucketProps` or any Storage call.
+    for (const name of bucketNames) {
+      yield* legacyValidateBucketName(name);
+    }
+
+    // 3b. Resolve + validate every bucket's props up front (Go parses sizes at
     // config-load, before NewStorageAPI), so an invalid/omitted file_size_limit
     // is settled before any Storage list/create/update.
     const bucketPropsByName = new Map<string, LegacyUpsertBucketProps>();
@@ -191,12 +280,20 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     // 4. Build the Storage service-gateway client (local or remote).
     let baseUrl: string;
     let apiKey: string;
-    // When local + TLS, resolve the CA cert to inject into fetch calls so Kong's
-    // self-signed certificate is trusted. Mirrors Go's `newLocalClient`
-    // (`apps/cli-go/internal/storage/client/api.go:30-37`).
+    // When local + TLS, validate cert/key pairing and resolve the CA cert to
+    // inject into fetch calls so Kong's self-signed certificate is trusted.
+    // Mirrors Go's `(*api).Validate` + `newLocalClient`
+    // (`apps/cli-go/pkg/config/config.go:845-861`,
+    //  `apps/cli-go/internal/storage/client/api.go:30-37`).
     const localTls = projectRef === "" && config.api.tls.enabled;
     const localKongCa = localTls
-      ? yield* resolveLocalKongCa(fs, path, cliConfig.workdir, config.api.tls.cert_path)
+      ? yield* validateLocalKongTls(
+          fs,
+          path,
+          cliConfig.workdir,
+          config.api.tls.cert_path,
+          config.api.tls.key_path,
+        )
       : undefined;
 
     if (projectRef === "") {
@@ -291,10 +388,14 @@ function resolveLocalBaseUrl(config: {
 /**
  * Resolve the service-role key used against the local Storage gateway, mirroring
  * Go's `(*auth).generateAPIKeys` (`apps/cli-go/pkg/config/apikeys.go:43-63`),
- * which `config.Load` always runs before `NewStorageAPI`:
- *  - an empty `jwt_secret` falls back to `defaultJwtSecret`;
- *  - a non-empty `jwt_secret` shorter than 16 chars is rejected;
- *  - an empty `service_role_key` is signed from the resolved secret.
+ * which `config.Load` always runs before `NewStorageAPI`. Applies env-var
+ * precedence matching Go's Viper `AutomaticEnv`+`SUPABASE_` prefix
+ * (`apps/cli-go/pkg/config/config.go:492-497`):
+ *  - jwt secret: `SUPABASE_AUTH_JWT_SECRET` env (if set & non-empty) →
+ *    `auth.jwt_secret` (if non-empty) → `defaultJwtSecret`;
+ *  - a resolved secret shorter than 16 chars is rejected;
+ *  - service-role key: `SUPABASE_AUTH_SERVICE_ROLE_KEY` env (if set & non-empty) →
+ *    `auth.service_role_key` (if non-empty) → sign from resolved secret.
  *
  * `@supabase/config` has no `generateAPIKeys` equivalent (the keys are
  * `optionalKey` with no default), so this fill-in is the caller's job. Empty
@@ -308,7 +409,11 @@ const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (auth: {
   readonly jwt_secret?: string;
   readonly service_role_key?: string;
 }) {
-  const configuredSecret = auth.jwt_secret;
+  // Apply env-var precedence for jwt_secret (Go Viper AutomaticEnv).
+  const envSecret = process.env["SUPABASE_AUTH_JWT_SECRET"];
+  const configuredSecret =
+    envSecret !== undefined && envSecret.length > 0 ? envSecret : auth.jwt_secret;
+
   let jwtSecret: string;
   if (configuredSecret === undefined || configuredSecret.length === 0) {
     jwtSecret = defaultJwtSecret;
@@ -320,7 +425,9 @@ const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (auth: {
     jwtSecret = configuredSecret;
   }
 
-  const configuredKey = auth.service_role_key;
+  // Apply env-var precedence for service_role_key (Go Viper AutomaticEnv).
+  const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
+  const configuredKey = envKey !== undefined && envKey.length > 0 ? envKey : auth.service_role_key;
   return configuredKey !== undefined && configuredKey.length > 0
     ? configuredKey
     : generateJwt(jwtSecret, "service_role");

@@ -7,11 +7,12 @@ stack is used; with `--linked` the remote project is used.
 
 ## Files Read
 
-| Path                                     | Format      | When                                                                                                                                                                                                                                                                        |
-| ---------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`         | TOML        | always, to read `[storage.buckets]` / `[storage.vector]` config                                                                                                                                                                                                             |
-| `<workdir>/supabase/<objects_path>/**`   | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively; a relative `objects_path` resolves under `supabase/` (Go `config.go:757-759`), an absolute path is used as-is                                                                                           |
-| `<workdir>/supabase/<api.tls.cert_path>` | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.cert_path` is set; the file is read to obtain the CA certificate for trusting the local Kong HTTPS gateway. If `cert_path` is not set, the embedded `kong.local.crt` constant is used instead (no file read). |
+| Path                                     | Format      | When                                                                                                                                                                                                                                                                             |
+| ---------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`         | TOML        | always, to read `[storage.buckets]` / `[storage.vector]` config; on `--linked`, the matching `[remotes.<name>]` block (whose `project_id` equals the resolved project ref) is merged over the base config before decode, so remote-specific storage config takes effect          |
+| `<workdir>/supabase/<objects_path>/**`   | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively; a relative `objects_path` resolves under `supabase/` (Go `config.go:757-759`), an absolute path is used as-is                                                                                                |
+| `<workdir>/supabase/<api.tls.cert_path>` | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.cert_path` is set; the file is read to obtain the CA certificate for trusting the local Kong HTTPS gateway. If `cert_path` is not set, the embedded `kong.local.crt` constant is used instead (no file read).      |
+| `<workdir>/supabase/<api.tls.key_path>`  | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.key_path` is set; read purely to validate the cert/key pairing (Go `config.go:845-861`) — the key content is not used by the CLI. If `cert_path` is set without `key_path` (or vice-versa), the command exits `1`. |
 
 ## Files Written
 
@@ -62,22 +63,26 @@ Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 
 ## Environment Variables
 
-| Variable                         | Purpose                                                                                        | Required? |
-| -------------------------------- | ---------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_SERVICES_HOSTNAME`     | override the local services host (highest precedence)                                          | no        |
-| `DOCKER_HOST`                    | when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1` | no        |
-| `SUPABASE_AUTH_SERVICE_ROLE_KEY` | when set, used as the service-role key for `--linked` (skips Management API key fetch)         | no        |
+| Variable                         | Purpose                                                                                                                                                                                                               | Required? |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_SERVICES_HOSTNAME`     | override the local services host (highest precedence)                                                                                                                                                                 | no        |
+| `DOCKER_HOST`                    | when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1`                                                                                                                        | no        |
+| `SUPABASE_AUTH_SERVICE_ROLE_KEY` | when set and non-empty: for `--linked`, used as the service-role key (skips Management API key fetch); for local runs, used as the service-role key instead of `auth.service_role_key` (Go Viper AutomaticEnv parity) | no        |
+| `SUPABASE_AUTH_JWT_SECRET`       | local runs only: when set and non-empty, overrides `auth.jwt_secret` for service-role key derivation (Go Viper `AutomaticEnv`+`SUPABASE_` prefix parity, `config.go:492-497`)                                         | no        |
 
 ## Exit Codes
 
-| Code | Condition                                                       |
-| ---- | --------------------------------------------------------------- |
-| `0`  | success (including the empty-config short-circuit)              |
-| `1`  | `supabase/config.toml` parse failure                            |
-| `1`  | `auth.jwt_secret` set but shorter than 16 characters            |
-| `1`  | Storage API error (non-2xx) other than vector-unavailable       |
-| `1`  | network / connection failure to the Storage gateway             |
-| `1`  | unreadable `objects_path` (filesystem error during walk/upload) |
+| Code | Condition                                                                                                     |
+| ---- | ------------------------------------------------------------------------------------------------------------- |
+| `0`  | success (including the empty-config short-circuit)                                                            |
+| `1`  | `supabase/config.toml` parse failure                                                                          |
+| `1`  | `auth.jwt_secret` (or `SUPABASE_AUTH_JWT_SECRET`) set but shorter than 16 characters                          |
+| `1`  | `[storage.buckets]` entry has an invalid name (contains characters outside Go's `ValidateBucketName` regex)   |
+| `1`  | `api.tls.cert_path` set without `api.tls.key_path` (or vice-versa) when `api.tls.enabled = true` (local only) |
+| `1`  | `api.tls.cert_path` or `api.tls.key_path` points to an unreadable file (local TLS only)                       |
+| `1`  | Storage API error (non-2xx) other than vector-unavailable                                                     |
+| `1`  | network / connection failure to the Storage gateway                                                           |
+| `1`  | unreadable `objects_path` (filesystem error during walk/upload)                                               |
 
 ## Telemetry Events Fired
 
@@ -130,11 +135,25 @@ stdout and a terminal `result`/`error` event is emitted.
 
 ## Notes
 
-- **Remote (`--linked`).** When `--linked` is passed, the command seeds the
-  linked remote project. The remote base URL is `https://<ref>.<projectHost>`
+- **Remote (`--linked`) — config override merge.** The project ref is resolved
+  BEFORE config is loaded. `loadProjectConfig` then merges the `[remotes.<name>]`
+  block whose `project_id` equals the resolved ref over the base config (including
+  `storage.buckets`, `storage.vector`, `storage.analytics`), mirroring Go's
+  `Config.ProjectId = ProjectRef` → `config.Load` sequence (`config.go:505-518`).
+  Local runs load the base config verbatim with no merge.
+- **Remote (`--linked`).** The remote base URL is `https://<ref>.<projectHost>`
   (default: `supabase.co`). The service-role key is read from
   `SUPABASE_AUTH_SERVICE_ROLE_KEY` if set; otherwise fetched via
   `GET /v1/projects/{ref}/api-keys?reveal=true`.
+- **Bucket name validation.** Every `[storage.buckets]` name is validated against
+  Go's `ValidateBucketName` regex (`^(\w|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$`,
+  `config.go:1382`) before any Storage call. Invalid names exit `1` with the exact
+  Go error message. Vector and analytics bucket names are NOT validated.
+- **Local env-var overrides.** For local runs, `SUPABASE_AUTH_JWT_SECRET` (if set
+  and non-empty) overrides `auth.jwt_secret`, and `SUPABASE_AUTH_SERVICE_ROLE_KEY`
+  (if set and non-empty) overrides `auth.service_role_key`, mirroring Go's Viper
+  `AutomaticEnv`+`SUPABASE_` prefix (`config.go:492-497`). The `<16`-char rejection
+  applies to the resolved secret (env or config value).
 - **Analytics buckets.** Analytics bucket upsert (`/storage/v1/iceberg/...`) is
   gated on `[storage.analytics].enabled = true` AND `--linked`. It is never
   reached for local runs. Errors from analytics routes propagate (no graceful skip).
@@ -146,11 +165,10 @@ configured`, or a 404 on `ListVectorBuckets`), a WARNING is printed and object
   objects are uploaded with `x-upsert: true`.
 - **Content-Type** for uploaded objects is derived from the file extension — a
   best-effort approximation of Go's `http.DetectContentType` + `mime.TypeByExtension`.
-- **Local Kong TLS.** When `[api.tls] enabled = true` for a local stack, all
-  HTTPS storage gateway calls trust the Kong CA. The CA is the embedded
-  `kong.local.crt` constant (from `apps/cli-go/pkg/config/templates/certs/kong.local.crt`)
-  unless `api.tls.cert_path` is set, in which case that file is read from
-  `<workdir>/supabase/<cert_path>` (or an absolute path as-is). This mirrors
-  Go's `newLocalClient` (`apps/cli-go/internal/storage/client/api.go:30-37`) and
-  `config.go:845-851`. The CA is injected into Bun's `fetch` via
-  `tls: { ca: <pem> }` — no system trust store modification.
+- **Local Kong TLS.** When `[api.tls] enabled = true` for a local stack, the
+  cert/key pairing is validated before seeding (Go `(*api).Validate`, `config.go:845-861`):
+  `cert_path` and `key_path` must both be set or both absent; setting only one exits `1`.
+  When both are set, both files are read for validation; `cert_path` provides the CA PEM
+  used to trust the Kong gateway. If neither is set, the embedded `kong.local.crt` constant
+  is used. Resolved against `<workdir>/supabase/` (or absolute path as-is). The CA is
+  injected into Bun's `fetch` via `tls: { ca: <pem> }` — no system trust store modification.

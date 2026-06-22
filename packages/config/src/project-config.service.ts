@@ -1,9 +1,16 @@
 import type { Effect } from "effect";
 import { Context } from "effect";
-import type { LoadedProjectConfig, SaveProjectConfigOptions } from "./io.ts";
+import type {
+  LoadedProjectConfig,
+  LoadProjectConfigOptions,
+  SaveProjectConfigOptions,
+} from "./io.ts";
 
 interface ProjectConfigStoreShape {
-  readonly load: (cwd: string) => Effect.Effect<LoadedProjectConfig | null, unknown>;
+  readonly load: (
+    cwd: string,
+    options?: LoadProjectConfigOptions,
+  ) => Effect.Effect<LoadedProjectConfig | null, unknown>;
   readonly loadFile: (path: string) => Effect.Effect<LoadedProjectConfig, unknown>;
   readonly save: (options: SaveProjectConfigOptions) => Effect.Effect<LoadedProjectConfig, unknown>;
 }

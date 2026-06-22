@@ -8,6 +8,7 @@ export {
 export {
   type ConfigFormat,
   type LoadedProjectConfig,
+  type LoadProjectConfigOptions,
   type SaveProjectConfigOptions,
   configJsonPath,
   configTomlPath,
