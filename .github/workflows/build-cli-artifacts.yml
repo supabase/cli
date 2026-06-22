@@ -37,6 +37,10 @@ jobs:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
       POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
+      # Fail the build if the macOS signing tool is missing — release artifacts
+      # must be signed (CLI-1621). Local builds without rcodesign degrade to a
+      # warning instead.
+      SUPABASE_CLI_REQUIRE_SIGNING: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -64,6 +68,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nfpm
 
+      - name: Install rcodesign
+        env:
+          RCODESIGN_VERSION: "0.29.0"
+          RCODESIGN_SHA256: "dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002"
+        run: |
+          set -euo pipefail
+          asset="apple-codesign-${RCODESIGN_VERSION}-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSL -o /tmp/rcodesign.tar.gz \
+            "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${RCODESIGN_VERSION}/${asset}"
+          echo "${RCODESIGN_SHA256}  /tmp/rcodesign.tar.gz" | sha256sum -c
+          tar -xzf /tmp/rcodesign.tar.gz -C /tmp
+          sudo install -m 0755 "/tmp/apple-codesign-${RCODESIGN_VERSION}-x86_64-unknown-linux-musl/rcodesign" /usr/local/bin/rcodesign
+          rcodesign --version
+
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
 
@@ -78,6 +96,19 @@ jobs:
           done
           echo "Checking dist/..."
           ls -la dist/
+
+      - name: Verify macOS signatures
+        run: |
+          set -euo pipefail
+          for bin in packages/cli-darwin-*/bin/supabase packages/cli-darwin-*/bin/supabase-go; do
+            [ -f "$bin" ] || continue
+            echo "::group::$bin"
+            info="$(rcodesign print-signature-info "$bin")"
+            echo "$info" | grep -E 'identifier:|flags:'
+            echo "$info" | grep -q 'identifier: com.supabase.cli' || { echo "::error::$bin missing supabase identifier"; exit 1; }
+            if echo "$info" | grep -q 'LINKER_SIGNED'; then echo "::error::$bin still linker-signed"; exit 1; fi
+            echo "::endgroup::"
+          done
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

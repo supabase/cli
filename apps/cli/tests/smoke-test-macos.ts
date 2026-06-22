@@ -1,8 +1,10 @@
 import { $ } from "bun";
+import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { verifyMacSignature } from "./helpers/macos-signature.ts";
 import { createTmpDir, describeError, runNpmTest } from "./helpers/npm-registry.ts";
 import { verifyExpectedShell } from "./helpers/release-shell.ts";
 
@@ -51,6 +53,31 @@ console.log("=".repeat(60));
   } catch (e) {
     console.log(`[${name}] FAIL —\n${describeError(e)}`);
     results.push({ name, status: "fail" });
+  }
+}
+
+// --- Native signature ---
+
+{
+  const arch = process.arch; // "arm64" or "x64"
+  const binDir = path.join(root, "packages", `cli-darwin-${arch}`, "bin");
+  const binaries = ["supabase"];
+  if (existsSync(path.join(binDir, "supabase-go"))) {
+    binaries.push("supabase-go");
+  }
+
+  for (const binary of binaries) {
+    const name = `native-darwin-${arch}-signature-${binary}`;
+    const binPath = path.join(binDir, binary);
+    console.log(`[${name}] Verifying signature of ${binPath}...`);
+    try {
+      const sig = await verifyMacSignature(binPath);
+      console.log(`[${name}] ${sig.passed ? "PASS" : "FAIL"} — ${sig.detail}`);
+      results.push({ name, status: sig.passed ? "pass" : "fail" });
+    } catch (e) {
+      console.log(`[${name}] FAIL —\n${describeError(e)}`);
+      results.push({ name, status: "fail" });
+    }
   }
 }
 
