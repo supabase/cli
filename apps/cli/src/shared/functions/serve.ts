@@ -1,11 +1,12 @@
 import {
   ProjectConfigSchema,
+  findProjectPaths,
   inferFunctionsManifest,
   loadProjectConfig,
-  loadProjectEnvironment,
   resolveProjectSubtree,
   resolveProjectValue,
   type ProjectConfig,
+  type ProjectEnvironment,
   type ResolvedProjectValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config";
@@ -80,6 +81,7 @@ const dockerLogRetryDelay = Duration.millis(400);
 const dockerLogDiagnosticTailLength = 4_096;
 const remoteJwksTimeoutMs = 10_000;
 const legacyDefaultEdgeRuntimeVersion = "v1.74.1";
+const defaultSupabaseEnv = "development";
 const clerkDomainPattern = /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/;
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const serveMainTypecheckPreamble = "declare const Deno: any;\ndeclare const EdgeRuntime: any;\n\n";
@@ -624,10 +626,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
     projectRef === undefined ? undefined : { projectRef },
   );
   const baseConfig = loadedConfig?.config ?? defaultProjectConfig;
-  const projectEnv =
-    loadedConfig === null
-      ? null
-      : yield* loadProjectEnvironment({ cwd: projectRoot, baseEnv: process.env });
+  const projectEnv = loadedConfig === null ? null : yield* loadServeProjectEnvironment(projectRoot);
 
   const auth =
     projectEnv === null
@@ -876,6 +875,68 @@ function validateDockerMultilineEnvNames(env: ReadonlyArray<readonly [string, st
   }
 }
 
+function loadDefaultEnvFilenames(env: string) {
+  return [`.env.${env}.local`, ...(env === "test" ? [] : [".env.local"]), `.env.${env}`, ".env"];
+}
+
+function ambientProjectEnv() {
+  return Object.fromEntries(
+    Object.entries(process.env).flatMap(([key, value]) =>
+      value === undefined ? [] : [[key, value]],
+    ),
+  );
+}
+
+const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {
+  const paths = yield* findProjectPaths(projectRoot);
+  if (paths === null) {
+    return null;
+  }
+
+  const values: Record<string, string> = ambientProjectEnv();
+  const sources: Record<string, "ambient" | ".env" | ".env.local"> = Object.fromEntries(
+    Object.keys(values).map((key) => [key, "ambient"]),
+  );
+  const loadedPaths: string[] = [];
+  const env = process.env["SUPABASE_ENV"] || defaultSupabaseEnv;
+
+  for (const dir of [paths.supabaseDir, paths.projectRoot]) {
+    for (const filename of loadDefaultEnvFilenames(env)) {
+      const envPath = join(dir, filename);
+      const contents = yield* Effect.tryPromise(() =>
+        readFile(envPath, "utf8").then(
+          (value) => value,
+          (error) => {
+            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+              return undefined;
+            }
+            throw error;
+          },
+        ),
+      ).pipe(
+        Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))),
+      );
+      if (contents === undefined) {
+        continue;
+      }
+      loadedPaths.push(envPath);
+      const parsed = yield* Effect.try({
+        try: () => parseDotEnv(contents),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      });
+      for (const [key, value] of Object.entries(parsed)) {
+        if (values[key] !== undefined) {
+          continue;
+        }
+        values[key] = value;
+        sources[key] = filename.includes(".local") ? ".env.local" : ".env";
+      }
+    }
+  }
+
+  return { paths, values, loadedPaths, sources } satisfies ProjectEnvironment;
+});
+
 async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyArray<WatchSpec>> {
   const specs = new Map<string, WatchSpec>();
 
@@ -1029,6 +1090,7 @@ const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
+        extendEnv: true,
       }),
     );
 
@@ -1182,6 +1244,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   );
   const projectId = resolved.projectId;
   const containerId = localDockerId("edge_runtime", projectId);
+  let ownsRuntime = false;
   return yield* Effect.gen(function* () {
     const networkMode = Option.getOrElse(input.networkId, () =>
       localDockerId("network", projectId),
@@ -1201,6 +1264,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
 
     yield* assertLocalDbRunning(projectId);
     yield* bestEffortRemoveContainer(containerId);
+    ownsRuntime = true;
 
     const functionConfigs = yield* resolveServeFunctionConfigs(
       input.dependencies.projectRoot,
@@ -1367,7 +1431,9 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       cleanup: cleanupRuntimeArtifacts,
       watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...functionBinds])),
     } satisfies StartedRuntime;
-  }).pipe(Effect.onInterrupt(() => bestEffortRemoveContainer(containerId)));
+  }).pipe(
+    Effect.onInterrupt(() => (ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void)),
+  );
 });
 
 export const serveFunctions = Effect.fn("functions.serve")(function* (

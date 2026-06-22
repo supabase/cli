@@ -863,6 +863,64 @@ describe("legacy functions serve integration", () => {
     });
   });
 
+  it.live("does not remove the existing runtime when interrupted before startup owns it", () => {
+    const processControl = mockQueuedProcessControl();
+
+    return Effect.gen(function* () {
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(
+        () =>
+          new Promise<Response>(() => {
+            // Intentionally pending to keep startup in pre-removal work.
+          }),
+      );
+
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          fetchMock.mockRestore();
+        }),
+      );
+
+      yield* Effect.promise(() =>
+        writeProjectConfig(
+          [
+            'project_id = "test-project"',
+            "",
+            "[auth.third_party.workos]",
+            "enabled = true",
+            'issuer_url = "https://issuer.example.com"',
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+      const { layer, out } = setupServe({ processControl });
+      const fiber = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+
+      yield* waitFor(() => fetchMock.mock.calls.length > 0, "timed out waiting for JWKS fetch");
+      processControl.signal("SIGINT");
+
+      const exit = yield* Fiber.await(fiber);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(
+        deployMockState.runCalls.some(
+          (call) =>
+            call.command === "docker" &&
+            call.args[0] === "container" &&
+            call.args[1] === "rm" &&
+            call.args.includes("supabase_edge_runtime_test-project"),
+        ),
+      ).toBe(false);
+      expect(out.stdoutText).toContain("Stopped serving");
+    });
+  });
+
   it.live("passes inspect, debug, and custom network settings through to edge-runtime", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
@@ -1469,6 +1527,79 @@ describe("legacy functions serve integration", () => {
         expect(error.message).toContain("supabase start is not running.");
       }
     });
+  });
+
+  it.live("resolves env() config values from root env development files", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "run") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "exec") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "root env logs failed" }]);
+    const previousSupabaseEnv = process.env["SUPABASE_ENV"];
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig([`project_id = "env(ROOT_PROJECT_ID)"`, ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeProjectFile(".env.development", "ROOT_PROJECT_ID=root-env-project\n"),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+      process.env["SUPABASE_ENV"] = "development";
+
+      const { layer } = setupServe({ childSpawner });
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain("root env logs failed");
+      }
+
+      expect(deployMockState.volumeCalls).toEqual([
+        {
+          volumeName: "supabase_edge_runtime_root-env-project",
+          projectId: "root-env-project",
+        },
+      ]);
+      expect(deployMockState.networkCalls).toEqual([
+        {
+          networkMode: "supabase_network_root-env-project",
+          projectId: "root-env-project",
+        },
+      ]);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previousSupabaseEnv === undefined) {
+            delete process.env["SUPABASE_ENV"];
+          } else {
+            process.env["SUPABASE_ENV"] = previousSupabaseEnv;
+          }
+        }),
+      ),
+    );
   });
 
   it.live("fails when the explicit env file is missing", () => {
