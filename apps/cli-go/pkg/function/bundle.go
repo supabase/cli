@@ -91,7 +91,20 @@ func (b *nativeBundler) Bundle(ctx context.Context, slug, entrypoint, importMap 
 }
 
 func ShouldUseDenoJsonDiscovery(entrypoint, importMap string) bool {
-	return isDeno(filepath.Base(importMap)) && filepath.Dir(importMap) == filepath.Dir(entrypoint)
+	if !isDeno(filepath.Base(importMap)) {
+		return false
+	}
+	if filepath.Dir(importMap) != filepath.Dir(entrypoint) {
+		return false
+	}
+	// Only rely on Deno auto-discovery if the import map file
+	// actually exists at the expected path. In GitHub branch
+	// deploy pipelines, the working directory may differ from
+	// local, causing auto-discovery to silently fail.
+	if _, err := os.Stat(importMap); err != nil {
+		return false
+	}
+	return true
 }
 
 func ShouldUsePackageJsonDiscovery(entrypoint, importMap string, fsys fs.StatFS) bool {

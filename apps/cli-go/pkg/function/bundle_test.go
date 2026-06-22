@@ -91,3 +91,32 @@ func TestBundleFunction(t *testing.T) {
 		assert.Nil(t, meta.VerifyJwt)
 	})
 }
+func TestShouldUseDenoJsonDiscovery(t *testing.T) {
+	t.Run("returns false when import map file does not exist", func(t *testing.T) {
+		result := ShouldUseDenoJsonDiscovery(
+			"/repo/supabase/functions/hello/index.ts",
+			"/repo/supabase/functions/hello/deno.json",
+		)
+		assert.False(t, result)
+	})
+
+	t.Run("returns true when import map file exists alongside entrypoint", func(t *testing.T) {
+		dir := t.TempDir()
+		entrypoint := filepath.Join(dir, "index.ts")
+		importMap := filepath.Join(dir, "deno.json")
+		require.NoError(t, os.WriteFile(importMap, []byte("{}"), 0644))
+
+		result := ShouldUseDenoJsonDiscovery(entrypoint, importMap)
+		assert.True(t, result)
+	})
+
+	t.Run("returns false when import map is not a deno json file", func(t *testing.T) {
+		dir := t.TempDir()
+		entrypoint := filepath.Join(dir, "index.ts")
+		importMap := filepath.Join(dir, "import_map.json")
+		require.NoError(t, os.WriteFile(importMap, []byte("{}"), 0644))
+
+		result := ShouldUseDenoJsonDiscovery(entrypoint, importMap)
+		assert.False(t, result)
+	})
+}
