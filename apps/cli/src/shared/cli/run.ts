@@ -116,7 +116,35 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  const useGlobalSignalInterrupt = !args.includes("start");
+  const globalFlagsWithValues = new Set([
+    "--output-format",
+    "--output",
+    "-o",
+    "--profile",
+    "--workdir",
+    "--network-id",
+    "--dns-resolver",
+    "--agent",
+  ]);
+  const commandArgs: Array<string> = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg.startsWith("-")) {
+      const [flag] = arg.split("=", 1);
+      if (!arg.includes("=") && flag !== undefined && globalFlagsWithValues.has(flag)) {
+        index += 1;
+      }
+      continue;
+    }
+    commandArgs.push(arg);
+  }
+  const command = commandArgs[0];
+  const subcommand = commandArgs[1];
+  const useGlobalSignalInterrupt = !(
+    command === "start" ||
+    (command === "db" && subcommand === "start") ||
+    (command === "functions" && subcommand === "serve")
+  );
   const outputFormat = await Effect.runPromise(
     Effect.gen(function* () {
       const aiTool = yield* AiTool;

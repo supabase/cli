@@ -119,34 +119,35 @@ describe("native hidden flags", () => {
     const proxy = mockLegacyGoProxy();
 
     await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["start", "--preview"]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-          "stop",
-          "--backup=false",
-        ]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-          "functions",
-          "download",
-          "hello",
-          "--project-ref",
-          "abcdefghijklmnopqrst",
-          "--use-docker",
-        ]);
-        const useDockerExit = yield* Command.runWith(legacyTestRoot, {
-          version: "0.0.0-test",
-        })(["functions", "deploy", "hello", "--use-docker"]).pipe(Effect.exit);
-        const legacyBundleExit = yield* Command.runWith(legacyTestRoot, {
-          version: "0.0.0-test",
-        })(["functions", "deploy", "hello", "--legacy-bundle"]).pipe(Effect.exit);
-        expect(JSON.stringify(useDockerExit)).not.toContain("UnrecognizedFlag");
-        expect(JSON.stringify(legacyBundleExit)).not.toContain("UnrecognizedFlag");
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-          "functions",
-          "serve",
-          "--all=false",
-        ]);
-      }).pipe(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["start", "--preview"]);
+          yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+            "stop",
+            "--backup=false",
+          ]);
+          yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+            "functions",
+            "download",
+            "hello",
+            "--project-ref",
+            "abcdefghijklmnopqrst",
+            "--use-docker",
+          ]);
+          const useDockerExit = yield* Command.runWith(legacyTestRoot, {
+            version: "0.0.0-test",
+          })(["functions", "deploy", "hello", "--use-docker"]).pipe(Effect.exit);
+          const legacyBundleExit = yield* Command.runWith(legacyTestRoot, {
+            version: "0.0.0-test",
+          })(["functions", "deploy", "hello", "--legacy-bundle"]).pipe(Effect.exit);
+          expect(JSON.stringify(useDockerExit)).not.toContain("UnrecognizedFlag");
+          expect(JSON.stringify(legacyBundleExit)).not.toContain("UnrecognizedFlag");
+          const serveExit = yield* Command.runWith(legacyTestRoot, {
+            version: "0.0.0-test",
+          })(["functions", "serve", "--all=false"]).pipe(Effect.exit);
+          expect(JSON.stringify(serveExit)).not.toContain("UnrecognizedFlag");
+        }),
+      ).pipe(
         Effect.provide(
           Layer.mergeAll(
             withEnv(authenticatedEnv),
@@ -162,7 +163,6 @@ describe("native hidden flags", () => {
       ["start", "--preview"],
       ["stop", "--backup=false"],
       ["functions", "download", "hello", "--project-ref", "abcdefghijklmnopqrst", "--use-docker"],
-      ["functions", "serve", "--all=false"],
     ]);
   });
 
