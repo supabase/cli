@@ -316,3 +316,10 @@ Legend:
 | `db remote commit`                     | `wrapped`     | [`../src/legacy/commands/db/remote/commit/commit.command.ts`](../src/legacy/commands/db/remote/commit/commit.command.ts)                                                                                                                         |
 | `db schema declarative sync`           | `ported`      | [`../src/legacy/commands/db/schema/declarative/sync/sync.command.ts`](../src/legacy/commands/db/schema/declarative/sync/sync.command.ts)                                                                                                         |
 | `db schema declarative generate`       | `ported`      | [`../src/legacy/commands/db/schema/declarative/generate/generate.command.ts`](../src/legacy/commands/db/schema/declarative/generate/generate.command.ts)                                                                                         |
+
+Flag divergences from the Go reference:
+
+- `projects api-keys` has a TS-only `--reveal` flag (no Go equivalent). It sends
+  `reveal=true` so the Management API returns the full secret keys (`sb_secret_...`) in
+  full instead of redacting them, addressing issue #4775. Default behavior (omitted flag)
+  matches Go exactly.

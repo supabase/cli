@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
+	"strings"
 
 	"github.com/go-errors/errors"
 )
@@ -92,6 +94,9 @@ func (s *Fetcher) Send(ctx context.Context, method, path string, reqBody any, re
 	// Sends request
 	resp, err := s.client.Do(req)
 	if err != nil {
+		if hint := localGatewayHint(s.server, err); len(hint) > 0 {
+			return nil, errors.Errorf("failed to execute http request: %w\n\n%s", err, hint)
+		}
 		return nil, errors.Errorf("failed to execute http request: %w", err)
 	}
 	if slices.Contains(s.status, resp.StatusCode) {
@@ -107,6 +112,33 @@ func (s *Fetcher) Send(ctx context.Context, method, path string, reqBody any, re
 		return resp, errors.Errorf("Error status %d: %s", resp.StatusCode, data)
 	}
 	return resp, nil
+}
+
+func localGatewayHint(server string, err error) string {
+	if err == nil {
+		return ""
+	}
+	parsed, parseErr := url.Parse(server)
+	if parseErr != nil {
+		return ""
+	}
+	host := parsed.Hostname()
+	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		return ""
+	}
+	message := err.Error()
+	if !strings.Contains(message, "malformed HTTP response") &&
+		!strings.Contains(message, "Client.Timeout exceeded while awaiting headers") &&
+		!strings.Contains(message, "context deadline exceeded") {
+		return ""
+	}
+	port := parsed.Port()
+	if len(port) == 0 {
+		return ""
+	}
+	return "The local Supabase API gateway did not return a valid HTTP response. " +
+		"Another process may be listening on the configured API port " + port + ". " +
+		"Check the port with `lsof -nP -iTCP:" + port + " -sTCP:LISTEN`, then stop the conflicting process or set a different `api.port` in supabase/config.toml."
 }
 
 func ParseJSON[T any](r io.ReadCloser) (T, error) {
