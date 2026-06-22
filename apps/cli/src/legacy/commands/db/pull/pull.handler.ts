@@ -91,10 +91,6 @@ const connToUrl = (conn: LegacyPgConnInput): string =>
 const rebuildDelegateArgs = (flags: LegacyDbPullFlags): Array<string> => {
   const args = ["db", "pull"];
   if (Option.isSome(flags.name)) args.push(flags.name.value);
-  const pushBool = (name: string, value: Option.Option<boolean>) => {
-    // Engine/output flags act on their value; `Some(false)` equals the default.
-    if (Option.isSome(value) && value.value) args.push(`--${name}`);
-  };
   const pushTarget = (name: string, value: Option.Option<boolean>) => {
     // Target flags (linked/local) are selectors: Go's ParseDatabaseConfig keys off
     // `flag.Changed` before the value (`internal/utils/flags/db_url.go`), so a
@@ -103,8 +99,21 @@ const rebuildDelegateArgs = (flags: LegacyDbPullFlags): Array<string> => {
     // of falling through to a different default.
     if (Option.isSome(value)) args.push(value.value ? `--${name}` : `--${name}=false`);
   };
-  pushBool("declarative", flags.declarative);
-  pushBool("use-pg-delta", flags.usePgDelta);
+  // Delegation only ever happens in MIGRATION mode — the declarative branch
+  // returns before reaching the delegate call sites — so the resolved decision
+  // here is always `useDeclarative === false`. Go binds `--declarative` and
+  // `--use-pg-delta` to one last-occurrence-wins variable (`cmd/db.go:534-535`), so
+  // replaying only the truthy alias (e.g. forwarding `--declarative` for
+  // `db pull --declarative --use-pg-delta=false`) would flip the child back to
+  // declarative export. Forward an explicit `--declarative=false` when an alias was
+  // passed so the child resolves migration mode deterministically. Never forward
+  // `--use-pg-delta`: the parent already prints its deprecation line and Go's
+  // MarkDeprecated (`cmd/db.go:536`) would re-print it. The "alias present" guard
+  // also keeps us clear of Go's mutually-exclusive [declarative diff-engine] group
+  // (which fires on `Changed`), since an alias and `--diff-engine` can't co-occur.
+  if (Option.isSome(flags.declarative) || Option.isSome(flags.usePgDelta)) {
+    args.push("--declarative=false");
+  }
   if (Option.isSome(flags.diffEngine)) args.push("--diff-engine", flags.diffEngine.value);
   // Re-encode each parsed schema as a CSV field so the Go child's pflag StringSlice
   // CSV parse doesn't re-split a comma-containing schema (e.g. `"tenant,one"`).

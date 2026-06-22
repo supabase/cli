@@ -613,6 +613,44 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect(
+    "delegated pull forwards resolved migration mode when the last alias occurrence is false",
+    () => {
+      // Parent resolves migration mode (last wins = false). The rebuilt delegate
+      // argv must forward that decision as `--declarative=false`, not replay the
+      // truthy `--declarative` alone — Go binds both aliases to one variable, so a
+      // lone `--declarative` would flip the child back to declarative export. The
+      // deprecated `--use-pg-delta` must NOT be forwarded (the parent already
+      // printed its deprecation line).
+      const s = setup(tmp.current, {
+        experimental: true,
+        args: ["db", "pull", "--experimental", "--declarative", "--use-pg-delta=false"],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(
+          flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }),
+        );
+        expect(s.proxyCalls[0]?.args).toContain("--declarative=false");
+        expect(s.proxyCalls[0]?.args).not.toContain("--declarative");
+        expect(s.proxyCalls[0]?.args).not.toContain("--use-pg-delta");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect("delegated pull with --diff-engine and no alias omits --declarative entirely", () => {
+    // The "alias present" guard matters: forwarding --declarative=false alongside
+    // --diff-engine would trip Go's mutually-exclusive [declarative diff-engine]
+    // group (which fires on Changed regardless of value). With no alias passed, the
+    // delegate argv must carry only --diff-engine.
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ diffEngine: Option.some("migra") }));
+      expect(s.proxyCalls[0]?.args).toContain("--diff-engine");
+      expect(s.proxyCalls[0]?.args).not.toContain("--declarative=false");
+      expect(s.proxyCalls[0]?.args).not.toContain("--declarative");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("the global --experimental flag delegates the structured-dump pull to Go", () => {
     // viper resolves EXPERIMENTAL from the pflag OR the env var; the flag form
     // (`supabase --experimental db pull`) must delegate just like the env form.
