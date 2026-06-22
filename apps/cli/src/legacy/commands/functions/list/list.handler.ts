@@ -100,6 +100,53 @@ function readOptionalNullableString(
   return value === null || typeof value === "string" ? value : undefined;
 }
 
+function readRequiredString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function readRequiredNumber(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" ? value : undefined;
+}
+
+function readRequiredFunctionFields(
+  record: Record<string, unknown>,
+):
+  | Omit<
+      LegacyFunctionRecord,
+      "verify_jwt" | "import_map" | "entrypoint_path" | "import_map_path" | "ezbr_sha256"
+    >
+  | undefined {
+  const id = readRequiredString(record, "id");
+  const slug = readRequiredString(record, "slug");
+  const name = readRequiredString(record, "name");
+  const status = readRequiredString(record, "status");
+  const version = readRequiredNumber(record, "version");
+  const createdAt = readRequiredNumber(record, "created_at");
+  const updatedAt = readRequiredNumber(record, "updated_at");
+  if (
+    id === undefined ||
+    slug === undefined ||
+    name === undefined ||
+    status === undefined ||
+    version === undefined ||
+    createdAt === undefined ||
+    updatedAt === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    id,
+    slug,
+    name,
+    status,
+    version,
+    created_at: createdAt,
+    updated_at: updatedAt,
+  };
+}
+
 function parseFunctionsResponse(value: unknown): Functions | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -110,32 +157,12 @@ function parseFunctionsResponse(value: unknown): Functions | undefined {
       return undefined;
     }
     const record = item as Record<string, unknown>;
-    const id = record.id;
-    const slug = record.slug;
-    const name = record.name;
-    const status = record.status;
-    const version = record.version;
-    const createdAt = record.created_at;
-    const updatedAt = record.updated_at;
-    if (
-      typeof id !== "string" ||
-      typeof slug !== "string" ||
-      typeof name !== "string" ||
-      typeof status !== "string" ||
-      typeof version !== "number" ||
-      typeof createdAt !== "number" ||
-      typeof updatedAt !== "number"
-    ) {
+    const required = readRequiredFunctionFields(record);
+    if (required === undefined) {
       return undefined;
     }
     functions.push({
-      id,
-      slug,
-      name,
-      status,
-      version,
-      created_at: createdAt,
-      updated_at: updatedAt,
+      ...required,
       verify_jwt: readOptionalBoolean(record, "verify_jwt"),
       import_map: readOptionalBoolean(record, "import_map"),
       entrypoint_path: readOptionalString(record, "entrypoint_path"),
@@ -146,32 +173,20 @@ function parseFunctionsResponse(value: unknown): Functions | undefined {
   return functions;
 }
 
-function toGoYamlFunction(function_: Functions[number]) {
+function baseFunctionFields(function_: Functions[number]) {
   return {
-    createdat: function_.created_at,
-    entrypointpath: function_.entrypoint_path ?? null,
-    ezbrsha256: function_.ezbr_sha256 ?? null,
     id: function_.id,
-    importmap: function_.import_map ?? null,
-    importmappath: function_.import_map_path ?? null,
     name: function_.name,
     slug: function_.slug,
     status: function_.status,
-    updatedat: function_.updated_at,
-    verifyjwt: function_.verify_jwt ?? null,
     version: function_.version,
+    created_at: function_.created_at,
+    updated_at: function_.updated_at,
   };
 }
 
-function toGoJsonFunction(function_: Functions[number]) {
+function optionalGoJsonFields(function_: Functions[number]) {
   return {
-    created_at: function_.created_at,
-    id: function_.id,
-    name: function_.name,
-    slug: function_.slug,
-    status: function_.status,
-    updated_at: function_.updated_at,
-    version: function_.version,
     ...(function_.entrypoint_path != null ? { entrypoint_path: function_.entrypoint_path } : {}),
     ...(function_.ezbr_sha256 != null ? { ezbr_sha256: function_.ezbr_sha256 } : {}),
     ...(function_.import_map != null ? { import_map: function_.import_map } : {}),
@@ -180,20 +195,53 @@ function toGoJsonFunction(function_: Functions[number]) {
   };
 }
 
-function toGoTomlFunction(function_: Functions[number]) {
+function toGoYamlFunction(function_: Functions[number]) {
+  const base = baseFunctionFields(function_);
   return {
-    CreatedAt: function_.created_at,
+    createdat: base.created_at,
+    entrypointpath: function_.entrypoint_path ?? null,
+    ezbrsha256: function_.ezbr_sha256 ?? null,
+    id: base.id,
+    importmap: function_.import_map ?? null,
+    importmappath: function_.import_map_path ?? null,
+    name: base.name,
+    slug: base.slug,
+    status: base.status,
+    updatedat: base.updated_at,
+    verifyjwt: function_.verify_jwt ?? null,
+    version: base.version,
+  };
+}
+
+function toGoJsonFunction(function_: Functions[number]) {
+  const base = baseFunctionFields(function_);
+  return {
+    created_at: base.created_at,
+    id: base.id,
+    name: base.name,
+    slug: base.slug,
+    status: base.status,
+    updated_at: base.updated_at,
+    version: base.version,
+    ...optionalGoJsonFields(function_),
+  };
+}
+
+function toGoTomlFunction(function_: Functions[number]) {
+  const base = baseFunctionFields(function_);
+  return {
+    CreatedAt: base.created_at,
     ...(function_.entrypoint_path != null ? { EntrypointPath: function_.entrypoint_path } : {}),
     ...(function_.ezbr_sha256 != null ? { EzbrSha256: function_.ezbr_sha256 } : {}),
-    Id: function_.id,
+    Id: base.id,
     ...(function_.import_map != null ? { ImportMap: function_.import_map } : {}),
     ...(function_.import_map_path != null ? { ImportMapPath: function_.import_map_path } : {}),
-    Name: function_.name,
-    Slug: function_.slug,
-    Status: function_.status,
-    UpdatedAt: function_.updated_at,
+    Name: base.name,
+    Slug: base.slug,
+    Status: base.status,
+    UpdatedAt: base.updated_at,
     ...(function_.verify_jwt != null ? { VerifyJwt: function_.verify_jwt } : {}),
-    Version: function_.version,
+    Version: base.version,
   };
 }
 
