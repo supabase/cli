@@ -662,6 +662,34 @@ describe("legacy functions serve integration", () => {
     });
   });
 
+  it.live("sanitizes dotenv parse failures from config env files", () => {
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() => writeProjectFile(".env.development", "API-KEY=secret-value\n"));
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain("failed to parse environment file:");
+        expect(error.message).toContain(".env.development");
+        expect(error.message).toContain("unexpected character '-' in variable name");
+        expect(error.message).not.toContain("secret-value");
+        expect(error.message).not.toContain('near "API-KEY=secret-value"');
+      }
+      expect(deployMockState.runCalls).toHaveLength(0);
+    });
+  });
+
   it.live("skips missing unused import map targets during serve startup", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
@@ -729,6 +757,91 @@ describe("legacy functions serve integration", () => {
       expect(
         deployMockState.runCalls.some(
           (call) => call.command === "docker" && call.args[0] === "run",
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it.live("binds deno.json import map references outside the project root", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "run") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "exec") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    const childSpawner = mockDockerLogSpawner([
+      {
+        exitCode: 1,
+        stderr: "external import map logs failed",
+      },
+    ]);
+
+    return Effect.gen(function* () {
+      const externalImportMapPath = join(dirname(tempRoot.current), "shared-import-map.json");
+
+      yield* Effect.promise(() =>
+        writeProjectConfig(
+          [
+            'project_id = "test-project"',
+            "[functions.hello]",
+            'entrypoint = "./functions/hello/index.ts"',
+            'import_map = "./functions/hello/deno.json"',
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFile(externalImportMapPath, JSON.stringify({ imports: {} })),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile(
+          "hello",
+          "deno.json",
+          JSON.stringify({
+            importMap: "../../../../shared-import-map.json",
+          }),
+        ),
+      );
+
+      const { layer } = setupServe({ childSpawner });
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain("external import map logs failed");
+      }
+
+      const dockerRun = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "run",
+      );
+      expect(dockerRun).toBeDefined();
+      if (dockerRun === undefined) {
+        throw new Error("expected docker run invocation");
+      }
+      expect(
+        extractFlagValues(dockerRun.args, "-v").some(
+          (value) =>
+            value.startsWith(`${externalImportMapPath}:`) &&
+            value.endsWith("/shared-import-map.json:ro"),
         ),
       ).toBe(true);
     });

@@ -879,6 +879,37 @@ function loadDefaultEnvFilenames(env: string) {
   return [`.env.${env}.local`, ...(env === "test" ? [] : [".env.local"]), `.env.${env}`, ".env"];
 }
 
+function sanitizeDotEnvParseError(path: string, cause: unknown) {
+  if (!(cause instanceof Error)) {
+    return new Error(`failed to parse environment file: ${path}`);
+  }
+  const message = cause.message;
+  if (message.startsWith('unexpected character "')) {
+    const prefix = 'unexpected character "';
+    const start = message.indexOf(prefix);
+    if (start !== -1) {
+      const charStart = start + prefix.length;
+      const charEnd = message.indexOf('"', charStart);
+      if (charEnd !== -1) {
+        const char = message.slice(charStart, charEnd);
+        return new Error(
+          `failed to parse environment file: ${path} (unexpected character '${char}' in variable name)`,
+        );
+      }
+    }
+    return new Error(
+      `failed to parse environment file: ${path} (unexpected character in variable name)`,
+    );
+  }
+  if (message.startsWith("unterminated quoted value")) {
+    return new Error(`failed to parse environment file: ${path} (unterminated quoted value)`);
+  }
+  if (message.includes("\n")) {
+    return new Error(`failed to parse environment file: ${path} (syntax error)`);
+  }
+  return new Error(`failed to load ${path}: ${message}`);
+}
+
 function ambientProjectEnv() {
   return Object.fromEntries(
     Object.entries(process.env).flatMap(([key, value]) =>
@@ -922,7 +953,7 @@ const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: st
       loadedPaths.push(envPath);
       const parsed = yield* Effect.try({
         try: () => parseDotEnv(contents),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+        catch: (cause) => sanitizeDotEnvParseError(envPath, cause),
       });
       for (const [key, value] of Object.entries(parsed)) {
         if (values[key] !== undefined) {
@@ -1341,11 +1372,11 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     const dockerEnv = Object.fromEntries(env.map(splitEnvEntry));
     const { singleLine: singleLineDockerEnv, multiline: multilineDockerEnv } =
       partitionDockerEnvEntries(dockerEnv);
-    const dockerEnvFile = yield* Effect.tryPromise(() => writeDockerEnvFile(singleLineDockerEnv));
     yield* Effect.try({
       try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     });
+    const dockerEnvFile = yield* Effect.tryPromise(() => writeDockerEnvFile(singleLineDockerEnv));
     const multilineEnvDir = "/root/.supabase/multiline-env";
     const dockerMultilineEnvScript = yield* Effect.tryPromise(() =>
       writeDockerMultilineEnvScript(multilineDockerEnv, multilineEnvDir),

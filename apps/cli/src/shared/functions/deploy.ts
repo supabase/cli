@@ -848,6 +848,19 @@ async function resolveImportMapAllowedRoots(projectRoot: string, importMapPath: 
   if (!isContainedPath(realProjectRoot, realImportMapPath)) {
     allowedRoots.push(dirname(realImportMapPath));
   }
+  if (isDenoConfigFile(importMapPath)) {
+    const contents = await readFile(importMapPath);
+    const parsed = JSON.parse(stripJsonComments(new TextDecoder().decode(contents)));
+    const importMap = ImportMapFile.fromUnknown(parsed);
+    if (importMap.importMapReference.length > 0) {
+      const referencedImportMapPath = await realpath(
+        join(dirname(importMapPath), importMap.importMapReference),
+      );
+      if (!isContainedPath(realProjectRoot, referencedImportMapPath)) {
+        allowedRoots.push(dirname(referencedImportMapPath));
+      }
+    }
+  }
   return allowedRoots;
 }
 
