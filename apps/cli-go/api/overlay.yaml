@@ -44,6 +44,23 @@ actions:
 - target: $.components.schemas.JitStateResponse.discriminator
   description: Replaces discriminated union with concrete type
   remove: true
+- target: $.components.schemas.JitListAccessResponse.properties.items.items.oneOf[0].properties.invite_id
+  description: Replaces null-only project user invite id with nullable UUID for oapi-codegen
+  update:
+    type: string
+    format: uuid
+    nullable: true
+- target: $.components.schemas.JitListAccessResponse.properties.items.items.oneOf[0].properties.expires_at
+  description: Replaces null-only project user invite expiry with nullable string for oapi-codegen
+  update:
+    type: string
+    nullable: true
+- target: $.components.schemas.JitListAccessResponse.properties.items.items.oneOf[1].properties.user_id
+  description: Replaces null-only invited user id with nullable UUID for oapi-codegen
+  update:
+    type: string
+    format: uuid
+    nullable: true
 - target: $.components.schemas.ProjectUpgradeEligibilityResponse.properties.warnings.items.discriminator
   description: Removes inline warning discriminator that oapi-codegen cannot map
   remove: true

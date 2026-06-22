@@ -67,13 +67,29 @@ describe("default rules — pass and fail fixtures", () => {
     expect(evalScalar(q, { "unused_indexes.csv": "index\n" })).toEqual(Option.none());
   });
 
-  it("Check cache hit: numeric compare with OR", () => {
+  it("No duplicate indexes: reports indexes with the same table and columns", () => {
+    const q = rule("No duplicate indexes");
+    expect(
+      evalScalar(q, {
+        "index_stats.csv":
+          "name,table,columns\npublic.idx_a,public.accounts,user_id\npublic.idx_b,public.accounts,user_id\npublic.idx_c,public.accounts,email\n",
+      }),
+    ).toEqual(Option.some("public.idx_a,public.idx_b"));
+    expect(
+      evalScalar(q, {
+        "index_stats.csv":
+          "name,table,columns\npublic.idx_a,public.accounts,user_id\npublic.idx_c,public.accounts,email\n",
+      }),
+    ).toEqual(Option.none());
+  });
+
+  it("Check cache hit: numeric compare with OR and string concatenation", () => {
     const q = rule("Check cache hit is within acceptable bounds");
     expect(
       evalScalar(q, {
         "db_stats.csv": "name,index_hit_rate,table_hit_rate\npostgres,0.90,0.99\n",
       }),
-    ).toEqual(Option.some("postgres"));
+    ).toEqual(Option.some("index: 0.90, table: 0.99"));
     expect(
       evalScalar(q, {
         "db_stats.csv": "name,index_hit_rate,table_hit_rate\npostgres,0.99,0.99\n",
@@ -105,16 +121,18 @@ describe("default rules — pass and fail fixtures", () => {
     ).toEqual(Option.none());
   });
 
-  it("Waiting on autovacuum (rule 6) references s.tbl, which vacuum_stats lacks → errors (Go-verbatim)", () => {
-    // rules.toml uses `s.tbl` but vacuum_stats.sql emits the column as `name`; csvq
-    // raises unknown-column and the report surfaces it as the rule's STATUS cell.
-    // Preserved verbatim for strict Go parity (see report.rules.ts).
+  it("Waiting on autovacuum: uses the vacuum_stats name column", () => {
     const q = rule("No large tables waiting on autovacuum");
-    expect(() =>
+    expect(
       evalScalar(q, {
         "vacuum_stats.csv": "name,expect_autovacuum,rowcount\npublic.t,yes,2000\n",
       }),
-    ).toThrow(LegacyInspectCsvqError);
+    ).toEqual(Option.some("public.t"));
+    expect(
+      evalScalar(q, {
+        "vacuum_stats.csv": "name,expect_autovacuum,rowcount\npublic.t,no,2000\n",
+      }),
+    ).toEqual(Option.none());
   });
 
   it("evaluator mechanics: alias-qualified string + numeric AND predicate", () => {
@@ -148,6 +166,43 @@ describe("default rules — pass and fail fixtures", () => {
           "name,rowcount,last_autovacuum,last_vacuum\npublic.t,2000,2024-01-01 00:00,2024-01-01 00:00\n",
       }),
     ).toEqual(Option.none());
+  });
+
+  it("Dead rows: supports FLOAT(REPLACE(...)) for thousands-grouped counts", () => {
+    const q = rule("No tables with more than 20% dead rows");
+    expect(
+      evalScalar(q, {
+        "vacuum_stats.csv": 'name,rowcount,dead_rowcount\npublic.t,"2,000",501\n',
+      }),
+    ).toEqual(Option.some("public.t"));
+    expect(
+      evalScalar(q, {
+        "vacuum_stats.csv": 'name,rowcount,dead_rowcount\npublic.t,"2,000",100\n',
+      }),
+    ).toEqual(Option.none());
+  });
+
+  it("New report health rules inspect replication slots, blocking, long running queries, and bloat", () => {
+    expect(
+      evalScalar(rule("No inactive replication slots"), {
+        "replication_slots.csv": "slot_name,active\nslot_a,f\nslot_b,t\n",
+      }),
+    ).toEqual(Option.some("slot_a"));
+    expect(
+      evalScalar(rule("No blocked queries"), {
+        "blocking.csv": "blocked_pid\n42\n",
+      }),
+    ).toEqual(Option.some("42"));
+    expect(
+      evalScalar(rule("No queries running longer than 5 minutes"), {
+        "long_running_queries.csv": "pid\n99\n",
+      }),
+    ).toEqual(Option.some("99"));
+    expect(
+      evalScalar(rule("No tables or indexes with bloat ratio above 4x"), {
+        "bloat.csv": "name,bloat\npublic.t,4.1\npublic.ok,2\n",
+      }),
+    ).toEqual(Option.some("public.t"));
   });
 });
 

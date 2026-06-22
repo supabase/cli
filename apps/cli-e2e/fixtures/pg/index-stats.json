@@ -1,5 +1,5 @@
 {
-  "columns": ["name", "size", "percent_used", "index_scans", "seq_scans", "unused"],
-  "typeOids": [25, 25, 25, 20, 20, 16],
-  "rows": [["public.users_email_idx", "1024 kB", "87%", "25000", "300", "f"]]
+  "columns": ["name", "table", "columns", "size", "percent_used", "index_scans", "seq_scans", "unused"],
+  "typeOids": [25, 25, 25, 25, 25, 20, 20, 16],
+  "rows": [["public.users_email_idx", "public.users", "email", "1024 kB", "87%", "25000", "300", "f"]]
 }
