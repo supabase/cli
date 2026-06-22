@@ -1,5 +1,6 @@
 import { Effect, FileSystem } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { LegacySeedStorageNetworkError, LegacySeedStorageStatusError } from "./buckets.errors.ts";
@@ -88,6 +89,23 @@ function failParse(detail: string): LegacySeedStorageNetworkError {
   return new LegacySeedStorageNetworkError({ message: `failed to parse response body: ${detail}` });
 }
 
+/**
+ * Port-conflict hint appended to a local transport failure, mirroring Go's
+ * `localGatewayHint` (`apps/cli-go/pkg/fetcher/http.go:117-143`). Go gates on the
+ * configured host being local + the error message matching its net/http strings
+ * (`malformed HTTP response` / timeout); Bun/undici don't emit those exact
+ * strings, so the caller gates on a local `apiPort` + an Effect `TransportError`
+ * instead — the appended text stays byte-identical. Hoist to `legacy/shared/`
+ * when `storage ls/cp/mv/rm` land (same fetcher path).
+ */
+function legacyLocalGatewayHint(port: number): string {
+  return (
+    "The local Supabase API gateway did not return a valid HTTP response. " +
+    `Another process may be listening on the configured API port ${port}. ` +
+    `Check the port with \`lsof -nP -iTCP:${port} -sTCP:LISTEN\`, then stop the conflicting process or set a different \`api.port\` in supabase/config.toml.`
+  );
+}
+
 const parseJsonBody = (body: string): Effect.Effect<unknown, LegacySeedStorageNetworkError> =>
   Effect.try({
     try: () => JSON.parse(body) as unknown,
@@ -161,6 +179,29 @@ const decodeVectorBucketNames = (
     return names;
   });
 
+/**
+ * Validate a create/update bucket success body. Go's `CreateBucket`/`UpdateBucket`
+ * decode the 200 body via `fetcher.ParseJSON` into `{name}`/`{message}`
+ * (`pkg/storage/buckets.go:46,65`) and fail on a non-JSON/empty body before later
+ * uploads. The decoded value is unused (Go ignores it too) — this is purely the
+ * validity gate. `null` is tolerated (Go's `json.Decode` accepts it); a non-object
+ * top-level or a present-but-wrong-typed field fails.
+ */
+const decodeMutationResponse = (
+  body: string,
+  field: string,
+): Effect.Effect<void, LegacySeedStorageNetworkError> =>
+  Effect.gen(function* () {
+    const parsed = yield* parseJsonBody(body);
+    if (parsed === null) return;
+    const obj = asObject(parsed);
+    if (obj === null || decodeStringField(obj, field) === null) {
+      return yield* Effect.fail(
+        failParse(`invalid ${field === "name" ? "create" : "update"} bucket response`),
+      );
+    }
+  });
+
 /** Decode an array body of `{name, ...}` objects to names (Go `[]AnalyticsBucketResponse`). */
 const decodeAnalyticsBucketNames = (
   body: string,
@@ -207,9 +248,32 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly userAgent: string;
+  /**
+   * Local API port; set ONLY for the local stack (left undefined for remote
+   * `--linked`). When set, a transport failure appends Go's port-conflict hint,
+   * matching `localGatewayHint` only firing for the local URL.
+   */
+  readonly apiPort?: number;
 }) {
   const httpClient = yield* HttpClient.HttpClient;
   const fs = yield* FileSystem.FileSystem;
+
+  // Map a transport/request failure to a network error, appending Go's
+  // local-gateway port-conflict hint when this is the local stack and the
+  // failure is at the transport layer (`localGatewayHint`).
+  const networkError = (cause: unknown): LegacySeedStorageNetworkError => {
+    const base = `failed to execute http request: ${cause}`;
+    if (
+      opts.apiPort !== undefined &&
+      HttpClientError.isHttpClientError(cause) &&
+      cause.reason._tag === "TransportError"
+    ) {
+      return new LegacySeedStorageNetworkError({
+        message: `${base}\n\n${legacyLocalGatewayHint(opts.apiPort)}`,
+      });
+    }
+    return new LegacySeedStorageNetworkError({ message: base });
+  };
 
   // Go's `withAuthToken` (`pkg/fetcher/gateway.go:22`) gates the bearer header on
   // a plain `sb_` prefix check: opaque `sb_...` keys are not JWTs, so only the
@@ -238,14 +302,7 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
       const response = yield* httpClient.execute(req);
       const text = yield* response.text;
       return { status: response.status, body: text };
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new LegacySeedStorageNetworkError({
-            message: `failed to execute http request: ${cause}`,
-          }),
-      ),
-    );
+    }).pipe(Effect.mapError(networkError));
     if (status !== 200) {
       return yield* Effect.fail(
         new LegacySeedStorageStatusError({
@@ -270,13 +327,13 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
         withAuth(HttpClientRequest.post(url("/storage/v1/bucket"))).pipe(
           HttpClientRequest.bodyJsonUnsafe({ name, ...legacyBucketBody(props) }),
         ),
-      ).pipe(Effect.asVoid),
+      ).pipe(Effect.flatMap((body) => decodeMutationResponse(body, "name"))),
     updateBucket: (id, props) =>
       send(
         withAuth(HttpClientRequest.put(url(`/storage/v1/bucket/${id}`))).pipe(
           HttpClientRequest.bodyJsonUnsafe(legacyBucketBody(props)),
         ),
-      ).pipe(Effect.asVoid),
+      ).pipe(Effect.flatMap((body) => decodeMutationResponse(body, "message"))),
     listVectorBuckets: () =>
       send(
         withAuth(HttpClientRequest.post(url("/storage/v1/vector/ListVectorBuckets"))).pipe(

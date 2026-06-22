@@ -636,6 +636,53 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("appends Go's port-conflict hint on a local transport failure", () => {
+    const { layer } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[api]\nport = 7654\n[storage.buckets.test]\npublic = true\n",
+      routes: [{ method: "GET", match: "/storage/v1/bucket", transport: true }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const s = JSON.stringify(exit);
+      expect(s).toContain("Another process may be listening on the configured API port 7654");
+      expect(s).toContain("lsof -nP -iTCP:7654 -sTCP:LISTEN");
+    });
+  });
+
+  it.live("omits the port-conflict hint on a --linked (remote) transport failure", () => {
+    const { layer } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.test]\npublic = true\n",
+      projectRef: LEGACY_VALID_REF,
+      args: ["seed", "buckets", "--linked"],
+      routes: [{ method: "GET", match: "/storage/v1/bucket", transport: true }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets({ linked: true, local: false }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).not.toContain("Another process may be listening");
+    });
+  });
+
+  it.live("fails when a bucket create returns a non-object body (Go ParseJSON)", () => {
+    const { layer } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.images]\npublic = true\n",
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        // Go decodes the create 200 body into {name}; a non-object body fails.
+        { method: "POST", match: "/storage/v1/bucket", body: [] },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("failed to parse response body");
+    });
+  });
+
   it.live("skips vector seeding when enabled but no vector buckets are configured", () => {
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.vector]\nenabled = true\n[storage.buckets.images]\npublic = true\n",

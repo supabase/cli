@@ -335,6 +335,8 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
         baseUrl,
         apiKey,
         userAgent: cliConfig.userAgent,
+        // Local stack only — drives Go's port-conflict hint on transport failure.
+        apiPort: projectRef === "" ? config.api.port : undefined,
       });
 
       const summary = emptySummary();
