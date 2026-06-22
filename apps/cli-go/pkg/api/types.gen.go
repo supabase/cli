@@ -1832,6 +1832,12 @@ const (
 	Desc V1ListAllSnippetsParamsSortOrder = "desc"
 )
 
+// AcceptInviteExternalUserJitAccessBody defines model for AcceptInviteExternalUserJitAccessBody.
+type AcceptInviteExternalUserJitAccessBody struct {
+	Email openapi_types.Email `json:"email"`
+	Token string              `json:"token"`
+}
+
 // ActionRunResponse defines model for ActionRunResponse.
 type ActionRunResponse struct {
 	BranchId   string                         `json:"branch_id"`
@@ -2858,6 +2864,43 @@ type GetProviderResponse struct {
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
+// InviteExternalUserJitAccessBody defines model for InviteExternalUserJitAccessBody.
+type InviteExternalUserJitAccessBody struct {
+	Email openapi_types.Email `json:"email"`
+	Roles []struct {
+		AllowedNetworks *struct {
+			AllowedCidrs *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs,omitempty"`
+			AllowedCidrsV6 *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs_v6,omitempty"`
+		} `json:"allowed_networks,omitempty"`
+		BranchesOnly *bool    `json:"branches_only,omitempty"`
+		ExpiresAt    *float32 `json:"expires_at,omitempty"`
+		Role         string   `json:"role"`
+	} `json:"roles"`
+}
+
+// InviteExternalUserJitResponse defines model for InviteExternalUserJitResponse.
+type InviteExternalUserJitResponse struct {
+	Email     openapi_types.Email `json:"email"`
+	InviteId  openapi_types.UUID  `json:"invite_id"`
+	UserRoles []struct {
+		AllowedNetworks *struct {
+			AllowedCidrs *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs,omitempty"`
+			AllowedCidrsV6 *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs_v6,omitempty"`
+		} `json:"allowed_networks,omitempty"`
+		BranchesOnly *bool    `json:"branches_only,omitempty"`
+		ExpiresAt    *float32 `json:"expires_at,omitempty"`
+		Role         string   `json:"role"`
+	} `json:"user_roles"`
+}
+
 // JitAccessRequestRequest defines model for JitAccessRequestRequest.
 type JitAccessRequestRequest struct {
 	State JitAccessRequestRequestState `json:"state"`
@@ -2868,7 +2911,7 @@ type JitAccessRequestRequestState string
 
 // JitAccessResponse defines model for JitAccessResponse.
 type JitAccessResponse struct {
-	UserId    openapi_types.UUID `json:"user_id"`
+	UserId    *openapi_types.UUID `json:"user_id,omitempty"`
 	UserRoles []struct {
 		AllowedNetworks *struct {
 			AllowedCidrs *[]struct {
@@ -2904,22 +2947,54 @@ type JitAuthorizeAccessResponse struct {
 
 // JitListAccessResponse defines model for JitListAccessResponse.
 type JitListAccessResponse struct {
-	Items []struct {
-		UserId    openapi_types.UUID `json:"user_id"`
-		UserRoles []struct {
-			AllowedNetworks *struct {
-				AllowedCidrs *[]struct {
-					Cidr string `json:"cidr"`
-				} `json:"allowed_cidrs,omitempty"`
-				AllowedCidrsV6 *[]struct {
-					Cidr string `json:"cidr"`
-				} `json:"allowed_cidrs_v6,omitempty"`
-			} `json:"allowed_networks,omitempty"`
-			BranchesOnly *bool    `json:"branches_only,omitempty"`
-			ExpiresAt    *float32 `json:"expires_at,omitempty"`
-			Role         string   `json:"role"`
-		} `json:"user_roles"`
-	} `json:"items"`
+	Items []JitListAccessResponse_Items_Item `json:"items"`
+}
+
+// JitListAccessResponseItems0 defines model for .
+type JitListAccessResponseItems0 struct {
+	ExpiresAt    nullable.Nullable[string]             `json:"expires_at"`
+	InviteId     nullable.Nullable[openapi_types.UUID] `json:"invite_id"`
+	PrimaryEmail nullable.Nullable[string]             `json:"primary_email"`
+	UserId       openapi_types.UUID                    `json:"user_id"`
+	UserRoles    []struct {
+		AllowedNetworks *struct {
+			AllowedCidrs *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs,omitempty"`
+			AllowedCidrsV6 *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs_v6,omitempty"`
+		} `json:"allowed_networks,omitempty"`
+		BranchesOnly *bool    `json:"branches_only,omitempty"`
+		ExpiresAt    *float32 `json:"expires_at,omitempty"`
+		Role         string   `json:"role"`
+	} `json:"user_roles"`
+}
+
+// JitListAccessResponseItems1 defines model for .
+type JitListAccessResponseItems1 struct {
+	ExpiresAt    string                                `json:"expires_at"`
+	InviteId     openapi_types.UUID                    `json:"invite_id"`
+	PrimaryEmail string                                `json:"primary_email"`
+	UserId       nullable.Nullable[openapi_types.UUID] `json:"user_id"`
+	UserRoles    []struct {
+		AllowedNetworks *struct {
+			AllowedCidrs *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs,omitempty"`
+			AllowedCidrsV6 *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs_v6,omitempty"`
+		} `json:"allowed_networks,omitempty"`
+		BranchesOnly *bool    `json:"branches_only,omitempty"`
+		ExpiresAt    *float32 `json:"expires_at,omitempty"`
+		Role         string   `json:"role"`
+	} `json:"user_roles"`
+}
+
+// JitListAccessResponse_Items_Item defines model for JitListAccessResponse.items.Item.
+type JitListAccessResponse_Items_Item struct {
+	union json.RawMessage
 }
 
 // JitStateResponse defines model for JitStateResponse.
@@ -5523,6 +5598,12 @@ type V1AuthorizeJitAccessJSONRequestBody = AuthorizeJitAccessBody
 // V1UpdateJitAccessJSONRequestBody defines body for V1UpdateJitAccess for application/json ContentType.
 type V1UpdateJitAccessJSONRequestBody = UpdateJitAccessBody
 
+// V1InviteExternalJitAccessJSONRequestBody defines body for V1InviteExternalJitAccess for application/json ContentType.
+type V1InviteExternalJitAccessJSONRequestBody = InviteExternalUserJitAccessBody
+
+// V1AcceptInviteExternalJitAccessJSONRequestBody defines body for V1AcceptInviteExternalJitAccess for application/json ContentType.
+type V1AcceptInviteExternalJitAccessJSONRequestBody = AcceptInviteExternalUserJitAccessBody
+
 // V1ApplyAMigrationJSONRequestBody defines body for V1ApplyAMigration for application/json ContentType.
 type V1ApplyAMigrationJSONRequestBody = V1CreateMigrationBody
 
@@ -6150,6 +6231,68 @@ func (t DiskResponse_Attributes) MarshalJSON() ([]byte, error) {
 }
 
 func (t *DiskResponse_Attributes) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsJitListAccessResponseItems0 returns the union data inside the JitListAccessResponse_Items_Item as a JitListAccessResponseItems0
+func (t JitListAccessResponse_Items_Item) AsJitListAccessResponseItems0() (JitListAccessResponseItems0, error) {
+	var body JitListAccessResponseItems0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromJitListAccessResponseItems0 overwrites any union data inside the JitListAccessResponse_Items_Item as the provided JitListAccessResponseItems0
+func (t *JitListAccessResponse_Items_Item) FromJitListAccessResponseItems0(v JitListAccessResponseItems0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeJitListAccessResponseItems0 performs a merge with any union data inside the JitListAccessResponse_Items_Item, using the provided JitListAccessResponseItems0
+func (t *JitListAccessResponse_Items_Item) MergeJitListAccessResponseItems0(v JitListAccessResponseItems0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsJitListAccessResponseItems1 returns the union data inside the JitListAccessResponse_Items_Item as a JitListAccessResponseItems1
+func (t JitListAccessResponse_Items_Item) AsJitListAccessResponseItems1() (JitListAccessResponseItems1, error) {
+	var body JitListAccessResponseItems1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromJitListAccessResponseItems1 overwrites any union data inside the JitListAccessResponse_Items_Item as the provided JitListAccessResponseItems1
+func (t *JitListAccessResponse_Items_Item) FromJitListAccessResponseItems1(v JitListAccessResponseItems1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeJitListAccessResponseItems1 performs a merge with any union data inside the JitListAccessResponse_Items_Item, using the provided JitListAccessResponseItems1
+func (t *JitListAccessResponse_Items_Item) MergeJitListAccessResponseItems1(v JitListAccessResponseItems1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t JitListAccessResponse_Items_Item) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *JitListAccessResponse_Items_Item) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

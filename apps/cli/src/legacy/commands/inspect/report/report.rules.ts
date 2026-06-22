@@ -19,7 +19,7 @@ export interface LegacyInspectRule {
 }
 
 /**
- * The 7 default rules, ported verbatim from
+ * The default rules, ported verbatim from
  * `apps/cli-go/internal/inspect/templates/rules.toml`. Used when
  * `[experimental.inspect.rules]` is absent or empty in `config.toml`.
  */
@@ -44,7 +44,14 @@ export const LEGACY_DEFAULT_INSPECT_RULES: ReadonlyArray<LegacyInspectRule> = [
   },
   {
     query:
-      "SELECT LISTAGG(name, ',') AS match FROM `db_stats.csv` WHERE index_hit_rate < 0.94 OR table_hit_rate < 0.94",
+      "SELECT LISTAGG(i.name, ',') AS match FROM `index_stats.csv` AS i JOIN (SELECT `table`, columns FROM `index_stats.csv` GROUP BY `table`, columns HAVING COUNT(*) > 1) AS d ON i.`table` = d.`table` AND i.columns = d.columns",
+    name: "No duplicate indexes",
+    pass: "✔",
+    fail: "There is at least one duplicate index (same columns on the same table)",
+  },
+  {
+    query:
+      "SELECT 'index: ' || index_hit_rate || ', table: ' || table_hit_rate AS match FROM `db_stats.csv` WHERE index_hit_rate < 0.94 OR table_hit_rate < 0.94",
     name: "Check cache hit is within acceptable bounds",
     pass: "✔",
     fail: "There is a cache hit ratio (table or index) below 94%",
@@ -57,13 +64,8 @@ export const LEGACY_DEFAULT_INSPECT_RULES: ReadonlyArray<LegacyInspectRule> = [
     fail: "At least one table is showing sequential scans more than 10% of total row count",
   },
   {
-    // NOTE: this query references `s.tbl`, but `vacuum_stats.sql` emits the column
-    // as `name` (there is no `tbl` column). csvq — and this evaluator — therefore
-    // raise an unknown-column error that surfaces as the rule's STATUS cell on real
-    // data. This is a pre-existing quirk in Go's `templates/rules.toml` and is kept
-    // VERBATIM for strict parity; do not "fix" it to `s.name` without changing Go.
     query:
-      "SELECT LISTAGG(s.tbl, ',') AS match FROM `vacuum_stats.csv` s WHERE s.expect_autovacuum = 'yes' and s.rowcount > 1000;",
+      "SELECT LISTAGG(s.name, ',') AS match FROM `vacuum_stats.csv` s WHERE s.expect_autovacuum = 'yes' and s.rowcount > 1000;",
     name: "No large tables waiting on autovacuum",
     pass: "✔",
     fail: "At least one table is waiting on autovacuum",
@@ -74,6 +76,38 @@ export const LEGACY_DEFAULT_INSPECT_RULES: ReadonlyArray<LegacyInspectRule> = [
     name: "No tables yet to be vacuumed",
     pass: "✔",
     fail: "At least one table has never had autovacuum or vacuum run on it",
+  },
+  {
+    query:
+      "SELECT LISTAGG(s.name, ',') AS match FROM `vacuum_stats.csv` s WHERE FLOAT(REPLACE(s.rowcount, ',', '')) > 1000 AND FLOAT(REPLACE(s.dead_rowcount, ',', '')) > 0.2 * FLOAT(REPLACE(s.rowcount, ',', ''))",
+    name: "No tables with more than 20% dead rows",
+    pass: "✔",
+    fail: "At least one table has more than 20% dead rows",
+  },
+  {
+    query:
+      "SELECT LISTAGG(slot_name, ',') AS match FROM `replication_slots.csv` WHERE active = 'f'",
+    name: "No inactive replication slots",
+    pass: "✔",
+    fail: "There is at least one inactive replication slot",
+  },
+  {
+    query: "SELECT LISTAGG(blocked_pid, ',') AS match FROM `blocking.csv`",
+    name: "No blocked queries",
+    pass: "✔",
+    fail: "There is at least one query blocked on another",
+  },
+  {
+    query: "SELECT LISTAGG(pid, ',') AS match FROM `long_running_queries.csv`",
+    name: "No queries running longer than 5 minutes",
+    pass: "✔",
+    fail: "At least one query has been running for more than 5 minutes",
+  },
+  {
+    query: "SELECT LISTAGG(name, ',') AS match FROM `bloat.csv` WHERE bloat > 4",
+    name: "No tables or indexes with bloat ratio above 4x",
+    pass: "✔",
+    fail: "At least one table or index is more than 4x its expected size",
   },
 ];
 
@@ -107,11 +141,20 @@ export function legacyEvaluateInspectRule(
     if (match.value === "") {
       return { name: rule.name, status: rule.pass, matches: "" };
     }
-    return { name: rule.name, status: rule.fail, matches: match.value };
+    return {
+      name: rule.name,
+      status: rule.fail,
+      matches: legacySummarizeInspectRuleMatch(match.value),
+    };
   } catch (error) {
     const message = error instanceof LegacyInspectCsvqError ? error.message : String(error);
     return { name: rule.name, status: message, matches: "-" };
   }
+}
+
+function legacySummarizeInspectRuleMatch(match: string): string {
+  if (match.length <= 20) return match;
+  return `${match.split(",").length} matches`;
 }
 
 /**

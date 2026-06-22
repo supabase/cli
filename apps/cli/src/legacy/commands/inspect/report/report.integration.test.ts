@@ -167,15 +167,18 @@ const flags = (over: Partial<LegacyInspectReportFlags> = {}): LegacyInspectRepor
 
 // One CSV per referenced file with the REAL column headers each query emits, so
 // column lookups resolve exactly as they would against Postgres. `locks.csv`
-// carries an old (rule 1 fail) but granted (rule 2 pass) row. Note `vacuum_stats`
-// has no `tbl` column (it never did) — default rule 6 references `s.tbl` verbatim
-// from Go, so it surfaces an unknown-column error as its STATUS cell.
+// carries an old (rule 1 fail) but granted (rule 2 pass) row.
 const DEFAULT_RULE_CSVS: Record<string, string> = {
   "locks.csv": "stmt,age,granted\nLOCK_A,00:05:00,t\n",
   "unused_indexes.csv": "index\n",
+  "index_stats.csv": "name,table,columns\n",
   "db_stats.csv": "name,index_hit_rate,table_hit_rate\npostgres,0.99,0.99\n",
   "table_stats.csv": "name,seq_scans,estimated_row_count\n",
-  "vacuum_stats.csv": "name,rowcount,expect_autovacuum,last_autovacuum,last_vacuum\n",
+  "vacuum_stats.csv": "name,rowcount,dead_rowcount,expect_autovacuum,last_autovacuum,last_vacuum\n",
+  "replication_slots.csv": "slot_name,active\n",
+  "blocking.csv": "blocked_pid\n",
+  "long_running_queries.csv": "pid\n",
+  "bloat.csv": "name,bloat\n",
 };
 
 function localDateFolder(): string {
@@ -328,9 +331,7 @@ describe("legacy inspect report", () => {
       expect(out.stdoutText).toContain("LOCK_A");
       // Rule 2 passes (lock is granted): ✔.
       expect(out.stdoutText).toContain("✔");
-      // Rule 6 references `s.tbl` (Go-verbatim) which vacuum_stats lacks → the
-      // unknown-column error is shown as its STATUS cell, command still succeeds.
-      expect(out.stdoutText).toContain("unknown column: tbl");
+      expect(out.stdoutText).toContain("No duplicate indexes");
     }).pipe(Effect.provide(layer));
   });
 
@@ -437,7 +438,7 @@ describe("legacy inspect report", () => {
       ).data;
       expect(data?.files?.length).toBe(14);
       expect(typeof data?.outputDir).toBe("string");
-      expect(data?.rules?.length).toBe(7);
+      expect(data?.rules?.length).toBe(13);
       // CSVs are still written.
       expect(dateFolderContents(base).files.length).toBe(14);
       // No progress lines in machine mode.

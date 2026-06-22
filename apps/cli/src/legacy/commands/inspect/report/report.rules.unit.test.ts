@@ -52,6 +52,14 @@ describe("legacyEvaluateInspectRule", () => {
     expect(result.status).not.toBe(RULE.pass);
     expect(result.status).not.toBe(RULE.fail);
   });
+
+  it("summarizes long match lists by count", () => {
+    const result = legacyEvaluateInspectRule(
+      RULE,
+      provider({ "locks.csv": "stmt,granted\none,f\ntwo,f\nthree,f\nfour,f\nfive,f\n" }),
+    );
+    expect(result).toEqual({ name: RULE.name, status: RULE.fail, matches: "5 matches" });
+  });
 });
 
 describe("legacyBuildRuleSummaryRows", () => {
