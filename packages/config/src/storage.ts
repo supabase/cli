@@ -1,4 +1,4 @@
-import { Effect, Schema } from "effect";
+import { Effect, Schema, SchemaGetter } from "effect";
 
 const links = [
   {
@@ -24,23 +24,42 @@ const defaultMaxTables = 10;
 const defaultMaxCatalogs = 2;
 const defaultAnalyticsBuckets = {};
 const defaultVector = {};
-const defaultVectorEnabled = false;
+// Go's embedded config template sets `[storage.vector] enabled = true`, which
+// `config.Load` merges as the base layer, so an omitted key resolves to `true`
+// (apps/cli-go/pkg/config/templates/config.toml + config_test.go:40).
+const defaultVectorEnabled = true;
 const defaultMaxBuckets = 10;
 const defaultMaxIndexes = 5;
 const defaultVectorBuckets = {};
+
+/**
+ * `file_size_limit` accepts both a human-readable string (`"50MiB"`) and a bare
+ * byte count (`5000000`), matching Go's `sizeInBytes` decoder
+ * (apps/cli-go/pkg/config/config_test.go:TestFileSizeLimitConfigParsing). A
+ * numeric value is normalized to its decimal string so the decoded type stays a
+ * `string` for all consumers (`ramInBytes` parses either form identically).
+ */
+const fileSizeLimit = Schema.Union([Schema.String, Schema.Number]).pipe(
+  Schema.decodeTo(Schema.String, {
+    decode: SchemaGetter.transform((value) => (typeof value === "number" ? String(value) : value)),
+    encode: SchemaGetter.transform((value) => value),
+  }),
+);
 
 const bucketSchema = Schema.Struct({
   public: Schema.Boolean.annotate({
     default: defaultBucketPublic,
     description: "Enable public access to the bucket.",
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultBucketPublic))),
-  file_size_limit: Schema.String.annotate({
-    default: defaultBucketFileSizeLimit,
-    description: "The maximum file size allowed for the bucket.",
-    examples: ["5MB", "500KB"],
-    tags,
-    links,
-  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultBucketFileSizeLimit))),
+  file_size_limit: fileSizeLimit
+    .annotate({
+      default: defaultBucketFileSizeLimit,
+      description: "The maximum file size allowed for the bucket.",
+      examples: ["5MB", "500KB"],
+      tags,
+      links,
+    })
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultBucketFileSizeLimit))),
   allowed_mime_types: Schema.Array(
     Schema.String.annotate({
       description: "A MIME type allowed for the bucket.",
@@ -67,13 +86,15 @@ export const storage = Schema.Struct({
     tags,
     links,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
-  file_size_limit: Schema.String.annotate({
-    default: defaultFileSizeLimit,
-    description: "The maximum file size allowed.",
-    examples: ["5MB", "500KB"],
-    tags,
-    links,
-  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultFileSizeLimit))),
+  file_size_limit: fileSizeLimit
+    .annotate({
+      default: defaultFileSizeLimit,
+      description: "The maximum file size allowed.",
+      examples: ["5MB", "500KB"],
+      tags,
+      links,
+    })
+    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultFileSizeLimit))),
   image_transformation: Schema.optionalKey(
     Schema.Struct({
       enabled: Schema.Boolean.annotate({
