@@ -3,8 +3,10 @@ import { defaultJwtSecret, generateJwt } from "@supabase/stack/effect";
 import { Effect, FileSystem, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { legacySeedChangedTargetFlags } from "./buckets.flags.ts";
 import { legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -18,6 +20,7 @@ import {
 } from "./buckets.gateway.ts";
 import {
   LegacySeedConfigLoadError,
+  LegacySeedMutuallyExclusiveFlagsError,
   LegacySeedStorageNetworkError,
   LegacySeedStorageStatusError,
 } from "./buckets.errors.ts";
@@ -77,8 +80,17 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const cliArgs = yield* CliArgs;
 
   yield* Effect.gen(function* () {
+    // 0. Reproduce cobra's MarkFlagsMutuallyExclusive("local", "linked").
+    const setFlags = legacySeedChangedTargetFlags(cliArgs.args);
+    if (setFlags.length > 1) {
+      return yield* new LegacySeedMutuallyExclusiveFlagsError({
+        message: `if any flags in the group [linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
+      });
+    }
+
     // 1. Load config.toml. A parse failure aborts before any network call.
     const loaded = yield* loadProjectConfig(cliConfig.workdir).pipe(
       Effect.catchTag(

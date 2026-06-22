@@ -34,3 +34,13 @@ export class LegacySeedStorageStatusError extends Data.TaggedError("LegacySeedSt
 export class LegacySeedConfigLoadError extends Data.TaggedError("LegacySeedConfigLoadError")<{
   readonly message: string;
 }> {}
+
+/**
+ * Raised when `--local` and `--linked` are both passed, reproducing cobra's
+ * `MarkFlagsMutuallyExclusive("local", "linked")` (`apps/cli-go/cmd/seed.go:32`).
+ */
+export class LegacySeedMutuallyExclusiveFlagsError extends Data.TaggedError(
+  "LegacySeedMutuallyExclusiveFlagsError",
+)<{
+  readonly message: string;
+}> {}

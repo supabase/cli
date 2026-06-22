@@ -15,6 +15,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { legacySeedBuckets } from "./buckets.handler.ts";
 import type { LegacyBucketsFlags } from "./buckets.command.ts";
@@ -40,6 +41,7 @@ function setupLegacySeedBuckets(
     readonly format?: OutputFormat;
     readonly confirm?: ReadonlyArray<boolean>;
     readonly promptConfirmFail?: boolean;
+    readonly args?: ReadonlyArray<string>;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -86,6 +88,7 @@ function setupLegacySeedBuckets(
     telemetry.layer,
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
+    Layer.succeed(CliArgs, { args: opts.args ?? ["seed", "buckets"] }),
   );
 
   return { layer, out, requests, telemetry };
@@ -107,6 +110,21 @@ describe("legacy seed buckets", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests).toHaveLength(0);
       expect(out.stderrText).toBe("");
+    });
+  });
+
+  it.live("rejects passing both --local and --linked", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["seed", "buckets", "--local", "--linked"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "if any flags in the group [linked local] are set none of the others can be; [linked local] were all set",
+      );
+      expect(requests).toHaveLength(0);
     });
   });
 
