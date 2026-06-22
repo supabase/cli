@@ -55,6 +55,11 @@ describe("legacyParseFileSizeLimit", () => {
     expect(() => legacyParseFileSizeLimit("1 2MiB")).toThrow("invalid size");
     expect(() => legacyParseFileSizeLimit("-5MiB")).toThrow("invalid size");
   });
+
+  it("rejects an overflowing numeral (Go ParseFloat range error)", () => {
+    // 1e309 parses to Infinity in JS; Go's strconv.ParseFloat returns a range error.
+    expect(() => legacyParseFileSizeLimit("1e309")).toThrow("invalid size");
+  });
 });
 
 describe("legacyContentTypeForPath", () => {

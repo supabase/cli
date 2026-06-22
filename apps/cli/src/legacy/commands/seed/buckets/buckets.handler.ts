@@ -207,7 +207,9 @@ function emptySummary(): SeedSummary {
  * otherwise the local stack is used.
  */
 export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
-  flags: LegacyBucketsFlags,
+  // Target is selected from the changed-flag set (Go's flag.Changed), not the
+  // parsed value, so the flags arg itself is unused here.
+  _flags: LegacyBucketsFlags,
 ) {
   const output = yield* Output;
   const cliConfig = yield* LegacyCliConfig;
@@ -238,8 +240,14 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     // merged over the base config by `loadProjectConfig`. Mirrors Go's
     // `Config.ProjectId = ProjectRef` → `config.Load` sequence
     // (`apps/cli-go/pkg/config/config.go:505-518`).
+    // Go selects the target from `flag.Changed`, not the flag value
+    // (`internal/utils/flags/db_url.go:46-63`): `--linked` is the linked path
+    // whenever it's *set*, even `--linked=false`. Use the same changed-flag set
+    // as the mutual-exclusivity check, not `flags.linked`'s parsed value.
     const projectRefResolver = yield* LegacyProjectRefResolver;
-    const projectRef = flags.linked ? yield* projectRefResolver.loadProjectRef(Option.none()) : "";
+    const projectRef = setFlags.includes("linked")
+      ? yield* projectRefResolver.loadProjectRef(Option.none())
+      : "";
     linkedRef = projectRef;
 
     // 2. Load config.toml, passing projectRef so `[remotes.*]` overrides are
@@ -267,6 +275,11 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
 
     // 3. Short-circuit: nothing to seed (ref present → never short-circuits).
     if (projectRef === "" && bucketNames.length === 0 && !hasVectorBuckets) {
+      // Go emits nothing in text mode; in the additive json/stream-json modes a
+      // scripted caller still expects a result object, so emit an empty summary.
+      if (output.format !== "text") {
+        yield* output.success("", { ...emptySummary() });
+      }
       return;
     }
 

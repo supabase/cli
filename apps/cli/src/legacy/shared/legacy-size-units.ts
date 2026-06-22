@@ -58,7 +58,10 @@ export function ramInBytes(sizeStr: string): number {
     throw new Error(`invalid size: '${sizeStr}'`);
   }
   const size = Number.parseFloat(num);
-  if (Number.isNaN(size)) {
+  // Reject NaN and ±Infinity: Go's `strconv.ParseFloat` returns a range error
+  // for an overflowing numeral like `1e309` (which JS parses to Infinity), so it
+  // must fail config load rather than flow through as `null` in the request body.
+  if (!Number.isFinite(size)) {
     throw new Error(`invalid size: '${sizeStr}'`);
   }
   if (size < 0) {

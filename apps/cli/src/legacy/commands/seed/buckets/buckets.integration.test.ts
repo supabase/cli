@@ -203,6 +203,22 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("emits an empty JSON result for a no-op run (json mode)", () => {
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: 'project_id = "test"\n',
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests).toHaveLength(0);
+      // Scripted json callers get a result object even for the no-op short-circuit.
+      const success = out.messages.find((m) => m.type === "success");
+      expect(success?.data?.["buckets_created"]).toEqual([]);
+      expect(success?.data?.["objects_uploaded"]).toEqual([]);
+    });
+  });
+
   it.live("rejects passing both --local and --linked", () => {
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -1135,6 +1151,53 @@ describe("legacy seed buckets", () => {
         requests.some((r) => r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)),
       ).toBe(true);
       expect(requests.some((r) => r.headers["apikey"] === "remote-service-role-key")).toBe(true);
+    });
+  });
+
+  it.live("--linked=false still takes the linked path (Go flag.Changed, not value)", () => {
+    // Go selects the target from flag.Changed: `--linked=false` is still linked.
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.test]\npublic = true\n",
+      projectRef: LEGACY_VALID_REF,
+      args: ["seed", "buckets", "--linked=false"],
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets({ linked: false, local: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // Remote URL → the linked path ran despite the parsed value being false.
+      expect(
+        requests.every((r) => r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)),
+      ).toBe(true);
+    });
+  });
+
+  it.live("--local=false stays on the local path", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.test]\npublic = true\n",
+      args: ["seed", "buckets", "--local=false"],
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets({ linked: false, local: false }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // Local path (not the remote https host) — `--local` changed selects local.
+      // Asserting "not remote" keeps this independent of the loopback host env.
+      expect(requests.length).toBeGreaterThan(0);
+      expect(requests.every((r) => r.url.startsWith("http://"))).toBe(true);
+      expect(requests.some((r) => r.url.includes("supabase.co"))).toBe(false);
     });
   });
 
