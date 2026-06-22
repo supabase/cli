@@ -14,6 +14,7 @@ import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyGetProjectApiKeys } from "../../../shared/legacy-get-api-keys.ts";
 import { legacyExtractServiceKeys } from "../../../shared/legacy-tenant-keys.ts";
+import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacySeedChangedTargetFlags } from "./buckets.flags.ts";
 import { legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
@@ -210,10 +211,17 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
   const output = yield* Output;
   const cliConfig = yield* LegacyCliConfig;
   const telemetryState = yield* LegacyTelemetryState;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cliArgs = yield* CliArgs;
   const yes = yield* LegacyYesFlag;
+
+  // Set once --linked resolves a ref; drives the post-run linked-project cache
+  // write + org/project group identify, mirroring Go's `ensureProjectGroupsCached`
+  // (`cmd/root.go`, gated on a non-empty `flags.ProjectRef`). Empty on the local
+  // path, so the cache is never written there.
+  let linkedRef = "";
 
   yield* Effect.gen(function* () {
     // 0. Reproduce cobra's MarkFlagsMutuallyExclusive("local", "linked").
@@ -231,6 +239,7 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     // (`apps/cli-go/pkg/config/config.go:505-518`).
     const projectRefResolver = yield* LegacyProjectRefResolver;
     const projectRef = flags.linked ? yield* projectRefResolver.loadProjectRef(Option.none()) : "";
+    linkedRef = projectRef;
 
     // 2. Load config.toml, passing projectRef so `[remotes.*]` overrides are
     // merged for --linked. A parse failure aborts before any network call.
@@ -266,14 +275,22 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
       yield* legacyValidateBucketName(name);
     }
 
-    // 3b. Resolve + validate every bucket's props up front (Go parses sizes at
+    // 3b. Parse the storage-level file_size_limit once, up front and
+    // unconditionally — Go unmarshals `storage.FileSizeLimit` during
+    // config.Load, so an invalid value (e.g. "bogus") aborts before any Storage
+    // call even when no bucket inherits it or only vector buckets are configured.
+    const storageFileSizeLimitBytes = yield* parseFileSizeLimitOrFail(
+      config.storage.file_size_limit,
+    );
+
+    // 3c. Resolve + validate every bucket's props up front (Go parses sizes at
     // config-load, before NewStorageAPI), so an invalid/omitted file_size_limit
     // is settled before any Storage list/create/update.
     const bucketPropsByName = new Map<string, LegacyUpsertBucketProps>();
     for (const [name, bucket] of Object.entries(bucketsConfig)) {
       bucketPropsByName.set(
         name,
-        yield* computeBucketProps(loaded.document, name, bucket, config.storage.file_size_limit),
+        yield* computeBucketProps(loaded.document, name, bucket, storageFileSizeLimitBytes),
       );
     }
 
@@ -360,7 +377,16 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
           Effect.provideService(FetchHttpClient.Fetch, legacyKongCaFetch(localKongCa)),
         )
       : gatewayOps;
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  }).pipe(
+    // Go's root `Execute` caches the linked project + fires org/project group
+    // identify whenever `flags.ProjectRef` is set — only on the --linked path.
+    // `suspend` defers reading `linkedRef` until the finalizer runs (after the
+    // ref has been resolved inside the gen).
+    Effect.ensuring(
+      Effect.suspend(() => (linkedRef === "" ? Effect.void : linkedProjectCache.cache(linkedRef))),
+    ),
+    Effect.ensuring(telemetryState.flush),
+  );
 });
 
 /**
@@ -495,25 +521,30 @@ function bucketHasKey(
  *    config-load error) before any Storage list/create/update side effect — Go
  *    rejects the same config during `LoadConfig`.
  */
+// Parse a `file_size_limit` string to bytes, mapping a parse failure to a
+// config-load error (Go rejects an invalid `sizeInBytes` during `config.Load`,
+// before NewStorageAPI).
+const parseFileSizeLimitOrFail = (value: string) =>
+  Effect.try({
+    try: () => legacyParseFileSizeLimit(value),
+    catch: (cause) =>
+      new LegacySeedConfigLoadError({
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
+
 const computeBucketProps = Effect.fnUntraced(function* (
   document: Record<string, unknown> | undefined,
   name: string,
   bucket: BucketsConfig[string],
-  storageFileSizeLimit: string,
+  storageFileSizeLimitBytes: number,
 ) {
-  const parseSize = (value: string) =>
-    Effect.try({
-      try: () => legacyParseFileSizeLimit(value),
-      catch: (cause) =>
-        new LegacySeedConfigLoadError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
-
+  // Go's resolve() inherits the (already-parsed) storage-level limit when the
+  // bucket omits its own / sets 0 (`config.go:753-756`).
   const bucketBytes = bucketHasFileSizeLimit(document, name)
-    ? yield* parseSize(bucket.file_size_limit)
+    ? yield* parseFileSizeLimitOrFail(bucket.file_size_limit)
     : 0;
-  const fileSizeLimit = bucketBytes === 0 ? yield* parseSize(storageFileSizeLimit) : bucketBytes;
+  const fileSizeLimit = bucketBytes === 0 ? storageFileSizeLimitBytes : bucketBytes;
 
   return {
     public: bucketHasPublicKey(document, name) ? bucket.public : undefined,

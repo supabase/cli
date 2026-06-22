@@ -16,9 +16,9 @@ stack is used; with `--linked` the remote project is used.
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                           | Format | When                                                                                                                                                                                                                 |
+| ---------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | `--linked` only, once the project ref resolves and no cache exists yet — mirrors Go's `ensureProjectGroupsCached` (`cmd/root.go`). Best-effort (auth/network/write errors are swallowed). Local runs never write it. |
 
 ## API Routes
 
@@ -47,8 +47,10 @@ header is also sent, except when the key is an opaque `sb_...` key, which Go's
 | `DELETE` | `/storage/v1/iceberg/bucket/{name}`     | service-role | none                                                                                    | — (pruned)                             |
 
 A bucket that omits `file_size_limit` (or sets it to `0`) inherits the
-storage-level `[storage].file_size_limit` (Go `config.go:753-756`). All bucket
-sizes are parsed up front, so an invalid value fails before any Storage call.
+storage-level `[storage].file_size_limit` (Go `config.go:753-756`). The
+storage-level limit and all bucket sizes are parsed up front (the storage-level
+one unconditionally, even with only vector buckets), so an invalid value fails
+before any Storage call.
 `file_size_limit` is omitted from the body when the resolved value is `0`;
 `allowed_mime_types` is omitted when empty (Go `omitempty`).
 

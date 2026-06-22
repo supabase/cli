@@ -313,18 +313,24 @@ export function mockLegacyTelemetryStateTracked(): {
 export function mockLegacyLinkedProjectCacheTracked(): {
   readonly layer: Layer.Layer<LegacyLinkedProjectCache>;
   readonly cached: boolean;
+  readonly cachedRef: string | undefined;
 } {
   let cached = false;
+  let cachedRef: string | undefined;
   const layer = Layer.succeed(LegacyLinkedProjectCache, {
-    cache: (_ref: string) =>
+    cache: (ref: string) =>
       Effect.sync(() => {
         cached = true;
+        cachedRef = ref;
       }),
   });
   return {
     layer,
     get cached() {
       return cached;
+    },
+    get cachedRef() {
+      return cachedRef;
     },
   };
 }

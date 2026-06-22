@@ -14,6 +14,7 @@ import {
   legacyTransportFailure,
   mockLegacyCliConfig,
   mockLegacyPlatformApiService,
+  mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -119,6 +120,7 @@ function setupLegacySeedBuckets(
   );
 
   const telemetry = mockLegacyTelemetryStateTracked();
+  const linkedCache = mockLegacyLinkedProjectCacheTracked();
 
   const projectRefRef = opts.projectRef ?? LEGACY_VALID_REF;
   const projectRefLayer = Layer.succeed(LegacyProjectRefResolver, {
@@ -176,9 +178,10 @@ function setupLegacySeedBuckets(
     Layer.succeed(LegacyPlatformApiFactory, {
       make: LegacyPlatformApi.pipe(Effect.provide(managementApi.layer)),
     }),
+    linkedCache.layer,
   );
 
-  return { layer, out, requests, telemetry };
+  return { layer, out, requests, telemetry, linkedCache };
 }
 
 const VECTOR_LIST = "/storage/v1/vector/ListVectorBuckets";
@@ -561,6 +564,25 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("fails on an invalid storage-level file_size_limit (only vector buckets)", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      // No storage buckets inherit it, only a vector bucket is configured — Go
+      // still unmarshals storage.FileSizeLimit at config-load and aborts.
+      toml: [
+        '[storage]\nfile_size_limit = "bogus"',
+        "[storage.vector]\nenabled = true",
+        "[storage.vector.buckets.docs-openai]",
+      ].join("\n"),
+      routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("invalid size");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
   it.live("inherits the storage-level file_size_limit when a bucket omits it", () => {
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       // Custom storage-level limit; the bucket omits file_size_limit, so Go's
@@ -903,6 +925,39 @@ describe("legacy seed buckets", () => {
         requests.some((r) => r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)),
       ).toBe(true);
       expect(requests.some((r) => r.headers["apikey"] === "remote-service-role-key")).toBe(true);
+    });
+  });
+
+  it.live("caches the linked project on --linked but not on local", () => {
+    // Mirrors Go's ensureProjectGroupsCached (cmd/root.go), gated on a non-empty
+    // resolved ref: --linked writes the linked-project cache + group identify;
+    // the local path must not.
+    const linked = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.test]\npublic = true\n",
+      projectRef: LEGACY_VALID_REF,
+      args: ["seed", "buckets", "--linked"],
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+      ],
+    });
+    const local = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.test]\npublic = true\n",
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      yield* legacySeedBuckets({ linked: true, local: false }).pipe(
+        Effect.provide(linked.layer),
+        Effect.exit,
+      );
+      expect(linked.linkedCache.cached).toBe(true);
+      expect(linked.linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+
+      yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(local.layer), Effect.exit);
+      expect(local.linkedCache.cached).toBe(false);
     });
   });
 
