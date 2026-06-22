@@ -478,6 +478,19 @@ type ClientInterface interface {
 
 	V1UpdateJitAccess(ctx context.Context, ref string, body V1UpdateJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1InviteExternalJitAccessWithBody request with any body
+	V1InviteExternalJitAccessWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1InviteExternalJitAccess(ctx context.Context, ref string, body V1InviteExternalJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1AcceptInviteExternalJitAccessWithBody request with any body
+	V1AcceptInviteExternalJitAccessWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	V1AcceptInviteExternalJitAccess(ctx context.Context, ref string, body V1AcceptInviteExternalJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// V1DeleteInviteExternalJitAccess request
+	V1DeleteInviteExternalJitAccess(ctx context.Context, ref string, inviteId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1ListJitAccess request
 	V1ListJitAccess(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2374,6 +2387,66 @@ func (c *Client) V1UpdateJitAccessWithBody(ctx context.Context, ref string, cont
 
 func (c *Client) V1UpdateJitAccess(ctx context.Context, ref string, body V1UpdateJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1UpdateJitAccessRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1InviteExternalJitAccessWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1InviteExternalJitAccessRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1InviteExternalJitAccess(ctx context.Context, ref string, body V1InviteExternalJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1InviteExternalJitAccessRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1AcceptInviteExternalJitAccessWithBody(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1AcceptInviteExternalJitAccessRequestWithBody(c.Server, ref, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1AcceptInviteExternalJitAccess(ctx context.Context, ref string, body V1AcceptInviteExternalJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1AcceptInviteExternalJitAccessRequest(c.Server, ref, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1DeleteInviteExternalJitAccess(ctx context.Context, ref string, inviteId openapi_types.UUID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1DeleteInviteExternalJitAccessRequest(c.Server, ref, inviteId)
 	if err != nil {
 		return nil, err
 	}
@@ -8326,6 +8399,141 @@ func NewV1UpdateJitAccessRequestWithBody(server string, ref string, contentType 
 	return req, nil
 }
 
+// NewV1InviteExternalJitAccessRequest calls the generic V1InviteExternalJitAccess builder with application/json body
+func NewV1InviteExternalJitAccessRequest(server string, ref string, body V1InviteExternalJitAccessJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1InviteExternalJitAccessRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1InviteExternalJitAccessRequestWithBody generates requests for V1InviteExternalJitAccess with any type of body
+func NewV1InviteExternalJitAccessRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/jit/invite", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1AcceptInviteExternalJitAccessRequest calls the generic V1AcceptInviteExternalJitAccess builder with application/json body
+func NewV1AcceptInviteExternalJitAccessRequest(server string, ref string, body V1AcceptInviteExternalJitAccessJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewV1AcceptInviteExternalJitAccessRequestWithBody(server, ref, "application/json", bodyReader)
+}
+
+// NewV1AcceptInviteExternalJitAccessRequestWithBody generates requests for V1AcceptInviteExternalJitAccess with any type of body
+func NewV1AcceptInviteExternalJitAccessRequestWithBody(server string, ref string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/jit/invite/accept", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewV1DeleteInviteExternalJitAccessRequest generates requests for V1DeleteInviteExternalJitAccess
+func NewV1DeleteInviteExternalJitAccessRequest(server string, ref string, inviteId openapi_types.UUID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "invite_id", runtime.ParamLocationPath, inviteId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/database/jit/invite/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewV1ListJitAccessRequest generates requests for V1ListJitAccess
 func NewV1ListJitAccessRequest(server string, ref string) (*http.Request, error) {
 	var err error
@@ -11614,6 +11822,19 @@ type ClientWithResponsesInterface interface {
 
 	V1UpdateJitAccessWithResponse(ctx context.Context, ref string, body V1UpdateJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*V1UpdateJitAccessResponse, error)
 
+	// V1InviteExternalJitAccessWithBodyWithResponse request with any body
+	V1InviteExternalJitAccessWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1InviteExternalJitAccessResponse, error)
+
+	V1InviteExternalJitAccessWithResponse(ctx context.Context, ref string, body V1InviteExternalJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*V1InviteExternalJitAccessResponse, error)
+
+	// V1AcceptInviteExternalJitAccessWithBodyWithResponse request with any body
+	V1AcceptInviteExternalJitAccessWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1AcceptInviteExternalJitAccessResponse, error)
+
+	V1AcceptInviteExternalJitAccessWithResponse(ctx context.Context, ref string, body V1AcceptInviteExternalJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*V1AcceptInviteExternalJitAccessResponse, error)
+
+	// V1DeleteInviteExternalJitAccessWithResponse request
+	V1DeleteInviteExternalJitAccessWithResponse(ctx context.Context, ref string, inviteId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteInviteExternalJitAccessResponse, error)
+
 	// V1ListJitAccessWithResponse request
 	V1ListJitAccessWithResponse(ctx context.Context, ref string, reqEditors ...RequestEditorFn) (*V1ListJitAccessResponse, error)
 
@@ -14151,6 +14372,71 @@ func (r V1UpdateJitAccessResponse) StatusCode() int {
 	return 0
 }
 
+type V1InviteExternalJitAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *InviteExternalUserJitResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1InviteExternalJitAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1InviteExternalJitAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1AcceptInviteExternalJitAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *JitAccessResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1AcceptInviteExternalJitAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1AcceptInviteExternalJitAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1DeleteInviteExternalJitAccessResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+}
+
+// Status returns HTTPResponse.Status
+func (r V1DeleteInviteExternalJitAccessResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1DeleteInviteExternalJitAccessResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type V1ListJitAccessResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -16655,6 +16941,49 @@ func (c *ClientWithResponses) V1UpdateJitAccessWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseV1UpdateJitAccessResponse(rsp)
+}
+
+// V1InviteExternalJitAccessWithBodyWithResponse request with arbitrary body returning *V1InviteExternalJitAccessResponse
+func (c *ClientWithResponses) V1InviteExternalJitAccessWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1InviteExternalJitAccessResponse, error) {
+	rsp, err := c.V1InviteExternalJitAccessWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1InviteExternalJitAccessResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1InviteExternalJitAccessWithResponse(ctx context.Context, ref string, body V1InviteExternalJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*V1InviteExternalJitAccessResponse, error) {
+	rsp, err := c.V1InviteExternalJitAccess(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1InviteExternalJitAccessResponse(rsp)
+}
+
+// V1AcceptInviteExternalJitAccessWithBodyWithResponse request with arbitrary body returning *V1AcceptInviteExternalJitAccessResponse
+func (c *ClientWithResponses) V1AcceptInviteExternalJitAccessWithBodyWithResponse(ctx context.Context, ref string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*V1AcceptInviteExternalJitAccessResponse, error) {
+	rsp, err := c.V1AcceptInviteExternalJitAccessWithBody(ctx, ref, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1AcceptInviteExternalJitAccessResponse(rsp)
+}
+
+func (c *ClientWithResponses) V1AcceptInviteExternalJitAccessWithResponse(ctx context.Context, ref string, body V1AcceptInviteExternalJitAccessJSONRequestBody, reqEditors ...RequestEditorFn) (*V1AcceptInviteExternalJitAccessResponse, error) {
+	rsp, err := c.V1AcceptInviteExternalJitAccess(ctx, ref, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1AcceptInviteExternalJitAccessResponse(rsp)
+}
+
+// V1DeleteInviteExternalJitAccessWithResponse request returning *V1DeleteInviteExternalJitAccessResponse
+func (c *ClientWithResponses) V1DeleteInviteExternalJitAccessWithResponse(ctx context.Context, ref string, inviteId openapi_types.UUID, reqEditors ...RequestEditorFn) (*V1DeleteInviteExternalJitAccessResponse, error) {
+	rsp, err := c.V1DeleteInviteExternalJitAccess(ctx, ref, inviteId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1DeleteInviteExternalJitAccessResponse(rsp)
 }
 
 // V1ListJitAccessWithResponse request returning *V1ListJitAccessResponse
@@ -19933,6 +20262,74 @@ func ParseV1UpdateJitAccessResponse(rsp *http.Response) (*V1UpdateJitAccessRespo
 		}
 		response.JSON200 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseV1InviteExternalJitAccessResponse parses an HTTP response from a V1InviteExternalJitAccessWithResponse call
+func ParseV1InviteExternalJitAccessResponse(rsp *http.Response) (*V1InviteExternalJitAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1InviteExternalJitAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest InviteExternalUserJitResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1AcceptInviteExternalJitAccessResponse parses an HTTP response from a V1AcceptInviteExternalJitAccessWithResponse call
+func ParseV1AcceptInviteExternalJitAccessResponse(rsp *http.Response) (*V1AcceptInviteExternalJitAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1AcceptInviteExternalJitAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest JitAccessResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1DeleteInviteExternalJitAccessResponse parses an HTTP response from a V1DeleteInviteExternalJitAccessWithResponse call
+func ParseV1DeleteInviteExternalJitAccessResponse(rsp *http.Response) (*V1DeleteInviteExternalJitAccessResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1DeleteInviteExternalJitAccessResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
 	}
 
 	return response, nil
