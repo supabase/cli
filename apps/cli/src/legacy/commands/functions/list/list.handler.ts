@@ -67,6 +67,51 @@ function renderFunctionsTable(functions: Functions): string {
   );
 }
 
+function toGoYamlFunction(function_: Functions[number]) {
+  return {
+    createdat: function_.created_at,
+    entrypointpath: function_.entrypoint_path,
+    ezbrsha256: function_.ezbr_sha256 ?? null,
+    id: function_.id,
+    importmap: function_.import_map,
+    importmappath: function_.import_map_path,
+    name: function_.name,
+    slug: function_.slug,
+    status: function_.status,
+    updatedat: function_.updated_at,
+    verifyjwt: function_.verify_jwt,
+    version: function_.version,
+  };
+}
+
+function toGoTomlFunction(function_: Functions[number]) {
+  const goFunction: Record<string, unknown> = {
+    CreatedAt: function_.created_at,
+    Id: function_.id,
+    Name: function_.name,
+    Slug: function_.slug,
+    Status: function_.status,
+    UpdatedAt: function_.updated_at,
+    Version: function_.version,
+  };
+  if (function_.entrypoint_path != null) {
+    goFunction.EntrypointPath = function_.entrypoint_path;
+  }
+  if (function_.ezbr_sha256 != null) {
+    goFunction.EzbrSha256 = function_.ezbr_sha256;
+  }
+  if (function_.import_map != null) {
+    goFunction.ImportMap = function_.import_map;
+  }
+  if (function_.import_map_path != null) {
+    goFunction.ImportMapPath = function_.import_map_path;
+  }
+  if (function_.verify_jwt != null) {
+    goFunction.VerifyJwt = function_.verify_jwt;
+  }
+  return goFunction;
+}
+
 export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* (
   flags: LegacyFunctionsListFlags,
 ) {
@@ -100,11 +145,11 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeYaml(functions));
+      yield* output.raw(encodeYaml(functions.map(toGoYamlFunction)));
       return;
     }
     if (goFmt === "toml") {
-      yield* output.raw(encodeToml({ functions }) + "\n");
+      yield* output.raw(encodeToml({ functions: functions.map(toGoTomlFunction) }) + "\n");
       return;
     }
 

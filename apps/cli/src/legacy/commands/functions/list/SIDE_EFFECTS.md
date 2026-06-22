@@ -11,9 +11,10 @@
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| -    | -      | -    |
+| Path                                            | Format | When                                                                    |
+| ----------------------------------------------- | ------ | ----------------------------------------------------------------------- |
+| `./supabase/.temp/linked-project.json`          | JSON   | after resolving a project ref, cached on both success and failure paths |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | after command completion, flushed on both success and failure paths     |
 
 ## API Routes
 

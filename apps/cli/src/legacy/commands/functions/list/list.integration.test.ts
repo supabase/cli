@@ -148,8 +148,11 @@ describe("legacy functions list integration", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* legacyFunctionsList({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain("name: Hello World");
-      expect(out.stdoutText).toContain("slug: hello-world");
+      expect(out.stdoutText).toContain("createdat: 1687423025152");
+      expect(out.stdoutText).toContain("entrypointpath: functions/hello-world/index.ts");
+      expect(out.stdoutText).toContain("verifyjwt: true");
+      expect(out.stdoutText).not.toContain("created_at:");
+      expect(out.stdoutText).not.toContain("entrypoint_path:");
     }).pipe(Effect.provide(layer));
   });
 
@@ -158,7 +161,11 @@ describe("legacy functions list integration", () => {
     return Effect.gen(function* () {
       yield* legacyFunctionsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("[[functions]]");
-      expect(out.stdoutText).toContain('name = "Hello World"');
+      expect(out.stdoutText).toContain("CreatedAt = 1687423025152");
+      expect(out.stdoutText).toContain('EntrypointPath = "functions/hello-world/index.ts"');
+      expect(out.stdoutText).toContain('Name = "Hello World"');
+      expect(out.stdoutText).not.toContain("created_at");
+      expect(out.stdoutText).not.toContain("entrypoint_path");
     }).pipe(Effect.provide(layer));
   });
 
