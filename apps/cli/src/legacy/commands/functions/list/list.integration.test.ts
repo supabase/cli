@@ -37,7 +37,7 @@ const PIPE_FUNCTION: Functions[number] = {
   slug: "hello|world",
 };
 
-const UNKNOWN_STATUS_FUNCTION: Functions[number] = {
+const UNKNOWN_STATUS_FUNCTION = {
   ...SAMPLE_FUNCTION,
   status: "PAUSED_FOR_REBALANCE",
 };
@@ -56,7 +56,7 @@ const tempRoot = useLegacyTempWorkdir("supabase-functions-list-int-");
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
   readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
-  readonly response?: Functions;
+  readonly response?: unknown;
   readonly status?: number;
   readonly network?: "fail";
 }
