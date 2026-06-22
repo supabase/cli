@@ -371,6 +371,7 @@ export const V1AuthorizeUserInput = Schema.Struct({
   organization_slug: Schema.optionalKey(
     Schema.String.check(Schema.isPattern(new RegExp("^[\\w-]+$"))),
   ),
+  target_flow: Schema.optionalKey(Schema.String),
   resource: Schema.optionalKey(Schema.String.annotate({ format: "uri" })),
 });
 export const V1BulkCreateSecretsInput = Schema.Struct({
@@ -2793,9 +2794,14 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
     ),
   ),
   warnings: Schema.Array(
-    Schema.Union([Schema.Struct({ type: Schema.Literal("pg_graphql_introspection_change") })], {
-      mode: "oneOf",
-    }),
+    Schema.Union(
+      [
+        Schema.Struct({ type: Schema.Literal("pg_graphql_introspection_change") }),
+        Schema.Struct({ type: Schema.Literal("ltree_reindex_required") }),
+        Schema.Struct({ type: Schema.Literal("operator_estimator_gate") }),
+      ],
+      { mode: "oneOf" },
+    ),
   ),
 });
 export const V1GetPostgresUpgradeStatusInput = Schema.Struct({
@@ -6188,6 +6194,7 @@ export const operationDefinitions = {
       "code_challenge",
       "code_challenge_method",
       "organization_slug",
+      "target_flow",
       "resource",
     ],
     headerParams: [],
