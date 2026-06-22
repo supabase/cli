@@ -50,14 +50,21 @@ export function ramInBytes(sizeStr: string): number {
   // `strconv.ParseFloat`, which rejects a string that isn't a complete float.
   // JS `Number.parseFloat` instead silently parses a valid prefix (`1.2.3` → 1.2,
   // `1 2` → 1), so validate the numeric part against Go's float grammar first:
-  // optional sign, a leading OR trailing dot allowed, optional exponent. This
-  // accepts Go-valid forms (`.5`, `1.`, `1e6`, `+5`) and rejects the prefix
-  // hazards (`1.2.3`, `1 2`, leading-space, `0x10`). A negative value is still
-  // rejected post-parse below (matching Go's `size < 0` check).
-  if (!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(num)) {
+  // optional sign, a leading OR trailing dot, optional exponent, and single
+  // underscores BETWEEN digits (Go 1.13+ literal rule — no leading/trailing/
+  // doubled `_`, none adjacent to `.`/sign). The digit group `\d(?:_?\d)*`
+  // enforces the underscore placement. This accepts Go-valid forms (`.5`, `1.`,
+  // `1e6`, `+5`, `1_000`) and rejects the prefix hazards (`1.2.3`, `1 2`,
+  // leading-space, `0x10`, `_1`, `1_`). A negative value is rejected post-parse
+  // below (matching Go's `size < 0` check); `1e309`→Infinity by the isFinite check.
+  if (
+    !/^[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)([eE][+-]?\d(?:_?\d)*)?$/.test(num)
+  ) {
     throw new Error(`invalid size: '${sizeStr}'`);
   }
-  const size = Number.parseFloat(num);
+  // Strip the (already-validated, between-digits) underscores before parsing:
+  // JS `Number.parseFloat("1_000")` stops at the underscore (→1), unlike Go.
+  const size = Number.parseFloat(num.replace(/_/g, ""));
   // Reject NaN and ±Infinity: Go's `strconv.ParseFloat` returns a range error
   // for an overflowing numeral like `1e309` (which JS parses to Infinity), so it
   // must fail config load rather than flow through as `null` in the request body.

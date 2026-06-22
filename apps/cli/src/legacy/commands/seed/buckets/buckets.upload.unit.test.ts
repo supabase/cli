@@ -43,10 +43,19 @@ describe("legacyParseFileSizeLimit", () => {
 
   it("accepts Go-valid numeral forms (strconv.ParseFloat parity)", () => {
     // docker/go-units RAMInBytes hands the numeric part to strconv.ParseFloat,
-    // which accepts a leading/trailing dot, exponent, and sign.
+    // which accepts a leading/trailing dot, exponent, sign, and underscores
+    // between digits (Go 1.13+ literal rule).
     expect(legacyParseFileSizeLimit(".5MiB")).toBe(Math.trunc(0.5 * 1024 * 1024));
     expect(legacyParseFileSizeLimit("1.MiB")).toBe(1024 * 1024);
     expect(legacyParseFileSizeLimit("1e6")).toBe(1_000_000);
+    expect(legacyParseFileSizeLimit("1_000MiB")).toBe(1000 * 1024 * 1024);
+    expect(legacyParseFileSizeLimit("1_0MiB")).toBe(10 * 1024 * 1024);
+  });
+
+  it("rejects badly-placed underscores (Go literal rule)", () => {
+    // Underscores only between digits — no leading/trailing/doubled.
+    expect(() => legacyParseFileSizeLimit("_1000MiB")).toThrow("invalid size");
+    expect(() => legacyParseFileSizeLimit("1__0MiB")).toThrow("invalid size");
   });
 
   it("rejects malformed numerals that JS parseFloat would truncate", () => {
