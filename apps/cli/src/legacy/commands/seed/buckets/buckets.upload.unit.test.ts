@@ -40,6 +40,21 @@ describe("legacyParseFileSizeLimit", () => {
   it("throws on an unparseable value", () => {
     expect(() => legacyParseFileSizeLimit("not-a-size")).toThrow();
   });
+
+  it("accepts Go-valid numeral forms (strconv.ParseFloat parity)", () => {
+    // docker/go-units RAMInBytes hands the numeric part to strconv.ParseFloat,
+    // which accepts a leading/trailing dot, exponent, and sign.
+    expect(legacyParseFileSizeLimit(".5MiB")).toBe(Math.trunc(0.5 * 1024 * 1024));
+    expect(legacyParseFileSizeLimit("1.MiB")).toBe(1024 * 1024);
+    expect(legacyParseFileSizeLimit("1e6")).toBe(1_000_000);
+  });
+
+  it("rejects malformed numerals that JS parseFloat would truncate", () => {
+    // strconv.ParseFloat rejects the whole string; JS parseFloat parses a prefix.
+    expect(() => legacyParseFileSizeLimit("1.2.3MiB")).toThrow("invalid size");
+    expect(() => legacyParseFileSizeLimit("1 2MiB")).toThrow("invalid size");
+    expect(() => legacyParseFileSizeLimit("-5MiB")).toThrow("invalid size");
+  });
 });
 
 describe("legacyContentTypeForPath", () => {

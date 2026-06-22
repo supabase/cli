@@ -90,15 +90,33 @@ function failParse(detail: string): LegacySeedStorageNetworkError {
 }
 
 /**
- * Port-conflict hint appended to a local transport failure, mirroring Go's
- * `localGatewayHint` (`apps/cli-go/pkg/fetcher/http.go:117-143`). Go gates on the
- * configured host being local + the error message matching its net/http strings
- * (`malformed HTTP response` / timeout); Bun/undici don't emit those exact
- * strings, so the caller gates on a local `apiPort` + an Effect `TransportError`
- * instead — the appended text stays byte-identical. Hoist to `legacy/shared/`
- * when `storage ls/cp/mv/rm` land (same fetcher path).
+ * The port to use for the local-gateway port-conflict hint, mirroring Go's
+ * `localGatewayHint` (`apps/cli-go/pkg/fetcher/http.go:117-143`), which parses
+ * the configured **server URL**: the hint only fires for a loopback host
+ * (`127.0.0.1`/`localhost`/`::1`) that has a port, and reports THAT URL's port —
+ * not `api.port`, which can differ when `api.external_url` is overridden. Returns
+ * undefined for a non-loopback/remote host (so `--linked` never gets the hint).
  */
-function legacyLocalGatewayHint(port: number): string {
+function localGatewayHintPort(baseUrl: string): string | undefined {
+  try {
+    const url = new URL(baseUrl);
+    const host = url.hostname.replace(/^\[|\]$/g, ""); // WHATWG brackets IPv6
+    if ((host === "127.0.0.1" || host === "localhost" || host === "::1") && url.port.length > 0) {
+      return url.port;
+    }
+  } catch {
+    // Unparseable base URL → no hint.
+  }
+  return undefined;
+}
+
+/**
+ * Byte-identical to Go's `localGatewayHint` message. Go gates on its net/http
+ * error strings (`malformed HTTP response` / timeout); Bun/undici don't emit
+ * those, so the caller gates on an Effect `TransportError` instead — the text is
+ * unchanged. Hoist to `legacy/shared/` when `storage ls/cp/mv/rm` land.
+ */
+function legacyLocalGatewayHint(port: string): string {
   return (
     "The local Supabase API gateway did not return a valid HTTP response. " +
     `Another process may be listening on the configured API port ${port}. ` +
@@ -250,28 +268,26 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly userAgent: string;
-  /**
-   * Local API port; set ONLY for the local stack (left undefined for remote
-   * `--linked`). When set, a transport failure appends Go's port-conflict hint,
-   * matching `localGatewayHint` only firing for the local URL.
-   */
-  readonly apiPort?: number;
 }) {
   const httpClient = yield* HttpClient.HttpClient;
   const fs = yield* FileSystem.FileSystem;
 
+  // Port for Go's local-gateway hint, derived from the actual base URL: only a
+  // loopback host with a port qualifies (so remote/custom hosts never get it).
+  const hintPort = localGatewayHintPort(opts.baseUrl);
+
   // Map a transport/request failure to a network error, appending Go's
-  // local-gateway port-conflict hint when this is the local stack and the
-  // failure is at the transport layer (`localGatewayHint`).
+  // local-gateway port-conflict hint when the base URL is a local loopback
+  // gateway and the failure is at the transport layer (`localGatewayHint`).
   const networkError = (cause: unknown): LegacySeedStorageNetworkError => {
     const base = `failed to execute http request: ${cause}`;
     if (
-      opts.apiPort !== undefined &&
+      hintPort !== undefined &&
       HttpClientError.isHttpClientError(cause) &&
       cause.reason._tag === "TransportError"
     ) {
       return new LegacySeedStorageNetworkError({
-        message: `${base}\n\n${legacyLocalGatewayHint(opts.apiPort)}`,
+        message: `${base}\n\n${legacyLocalGatewayHint(hintPort)}`,
       });
     }
     return new LegacySeedStorageNetworkError({ message: base });

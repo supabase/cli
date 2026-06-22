@@ -683,6 +683,34 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("reports the external_url port (not api.port) in the local hint", () => {
+    const { layer } = setupLegacySeedBuckets(tmp.current, {
+      // external_url overrides the host:port the gateway actually targets; Go's
+      // localGatewayHint parses that URL, so the hint reports 9999, not 7654.
+      toml: '[api]\nport = 7654\nexternal_url = "http://127.0.0.1:9999"\n[storage.buckets.test]\npublic = true\n',
+      routes: [{ method: "GET", match: "/storage/v1/bucket", transport: true }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const s = JSON.stringify(exit);
+      expect(s).toContain("configured API port 9999");
+      expect(s).not.toContain("port 7654");
+    });
+  });
+
+  it.live("omits the port-conflict hint for a non-loopback external_url", () => {
+    const { layer } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[api]\nexternal_url = "http://gateway.test:9999"\n[storage.buckets.test]\npublic = true\n',
+      routes: [{ method: "GET", match: "/storage/v1/bucket", transport: true }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).not.toContain("Another process may be listening");
+    });
+  });
+
   it.live("omits the port-conflict hint on a --linked (remote) transport failure", () => {
     const { layer } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.test]\npublic = true\n",
