@@ -688,17 +688,13 @@ describe("legacy seed buckets", () => {
     );
   });
 
-  it.live("tolerates malformed entries in the bucket list response", () => {
+  it.live("tolerates bucket entries with a missing field (Go zero value)", () => {
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.images]\npublic = true\n",
       routes: [
-        {
-          method: "GET",
-          match: "/storage/v1/bucket",
-          // Missing key, non-object entry, and a non-string field exercise the
-          // defensive readString branches.
-          body: [{ id: "x" }, "not-an-object", { name: 42, id: "y" }],
-        },
+        // A missing `name` decodes to the zero value (""), tolerated like Go's
+        // json.Decode. (Non-object elements / wrong-typed fields are NOT — see below.)
+        { method: "GET", match: "/storage/v1/bucket", body: [{ id: "x" }] },
         { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
       ],
     });
@@ -706,6 +702,44 @@ describe("legacy seed buckets", () => {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.method === "POST")).toBe(true);
+    });
+  });
+
+  it.live("fails on a malformed bucket-list response before any mutation", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.images]\npublic = true\n",
+      routes: [
+        // A non-object element / wrong-typed field — Go's ParseJSON aborts here
+        // (cannot unmarshal string into BucketResponse), before any create.
+        {
+          method: "GET",
+          match: "/storage/v1/bucket",
+          body: [{ id: "x" }, "not-an-object", { name: 42, id: "y" }],
+        },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("failed to parse response body");
+      // No bucket was created from the bad response.
+      expect(requests.some((r) => r.method === "POST")).toBe(false);
+    });
+  });
+
+  it.live("fails on a non-array bucket-list response (misrouted gateway)", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.images]\npublic = true\n",
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: { message: "not an array" } },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(requests.some((r) => r.method === "POST")).toBe(false);
     });
   });
 

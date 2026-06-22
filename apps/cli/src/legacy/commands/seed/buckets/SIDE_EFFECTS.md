@@ -84,6 +84,7 @@ Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 | `1`  | `api.tls.cert_path` or `api.tls.key_path` points to an unreadable file (local TLS only)                       |
 | `1`  | Storage API error (non-2xx) other than vector-unavailable                                                     |
 | `1`  | network / connection failure to the Storage gateway                                                           |
+| `1`  | malformed list response (a 200 body whose shape doesn't decode, mirroring Go's strict `ParseJSON`)            |
 | `1`  | unreadable `objects_path` (filesystem error during walk/upload)                                               |
 
 ## Telemetry Events Fired

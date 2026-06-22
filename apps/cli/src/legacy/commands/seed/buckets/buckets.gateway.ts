@@ -75,13 +75,113 @@ export interface LegacyStorageGateway {
   ) => Effect.Effect<void, LegacySeedStorageNetworkError | LegacySeedStorageStatusError>;
 }
 
-function readString(obj: unknown, key: string): string {
-  if (typeof obj === "object" && obj !== null && key in obj) {
-    const value = (obj as Record<string, unknown>)[key];
-    return typeof value === "string" ? value : "";
-  }
-  return "";
+/**
+ * Strict JSON decode mirroring Go's `fetcher.ParseJSON[T]`
+ * (`pkg/fetcher/http.go` — `json.NewDecoder(r).Decode(&data)`): a body whose
+ * shape doesn't match the typed target aborts before any bucket mutation. Only
+ * missing fields, `null`, empty arrays, and extra keys are tolerated (zero
+ * values); a non-matching top-level type, a non-object element, or a
+ * present-but-wrong-typed string field all fail. The graceful-skip classifiers
+ * never see these (the message doesn't match), so they propagate, like Go.
+ */
+function failParse(detail: string): LegacySeedStorageNetworkError {
+  return new LegacySeedStorageNetworkError({ message: `failed to parse response body: ${detail}` });
 }
+
+const parseJsonBody = (body: string): Effect.Effect<unknown, LegacySeedStorageNetworkError> =>
+  Effect.try({
+    try: () => JSON.parse(body) as unknown,
+    catch: (cause) => failParse(String(cause)),
+  });
+
+/** A non-null, non-array object, or `null` to signal a Go-struct decode failure. */
+function asObject(entry: unknown): Record<string, unknown> | null {
+  return typeof entry === "object" && entry !== null && !Array.isArray(entry)
+    ? (entry as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Go-struct string field: absent → "" (zero value, tolerated); present-but-not-a-
+ * string → `null` (decode failure). Distinguish the failure via `=== null`.
+ */
+function decodeStringField(obj: Record<string, unknown>, key: string): string | null {
+  const value = obj[key];
+  if (value === undefined) return "";
+  return typeof value === "string" ? value : null;
+}
+
+/** Decode an array body of `{name, id}` objects (Go `[]BucketResponse`). */
+const decodeBucketSummaries = (
+  body: string,
+): Effect.Effect<ReadonlyArray<LegacyBucketSummary>, LegacySeedStorageNetworkError> =>
+  Effect.gen(function* () {
+    const parsed = yield* parseJsonBody(body);
+    if (parsed === null) return [];
+    if (!Array.isArray(parsed)) {
+      return yield* Effect.fail(failParse("expected an array of buckets"));
+    }
+    const result: Array<LegacyBucketSummary> = [];
+    for (const entry of parsed) {
+      const obj = asObject(entry);
+      const name = obj === null ? null : decodeStringField(obj, "name");
+      const id = obj === null ? null : decodeStringField(obj, "id");
+      if (name === null || id === null) {
+        return yield* Effect.fail(failParse("invalid bucket entry"));
+      }
+      result.push({ name, id });
+    }
+    return result;
+  });
+
+/** Decode the `{vectorBuckets: [{vectorBucketName}]}` body (Go `ListVectorBucketsResponse`). */
+const decodeVectorBucketNames = (
+  body: string,
+): Effect.Effect<ReadonlyArray<string>, LegacySeedStorageNetworkError> =>
+  Effect.gen(function* () {
+    const parsed = yield* parseJsonBody(body);
+    const root = asObject(parsed);
+    if (root === null) {
+      return yield* Effect.fail(failParse("expected a vector bucket list object"));
+    }
+    const list = root["vectorBuckets"];
+    if (list === undefined) return [];
+    if (!Array.isArray(list)) {
+      return yield* Effect.fail(failParse("vectorBuckets must be an array"));
+    }
+    const names: Array<string> = [];
+    for (const entry of list) {
+      const obj = asObject(entry);
+      const name = obj === null ? null : decodeStringField(obj, "vectorBucketName");
+      if (name === null) {
+        return yield* Effect.fail(failParse("invalid vector bucket entry"));
+      }
+      names.push(name);
+    }
+    return names;
+  });
+
+/** Decode an array body of `{name, ...}` objects to names (Go `[]AnalyticsBucketResponse`). */
+const decodeAnalyticsBucketNames = (
+  body: string,
+): Effect.Effect<ReadonlyArray<string>, LegacySeedStorageNetworkError> =>
+  Effect.gen(function* () {
+    const parsed = yield* parseJsonBody(body);
+    if (parsed === null) return [];
+    if (!Array.isArray(parsed)) {
+      return yield* Effect.fail(failParse("expected an array of analytics buckets"));
+    }
+    const names: Array<string> = [];
+    for (const entry of parsed) {
+      const obj = asObject(entry);
+      const name = obj === null ? null : decodeStringField(obj, "name");
+      if (name === null) {
+        return yield* Effect.fail(failParse("invalid analytics bucket entry"));
+      }
+      names.push(name);
+    }
+    return names;
+  });
 
 /**
  * Build the create/update bucket body with Go's `omitempty` semantics
@@ -160,14 +260,7 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
   const gateway: LegacyStorageGateway = {
     listBuckets: () =>
       send(withAuth(HttpClientRequest.get(url("/storage/v1/bucket")))).pipe(
-        Effect.map((body) => {
-          const parsed: unknown = JSON.parse(body);
-          if (!Array.isArray(parsed)) return [];
-          return parsed.map((entry) => ({
-            name: readString(entry, "name"),
-            id: readString(entry, "id"),
-          }));
-        }),
+        Effect.flatMap(decodeBucketSummaries),
       ),
     createBucket: (name, props) =>
       send(
@@ -186,17 +279,7 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
         withAuth(HttpClientRequest.post(url("/storage/v1/vector/ListVectorBuckets"))).pipe(
           HttpClientRequest.bodyJsonUnsafe({}),
         ),
-      ).pipe(
-        Effect.map((body) => {
-          const parsed: unknown = JSON.parse(body);
-          const list =
-            typeof parsed === "object" && parsed !== null
-              ? (parsed as { vectorBuckets?: unknown }).vectorBuckets
-              : undefined;
-          if (!Array.isArray(list)) return [];
-          return list.map((entry) => readString(entry, "vectorBucketName"));
-        }),
-      ),
+      ).pipe(Effect.flatMap(decodeVectorBucketNames)),
     createVectorBucket: (name) =>
       send(
         withAuth(HttpClientRequest.post(url("/storage/v1/vector/CreateVectorBucket"))).pipe(
@@ -211,11 +294,7 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
       ).pipe(Effect.asVoid),
     listAnalyticsBuckets: () =>
       send(withAuth(HttpClientRequest.get(url("/storage/v1/iceberg/bucket")))).pipe(
-        Effect.map((body) => {
-          const parsed: unknown = JSON.parse(body);
-          if (!Array.isArray(parsed)) return [];
-          return parsed.map((entry) => readString(entry, "name"));
-        }),
+        Effect.flatMap(decodeAnalyticsBucketNames),
       ),
     createAnalyticsBucket: (name) =>
       send(
