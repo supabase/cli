@@ -4,6 +4,7 @@ import { Effect, FileSystem, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacySeedChangedTargetFlags } from "./buckets.flags.ts";
@@ -81,6 +82,7 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cliArgs = yield* CliArgs;
+  const yes = yield* LegacyYesFlag;
 
   yield* Effect.gen(function* () {
     // 0. Reproduce cobra's MarkFlagsMutuallyExclusive("local", "linked").
@@ -130,12 +132,12 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     const summary = emptySummary();
 
     // 4. Upsert configured buckets.
-    yield* upsertBuckets(output, gateway, bucketsConfig, summary);
+    yield* upsertBuckets(output, yes, gateway, bucketsConfig, loaded.document, summary);
 
     // 5. Upsert vector buckets (local), with graceful skip on unavailability.
     if (vectorEnabled && hasVectorBuckets) {
       yield* output.raw("Updating vector buckets...\n", "stderr");
-      yield* upsertVectorBuckets(output, gateway, vectorBucketNames, summary).pipe(
+      yield* upsertVectorBuckets(output, yes, gateway, vectorBucketNames, summary).pipe(
         Effect.catch((error) => handleVectorError(output, error, summary)),
       );
     }
@@ -183,24 +185,54 @@ type BucketsConfig = Readonly<
   >
 >;
 
-function bucketProps(bucket: BucketsConfig[string]): LegacyUpsertBucketProps {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Whether the bucket's TOML entry explicitly declares a `public` key. Go reads
+ * `public` into a `*bool`, so an absent key serialises as omitted (not `false`).
+ * The decoded `@supabase/config` value defaults to `false` and loses this, so we
+ * recover presence from the raw (post-`env()`) document.
+ */
+function bucketHasPublicKey(document: Record<string, unknown> | undefined, name: string): boolean {
+  if (document === undefined) return false;
+  const storage = document["storage"];
+  if (!isRecord(storage)) return false;
+  const buckets = storage["buckets"];
+  if (!isRecord(buckets)) return false;
+  const bucket = buckets[name];
+  return isRecord(bucket) && "public" in bucket;
+}
+
+function bucketProps(
+  bucket: BucketsConfig[string],
+  publicWasSet: boolean,
+): LegacyUpsertBucketProps {
   return {
-    public: bucket.public,
+    public: publicWasSet ? bucket.public : undefined,
     fileSizeLimit: legacyParseFileSizeLimit(bucket.file_size_limit),
     allowedMimeTypes: bucket.allowed_mime_types,
   };
 }
 
 /**
- * Confirm-or-default prompt mirroring Go's `console.PromptYesNo`: a real TTY in
- * text mode prompts; everything else (non-interactive, json/stream-json) uses
- * the default without printing.
+ * Confirm-or-default prompt mirroring Go's `console.PromptYesNo`
+ * (`internal/utils/console.go`): `--yes`/`SUPABASE_YES` echoes `<label> [Y/n] y`
+ * and returns true even on a TTY; a real TTY in text mode otherwise prompts;
+ * everything else (non-interactive, json/stream-json) uses the default silently.
  */
 const promptYesNo = Effect.fnUntraced(function* (
   output: typeof Output.Service,
+  yes: boolean,
   label: string,
   defaultValue: boolean,
 ) {
+  if (yes) {
+    const choices = defaultValue ? "Y/n" : "y/N";
+    yield* output.raw(`${label} [${choices}] y\n`, "stderr");
+    return true;
+  }
   if (output.format !== "text") {
     return defaultValue;
   }
@@ -212,18 +244,22 @@ const promptYesNo = Effect.fnUntraced(function* (
 // Port of `pkg/storage/batch.go:UpsertBuckets`.
 const upsertBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
+  yes: boolean,
   gateway: LegacyStorageGateway,
   bucketsConfig: BucketsConfig,
+  document: Record<string, unknown> | undefined,
   summary: SeedSummary,
 ) {
   const existing = yield* gateway.listBuckets();
   const byName = new Map(existing.map((b) => [b.name, b.id]));
 
   for (const [name, bucket] of Object.entries(bucketsConfig)) {
+    const props = bucketProps(bucket, bucketHasPublicKey(document, name));
     const bucketId = byName.get(name);
     if (bucketId !== undefined) {
       const overwrite = yield* promptYesNo(
         output,
+        yes,
         `Bucket ${legacyBold(bucketId)} already exists. Do you want to overwrite its properties?`,
         true,
       );
@@ -232,11 +268,11 @@ const upsertBuckets = Effect.fnUntraced(function* (
         continue;
       }
       yield* output.raw(`Updating Storage bucket: ${bucketId}\n`, "stderr");
-      yield* gateway.updateBucket(bucketId, bucketProps(bucket));
+      yield* gateway.updateBucket(bucketId, props);
       summary.buckets_updated.push(bucketId);
     } else {
       yield* output.raw(`Creating Storage bucket: ${name}\n`, "stderr");
-      yield* gateway.createBucket(name, bucketProps(bucket));
+      yield* gateway.createBucket(name, props);
       summary.buckets_created.push(name);
     }
   }
@@ -245,6 +281,7 @@ const upsertBuckets = Effect.fnUntraced(function* (
 // Port of `pkg/storage/vector.go:UpsertVectorBuckets`.
 const upsertVectorBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
+  yes: boolean,
   gateway: LegacyStorageGateway,
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
@@ -267,6 +304,7 @@ const upsertVectorBuckets = Effect.fnUntraced(function* (
   for (const name of toDelete) {
     const prune = yield* promptYesNo(
       output,
+      yes,
       `Bucket ${legacyBold(name)} not found in ${legacyBold(CONFIG_PATH)}. Do you want to prune it?`,
       false,
     );
@@ -341,10 +379,18 @@ const uploadObjects = Effect.fnUntraced(function* (
 });
 
 /**
- * Recursively collect regular files under `absRoot`, lexically ordered (Go's
- * `fs.WalkDir`). `displayRoot` is the config-relative path Go prints in the
- * `Uploading:` line. Non-regular entries are skipped with Go's
- * `Skipping non-regular file:` notice.
+ * Collect uploadable files under `absRoot`, lexically ordered, mirroring Go's
+ * `fs.WalkDir` + `isUploadableEntry` (`pkg/storage/batch.go:65-131`).
+ *
+ * Parity details:
+ *  - The **root** is resolved with a following stat (Go's `fs.Stat`), so a
+ *    symlinked `objects_path` is followed; a missing/dangling root fails the
+ *    command, as Go's WalkDir does.
+ *  - **Nested** entries use no-follow detection (Go reads `DirEntry` from
+ *    `ReadDir`): real directories are descended; symlinks are NOT descended —
+ *    Go's `isUploadableEntry` uploads a symlink only when its target is a
+ *    regular file, and skips dangling symlinks / symlinks-to-directories /
+ *    other non-regular entries with `Skipping non-regular file:` (no crash).
  */
 const collectFiles = (
   fs: FileSystem.FileSystem,
@@ -356,23 +402,56 @@ const collectFiles = (
   Effect.gen(function* () {
     const info = yield* fs.stat(absRoot);
     if (info.type === "Directory") {
-      const names = [...(yield* fs.readDirectory(absRoot))].sort();
-      const collected: Array<CollectedFile> = [];
-      for (const name of names) {
-        const nested = yield* collectFiles(
-          fs,
-          path,
-          output,
-          path.join(absRoot, name),
-          path.join(displayRoot, name),
-        );
-        collected.push(...nested);
-      }
-      return collected;
+      return yield* collectDir(fs, path, output, absRoot, displayRoot);
     }
     if (info.type === "File") {
       return [{ absPath: absRoot, displayPath: displayRoot }];
     }
     yield* output.raw(`Skipping non-regular file: ${displayRoot}\n`, "stderr");
     return [];
+  });
+
+const collectDir = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  output: typeof Output.Service,
+  absDir: string,
+  displayDir: string,
+): Effect.Effect<ReadonlyArray<CollectedFile>, PlatformError> =>
+  Effect.gen(function* () {
+    const names = [...(yield* fs.readDirectory(absDir))].sort();
+    const collected: Array<CollectedFile> = [];
+    for (const name of names) {
+      const absChild = path.join(absDir, name);
+      const displayChild = path.join(displayDir, name);
+      // `readLink` succeeds only on a symlink — our no-follow detector (Effect's
+      // `stat` follows symlinks and has no `lstat`).
+      const isSymlink = yield* fs.readLink(absChild).pipe(
+        Effect.as(true),
+        Effect.catch(() => Effect.succeed(false)),
+      );
+      if (isSymlink) {
+        // Go `isUploadableEntry`: open + stat the target; upload only a regular
+        // file, otherwise skip (covers dangling symlinks and symlink-to-dir).
+        const targetType = yield* fs.stat(absChild).pipe(
+          Effect.map((i) => i.type),
+          Effect.catch(() => Effect.succeed("Unknown" as const)),
+        );
+        if (targetType === "File") {
+          collected.push({ absPath: absChild, displayPath: displayChild });
+        } else {
+          yield* output.raw(`Skipping non-regular file: ${displayChild}\n`, "stderr");
+        }
+        continue;
+      }
+      const childInfo = yield* fs.stat(absChild);
+      if (childInfo.type === "Directory") {
+        collected.push(...(yield* collectDir(fs, path, output, absChild, displayChild)));
+      } else if (childInfo.type === "File") {
+        collected.push({ absPath: absChild, displayPath: displayChild });
+      } else {
+        yield* output.raw(`Skipping non-regular file: ${displayChild}\n`, "stderr");
+      }
+    }
+    return collected;
   });

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -16,6 +16,7 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { legacySeedBuckets } from "./buckets.handler.ts";
 import type { LegacyBucketsFlags } from "./buckets.command.ts";
@@ -42,6 +43,7 @@ function setupLegacySeedBuckets(
     readonly confirm?: ReadonlyArray<boolean>;
     readonly promptConfirmFail?: boolean;
     readonly args?: ReadonlyArray<string>;
+    readonly yes?: boolean;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -89,6 +91,7 @@ function setupLegacySeedBuckets(
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
     Layer.succeed(CliArgs, { args: opts.args ?? ["seed", "buckets"] }),
+    Layer.succeed(LegacyYesFlag, opts.yes ?? false),
   );
 
   return { layer, out, requests, telemetry };
@@ -491,6 +494,104 @@ describe("legacy seed buckets", () => {
       expect(out.stderrText).toContain("Skipping non-regular file: assets/pipe");
       const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
       expect(uploads).toHaveLength(1);
+    });
+  });
+
+  it.live("skips a dangling symlink without failing (Go isUploadableEntry parity)", () => {
+    mkdirSync(join(tmp.current, "assets"), { recursive: true });
+    writeFileSync(join(tmp.current, "assets", "a.txt"), "hello");
+    symlinkSync("./does-not-exist", join(tmp.current, "assets", "dangling"));
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/object/", body: {} },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Skipping non-regular file: assets/dangling");
+      expect(out.stderrText).toContain("Uploading: assets/a.txt => images/a.txt");
+      const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
+      expect(uploads).toHaveLength(1);
+    });
+  });
+
+  it.live(
+    "does not descend into a symlinked directory (Go does not follow nested symlinks)",
+    () => {
+      mkdirSync(join(tmp.current, "assets", "realdir"), { recursive: true });
+      writeFileSync(join(tmp.current, "assets", "a.txt"), "hello");
+      writeFileSync(join(tmp.current, "assets", "realdir", "c.txt"), "world");
+      symlinkSync("./realdir", join(tmp.current, "assets", "linkdir"));
+      const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/object/", body: {} },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain("Skipping non-regular file: assets/linkdir");
+        expect(out.stderrText).toContain("Uploading: assets/realdir/c.txt => images/realdir/c.txt");
+        expect(out.stderrText).not.toContain("assets/linkdir/c.txt");
+        const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
+        expect(uploads).toHaveLength(2);
+      });
+    },
+  );
+
+  it.live("--yes overwrites an existing bucket and echoes Go's prompt line", () => {
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.assets]\npublic = true\n",
+      yes: true,
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [{ name: "assets", id: "assets" }] },
+        { method: "PUT", match: "/storage/v1/bucket/assets", body: {} },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // The bucket name is bold-rendered, so assert the stable suffix.
+      expect(out.stderrText).toContain(
+        "already exists. Do you want to overwrite its properties? [Y/n] y",
+      );
+      expect(out.stderrText).toContain("Updating Storage bucket: assets");
+      expect(requests.some((r) => r.method === "PUT")).toBe(true);
+      expect(out.promptConfirmCalls).toHaveLength(0);
+    });
+  });
+
+  it.live("--yes prunes a stale vector bucket and echoes Go's prompt line", () => {
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.vector]\nenabled = true\n[storage.vector.buckets.vec1]\n",
+      yes: true,
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        {
+          method: "POST",
+          match: VECTOR_LIST,
+          body: { vectorBuckets: [{ vectorBucketName: "stale" }] },
+        },
+        { method: "POST", match: VECTOR_CREATE, body: {} },
+        { method: "POST", match: VECTOR_DELETE, body: {} },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // Bucket name + config path are bold-rendered, so assert the stable suffix.
+      expect(out.stderrText).toContain("Do you want to prune it? [y/N] y");
+      expect(requests.some((r) => r.url.endsWith(VECTOR_DELETE))).toBe(true);
     });
   });
 });

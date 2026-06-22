@@ -21,7 +21,12 @@ interface LegacyBucketSummary {
 }
 
 export interface LegacyUpsertBucketProps {
-  readonly public: boolean;
+  /**
+   * Tri-state to match Go's `Public *bool` with `json:"public,omitempty"`:
+   * `undefined` when `public` is absent from the bucket's TOML (field omitted),
+   * otherwise the explicit value.
+   */
+  readonly public: boolean | undefined;
   /** Byte count; omitted from the request body when 0 (Go `omitempty`). */
   readonly fileSizeLimit: number;
   readonly allowedMimeTypes: ReadonlyArray<string>;
@@ -65,9 +70,17 @@ function readString(obj: unknown, key: string): string {
   return "";
 }
 
-/** Build the create/update bucket body with Go's `omitempty` semantics. */
-function bucketBody(props: LegacyUpsertBucketProps): Record<string, unknown> {
-  const body: Record<string, unknown> = { public: props.public };
+/**
+ * Build the create/update bucket body with Go's `omitempty` semantics
+ * (`pkg/storage/buckets.go:29-54`): `public` (a `*bool`) is omitted when absent
+ * from the TOML, `file_size_limit` when 0, `allowed_mime_types` when empty.
+ * Exported for focused unit coverage.
+ */
+export function legacyBucketBody(props: LegacyUpsertBucketProps): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (props.public !== undefined) {
+    body["public"] = props.public;
+  }
   if (props.fileSizeLimit > 0) {
     body["file_size_limit"] = props.fileSizeLimit;
   }
@@ -138,13 +151,13 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
     createBucket: (name, props) =>
       send(
         withAuth(HttpClientRequest.post(url("/storage/v1/bucket"))).pipe(
-          HttpClientRequest.bodyJsonUnsafe({ name, ...bucketBody(props) }),
+          HttpClientRequest.bodyJsonUnsafe({ name, ...legacyBucketBody(props) }),
         ),
       ).pipe(Effect.asVoid),
     updateBucket: (id, props) =>
       send(
         withAuth(HttpClientRequest.put(url(`/storage/v1/bucket/${id}`))).pipe(
-          HttpClientRequest.bodyJsonUnsafe(bucketBody(props)),
+          HttpClientRequest.bodyJsonUnsafe(legacyBucketBody(props)),
         ),
       ).pipe(Effect.asVoid),
     listVectorBuckets: () =>
