@@ -43,9 +43,9 @@ omitted when empty (Go `omitempty`).
 
 ## Environment Variables
 
-| Variable                     | Purpose                                                                                  | Required? |
-| ---------------------------- | ---------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_SERVICES_HOSTNAME` | override the local services host (highest precedence)                                    | no        |
+| Variable                     | Purpose                                                                                        | Required? |
+| ---------------------------- | ---------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_SERVICES_HOSTNAME` | override the local services host (highest precedence)                                          | no        |
 | `DOCKER_HOST`                | when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1` | no        |
 
 ## Exit Codes
