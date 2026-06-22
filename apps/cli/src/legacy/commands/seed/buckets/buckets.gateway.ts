@@ -7,7 +7,10 @@ import { LegacySeedStorageNetworkError, LegacySeedStorageStatusError } from "./b
 /**
  * Native TypeScript client for the Supabase Storage **service gateway** (Kong),
  * mirroring `apps/cli-go/pkg/storage/{buckets,objects,vector}.go` and the
- * `fetcher.NewServiceGateway` auth headers (`apikey` + `Authorization: Bearer`).
+ * `fetcher.NewServiceGateway` auth headers: the `apikey` header is always sent,
+ * and `Authorization: Bearer <key>` is added only when the key is a JWT — Go's
+ * `withAuthToken` (`pkg/fetcher/gateway.go:22`) omits it for opaque `sb_...`
+ * keys, which are not bearer tokens.
  *
  * Scope is limited to what `seed buckets` reaches against the **local** stack
  * (list/create/update buckets, upload objects, vector list/create/delete). No
@@ -97,14 +100,21 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
 }) {
   const httpClient = yield* HttpClient.HttpClient;
 
+  // Go's `withAuthToken` (`pkg/fetcher/gateway.go:22`) gates the bearer header on
+  // a plain `sb_` prefix check: opaque `sb_...` keys are not JWTs, so only the
+  // `apikey` header is sent for them.
+  const isOpaqueServiceKey = opts.apiKey.startsWith("sb_");
   const withAuth = (
     req: HttpClientRequest.HttpClientRequest,
-  ): HttpClientRequest.HttpClientRequest =>
-    req.pipe(
+  ): HttpClientRequest.HttpClientRequest => {
+    const withApiKey = req.pipe(
       HttpClientRequest.setHeader("apikey", opts.apiKey),
-      HttpClientRequest.setHeader("Authorization", `Bearer ${opts.apiKey}`),
       HttpClientRequest.setHeader("User-Agent", opts.userAgent),
     );
+    return isOpaqueServiceKey
+      ? withApiKey
+      : withApiKey.pipe(HttpClientRequest.setHeader("Authorization", `Bearer ${opts.apiKey}`));
+  };
 
   // Sends a request and returns the response body text, reproducing the Go
   // fetcher's error shapes (`pkg/fetcher/http.go`): transport failure →

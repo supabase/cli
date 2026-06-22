@@ -63,12 +63,12 @@ function setupLegacySeedBuckets(
     promptConfirmFail: opts.promptConfirmFail,
   });
 
-  const requests: Array<{ method: string; url: string }> = [];
+  const requests: Array<{ method: string; url: string; headers: Record<string, string> }> = [];
   const routes = opts.routes ?? [];
   const httpLayer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
-      requests.push({ method: request.method, url: request.url });
+      requests.push({ method: request.method, url: request.url, headers: { ...request.headers } });
       const route = routes.find(
         (r) => r.method === request.method && request.url.includes(r.match),
       );
@@ -363,6 +363,70 @@ describe("legacy seed buckets", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       // baseUrl is the configured external_url, not the 127.0.0.1 default.
       expect(requests.every((r) => r.url.startsWith("http://gateway.test:9999"))).toBe(true);
+      // A non-`sb_` key is treated as a JWT: both apikey and bearer are sent.
+      expect(requests.every((r) => r.headers["apikey"] === "explicit-key")).toBe(true);
+      expect(requests.every((r) => r.headers["authorization"] === "Bearer explicit-key")).toBe(
+        true,
+      );
+    });
+  });
+
+  it.live("omits the Authorization header for an opaque sb_ service key", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: [
+        "[auth]",
+        'service_role_key = "sb_secret_localkey"',
+        "[storage.buckets.media]",
+        "public = true",
+      ].join("\n"),
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "media" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // Go's withAuthToken sends only `apikey` for opaque `sb_...` keys.
+      expect(requests.every((r) => r.headers["apikey"] === "sb_secret_localkey")).toBe(true);
+      expect(requests.every((r) => r.headers["authorization"] === undefined)).toBe(true);
+    });
+  });
+
+  it.live("regenerates the service-role key when it is set to an empty string", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: ["[auth]", 'service_role_key = ""', "[storage.buckets.media]", "public = true"].join(
+        "\n",
+      ),
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "media" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // An empty key is regenerated from the default secret (a signed JWT), not
+      // sent verbatim — Go's generateAPIKeys fills it on len == 0.
+      expect(
+        requests.every((r) => (r.headers["authorization"] ?? "").startsWith("Bearer ey")),
+      ).toBe(true);
+    });
+  });
+
+  it.live("rejects a jwt_secret shorter than 16 characters", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[auth]\njwt_secret = "tooshort"\n[storage.buckets.media]\npublic = true\n',
+      routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "Invalid config for auth.jwt_secret. Must be at least 16 characters",
+      );
+      // Validation fails before any Storage call.
+      expect(requests).toHaveLength(0);
     });
   });
 
@@ -413,6 +477,12 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("falls back to the default host when external_url is empty", () => {
+    // Clear both host overrides so legacyGetHostname resolves to loopback
+    // deterministically, regardless of the test environment's DOCKER_HOST.
+    const previousServices = process.env["SUPABASE_SERVICES_HOSTNAME"];
+    const previousDocker = process.env["DOCKER_HOST"];
+    delete process.env["SUPABASE_SERVICES_HOSTNAME"];
+    delete process.env["DOCKER_HOST"];
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[api]\nexternal_url = ""\n[storage.buckets.images]\npublic = true\n',
       routes: [
@@ -424,7 +494,22 @@ describe("legacy seed buckets", () => {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.every((r) => r.url.startsWith("http://127.0.0.1:54321"))).toBe(true);
-    });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previousServices === undefined) {
+            delete process.env["SUPABASE_SERVICES_HOSTNAME"];
+          } else {
+            process.env["SUPABASE_SERVICES_HOSTNAME"] = previousServices;
+          }
+          if (previousDocker === undefined) {
+            delete process.env["DOCKER_HOST"];
+          } else {
+            process.env["DOCKER_HOST"] = previousDocker;
+          }
+        }),
+      ),
+    );
   });
 
   it.live("tolerates malformed entries in the bucket list response", () => {
@@ -469,6 +554,42 @@ describe("legacy seed buckets", () => {
             delete process.env["SUPABASE_SERVICES_HOSTNAME"];
           } else {
             process.env["SUPABASE_SERVICES_HOSTNAME"] = previousHost;
+          }
+        }),
+      ),
+    );
+  });
+
+  it.live("falls back to the TCP Docker daemon host when only DOCKER_HOST is set", () => {
+    const previousServices = process.env["SUPABASE_SERVICES_HOSTNAME"];
+    const previousDocker = process.env["DOCKER_HOST"];
+    delete process.env["SUPABASE_SERVICES_HOSTNAME"];
+    process.env["DOCKER_HOST"] = "tcp://docker.internal:2375";
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.images]\npublic = true\n",
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // Go's GetHostname dials the TCP daemon host, not loopback, when only
+      // DOCKER_HOST is set (misc.go:305-310).
+      expect(requests.every((r) => r.url.startsWith("http://docker.internal:54321"))).toBe(true);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previousServices === undefined) {
+            delete process.env["SUPABASE_SERVICES_HOSTNAME"];
+          } else {
+            process.env["SUPABASE_SERVICES_HOSTNAME"] = previousServices;
+          }
+          if (previousDocker === undefined) {
+            delete process.env["DOCKER_HOST"];
+          } else {
+            process.env["DOCKER_HOST"] = previousDocker;
           }
         }),
       ),

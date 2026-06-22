@@ -20,9 +20,13 @@ Seeds the **local** Supabase Storage stack from `[storage.buckets]` and
 ## API Routes
 
 All routes target the local **Storage service gateway** (Kong) at
-`api.external_url` (default `http://127.0.0.1:54321`). Auth: `apikey` +
-`Authorization: Bearer` headers, both set to the local service-role key
-(`auth.service_role_key`, or a JWT signed from `auth.jwt_secret`).
+`api.external_url` (default `http://<host>:54321`, where `<host>` follows Go's
+`utils.GetHostname`: `SUPABASE_SERVICES_HOSTNAME` → TCP `DOCKER_HOST` → `127.0.0.1`).
+Auth: an `apikey` header set to the local service-role key
+(`auth.service_role_key`, or a JWT signed from `auth.jwt_secret`); an
+`Authorization: Bearer <key>` header is also sent, except when the key is an
+opaque `sb_...` key, which Go's `withAuthToken` (`pkg/fetcher/gateway.go:22`)
+treats as a non-JWT and omits.
 
 | Method | Path                                    | Auth         | Request body                                                                            | Response (used fields)                 |
 | ------ | --------------------------------------- | ------------ | --------------------------------------------------------------------------------------- | -------------------------------------- |
@@ -39,9 +43,10 @@ omitted when empty (Go `omitempty`).
 
 ## Environment Variables
 
-| Variable                     | Purpose                                                | Required? |
-| ---------------------------- | ------------------------------------------------------ | --------- |
-| `SUPABASE_SERVICES_HOSTNAME` | override the local services host (default `127.0.0.1`) | no        |
+| Variable                     | Purpose                                                                                  | Required? |
+| ---------------------------- | ---------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_SERVICES_HOSTNAME` | override the local services host (highest precedence)                                    | no        |
+| `DOCKER_HOST`                | when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1` | no        |
 
 ## Exit Codes
 
@@ -49,6 +54,7 @@ omitted when empty (Go `omitempty`).
 | ---- | --------------------------------------------------------------- |
 | `0`  | success (including the empty-config short-circuit)              |
 | `1`  | `supabase/config.toml` parse failure                            |
+| `1`  | `auth.jwt_secret` set but shorter than 16 characters            |
 | `1`  | Storage API error (non-2xx) other than vector-unavailable       |
 | `1`  | network / connection failure to the Storage gateway             |
 | `1`  | unreadable `objects_path` (filesystem error during walk/upload) |
