@@ -240,6 +240,7 @@ function localDockerId(name: string, projectId: string) {
 
 const dockerCliProjectLabel = "com.supabase.cli.project";
 const dockerComposeProjectLabel = "com.docker.compose.project";
+const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY", "NPM_AUTH_TOKEN"] as const;
 
 function dockerProjectLabels(projectId: string) {
   return {
@@ -263,6 +264,13 @@ function dockerBindHostPath(bind: string) {
   const withoutMode = bind.replace(/:(?:ro|rw)$/, "");
   const separatorIndex = withoutMode.lastIndexOf(":");
   return separatorIndex === -1 ? withoutMode : withoutMode.slice(0, separatorIndex);
+}
+
+function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
+  return dockerNpmEnvNames.flatMap((name) => {
+    const value = env[name];
+    return value === undefined || value === "" ? [] : [`${name}=${value}`];
+  });
 }
 
 function toApiRelativePath(cwd: string, hostPath: string) {
@@ -1256,8 +1264,8 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     ) {
       command.push("-e", "DENO_NO_PACKAGE_JSON=1");
     }
-    if (process.env["NPM_CONFIG_REGISTRY"] !== undefined) {
-      command.push("-e", `NPM_CONFIG_REGISTRY=${process.env["NPM_CONFIG_REGISTRY"]}`);
+    for (const env of dockerNpmEnv()) {
+      command.push("-e", env);
     }
 
     command.push(

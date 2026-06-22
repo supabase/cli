@@ -1224,6 +1224,70 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
+  it.live("forwards npm auth environment to the Docker bundler", () => {
+    const tempDir = makeTempDir();
+    const previousRegistry = process.env["NPM_CONFIG_REGISTRY"];
+    const previousToken = process.env["NPM_AUTH_TOKEN"];
+    const child = mockChildProcessSpawner({
+      exitCode: 0,
+      onSpawn: (record) => {
+        if (record.command !== "docker" || record.args[0] !== "run") {
+          return;
+        }
+        const outputPath = resolveDockerOutputPath(record.args);
+        mkdirSync(dirname(outputPath), { recursive: true });
+        writeFileSync(outputPath, "eszip-test-output");
+      },
+    });
+
+    const restoreEnv = Effect.sync(() => {
+      if (previousRegistry === undefined) {
+        delete process.env["NPM_CONFIG_REGISTRY"];
+      } else {
+        process.env["NPM_CONFIG_REGISTRY"] = previousRegistry;
+      }
+      if (previousToken === undefined) {
+        delete process.env["NPM_AUTH_TOKEN"];
+      } else {
+        process.env["NPM_AUTH_TOKEN"] = previousToken;
+      }
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* Effect.sync(() => {
+        process.env["NPM_CONFIG_REGISTRY"] = "https://npm.pkg.github.com";
+        process.env["NPM_AUTH_TOKEN"] = "test-token";
+      });
+
+      const { layer } = setup(tempDir, {
+        rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
+        childLayer: child.layer,
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+        useDocker: true,
+      }).pipe(Effect.provide(layer));
+
+      const dockerRun = child.spawned.find(
+        (record) => record.command === "docker" && record.args[0] === "run",
+      );
+      const forwardedEnv = dockerRun?.args.flatMap((arg, index, args) =>
+        args[index - 1] === "-e" ? [arg] : [],
+      );
+
+      expect(forwardedEnv).toEqual(
+        expect.arrayContaining([
+          "NPM_CONFIG_REGISTRY=https://npm.pkg.github.com",
+          "NPM_AUTH_TOKEN=test-token",
+        ]),
+      );
+    }).pipe(Effect.ensuring(Effect.all([cleanupTempDir(tempDir), restoreEnv])));
+  });
+
   it.live("rejects unsupported edge runtime Deno versions for Docker bundling", () => {
     const tempDir = makeTempDir();
 
