@@ -6,7 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { CliOutput, Command } from "effect/unstable/cli";
-import { Deferred, Effect, Exit, Layer, Option, Sink, Stdio, Stream } from "effect";
+import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream } from "effect";
 import {
   LEGACY_GLOBAL_FLAGS,
   LegacyDebugFlag,
@@ -240,6 +240,78 @@ function mockSequentialChildProcessSpawner(
 
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(2000 + spawned.length),
+          stdout: Stream.fromIterable(stdoutBytes),
+          stderr: Stream.fromIterable(stderrBytes),
+          all: Stream.empty,
+          exitCode: Deferred.await(exitDeferred),
+          isRunning: Effect.succeed(false),
+          stdin: Sink.drain,
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    ),
+  );
+
+  return {
+    layer,
+    get spawned() {
+      return spawned;
+    },
+  };
+}
+
+function mockDockerMissingChildProcessSpawner(
+  steps: ReadonlyArray<{
+    readonly exitCode?: number;
+    readonly stdout?: ReadonlyArray<string>;
+    readonly stderr?: ReadonlyArray<string>;
+  }>,
+) {
+  const encoder = new TextEncoder();
+  const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+  let stepIndex = 0;
+
+  const layer = Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        const cmd = command._tag === "StandardCommand" ? command.command : "";
+        const args = command._tag === "StandardCommand" ? command.args : [];
+        spawned.push({ command: cmd, args });
+
+        if (cmd === "docker") {
+          return yield* Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "ChildProcess",
+              method: "spawn",
+              description: "docker not found",
+            }),
+          );
+        }
+
+        const step = steps[Math.min(stepIndex, steps.length - 1)];
+        stepIndex += 1;
+        const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+
+        yield* Effect.forkDetach(
+          Effect.gen(function* () {
+            yield* Effect.sleep("10 millis");
+            yield* Deferred.succeed(
+              exitDeferred,
+              ChildProcessSpawner.ExitCode(step?.exitCode ?? 0),
+            );
+          }),
+        );
+
+        const stdoutBytes = (step?.stdout ?? []).map((line) => encoder.encode(`${line}\n`));
+        const stderrBytes = (step?.stderr ?? []).map((line) => encoder.encode(`${line}\n`));
+
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(3000 + spawned.length),
           stdout: Stream.fromIterable(stdoutBytes),
           stderr: Stream.fromIterable(stderrBytes),
           all: Stream.empty,
@@ -692,6 +764,55 @@ describe("legacy gen types", () => {
           // The local/db-url paths have no project ref, so they must not populate the
           // linked-project cache (matches Go's ensureProjectGroupsCached early return).
           expect(linkedProjectCache.cached).toBe(false);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("falls back to podman when the docker executable is missing for local generation", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-podman-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "demo"',
+              "",
+              "[api]",
+              'schemas = ["public"]',
+              "",
+              "[db]",
+              `port = ${port}`,
+            ].join("\n"),
+          );
+          const child = mockDockerMissingChildProcessSpawner([
+            { exitCode: 0 },
+            { exitCode: 0, stdout: ["export type Database = {};"] },
+          ]);
+          const { layer, out } = setup({
+            workdir,
+            childLayer: child.layer,
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
+          );
+
+          expect(out.stdoutText).toContain("export type Database = {};");
+          expect(child.spawned[0]).toEqual({
+            command: "docker",
+            args: ["container", "inspect", "supabase_db_demo"],
+          });
+          expect(child.spawned[1]).toEqual({
+            command: "podman",
+            args: ["container", "inspect", "supabase_db_demo"],
+          });
+          expect(child.spawned[2]?.command).toBe("docker");
+          expect(child.spawned[2]?.args).toContain("run");
+          expect(child.spawned[3]?.command).toBe("podman");
+          expect(child.spawned[3]?.args).toContain("run");
+          expect(child.spawned[3]?.args).toContain("supabase_network_demo");
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),

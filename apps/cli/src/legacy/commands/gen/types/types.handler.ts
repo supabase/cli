@@ -30,6 +30,8 @@ import {
   resolvePgmetaImage,
 } from "./types.shared.ts";
 
+type ChildProcessOptions = ChildProcess.CommandOptions;
+
 const mapProjectTypesError = mapLegacyHttpError({
   networkError: LegacyGenTypesNetworkError,
   statusError: LegacyGenTypesUnexpectedStatusError,
@@ -307,13 +309,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           "node",
           "dist/server/server.js",
         ];
-        const child = yield* spawner.spawn(
-          ChildProcess.make("docker", args, {
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "pipe",
-          }),
-        );
+        const child = yield* spawnContainerProcess(args, {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
         const [exitCode] = yield* Effect.all(
           [
@@ -336,12 +336,13 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         // We only need the exit code and stderr (Go uses Docker's ContainerInspect API,
         // which reads no stdout). Discard stdout so the inspect JSON can never fill the
         // pipe buffer and deadlock the unconsumed stream.
-        const child = yield* spawner.spawn(
-          ChildProcess.make("docker", ["container", "inspect", localDbContainerId(projectId)], {
+        const child = yield* spawnContainerProcess(
+          ["container", "inspect", localDbContainerId(projectId)],
+          {
             stdin: "ignore",
             stdout: "ignore",
             stderr: "pipe",
-          }),
+          },
         );
         const [exitCode, stderr] = yield* Effect.all([
           child.exitCode.pipe(Effect.map(Number)),
@@ -362,6 +363,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         }
       }),
     );
+
+  const spawnContainerProcess = (args: ReadonlyArray<string>, options: ChildProcessOptions) =>
+    spawner
+      .spawn(ChildProcess.make("docker", args, options))
+      .pipe(Effect.catch(() => spawner.spawn(ChildProcess.make("podman", args, options))));
 
   yield* Effect.gen(function* () {
     if (flags.local) {
