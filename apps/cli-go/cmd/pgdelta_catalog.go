@@ -11,6 +11,13 @@ import (
 // pgdeltaCatalogMode selects which catalog the hidden seam command produces.
 var pgdeltaCatalogMode string
 
+// pgdeltaCatalogProjectRef is the resolved linked project ref, forwarded by the
+// native-TypeScript seam so the catalog is built from the remote-merged config.
+// The declarative group's PersistentPreRunE seeds flags.ProjectRef from it before
+// LoadConfig (this command never runs LoadProjectRef, so SUPABASE_PROJECT_ID env
+// alone would not trigger the [remotes.<ref>] merge).
+var pgdeltaCatalogProjectRef string
+
 // dbDeclarativeCatalogCmd is a hidden seam used by the native-TypeScript
 // declarative commands to provision a shadow-database platform baseline (and,
 // for migrations/declarative modes, apply migrations / declarative files) and
@@ -34,5 +41,6 @@ var dbDeclarativeCatalogCmd = &cobra.Command{
 
 func init() {
 	dbDeclarativeCatalogCmd.Flags().StringVar(&pgdeltaCatalogMode, "mode", "", "Catalog mode: baseline, migrations, or declarative.")
+	dbDeclarativeCatalogCmd.Flags().StringVar(&pgdeltaCatalogProjectRef, "project-ref", "", "Linked project ref, so the catalog merges the matching [remotes.<ref>] config override.")
 	dbDeclarativeCmd.AddCommand(dbDeclarativeCatalogCmd)
 }

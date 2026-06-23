@@ -5,7 +5,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Path } from "effect";
 
-import { legacyCollectMigrationsList, legacySaveDebugBundle } from "./declarative.debug-bundle.ts";
+import { legacyCollectMigrationsList, legacySaveDebugBundle } from "./legacy-debug-bundle.ts";
 
 const save = (workdir: string, tempDir: string, migrationsDir: string, id: string) =>
   Effect.gen(function* () {

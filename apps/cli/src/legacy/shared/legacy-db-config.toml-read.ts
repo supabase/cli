@@ -17,6 +17,14 @@ type EnvLookup = (name: string) => string | undefined;
  * and aborts the command rather than running against the default local database).
  */
 interface LegacyDbTomlValues {
+  /**
+   * Resolves a `SUPABASE_*` env var with Go's precedence: shell env (non-empty)
+   * wins, then the loaded project `.env*` files (non-empty), else undefined.
+   * Go writes project `.env` into the process env before viper's `AutomaticEnv`
+   * reads these (`config.go:624,1055-1096`), so handlers must consult both
+   * rather than `process.env` alone (e.g. `SUPABASE_EXPERIMENTAL_PG_DELTA`).
+   */
+  readonly envLookup: (name: string) => string | undefined;
   /** `[db] port`, default 54322 (`packages/config/src/db.ts`). */
   readonly port: number;
   /** `[db] shadow_port`, default 54320. */
@@ -868,6 +876,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   );
 
   const values: LegacyDbTomlValues = {
+    envLookup: envOverride,
     port,
     shadowPort,
     password: passwordRaw !== undefined ? legacyExpandEnv(passwordRaw, lookup) : DEFAULT_PASSWORD,

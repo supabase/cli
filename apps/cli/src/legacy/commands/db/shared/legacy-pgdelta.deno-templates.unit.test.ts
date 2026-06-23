@@ -11,15 +11,15 @@ import {
   legacyPgDeltaDeclarativeApplyScript,
   legacyPgDeltaDeclarativeExportScript,
   legacyPgDeltaDiffScript,
-} from "./declarative.deno-templates.ts";
+} from "./legacy-pgdelta.deno-templates.ts";
 
 // Resolve the Go template sources relative to this file so the byte-equality
 // assertion fails loudly if the embedded copies drift from upstream.
 const goDiffTemplatesDir = fileURLToPath(
-  new URL("../../../../../../../cli-go/internal/db/diff/templates/", import.meta.url),
+  new URL("../../../../../../cli-go/internal/db/diff/templates/", import.meta.url),
 );
 const goPgDeltaTemplatesDir = fileURLToPath(
-  new URL("../../../../../../../cli-go/internal/pgdelta/templates/", import.meta.url),
+  new URL("../../../../../../cli-go/internal/pgdelta/templates/", import.meta.url),
 );
 const readGoTemplate = (name: string) => readFileSync(`${goDiffTemplatesDir}${name}`, "utf8");
 

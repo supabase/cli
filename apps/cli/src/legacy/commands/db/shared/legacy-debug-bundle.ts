@@ -1,22 +1,37 @@
 import { Effect, type FileSystem, type Path } from "effect";
 
-import { legacyBold, legacyYellow } from "../../../../shared/legacy-colors.ts";
-import { legacyListLocalMigrations } from "./declarative.cache.ts";
+import { legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
+import { legacyListLocalMigrations } from "./legacy-pgdelta.cache.ts";
 
 /**
- * Diagnostic artifacts collected when a declarative operation fails. Mirrors
- * Go's `DebugBundle` (`apps/cli-go/internal/db/declarative/debug.go`).
+ * Diagnostic artifacts collected when a pg-delta operation fails (or an empty
+ * diff under `PGDELTA_DEBUG`). Mirrors Go's `DebugBundle`
+ * (`apps/cli-go/internal/db/declarative/debug.go`). Shared by the declarative
+ * commands (ref-based catalogs) and the migration-style `db pull` empty-diff
+ * debug bundle (inline catalog strings + connection metadata).
  */
-export interface LegacyDeclarativeDebugBundle {
+export interface LegacyDebugBundle {
   /** Timestamp-based id (e.g. `20240414-044403`); names the debug subdirectory. */
   readonly id: string;
   readonly sourceRef?: string;
   readonly targetRef?: string;
+  /** Inline source catalog JSON; preferred over `sourceRef` when present (Go's debug.go:45-52). */
+  readonly sourceCatalog?: string;
+  /** Inline target catalog JSON; preferred over `targetRef` when present (Go's debug.go:54-61). */
+  readonly targetCatalog?: string;
   readonly migrationSql?: string;
   readonly pgDeltaStderr?: string;
+  /** Redacted connection metadata, written to `connection.txt` (Go's debug.go:76-77). */
+  readonly connectionInfo?: string;
   readonly error?: string;
   /** Local migration filenames to copy into the bundle. */
   readonly migrations?: ReadonlyArray<string>;
+}
+
+/** Go's debug-bundle id layout `20060102-150405` (UTC). */
+export function legacyFormatDebugId(millis: number): string {
+  const digits = new Date(millis).toISOString().replace(/\D/gu, "").slice(0, 14);
+  return `${digits.slice(0, 8)}-${digits.slice(8)}`;
 }
 
 const writeBestEffort = (
@@ -44,7 +59,7 @@ export const legacySaveDebugBundle = Effect.fnUntraced(function* (
   workdir: string,
   tempDir: string,
   migrationsDir: string,
-  bundle: LegacyDeclarativeDebugBundle,
+  bundle: LegacyDebugBundle,
 ) {
   const debugDir = path.join(tempDir, "debug", bundle.id);
   // Go's `SaveDebugBundle` returns an error when the top-level debug directory
@@ -58,15 +73,21 @@ export const legacySaveDebugBundle = Effect.fnUntraced(function* (
   // The catalog refs come back from the Go seam as workdir-relative paths
   // (`supabase/.temp/pgdelta/...`); Go chdir's into the workdir before reading them,
   // so resolve against `workdir` rather than the process cwd (`path.resolve` leaves
-  // absolute refs unchanged).
-  if (bundle.sourceRef !== undefined && bundle.sourceRef.length > 0) {
+  // absolute refs unchanged). An inline catalog string takes precedence over the
+  // ref (Go's debug.go:45-61), matching the `db pull` empty-diff path which holds
+  // the catalogs in memory rather than as files.
+  if (bundle.sourceCatalog !== undefined && bundle.sourceCatalog.length > 0) {
+    yield* writeBestEffort(fs, path.join(debugDir, "source-catalog.json"), bundle.sourceCatalog);
+  } else if (bundle.sourceRef !== undefined && bundle.sourceRef.length > 0) {
     yield* copyBestEffort(
       fs,
       path.resolve(workdir, bundle.sourceRef),
       path.join(debugDir, "source-catalog.json"),
     );
   }
-  if (bundle.targetRef !== undefined && bundle.targetRef.length > 0) {
+  if (bundle.targetCatalog !== undefined && bundle.targetCatalog.length > 0) {
+    yield* writeBestEffort(fs, path.join(debugDir, "target-catalog.json"), bundle.targetCatalog);
+  } else if (bundle.targetRef !== undefined && bundle.targetRef.length > 0) {
     yield* copyBestEffort(
       fs,
       path.resolve(workdir, bundle.targetRef),
@@ -81,6 +102,9 @@ export const legacySaveDebugBundle = Effect.fnUntraced(function* (
   }
   if (bundle.pgDeltaStderr !== undefined && bundle.pgDeltaStderr.length > 0) {
     yield* writeBestEffort(fs, path.join(debugDir, "pgdelta-stderr.txt"), bundle.pgDeltaStderr);
+  }
+  if (bundle.connectionInfo !== undefined && bundle.connectionInfo.length > 0) {
+    yield* writeBestEffort(fs, path.join(debugDir, "connection.txt"), bundle.connectionInfo);
   }
   if (bundle.migrations !== undefined && bundle.migrations.length > 0) {
     const migrationsOut = path.join(debugDir, "migrations");

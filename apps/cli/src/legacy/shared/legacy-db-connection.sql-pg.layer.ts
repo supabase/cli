@@ -95,16 +95,25 @@ const LEGACY_TLS_GATED_SQLSTATE = "28000";
  * `@effect/sql`'s `SqlError.cause`), so we walk the `cause` chain looking for one.
  */
 export function legacyIsTerminalConnectError(error: unknown, usedTls: boolean): boolean {
+  const code = legacyExtractSqlState(error);
+  if (code === undefined) return false;
+  if (LEGACY_TERMINAL_SQLSTATES.has(code)) return true;
+  return code === LEGACY_TLS_GATED_SQLSTATE && usedTls;
+}
+
+/**
+ * Extracts the Postgres SQLSTATE from a driver error. The `pg` driver attaches the
+ * code as a `code` property on the server error, carried through `@effect/sql`'s
+ * `SqlError.cause`, so walk the `cause` chain and return the first string `code`.
+ */
+function legacyExtractSqlState(error: unknown): string | undefined {
   let current: unknown = error;
   for (let depth = 0; depth < 6 && typeof current === "object" && current !== null; depth++) {
     const code = Reflect.get(current, "code");
-    if (typeof code === "string") {
-      if (LEGACY_TERMINAL_SQLSTATES.has(code)) return true;
-      if (code === LEGACY_TLS_GATED_SQLSTATE && usedTls) return true;
-    }
+    if (typeof code === "string") return code;
     current = Reflect.get(current, "cause");
   }
-  return false;
+  return undefined;
 }
 
 /**
@@ -557,16 +566,28 @@ const connect = (
       exec: (sql) =>
         client.unsafe(sql).pipe(
           Effect.asVoid,
-          Effect.mapError((error) => new LegacyDbExecError({ message: String(error) })),
+          Effect.mapError(
+            (error) =>
+              new LegacyDbExecError({ message: String(error), code: legacyExtractSqlState(error) }),
+          ),
         ),
       query: (sql, params) =>
-        client
-          .unsafe<Record<string, unknown>>(sql, params)
-          .pipe(Effect.mapError((error) => new LegacyDbExecError({ message: String(error) }))),
+        client.unsafe<Record<string, unknown>>(sql, params).pipe(
+          Effect.mapError(
+            (error) =>
+              new LegacyDbExecError({
+                message: String(error),
+                code: legacyExtractSqlState(error),
+              }),
+          ),
+        ),
       extensionExists: (name) =>
         client`select 1 from pg_extension where extname = ${name}`.pipe(
           Effect.map((rows) => rows.length > 0),
-          Effect.mapError((error) => new LegacyDbExecError({ message: String(error) })),
+          Effect.mapError(
+            (error) =>
+              new LegacyDbExecError({ message: String(error), code: legacyExtractSqlState(error) }),
+          ),
         ),
       queryRaw: (sql) =>
         Effect.gen(function* () {

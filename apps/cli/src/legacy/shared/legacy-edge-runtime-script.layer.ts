@@ -33,8 +33,10 @@ const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => 
 /**
  * Real `LegacyEdgeRuntimeScript`: runs the Deno program in the edge-runtime
  * container via `LegacyDockerRun.runCapture`, overriding the image entrypoint
- * with `sh -c <heredoc>` (Go's `RunEdgeRuntimeScript`). The image is resolved
- * once at construction; a fresh free port is allocated per run.
+ * with `sh -c <heredoc>` (Go's `RunEdgeRuntimeScript`). The image (from the
+ * caller's effective `deno_version`) and a fresh free port are resolved per run,
+ * so layer construction reads no config (it would validate base config before a
+ * linked command resolves its ref).
  *
  * NOTE: the non-zero-exit message string is approximated from the docker exit
  * code and should be golden-verified against the Go binary.
@@ -57,15 +59,6 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
     // SUPABASE_SERVICES_HOSTNAME) resolves inside the container on Linux/dev-container.
     const extraHosts =
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-    // Read `[edge_runtime] deno_version` so a `deno_version = 1` project runs the
-    // `deno1` image, matching Go's config-driven image switch (the resolver applies
-    // the version pin first, then the deno1 override). This is the *base*-config
-    // value; a caller with a remote-merged config (e.g. `--linked` declarative
-    // generate) overrides it per-run via `opts.denoVersion` below.
-    const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-    const baseImage = legacyGetRegistryImageUrl(
-      yield* legacyResolveEdgeRuntimeImage(fs, path, cliConfig.workdir, toml.denoVersion),
-    );
 
     // Go requests host networking for the edge-runtime container, but `DockerStart`
     // overrides any network mode (host included) with `--network-id` when set
@@ -81,21 +74,24 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
     return LegacyEdgeRuntimeScript.of({
       run: (opts) =>
         Effect.gen(function* () {
-          // Resolve the image per-run only when the caller supplies an effective
-          // `deno_version` that differs from the base config (the remote-merged
-          // value on `--linked` declarative generate); otherwise reuse the base
-          // image resolved once at layer construction.
-          const registryImage =
-            opts.denoVersion !== undefined && opts.denoVersion !== toml.denoVersion
-              ? legacyGetRegistryImageUrl(
-                  yield* legacyResolveEdgeRuntimeImage(
-                    fs,
-                    path,
-                    cliConfig.workdir,
-                    opts.denoVersion,
-                  ),
-                )
-              : baseImage;
+          // Resolve the image per-run from the caller's effective `deno_version` —
+          // the remote-merged value the handler resolved AFTER the linked ref. The
+          // config read happens here, not at layer acquisition, so merely composing
+          // the db diff/pull runtime never validates the base config before the
+          // linked ref is known (Go validates the `[remotes.<ref>]`-merged config,
+          // and even `db diff --use-pgadmin --linked` must not fail at layer build).
+          // Every pg-delta/migra caller passes `opts.denoVersion`, so the base read
+          // is a defensive fallback that does not run for them.
+          const denoVersion =
+            opts.denoVersion ??
+            (yield* legacyReadDbToml(fs, path, cliConfig.workdir).pipe(
+              Effect.mapError(
+                (error) => new LegacyEdgeRuntimeScriptError({ message: error.message }),
+              ),
+            )).denoVersion;
+          const registryImage = legacyGetRegistryImageUrl(
+            yield* legacyResolveEdgeRuntimeImage(fs, path, cliConfig.workdir, denoVersion),
+          );
           const port = yield* allocateFreeHostPort;
           const startCmd = legacyBuildEdgeRuntimeStartCmd({ port, debug }).join(" ");
           const files = [{ name: "index.ts", content: opts.script }, ...(opts.extraFiles ?? [])];

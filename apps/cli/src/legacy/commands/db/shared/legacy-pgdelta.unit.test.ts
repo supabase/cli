@@ -6,7 +6,7 @@ import {
   legacyIsPostgresURL,
   legacyPgDeltaBinds,
   legacyPgDeltaContainerRef,
-} from "./declarative.pgdelta.ts";
+} from "./legacy-pgdelta.ts";
 
 describe("legacyIsPostgresURL", () => {
   it("recognizes postgres:// and postgresql:// schemes", () => {

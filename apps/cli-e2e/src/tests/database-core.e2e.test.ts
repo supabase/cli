@@ -279,7 +279,24 @@ describe("db pull", () => {
     expect(result.stderr).toContain("connect");
   });
 
-  testParity(["db", "pull", "--local"]);
+  // No testParity for `db pull --local`: like `db lint --local` and `test db --local`,
+  // pull connects via the shared utils.ConnectByConfig → pgxv5.Connect path on Go and
+  // the same LegacyDbConnection sql-pg layer on TS. With no local Postgres listening in
+  // the harness, the only reachable path is the connection-failure path, and its stderr
+  // diverges by driver in ways that aren't cosmetic and can't be normalized away.
+  // Both emit Go's leading diagnostic to stderr:
+  //   Connecting to local database...
+  // but the connect-error body and trailing hint still differ by driver. Go (pgx):
+  //   failed to connect to postgres: failed to connect to `host=… user=… database=…`: dial error (dial tcp …: connect: connection refused)
+  //   Make sure your local IP is allowed in Network Restrictions and Network Bans.
+  //   http://…/project/_/database/settings
+  // The TS port (@effect/sql-pg) prints the effect SqlError and the --debug hint:
+  //   failed to connect to postgres: effect/sql/SqlError: PgClient: Failed to connect
+  //   Try rerunning the command with --debug to troubleshoot the error.
+  // The meaningful contract (non-zero exit + a connect error on stderr) is covered by
+  // the behaviour test above. A real connect-path parity test would need a live local
+  // database in the harness. (db dump --local keeps its testParity because it connects
+  // through the pg_dump Docker container, so its stderr matches on both runtimes.)
 });
 
 // ---------------------------------------------------------------------------

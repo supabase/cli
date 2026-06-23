@@ -48,7 +48,7 @@ export const legacyPromptBranchId = Effect.fnUntraced(function* (
 
   if (!tty.stdinIsTty) {
     // Non-TTY path: read once from stdin, optionally with a git-branch default.
-    const gitBranch = yield* detectGitBranch;
+    const gitBranch = yield* detectGitBranch();
     const defaultBranch = Option.getOrElse(gitBranch, () => "");
     // Go applies `utils.Aqua(branchId)` to the default in the prompt label
     // (`apps/cli-go/cmd/branches.go:235`). lipgloss color "14" maps to ANSI

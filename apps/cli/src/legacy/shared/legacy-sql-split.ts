@@ -184,3 +184,16 @@ export function legacySplitAndTrim(sql: string): string[] {
     (token) => token.trim(),
   );
 }
+
+// `(?i)drop\s+` — Go's `dropStatementPattern` (`internal/db/diff/diff.go:100`,
+// also `internal/db/declarative/declarative.go:62`).
+const DROP_STATEMENT_PATTERN = /drop\s+/i;
+
+/**
+ * Extracts DROP statements from a schema diff for the safety warning shown by
+ * `db diff` / `db pull` / declarative `sync`. Mirrors Go's `findDropStatements`:
+ * split the SQL into statements, then keep those matching `(?i)drop\s+`.
+ */
+export function legacyFindDropStatements(sql: string): ReadonlyArray<string> {
+  return legacySplitAndTrim(sql).filter((statement) => DROP_STATEMENT_PATTERN.test(statement));
+}

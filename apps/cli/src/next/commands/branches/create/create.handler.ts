@@ -17,7 +17,7 @@ const resolveBranchName = Effect.fnUntraced(function* (nameOpt: Option.Option<st
   }
 
   const output = yield* Output;
-  const maybeGitBranch = yield* detectGitBranch;
+  const maybeGitBranch = yield* detectGitBranch();
 
   if (Option.isNone(maybeGitBranch)) {
     return yield* Effect.fail(

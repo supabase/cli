@@ -116,3 +116,30 @@ export function legacyParseSchemaFlags(rawValues: ReadonlyArray<string>): Readon
   }
   return schemas;
 }
+
+/**
+ * Whether a CSV field must be quoted. Mirrors Go's `encoding/csv`
+ * `Writer.fieldNeedsQuotes`: never quote the empty string; always quote `\.`;
+ * quote when the field contains `,`, `"`, `\r`, or `\n`; otherwise quote when the
+ * first rune is whitespace.
+ */
+function fieldNeedsQuotes(field: string): boolean {
+  if (field === "") return false;
+  if (field === "\\.") return true;
+  if (/[\n\r",]/u.test(field)) return true;
+  return /^\s/u.test(field);
+}
+
+/**
+ * Serializes a SINGLE parsed schema value back into one CSV field — the inverse of
+ * `readAsCSVStrict` for one element. A schema parsed from `--schema '"tenant,one"'`
+ * is the single value `tenant,one`; forwarding it raw to the Go binary would let
+ * pflag's `StringSlice` CSV-parse it a SECOND time and split it into two schemas.
+ * Re-encoding (mirroring Go's `csv.Writer`) keeps it one field so the delegated
+ * child sees exactly the schema set the native path would. Used when rebuilding
+ * `--schema` argv for the Go-delegated `db diff` / `db pull` paths.
+ */
+export function legacySchemaToCsvField(value: string): string {
+  if (!fieldNeedsQuotes(value)) return value;
+  return `"${value.split('"').join('""')}"`;
+}

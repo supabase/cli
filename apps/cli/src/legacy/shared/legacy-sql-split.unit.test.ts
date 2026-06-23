@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { legacySplitAndTrim, legacySplitSql } from "./legacy-sql-split.ts";
+import {
+  legacyFindDropStatements,
+  legacySplitAndTrim,
+  legacySplitSql,
+} from "./legacy-sql-split.ts";
 
 describe("legacySplitAndTrim", () => {
   it("splits simple statements and trims trailing ; + whitespace", () => {
@@ -70,5 +74,20 @@ describe("legacySplitAndTrim", () => {
 describe("legacySplitSql", () => {
   it("preserves raw statements (no transforms) including the trailing ;-less token", () => {
     expect(legacySplitSql("SELECT 1; SELECT 2")).toEqual(["SELECT 1;", " SELECT 2"]);
+  });
+});
+
+describe("legacyFindDropStatements", () => {
+  it("flags DROP statements (case-insensitive) and ignores others", () => {
+    const sql = "DROP TABLE a;\nCREATE TABLE b();\ndrop function f();";
+    expect(legacyFindDropStatements(sql)).toEqual(["DROP TABLE a", "drop function f()"]);
+  });
+
+  it("does not split a function body on its inner ; (no spurious statements)", () => {
+    // The dollar-quoted `;` must not create extra statements; this benign
+    // function (no DROP) stays whole and is therefore not flagged.
+    const sql =
+      "CREATE FUNCTION f() AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql;\nDROP TABLE real;";
+    expect(legacyFindDropStatements(sql)).toEqual(["DROP TABLE real"]);
   });
 });

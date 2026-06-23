@@ -6,19 +6,19 @@ import {
   type LegacyEdgeRuntimeRunOpts,
   type LegacyEdgeRuntimeRunResult,
   LegacyEdgeRuntimeScript,
-} from "../../../../shared/legacy-edge-runtime-script.service.ts";
-import { LegacyEdgeRuntimeScriptError } from "../../../../shared/legacy-edge-runtime-script.errors.ts";
-import { LegacyPgDeltaSslProbe } from "../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+} from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
+import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import {
   LEGACY_DEFAULT_PG_DELTA_NPM_VERSION,
   LEGACY_PG_DELTA_NPM_VERSION_PLACEHOLDER,
-} from "./declarative.deno-templates.ts";
+} from "./legacy-pgdelta.deno-templates.ts";
 import {
   legacyDeclarativeExportPgDelta,
   legacyDiffPgDelta,
   legacyExportCatalogPgDelta,
   type LegacyPgDeltaContext,
-} from "./declarative.pgdelta.ts";
+} from "./legacy-pgdelta.ts";
 
 const CTX: LegacyPgDeltaContext = {
   projectId: "ref",

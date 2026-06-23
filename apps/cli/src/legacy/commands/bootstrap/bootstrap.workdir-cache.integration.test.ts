@@ -100,7 +100,10 @@ describe("legacy bootstrap linked-project cache location", () => {
       };
       const api = mockLegacyPlatformApi({ handler });
 
-      const proxyLayer = Layer.succeed(LegacyGoProxy, { exec: () => Effect.void });
+      const proxyLayer = Layer.succeed(LegacyGoProxy, {
+        exec: () => Effect.void,
+        execCapture: () => Effect.succeed(""),
+      });
       const templateLayer = Layer.succeed(LegacyTemplateService, {
         listSamples: Effect.succeed([]),
         download: () => Effect.void,

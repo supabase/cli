@@ -24,7 +24,7 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
-import { LegacyDeclarativeSeam } from "../declarative.seam.service.ts";
+import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { legacyDbSchemaDeclarativeSync } from "./sync.handler.ts";
 
@@ -59,6 +59,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         return opts.resetExitCode ?? 0;
       }),
     ensureLocalDatabaseStarted: () => Effect.void,
+    provisionShadow: () => Effect.die("provisionShadow not used in declarative tests"),
+    removeShadowContainer: () => Effect.void,
   });
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (_opts: LegacyEdgeRuntimeRunOpts) =>

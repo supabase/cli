@@ -1,19 +1,33 @@
-import { Argument, Command, Flag } from "effect/unstable/cli";
+import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyDbDiff } from "./diff.handler.ts";
+import { legacyDbDiffRuntimeLayer } from "./diff.layers.ts";
 
 const config = {
+  // The four engine flags form a cobra mutually-exclusive group
+  // (`apps/cli-go/cmd/db.go:416`) and `--use-migra` defaults to true, so they are
+  // modelled as `Option` to track pflag `Changed`: the mutex check and
+  // `resolveDiffEngine`'s `useMigraChanged` key off whether the flag was passed,
+  // not its value.
   useMigra: Flag.boolean("use-migra").pipe(
     Flag.withDescription("Use migra to generate schema diff."),
+    Flag.optional,
   ),
   usePgAdmin: Flag.boolean("use-pgadmin").pipe(
     Flag.withDescription("Use pgAdmin to generate schema diff."),
+    Flag.optional,
   ),
   usePgSchema: Flag.boolean("use-pg-schema").pipe(
     Flag.withDescription("Use pg-schema-diff to generate schema diff."),
+    Flag.optional,
   ),
   usePgDelta: Flag.boolean("use-pg-delta").pipe(
     Flag.withDescription("Use pg-delta to generate schema diff."),
+    Flag.optional,
   ),
   from: Flag.string("from").pipe(
     Flag.withDescription("Diff from local, linked, migrations, or a Postgres URL."),
@@ -34,11 +48,16 @@ const config = {
     ),
     Flag.optional,
   ),
+  // The target flags form the cobra group `[db-url linked local]`
+  // (`apps/cli-go/cmd/db.go:423`); modelled as `Option` so the mutex check tracks
+  // `Changed`. `--local` defaults to true via the target resolver's fall-through.
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Diffs local migration files against the linked project."),
+    Flag.optional,
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Diffs local migration files against the local database."),
+    Flag.optional,
   ),
   file: Flag.string("file").pipe(
     Flag.withAlias("f"),
@@ -49,10 +68,13 @@ const config = {
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
-  ),
-  paths: Argument.string("path").pipe(
-    Argument.withDescription("Additional paths."),
-    Argument.variadic(),
+    // Go registers --schema/-s as a cobra StringSliceVarP (`apps/cli-go/cmd/db.go:425`),
+    // CSV-parsing each value; use the shared pflag-faithful helper so quoted commas
+    // survive and malformed CSV fails at parse time.
+    Flag.mapTryCatch(
+      (rawValues) => legacyParseSchemaFlags(rawValues),
+      (err) => (err instanceof Error ? err.message : String(err)),
+    ),
   ),
 } as const;
 
@@ -61,5 +83,27 @@ export type LegacyDbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const legacyDbDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription("Diffs the local database for schema changes."),
   Command.withShortDescription("Diffs the local database for schema changes"),
-  Command.withHandler((flags) => legacyDbDiff(flags)),
+  Command.withHandler((flags) =>
+    legacyDbDiff(flags).pipe(
+      withLegacyCommandInstrumentation({
+        flags: {
+          "use-migra": flags.useMigra,
+          "use-pgadmin": flags.usePgAdmin,
+          "use-pg-schema": flags.usePgSchema,
+          "use-pg-delta": flags.usePgDelta,
+          from: flags.from,
+          to: flags.to,
+          output: flags.output,
+          "db-url": flags.dbUrl,
+          linked: flags.linked,
+          local: flags.local,
+          file: flags.file,
+          schema: flags.schema,
+        },
+        aliases: { o: "output", f: "file", s: "schema" },
+      }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyDbDiffRuntimeLayer),
 );

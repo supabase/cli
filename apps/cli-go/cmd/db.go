@@ -197,6 +197,76 @@ var (
 		},
 	}
 
+	shadowMode        string
+	shadowTargetLocal bool
+	shadowUsePgDelta  bool
+	shadowSchema      []string
+	shadowProjectRef  string
+
+	// dbShadowCmd is a hidden seam used by the native-TypeScript db diff/pull
+	// commands to provision the throwaway shadow database that the diff "source"
+	// runs against, then leave it running so the TS caller can run the differ
+	// (migra or pg-delta) itself and remove the container afterwards. It prints
+	// three newline-separated lines to stdout: the container id, the source
+	// Postgres URL, and an optional target-override URL (empty unless the
+	// local-target declarative branch redirects the diff target to a second
+	// shadow database). The URLs are emitted WITHOUT the password
+	// (ToPostgresURLWithoutPassword) so we never log a credential to stdout
+	// (CWE-312); the TS caller re-injects the local Postgres password it already
+	// resolves from config.toml, which is the same value the shadow uses. Shadow
+	// provisioning (start.SetupDatabase) is not yet ported, which is why this
+	// stays in Go.
+	dbShadowCmd = &cobra.Command{
+		Use:    "__shadow",
+		Hidden: true,
+		Short:  "Internal: provision a shadow database for the native db diff/pull commands",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// The hidden __shadow command carries none of the db-url/local/linked
+			// target flags, so the root PersistentPreRunE's ParseDatabaseConfig
+			// never loads supabase/config.toml (it only loads when a target flag
+			// is set, internal/utils/flags/db_url.go:46-90). Load it explicitly so
+			// the shadow is provisioned from the project's [db] settings — shadow
+			// port, Postgres version, service baseline, and especially the
+			// password: the native-TS caller injects the config.toml password into
+			// the seam URLs, so the shadow must be created with that same password.
+			fsys := afero.NewOsFs()
+			// On the linked path the native-TS caller passes the resolved project
+			// ref via --project-ref so the shadow is built from the same
+			// remote-merged config the Go monolith uses: LoadConfig seeds
+			// utils.Config.ProjectId from flags.ProjectRef and merges the matching
+			// [remotes.<ref>] block (pkg/config/config.go). Omitted on local/db-url
+			// shadows, which the monolith never remote-merges, so the base config is
+			// used exactly as before.
+			if len(shadowProjectRef) > 0 {
+				flags.ProjectRef = shadowProjectRef
+			}
+			if err := flags.LoadConfig(fsys); err != nil {
+				return err
+			}
+			var src diff.ShadowSource
+			var err error
+			switch shadowMode {
+			case "declarative":
+				src, err = diff.PrepareRawShadow(cmd.Context())
+			case "diff", "":
+				src, err = diff.PrepareShadowSource(cmd.Context(), shadowSchema, shadowTargetLocal, shadowUsePgDelta, fsys)
+			default:
+				return fmt.Errorf("unknown shadow mode: %s", shadowMode)
+			}
+			if err != nil {
+				return err
+			}
+			fmt.Println(src.Container)
+			fmt.Println(utils.ToPostgresURLWithoutPassword(src.Source))
+			if src.TargetOverride != nil {
+				fmt.Println(utils.ToPostgresURLWithoutPassword(*src.TargetOverride))
+			} else {
+				fmt.Println("")
+			}
+			return nil
+		},
+	}
+
 	dbRemoteCmd = &cobra.Command{
 		Hidden: true,
 		Use:    "remote",
@@ -475,6 +545,14 @@ func init() {
 	pullFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pullFlags.Lookup("password")))
 	dbCmd.AddCommand(dbPullCmd)
+	// Build hidden shadow-provisioning seam command
+	shadowFlags := dbShadowCmd.Flags()
+	shadowFlags.StringVar(&shadowMode, "mode", "diff", "Shadow mode: diff (baseline + migrations) or declarative (bare shadow).")
+	shadowFlags.BoolVar(&shadowTargetLocal, "target-local", false, "Whether the diff target is the local database (enables the declarative-schema branch).")
+	shadowFlags.BoolVar(&shadowUsePgDelta, "use-pg-delta", false, "Whether pg-delta is the active diff engine (selects the declarative-apply path).")
+	shadowFlags.StringSliceVarP(&shadowSchema, "schema", "s", []string{}, "Comma separated list of schema to include.")
+	shadowFlags.StringVar(&shadowProjectRef, "project-ref", "", "Linked project ref, so the shadow merges the matching [remotes.<ref>] config override.")
+	dbCmd.AddCommand(dbShadowCmd)
 	// Build remote command
 	remoteFlags := dbRemoteCmd.PersistentFlags()
 	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
