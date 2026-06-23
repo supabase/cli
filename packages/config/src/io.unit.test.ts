@@ -674,7 +674,9 @@ major_version = 16
     expect(schemaString).toContain("remotes");
     expect(schemaString).toContain("static_files");
     expect(schemaString).toContain("env");
-    expect(schemaString).not.toContain("inbucket");
+    // The deprecated implementation name must not leak anywhere in the schema,
+    // including descriptions (case-insensitive guard).
+    expect(schemaString.toLowerCase()).not.toContain("inbucket");
     expect(schemaString).not.toContain("versions");
   });
 
