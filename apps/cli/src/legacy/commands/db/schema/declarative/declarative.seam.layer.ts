@@ -5,6 +5,7 @@ import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner
 import { LegacyNetworkIdFlag } from "../../../../../shared/legacy/global-flags.ts";
 import { resolveBinary } from "../../../../../shared/legacy/go-proxy.layer.ts";
 import { LegacyCliConfig } from "../../../../config/legacy-cli-config.service.ts";
+import { spawnContainerCli } from "../../../../shared/legacy-container-cli.ts";
 import { legacyReadDbToml } from "../../../../shared/legacy-db-config.toml-read.ts";
 import {
   legacyResolveLocalProjectId,
@@ -146,20 +147,16 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             // Go's AssertSupabaseDbIsRunning = ContainerInspect → NotFound ⇒ not
             // running. Discard stdout (the inspect JSON) so the unconsumed pipe can
             // never deadlock; only the exit code + stderr matter.
-            const inspect = ChildProcess.make("docker", ["container", "inspect", containerId], {
+            const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {
               stdin: "ignore",
               stdout: "ignore",
               stderr: "pipe",
               extendEnv: true,
-            });
-            const child = yield* spawner
-              .spawn(inspect)
-              .pipe(
-                Effect.mapError(
-                  () =>
-                    new LegacyDeclarativeShadowDbError({ message: "failed to inspect service" }),
-                ),
-              );
+            }).pipe(
+              Effect.mapError(
+                () => new LegacyDeclarativeShadowDbError({ message: "failed to inspect service" }),
+              ),
+            );
             const stderrChunks: Array<Uint8Array> = [];
             yield* Stream.runForEach(child.stderr, (chunk) =>
               Effect.sync(() => {

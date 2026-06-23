@@ -10,9 +10,10 @@ import {
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config";
 import { Duration, Effect, Option, Schema, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { Output } from "../output/output.service.ts";
+import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import { invalidFunctionSlugDetail, validateFunctionSlugMessage } from "./functions.shared.ts";
 import {
@@ -1141,7 +1142,7 @@ const ensureDockerNetwork = Effect.fnUntraced(function* (networkMode: string, pr
     return;
   }
 
-  const inspect = yield* runChildProcess("docker", ["network", "inspect", networkMode], {
+  const inspect = yield* runContainerCli(["network", "inspect", networkMode], {
     stdout: "ignore",
     stderr: "ignore",
   }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
@@ -1150,8 +1151,7 @@ const ensureDockerNetwork = Effect.fnUntraced(function* (networkMode: string, pr
   }
 
   const labels = dockerProjectLabels(projectId);
-  const create = yield* runChildProcess(
-    "docker",
+  const create = yield* runContainerCli(
     [
       "network",
       "create",
@@ -1180,8 +1180,7 @@ const ensureDockerNamedVolume = Effect.fnUntraced(function* (
   }
 
   const labels = dockerProjectLabels(projectId);
-  const create = yield* runChildProcess(
-    "docker",
+  const create = yield* runContainerCli(
     [
       "volume",
       "create",
@@ -1213,8 +1212,11 @@ async function shouldUsePackageJsonDiscovery(entrypoint: string, importMap: stri
   }
 }
 
-const runChildProcess = Effect.fnUntraced(function* (
-  command: string,
+// Runs a container-CLI command (docker, falling back to podman when the docker
+// executable is missing) and collects its output. All callers operate docker,
+// so the spawn goes through `spawnContainerCli` to keep Podman-only hosts
+// working across the whole deploy flow.
+const runContainerCli = Effect.fnUntraced(function* (
   args: ReadonlyArray<string>,
   opts: {
     readonly stdout?: "pipe" | "ignore";
@@ -1223,14 +1225,12 @@ const runChildProcess = Effect.fnUntraced(function* (
   } = {},
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const child = yield* spawner.spawn(
-    ChildProcess.make(command, [...args], {
-      stdin: "ignore",
-      stdout: opts.stdout ?? "pipe",
-      stderr: opts.stderr ?? "pipe",
-      env: opts.env,
-    }),
-  );
+  const child = yield* spawnContainerCli(spawner, [...args], {
+    stdin: "ignore",
+    stdout: opts.stdout ?? "pipe",
+    stderr: opts.stderr ?? "pipe",
+    env: opts.env,
+  });
 
   const [stdout, stderr, exitCode] = yield* Effect.all(
     [
@@ -1244,7 +1244,7 @@ const runChildProcess = Effect.fnUntraced(function* (
 });
 
 const isDockerRunning = Effect.fnUntraced(function* () {
-  const result = yield* runChildProcess("docker", ["info"], {
+  const result = yield* runContainerCli(["info"], {
     stdout: "ignore",
     stderr: "ignore",
   }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
@@ -1312,7 +1312,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       command.push("--verbose");
     }
 
-    const result = yield* runChildProcess("docker", command, { stdout: "pipe", stderr: "pipe" });
+    const result = yield* runContainerCli(command, { stdout: "pipe", stderr: "pipe" });
     if (result.stdout.length > 0) {
       yield* output.raw(result.stdout, output.format === "text" ? "stdout" : "stderr");
     }
