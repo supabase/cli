@@ -1507,6 +1507,39 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live(
+    "re-roots an absolute cert_path/key_path under supabase/ (Go path.Join, no IsAbs guard)",
+    () => {
+      // Go resolves api.tls.cert_path/key_path with path.Join(SupabaseDirPath, p)
+      // and NO filepath.IsAbs guard (config.go:795-801), so an absolute-looking
+      // "/tmp/kong.crt" is read from supabase/tmp/kong.crt — NOT from the real
+      // /tmp. We only write the cert/key under supabase/tmp/; if the handler tried
+      // the literal /tmp path it would fail to read and error out.
+      const certContent = "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n";
+      const keyContent = "-----BEGIN PRIVATE KEY-----\nZHVtbXk=\n-----END PRIVATE KEY-----\n";
+      mkdirSync(join(tmp.current, "supabase", "tmp"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", "tmp", "kong.crt"), certContent);
+      writeFileSync(join(tmp.current, "supabase", "tmp", "kong.key"), keyContent);
+      const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: '[api]\nport = 54321\n[api.tls]\nenabled = true\ncert_path = "/tmp/kong.crt"\nkey_path = "/tmp/kong.key"\n[storage.buckets.docs]\npublic = false\n',
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "docs" } },
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(
+          requests.some((r) => r.method === "POST" && r.url.includes("/storage/v1/bucket")),
+        ).toBe(true);
+      });
+    },
+  );
+
   // ---------------------------------------------------------------------------
   // Fix 1 — --linked merges [remotes.*] config overrides
   // ---------------------------------------------------------------------------

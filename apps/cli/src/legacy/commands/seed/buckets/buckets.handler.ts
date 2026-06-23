@@ -113,7 +113,12 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
   }
 
   if (hasCert) {
-    const absCert = path.isAbsolute(certPath) ? certPath : path.join(workdir, "supabase", certPath);
+    // Go joins TLS paths unconditionally with the supabase dir — NO IsAbs guard
+    // (config.go:795-801 uses path.Join, which absorbs a leading "/" on the
+    // joined element), so `cert_path = "/tmp/kong.crt"` resolves under
+    // supabase/tmp/kong.crt. This differs from objects_path below, which Go
+    // guards with !filepath.IsAbs (config.go:753-761).
+    const absCert = path.join(workdir, "supabase", certPath);
     const certContent = yield* fs.readFileString(absCert).pipe(
       Effect.catchTag(
         "PlatformError",
@@ -123,8 +128,9 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
           }),
       ),
     );
-    // keyPath is non-empty here because hasKey === true (cert+key both present)
-    const absKey = path.isAbsolute(keyPath!) ? keyPath! : path.join(workdir, "supabase", keyPath!);
+    // keyPath is non-empty here because hasKey === true (cert+key both present);
+    // joined unconditionally, same as cert_path above (config.go:795-801).
+    const absKey = path.join(workdir, "supabase", keyPath!);
     yield* fs.readFileString(absKey).pipe(
       Effect.catchTag(
         "PlatformError",
