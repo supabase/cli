@@ -1715,6 +1715,164 @@ describe("legacy functions serve integration", () => {
     );
   });
 
+  it.live(
+    "resolves numeric env() config values from root env development files before decode",
+    () => {
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && args[1] === "inspect") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "container" && args[1] === "rm") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "run") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+
+      const childSpawner = mockDockerLogSpawner([
+        { exitCode: 1, stderr: "root api env logs failed" },
+      ]);
+      const previousSupabaseEnv = process.env["SUPABASE_ENV"];
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          writeProjectConfig(
+            ['project_id = "test-project"', "[api]", 'port = "env(ROOT_API_PORT)"', ""].join("\n"),
+          ),
+        );
+        yield* Effect.promise(() => writeProjectFile(".env.development", "ROOT_API_PORT=5544\n"));
+        yield* Effect.promise(() =>
+          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+        );
+        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+        process.env["SUPABASE_ENV"] = "development";
+
+        const { layer } = setupServe({ childSpawner });
+        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+          Effect.provide(layer),
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toContain("root api env logs failed");
+        }
+
+        const dockerRun = deployMockState.runCalls.find(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        );
+        expect(dockerRun).toBeDefined();
+        if (dockerRun === undefined) {
+          throw new Error("expected docker run call");
+        }
+
+        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
+        expect(envs).toContain("SUPABASE_INTERNAL_HOST_PORT=5544");
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousSupabaseEnv === undefined) {
+              delete process.env["SUPABASE_ENV"];
+            } else {
+              process.env["SUPABASE_ENV"] = previousSupabaseEnv;
+            }
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live(
+    "does not publish default jwks fallbacks when signing_keys_path is configured but empty",
+    () => {
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && args[1] === "inspect") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "container" && args[1] === "rm") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "run") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+
+      const childSpawner = mockDockerLogSpawner([
+        { exitCode: 1, stderr: "empty signing keys logs failed" },
+      ]);
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          writeProjectConfig(
+            [
+              'project_id = "test-project"',
+              "[auth]",
+              'signing_keys_path = "./signing-keys.json"',
+              "",
+            ].join("\n"),
+          ),
+        );
+        yield* Effect.promise(() =>
+          writeProjectFile(join("supabase", "signing-keys.json"), "[]\n"),
+        );
+        yield* Effect.promise(() =>
+          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+        );
+        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+        const { layer } = setupServe({ childSpawner });
+        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+          Effect.provide(layer),
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toContain("empty signing keys logs failed");
+        }
+
+        const dockerRun = deployMockState.runCalls.find(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        );
+        expect(dockerRun).toBeDefined();
+        if (dockerRun === undefined) {
+          throw new Error("expected docker run call");
+        }
+
+        const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
+        const jwks = envs.find((entry) => entry.startsWith("SUPABASE_JWKS="));
+        expect(jwks).toBeDefined();
+        if (jwks === undefined) {
+          throw new Error("missing SUPABASE_JWKS");
+        }
+
+        const parsed = JSON.parse(jwks.slice("SUPABASE_JWKS=".length)) as {
+          readonly keys: ReadonlyArray<Record<string, unknown>>;
+        };
+        expect(
+          parsed.keys.some((key) => key["kid"] === "b81269f1-21d8-4f2e-b719-c2240a840d90"),
+        ).toBe(false);
+        expect(parsed.keys.some((key) => key["kty"] === "oct")).toBe(false);
+      });
+    },
+  );
+
   it.live("fails when the explicit env file is missing", () => {
     return Effect.gen(function* () {
       yield* Effect.promise(() =>

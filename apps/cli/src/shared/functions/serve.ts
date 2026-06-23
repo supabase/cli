@@ -574,6 +574,7 @@ const resolveAuthArtifacts = Effect.fnUntraced(function* (
         ? generateAsymmetricJwt(signingKeys[0]!, "service_role")
         : generateSymmetricJwt(jwtSecret, "service_role")
       : auth.service_role_key;
+  const shouldUseJwtSecretFallback = signingKeysPath.length === 0;
 
   const keys: unknown[] = [];
   const issuerUrl = enabledThirdPartyIssuer(auth.third_party);
@@ -585,9 +586,13 @@ const resolveAuthArtifacts = Effect.fnUntraced(function* (
     keys.push(...remoteJwks);
   }
   keys.push(
-    ...(signingKeys.length > 0 ? signingKeys.map(toPublicSigningKey) : [defaultSigningKey]),
+    ...(signingKeys.length > 0
+      ? signingKeys.map(toPublicSigningKey)
+      : shouldUseJwtSecretFallback
+        ? [defaultSigningKey]
+        : []),
   );
-  if (signingKeys.length === 0) {
+  if (shouldUseJwtSecretFallback) {
     keys.push({
       kty: "oct",
       k: Buffer.from(jwtSecret).toString("base64url"),
@@ -614,6 +619,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   projectRoot: string,
   projectIdOverride: Option.Option<string>,
 ) {
+  const projectEnv = yield* loadServeProjectEnvironment(projectRoot);
   const projectRef = Option.match(projectIdOverride, {
     onNone: () => undefined,
     onSome: (value) => {
@@ -621,12 +627,30 @@ const resolveServeConfig = Effect.fnUntraced(function* (
       return normalized.length > 0 ? normalized : undefined;
     },
   });
-  const loadedConfig = yield* loadProjectConfig(
-    projectRoot,
-    projectRef === undefined ? undefined : { projectRef },
+  const loadedConfig = yield* Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const previousEnv = new Map<string, string | undefined>();
+      if (projectEnv !== null) {
+        for (const [key, value] of Object.entries(projectEnv.values)) {
+          previousEnv.set(key, process.env[key]);
+          process.env[key] = value;
+        }
+      }
+      return previousEnv;
+    }),
+    () => loadProjectConfig(projectRoot, projectRef === undefined ? undefined : { projectRef }),
+    (previousEnv) =>
+      Effect.sync(() => {
+        for (const [key, value] of previousEnv) {
+          if (value === undefined) {
+            delete process.env[key];
+          } else {
+            process.env[key] = value;
+          }
+        }
+      }),
   );
   const baseConfig = loadedConfig?.config ?? defaultProjectConfig;
-  const projectEnv = loadedConfig === null ? null : yield* loadServeProjectEnvironment(projectRoot);
 
   const auth =
     projectEnv === null
@@ -1443,25 +1467,27 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
             Effect.orDie,
           );
 
-    yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
-    const result = yield* runChildProcess("docker", command, {
-      stdout: "pipe",
-      stderr: "pipe",
+    return yield* Effect.gen(function* () {
+      yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
+      const result = yield* runChildProcess("docker", command, {
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      if (result.exitCode !== 0) {
+        yield* cleanupRuntimeArtifacts;
+        const message =
+          result.stderr.trim() || result.stdout.trim() || "failed to start edge runtime";
+        return yield* Effect.fail(new Error(message));
+      }
+
+      yield* reloadKong(projectId);
+
+      return {
+        containerId,
+        cleanup: cleanupRuntimeArtifacts,
+        watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...functionBinds])),
+      } satisfies StartedRuntime;
     }).pipe(Effect.onInterrupt(() => cleanupRuntimeArtifacts));
-    if (result.exitCode !== 0) {
-      yield* cleanupRuntimeArtifacts;
-      const message =
-        result.stderr.trim() || result.stdout.trim() || "failed to start edge runtime";
-      return yield* Effect.fail(new Error(message));
-    }
-
-    yield* reloadKong(projectId);
-
-    return {
-      containerId,
-      cleanup: cleanupRuntimeArtifacts,
-      watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...functionBinds])),
-    } satisfies StartedRuntime;
   }).pipe(
     Effect.onInterrupt(() => (ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void)),
   );
