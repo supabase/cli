@@ -1,10 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient, FunctionResponse } from "@supabase/api/effect";
 import { BunServices } from "@effect/platform-bun";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
+import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
 import { Effect, Layer, Option, Sink, Stdio, Stream } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -73,6 +75,18 @@ interface RecordedMultipart {
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-functions-deploy-"));
+}
+
+function compressedBundleHash(contents: string): string {
+  const compressed = Buffer.concat([
+    Buffer.from("EZBR"),
+    brotliCompressSync(Buffer.from(contents), {
+      params: {
+        [zlibConstants.BROTLI_PARAM_QUALITY]: 6,
+      },
+    }),
+  ]);
+  return createHash("sha256").update(compressed).digest("hex");
 }
 
 async function writeProjectConfig(cwd: string, content = 'project_id = "test-project"\n') {
@@ -452,16 +466,20 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer));
 
       expect(child.spawned).toHaveLength(0);
-      expect(api.requests).toHaveLength(3);
+      expect(api.requests).toHaveLength(4);
       expect(api.requests[0]).toMatchObject({
+        method: "GET",
+        path: `/v1/projects/${PROJECT_REF}/functions`,
+      });
+      expect(api.requests[1]).toMatchObject({
         method: "POST",
         path: `/v1/projects/${PROJECT_REF}/functions/deploy`,
       });
-      expect(api.requests[0]?.urlParams).toContain("slug=hello-world");
-      expect(api.requests[0]?.urlParams).toContain("bundleOnly=true");
-      expect(api.requests[1]?.urlParams).toContain("slug=bye-world");
+      expect(api.requests[1]?.urlParams).toContain("slug=hello-world");
       expect(api.requests[1]?.urlParams).toContain("bundleOnly=true");
-      expect(api.requests[2]).toMatchObject({
+      expect(api.requests[2]?.urlParams).toContain("slug=bye-world");
+      expect(api.requests[2]?.urlParams).toContain("bundleOnly=true");
+      expect(api.requests[3]).toMatchObject({
         method: "PUT",
         path: `/v1/projects/${PROJECT_REF}/functions`,
       });
@@ -488,6 +506,99 @@ describe("functions deploy", () => {
         `Deployed Functions on project ${PROJECT_REF}: hello-world\n`,
       );
       expect(out.stdoutText).not.toContain("hello-world, hello-world");
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
+  it.live("omits verify_jwt for functions without a config override", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+      const { api, layer } = setup(tempDir, {
+        rawArgs: ["functions", "deploy", "hello-world"],
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+      }).pipe(Effect.provide(layer));
+
+      expect(api.multiparts[0]?.metadata).toBeDefined();
+      const metadata = JSON.parse(api.multiparts[0]!.metadata!);
+      expect(metadata).not.toHaveProperty("verify_jwt");
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
+  it.live("preserves remote verify_jwt for existing functions without a config override", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+      const { api, layer } = setup(tempDir, {
+        api: { listFunctions: [makeFunction({ slug: "hello-world", verify_jwt: false })] },
+        rawArgs: ["functions", "deploy", "hello-world"],
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+      }).pipe(Effect.provide(layer));
+
+      expect(api.multiparts[0]?.metadata).toContain('"verify_jwt":false');
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
+  it.live("sends verify_jwt when explicitly configured", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(
+          tempDir,
+          [
+            'project_id = "test-project"',
+            '[functions."hello-world"]',
+            "verify_jwt = false",
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+      const { api, layer } = setup(tempDir, {
+        rawArgs: ["functions", "deploy", "hello-world"],
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+      }).pipe(Effect.provide(layer));
+
+      expect(api.multiparts[0]?.metadata).toContain('"verify_jwt":false');
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
+  it.live("sends verify_jwt when the no-verify-jwt flag is explicitly disabled", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+      const { api, layer } = setup(tempDir, {
+        rawArgs: ["functions", "deploy", "hello-world", "--no-verify-jwt=false"],
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+      }).pipe(Effect.provide(layer));
+
+      expect(api.multiparts[0]?.metadata).toContain('"verify_jwt":true');
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
@@ -528,7 +639,10 @@ describe("functions deploy", () => {
 
       yield* functionsDeploy(BASE_FLAGS).pipe(Effect.provide(layer));
 
-      expect(api.requests[0]?.urlParams).toContain("slug=custom-entry");
+      const deployRequest = api.requests.find(
+        (request) => request.method === "POST" && request.path.endsWith("/functions/deploy"),
+      );
+      expect(deployRequest?.urlParams).toContain("slug=custom-entry");
       expect(out.stdoutText).toContain(
         `Deployed Functions on project ${PROJECT_REF}: custom-entry\n`,
       );
@@ -1090,8 +1204,8 @@ describe("functions deploy", () => {
         command: "docker",
         args: ["info"],
       });
-      expect(api.requests).toHaveLength(1);
-      expect(api.requests[0]).toMatchObject({
+      expect(api.requests).toHaveLength(2);
+      expect(api.requests[1]).toMatchObject({
         method: "POST",
         path: `/v1/projects/${PROJECT_REF}/functions/deploy`,
       });
@@ -1405,6 +1519,51 @@ describe("functions deploy", () => {
       }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
+
+  it.live("skips unchanged Docker deploys when verify_jwt is not configured", () => {
+    const tempDir = makeTempDir();
+    const child = mockChildProcessSpawner({
+      exitCode: 0,
+      onSpawn: (record) => {
+        if (record.command !== "docker" || record.args[0] !== "run") {
+          return;
+        }
+        const outputPath = resolveDockerOutputPath(record.args);
+        mkdirSync(dirname(outputPath), { recursive: true });
+        writeFileSync(outputPath, "eszip-test-output");
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      const expectedHash = compressedBundleHash("eszip-test-output");
+
+      const { api, out, layer } = setup(tempDir, {
+        rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
+        childLayer: child.layer,
+        api: {
+          listFunctions: [
+            {
+              ...makeFunction({
+                verify_jwt: false,
+                ezbr_sha256: expectedHash,
+              }),
+            },
+          ],
+        },
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+        useDocker: true,
+      }).pipe(Effect.provide(layer));
+
+      expect(api.requests).toHaveLength(1);
+      expect(out.stderrText).toContain("No change found in Function: hello-world\n");
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
 
   it.live("omits undefined import_map_path on bundled function updates", () => {
     const tempDir = makeTempDir();

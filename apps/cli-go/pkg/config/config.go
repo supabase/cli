@@ -201,7 +201,7 @@ type (
 
 	function struct {
 		Enabled     bool   `toml:"enabled" json:"enabled"`
-		VerifyJWT   bool   `toml:"verify_jwt" json:"verify_jwt"`
+		VerifyJWT   *bool  `toml:"verify_jwt" json:"verify_jwt"`
 		ImportMap   string `toml:"import_map" json:"import_map"`
 		Entrypoint  string `toml:"entrypoint" json:"entrypoint"`
 		StaticFiles Glob   `toml:"static_files" json:"static_files"`
@@ -569,9 +569,6 @@ func (c *config) load(v *viper.Viper) error {
 			continue
 		}
 		if k := fmt.Sprintf("functions.%s.enabled", key); !v.IsSet(k) {
-			v.Set(k, true)
-		}
-		if k := fmt.Sprintf("functions.%s.verify_jwt", key); !v.IsSet(k) {
 			v.Set(k, true)
 		}
 	}

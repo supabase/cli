@@ -1,18 +1,37 @@
-import { Effect, Option } from "effect";
-import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
-import type { LegacyFunctionsServeFlags } from "./serve.command.ts";
+import { Effect } from "effect";
+import { join } from "node:path";
+import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
+import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import {
+  buildFunctionsServeInspectArgs,
+  resolveFunctionsServeInspectMode,
+  serveFunctions,
+  type FunctionsServeFlags,
+} from "../../../../shared/functions/serve.ts";
+
+export type LegacyFunctionsServeFlags = FunctionsServeFlags;
+
+export const legacyResolveFunctionsServeInspectMode = resolveFunctionsServeInspectMode;
+export const legacyBuildFunctionsServeInspectArgs = buildFunctionsServeInspectArgs;
 
 export const legacyFunctionsServe = Effect.fn("legacy.functions.serve")(function* (
   flags: LegacyFunctionsServeFlags,
 ) {
-  const proxy = yield* LegacyGoProxy;
-  const args: string[] = ["functions", "serve"];
-  if (flags.noVerifyJwt) args.push("--no-verify-jwt");
-  if (Option.isSome(flags.envFile)) args.push("--env-file", flags.envFile.value);
-  if (Option.isSome(flags.importMap)) args.push("--import-map", flags.importMap.value);
-  if (flags.inspect) args.push("--inspect");
-  if (Option.isSome(flags.inspectMode)) args.push("--inspect-mode", flags.inspectMode.value);
-  if (flags.inspectMain) args.push("--inspect-main");
-  if (Option.isSome(flags.all)) args.push(`--all=${flags.all.value ? "true" : "false"}`);
-  yield* proxy.exec(args);
+  const cliConfig = yield* LegacyCliConfig;
+  const runtimeInfo = yield* RuntimeInfo;
+  const telemetryState = yield* LegacyTelemetryState;
+  const debug = yield* LegacyDebugFlag;
+  const networkId = yield* LegacyNetworkIdFlag;
+
+  yield* serveFunctions(flags, {
+    projectRoot: cliConfig.workdir,
+    supabaseDir: join(cliConfig.workdir, "supabase"),
+    flagCwd: runtimeInfo.cwd,
+    platform: runtimeInfo.platform,
+    debug,
+    networkId,
+    projectIdOverride: cliConfig.projectId,
+  }).pipe(Effect.ensuring(telemetryState.flush));
 });

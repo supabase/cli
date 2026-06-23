@@ -27,18 +27,25 @@ const { values } = parseArgs({
   },
 });
 
-const version = values.version;
-if (!version) {
-  console.error(
-    "Usage: pnpm exec bun apps/cli/scripts/build.ts --version <npm-version> --shell <legacy|next>",
-  );
-  process.exit(1);
-}
-
 const shell = values.shell;
 if (shell !== "legacy" && shell !== "next") {
   console.error(`Invalid --shell value: ${String(shell)}. Expected "legacy" or "next".`);
   process.exit(1);
+}
+const root = path.resolve(import.meta.dir, "../../..");
+const packageJsonPath = path.join(root, "apps/cli/package.json");
+const packageVersion = JSON.parse(await readFile(packageJsonPath, "utf8")) as { version?: string };
+const version = values.version ?? packageVersion.version;
+if (!version) {
+  console.error(
+    "Usage: pnpm exec bun apps/cli/scripts/build.ts [--version <npm-version>] --shell <legacy|next>",
+  );
+  process.exit(1);
+}
+if (values.version === undefined) {
+  console.warn(
+    `[build] --version not provided; falling back to package.json version "${version}". Pass --version explicitly in release builds.`,
+  );
 }
 
 const TARGETS = [
@@ -82,10 +89,13 @@ const TARGETS = [
   },
 ] as const;
 
-const root = path.resolve(import.meta.dir, "../../..");
 const entrypoint = path.join(root, "apps/cli/src", shell, "main.ts");
 const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
+const serveMainTemplateSource = path.join(root, "apps/cli/src/shared/functions/serve.main.ts");
+const serveMainTemplateDefine = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
+  await readFile(serveMainTemplateSource, "utf8"),
+)}`;
 const posthogBuildDefines = [
   `--define=process.env.SUPABASE_CLI_POSTHOG_KEY=${JSON.stringify(process.env.POSTHOG_API_KEY ?? "")}`,
   `--define=process.env.SUPABASE_CLI_POSTHOG_HOST=${JSON.stringify(process.env.POSTHOG_ENDPOINT ?? "")}`,
@@ -109,6 +119,18 @@ function libcForBunTarget(target: string): "glibc" | "musl" | "" {
   return target.includes("-musl") ? "musl" : "glibc";
 }
 
+async function runBunBuild(args: ReadonlyArray<string>) {
+  const child = Bun.spawn({
+    cmd: ["bun", ...args],
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const exitCode = await child.exited;
+  if (exitCode !== 0) {
+    throw new Error(`bun build failed with exit code ${exitCode}`);
+  }
+}
+
 async function buildTarget(target: (typeof TARGETS)[number]) {
   const binDir = path.join(root, "packages", target.pkg, "bin");
   await mkdir(binDir, { recursive: true });
@@ -117,7 +139,18 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   const libc = libcForBunTarget(target.bunTarget);
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
-  await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} ${posthogBuildDefines} --outfile=${outfile}`;
+  await runBunBuild([
+    "build",
+    entrypoint,
+    "--compile",
+    "--minify",
+    `--target=${target.bunTarget}`,
+    `--define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)}`,
+    `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
+    serveMainTemplateDefine,
+    ...posthogBuildDefines,
+    `--outfile=${outfile}`,
+  ]);
   console.log(`[${target.pkg}] Done.`);
 }
 
@@ -188,7 +221,18 @@ async function buildMuslBinaries() {
       const outfile = path.join(binDir, "supabase");
       const libc = libcForBunTarget(target.bunTarget);
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
-      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} ${posthogBuildDefines} --outfile=${outfile}`;
+      await runBunBuild([
+        "build",
+        entrypoint,
+        "--compile",
+        "--minify",
+        `--target=${target.bunTarget}`,
+        `--define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)}`,
+        `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
+        serveMainTemplateDefine,
+        ...posthogBuildDefines,
+        `--outfile=${outfile}`,
+      ]);
 
       if (shell === "legacy") {
         // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on

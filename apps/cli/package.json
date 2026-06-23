@@ -112,10 +112,12 @@
     "ignore": [
       "scripts/*.ts",
       "tests/**/*.ts",
-      "src/shared/telemetry/event-catalog.ts"
+      "src/shared/telemetry/event-catalog.ts",
+      "src/shared/functions/serve.main.ts"
     ],
     "ignoreBinaries": [
-      "nx"
+      "nx",
+      "mkfifo"
     ],
     "ignoreDependencies": [
       "@parcel/watcher-darwin-arm64",
