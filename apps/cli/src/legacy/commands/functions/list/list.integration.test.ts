@@ -12,6 +12,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
@@ -496,7 +497,16 @@ Name = "Hello World"`);
         linkedProjectCache: cache.layer,
       }),
       Layer.succeed(LegacyProjectRefResolver, {
-        resolve: () => Effect.fail(new Error("no linked project")),
+        resolve: () =>
+          Effect.fail(
+            new LegacyProjectNotLinkedError({
+              message: "Cannot find project ref. Have you run supabase link?",
+            }),
+          ),
+        resolveForLink: () => Effect.die("not used in functions list test"),
+        resolveOptional: () => Effect.die("not used in functions list test"),
+        loadProjectRef: () => Effect.die("not used in functions list test"),
+        promptProjectRef: () => Effect.die("not used in functions list test"),
       }),
     );
     return Effect.gen(function* () {
