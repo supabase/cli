@@ -38,6 +38,31 @@ import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { withCommandInstrumentation } from "../../../shared/telemetry/command-instrumentation.ts";
 import { start } from "./start.handler.ts";
 
+/**
+ * Deprecation warning shown when `[api].auto_expose_new_tables = true` is loaded from
+ * config.toml. Mirrors the Go CLI warning emitted during config validation
+ * (`apps/cli-go/pkg/config/config.go`).
+ */
+export const AUTO_EXPOSE_NEW_TABLES_DEPRECATION_WARNING =
+  "api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Remove the field or set it to false to adopt the new default of revoking Data API privileges on new entities in the public schema.";
+
+/**
+ * Resolves the tri-state `[api].auto_expose_new_tables` flag from config.toml.
+ *
+ *   - unset (`undefined`): defaults to `false` (revoke), matching the 2026-05-30 cloud flip.
+ *   - `true`: keep the legacy auto-expose behaviour, but surface a deprecation warning.
+ *   - `false`: revoke explicitly (no warning).
+ */
+export function resolveAutoExposeNewTables(value: boolean | undefined): {
+  readonly autoExposeNewTables: boolean;
+  readonly deprecationWarning: string | undefined;
+} {
+  return {
+    autoExposeNewTables: value ?? false,
+    deprecationWarning: value === true ? AUTO_EXPOSE_NEW_TABLES_DEPRECATION_WARNING : undefined,
+  };
+}
+
 export const excludeFlag = Flag.choice("exclude", excludedStackServices).pipe(
   Flag.atMost(excludedStackServices.length),
   Flag.withDescription(
@@ -151,12 +176,17 @@ export const startCommand = Command.make("start", flags).pipe(
           onSome: (metadata) => metadata.services,
         }),
       );
-      // The flag is tri-state in config.toml: unset / true / false. Today, unset and true both
-      // preserve the long-standing local behaviour of auto-exposing new entities in `public`.
-      // The implicit default flips to false on 2026-05-30 to match the new cloud default, and
-      // the field is removed in 2026-10-30.
+      // The flag is tri-state in config.toml: unset / true / false. As of the 2026-05-30 flip,
+      // unset behaves as false (revoke the default Data API GRANTs) to match the new cloud
+      // default. Explicit true preserves the legacy auto-expose behaviour but is deprecated and
+      // emits a warning; the field is removed entirely on 2026-10-30.
       const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
-      const autoExposeNewTables = loadedProjectConfig?.config.api.auto_expose_new_tables ?? true;
+      const { autoExposeNewTables, deprecationWarning } = resolveAutoExposeNewTables(
+        loadedProjectConfig?.config.api.auto_expose_new_tables,
+      );
+      if (deprecationWarning !== undefined) {
+        yield* output.warn(deprecationWarning);
+      }
       const baseStackConfig = withServiceVersions(
         toStartStackConfig(flags.exclude, flags.mode),
         serviceVersionContext.runtimeVersions,

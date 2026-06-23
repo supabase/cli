@@ -216,6 +216,7 @@ func ToRealtimeEnv(addr config.AddressFamily) string {
 type InitParams struct {
 	ProjectId   string
 	UseOrioleDB bool
+	UsePgDelta  bool
 	Overwrite   bool
 }
 
@@ -225,6 +226,10 @@ func InitConfig(params InitParams, fsys afero.Fs) error {
 	if params.UseOrioleDB {
 		c.Experimental.OrioleDBVersion = "15.1.0.150"
 	}
+	// The supabase init command opts new projects into pg-delta. Existing configs are
+	// unaffected because mergeDefaultValues ejects with this flag false (default stays
+	// migra), and other InitConfig callers leave it disabled.
+	c.Experimental.PgDeltaInitEnabled = params.UsePgDelta
 	// Create config file
 	if err := MkdirIfNotExistFS(fsys, SupabaseDirPath); err != nil {
 		return err

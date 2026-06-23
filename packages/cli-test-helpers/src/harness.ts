@@ -22,6 +22,11 @@ export interface HarnessOptions {
   /** Set as SUPABASE_PROJECT_ID in the subprocess env. Storage commands read
    *  this via viper (no --project-ref flag) for config validation in --local mode. */
   projectId?: string;
+  /** Profile `project_host` — the domain the CLI derives per-project hosts from
+   *  (storage `<ref>.<host>`, db `db.<ref>.<host>`, etc.). Defaults to "localhost"
+   *  for replay/mock runs; live mode sets the real target host (e.g. supabase.red)
+   *  so host-derived commands like `storage --linked` reach the real endpoint. */
+  projectHost?: string;
 }
 
 export interface CLIHarness {
@@ -53,6 +58,41 @@ const WORKSPACE_ROOT = new URL("../../../", import.meta.url).pathname.replace(/\
 
 const BINARY_EXT = osPlatform() === "win32" ? ".exe" : "";
 const TS_CLI_SHIM = join(WORKSPACE_ROOT, "apps/cli/dist/supabase.js");
+
+// E2E subprocesses should only enter agent output mode when a test explicitly
+// opts in via `opts.env`. Keep this list aligned with @vercel/detect-agent env
+// probes so a developer's shell cannot accidentally change CLI rendering.
+const AGENT_DETECTION_ENV_KEYS: readonly string[] = [
+  "AI_AGENT",
+  "CURSOR_TRACE_ID",
+  "CURSOR_AGENT",
+  "CURSOR_EXTENSION_HOST_ROLE",
+  "GEMINI_CLI",
+  "CODEX_SANDBOX",
+  "CODEX_CI",
+  "CODEX_THREAD_ID",
+  "ANTIGRAVITY_AGENT",
+  "AUGMENT_AGENT",
+  "OPENCODE_CLIENT",
+  "CLAUDECODE",
+  "CLAUDE_CODE",
+  "CLAUDE_CODE_IS_COWORK",
+  "REPL_ID",
+  "COPILOT_MODEL",
+  "COPILOT_ALLOW_ALL",
+  "COPILOT_GITHUB_TOKEN",
+];
+
+export function createSubprocessBaseEnv(
+  source: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value !== undefined) env[key] = value;
+  }
+  for (const key of AGENT_DETECTION_ENV_KEYS) delete env[key];
+  return env;
+}
 
 function tsCliBinary(shell: "next" | "legacy"): string {
   return join(WORKSPACE_ROOT, `apps/cli/dist/supabase-${shell}${BINARY_EXT}`);
@@ -103,7 +143,7 @@ export async function exec(
   const built = buildCommand(harness.target);
 
   const env: Record<string, string> = {
-    ...(process.env as Record<string, string>),
+    ...createSubprocessBaseEnv(),
     SUPABASE_ACCESS_TOKEN: harness.options.accessToken,
     SUPABASE_NO_KEYRING: "true",
     SUPABASE_TELEMETRY_DISABLED: "1",
@@ -140,7 +180,7 @@ export async function exec(
         `name: test`,
         `api_url: "${url}"`,
         `dashboard_url: "${url}"`,
-        `project_host: localhost`,
+        `project_host: ${harness.options.projectHost ?? "localhost"}`,
       ].join("\n"),
     );
     env["SUPABASE_PROFILE"] = profilePath;

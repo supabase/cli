@@ -1,4 +1,8 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
+import type * as CliCommand from "effect/unstable/cli/Command";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyFunctionsDeploy } from "./deploy.handler.ts";
 
 const config = {
@@ -25,11 +29,16 @@ const config = {
   ),
   jobs: Flag.integer("jobs").pipe(
     Flag.withAlias("j"),
+    Flag.filter(
+      (jobs) => jobs >= 0,
+      (jobs) => `Expected --jobs to be non-negative, got ${jobs}`,
+    ),
     Flag.withDescription("Maximum number of parallel jobs."),
     Flag.optional,
   ),
   useDocker: Flag.boolean("use-docker").pipe(
     Flag.withDescription("Use Docker to bundle functions locally."),
+    Flag.withDefault(true),
     Flag.withHidden,
   ),
   legacyBundle: Flag.boolean("legacy-bundle").pipe(
@@ -38,20 +47,26 @@ const config = {
   ),
 } as const;
 
+export type LegacyFunctionsDeployFlags = CliCommand.Command.Config.Infer<typeof config>;
+
 export const legacyFunctionsDeployCommand = Command.make("deploy", config).pipe(
   Command.withDescription("Deploy a Function to the linked Supabase project."),
   Command.withShortDescription("Deploy a Function to Supabase"),
+  Command.withExamples([
+    {
+      command: "supabase functions deploy hello-world",
+      description: "Deploy a single function to the linked project",
+    },
+    {
+      command: "supabase functions deploy --project-ref abcdefghijklmnopqrst",
+      description: "Deploy all local functions to a specific project",
+    },
+  ]),
   Command.withHandler((flags) =>
-    legacyFunctionsDeploy({
-      functionNames: flags.functionNames.map(String),
-      projectRef: flags.projectRef,
-      noVerifyJwt: flags.noVerifyJwt,
-      useApi: flags.useApi,
-      importMap: flags.importMap,
-      prune: flags.prune,
-      jobs: flags.jobs,
-      useDocker: flags.useDocker,
-      legacyBundle: flags.legacyBundle,
-    }),
+    legacyFunctionsDeploy(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withJsonErrorHandling,
+    ),
   ),
+  Command.provide(legacyManagementApiRuntimeLayer(["functions", "deploy"])),
 );

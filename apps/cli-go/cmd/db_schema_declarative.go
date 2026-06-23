@@ -47,6 +47,27 @@ var (
 		Use:   "declarative",
 		Short: "Manage declarative database schemas",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// The hidden __catalog seam forwards the resolved linked ref via
+			// --project-ref so the catalog is built from the remote-merged config.
+			// Seed flags.ProjectRef before LoadConfig (which keys the [remotes.<ref>]
+			// merge off Config.ProjectId = flags.ProjectRef); this command never runs
+			// LoadProjectRef, so SUPABASE_PROJECT_ID env alone would not merge.
+			if len(pgdeltaCatalogProjectRef) > 0 {
+				flags.ProjectRef = pgdeltaCatalogProjectRef
+			}
+			// LoadConfig applies profile-specific overrides keyed off
+			// utils.CurrentProfile (internal/utils/flags/config_path.go), which is
+			// only populated by LoadProfile. The root pre-run (cmd/root.go:101) runs
+			// AFTER this block — it is chained at the bottom of this function — so
+			// CurrentProfile would still be its zero value when LoadConfig runs here.
+			// Load the profile first to match the real in-process path, where
+			// LoadConfig is only ever reached from a RunE after the root pre-run has
+			// already set the profile (e.g. internal/db/diff/explicit.go). Without
+			// this, a --profile forwarded to the hidden __catalog seam is ignored
+			// when the catalog config is built.
+			if err := utils.LoadProfile(cmd.Context(), afero.NewOsFs()); err != nil {
+				return err
+			}
 			if err := flags.LoadConfig(afero.NewOsFs()); err != nil {
 				return err
 			}

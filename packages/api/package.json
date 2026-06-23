@@ -23,7 +23,7 @@
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "effect": "catalog:",
-    "undici": "^8.3.0"
+    "undici": "^8.5.0"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",
@@ -44,7 +44,8 @@
       "src/**/*.test.ts",
       "scripts/download-openapi.ts",
       "scripts/download-openapi.unit.test.ts",
-      "scripts/generate.ts"
+      "scripts/generate.ts",
+      "scripts/generate.unit.test.ts"
     ],
     "ignoreDependencies": [
       "undici",

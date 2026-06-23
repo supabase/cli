@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/testing/apitest"
 	"github.com/supabase/cli/internal/testing/fstest"
+	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/pgtest"
 	"github.com/supabase/cli/pkg/storage"
@@ -62,9 +63,11 @@ func TestResetCommand(t *testing.T) {
 					Health:  &container.Health{Status: types.Healthy},
 				},
 			}})
-		// Setup mock postgres
+		// Setup mock postgres: with auto_expose_new_tables unset, the default Data API GRANTs
+		// are revoked by default during database setup.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
+		helper.MockApiPrivilegesRevoke(conn)
 		// Restarts services
 		utils.StorageId = "test-storage"
 		utils.GotrueId = "test-auth"
@@ -163,6 +166,7 @@ func TestInitDatabase(t *testing.T) {
 		defer conn.Close(t)
 		conn.Query(utils.InitialSchemaPg14Sql).
 			Reply("CREATE SCHEMA")
+		helper.MockApiPrivilegesRevoke(conn)
 		// Run test
 		assert.NoError(t, initDatabase(context.Background(), conn.Intercept))
 	})

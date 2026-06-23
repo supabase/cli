@@ -1,9 +1,14 @@
 package config
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"testing"
+	fs "testing/fstest"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	v1API "github.com/supabase/cli/pkg/api"
 )
 
@@ -136,8 +141,57 @@ func TestApiDiff(t *testing.T) {
 }
 
 func TestApiAutoExposeNewTablesDefault(t *testing.T) {
-	t.Run("is unset on a fresh config so today's implicit-true behaviour applies", func(t *testing.T) {
+	t.Run("is unset on a fresh config so the implicit revoke-by-default behaviour applies", func(t *testing.T) {
 		cfg := NewConfig()
 		assert.Nil(t, cfg.Api.AutoExposeNewTables)
+	})
+}
+
+func TestApiAutoExposeNewTablesWarning(t *testing.T) {
+	captureStderr := func(t *testing.T, run func()) string {
+		t.Helper()
+		r, w, err := os.Pipe()
+		require.NoError(t, err)
+		orig := os.Stderr
+		os.Stderr = w
+		defer func() { os.Stderr = orig }()
+		run()
+		require.NoError(t, w.Close())
+		var out bytes.Buffer
+		_, err = io.Copy(&out, r)
+		require.NoError(t, err)
+		return out.String()
+	}
+
+	t.Run("warns when auto_expose_new_tables is explicitly true", func(t *testing.T) {
+		cfg := NewConfig()
+		fsys := fs.MapFS{"config.toml": &fs.MapFile{Data: []byte("[api]\nauto_expose_new_tables = true\n")}}
+		stderr := captureStderr(t, func() {
+			require.NoError(t, cfg.Load("config.toml", fsys))
+		})
+		require.NotNil(t, cfg.Api.AutoExposeNewTables)
+		assert.True(t, *cfg.Api.AutoExposeNewTables)
+		assert.Contains(t, stderr, "api.auto_expose_new_tables is deprecated")
+		assert.Contains(t, stderr, "2026-10-30")
+	})
+
+	t.Run("does not warn when unset", func(t *testing.T) {
+		cfg := NewConfig()
+		stderr := captureStderr(t, func() {
+			require.NoError(t, cfg.Load("", fs.MapFS{}))
+		})
+		assert.Nil(t, cfg.Api.AutoExposeNewTables)
+		assert.NotContains(t, stderr, "auto_expose_new_tables is deprecated")
+	})
+
+	t.Run("does not warn when explicitly false", func(t *testing.T) {
+		cfg := NewConfig()
+		fsys := fs.MapFS{"config.toml": &fs.MapFile{Data: []byte("[api]\nauto_expose_new_tables = false\n")}}
+		stderr := captureStderr(t, func() {
+			require.NoError(t, cfg.Load("config.toml", fsys))
+		})
+		require.NotNil(t, cfg.Api.AutoExposeNewTables)
+		assert.False(t, *cfg.Api.AutoExposeNewTables)
+		assert.NotContains(t, stderr, "auto_expose_new_tables is deprecated")
 	})
 }

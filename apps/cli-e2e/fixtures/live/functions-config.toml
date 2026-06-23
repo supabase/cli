@@ -1,0 +1,19 @@
+# Per-function config appended onto the `supabase init`-generated config.toml by
+# seedFunctions() for the functions deploy tests (the import-map, custom
+# entrypoint, static-file, and no-jwt fixtures need these). Everything else runs
+# against the bare generated config.
+
+[functions."deploy-e2e-root-map"]
+import_map = "./import_map.json"
+
+[functions."deploy-e2e-custom-entry"]
+entrypoint = "./functions/deploy-e2e-custom-entry/handler.ts"
+
+[functions."deploy-e2e-static-in-fn"]
+static_files = ["./functions/deploy-e2e-static-in-fn/static/*.txt"]
+
+[functions."deploy-e2e-static-asset"]
+static_files = ["./assets/*.svg", "./functions/deploy-e2e-static-asset/assets/*.svg"]
+
+[functions."deploy-e2e-no-jwt"]
+verify_jwt = false

@@ -46,6 +46,7 @@ import { Stdin } from "../../src/shared/runtime/stdin.service.ts";
 import { Tty } from "../../src/shared/runtime/tty.service.ts";
 import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../src/shared/telemetry/runtime.service.ts";
+import { makeTelemetryIdentity } from "../../src/shared/telemetry/identity.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -151,6 +152,7 @@ export function mockProcessControl(
 ) {
   let exitCode: number | undefined;
   const exitCalls: number[] = [];
+  const exitDeferred = Deferred.makeUnsafe<number>();
 
   return {
     layer: Layer.succeed(ProcessControl, {
@@ -166,9 +168,11 @@ export function mockProcessControl(
       awaitShutdown: opts.awaitShutdown ?? Effect.never,
       holdSignals: (_signals) => Effect.void,
       exit: (code: number) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           exitCalls.push(code);
-        }).pipe(Effect.flatMap(() => Effect.never)),
+          yield* Deferred.succeed(exitDeferred, code);
+          return yield* Effect.never;
+        }),
       setExitCode: (code: number) =>
         Effect.sync(() => {
           exitCode = code;
@@ -178,6 +182,7 @@ export function mockProcessControl(
     get exitCalls() {
       return exitCalls;
     },
+    awaitExit: Deferred.await(exitDeferred),
     get exitCode() {
       return exitCode;
     },
@@ -222,6 +227,7 @@ export function mockOutput(
     confirmRelogin?: boolean;
     confirmLogout?: boolean;
     promptTextFail?: boolean;
+    promptConfirmFail?: boolean;
     promptTextResponses?: ReadonlyArray<string>;
     promptSelectResponses?: ReadonlyArray<string>;
     promptPasswordResponses?: ReadonlyArray<string>;
@@ -232,6 +238,10 @@ export function mockOutput(
   const progressEvents: ProgressEvent[] = [];
   const events: OutputEvent[] = [];
   const rawChunks: Array<{ text: string; stream: "stdout" | "stderr" }> = [];
+  const promptConfirmCalls: Array<{
+    message: string;
+    opts?: { defaultValue?: boolean };
+  }> = [];
   const promptSelectCalls: Array<{
     message: string;
     options: ReadonlyArray<{
@@ -374,9 +384,25 @@ export function mockOutput(
         };
       })(),
       promptPassword: () => Effect.succeed(promptPasswordResponses.shift() ?? ""),
-      promptConfirm: (_message, _opts) =>
-        Effect.succeed(
-          promptConfirmResponses.shift() ?? opts.confirmLogout ?? opts.confirmRelogin ?? true,
+      promptConfirm: (message, promptOptions) =>
+        Effect.sync(() => {
+          promptConfirmCalls.push({ message, opts: promptOptions });
+        }).pipe(
+          Effect.flatMap(() =>
+            opts.promptConfirmFail
+              ? Effect.fail(
+                  new NonInteractiveError({
+                    detail: "Prompt cancelled",
+                    suggestion: "Run in interactive mode",
+                  }),
+                )
+              : Effect.succeed(
+                  promptConfirmResponses.shift() ??
+                    opts.confirmLogout ??
+                    opts.confirmRelogin ??
+                    true,
+                ),
+          ),
         ),
       promptSelect: (message, options, behavior) =>
         Effect.sync(() => {
@@ -390,10 +416,15 @@ export function mockOutput(
         Effect.sync(() => {
           rawChunks.push({ text, stream });
         }),
+      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
+        Effect.sync(() => {
+          rawChunks.push({ text: new TextDecoder().decode(bytes), stream });
+        }),
     }),
     messages,
     progressEvents,
     events,
+    promptConfirmCalls,
     promptSelectCalls,
     rawChunks,
     get stdoutText() {
@@ -513,7 +544,7 @@ export function mockAnalytics() {
   };
 }
 
-function mockTelemetryRuntime(
+export function mockTelemetryRuntime(
   opts: Partial<{
     configDir: string;
     tracesDir: string;
@@ -539,7 +570,7 @@ function mockTelemetryRuntime(
       showDebug: opts.showDebug ?? false,
       deviceId: opts.deviceId ?? "test-device-id",
       sessionId: opts.sessionId ?? "test-session-id",
-      distinctId: opts.distinctId,
+      identity: makeTelemetryIdentity(opts.distinctId),
       isFirstRun: opts.isFirstRun ?? false,
       isTty: opts.isTty ?? false,
       isCi: opts.isCi ?? false,

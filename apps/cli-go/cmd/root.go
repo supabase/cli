@@ -144,13 +144,11 @@ var (
 			if service != nil {
 				var stitchOnce sync.Once
 				utils.OnGotrueID = func(gotrueID string) {
-					if service.NeedsIdentityStitch() {
-						stitchOnce.Do(func() {
-							if err := service.StitchLogin(gotrueID); err != nil {
-								fmt.Fprintln(utils.GetDebugLogger(), err)
-							}
-						})
-					}
+					stitchOnce.Do(func() {
+						if err := service.ObserveAuthenticatedUser(gotrueID); err != nil {
+							fmt.Fprintln(utils.GetDebugLogger(), err)
+						}
+					})
 				}
 			}
 			ctx = telemetry.WithCommandContext(ctx, commandAnalyticsContext(cmd))
@@ -175,8 +173,9 @@ func Execute() {
 		if service := telemetry.FromContext(executedCmd.Context()); service != nil {
 			ensureProjectGroupsCached(executedCmd.Context(), service)
 			_ = service.Capture(executedCmd.Context(), telemetry.EventCommandExecuted, map[string]any{
-				telemetry.PropExitCode:   exitCode(err),
-				telemetry.PropDurationMs: time.Since(startedAt).Milliseconds(),
+				telemetry.PropExitCode:     exitCode(err),
+				telemetry.PropDurationMs:   time.Since(startedAt).Milliseconds(),
+				telemetry.PropOutputFormat: utils.OutputFormat.Value,
 			}, nil)
 			_ = service.Close()
 		}

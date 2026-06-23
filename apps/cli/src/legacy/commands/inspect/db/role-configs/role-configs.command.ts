@@ -1,24 +1,19 @@
-import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
+import { Command } from "effect/unstable/cli";
 import { legacyInspectDbRoleConfigs } from "./role-configs.handler.ts";
+import {
+  LEGACY_INSPECT_DB_FLAGS,
+  legacyInspectDbCommandHandler,
+} from "../legacy-inspect-db-command.ts";
+import { legacyInspectDbRuntimeLayer } from "../db.layers.ts";
 
-const config = {
-  dbUrl: Flag.string("db-url").pipe(
-    Flag.withDescription(
-      "Inspect the database specified by the connection string (must be percent-encoded).",
-    ),
-    Flag.optional,
-  ),
-  linked: Flag.boolean("linked").pipe(Flag.withDescription("Inspect the linked project.")),
-  local: Flag.boolean("local").pipe(Flag.withDescription("Inspect the local database.")),
-} as const;
-
-export type LegacyInspectDbRoleConfigsFlags = CliCommand.Command.Config.Infer<typeof config>;
-
-export const legacyInspectDbRoleConfigsCommand = Command.make("role-configs", config).pipe(
+export const legacyInspectDbRoleConfigsCommand = Command.make(
+  "role-configs",
+  LEGACY_INSPECT_DB_FLAGS,
+).pipe(
   Command.withDescription(
     'Show configuration settings for database roles when they have been modified. Deprecated: use "role-stats" instead.',
   ),
   Command.withShortDescription("Show role configs (deprecated)"),
-  Command.withHandler((flags) => legacyInspectDbRoleConfigs(flags)),
+  Command.withHandler(legacyInspectDbCommandHandler(legacyInspectDbRoleConfigs)),
+  Command.provide(legacyInspectDbRuntimeLayer("role-configs")),
 );

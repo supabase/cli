@@ -201,7 +201,7 @@ type (
 
 	function struct {
 		Enabled     bool   `toml:"enabled" json:"enabled"`
-		VerifyJWT   bool   `toml:"verify_jwt" json:"verify_jwt"`
+		VerifyJWT   *bool  `toml:"verify_jwt" json:"verify_jwt"`
 		ImportMap   string `toml:"import_map" json:"import_map"`
 		Entrypoint  string `toml:"entrypoint" json:"entrypoint"`
 		StaticFiles Glob   `toml:"static_files" json:"static_files"`
@@ -253,6 +253,11 @@ type (
 		Webhooks        *webhooks      `toml:"webhooks" json:"webhooks"`
 		PgDelta         *PgDeltaConfig `toml:"pgdelta" json:"pgdelta"`
 		Inspect         inspect        `toml:"inspect" json:"inspect"`
+		// PgDeltaInitEnabled drives the [experimental.pgdelta] enabled value rendered
+		// by Eject. It is true only for the supabase init scaffold so freshly generated
+		// projects opt into pg-delta, and false when Eject feeds mergeDefaultValues so
+		// existing configs without the section keep resolving to migra (non-breaking).
+		PgDeltaInitEnabled bool `toml:"-" json:"-"`
 	}
 )
 
@@ -604,9 +609,6 @@ func (c *config) load(v *viper.Viper) error {
 		if k := fmt.Sprintf("functions.%s.enabled", key); !v.IsSet(k) {
 			v.Set(k, true)
 		}
-		if k := fmt.Sprintf("functions.%s.verify_jwt", key); !v.IsSet(k) {
-			v.Set(k, true)
-		}
 	}
 	// Set default values when [auth.email.smtp] is defined
 	if smtp := v.GetStringMap("auth.email.smtp"); len(smtp) > 0 {
@@ -868,6 +870,9 @@ func (c *config) Validate(fsys fs.FS) error {
 		}
 	}
 	// Validate api config
+	if c.Api.AutoExposeNewTables != nil && *c.Api.AutoExposeNewTables {
+		fmt.Fprintln(os.Stderr, "WARN: api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Remove the field or set it to false to adopt the new default of revoking Data API privileges on new entities in the public schema.")
+	}
 	if c.Api.Enabled {
 		if c.Api.Port == 0 {
 			return errors.New("Missing required field in config: api.port")

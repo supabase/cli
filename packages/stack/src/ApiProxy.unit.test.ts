@@ -223,13 +223,28 @@ describe("ApiProxy", () => {
     expect(body.path).toBe("/users");
   });
 
-  test("/functions/v1/test strips prefix and transforms auth", async () => {
-    const res = await fetch(`${proxyUrl}/functions/v1/test`, {
-      headers: { apikey: SECRET_KEY },
+  describe("/functions/v1/ test strips prefix and transforms auth", () => {
+    test("transforms to custom header", async () => {
+      const res = await fetch(`${proxyUrl}/functions/v1/test`, {
+        headers: { apikey: SECRET_KEY },
+      });
+      const body = (await res.json()) as { path: string; headers: Record<string, string> };
+      expect(body.path).toBe("/test");
+      expect(body.headers["sb-api-key"]).toBe(SERVICE_ROLE_JWT);
     });
-    const body = (await res.json()) as { path: string; headers: Record<string, string> };
-    expect(body.path).toBe("/test");
-    expect(body.headers["authorization"]).toBe(`Bearer ${SERVICE_ROLE_JWT}`);
+
+    test("transforms to custom header without replacing original auth", async () => {
+      const res = await fetch(`${proxyUrl}/functions/v1/test`, {
+        headers: {
+          apikey: SECRET_KEY,
+          authorization: `Bearer ${SECRET_KEY}`,
+        },
+      });
+      const body = (await res.json()) as { path: string; headers: Record<string, string> };
+      expect(body.path).toBe("/test");
+      expect(body.headers["authorization"]).toBe(`Bearer ${SECRET_KEY}`);
+      expect(body.headers["sb-api-key"]).toBe(SERVICE_ROLE_JWT);
+    });
   });
 
   test("strips upstream content-encoding metadata from proxied function responses", async () => {

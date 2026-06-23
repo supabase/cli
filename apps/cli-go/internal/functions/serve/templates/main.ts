@@ -1,6 +1,5 @@
 import { STATUS_CODE, STATUS_TEXT } from "https://deno.land/std/http/status.ts";
 import * as posix from "https://deno.land/std/path/posix/mod.ts";
-
 import * as jose from "jsr:@panva/jose@6";
 
 const SB_SPECIFIC_ERROR_CODE = {
@@ -96,15 +95,40 @@ const functionsConfig: Record<string, FunctionConfig> = (() => {
   }
 })();
 
+/* --- JWT verification --- */
+export function extractBearerToken(rawToken: string) {
+  const tokenParts = rawToken.split(' ')
+  const [bearer, token] = tokenParts
+  if (bearer !== 'Bearer' || tokenParts.length !== 2) {
+    return null
+  }
+
+  return token
+}
+
 function getAuthToken(req: Request) {
   const authHeader = req.headers.get("authorization");
-  if (!authHeader) {
+  const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key")
+
+  // NOTE:(kallebysantos) Kong on legacy CLI stack pass it down as 'Bearer Token' format
+  const cleanSbApiKeyCompatibilityToken = sbApiKeyCompatibilityToken?.replace('Bearer', '')?.trim()
+
+  if (!authHeader && !cleanSbApiKeyCompatibilityToken) {
     throw new Error("Missing authorization header");
   }
-  const [bearer, token] = authHeader.split(" ");
-  if (bearer !== "Bearer") {
+
+  // NOTE:(kallebysantos) Compatibility mode is triggered when all conditions match:
+  // - API proxy mints a temp token
+  // - Original bearer is not present or is ApiKey
+  const bearerToken = extractBearerToken(authHeader ?? '')
+  const token = (!bearerToken || bearerToken.startsWith('sb_'))
+    ? cleanSbApiKeyCompatibilityToken
+    : bearerToken
+
+  if (!token) {
     throw new Error(`Auth header is not 'Bearer {token}'`);
   }
+
   return token;
 }
 
@@ -120,18 +144,24 @@ async function isValidLegacyJWT(jwtSecret: string, jwt: string): Promise<boolean
   return true;
 }
 
-// Lazy-loading JWKs
-let jwks = (() => {
+let jwks: any | undefined;
+
+function getJwks(jose: any) {
+  if (jwks !== undefined) {
+    return jwks;
+  }
   try {
     // using injected JWKS from cli
-    return jose.createLocalJWKSet(JSON.parse(Deno.env.get('SUPABASE_JWKS')));
+    jwks = jose.createLocalJWKSet(JSON.parse(Deno.env.get('SUPABASE_JWKS')));
   } catch (error) {
-    return null
+    jwks = null;
   }
-})();
+  return jwks;
+}
 
 async function isValidJWT(jwksUrl: URL, jwt: string): Promise<boolean> {
   try {
+    jwks = getJwks(jose);
     if (!jwks) {
       // Loading from remote-url on fly
       jwks = jose.createRemoteJWKSet(new URL(jwksUrl));
@@ -178,6 +208,19 @@ async function shouldUsePackageJsonDiscovery({ entrypointPath, importMapPath }: 
     }
   }
   return true
+}
+
+export function prepareUserRequest(req: Request): Request {
+  const clonedURL = new URL(req.url)
+  const forwardedHost = req.headers.get('x-forwarded-host')
+  clonedURL.hostname = forwardedHost ?? clonedURL.hostname
+  const clonedReq = new Request(clonedURL, req.clone())
+
+  // remove custom api headers
+  clonedReq.headers.delete('sb-api-key')
+  EdgeRuntime.applySupabaseTag(req, clonedReq)
+
+  return clonedReq
 }
 
 Deno.serve({
@@ -279,7 +322,8 @@ Deno.serve({
         staticPatterns,
       });
 
-      return await worker.fetch(req);
+      const userReq = prepareUserRequest(req)
+      return await worker.fetch(userReq);
     } catch (e) {
       console.error(e);
 

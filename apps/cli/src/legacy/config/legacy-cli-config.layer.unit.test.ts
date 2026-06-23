@@ -5,10 +5,15 @@ import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option, Redacted } from "effect";
-import { afterEach, beforeEach } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 
-import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
+import {
+  LegacyDebugFlag,
+  LegacyProfileFlag,
+  LegacyWorkdirFlag,
+} from "../../shared/legacy/global-flags.ts";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
+import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
 import { legacyCliConfigLayer } from "./legacy-cli-config.layer.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 
@@ -17,13 +22,17 @@ function makeLayer(opts: {
   workdirFlag?: Option.Option<string>;
   env?: Record<string, string | undefined>;
   cwd?: string;
+  home?: string;
+  debug?: boolean;
 }) {
   const profileFlag = opts.profileFlag ?? "supabase";
   const workdirFlag = opts.workdirFlag ?? Option.none<string>();
   return legacyCliConfigLayer.pipe(
+    Layer.provide(legacyDebugLoggerLayer),
+    Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
     Layer.provide(Layer.succeed(LegacyProfileFlag, profileFlag)),
     Layer.provide(Layer.succeed(LegacyWorkdirFlag, workdirFlag)),
-    Layer.provide(mockRuntimeInfo({ cwd: opts.cwd ?? "/test/cwd" })),
+    Layer.provide(mockRuntimeInfo({ cwd: opts.cwd ?? "/test/cwd", homeDir: opts.home })),
     Layer.provide(BunServices.layer),
     Layer.provide(processEnvLayer(opts.env ?? {})),
   );
@@ -46,6 +55,7 @@ describe("legacyCliConfigLayer", () => {
       expect(config.profile).toBe("supabase");
       expect(config.apiUrl).toBe("https://api.supabase.com");
       expect(config.projectHost).toBe("supabase.co");
+      expect(config.poolerHost).toBe("supabase.com");
     }).pipe(Effect.provide(makeLayer({ cwd: tempRoot }))),
   );
 
@@ -55,6 +65,7 @@ describe("legacyCliConfigLayer", () => {
       expect(config.profile).toBe("supabase-staging");
       expect(config.apiUrl).toBe("https://api.supabase.green");
       expect(config.projectHost).toBe("supabase.red");
+      expect(config.poolerHost).toBe("supabase.green");
     }).pipe(
       Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: "supabase-staging" }, cwd: tempRoot })),
     ),
@@ -75,6 +86,49 @@ describe("legacyCliConfigLayer", () => {
     }).pipe(Effect.provide(makeLayer({ profileFlag: "snap", cwd: tempRoot }))),
   );
 
+  it.effect("reads the persisted ~/.supabase/profile file when no flag/env is set", () => {
+    const home = join(tempRoot, "home");
+    mkdirSync(join(home, ".supabase"), { recursive: true });
+    writeFileSync(join(home, ".supabase", "profile"), "supabase-staging\n");
+    return Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.profile).toBe("supabase-staging");
+    }).pipe(Effect.provide(makeLayer({ home, cwd: tempRoot })));
+  });
+
+  it.effect("debug logs the persisted profile file source", () => {
+    const home = join(tempRoot, "home");
+    const profilePath = join(home, ".supabase", "profile");
+    mkdirSync(join(home, ".supabase"), { recursive: true });
+    writeFileSync(profilePath, "supabase-staging\n");
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    return Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.profile).toBe("supabase-staging");
+      expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join("")).toContain(
+        `Loading profile from file: ${profilePath}\n`,
+      );
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => stderr.mockRestore())),
+      Effect.provide(makeLayer({ home, cwd: tempRoot, debug: true })),
+    );
+  });
+
+  it.effect("flag and env take precedence over the persisted profile file", () => {
+    const home = join(tempRoot, "home");
+    mkdirSync(join(home, ".supabase"), { recursive: true });
+    writeFileSync(join(home, ".supabase", "profile"), "supabase-staging");
+    return Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      // SUPABASE_PROFILE wins over the file.
+      expect(config.profile).toBe("supabase-local");
+    }).pipe(
+      Effect.provide(
+        makeLayer({ home, cwd: tempRoot, env: { SUPABASE_PROFILE: "supabase-local" } }),
+      ),
+    );
+  });
+
   it.effect(
     "falls back to supabase profile when SUPABASE_PROFILE is neither a known name nor a readable file",
     () =>
@@ -87,26 +141,35 @@ describe("legacyCliConfigLayer", () => {
       ),
   );
 
-  it.effect("loads api_url and name from a YAML profile file (Go-parity dual semantics)", () => {
+  it.effect("loads api_url, name, and pooler_host from a YAML profile file", () => {
     const profilePath = join(tempRoot, "profile.yaml");
     writeFileSync(
       profilePath,
-      ["name: cli-e2e", 'api_url: "http://127.0.0.1:9999"', "project_host: localhost"].join("\n"),
+      [
+        "name: cli-e2e",
+        'api_url: "http://127.0.0.1:9999"',
+        "project_host: localhost",
+        "pooler_host: staging.example.com",
+      ].join("\n"),
     );
     return Effect.gen(function* () {
       const config = yield* LegacyCliConfig;
       expect(config.profile).toBe("cli-e2e");
       expect(config.apiUrl).toBe("http://127.0.0.1:9999");
       expect(config.projectHost).toBe("localhost");
+      expect(config.poolerHost).toBe("staging.example.com");
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
   });
 
-  it.effect("defaults project_host to supabase.co when a YAML profile omits it", () => {
+  it.effect("defaults project_host to supabase.co and pooler_host to empty when omitted", () => {
     const profilePath = join(tempRoot, "no-host.yaml");
     writeFileSync(profilePath, ["name: cli-e2e", 'api_url: "http://127.0.0.1:9999"'].join("\n"));
     return Effect.gen(function* () {
       const config = yield* LegacyCliConfig;
       expect(config.projectHost).toBe("supabase.co");
+      // Go's Profile.PoolerHost is `omitempty`: an absent pooler_host disables the
+      // MITM domain assertion rather than falling back to supabase.com.
+      expect(config.poolerHost).toBe("");
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
   });
 

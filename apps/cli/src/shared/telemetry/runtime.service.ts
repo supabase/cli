@@ -1,4 +1,5 @@
 import { Context } from "effect";
+import type { TelemetryIdentity } from "./identity.ts";
 import type { ConsentState } from "./types.ts";
 
 interface TelemetryRuntimeShape {
@@ -8,7 +9,7 @@ interface TelemetryRuntimeShape {
   readonly showDebug: boolean;
   readonly deviceId: string;
   readonly sessionId: string;
-  readonly distinctId?: string;
+  readonly identity: TelemetryIdentity;
   readonly isFirstRun: boolean;
   readonly isTty: boolean;
   readonly isCi: boolean;

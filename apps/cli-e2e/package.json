@@ -9,6 +9,7 @@
     "test:go": "CLI_HARNESS_TARGET=go bun --bun vitest run",
     "test:legacy": "CLI_HARNESS_TARGET=ts-legacy bun --bun vitest run",
     "test:next": "CLI_HARNESS_TARGET=ts-next bun --bun vitest run",
+    "test:e2e:live": "CLI_E2E_MODE=live CLI_E2E_TARGET_ENV=staging bun --bun vitest run --config vitest.live.config.ts",
     "record": "RECORD=true CLI_HARNESS_TARGET=go bun --bun vitest run",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
@@ -30,7 +31,12 @@
   "knip": {
     "entry": [
       "src/**/*.e2e.test.ts",
-      "tests/**/*.ts"
+      "src/**/*.live.e2e.test.ts",
+      "tests/**/*.ts",
+      "vitest.live.config.ts"
+    ],
+    "ignore": [
+      "fixtures/**"
     ],
     "ignoreDependencies": [
       "@typescript/native-preview",

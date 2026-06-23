@@ -17,6 +17,8 @@
  *   - Error injection: returns ErrorResponse for all queries (extended: on Execute)
  *   - Empty state: returns CommandComplete "SELECT 0" for extended Execute;
  *                  returns error for simple SELECT; returns empty COPY for COPY
+ *   - Liveness probe: a simple `SELECT 1` always succeeds (one row) regardless of
+ *                     state — the native driver uses it to force its lazy connection
  *   - Terminate ('X') → closes connection gracefully
  */
 
@@ -244,6 +246,23 @@ function buildStartupResponse(): Buffer {
   ]);
 }
 
+/**
+ * Connection liveness probe (`SELECT 1`). The native TS driver eagerly forces its
+ * lazily-connected `pg` client by running `SELECT 1` over the simple-query
+ * protocol (Go's pgx connects eagerly at the protocol level and issues no such
+ * query). A real Postgres always answers `SELECT 1` regardless of any fixtures, so
+ * the mock must too — otherwise the empty-state "no fixture" guard rejects the
+ * probe and the native command fails to connect before doing any real work.
+ */
+function buildProbeResponse(): Buffer {
+  return Buffer.concat([
+    buildRowDescription(["?column?"], [TEXT_OID]),
+    buildDataRow(["1"]),
+    buildCommandComplete("SELECT 1"),
+    buildReadyForQuery(),
+  ]);
+}
+
 function buildSelectResponse(state: PgMockState): Buffer {
   if (state.type === "error") {
     const { code, message, severity = "ERROR" } = state.error;
@@ -372,8 +391,15 @@ function processMessages(socket: Bun.Socket<SocketData>, getState: () => PgMockS
     if (msgType === 0x51) {
       // 'Q' — simple query (used by pgconn.CopyTo and simple-protocol callers)
       const query = payload.slice(0, payload.length - 1).toString("utf8");
+      const isProbe = /^\s*select\s+1\s*;?\s*$/i.test(query);
       const isCopy = /^\s*COPY\s+/i.test(query);
-      socket.write(isCopy ? buildCopyResponse(getState()) : buildSelectResponse(getState()));
+      socket.write(
+        isProbe
+          ? buildProbeResponse()
+          : isCopy
+            ? buildCopyResponse(getState())
+            : buildSelectResponse(getState()),
+      );
     } else if (msgType === 0x50) {
       // 'P' Parse → extract param count from SQL, then ParseComplete
       const sql = parseSqlFromPayload(payload);

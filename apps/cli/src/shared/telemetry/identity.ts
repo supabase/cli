@@ -56,6 +56,67 @@ export const saveDistinctId = Effect.fnUntraced(function* (configDir: string, di
   yield* writeTelemetryConfig(nextConfig, configDir);
 });
 
+/**
+ * True when `~/.supabase/` will not survive this invocation (CI runners,
+ * Docker, `npx supabase`), detected heuristically. Identity stitching
+ * ($create_alias + persisted distinct_id) is wasted in these environments;
+ * only in-memory stamping applies.
+ * See docs/adr/0013-hybrid-stitch-stamp-identity-attribution.md.
+ */
+export function isEphemeralIdentityRuntime(runtime: {
+  readonly isCi: boolean;
+  readonly isFirstRun: boolean;
+  readonly isTty: boolean;
+}): boolean {
+  return runtime.isCi || (runtime.isFirstRun && !runtime.isTty);
+}
+
+/**
+ * In-process identity for telemetry capture events: the persisted distinct_id
+ * snapshot at startup, overridden when the process learns the authenticated
+ * user ("stamping"), emptied on logout. The single source of truth consulted
+ * at capture time — see docs/adr/0013-hybrid-stitch-stamp-identity-attribution.md.
+ */
+export interface TelemetryIdentity {
+  readonly current: () => string | undefined;
+  readonly stamp: (distinctId: string) => void;
+  readonly clear: () => void;
+}
+
+export function makeTelemetryIdentity(persisted: string | undefined): TelemetryIdentity {
+  let value = persisted;
+  return {
+    current: () => value,
+    stamp: (distinctId: string) => {
+      value = distinctId;
+    },
+    clear: () => {
+      value = undefined;
+    },
+  };
+}
+
+/**
+ * Logout-only: forget the user AND rotate the device id, severing the link
+ * between this device and the logged-out user's person graph. A later login
+ * as a different account then aliases a fresh device. Transient failure
+ * paths use clearDistinctId, which keeps the device id.
+ */
+export const resetIdentity = Effect.fnUntraced(function* (configDir: string) {
+  const identity = yield* resolveIdentity(configDir);
+  const config = yield* readTelemetryConfig(configDir);
+  const nextConfig: TelemetryConfig = {
+    consent: Option.match(config, {
+      onNone: () => "granted",
+      onSome: (value) => value.consent,
+    }),
+    device_id: crypto.randomUUID(),
+    session_id: identity.sessionId,
+    session_last_active: Date.now(),
+  };
+  yield* writeTelemetryConfig(nextConfig, configDir);
+});
+
 export const clearDistinctId = Effect.fnUntraced(function* (configDir: string) {
   const identity = yield* resolveIdentity(configDir);
   const config = yield* readTelemetryConfig(configDir);

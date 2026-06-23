@@ -4,7 +4,7 @@ import "strings"
 
 // DefaultPgDeltaNpmVersion is the npm dist-tag/version used for @supabase/pg-delta
 // when supabase/.temp/pgdelta-version is absent or empty.
-const DefaultPgDeltaNpmVersion = "1.0.0-alpha.22"
+const DefaultPgDeltaNpmVersion = "1.0.0-alpha.27"
 
 const pgDeltaNpmVersionPlaceholder = "1.0.0-alpha.20"
 

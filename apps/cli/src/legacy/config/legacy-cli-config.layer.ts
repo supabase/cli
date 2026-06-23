@@ -2,14 +2,20 @@ import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { parse as parseYaml } from "yaml";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
-import { legacyProjectHost } from "../shared/legacy-profile.ts";
+import { legacyPoolerHost, legacyProjectHost } from "../shared/legacy-profile.ts";
+import {
+  LegacyDebugLogger,
+  type LegacyDebugLoggerShape,
+} from "../shared/legacy-debug-logger.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig, type LegacyProfileName } from "./legacy-cli-config.service.ts";
+import { legacyProfileFilePath } from "./legacy-profile-file.ts";
 
 interface ResolvedProfile {
   readonly name: string;
   readonly apiUrl: string;
   readonly projectHost: string;
+  readonly poolerHost: string;
 }
 
 const BUILTIN_PROFILE_API_URLS: Record<LegacyProfileName, string> = {
@@ -31,25 +37,44 @@ function resolvedBuiltin(name: LegacyProfileName): ResolvedProfile {
     name,
     apiUrl: BUILTIN_PROFILE_API_URLS[name],
     projectHost: legacyProjectHost(name),
+    poolerHost: legacyPoolerHost(name),
   };
 }
 
-function safeParseYaml(
-  text: string,
-): { name?: unknown; api_url?: unknown; project_host?: unknown } | undefined {
+function safeParseYaml(text: string):
+  | {
+      name?: unknown;
+      api_url?: unknown;
+      project_host?: unknown;
+      pooler_host?: unknown;
+    }
+  | undefined {
   try {
     const value = parseYaml(text);
     return value !== null && typeof value === "object"
-      ? (value as { name?: unknown; api_url?: unknown; project_host?: unknown })
+      ? (value as {
+          name?: unknown;
+          api_url?: unknown;
+          project_host?: unknown;
+          pooler_host?: unknown;
+        })
       : undefined;
   } catch {
     return undefined;
   }
 }
 
+function unknownMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Resolves the profile that produces the API URL. Mirrors Go's `LoadProfile`
  * (`apps/cli-go/internal/utils/profile.go:96-118`):
+ *
+ * Profile-name precedence mirrors Go's `getProfileName` (`profile.go:121-136`):
+ * `--profile` flag (when not the default) → `SUPABASE_PROFILE` env → the
+ * persisted `~/.supabase/profile` file → `supabase`. The resolved token is then:
  *
  * 1. If the token matches a built-in profile name, use that.
  * 2. Otherwise treat the token as a path to a YAML config file with `api_url:`.
@@ -58,15 +83,47 @@ function safeParseYaml(
  * The cli-e2e harness depends on (2) — it writes a per-test YAML profile and
  * sets `SUPABASE_PROFILE=<that-path>` so both the Go and ts-legacy binaries
  * route requests to the local replay server. YAML profiles may also carry a
- * `project_host:` key (Go's `Profile.ProjectHost`); it defaults to `supabase.co`.
+ * `project_host:` key (Go's `Profile.ProjectHost`; defaults to `supabase.co`) and
+ * a `pooler_host:` key (Go's `Profile.PoolerHost`; `omitempty`, defaults to empty
+ * which disables the linked pooler MITM domain assertion).
  */
 function resolveProfile(
   flagValue: string,
   envValue: string | undefined,
   fs: FileSystem.FileSystem,
+  path: Path.Path,
+  homeDir: string,
+  debugLogger: LegacyDebugLoggerShape,
 ): Effect.Effect<ResolvedProfile> {
   return Effect.gen(function* () {
-    const token = flagValue !== "supabase" ? flagValue : (envValue ?? "supabase");
+    let token: string;
+    if (flagValue !== "supabase") {
+      yield* debugLogger.debug(`Loading profile from flag: ${flagValue}`);
+      token = flagValue;
+    } else if (envValue !== undefined && envValue.length > 0) {
+      // Go reads SUPABASE_PROFILE through viper's PROFILE key, so debug output
+      // cannot distinguish env from an explicitly changed flag.
+      yield* debugLogger.debug(`Loading profile from flag: ${envValue}`);
+      token = envValue;
+    } else {
+      // Lowest precedence: the persisted `~/.supabase/profile` file (Go's
+      // `getProfileName` file fallback, `profile.go:129-131`).
+      const filePath = legacyProfileFilePath(path, homeDir);
+      const content = yield* fs.readFileString(filePath).pipe(
+        Effect.tap(() => debugLogger.debug(`Loading profile from file: ${filePath}`)),
+        Effect.map(Option.some),
+        Effect.catch((error) =>
+          debugLogger.debug(unknownMessage(error)).pipe(Effect.as(Option.none<string>())),
+        ),
+      );
+      token = Option.match(content, {
+        onNone: () => "supabase",
+        onSome: (value) => {
+          const trimmed = value.trim();
+          return trimmed.length === 0 ? "supabase" : trimmed;
+        },
+      });
+    }
 
     if (isBuiltinProfileName(token)) {
       return resolvedBuiltin(token);
@@ -86,6 +143,10 @@ function resolveProfile(
         typeof parsed.project_host === "string"
           ? parsed.project_host
           : legacyProjectHost("supabase"),
+      // Go's `Profile.PoolerHost` is `omitempty` (`profile.go:23`): a YAML profile
+      // that omits `pooler_host:` yields an empty host, which disables the MITM
+      // domain assertion — it must NOT fall back to the production `supabase.com`.
+      poolerHost: typeof parsed.pooler_host === "string" ? parsed.pooler_host : "",
     };
   });
 }
@@ -124,6 +185,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
   Effect.gen(function* () {
     const profileFlag = yield* LegacyProfileFlag;
     const workdirFlag = yield* LegacyWorkdirFlag;
+    const debugLogger = yield* LegacyDebugLogger;
 
     return Layer.effect(
       LegacyCliConfig,
@@ -137,7 +199,15 @@ export const legacyCliConfigLayer = Layer.unwrap(
           name: profile,
           apiUrl,
           projectHost,
-        } = yield* resolveProfile(profileFlag, env["SUPABASE_PROFILE"], fs);
+          poolerHost,
+        } = yield* resolveProfile(
+          profileFlag,
+          env["SUPABASE_PROFILE"],
+          fs,
+          path,
+          runtimeInfo.homeDir,
+          debugLogger,
+        );
 
         const rawAccessToken = env["SUPABASE_ACCESS_TOKEN"];
         const accessToken =
@@ -165,6 +235,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
           profile,
           apiUrl,
           projectHost,
+          poolerHost,
           accessToken,
           projectId,
           workdir,

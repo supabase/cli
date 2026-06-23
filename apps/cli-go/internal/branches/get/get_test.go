@@ -119,6 +119,50 @@ SUPABASE_URL = "https://%s."
 		assert.NoError(t, err)
 	})
 
+	t.Run("encodes publishable key for new-format api keys", func(t *testing.T) {
+		t.Cleanup(fstest.MockStdout(t, fmt.Sprintf(`POSTGRES_URL = "postgresql://postgres:postgres@127.0.0.1:6543/postgres?connect_timeout=10"
+POSTGRES_URL_NON_POOLING = "postgresql://postgres:postgres@127.0.0.1:5432/postgres?connect_timeout=10"
+SUPABASE_DEFAULT_KEY = "sb_secret_test"
+SUPABASE_JWT_SECRET = "secret-key"
+SUPABASE_PUBLISHABLE_KEY = "sb_publishable_test"
+SUPABASE_URL = "https://%s."
+`, flags.ProjectRef)))
+		t.Cleanup(apitest.MockPlatformAPI(t))
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/branches/" + flags.ProjectRef).
+			Reply(http.StatusOK).
+			JSON(api.BranchDetailResponse{
+				DbHost:    "127.0.0.1",
+				DbPort:    5432,
+				DbUser:    cast.Ptr("postgres"),
+				DbPass:    cast.Ptr("postgres"),
+				JwtSecret: cast.Ptr("secret-key"),
+				Ref:       flags.ProjectRef,
+			})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
+			Reply(http.StatusOK).
+			JSON([]api.ApiKeyResponse{{
+				Name:   "default",
+				Type:   nullable.NewNullableWithValue(api.ApiKeyResponseTypePublishable),
+				ApiKey: nullable.NewNullableWithValue("sb_publishable_test"),
+			}, {
+				Name:   "default",
+				Type:   nullable.NewNullableWithValue(api.ApiKeyResponseTypeSecret),
+				ApiKey: nullable.NewNullableWithValue("sb_secret_test"),
+			}})
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + flags.ProjectRef + "/config/database/pooler").
+			Reply(http.StatusOK).
+			JSON([]api.SupavisorConfigResponse{{
+				ConnectionString: "postgres://postgres:postgres@127.0.0.1:6543/postgres",
+				DatabaseType:     api.SupavisorConfigResponseDatabaseTypePRIMARY,
+				PoolMode:         api.SupavisorConfigResponsePoolModeTransaction,
+			}})
+		err := Run(context.Background(), flags.ProjectRef, nil)
+		assert.NoError(t, err)
+	})
+
 	t.Run("throws error on network error", func(t *testing.T) {
 		errNetwork := errors.New("network error")
 		t.Cleanup(apitest.MockPlatformAPI(t))

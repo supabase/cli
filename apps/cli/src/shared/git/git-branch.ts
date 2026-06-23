@@ -12,34 +12,38 @@ import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
  * Returns `Option.none()` when no git repository is detected. Callers may
  * substitute their own default (e.g. Go's `GetGitBranch` defaults to "main";
  * `branches create` defaults to the empty string so the prompt is skipped).
+ *
+ * `startDir` is the directory to begin the walk from; it defaults to the
+ * runtime CWD. Commands that resolve a `--workdir` should pass it, because Go
+ * chdirs into the workdir in `PersistentPreRunE` before calling `GetGitBranch`
+ * (`cmd/root.go`), so the branch must reflect the project dir, not the caller's.
  */
-export const detectGitBranch: Effect.Effect<
-  Option.Option<string>,
-  never,
-  RuntimeInfo | FileSystem.FileSystem | Path.Path
-> = Effect.gen(function* () {
-  const githubHeadRef = process.env["GITHUB_HEAD_REF"];
-  if (githubHeadRef !== undefined && githubHeadRef.length > 0) {
-    return Option.some(githubHeadRef);
-  }
-
-  const runtimeInfo = yield* RuntimeInfo;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-
-  let dir = path.resolve(runtimeInfo.cwd);
-  const root = path.parse(dir).root;
-
-  while (true) {
-    const headPath = path.join(dir, ".git", "HEAD");
-    const content = yield* fs.readFileString(headPath).pipe(Effect.option);
-    if (Option.isSome(content)) {
-      const match = content.value.trim().match(/^ref: refs\/heads\/(.+)$/);
-      return match?.[1] !== undefined ? Option.some(match[1]) : Option.none<string>();
+export const detectGitBranch = (
+  startDir?: string,
+): Effect.Effect<Option.Option<string>, never, RuntimeInfo | FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const githubHeadRef = process.env["GITHUB_HEAD_REF"];
+    if (githubHeadRef !== undefined && githubHeadRef.length > 0) {
+      return Option.some(githubHeadRef);
     }
-    if (dir === root) {
-      return Option.none<string>();
+
+    const runtimeInfo = yield* RuntimeInfo;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    let dir = path.resolve(startDir ?? runtimeInfo.cwd);
+    const root = path.parse(dir).root;
+
+    while (true) {
+      const headPath = path.join(dir, ".git", "HEAD");
+      const content = yield* fs.readFileString(headPath).pipe(Effect.option);
+      if (Option.isSome(content)) {
+        const match = content.value.trim().match(/^ref: refs\/heads\/(.+)$/);
+        return match?.[1] !== undefined ? Option.some(match[1]) : Option.none<string>();
+      }
+      if (dir === root) {
+        return Option.none<string>();
+      }
+      dir = path.dirname(dir);
     }
-    dir = path.dirname(dir);
-  }
-});
+  });

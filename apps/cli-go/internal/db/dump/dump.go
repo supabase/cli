@@ -20,10 +20,8 @@ import (
 func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleOnly, dryRun bool, fsys afero.Fs, opts ...migration.DumpOptionFunc) error {
 	// Initialize output stream
 	outStream := (io.Writer)(os.Stdout)
-	exec := DockerExec
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: *only* printing the pg_dump script to console.")
-		exec = noExec
 	} else if len(path) > 0 {
 		f, err := fsys.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 		if err != nil {
@@ -36,15 +34,25 @@ func Run(ctx context.Context, path string, config pgconn.Config, dataOnly, roleO
 	if utils.IsLocalDatabase(config) {
 		db = "local"
 	}
-	if dataOnly {
-		fmt.Fprintf(os.Stderr, "Dumping data from %s database...\n", db)
-		return migration.DumpData(ctx, config, outStream, exec, opts...)
-	} else if roleOnly {
-		fmt.Fprintf(os.Stderr, "Dumping roles from %s database...\n", db)
-		return migration.DumpRole(ctx, config, outStream, exec, opts...)
+	return RunWithPoolerFallback(ctx, config, outStream, dryRun, func(ctx context.Context, config pgconn.Config, out io.Writer, exec migration.ExecFunc) error {
+		if dataOnly {
+			fmt.Fprintf(os.Stderr, "Dumping data from %s database...\n", db)
+			return migration.DumpData(ctx, config, out, exec, opts...)
+		} else if roleOnly {
+			fmt.Fprintf(os.Stderr, "Dumping roles from %s database...\n", db)
+			return migration.DumpRole(ctx, config, out, exec, opts...)
+		}
+		fmt.Fprintf(os.Stderr, "Dumping schemas from %s database...\n", db)
+		return migration.DumpSchema(ctx, config, out, exec, opts...)
+	})
+}
+
+// captureExec wraps DockerExec so the container's stderr is teed into errBuf
+// (in addition to the user's terminal) for post-failure classification.
+func captureExec(errBuf *strings.Builder) migration.ExecFunc {
+	return func(ctx context.Context, script string, env []string, w io.Writer) error {
+		return dockerExec(ctx, script, env, w, io.MultiWriter(os.Stderr, errBuf))
 	}
-	fmt.Fprintf(os.Stderr, "Dumping schemas from %s database...\n", db)
-	return migration.DumpSchema(ctx, config, outStream, exec, opts...)
 }
 
 func noExec(ctx context.Context, script string, env []string, w io.Writer) error {
@@ -69,6 +77,10 @@ func noExec(ctx context.Context, script string, env []string, w io.Writer) error
 }
 
 func DockerExec(ctx context.Context, script string, env []string, w io.Writer) error {
+	return dockerExec(ctx, script, env, w, os.Stderr)
+}
+
+func dockerExec(ctx context.Context, script string, env []string, w, errW io.Writer) error {
 	return utils.DockerRunOnceWithConfig(
 		ctx,
 		container.Config{
@@ -82,6 +94,6 @@ func DockerExec(ctx context.Context, script string, env []string, w io.Writer) e
 		network.NetworkingConfig{},
 		"",
 		w,
-		os.Stderr,
+		errW,
 	)
 }

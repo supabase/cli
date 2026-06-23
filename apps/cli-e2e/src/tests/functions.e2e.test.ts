@@ -124,10 +124,13 @@ describe("functions", () => {
 
     testBehaviour("exits non-zero on 429", async ({ run, apiUrl }) => {
       await run(["functions", "new", FUNCTION_NAME]);
-      await fetch(`${apiUrl}/_ctrl/error-all`, {
+      await fetch(`${apiUrl}/_ctrl/rate-limit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: 429, body: { message: "Too Many Requests" } }),
+        body: JSON.stringify({
+          path: `/v1/projects/${PROJECT_REF}/functions/deploy`,
+          retryAfterSeconds: 0,
+        }),
       });
       const result = await run([
         "functions",

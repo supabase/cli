@@ -72,6 +72,35 @@ func TestInitConfig(t *testing.T) {
 		assert.True(t, exists)
 	})
 
+	t.Run("generated config enables pgdelta when requested", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		params := InitParams{
+			ProjectId:  "test-project",
+			UsePgDelta: true,
+		}
+
+		err := InitConfig(params, fsys)
+
+		require.NoError(t, err)
+		content, err := afero.ReadFile(fsys, ConfigPath)
+		require.NoError(t, err)
+		assert.Contains(t, string(content), "[experimental.pgdelta]\nenabled = true")
+	})
+
+	t.Run("generated config leaves pgdelta disabled by default", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		params := InitParams{
+			ProjectId: "test-project",
+		}
+
+		err := InitConfig(params, fsys)
+
+		require.NoError(t, err)
+		content, err := afero.ReadFile(fsys, ConfigPath)
+		require.NoError(t, err)
+		assert.Contains(t, string(content), "[experimental.pgdelta]\nenabled = false")
+	})
+
 	t.Run("creates config with orioledb", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		params := InitParams{

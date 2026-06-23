@@ -75,7 +75,7 @@ Create three empty repos on your own GitHub account:
 | Homebrew tap                 | Must be named `homebrew-<anything>` (so `brew tap <owner>/<anything>` works) | `[avallete/homebrew-supabase-shim-poc](https://github.com/avallete/homebrew-supabase-shim-poc)` |
 | Scoop bucket                 | None                                                                         | `[avallete/scoop-bucket](https://github.com/avallete/scoop-bucket)`                             |
 
-All three can be empty git trees — the updater scripts `gh repo clone` them into a tmpdir, write their generated file, commit, and push.
+All three can be empty git trees. The downstream updater scripts clone the Homebrew tap / Scoop bucket into a tmpdir with git, write their generated file, commit, and push.
 
 Authenticate the GitHub CLI once with write access to all three:
 
@@ -183,10 +183,10 @@ Validated on Windows x64 (`v0.0.1`, 2026-04-21): installed with no SmartScreen b
 Beyond `--version` and `brew test`, exercise a Phase-0 proxied subcommand that requires the `supabase-go` sidecar (`--shell legacy` only):
 
 ```sh
-supabase projects list --help
+supabase completion bash
 ```
 
-This must spawn the colocated `supabase-go` and print help text — not return `NotFound: ChildProcess.spawn (supabase ...)`. If it fails, the Homebrew install step is wrong: check that `[apps/cli/scripts/update-homebrew.ts](../scripts/update-homebrew.ts)`'s install-lines block ran `bin.install "supabase-go" if File.exist?("supabase-go")`, and that the built archive actually contains `supabase-go` (it should, for any `--shell legacy` build).
+This must spawn the colocated `supabase-go` and print the generated completion script — not return `NotFound: ChildProcess.spawn (supabase ...)`. (`supabase --version` is served by the Bun wrapper and never touches the sidecar, so it is not a sufficient check on its own.) If it fails, the Homebrew install step is wrong: check that `[apps/cli/scripts/update-homebrew.ts](../scripts/update-homebrew.ts)`'s install-lines block ran `bin.install "supabase-go" if File.exist?("supabase-go")`, and that the built archive actually contains `supabase-go` (it should, for any `--shell legacy` build).
 
 ### Local-artifact testing (no GitHub Release upload)
 
@@ -240,6 +240,9 @@ flowchart TD
     pub --> rel["softprops/action-gh-release<br/>(draft) → gh release edit --draft=false"]
     rel --> hb["publish-homebrew<br/>App-token-authed clone of homebrew-tap<br/>update-homebrew.ts --name <brew_name>"]
     rel --> sc["publish-scoop<br/>App-token-authed clone of scoop-bucket<br/>update-scoop.ts --name <scoop_name>"]
+    rel --> sucs["setup-cli-smoke<br/>install via supabase/setup-cli<br/>(GitHub Release download)"]
+    hb --> vic["verify-install-channels<br/>real brew/scoop/install-script installs<br/>against the live channels"]
+    sc --> vic
 ```
 
 ### Trigger
@@ -285,15 +288,22 @@ The matrix does not yet include `windows-11-arm` (gate 6) or an Alpine musl runn
 
 ### Post-publish: Homebrew + Scoop
 
-Both updaters run automatically from `release-shared.yml`'s `publish-homebrew` and `publish-scoop` jobs after the GitHub Release is finalised. Each job mints a GitHub App token scoped to `homebrew-tap` / `scoop-bucket` (via `actions/create-github-app-token` with the `APP_ID` + `GH_APP_PRIVATE_KEY` secrets), runs `gh auth setup-git` + sets a `github-actions[bot]` git identity, then invokes `apps/cli/scripts/update-homebrew.ts` / `update-scoop.ts` with `--name <brew_name>` / `--name <scoop_name>`:
+Both updaters run automatically from `release-shared.yml`'s `publish-homebrew` and `publish-scoop` jobs after the GitHub Release is finalised. Each job mints a GitHub App token scoped to `homebrew-tap` / `scoop-bucket` (via `actions/create-github-app-token` with the `GH_APP_CLIENT_ID` + `GH_APP_PRIVATE_KEY` secrets), runs `gh auth setup-git` + sets a `github-actions[bot]` git identity, then invokes `apps/cli/scripts/update-homebrew.ts` / `update-scoop.ts` with `--name <brew_name>` / `--name <scoop_name>`:
 
 - `stable` → `--name supabase` (the default formula / manifest, what `brew install supabase` resolves)
 - `beta` → `--name supabase-beta` (a separate formula / manifest for the prerelease channel)
 - `alpha` → skipped (Homebrew + Scoop are not part of the v3 alpha story; npm only)
 
+### Post-publish: install-channel verification
+
+Once the channels are live, two reusable workflows run automatically (last in `release-shared.yml`, non-gating — by the time they run the artifacts are already published, so a failure surfaces as a red post-release signal rather than blocking distribution):
+
+- `[setup-cli-smoke-test.yml](../../../.github/workflows/setup-cli-smoke-test.yml)` (`setup-cli-smoke` job) — installs the released version through `supabase/setup-cli` (the GitHub Release download path) on Linux, macOS, Windows, and Alpine.
+- `[verify-install-channels.yml](../../../.github/workflows/verify-install-channels.yml)` (`verify-install-channels` job) — runs a **real** `brew install` (macOS **and** Linux, so both the `on_macos` and `on_linux` stanzas of the formula are exercised), `scoop install`, and `curl|bash` install of the **published** install script (fetched from the release asset, not the repo checkout) against the just-published Homebrew tap, Scoop bucket, and GitHub Release. Each leg then asserts `supabase --version` matches and runs `supabase completion bash` (a Go-proxied command) so a package that omits or misplaces the `supabase-go` sidecar fails too. brew, scoop, and the install script each verify the published `sha256`/`hash` against the downloaded tarball, so this is the signal that would have caught CLI v2.107.0 (where the brew/scoop manifests shipped checksums that did not match the release tarballs and every `brew install` / `scoop install` failed). It only runs for `beta`/`stable` (the channels that publish brew/scoop) and can be dispatched manually against any already-published version via the Actions tab.
+
 ### Verification
 
-After `release-shared.yml` finishes (all jobs including `publish-homebrew` and `publish-scoop`):
+The `verify-install-channels` workflow above automates the manual checks below for the brew/scoop/install-script channels; the steps remain useful for a manual sanity check or for the npm/provenance bits the workflow does not cover. After `release-shared.yml` finishes (all jobs including `publish-homebrew` and `publish-scoop`):
 
 ```sh
 npm view supabase@0.1.0 dist-tags   # expect: latest: 0.1.0 (or beta: 0.1.0-beta.N for beta channel)

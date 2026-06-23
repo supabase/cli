@@ -22,24 +22,63 @@ import { ttyLayer } from "../runtime/tty.layer.ts";
 import { CommandRuntime } from "../runtime/command-runtime.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
 import type { Analytics } from "../telemetry/analytics.service.ts";
+import { aiToolLayer } from "../telemetry/ai-tool.layer.ts";
+import { AiTool } from "../telemetry/ai-tool.service.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
+import { CliArgs } from "./cli-args.service.ts";
+import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
 
-function outputFormatFor(args: ReadonlyArray<string>): OutputFormat {
-  const inline = args.find((arg) => arg.startsWith("--output-format="));
-  if (inline) {
-    const value = inline.slice("--output-format=".length);
-    if (value === "json" || value === "stream-json" || value === "text") {
-      return value;
+// Global flags that consume the following argv token as their value. Keep this in
+// sync with the value-taking global flags defined in `shared/cli/global-flags.ts`
+// and `legacy/shared/legacy/global-flags.ts`: a value flag missing here would make
+// `extractCommandPath` mistake its value for a command-path segment.
+const globalFlagsWithValues = new Set([
+  "--output-format",
+  "--output",
+  "-o",
+  "--profile",
+  "--workdir",
+  "--network-id",
+  "--dns-resolver",
+  "--agent",
+]);
+
+// Commands that run their own foreground signal loop (serve/start daemons) and must
+// NOT be wrapped in the global signal-interrupt handler, which would otherwise race
+// their graceful shutdown. Matched by leading command-path segments.
+const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [
+  ["start"],
+  ["db", "start"],
+  ["functions", "serve"],
+];
+
+/** Positional command-path tokens from argv, skipping global flags and their values. */
+export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<string> {
+  const commandArgs: Array<string> = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg.startsWith("-")) {
+      const [flag] = arg.split("=", 1);
+      if (!arg.includes("=") && flag !== undefined && globalFlagsWithValues.has(flag)) {
+        index += 1;
+      }
+      continue;
     }
+    commandArgs.push(arg);
   }
-  const formatIdx = args.indexOf("--output-format");
-  const format = formatIdx !== -1 ? args[formatIdx + 1] : undefined;
-  return format === "json" || format === "stream-json" ? format : "text";
+  return commandArgs;
 }
 
-function formatterLayerFor(args: ReadonlyArray<string>) {
-  const format = outputFormatFor(args);
+/** Whether the global signal-interrupt handler should wrap this invocation. */
+export function shouldUseGlobalSignalInterrupt(args: ReadonlyArray<string>): boolean {
+  const commandPath = extractCommandPath(args);
+  return !selfManagedSignalCommands.some((command) =>
+    command.every((segment, index) => commandPath[index] === segment),
+  );
+}
+
+function formatterLayerFor(format: OutputFormat) {
   return format === "json" || format === "stream-json"
     ? CliOutput.layer(jsonCliOutputFormatter())
     : CliOutput.layer(textCliOutputFormatter());
@@ -75,6 +114,7 @@ function cliProgramFor(
   rootCommand: Command.Command.Any,
   args: ReadonlyArray<string>,
   options: RunCliOptions,
+  outputFormat: OutputFormat,
 ) {
   const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
   const fallbackCommandLayer = Layer.mergeAll(
@@ -101,7 +141,7 @@ function cliProgramFor(
     ),
   );
   return Command.runWith(rootCommand, { version: CLI_VERSION })(args).pipe(
-    Effect.provide(formatterLayerFor(args)),
+    Effect.provide(formatterLayerFor(outputFormat)),
     Effect.provide(options.analyticsLayer),
     Effect.provide(tracingLayer),
     Effect.provide(telemetryRuntimeLayer),
@@ -112,6 +152,7 @@ function cliProgramFor(
     Effect.provide(runtimeLayer),
     Effect.provide(unixHttpClientLayer),
     Effect.provide(fallbackCommandLayer),
+    Effect.provide(Layer.succeed(CliArgs, { args })),
     Effect.provide(BunServices.layer),
   );
 }
@@ -124,8 +165,14 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
-  const useGlobalSignalInterrupt = !args.includes("start");
-  const cliProgram = cliProgramFor(rootCommand, args, options);
+  const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
+  const outputFormat = await Effect.runPromise(
+    Effect.gen(function* () {
+      const aiTool = yield* AiTool;
+      return resolveAgentOutputFormatFromArgs(args, aiTool.name);
+    }).pipe(Effect.provide(aiToolLayer)),
+  );
+  const cliProgram = cliProgramFor(rootCommand, args, options, outputFormat);
 
   const signalAwareProgram = Effect.scoped(
     Effect.gen(function* () {
@@ -172,7 +219,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       const exitCode = yield* processControl.getExitCode;
       return yield* processControl.exit(exitCode ?? 0);
     }).pipe(
-      Effect.provide(outputLayerFor(outputFormatFor(args))),
+      Effect.provide(outputLayerFor(outputFormat)),
       Effect.provide(telemetryRuntimeLayer),
       Effect.provide(projectHomeLayerFor(handledRuntimeLayer)),
       Effect.provide(cliConfigLayerFor(handledRuntimeLayer)),

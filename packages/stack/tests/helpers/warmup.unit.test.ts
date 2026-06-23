@@ -79,6 +79,7 @@ describe("stack e2e warmup", () => {
     await expect(
       warmStackE2eDependencies({
         failOnError: true,
+        hasDockerDaemon: () => false,
         logger,
         prefetch: async () => {
           throw new Error("pull failed");
@@ -94,6 +95,7 @@ describe("stack e2e warmup", () => {
     await expect(
       warmStackE2eDependencies({
         failOnError: false,
+        hasDockerDaemon: () => false,
         logger,
         prefetch: async () => {
           throw new Error("pull failed");

@@ -1,0 +1,187 @@
+name: Live E2E
+
+# Live e2e suite (ADR-0013). Runs the real CLI against the real staging
+# Management API + Docker bundler, then invokes the deployed functions over HTTP.
+#
+# Non-blocking by construction: this is a standalone workflow, NOT part of the
+# required-checks set, and it never runs on the default PR path of test.yml.
+#
+# Triggers:
+#   - workflow_dispatch — manual run. The Actions UI branch picker selects the
+#     ref (github.ref), always a same-repo branch. We deliberately take NO
+#     free-form `ref` input: that would let a manual run check out arbitrary
+#     (e.g. external PR) code while the staging token is in the job env.
+#   - schedule (hourly) — exercises the `@beta` channel. `develop` is the default
+#     branch AND the beta release source, so a scheduled run checks it out and
+#     builds from source. The `gate` job skips the run unless the published
+#     `supabase@beta` version changed since the last green run (an actions/cache
+#     marker keyed on the version), so we only spend a staging project when there
+#     is actually a new beta to test.
+#
+# Secrets: workflow_dispatch and schedule both run on trusted same-repo refs, so
+# the staging token is never exposed to fork code.
+on:
+  workflow_dispatch:
+  schedule:
+    # Hourly, offset from other scheduled workflows. Cron timing is best-effort.
+    - cron: "23 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  # Decide whether to run. Manual dispatch always runs. Scheduled runs only fire
+  # when the latest published `@beta` is newer than the last one we tested green.
+  gate:
+    name: Gate (newer @beta?)
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Resolve latest @beta version
+        id: ver
+        run: |
+          set -euo pipefail
+          version="$(npm view supabase@beta version)"
+          # Validate the shape before it becomes a cache key (defense-in-depth
+          # against a garbage/poisoned registry value).
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::unexpected supabase@beta version '$version'"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Marker presence == "this beta already tested green". lookup-only so we
+      # download nothing; the marker is written by `finalize` after a green run.
+      - name: Check tested marker
+        id: cache
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .beta-marker
+          key: live-e2e-beta-${{ steps.ver.outputs.version }}
+          lookup-only: true
+
+      - name: Decide
+        id: decide
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "manual dispatch -> run"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.cache.outputs.cache-hit }}" = "true" ]; then
+            echo "beta ${{ steps.ver.outputs.version }} already tested green -> skip"
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "new beta ${{ steps.ver.outputs.version }} -> run"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  live-e2e:
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    name: Live e2e (${{ matrix.target }})
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # Serialize a target against itself across runs; go and ts-legacy run in
+    # parallel. Per-job-scoped project names mean this is mostly belt-and-braces.
+    concurrency:
+      group: live-e2e-${{ matrix.target }}-${{ github.ref }}
+      cancel-in-progress: true
+    strategy:
+      # Each target is an independent green/red signal.
+      fail-fast: false
+      matrix:
+        # go = source-of-truth Go binary; ts-legacy = the TS rewrite (shells out
+        # to Go for most commands). Authoring target is go; ts-legacy proves the
+        # shim matches. ts-next is a later axis.
+        target:
+          - go
+          - ts-legacy
+    # Non-secret config is job-level; the staging token is scoped to only the two
+    # steps that need it (run + cleanup) so build/checkout/docker never see it.
+    env:
+      CLI_E2E_MODE: live
+      CLI_E2E_TARGET_ENV: staging
+      CLI_E2E_API_URL: https://api.supabase.green
+      CLI_E2E_PROJECT_HOST: supabase.red
+      CLI_HARNESS_TARGET: ${{ matrix.target }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: apps/cli-go/go.mod
+          cache-dependency-path: apps/cli-go/go.sum
+
+      # Build the Go binary for every target: `go` runs it directly and
+      # `ts-legacy` shells out to it for most commands.
+      - name: Build Go CLI
+        working-directory: apps/cli-go
+        run: go build -o supabase-go .
+
+      - name: Export Go binary path
+        run: echo "SUPABASE_GO_BINARY=${{ github.workspace }}/apps/cli-go/supabase-go" >> "$GITHUB_ENV"
+
+      # The ts-legacy harness runs the compiled supabase binary from apps/cli/dist.
+      - name: Build CLI
+        if: matrix.target == 'ts-legacy'
+        run: pnpm exec nx run supabase:build
+
+      # Docker is a hard requirement for the --use-docker bundler cell.
+      - name: Docker preflight
+        run: docker info
+
+      - name: Run live e2e (retry up to 3x)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
+        run: |
+          PREFIX="cli-e2e-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
+          # GitHub runs this step as `bash -e`; use `if cmd; then` (errexit-exempt)
+          # so a failing attempt does not abort the step before the retry.
+          for attempt in 1 2 3; do
+            echo "::group::live e2e attempt ${attempt}"
+            if [ "$attempt" -gt 1 ]; then
+              bash .github/scripts/sweep-live-projects.sh "$PREFIX" || true
+            fi
+            if pnpm --filter @supabase/cli-e2e test:e2e:live; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "attempt ${attempt} failed"
+          done
+          exit 1
+
+      # Backstop: delete any project this job created that survived a crash.
+      # The script exits non-zero (failing this step) if any delete failed.
+      - name: Cleanup leftover projects
+        if: always()
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
+        run: bash .github/scripts/sweep-live-projects.sh "cli-e2e-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
+
+  # Record that this beta tested green so the next scheduled run skips it. Needs
+  # the whole matrix: the marker is saved only if BOTH go and ts-legacy passed
+  # (a red leg leaves no marker, so the next hour re-runs the same beta).
+  finalize:
+    needs: [gate, live-e2e]
+    if: github.event_name == 'schedule' && needs.live-e2e.result == 'success'
+    name: Mark @beta tested
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write marker
+        run: |
+          mkdir -p .beta-marker
+          echo "${{ needs.gate.outputs.version }}" > .beta-marker/version
+
+      - name: Save tested marker
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .beta-marker
+          key: live-e2e-beta-${{ needs.gate.outputs.version }}

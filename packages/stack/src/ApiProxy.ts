@@ -28,22 +28,29 @@ export interface ProxyConfig {
   readonly serviceRoleJwt: string;
 }
 
-function transformAuthorization(headers: Headers.Headers, config: ProxyConfig): Headers.Headers {
+function transformAuthorization(
+  headers: Headers.Headers,
+  config: ProxyConfig,
+  useCustomHeader = false,
+): Headers.Headers {
   const auth = headers["authorization"];
   const apikey = headers["apikey"];
+
+  const transformHeaderName = useCustomHeader ? "sb-api-key" : "authorization";
+  const transformPrefix = useCustomHeader ? "" : "Bearer ";
 
   if (auth !== undefined && !auth.startsWith("Bearer sb_")) {
     return headers;
   }
 
   if (apikey === config.publishableKey) {
-    return Headers.set(headers, "authorization", `Bearer ${config.anonJwt}`);
+    return Headers.set(headers, transformHeaderName, transformPrefix + config.anonJwt);
   }
   if (apikey === config.secretKey) {
-    return Headers.set(headers, "authorization", `Bearer ${config.serviceRoleJwt}`);
+    return Headers.set(headers, transformHeaderName, transformPrefix + config.serviceRoleJwt);
   }
   if (apikey !== undefined && apikey !== "") {
-    return Headers.set(headers, "authorization", apikey);
+    return Headers.set(headers, transformHeaderName, apikey);
   }
 
   return headers;
@@ -103,6 +110,7 @@ interface ProxyHandlerOptions {
   readonly stripPrefix?: string;
   readonly backendPath?: string;
   readonly transformAuth?: boolean;
+  readonly transformAuthCustomHeader?: boolean;
   readonly extraHeaders?: Record<string, string>;
 }
 
@@ -126,7 +134,7 @@ function makeProxyHandler(
 
       let outHeaders = req.headers;
       if (opts.transformAuth === true) {
-        outHeaders = transformAuthorization(outHeaders, config);
+        outHeaders = transformAuthorization(outHeaders, config, opts.transformAuthCustomHeader);
       }
       outHeaders = addProxyHeaders(outHeaders, Option.getOrUndefined(req.remoteAddress));
 
@@ -254,6 +262,7 @@ export class ApiProxy extends Context.Service<
               backendPort: config.edgeRuntimePort,
               stripPrefix: "/functions/v1",
               transformAuth: true,
+              transformAuthCustomHeader: true,
             }),
           ),
           HttpRouter.route(

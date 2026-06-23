@@ -104,6 +104,84 @@ func TestPullImage(t *testing.T) {
 		assert.ErrorContains(t, err, "no space left on device")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+
+	t.Run("falls back to GHCR when the default ECR pull fails", func(t *testing.T) {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "")
+		timeUnit = time.Duration(0)
+		t.Cleanup(func() {
+			viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+			timeUnit = time.Second
+		})
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(Docker))
+		defer gock.OffAll()
+		ecrImage := "public.ecr.aws/supabase/" + imageId
+		ghcrImage := "ghcr.io/supabase/" + imageId
+		dockerImage := imageId
+		for _, image := range []string{ecrImage, ghcrImage, dockerImage} {
+			gock.New(Docker.DaemonHost()).
+				Get("/v" + Docker.ClientVersion() + "/images/" + image + "/json").
+				Reply(http.StatusNotFound)
+		}
+		// ECR gets the initial attempt plus two retries.
+		for range 3 {
+			gock.New(Docker.DaemonHost()).
+				Post("/v"+Docker.ClientVersion()+"/images/create").
+				MatchParam("fromImage", ecrImage).
+				MatchParam("tag", "latest").
+				Reply(http.StatusAccepted).
+				JSON(jsonmessage.JSONMessage{Error: &jsonmessage.JSONError{Message: "toomanyrequests: Rate exceeded"}})
+		}
+		gock.New(Docker.DaemonHost()).
+			Post("/v"+Docker.ClientVersion()+"/images/create").
+			MatchParam("fromImage", ghcrImage).
+			MatchParam("tag", "latest").
+			Reply(http.StatusAccepted)
+		// Run test
+		imageURL, err := DockerResolveImageIfNotCached(context.Background(), imageId)
+		// Validate api
+		assert.NoError(t, err)
+		assert.Equal(t, ghcrImage, imageURL)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestRegistryImageUrls(t *testing.T) {
+	t.Cleanup(func() {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "")
+	})
+
+	t.Run("returns fallback candidates when the registry is unset", func(t *testing.T) {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "")
+
+		assert.Equal(t, []string{
+			"public.ecr.aws/supabase/postgres:17.6.1.138",
+			"ghcr.io/supabase/postgres:17.6.1.138",
+			"supabase/postgres:17.6.1.138",
+		}, GetRegistryImageUrls("supabase/postgres:17.6.1.138"))
+	})
+
+	t.Run("dedupes an already-defaulted image", func(t *testing.T) {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "")
+
+		assert.Equal(t, []string{
+			"public.ecr.aws/supabase/postgres:17.6.1.138",
+			"ghcr.io/supabase/postgres:17.6.1.138",
+			"supabase/postgres:17.6.1.138",
+		}, GetRegistryImageUrls("public.ecr.aws/supabase/postgres:17.6.1.138"))
+	})
+
+	t.Run("uses a single candidate when the registry is explicitly configured", func(t *testing.T) {
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "public.ecr.aws")
+		assert.Equal(t, []string{
+			"public.ecr.aws/supabase/postgres:17.6.1.138",
+		}, GetRegistryImageUrls("supabase/postgres:17.6.1.138"))
+
+		viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+		assert.Equal(t, []string{
+			"supabase/postgres:17.6.1.138",
+		}, GetRegistryImageUrls("supabase/postgres:17.6.1.138"))
+	})
 }
 
 func TestRunOnce(t *testing.T) {

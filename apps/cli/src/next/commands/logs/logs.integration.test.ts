@@ -9,19 +9,9 @@ import { logs } from "./logs.handler.ts";
 import { mockOutput, mockProcessControl, withEnv } from "../../../../tests/helpers/mocks.ts";
 import { makeRunningStackFixture } from "../../../../tests/helpers/running-stack.ts";
 
-const waitFor = Effect.fnUntraced(function* (
-  condition: () => boolean,
-  message: string,
-  attempts = 50,
-) {
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    if (condition()) {
-      return;
-    }
-    yield* Effect.sleep("1 millis");
-  }
-  throw new Error(message);
-});
+type LogsHistoryCompletion =
+  | { readonly type: "exit"; readonly code: number }
+  | { readonly type: "fiber"; readonly exit: Exit.Exit<unknown, unknown> };
 
 describe("logs handler", () => {
   it.live("shows a friendly failure when no local stack is running", () => {
@@ -78,10 +68,21 @@ describe("logs handler", () => {
         noFollow: true,
       }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
 
-      yield* waitFor(
-        () => processControl.exitCalls.includes(0),
-        "logs command did not finish its history snapshot",
+      const completion: LogsHistoryCompletion = yield* Effect.race(
+        Effect.map(
+          processControl.awaitExit,
+          (code): LogsHistoryCompletion => ({ type: "exit", code }),
+        ),
+        Effect.map(Fiber.await(fiber), (exit): LogsHistoryCompletion => ({ type: "fiber", exit })),
       );
+      if (completion.type === "fiber") {
+        throw new Error(
+          Exit.isFailure(completion.exit)
+            ? "logs command failed before finishing its history snapshot"
+            : "logs command completed before reporting process exit",
+        );
+      }
+      expect(completion.code).toBe(0);
       yield* Fiber.interrupt(fiber);
 
       expect(out.messages).toContainEqual(

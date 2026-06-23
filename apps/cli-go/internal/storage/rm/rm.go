@@ -71,7 +71,7 @@ func Run(ctx context.Context, paths []string, recursive bool, fsys afero.Fs) err
 		}
 		// Always try deleting first in case the paths resolve to extensionless files
 		fmt.Fprintln(os.Stderr, "Deleting objects:", prefixes)
-		removed, err := api.DeleteObjects(ctx, bucket, prefixes)
+		removed, err := deleteObjects(ctx, api, bucket, prefixes)
 		if err != nil {
 			return err
 		}
@@ -124,7 +124,7 @@ func RemoveStoragePathAll(ctx context.Context, api storage.StorageAPI, bucket, p
 		}
 		if len(files) > 0 {
 			fmt.Fprintln(os.Stderr, "Deleting objects:", files)
-			if _, err := api.DeleteObjects(ctx, bucket, files); err != nil {
+			if _, err := deleteObjects(ctx, api, bucket, files); err != nil {
 				return err
 			}
 		}
@@ -140,4 +140,17 @@ func RemoveStoragePathAll(ctx context.Context, api storage.StorageAPI, bucket, p
 		}
 	}
 	return nil
+}
+
+func deleteObjects(ctx context.Context, api storage.StorageAPI, bucket string, prefixes []string) ([]storage.DeleteObjectsResponse, error) {
+	var removed []storage.DeleteObjectsResponse
+	for start := 0; start < len(prefixes); start += storage.DELETE_OBJECTS_LIMIT {
+		end := min(start+storage.DELETE_OBJECTS_LIMIT, len(prefixes))
+		objects, err := api.DeleteObjects(ctx, bucket, prefixes[start:end])
+		if err != nil {
+			return nil, err
+		}
+		removed = append(removed, objects...)
+	}
+	return removed, nil
 }

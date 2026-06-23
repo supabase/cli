@@ -1,0 +1,4 @@
+# Live e2e fixtures are real Deno Edge Function projects (deno.json, jsr:/npm:
+# imports, Deno globals) — test data the CLI deploys, not workspace source.
+# oxfmt reads this file by default; keep it from formatting the fixtures.
+fixtures/

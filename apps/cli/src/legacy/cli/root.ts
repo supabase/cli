@@ -12,6 +12,7 @@ import { legacyFunctionsCommand } from "../commands/functions/functions.command.
 import { legacyGenCommand } from "../commands/gen/gen.command.ts";
 import { legacyInitCommand } from "../commands/init/init.command.ts";
 import { legacyInspectCommand } from "../commands/inspect/inspect.command.ts";
+import { legacyIssueCommand } from "../commands/issue/issue.command.ts";
 import { legacyLinkCommand } from "../commands/link/link.command.ts";
 import { legacyLoginCommand } from "../commands/login/login.command.ts";
 import { legacyLogoutCommand } from "../commands/logout/logout.command.ts";
@@ -39,6 +40,10 @@ import { OutputFormatFlag } from "../../shared/cli/global-flags.ts";
 import { outputLayerFor } from "../../shared/output/output.layer.ts";
 import { legacyQuietProgressTextOutputLayer } from "../output/legacy-quiet-progress-text-output.layer.ts";
 import { makeGoProxyLayer } from "../../shared/legacy/go-proxy.layer.ts";
+import { AiTool } from "../../shared/telemetry/ai-tool.service.ts";
+import { aiToolLayer } from "../../shared/telemetry/ai-tool.layer.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
+import { isBuiltInTextRequest, resolveAgentOutputFormat } from "../../shared/cli/agent-output.ts";
 import {
   LEGACY_GLOBAL_FLAGS,
   LegacyAgentFlag,
@@ -69,6 +74,7 @@ export const legacyRoot = Command.make("supabase").pipe(
     legacyGenCommand,
     legacyInitCommand,
     legacyInspectCommand,
+    legacyIssueCommand,
     legacyLinkCommand,
     legacyLoginCommand,
     legacyLogoutCommand,
@@ -96,7 +102,7 @@ export const legacyRoot = Command.make("supabase").pipe(
   Command.provide(
     Layer.unwrap(
       Effect.gen(function* () {
-        const outputFormat = yield* OutputFormatFlag;
+        const explicitOutputFormat = yield* OutputFormatFlag;
         const goOutput = yield* LegacyOutputFlag;
         const profile = yield* LegacyProfileFlag;
         const debug = yield* LegacyDebugFlag;
@@ -107,6 +113,19 @@ export const legacyRoot = Command.make("supabase").pipe(
         const dnsResolver = yield* LegacyDnsResolverFlag;
         const createTicket = yield* LegacyCreateTicketFlag;
         const agent = yield* LegacyAgentFlag;
+        const cliArgs = yield* CliArgs;
+
+        const aiTool = yield* AiTool.pipe(Effect.provide(aiToolLayer));
+        // An explicit Go --output is a complete format choice (even `-o pretty`
+        // must keep its human table), so the agent JSON default only applies
+        // when that flag is absent.
+        const outputFormat = resolveAgentOutputFormat({
+          explicitOutputFormat,
+          legacyOutputFormat: goOutput,
+          agentOverride: agent,
+          detectedAgentName: aiTool.name,
+          isBuiltInTextRequest: isBuiltInTextRequest(cliArgs.args),
+        });
 
         // Build args to prepend to every proxy exec call.
         // --output: use explicit --output if set, otherwise map from --output-format.
@@ -126,13 +145,14 @@ export const legacyRoot = Command.make("supabase").pipe(
         if (createTicket) globalArgs.push("--create-ticket");
         if (agent !== "auto") globalArgs.push("--agent", agent);
 
-        // Go's `-o {json,yaml,toml,env}` selects a machine encoder the handler
-        // writes via `output.raw`. Keep the text layer (so errors still render
-        // as red text on stderr, matching Go), but suppress its progress spinner
-        // — otherwise clack writes ANSI to stdout and corrupts the payload
-        // (CLI-1546). `-o pretty` / no `-o` keep the normal text/json layers.
+        // Go's `-o {json,yaml,toml,env,csv}` selects a machine encoder the
+        // handler writes via `output.raw`. Keep the text layer (so errors still
+        // render as red text on stderr, matching Go), but suppress its progress
+        // spinner — otherwise clack writes ANSI to stdout and corrupts the
+        // payload (CLI-1546). `-o pretty` / `-o table` (`db query`'s human
+        // default) / no `-o` keep the normal text/json layers.
         const goFmt = Option.getOrUndefined(goOutput);
-        const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty";
+        const isGoMachineFormat = goFmt !== undefined && goFmt !== "pretty" && goFmt !== "table";
         const outputLayer = isGoMachineFormat
           ? legacyQuietProgressTextOutputLayer
           : outputLayerFor(outputFormat);

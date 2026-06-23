@@ -27,6 +27,8 @@ on:
         required: true
       GH_APP_PRIVATE_KEY:
         required: true
+      DF_FIREWALL_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       tag:
@@ -68,6 +70,8 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       - uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Configure git identity
         run: |

@@ -18,12 +18,16 @@ const (
 
 // DebugBundle collects diagnostic artifacts when a declarative operation fails.
 type DebugBundle struct {
-	ID           string   // timestamp-based unique ID (e.g. "20240414-044403")
-	SourceRef    string   // path to source catalog
-	TargetRef    string   // path to target catalog
-	MigrationSQL string   // generated migration (if available)
-	Error        error    // the error that occurred
-	Migrations   []string // list of local migration files
+	ID             string   // timestamp-based unique ID (e.g. "20240414-044403")
+	SourceRef      string   // path to source catalog
+	TargetRef      string   // path to target catalog
+	SourceCatalog  string   // inline source catalog JSON (optional)
+	TargetCatalog  string   // inline target catalog JSON (optional)
+	MigrationSQL   string   // generated migration (if available)
+	PgDeltaStderr  string   // edge-runtime stderr from pg-delta scripts
+	ConnectionInfo string   // redacted connection metadata
+	Error          error    // the error that occurred
+	Migrations     []string // list of local migration files
 }
 
 // SaveDebugBundle writes diagnostic artifacts to .temp/pgdelta/debug/<ID>/ and
@@ -38,14 +42,18 @@ func SaveDebugBundle(bundle DebugBundle, fsys afero.Fs) (string, error) {
 	}
 
 	// Copy source catalog if available
-	if len(bundle.SourceRef) > 0 {
+	if len(bundle.SourceCatalog) > 0 {
+		_ = utils.WriteFile(filepath.Join(debugDir, "source-catalog.json"), []byte(bundle.SourceCatalog), fsys)
+	} else if len(bundle.SourceRef) > 0 {
 		if data, err := afero.ReadFile(fsys, bundle.SourceRef); err == nil {
 			_ = utils.WriteFile(filepath.Join(debugDir, "source-catalog.json"), data, fsys)
 		}
 	}
 
 	// Copy target catalog if available
-	if len(bundle.TargetRef) > 0 {
+	if len(bundle.TargetCatalog) > 0 {
+		_ = utils.WriteFile(filepath.Join(debugDir, "target-catalog.json"), []byte(bundle.TargetCatalog), fsys)
+	} else if len(bundle.TargetRef) > 0 {
 		if data, err := afero.ReadFile(fsys, bundle.TargetRef); err == nil {
 			_ = utils.WriteFile(filepath.Join(debugDir, "target-catalog.json"), data, fsys)
 		}
@@ -59,6 +67,14 @@ func SaveDebugBundle(bundle DebugBundle, fsys afero.Fs) (string, error) {
 	// Save error details
 	if bundle.Error != nil {
 		_ = utils.WriteFile(filepath.Join(debugDir, "error.txt"), []byte(bundle.Error.Error()), fsys)
+	}
+
+	if len(bundle.PgDeltaStderr) > 0 {
+		_ = utils.WriteFile(filepath.Join(debugDir, "pgdelta-stderr.txt"), []byte(bundle.PgDeltaStderr), fsys)
+	}
+
+	if len(bundle.ConnectionInfo) > 0 {
+		_ = utils.WriteFile(filepath.Join(debugDir, "connection.txt"), []byte(bundle.ConnectionInfo), fsys)
 	}
 
 	// Copy migration files

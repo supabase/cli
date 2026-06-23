@@ -8,6 +8,7 @@ import (
 	"github.com/supabase/cli/internal/storage/ls"
 	"github.com/supabase/cli/internal/storage/mv"
 	"github.com/supabase/cli/internal/storage/rm"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/storage"
 )
 
@@ -16,6 +17,21 @@ var (
 		GroupID: groupManagementAPI,
 		Use:     "storage",
 		Short:   "Manage Supabase Storage objects",
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			local, err := cmd.Flags().GetBool("local")
+			if err != nil {
+				return err
+			}
+			if local {
+				groupID := cmd.GroupID
+				cmd.GroupID = groupLocalDev
+				defer func() {
+					cmd.GroupID = groupID
+				}()
+				flags.ProjectRef = ""
+			}
+			return cmd.Root().PersistentPreRunE(cmd, args)
+		},
 	}
 
 	recursive bool

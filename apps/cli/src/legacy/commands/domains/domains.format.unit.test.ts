@@ -6,11 +6,11 @@ import {
   type LegacyHostnameResponse,
 } from "./domains.format.ts";
 
-type Status = LegacyHostnameResponse["status"];
+type Status = Exclude<LegacyHostnameResponse["status"], undefined>;
 type Ssl = LegacyHostnameResponse["data"]["result"]["ssl"];
 
 function makeResponse(args: {
-  readonly status: Status;
+  readonly status?: Status;
   readonly customHostname?: string;
   readonly customOriginServer?: string;
   readonly ssl: Ssl;
@@ -77,6 +77,17 @@ describe("formatHostnameStatus", () => {
     );
   });
 
+  it("infers in-progress status from sparse processing responses", () => {
+    const out = formatHostnameStatus(
+      makeResponse({
+        ssl: { status: "initializing" },
+      }),
+    );
+    expect(out).toBe(
+      "Custom hostname setup is being initialized; please request re-verification in a few seconds.\n",
+    );
+  });
+
   it("short-circuits to a CAA mismatch hint when a validation error mentions caa_error", () => {
     const out = formatHostnameStatus(
       makeResponse({
@@ -112,6 +123,18 @@ describe("formatHostnameStatus", () => {
       makeResponse({
         status: "2_initiated",
         ssl: { status: "pending_validation", validation_records: [] },
+      }),
+    );
+    expect(out).toBe(
+      "expected a single SSL verification record, received: {Status:pending_validation ValidationErrors:<nil> ValidationRecords:[]}",
+    );
+  });
+
+  it("treats missing validation records as an empty list", () => {
+    const out = formatHostnameStatus(
+      makeResponse({
+        status: "2_initiated",
+        ssl: { status: "pending_validation" },
       }),
     );
     expect(out).toBe(

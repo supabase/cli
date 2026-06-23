@@ -12,6 +12,9 @@ import { legacyProjectsCommand } from "../../legacy/commands/projects/projects.c
 import { legacyProjectsCreateCommand } from "../../legacy/commands/projects/create/create.command.ts";
 import { legacyStartCommand } from "../../legacy/commands/start/start.command.ts";
 import { legacyStopCommand } from "../../legacy/commands/stop/stop.command.ts";
+import { LEGACY_VALID_TOKEN } from "../../../tests/helpers/legacy-mocks.ts";
+import { mockOutput, withEnv } from "../../../tests/helpers/mocks.ts";
+import { LEGACY_GLOBAL_FLAGS } from "../legacy/global-flags.ts";
 import { LegacyGoProxy } from "../legacy/go-proxy.service.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 
@@ -30,12 +33,14 @@ function mockLegacyGoProxy() {
       Effect.sync(() => {
         calls.push([...args]);
       }),
+    execCapture: () => Effect.succeed(""),
   });
 
   return { layer, calls };
 }
 
 const legacyTestRoot = Command.make("supabase").pipe(
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([
     legacyStartCommand,
     legacyStopCommand,
@@ -53,6 +58,11 @@ const silentCliOutputFormatter: CliOutput.Formatter = {
   formatErrors: () => "",
   formatHelpDoc: () => "",
   formatVersion: () => "",
+};
+
+const authenticatedEnv = {
+  SUPABASE_ACCESS_TOKEN: LEGACY_VALID_TOKEN,
+  ...(process.env["SystemRoot"] === undefined ? {} : { SystemRoot: process.env["SystemRoot"] }),
 };
 
 describe("native hidden flags", () => {
@@ -102,6 +112,7 @@ describe("native hidden flags", () => {
       "db-password",
       "region",
       "size",
+      "high-availability",
     ]);
   });
 
@@ -109,42 +120,50 @@ describe("native hidden flags", () => {
     const proxy = mockLegacyGoProxy();
 
     await Effect.runPromise(
-      Effect.gen(function* () {
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["start", "--preview"]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-          "stop",
-          "--backup=false",
-        ]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-          "functions",
-          "download",
-          "hello",
-          "--use-docker",
-          "--legacy-bundle",
-        ]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-          "functions",
-          "deploy",
-          "hello",
-          "--use-docker",
-          "--legacy-bundle",
-        ]);
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-          "functions",
-          "serve",
-          "--all=false",
-        ]);
-      }).pipe(
-        Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()))),
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["start", "--preview"]);
+          yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+            "stop",
+            "--backup=false",
+          ]);
+          yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
+            "functions",
+            "download",
+            "hello",
+            "--project-ref",
+            "abcdefghijklmnopqrst",
+            "--use-docker",
+          ]);
+          const useDockerExit = yield* Command.runWith(legacyTestRoot, {
+            version: "0.0.0-test",
+          })(["functions", "deploy", "hello", "--use-docker"]).pipe(Effect.exit);
+          const legacyBundleExit = yield* Command.runWith(legacyTestRoot, {
+            version: "0.0.0-test",
+          })(["functions", "deploy", "hello", "--legacy-bundle"]).pipe(Effect.exit);
+          expect(JSON.stringify(useDockerExit)).not.toContain("UnrecognizedFlag");
+          expect(JSON.stringify(legacyBundleExit)).not.toContain("UnrecognizedFlag");
+          const serveExit = yield* Command.runWith(legacyTestRoot, {
+            version: "0.0.0-test",
+          })(["functions", "serve", "--all=false"]).pipe(Effect.exit);
+          expect(JSON.stringify(serveExit)).not.toContain("UnrecognizedFlag");
+        }),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            withEnv(authenticatedEnv),
+            proxy.layer,
+            mockOutput({ format: "text" }).layer,
+            CliOutput.layer(textCliOutputFormatter()),
+          ),
+        ),
       ) as Effect.Effect<void>,
     );
 
     expect(proxy.calls).toEqual([
       ["start", "--preview"],
       ["stop", "--backup=false"],
-      ["functions", "download", "hello", "--use-docker", "--legacy-bundle"],
-      ["functions", "deploy", "hello", "--use-docker", "--legacy-bundle"],
-      ["functions", "serve", "--all=false"],
+      ["functions", "download", "hello", "--project-ref", "abcdefghijklmnopqrst", "--use-docker"],
     ]);
   });
 

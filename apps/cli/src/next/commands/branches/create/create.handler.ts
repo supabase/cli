@@ -17,7 +17,7 @@ const resolveBranchName = Effect.fnUntraced(function* (nameOpt: Option.Option<st
   }
 
   const output = yield* Output;
-  const maybeGitBranch = yield* detectGitBranch;
+  const maybeGitBranch = yield* detectGitBranch();
 
   if (Option.isNone(maybeGitBranch)) {
     return yield* Effect.fail(
@@ -78,7 +78,8 @@ export const create = Effect.fn("branches.create")(function* (flags: CreateFlags
 
   const { project } = maybeLinkState.value;
 
-  const { branchName, gitBranch } = yield* resolveBranchName(flags.name);
+  const { branchName, gitBranch: detectedGitBranch } = yield* resolveBranchName(flags.name);
+  const gitBranch = Option.isSome(flags.gitBranch) ? flags.gitBranch : detectedGitBranch;
 
   const desiredInstanceSize = Option.getOrUndefined(flags.size);
 

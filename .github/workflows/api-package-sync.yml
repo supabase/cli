@@ -1,0 +1,65 @@
+name: API Package Sync
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: Sync API package
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Regenerate API package
+        run: pnpm generate
+        working-directory: packages/api
+
+      - name: Format API package
+        run: pnpm exec nx run @supabase/api:fmt:fix
+
+      - name: Check for generated changes
+        id: check
+        run: |
+          if git diff --ignore-space-at-eol --exit-code --quiet packages/api/src/generated; then
+            echo "No generated changes detected."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Generated changes detected."
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate token
+        if: steps.check.outputs.has_changes == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-pull-requests: write
+          permission-contents: write
+
+      - name: Create Pull Request
+        if: steps.check.outputs.has_changes == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          commit-message: "chore(api): sync Management API OpenAPI spec"
+          title: "chore(api): sync Management API OpenAPI spec"
+          body: |
+            This PR was automatically created to sync the generated `@supabase/api` package with the latest Management API OpenAPI document.
+
+            Changes were detected in the upstream OpenAPI document exposed by `https://api.supabase.com/api/v1-json`.
+          branch: sync/api-package
+          base: develop

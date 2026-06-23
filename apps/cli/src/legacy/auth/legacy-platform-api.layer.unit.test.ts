@@ -7,22 +7,36 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { vi } from "vitest";
 
+import { LegacyDebugFlag, LegacyDnsResolverFlag } from "../../shared/legacy/global-flags.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
+import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
+import { legacyIdentityStitchLayer } from "../shared/legacy-identity-stitch.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
+import { legacyPlatformApiFactoryLayer } from "./legacy-platform-api-factory.layer.ts";
+import { LegacyPlatformApiFactory } from "./legacy-platform-api-factory.service.ts";
 import { legacyPlatformApiLayer } from "./legacy-platform-api.layer.ts";
 import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
 
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
 const SESSION_LAST_ACTIVE = 1_777_200_000_000;
 
-function mockCliConfig(opts: { accessToken?: string; apiUrl?: string; userAgent?: string }) {
+function mockCliConfig(opts: {
+  accessToken?: string;
+  apiUrl?: string;
+  userAgent?: string;
+  profile?: string;
+  projectHost?: string;
+}) {
   return Layer.succeed(LegacyCliConfig, {
-    profile: "supabase",
+    profile: opts.profile ?? "supabase",
     apiUrl: opts.apiUrl ?? "https://api.supabase.com",
-    projectHost: "supabase.co",
+    projectHost: opts.projectHost ?? "supabase.co",
+    poolerHost: "supabase.com",
     accessToken:
       opts.accessToken === undefined ? Option.none() : Option.some(Redacted.make(opts.accessToken)),
     projectId: Option.none(),
@@ -35,7 +49,8 @@ function mockCredentials(token: Option.Option<string>) {
   return Layer.succeed(LegacyCredentials, {
     getAccessToken: Effect.succeed(Option.map(token, Redacted.make)),
     saveAccessToken: () => Effect.void,
-    deleteAccessToken: Effect.succeed(false),
+    deleteAccessToken: Effect.void,
+    deleteAllProjectCredentials: Effect.void,
     deleteProjectCredential: () => Effect.succeed(false),
   });
 }
@@ -48,6 +63,7 @@ function mockTelemetryRuntime(
     isFirstRun?: boolean;
     isTty?: boolean;
     isCi?: boolean;
+    debug?: boolean;
   } = {},
 ) {
   return Layer.succeed(
@@ -59,7 +75,7 @@ function mockTelemetryRuntime(
       showDebug: false,
       deviceId: opts.deviceId ?? "device-123",
       sessionId: "session-123",
-      ...(opts.distinctId === undefined ? {} : { distinctId: opts.distinctId }),
+      identity: makeTelemetryIdentity(opts.distinctId),
       isFirstRun: opts.isFirstRun ?? false,
       isTty: opts.isTty ?? false,
       isCi: opts.isCi ?? false,
@@ -151,23 +167,36 @@ function withBaseDeps(
     isFirstRun?: boolean;
     isTty?: boolean;
     isCi?: boolean;
+    debug?: boolean;
   } = {},
 ) {
   const analytics = opts.analytics ?? mockAnalytics();
+  // The typed client now consumes the single `LegacyIdentityStitch` service rather
+  // than building its own stitcher, so build that service from the test's
+  // Analytics / TelemetryRuntime / FileSystem / Path fakes and provide it. The
+  // underlying stitch behaviour is identical (the service wraps the same
+  // `makeLegacyIdentityStitcher`), so all alias/persist assertions still hold.
+  const identityStitch = legacyIdentityStitchLayer.pipe(
+    Layer.provide(analytics.layer),
+    Layer.provide(
+      mockTelemetryRuntime({
+        configDir: opts.configDir,
+        distinctId: opts.distinctId,
+        isFirstRun: opts.isFirstRun,
+        isTty: opts.isTty,
+        isCi: opts.isCi,
+      }),
+    ),
+    Layer.provide(nodeFileSystemLayer()),
+    Layer.provide(nodePathLayer()),
+  );
   return <ROut, E, RIn>(layer: Layer.Layer<ROut, E, RIn>) =>
     layer.pipe(
-      Layer.provide(analytics.layer),
-      Layer.provide(
-        mockTelemetryRuntime({
-          configDir: opts.configDir,
-          distinctId: opts.distinctId,
-          isFirstRun: opts.isFirstRun,
-          isTty: opts.isTty,
-          isCi: opts.isCi,
-        }),
-      ),
-      Layer.provide(nodeFileSystemLayer()),
-      Layer.provide(nodePathLayer()),
+      Layer.provide(identityStitch),
+      Layer.provide(legacyDebugLoggerLayer),
+      Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
+      // The lazy platform-API factory's DoH fetch layer reads the DNS-resolver flag.
+      Layer.provide(Layer.succeed(LegacyDnsResolverFlag, "native")),
     );
 }
 
@@ -247,6 +276,38 @@ describe("legacyPlatformApiLayer", () => {
     });
   });
 
+  it.effect(
+    "fails with the invalid-token error when the env token is malformed (Go parity)",
+    () => {
+      // Go's GetSupabase() → LoadAccessTokenFS validates the env token against the
+      // sbp_ pattern before any API call; a malformed SUPABASE_ACCESS_TOKEN must
+      // fail with ErrInvalidToken, not be sent to the API.
+      const http = captureRequests();
+      const layer = legacyPlatformApiLayer.pipe(
+        Layer.provide(mockCliConfig({ accessToken: "sbp_not_a_valid_token" })),
+        Layer.provide(mockCredentials(Option.none())),
+        Layer.provide(http.layer),
+        withBaseDeps(),
+      );
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          Effect.gen(function* () {
+            const api = yield* LegacyPlatformApi;
+            return yield* api.v1.listAllProjects();
+          }).pipe(Effect.provide(layer)),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const errorJson = JSON.stringify(exit.cause);
+          expect(errorJson).toContain("LegacyInvalidAccessTokenError");
+          expect(errorJson).toContain("Invalid access token format");
+        }
+        // The bad token was never sent to the API.
+        expect(http.requests).toHaveLength(0);
+      });
+    },
+  );
+
   it.effect("sends Go-style User-Agent and no X-Supabase-Command headers", () => {
     const http = captureRequests();
     const layer = legacyPlatformApiLayer.pipe(
@@ -279,6 +340,35 @@ describe("legacyPlatformApiLayer", () => {
       yield* api.v1.listAllProjects();
       expect(http.requests[0]?.url).toContain("https://api.supabase.green/");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("debug logs the CLI profile and fully resolved request URL", () => {
+    const http = captureRequests();
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const layer = legacyPlatformApiLayer.pipe(
+      Layer.provide(
+        mockCliConfig({
+          accessToken: VALID_TOKEN,
+          apiUrl: "https://api.supabase.green",
+          profile: "supabase-staging",
+          projectHost: "supabase.red",
+        }),
+      ),
+      Layer.provide(mockCredentials(Option.none())),
+      Layer.provide(http.layer),
+      withBaseDeps({ debug: true }),
+    );
+    return Effect.gen(function* () {
+      const api = yield* LegacyPlatformApi;
+      yield* api.v1.listAllProjects();
+      const output = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+      expect(output).toContain("Supabase CLI ");
+      expect(output).toContain("Using profile: supabase-staging (supabase.red)\n");
+      expect(output.match(/Using access token from env var\.\.\.\n/g)).toHaveLength(2);
+      expect(output).toMatch(
+        /\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2} HTTP GET: https:\/\/api\.supabase\.green\/v1\/projects\n/,
+      );
+    }).pipe(Effect.ensuring(Effect.sync(() => stderr.mockRestore())), Effect.provide(layer));
   });
 
   it.effect("stitches identity from X-Gotrue-Id responses outside CI", () => {
@@ -433,6 +523,62 @@ describe("legacyPlatformApiLayer", () => {
       } finally {
         rmSync(configDir, { recursive: true, force: true });
       }
+    }).pipe(Effect.provide(layer));
+  });
+});
+
+// The lazy factory underpins the `--linked` db-config resolver's auth-free
+// `--password` path (CLI port of Go's `NewDbConfigWithPassword`, which only calls
+// `GetSupabase` — and thus loads a token — when no password is supplied). Building
+// the factory must therefore resolve NO token; the friendly auth error must still
+// surface when a command branch actually reaches `make` (e.g. minting a temp role).
+describe("legacyPlatformApiFactoryLayer (lazy token)", () => {
+  it.effect("builds without resolving an access token even when none is configured", () => {
+    const layer = legacyPlatformApiFactoryLayer.pipe(
+      Layer.provide(mockCliConfig({})),
+      Layer.provide(mockCredentials(Option.none())),
+      withBaseDeps(),
+    );
+    // The eager `legacyPlatformApiLayer` would fail to build here; obtaining the
+    // factory service without touching `make` must succeed — this is exactly the
+    // `--linked --password` path, which never mints a temp role.
+    return Effect.gen(function* () {
+      const factory = yield* LegacyPlatformApiFactory;
+      expect(typeof factory.make).toBe("object");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("make fails with LegacyPlatformAuthRequiredError when no token is configured", () => {
+    const layer = legacyPlatformApiFactoryLayer.pipe(
+      Layer.provide(mockCliConfig({})),
+      Layer.provide(mockCredentials(Option.none())),
+      withBaseDeps(),
+    );
+    return Effect.gen(function* () {
+      const factory = yield* LegacyPlatformApiFactory;
+      const exit = yield* Effect.exit(factory.make);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const errorJson = JSON.stringify(exit.cause);
+        expect(errorJson).toContain("LegacyPlatformAuthRequiredError");
+        expect(errorJson).toContain("Access token not provided");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("make resolves a single cached client when a token is configured", () => {
+    const layer = legacyPlatformApiFactoryLayer.pipe(
+      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCredentials(Option.none())),
+      withBaseDeps(),
+    );
+    return Effect.gen(function* () {
+      const factory = yield* LegacyPlatformApiFactory;
+      const first = yield* factory.make;
+      const second = yield* factory.make;
+      // `Effect.cached` guarantees the token is resolved once and the same client
+      // instance is reused across repeated `make` calls within one command run.
+      expect(first).toBe(second);
     }).pipe(Effect.provide(layer));
   });
 });

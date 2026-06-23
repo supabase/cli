@@ -152,6 +152,18 @@ In **record mode**: global setup resolves the org, deletes any orphaned test pro
 
 The pre-recording cleanup deletes projects named `cli-e2e-test`, `my-project`, and `to-delete` so re-recording never hits a 409 name-conflict. Do not add tests that rely on pre-existing named projects existing on staging.
 
+## Live mode (ADR-0013)
+
+`live` is a third mode (`CLI_E2E_MODE=live`) that, unlike replay/record, **does not use the replay server**. The harness is wired straight at the real Management API (`CLI_E2E_API_URL`) and the real Docker socket; tests assert on **real outcomes**.
+
+- Live tests are `src/tests/live/**/*.live.e2e.test.ts`, run only via `vitest.live.config.ts` (the default config excludes them). They `skipIf(!isLive)`, so they are inert on the replay suite.
+- Global setup (`tests/live-setup.ts`) provisions **one ephemeral project per run** (`cli-e2e-live-{target}-{runId}-{short}`), waits for `ACTIVE_HEALTHY`, resolves the anon JWT, the IPv4 **session-pooler `dbUrl`** (for `--db-url` DB commands), the functions URL, and a seeded storage bucket, exposing them via `inject()`. It deletes the project on teardown (even on failure). Setup is intentionally **dumb** — no provisioning retry; the CI job re-runs the step on flake.
+- Use `testLive` from `src/tests/live/live-context.ts`: `run(cmd)` (direct-wired CLI), `invoke(slug)` (direct HTTP call sending the **anon JWT** in both `Authorization: Bearer` and `apikey`), plus `workspace` (a fresh `supabase init` config so golden paths exercise a generated config), `projectRef`, `anonKey`, `functionsUrl`, `dbUrl`, `storageBucket`. The functions deploy tests call `seedFunctions(workspace.path)` to layer the `deploy-e2e-*` fixtures + their `[functions.*]` config onto the init'd config.
+- **Assertion style:** outcome-based — assert `exitCode`/`stdout` substrings and the function's HTTP status + JSON body. This is ID-agnostic, so **no normalization/snapshots by default**. If the CLI's own diagnostic output is ever the assertion target, add a scoped normalizer for that one test — do not make normalization the default.
+- **Authoring target is `go`** (source of truth for the port); `ts-legacy` runs the same tests to prove the shim matches. Both run as separate CI jobs.
+- Retargeting to another env (e.g. `supabox`) is an env swap only: `CLI_E2E_TARGET_ENV` + `CLI_E2E_API_URL` + `CLI_E2E_PROJECT_HOST` + token. Tests assert on function output, not hostnames.
+- **CI triggers** (`.github/workflows/live-e2e.yml`): `workflow_dispatch` (manual; the Actions branch picker selects the ref — no free-form `ref` input, so the staging token never reaches arbitrary code) and an hourly `schedule`. There is **no `pull_request` trigger** — run it manually on a PR branch for pre-merge coverage. The scheduled run exercises the `@beta` channel: `develop` is the default branch and the beta release source, so it builds from `develop` source and runs the same `[go, ts-legacy]` matrix. A `gate` job skips the run unless the published `supabase@beta` version changed since the last green run (an `actions/cache` marker keyed on the version, written by `finalize` only after **both** legs pass), so a staging project is spent only when there is a new beta to test. Because the marker is written only on a fully-green matrix, a chronically-failing `@beta` keeps re-running every hour until it goes green or a newer beta supersedes it (intended — the failure stays visible).
+
 ## Running the suite
 
 ```sh
@@ -162,7 +174,18 @@ pnpm nx run @supabase/cli-e2e:test:go       # go binary target
 # Record (requires staging access)
 SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
   pnpm nx run @supabase/cli-e2e:record
+
+# Live (requires staging access; creates + deletes a real project; needs Docker).
+# For the `go` target, build the binary first so newly-added commands resolve
+# (the system `supabase` may be stale) — mirrors what CI does.
+cd apps/cli-go && go build -o /tmp/supabase-test-binary . && cd -
+SUPABASE_GO_BINARY=/tmp/supabase-test-binary CLI_HARNESS_TARGET=go \
+  SUPABASE_ACCESS_TOKEN=sbp_... \
+  pnpm --filter @supabase/cli-e2e test:e2e:live
 ```
+
+See `apps/cli-e2e/.env.example` for the full set of live/record env vars (copy to
+a gitignored `.env.local`).
 
 After recording, replay must pass with no changes between the two commands.
 

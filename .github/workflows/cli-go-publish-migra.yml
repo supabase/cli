@@ -2,8 +2,6 @@ name: Publish migra
 
 on:
   workflow_dispatch:
-    paths:
-      - apps/cli-go/**
 permissions:
   contents: read
 

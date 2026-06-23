@@ -58,34 +58,46 @@ const baseUrl = local
   ? `file:///${distDir.replace(/\\/g, "/")}`
   : `https://github.com/${repo}/releases/download/v${version}`;
 
+// Main-bucket layout uses unversioned Windows tarballs on GitHub Releases
+// (release-shared.yml copies versioned builds to supabase_windows_*.tar.gz).
+// Local builds only emit versioned archives, so --local keeps those names.
+const amd64Tar = local
+  ? `supabase_${version}_windows_amd64.tar.gz`
+  : "supabase_windows_amd64.tar.gz";
+const arm64Tar = local
+  ? `supabase_${version}_windows_arm64.tar.gz`
+  : "supabase_windows_arm64.tar.gz";
+
 const manifest = {
   version,
   description: "Supabase CLI",
-  homepage: "https://supabase.com",
+  homepage: "https://supabase.com/",
   license: "MIT",
   architecture: {
     "64bit": {
-      url: `${baseUrl}/supabase_${version}_windows_amd64.zip`,
-      hash: sha(`supabase_${version}_windows_amd64.zip`),
-      bin: [binEntry],
+      url: `${baseUrl}/${amd64Tar}`,
+      hash: sha(`supabase_${version}_windows_amd64.tar.gz`),
     },
     arm64: {
-      url: `${baseUrl}/supabase_${version}_windows_arm64.zip`,
-      hash: sha(`supabase_${version}_windows_arm64.zip`),
-      bin: [binEntry],
+      url: `${baseUrl}/${arm64Tar}`,
+      hash: sha(`supabase_${version}_windows_arm64.tar.gz`),
     },
   },
+  bin: binEntry,
   checkver: {
     github: `https://github.com/${repo}`,
   },
   autoupdate: {
     architecture: {
       "64bit": {
-        url: `https://github.com/${repo}/releases/download/v$version/supabase_$version_windows_amd64.zip`,
+        url: `https://github.com/${repo}/releases/download/v$version/supabase_windows_amd64.tar.gz`,
       },
       arm64: {
-        url: `https://github.com/${repo}/releases/download/v$version/supabase_$version_windows_arm64.zip`,
+        url: `https://github.com/${repo}/releases/download/v$version/supabase_windows_arm64.tar.gz`,
       },
+    },
+    hash: {
+      url: "$baseurl/supabase_$version_checksums.txt",
     },
   },
 };
@@ -101,19 +113,31 @@ if (local || dryRun) {
   process.exit(0);
 }
 
+async function hasStagedChanges(repoDir: string, repoPath: string): Promise<boolean> {
+  const diff =
+    await $`git -C ${repoDir} diff --cached --quiet --exit-code -- ${repoPath}`.nothrow();
+  if (diff.exitCode === 0) return false;
+  if (diff.exitCode === 1) return true;
+  throw new Error(`Failed to inspect staged changes for ${repoPath}`);
+}
+
 // Clone bucket repo, update manifest, commit, push
 const tmpDir = await mkdtemp(path.join(tmpdir(), "scoop-bucket-"));
 try {
-  await $`gh repo clone ${bucket} ${tmpDir}`;
+  const bucketUrl = `https://github.com/${bucket}.git`;
+  await $`git clone ${bucketUrl} ${tmpDir}`;
 
   const bucketManifestPath = path.join(tmpDir, manifestFileName);
   await writeFile(bucketManifestPath, manifestJson);
 
   await $`git -C ${tmpDir} add ${manifestFileName}`;
-  await $`git -C ${tmpDir} commit -m ${name + " " + version}`;
-  await $`git -C ${tmpDir} push`;
-
-  console.log(`Pushed manifest update to ${bucket}`);
+  if (await hasStagedChanges(tmpDir, manifestFileName)) {
+    await $`git -C ${tmpDir} commit -m ${name + " " + version}`;
+    await $`git -C ${tmpDir} push`;
+    console.log(`Pushed manifest update to ${bucket}`);
+  } else {
+    console.log(`Manifest ${manifestFileName} is already up to date in ${bucket}`);
+  }
 } finally {
   await rm(tmpDir, { recursive: true });
 }

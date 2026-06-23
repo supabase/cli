@@ -1,11 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { ConfigProvider, Effect, Layer } from "effect";
+import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { makeApiClient } from "./effect.ts";
+import { makeApiClient, operationDefinitions } from "./effect.ts";
+import { V1GetASsoProviderOutput, V1ListAllSsoProviderOutput } from "./generated/contracts.ts";
 
 const textDecoder = new TextDecoder();
 
@@ -50,6 +52,61 @@ const config = {
 } as const;
 
 describe("makeApiClient", () => {
+  test("decodes SSO provider responses with empty attribute mappings and no SAML ID", () => {
+    const provider = {
+      id: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
+      saml: {
+        entity_id: "https://example.com",
+        metadata_url: "https://example.com",
+        metadata_xml: '<?xml version="2.0"?>',
+        attribute_mapping: {},
+      },
+      domains: [
+        {
+          id: "9484591c-a203-4500-bea7-d0aaa845e2f5",
+          domain: "example.com",
+          created_at: "2023-03-28T13:50:14.464Z",
+          updated_at: "2023-03-28T13:50:14.464Z",
+        },
+      ],
+      created_at: "2023-03-28T13:50:14.464Z",
+      updated_at: "2023-03-28T13:50:14.464Z",
+    };
+
+    expect(() =>
+      Schema.decodeUnknownSync(V1ListAllSsoProviderOutput)({ items: [provider] }),
+    ).not.toThrow();
+    expect(() => Schema.decodeUnknownSync(V1GetASsoProviderOutput)(provider)).not.toThrow();
+  });
+
+  test("allows raw operations to override generated request headers", async () => {
+    let accept: string | undefined;
+
+    const client = await Effect.runPromise(
+      makeApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            accept = request.headers.accept;
+            return Effect.succeed(jsonResponse(request, 200, {}));
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      client.executeRaw(
+        operationDefinitions.v1GetAFunctionBody,
+        {
+          ref: "abcdefghijklmnopqrst",
+          function_slug: "hello-world",
+        },
+        { Accept: "multipart/form-data" },
+      ),
+    );
+
+    expect(accept).toBe("multipart/form-data");
+  });
+
   test("uses the default API URL when baseUrl is omitted", async () => {
     const seenRequests: Array<{ method: string; url: string }> = [];
 
