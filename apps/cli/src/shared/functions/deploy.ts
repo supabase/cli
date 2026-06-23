@@ -60,13 +60,14 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
 }
 
-interface ResolvedDeployFunctionConfig {
+export interface ResolvedDeployFunctionConfig {
   readonly slug: string;
   readonly enabled: boolean;
   readonly verifyJwt?: boolean;
   readonly entrypoint: string;
   readonly importMap: string;
   readonly staticFiles: ReadonlyArray<string>;
+  readonly env: Readonly<Record<string, string>>;
 }
 
 interface SourceDeployMetadata {
@@ -164,7 +165,7 @@ function hasOwnKey(value: Readonly<Record<string, unknown>> | undefined, key: st
   return value !== undefined && Object.prototype.hasOwnProperty.call(value, key);
 }
 
-function rawFunctionConfigRecord(
+export function rawFunctionConfigRecord(
   document: Readonly<Record<string, unknown>> | undefined,
 ): Readonly<Record<string, Readonly<Record<string, unknown>>>> {
   const functions = document?.["functions"];
@@ -248,14 +249,14 @@ function toSlash(pathname: string) {
   return pathname.replaceAll("\\", "/");
 }
 
-function normalizeProjectId(source: string) {
+export function normalizeProjectId(source: string) {
   const sanitized = source.replaceAll(INVALID_PROJECT_ID, "_").replace(/^[_.-]+/, "");
   return sanitized.length > MAX_PROJECT_ID_LENGTH
     ? sanitized.slice(0, MAX_PROJECT_ID_LENGTH)
     : sanitized;
 }
 
-function localDockerId(name: string, projectId: string) {
+export function localDockerId(name: string, projectId: string) {
   return `supabase_${name}_${normalizeProjectId(projectId)}`;
 }
 
@@ -263,14 +264,14 @@ const dockerCliProjectLabel = "com.supabase.cli.project";
 const dockerComposeProjectLabel = "com.docker.compose.project";
 const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY", "NPM_AUTH_TOKEN"] as const;
 
-function dockerProjectLabels(projectId: string) {
+export function dockerProjectLabels(projectId: string) {
   return {
     [dockerCliProjectLabel]: projectId,
     [dockerComposeProjectLabel]: projectId,
   };
 }
 
-function toDockerPath(hostPath: string) {
+export function toDockerPath(hostPath: string) {
   const normalized = toSlash(resolve(hostPath));
   return normalized.replace(/^[A-Za-z]:/, "");
 }
@@ -281,7 +282,7 @@ function toBundledFileUrl(hostPath: string) {
   return url.toString();
 }
 
-function dockerBindHostPath(bind: string) {
+export function dockerBindHostPath(bind: string) {
   const withoutMode = bind.replace(/:(?:ro|rw)$/, "");
   const separatorIndex = withoutMode.lastIndexOf(":");
   return separatorIndex === -1 ? withoutMode : withoutMode.slice(0, separatorIndex);
@@ -868,6 +869,19 @@ async function resolveImportMapAllowedRoots(projectRoot: string, importMapPath: 
   if (!isContainedPath(realProjectRoot, realImportMapPath)) {
     allowedRoots.push(dirname(realImportMapPath));
   }
+  if (isDenoConfigFile(importMapPath)) {
+    const contents = await readFile(importMapPath);
+    const parsed = JSON.parse(stripJsonComments(new TextDecoder().decode(contents)));
+    const importMap = ImportMapFile.fromUnknown(parsed);
+    if (importMap.importMapReference.length > 0) {
+      const referencedImportMapPath = await realpath(
+        join(dirname(importMapPath), importMap.importMapReference),
+      );
+      if (!isContainedPath(realProjectRoot, referencedImportMapPath)) {
+        allowedRoots.push(dirname(referencedImportMapPath));
+      }
+    }
+  }
   return allowedRoots;
 }
 
@@ -1069,21 +1083,40 @@ function sanitizeDockerBinds(
   return result;
 }
 
-async function buildDockerBinds(
+export async function buildDockerBinds(
   projectId: string,
   functionsDir: string,
   outputDir: string,
   config: ResolvedDeployFunctionConfig,
+  options: {
+    readonly additionalModuleRoots?: ReadonlyArray<string>;
+    readonly onWarning?: (message: string) => Promise<void>;
+    readonly skipMissingImportMapTargets?: boolean;
+  } = {},
 ) {
   const hostFunctionsDir = resolve(functionsDir);
   const hostOutputDir = resolve(outputDir);
   const projectRoot = resolve(functionsDir, "..", "..");
   const realProjectRoot = await realpath(projectRoot);
-  const importMapAllowedRoots = await resolveImportMapAllowedRoots(projectRoot, config.importMap);
-  const binds = [
-    `${localDockerId("edge_runtime", projectId)}:/root/.cache/deno:rw`,
-    `${hostFunctionsDir}:${toDockerPath(hostFunctionsDir)}:ro`,
+  const moduleRoots = [
+    realProjectRoot,
+    ...(
+      await Promise.all(
+        (options.additionalModuleRoots ?? []).map(async (root) => {
+          try {
+            return await realpath(root);
+          } catch {
+            return undefined;
+          }
+        }),
+      )
+    ).flatMap((root) => (root === undefined ? [] : [root])),
   ];
+  const importMapAllowedRoots = await resolveImportMapAllowedRoots(projectRoot, config.importMap);
+  const binds = [`${hostFunctionsDir}:${toDockerPath(hostFunctionsDir)}:ro`];
+  if (process.env["BITBUCKET_CLONE_DIR"] === undefined) {
+    binds.unshift(`${localDockerId("edge_runtime", projectId)}:/root/.cache/deno:rw`);
+  }
 
   if (!hostOutputDir.startsWith(hostFunctionsDir)) {
     binds.push(`${hostOutputDir}:${toDockerPath(hostOutputDir)}:rw`);
@@ -1099,6 +1132,8 @@ async function buildDockerBinds(
   };
   const appendProjectBind = async (pathname: string, _contents: Uint8Array) =>
     appendBindWithinRoots([realProjectRoot], pathname);
+  const appendModuleBind = async (pathname: string, _contents: Uint8Array) =>
+    appendBindWithinRoots(moduleRoots, pathname);
   const appendImportMapBind = async (pathname: string, _contents: Uint8Array) =>
     appendBindWithinRoots(importMapAllowedRoots, pathname);
   const importMap =
@@ -1108,24 +1143,39 @@ async function buildDockerBinds(
   await walkImportPaths(
     importMap,
     config.entrypoint,
-    [realProjectRoot],
+    moduleRoots,
     projectRoot,
-    appendProjectBind,
-    async () => {},
+    appendModuleBind,
+    options.onWarning ?? (async () => {}),
   );
   await forEachLocalImportMapTarget(importMap, async (target) => {
-    await appendBindWithinRoots(importMapAllowedRoots, target);
-    if ((await stat(target)).isDirectory()) {
-      return;
+    try {
+      await appendBindWithinRoots(importMapAllowedRoots, target);
+      if ((await stat(target)).isDirectory()) {
+        return;
+      }
+      await walkLocalImportMapTargetImports(
+        importMap,
+        target,
+        importMapAllowedRoots,
+        projectRoot,
+        appendImportMapBind,
+        async () => {},
+      );
+    } catch (error) {
+      if (
+        options.skipMissingImportMapTargets === true &&
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        await (options.onWarning ?? (async () => {}))(
+          `WARN: Skipping missing import map target: ${target}\n`,
+        );
+        return;
+      }
+      throw error;
     }
-    await walkLocalImportMapTargetImports(
-      importMap,
-      target,
-      importMapAllowedRoots,
-      projectRoot,
-      appendImportMapBind,
-      async () => {},
-    );
   });
   for (const pattern of config.staticFiles) {
     let files: ReadonlyArray<string>;
@@ -1159,7 +1209,10 @@ function isUserDefinedDockerNetwork(networkMode: string) {
   );
 }
 
-const ensureDockerNetwork = Effect.fnUntraced(function* (networkMode: string, projectId: string) {
+export const ensureDockerNetwork = Effect.fnUntraced(function* (
+  networkMode: string,
+  projectId: string,
+) {
   if (!isUserDefinedDockerNetwork(networkMode)) {
     return;
   }
@@ -1194,7 +1247,7 @@ const ensureDockerNetwork = Effect.fnUntraced(function* (networkMode: string, pr
   }
 });
 
-const ensureDockerNamedVolume = Effect.fnUntraced(function* (
+export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
   volumeName: string,
   projectId: string,
 ) {
@@ -1236,13 +1289,14 @@ async function shouldUsePackageJsonDiscovery(entrypoint: string, importMap: stri
   }
 }
 
-const runChildProcess = Effect.fnUntraced(function* (
+export const runChildProcess = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
   opts: {
     readonly stdout?: "pipe" | "ignore";
     readonly stderr?: "pipe" | "ignore";
     readonly env?: Readonly<Record<string, string>>;
+    readonly extendEnv?: boolean;
   } = {},
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1252,6 +1306,7 @@ const runChildProcess = Effect.fnUntraced(function* (
       stdout: opts.stdout ?? "pipe",
       stderr: opts.stderr ?? "pipe",
       env: opts.env,
+      extendEnv: opts.extendEnv ?? command === "docker",
     }),
   );
 
@@ -1266,7 +1321,7 @@ const runChildProcess = Effect.fnUntraced(function* (
   return { exitCode, stdout, stderr };
 });
 
-const isDockerRunning = Effect.fnUntraced(function* () {
+export const isDockerRunning = Effect.fnUntraced(function* () {
   const result = yield* runChildProcess("docker", ["info"], {
     stdout: "ignore",
     stderr: "ignore",
@@ -1690,7 +1745,7 @@ const deleteRemoteFunction = Effect.fnUntraced(function* (
   );
 });
 
-const discoverFunctionSlugs = Effect.fnUntraced(function* (
+export const discoverFunctionSlugs = Effect.fnUntraced(function* (
   projectRoot: string,
   configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>,
 ) {
@@ -1710,7 +1765,7 @@ const discoverFunctionSlugs = Effect.fnUntraced(function* (
   );
   if (entries !== undefined) {
     for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
-      if (!entry.isDirectory()) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) {
         continue;
       }
       const slug = entry.name;
@@ -1740,7 +1795,7 @@ const validateConfigFunctionSlugs = Effect.fnUntraced(function* (
   return configSlugs;
 });
 
-const resolveFunctionConfigs = Effect.fnUntraced(function* (input: {
+export const resolveFunctionConfigs = Effect.fnUntraced(function* (input: {
   readonly slugs: ReadonlyArray<string>;
   readonly cwd: string;
   readonly projectRoot: string;
@@ -1838,6 +1893,7 @@ const resolveFunctionConfigs = Effect.fnUntraced(function* (input: {
       entrypoint,
       importMap,
       staticFiles,
+      env: configured.env,
     });
   }
 
@@ -1977,7 +2033,7 @@ const deployViaDocker = Effect.fnUntraced(function* (
   }
 });
 
-function resolveEdgeRuntimeVersion(
+export function resolveEdgeRuntimeVersion(
   denoVersion: number | undefined,
   defaultVersion: string,
 ): Effect.Effect<string, Error> {
