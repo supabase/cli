@@ -124,6 +124,20 @@ function legacyLocalGatewayHint(port: string): string {
   );
 }
 
+/**
+ * Whether a transport failure is a plain connection-refused (the local stack is
+ * stopped). Go's `localGatewayHint` only fires for a malformed HTTP response,
+ * header timeout, or context-deadline timeout — NOT `ECONNREFUSED` — so the
+ * port-conflict hint is suppressed for refused connections. Bun/undici don't
+ * emit Go's net/http strings, so this is a substring check over the transport
+ * error's description/cause/message.
+ */
+function isConnectionRefused(error: HttpClientError.TransportError): boolean {
+  const detail =
+    `${error.description ?? ""} ${String(error.cause ?? "")} ${error.message}`.toLowerCase();
+  return /econnrefused|connection ?refused|unable to connect/.test(detail);
+}
+
 const parseJsonBody = (body: string): Effect.Effect<unknown, LegacySeedStorageNetworkError> =>
   Effect.try({
     try: () => JSON.parse(body) as unknown,
@@ -284,7 +298,8 @@ export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
     if (
       hintPort !== undefined &&
       HttpClientError.isHttpClientError(cause) &&
-      cause.reason._tag === "TransportError"
+      cause.reason._tag === "TransportError" &&
+      !isConnectionRefused(cause.reason)
     ) {
       return new LegacySeedStorageNetworkError({
         message: `${base}\n\n${legacyLocalGatewayHint(hintPort)}`,

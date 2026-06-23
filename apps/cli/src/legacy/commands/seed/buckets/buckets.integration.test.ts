@@ -36,6 +36,8 @@ interface MockRoute {
   readonly body?: unknown;
   /** When set, the route fails with a transport error instead of responding. */
   readonly transport?: boolean;
+  /** Transport-error description (defaults to "ECONNREFUSED"); e.g. a malformed-response. */
+  readonly transportDescription?: string;
 }
 
 const DEFAULT_FLAGS: LegacyBucketsFlags = { linked: false, local: true };
@@ -113,7 +115,7 @@ function setupLegacySeedBuckets(
         return Effect.succeed(legacyJsonResponse(request, 404, { message: "no mock route" }));
       }
       if (route.transport === true) {
-        return Effect.fail(legacyTransportFailure(request));
+        return Effect.fail(legacyTransportFailure(request, route.transportDescription));
       }
       return Effect.succeed(legacyJsonResponse(request, route.status ?? 200, route.body ?? {}));
     }),
@@ -691,10 +693,18 @@ describe("legacy seed buckets", () => {
     });
   });
 
-  it.live("appends Go's port-conflict hint on a local transport failure", () => {
+  it.live("appends Go's port-conflict hint on a malformed local response", () => {
     const { layer } = setupLegacySeedBuckets(tmp.current, {
       toml: "[api]\nport = 7654\n[storage.buckets.test]\npublic = true\n",
-      routes: [{ method: "GET", match: "/storage/v1/bucket", transport: true }],
+      // A malformed response (not connection-refused) is the port-conflict signal.
+      routes: [
+        {
+          method: "GET",
+          match: "/storage/v1/bucket",
+          transport: true,
+          transportDescription: "malformed HTTP response",
+        },
+      ],
     });
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
@@ -705,12 +715,33 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("omits the port-conflict hint on a connection-refused local failure", () => {
+    const { layer } = setupLegacySeedBuckets(tmp.current, {
+      // Stack simply stopped → ECONNREFUSED. Go's localGatewayHint does NOT fire
+      // for connection-refused (only malformed/timeout), so neither do we.
+      toml: "[api]\nport = 7654\n[storage.buckets.test]\npublic = true\n",
+      routes: [{ method: "GET", match: "/storage/v1/bucket", transport: true }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).not.toContain("Another process may be listening");
+    });
+  });
+
   it.live("reports the external_url port (not api.port) in the local hint", () => {
     const { layer } = setupLegacySeedBuckets(tmp.current, {
       // external_url overrides the host:port the gateway actually targets; Go's
       // localGatewayHint parses that URL, so the hint reports 9999, not 7654.
       toml: '[api]\nport = 7654\nexternal_url = "http://127.0.0.1:9999"\n[storage.buckets.test]\npublic = true\n',
-      routes: [{ method: "GET", match: "/storage/v1/bucket", transport: true }],
+      routes: [
+        {
+          method: "GET",
+          match: "/storage/v1/bucket",
+          transport: true,
+          transportDescription: "malformed HTTP response",
+        },
+      ],
     });
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
