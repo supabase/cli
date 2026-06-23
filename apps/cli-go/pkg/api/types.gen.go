@@ -4857,11 +4857,12 @@ type V1ListMigrationsResponse = []struct {
 
 // V1OrganizationMemberResponse defines model for V1OrganizationMemberResponse.
 type V1OrganizationMemberResponse struct {
-	Email      *string `json:"email,omitempty"`
-	MfaEnabled bool    `json:"mfa_enabled"`
-	RoleName   string  `json:"role_name"`
-	UserId     string  `json:"user_id"`
-	UserName   string  `json:"user_name"`
+	AvatarUrl  nullable.Nullable[string] `json:"avatar_url"`
+	Email      *string                   `json:"email,omitempty"`
+	MfaEnabled bool                      `json:"mfa_enabled"`
+	RoleName   string                    `json:"role_name"`
+	UserId     string                    `json:"user_id"`
+	UserName   string                    `json:"user_name"`
 }
 
 // V1OrganizationSlugResponse defines model for V1OrganizationSlugResponse.
