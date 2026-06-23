@@ -231,6 +231,10 @@ function escapeGoJsonHtmlChars(text: string): string {
   return text.replaceAll("<", "\\u003c").replaceAll(">", "\\u003e").replaceAll("&", "\\u0026");
 }
 
+function hasJsonContentType(response: { readonly headers: Readonly<Record<string, string>> }) {
+  return (response.headers["content-type"] ?? "").includes("json");
+}
+
 function baseFunctionFields(function_: Functions[number]) {
   return {
     id: function_.id,
@@ -340,6 +344,15 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
           new LegacyFunctionsListNetworkError({ message: `failed to list functions: ${cause}` }),
       ),
     );
+    if (!hasJsonContentType(response)) {
+      const body = sanitizeLegacyErrorBody(rawBody);
+      yield* fetching?.fail() ?? Effect.void;
+      return yield* new LegacyFunctionsListUnexpectedStatusError({
+        status: response.status,
+        body,
+        message: `unexpected list functions status ${response.status}: ${body}`,
+      });
+    }
     const functions = yield* decodeFunctionsResponse(rawBody).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
     );

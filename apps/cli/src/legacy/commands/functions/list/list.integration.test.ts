@@ -352,6 +352,34 @@ Name = "Hello World"`);
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("treats 200 non-json responses as unexpected status", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify([SAMPLE_FUNCTION]), {
+              status: 200,
+              headers: { "content-type": "text/plain" },
+            }),
+          ),
+        ),
+    });
+    const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = JSON.stringify(exit.cause);
+        expect(json).toContain("LegacyFunctionsListUnexpectedStatusError");
+        expect(json).toContain("unexpected list functions status 200");
+        expect(json).toContain("Hello World");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails on invalid optional field types", () => {
     const { layer } = setup({ response: [INVALID_OPTIONAL_FUNCTION] });
     return Effect.gen(function* () {
