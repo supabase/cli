@@ -169,9 +169,26 @@ func GetRegistryAuthForImage(imageTag string) string {
 }
 
 func getRegistryAuth(registry string) string {
+	// Docker stores Hub credentials under the legacy index server, which
+	// resolves to the `index.docker.io` hostname; a bare `docker.io` lookup
+	// never matches them. Normalising here also routes images Docker treats as
+	// Hub references (a registry override or repository segment without a dot,
+	// colon, or `localhost`) to the right credentials.
+	if registry == "docker.io" {
+		registry = "index.docker.io"
+	}
 	if auth, ok := registryAuth.Load(registry); ok {
 		return auth.(string)
 	}
+	// Cache every result, including the empty string, so a missing or
+	// unreadable credential entry does not re-read the Docker config file (and
+	// re-print the warning) on each fallback candidate and retry.
+	value := loadRegistryAuth(registry)
+	registryAuth.Store(registry, value)
+	return value
+}
+
+func loadRegistryAuth(registry string) string {
 	config := dockerConfig.LoadDefaultConfigFile(os.Stderr)
 	// Ref: https://docs.docker.com/engine/api/sdk/examples/#pull-an-image-with-authentication
 	auth, err := config.GetAuthConfig(registry)
@@ -184,9 +201,7 @@ func getRegistryAuth(registry string) string {
 		fmt.Fprintln(os.Stderr, "Failed to serialise auth config:", err)
 		return ""
 	}
-	value := base64.URLEncoding.EncodeToString(encoded)
-	registryAuth.Store(registry, value)
-	return value
+	return base64.URLEncoding.EncodeToString(encoded)
 }
 
 // Defaults to Supabase public ECR for faster image pull

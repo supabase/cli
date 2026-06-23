@@ -63,10 +63,12 @@ export const legacyDockerRunLayer: Layer.Layer<
     };
 
     const collectStream = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
-      Stream.runFold(
-        stream,
-        () => "",
-        (acc, chunk) => acc + new TextDecoder().decode(chunk),
+      // Collect raw chunks and decode once: decoding per-chunk allocates a
+      // decoder each time and corrupts any multi-byte UTF-8 sequence that
+      // straddles a chunk boundary. Mirrors the concat-then-decode idiom used
+      // for the buffered stderr paths below.
+      Stream.runCollect(stream).pipe(
+        Effect.map((chunks) => new TextDecoder().decode(concat(chunks))),
       );
 
     const hasLocalImage = (image: string): Effect.Effect<boolean> =>
