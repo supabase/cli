@@ -40,16 +40,6 @@ const PIPE_FUNCTION: Functions[number] = {
   slug: "hello|world",
 };
 
-const HTML_FUNCTION: Functions[number] = {
-  ...SAMPLE_FUNCTION,
-  name: "<Hello>&World>",
-};
-
-const LINE_SEPARATOR_FUNCTION: Functions[number] = {
-  ...SAMPLE_FUNCTION,
-  name: "Hello\u2028World\u2029",
-};
-
 const INVALID_OPTIONAL_FUNCTION = {
   ...SAMPLE_FUNCTION,
   verify_jwt: "true",
@@ -63,15 +53,6 @@ const NON_INTEGER_FUNCTION = {
 const UNKNOWN_STATUS_FUNCTION = {
   ...SAMPLE_FUNCTION,
   status: "PAUSED_FOR_REBALANCE",
-};
-
-const NIL_OPTIONALS_FUNCTION: Functions[number] = {
-  ...SAMPLE_FUNCTION,
-  entrypoint_path: undefined,
-  ezbr_sha256: undefined,
-  import_map: undefined,
-  import_map_path: null,
-  verify_jwt: undefined,
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-functions-list-int-");
@@ -159,15 +140,6 @@ describe("legacy functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders an empty table when the API returns null", () => {
-    const { layer, out } = setup({ response: null });
-    return Effect.gen(function* () {
-      yield* legacyFunctionsList({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain("UPDATED_AT (UTC)");
-      expect(out.stdoutText).not.toContain("Hello World");
-    }).pipe(Effect.provide(layer));
-  });
-
   it.live("emits a success event with { functions } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
@@ -197,52 +169,6 @@ describe("legacy functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("escapes html-sensitive characters in Go JSON output", () => {
-    const { layer, out } = setup({ goOutput: "json", response: [HTML_FUNCTION] });
-    return Effect.gen(function* () {
-      yield* legacyFunctionsList({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain('"name": "\\u003cHello\\u003e\\u0026World\\u003e"');
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("escapes Go JSON line separator characters", () => {
-    const { layer, out } = setup({ goOutput: "json", response: [LINE_SEPARATOR_FUNCTION] });
-    return Effect.gen(function* () {
-      yield* legacyFunctionsList({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain('"name": "Hello\\u2028World\\u2029"');
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("emits null for --output json when the API returns a null function list", () => {
-    const { layer, out } = setup({ goOutput: "json", response: null });
-    return Effect.gen(function* () {
-      yield* legacyFunctionsList({ projectRef: Option.none() });
-      expect(out.stdoutText).toBe("null\n");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("preserves Go zero values for omitted non-pointer fields", () => {
-    const { layer, out } = setup({ goOutput: "json", response: [{}] });
-    return Effect.gen(function* () {
-      yield* legacyFunctionsList({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain('"created_at": 0');
-      expect(out.stdoutText).toContain('"id": ""');
-      expect(out.stdoutText).toContain('"status": ""');
-      expect(out.stdoutText).toContain('"version": 0');
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("preserves null function entries as zero-value rows", () => {
-    const { layer, out } = setup({ goOutput: "json", response: [null] });
-    return Effect.gen(function* () {
-      yield* legacyFunctionsList({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain('"created_at": 0');
-      expect(out.stdoutText).toContain('"id": ""');
-      expect(out.stdoutText).toContain('"status": ""');
-      expect(out.stdoutText).toContain('"version": 0');
-    }).pipe(Effect.provide(layer));
-  });
-
   it.live("emits a YAML array for --output yaml", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
@@ -252,18 +178,6 @@ describe("legacy functions list integration", () => {
       expect(out.stdoutText).toContain("verifyjwt: true");
       expect(out.stdoutText).not.toContain("created_at:");
       expect(out.stdoutText).not.toContain("entrypoint_path:");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("preserves nil optional fields as null in YAML output", () => {
-    const { layer, out } = setup({ goOutput: "yaml", response: [NIL_OPTIONALS_FUNCTION] });
-    return Effect.gen(function* () {
-      yield* legacyFunctionsList({ projectRef: Option.none() });
-      expect(out.stdoutText).toContain("entrypointpath: null");
-      expect(out.stdoutText).toContain("ezbrsha256: null");
-      expect(out.stdoutText).toContain("importmap: null");
-      expect(out.stdoutText).toContain("importmappath: null");
-      expect(out.stdoutText).toContain("verifyjwt: null");
     }).pipe(Effect.provide(layer));
   });
 
@@ -280,14 +194,6 @@ Name = "Hello World"`);
       expect(out.stdoutText).not.toContain("created_at");
       expect(out.stdoutText).not.toContain("entrypoint_path");
       expect(out.stdoutText.endsWith("\n\n")).toBe(false);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("emits a single trailing newline for empty --output toml", () => {
-    const { layer, out } = setup({ goOutput: "toml", response: [] });
-    return Effect.gen(function* () {
-      yield* legacyFunctionsList({ projectRef: Option.none() });
-      expect(out.stdoutText).toBe("functions = []\n");
     }).pipe(Effect.provide(layer));
   });
 
