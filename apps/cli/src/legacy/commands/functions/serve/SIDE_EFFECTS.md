@@ -15,25 +15,41 @@
 
 ## Files Written
 
-| Path                         | Format | When                                          |
-| ---------------------------- | ------ | --------------------------------------------- |
-| `~/.supabase/telemetry.json` | JSON   | always, at command exit via `Effect.ensuring` |
+| Path                                                  | Format      | When                                                                                                                                |
+| ----------------------------------------------------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/telemetry.json`                          | JSON        | always, at command exit via `Effect.ensuring`                                                                                       |
+| `<tmpdir>/supabase-functions-serve-env-*/docker.env`  | dotenv      | per start, when single-line container env exists; passed via `--env-file`; mode `0600`; removed after the run                       |
+| `<tmpdir>/supabase-functions-serve-multiline-env-*/…` | shell + raw | per start, only when an env value contains a newline; bind-mounted read-only into the container; mode `0600`; removed after the run |
+
+The env files hold secrets (JWT secret, anon/service-role keys, JWKS), so they are
+written owner-only (`0600`) and cleaned up after the container exits. On `SIGKILL`
+(which bypasses cleanup) a temp directory under `<tmpdir>` may be orphaned; the OS
+temp directory is the only place affected — the project directory is never modified.
 
 ## API Routes
 
-| Method | Path | Auth | Request body | Response (used fields) |
-| ------ | ---- | ---- | ------------ | ---------------------- |
-| `—`    | `—`  | `—`  | `—`          | `—`                    |
+Management API: none. When a third-party auth provider (`auth.third_party.*`) is
+enabled, two outbound HTTPS GETs are made per start to build `SUPABASE_JWKS`:
+
+| Method | Path                                            | Auth | Request body | Response (used fields) |
+| ------ | ----------------------------------------------- | ---- | ------------ | ---------------------- |
+| `GET`  | `<issuer_url>/.well-known/openid-configuration` | none | `—`          | `jwks_uri`             |
+| `GET`  | `<jwks_uri>` (from discovery)                   | none | `—`          | `keys`                 |
+
+Both fetches use a 10s timeout and are best-effort: failure logs nothing and falls
+back to local keys (matching the Go CLI, which ignores the error). No scheme/host
+validation is performed on the discovered URLs, also matching the Go CLI.
 
 ## Environment Variables
 
-| Variable                                      | Purpose                                                    | Required?                            |
-| --------------------------------------------- | ---------------------------------------------------------- | ------------------------------------ |
-| `SUPABASE_PROFILE`                            | resolves the legacy profile / API base URL                 | no (defaults to `supabase`)          |
-| `SUPABASE_WORKDIR`                            | overrides the project workdir                              | no (falls back to CLI cwd discovery) |
-| `SUPABASE_PROJECT_ID`                         | legacy config-service override for project identity        | no                                   |
-| env vars referenced by `supabase/config.toml` | config interpolation through `loadProjectEnvironment(...)` | no                                   |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`            | overrides the edge-runtime Docker registry mirror          | no (defaults to `public.ecr.aws`)    |
+| Variable                                      | Purpose                                                                                                                      | Required?                            |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `SUPABASE_PROFILE`                            | resolves the legacy profile / API base URL                                                                                   | no (defaults to `supabase`)          |
+| `SUPABASE_WORKDIR`                            | overrides the project workdir                                                                                                | no (falls back to CLI cwd discovery) |
+| `SUPABASE_PROJECT_ID`                         | legacy config-service override for project identity                                                                          | no                                   |
+| `SUPABASE_ENV`                                | selects environment-specific dotenv files (`.env.<env>.local`, `.env.<env>`)                                                 | no (defaults to `development`)       |
+| env vars referenced by `supabase/config.toml` | config interpolation; the full ambient `process.env` is layered under the project `.env*` files and passed to config loading | no                                   |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`            | overrides the edge-runtime Docker registry mirror                                                                            | no (defaults to `public.ecr.aws`)    |
 
 ## Exit Codes
 
@@ -81,3 +97,5 @@ Long-running raw log / error events only; there is no terminal `result` event on
   - named volume: `supabase_edge_runtime_<project>`
   - network: `supabase_network_<project>` unless `--network-id` overrides it
 - Inspector mode exposes the configured `edge_runtime.inspector_port` on the host and sets `SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=0`, matching the Go serve path.
+- Config `env()` interpolation uses a project environment resolved by the command itself (ambient `process.env` layered under `.env.<env>.local` / `.env.local` / `.env.<env>` / `.env`, matching Go) and passed into `loadProjectConfig`. The command does not mutate `process.env` or move/hide any project files.
+- A container crash terminates the command with a non-zero exit; only a watched-file change restarts the container. The Go CLI never auto-restarts a crashed container.

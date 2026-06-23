@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -28,7 +28,7 @@ import {
   ProcessControl,
   type CliProcessSignal,
 } from "../../../../shared/runtime/process-control.service.ts";
-import type { LegacyFunctionsServeFlags } from "./serve.command.ts";
+import type { LegacyFunctionsServeFlags } from "./serve.handler.ts";
 
 const deployMockState = vi.hoisted(() => ({
   isDockerRunning: true,
@@ -838,10 +838,13 @@ describe("legacy functions serve integration", () => {
       if (dockerRun === undefined) {
         throw new Error("expected docker run invocation");
       }
+      // `buildDockerBinds` realpath-resolves host paths, so compare against the
+      // resolved path (on macOS the temp dir lives under /var -> /private/var).
+      const resolvedExternalImportMapPath = realpathSync(externalImportMapPath);
       expect(
         extractFlagValues(dockerRun.args, "-v").some(
           (value) =>
-            value.startsWith(`${externalImportMapPath}:`) &&
+            value.startsWith(`${resolvedExternalImportMapPath}:`) &&
             value.endsWith("/shared-import-map.json:ro"),
         ),
       ).toBe(true);
@@ -1108,6 +1111,98 @@ describe("legacy functions serve integration", () => {
       expect(deployMockState.networkCalls).toEqual([
         { networkMode: "custom-network", projectId: "test-project" },
       ]);
+    });
+  });
+
+  it.live("injects the Deno runtime template without the TypeScript-only preamble", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "run") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "template logs failed" }]);
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+
+      const { layer } = setupServe({ childSpawner });
+      yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+      const dockerRun = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "run",
+      );
+      expect(dockerRun).toBeDefined();
+      if (dockerRun === undefined) {
+        throw new Error("expected docker run call");
+      }
+
+      const commandScript = dockerRun.args[dockerRun.args.length - 1] ?? "";
+      expect(commandScript).toContain("cat <<'EOF' > /root/index.ts");
+      expect(commandScript).not.toContain("@ts-nocheck");
+      expect(commandScript).not.toContain("declare const Deno");
+      expect(commandScript).not.toContain("declare const EdgeRuntime");
+    });
+  });
+
+  it.live("maps the configured inspector_port to the container inspector port", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "run") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      return { exitCode: 0, stdout: "", stderr: "" };
+    };
+
+    const childSpawner = mockDockerLogSpawner([
+      { exitCode: 1, stderr: "inspect port logs failed" },
+    ]);
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(
+          [
+            'project_id = "test-project"',
+            "",
+            "[edge_runtime]",
+            'policy = "per_worker"',
+            "inspector_port = 9229",
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+
+      const { layer } = setupServe({ childSpawner });
+      yield* legacyFunctionsServe(baseFlags({ inspect: true })).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      const dockerRun = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "run",
+      );
+      expect(dockerRun).toBeDefined();
+      if (dockerRun === undefined) {
+        throw new Error("expected docker run call");
+      }
+
+      expect(dockerRun.args).toContain("-p");
+      expect(dockerRun.args).toContain("9229:8083");
+      expect(dockerRun.args).not.toContain("8083:8083");
     });
   });
 

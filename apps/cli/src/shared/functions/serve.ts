@@ -18,7 +18,7 @@ import {
   type JsonWebKeyInput,
 } from "node:crypto";
 import { readFileSync, watch } from "node:fs";
-import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { styleText } from "node:util";
@@ -55,6 +55,8 @@ const defaultProjectConfig = decodeProjectConfig({});
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;
+// Unix timestamp (~2032-11-30) used as the `exp` claim of the local-dev default
+// JWTs, matching the Go CLI's hardcoded expiry for anon/service_role tokens.
 const defaultJwtExpiry = 1983812996;
 const defaultSigningKey = {
   kty: "EC",
@@ -84,7 +86,6 @@ const legacyDefaultEdgeRuntimeVersion = "v1.74.1";
 const defaultSupabaseEnv = "development";
 const clerkDomainPattern = /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/;
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const serveMainTypecheckPreamble = "declare const Deno: any;\ndeclare const EdgeRuntime: any;\n\n";
 const serveMainSourcePath = new URL("./serve.main.ts", import.meta.url);
 let cachedLegacyFunctionsServeMainTemplate: string | undefined;
 const watchIgnoreGlobs = [
@@ -216,6 +217,29 @@ export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
   }),
 );
 
+/**
+ * `serve.main.ts` is authored as a TypeScript module so it can be type-checked
+ * and linted in this repo, but it runs verbatim as a Deno entrypoint inside the
+ * edge-runtime container. Strip the TypeScript-only preamble — the
+ * `// @ts-nocheck` pragma and the `declare const` ambient shims — so the injected
+ * `/root/index.ts` matches the Go CLI's `templates/main.ts` (which starts at the
+ * first `import`). Tolerant of reordering/extra blank lines so a small edit to the
+ * preamble does not silently ship the shims into the container.
+ */
+export function stripServeMainTypecheckPreamble(source: string): string {
+  const lines = source.split("\n");
+  let start = 0;
+  while (start < lines.length) {
+    const line = lines[start]!;
+    if (line === "// @ts-nocheck" || line.length === 0 || line.startsWith("declare ")) {
+      start += 1;
+      continue;
+    }
+    break;
+  }
+  return lines.slice(start).join("\n");
+}
+
 function getLegacyFunctionsServeMainTemplate(): string {
   if (cachedLegacyFunctionsServeMainTemplate === undefined) {
     const rawTemplateSource =
@@ -223,11 +247,7 @@ function getLegacyFunctionsServeMainTemplate(): string {
         ? SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE
         : readLegacyFunctionsServeMainTemplateFromDisk();
 
-    cachedLegacyFunctionsServeMainTemplate = rawTemplateSource.startsWith(
-      serveMainTypecheckPreamble,
-    )
-      ? rawTemplateSource.slice(serveMainTypecheckPreamble.length)
-      : rawTemplateSource;
+    cachedLegacyFunctionsServeMainTemplate = stripServeMainTypecheckPreamble(rawTemplateSource);
   }
   return cachedLegacyFunctionsServeMainTemplate;
 }
@@ -627,47 +647,14 @@ const resolveServeConfig = Effect.fnUntraced(function* (
       return normalized.length > 0 ? normalized : undefined;
     },
   });
-  const loadedConfig = yield* Effect.acquireUseRelease(
-    Effect.tryPromise(async () => {
-      const previousEnv = new Map<string, string | undefined>();
-      if (projectEnv !== null) {
-        for (const [key, value] of Object.entries(projectEnv.values)) {
-          previousEnv.set(key, process.env[key]);
-          process.env[key] = value;
-        }
-      }
-      const hiddenEnvFiles =
-        projectEnv === null
-          ? []
-          : (
-              await Promise.all([
-                movePathIfExists(
-                  projectEnv.paths.envPath,
-                  `serve-hidden-${process.pid}-${Date.now()}-env`,
-                ),
-                movePathIfExists(
-                  projectEnv.paths.envLocalPath,
-                  `serve-hidden-${process.pid}-${Date.now()}-env-local`,
-                ),
-              ])
-            ).flatMap((entry) => (entry === undefined ? [] : [entry]));
-      return { previousEnv, hiddenEnvFiles };
-    }),
-    () => loadProjectConfig(projectRoot, projectRef === undefined ? undefined : { projectRef }),
-    ({ previousEnv, hiddenEnvFiles }) =>
-      Effect.tryPromise(async () => {
-        for (const { originalPath, hiddenPath } of [...hiddenEnvFiles].reverse()) {
-          await rename(hiddenPath, originalPath);
-        }
-        for (const [key, value] of previousEnv) {
-          if (value === undefined) {
-            delete process.env[key];
-          } else {
-            process.env[key] = value;
-          }
-        }
-      }),
-  );
+  // `loadProjectConfig` interpolates `env()` references against the project
+  // environment. We resolve that environment ourselves (Go-accurate, layering
+  // `.env.<SUPABASE_ENV>`/`.env.local`/`.env` over the ambient env) and pass it
+  // in, so loading neither re-reads those files nor mutates `process.env`.
+  const loadedConfig = yield* loadProjectConfig(projectRoot, {
+    ...(projectRef === undefined ? {} : { projectRef }),
+    ...(projectEnv === null ? {} : { projectEnv }),
+  });
   const baseConfig = loadedConfig?.config ?? defaultProjectConfig;
 
   const auth =
@@ -846,11 +833,14 @@ async function writeDockerEnvFile(env: Readonly<Record<string, string>>) {
 
   const dir = await mkdtemp(join(tmpdir(), "supabase-functions-serve-env-"));
   const path = join(dir, "docker.env");
+  // The file holds the JWT secret, anon/service-role keys, and JWKS, so keep it
+  // owner-only rather than relying on the process umask.
   await writeFile(
     path,
     entries
       .map(([name, value]) => `${name}=${value.replaceAll("\r", "\\r").replaceAll("\n", "\\n")}`)
       .join("\n"),
+    { mode: 0o600 },
   );
 
   return {
@@ -872,11 +862,9 @@ async function writeDockerMultilineEnvScript(
   const path = join(dir, scriptName);
   const envDir = join(containerDir, "values");
   const hostEnvDir = join(dir, "values");
+  // Names are validated by `validateDockerMultilineEnvNames` before this runs.
   const script = env
     .map(([name], index) => {
-      if (!shellVariableNamePattern.test(name)) {
-        throw new Error(`invalid multiline environment variable name for shell export: ${name}`);
-      }
       const valueFile = `env-${index}`;
       const valuePath = join(envDir, valueFile).replaceAll("\\", "/");
       return `${name}="$(cat ${valuePath}; printf x)"
@@ -884,10 +872,13 @@ export ${name}="\${${name}%x}"`;
     })
     .join("\n");
   await mkdir(hostEnvDir, { recursive: true });
+  // The value files hold secret env values, so keep them owner-only.
   await Promise.all(
-    env.map(([_, value], index) => writeFile(join(hostEnvDir, `env-${index}`), value)),
+    env.map(([_, value], index) =>
+      writeFile(join(hostEnvDir, `env-${index}`), value, { mode: 0o600 }),
+    ),
   );
-  await writeFile(path, script);
+  await writeFile(path, script, { mode: 0o600 });
 
   return {
     bind: `${dir}:${containerDir}:ro`,
@@ -960,21 +951,6 @@ function ambientProjectEnv() {
       value === undefined ? [] : [[key, value]],
     ),
   );
-}
-
-async function movePathIfExists(pathname: string, suffix: string) {
-  try {
-    await stat(pathname);
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-      return undefined;
-    }
-    throw error;
-  }
-
-  const hiddenPath = `${pathname}.${suffix}`;
-  await rename(pathname, hiddenPath);
-  return { originalPath: pathname, hiddenPath };
 }
 
 const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {
@@ -1274,14 +1250,26 @@ const writeStoppedServingMessage = Effect.fnUntraced(function* () {
   yield* output.raw(`Stopped serving ${styleText("bold", functionsDirName)}\n`, "stdout");
 });
 
-function buildServeEntrypointScript(
+// The Go CLI writes the runtime template to /root/index.ts via a quoted `<<'EOF'`
+// heredoc; we keep the same terminator for byte-parity with its entrypoint. A line
+// equal to the terminator inside the template would close the heredoc early and
+// silently corrupt the script, so fail loudly instead. `serve.main.ts` (the only
+// template) is asserted to contain no such line by a unit test.
+const serveEntrypointHeredocTerminator = "EOF";
+
+export function buildServeEntrypointScript(
   template: string,
   command: ReadonlyArray<string>,
   multilineEnvScriptPath?: string,
 ) {
-  return `cat <<'EOF' > /root/index.ts
+  if (template.split("\n").includes(serveEntrypointHeredocTerminator)) {
+    throw new Error(
+      `functions serve runtime template contains a line equal to the heredoc terminator "${serveEntrypointHeredocTerminator}"`,
+    );
+  }
+  return `cat <<'${serveEntrypointHeredocTerminator}' > /root/index.ts
 ${template}
-EOF
+${serveEntrypointHeredocTerminator}
 ${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}${command.join(" ")}
 `;
 }
@@ -1562,12 +1550,16 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
 
       const started = startOutcome.started;
 
+      // `streamContainerLogs` never succeeds: it streams logs until the container
+      // exits, then fails. A container crash therefore propagates out of this race
+      // and terminates `serve` — the Go CLI never auto-restarts a crashed container.
+      // The race only ever resolves to "shutdown" (signal) or "restart" (file change).
       const outcome = yield* Effect.raceFirst(
         Effect.raceFirst(
           processControl.awaitSignal().pipe(Effect.as("shutdown" as const)),
           waitForRestartSignal(started.watchSpecs).pipe(Effect.as("restart" as const)),
         ),
-        streamContainerLogs(started.containerId).pipe(Effect.as("logs" as const)),
+        streamContainerLogs(started.containerId),
       ).pipe(
         Effect.ensuring(
           bestEffortRemoveContainer(started.containerId).pipe(Effect.ensuring(started.cleanup)),

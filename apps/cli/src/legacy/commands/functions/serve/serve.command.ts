@@ -1,12 +1,10 @@
 import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
-import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import {
   FUNCTIONS_SERVE_INSPECT_MODES,
   serveFileWatcherLayer,
-  type FunctionsServeFlags,
 } from "../../../../shared/functions/serve.ts";
 import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
@@ -50,9 +48,6 @@ const config = {
     Flag.withHidden,
   ),
 } as const;
-
-export type LegacyFunctionsServeFlags = CliCommand.Command.Config.Infer<typeof config> &
-  FunctionsServeFlags;
 
 export const legacyFunctionsServeCommand = Command.make("serve", config).pipe(
   Command.withDescription("Serve all Functions locally."),

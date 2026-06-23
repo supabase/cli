@@ -4,7 +4,7 @@ import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
 import { DuplicateRemoteProjectIdError, ProjectConfigParseError } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { findProjectPaths } from "./paths.ts";
-import { loadProjectEnvironment } from "./project.ts";
+import { loadProjectEnvironment, type ProjectEnvironment } from "./project.ts";
 
 const projectConfigSchemaKey = "$schema";
 
@@ -42,6 +42,15 @@ export interface LoadedProjectConfig {
  */
 export interface LoadProjectConfigOptions {
   readonly projectRef?: string;
+  /**
+   * Pre-resolved project environment used to interpolate `env()` references.
+   * When omitted, the environment is resolved internally from `.env`/`.env.local`
+   * layered over `process.env` (the default for most callers). Callers that need
+   * Go-accurate, environment-specific resolution (e.g. `functions serve`, which
+   * also reads `.env.<SUPABASE_ENV>` files) resolve it themselves and pass it in
+   * so loading does not re-read those files or depend on `process.env` mutation.
+   */
+  readonly projectEnv?: ProjectEnvironment;
 }
 
 export interface SaveProjectConfigOptions {
@@ -337,10 +346,12 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   // walking two directories up gives us the project root that
   // `loadProjectEnvironment` expects.
   const projectRoot = path.dirname(path.dirname(filePath));
-  const projectEnv = yield* loadProjectEnvironment({
-    cwd: projectRoot,
-    baseEnv: process.env,
-  });
+  const projectEnv =
+    options?.projectEnv ??
+    (yield* loadProjectEnvironment({
+      cwd: projectRoot,
+      baseEnv: process.env,
+    }));
   const interpolated = interpolateEnvReferencesAgainstSchema(
     document,
     projectEnv?.values ?? {},

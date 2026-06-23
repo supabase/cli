@@ -42,6 +42,11 @@ if (!version) {
   );
   process.exit(1);
 }
+if (values.version === undefined) {
+  console.warn(
+    `[build] --version not provided; falling back to package.json version "${version}". Pass --version explicitly in release builds.`,
+  );
+}
 
 const TARGETS = [
   {

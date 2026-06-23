@@ -1,9 +1,9 @@
 import { Option } from "effect";
 import { describe, expect, it } from "vitest";
-import type { LegacyFunctionsServeFlags } from "./serve.command.ts";
 import {
   legacyBuildFunctionsServeInspectArgs,
   legacyResolveFunctionsServeInspectMode,
+  type LegacyFunctionsServeFlags,
 } from "./serve.handler.ts";
 
 function baseFlags(): LegacyFunctionsServeFlags {
