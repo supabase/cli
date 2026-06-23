@@ -908,3 +908,87 @@ func TestVersionCompare(t *testing.T) {
 		})
 	}
 }
+
+func TestDeprecatedSMTPConfig(t *testing.T) {
+	t.Run("maps deprecated [inbucket] to local_smtp", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[inbucket]
+enabled = true
+port = 12345
+`)},
+		}
+		require.NoError(t, config.Load("", fsys))
+		assert.True(t, config.Inbucket.Enabled)
+		assert.Equal(t, uint16(12345), config.Inbucket.Port)
+	})
+
+	t.Run("keeps template defaults for a partial [inbucket] section", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[inbucket]
+port = 9999
+`)},
+		}
+		require.NoError(t, config.Load("", fsys))
+		// enabled is omitted by the user; the template default (true) must survive
+		// the inbucket -> local_smtp rewrite via deep merge instead of collapsing
+		// to the zero value.
+		assert.True(t, config.Inbucket.Enabled)
+		assert.Equal(t, uint16(9999), config.Inbucket.Port)
+	})
+
+	t.Run("prefers explicit [local_smtp] over deprecated [inbucket]", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[inbucket]
+enabled = true
+port = 11111
+
+[local_smtp]
+enabled = true
+port = 22222
+`)},
+		}
+		require.NoError(t, config.Load("", fsys))
+		assert.Equal(t, uint16(22222), config.Inbucket.Port)
+	})
+
+	t.Run("normalizes deprecated [remotes.*.inbucket]", func(t *testing.T) {
+		config := NewConfig()
+		config.ProjectId = "abcdefghijklmnopqrst"
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[remotes.staging]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.staging.inbucket]
+enabled = true
+port = 33333
+`)},
+		}
+		require.NoError(t, config.Load("", fsys))
+		assert.Equal(t, uint16(33333), config.Inbucket.Port)
+	})
+
+	t.Run("preserves env overrides when rewriting [inbucket]", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[inbucket]
+enabled = true
+port = 12345
+`)},
+		}
+		// Env overrides are applied via ExperimentalBindStruct at unmarshal time, not
+		// captured by AllSettings(). Rebuilding the viper without those options while
+		// rewriting [inbucket] would silently drop this override.
+		t.Setenv("SUPABASE_AUTH_SITE_URL", "http://env-override.example/")
+		require.NoError(t, config.Load("", fsys))
+		assert.Equal(t, "http://env-override.example/", config.Auth.SiteUrl)
+		assert.Equal(t, uint16(12345), config.Inbucket.Port)
+	})
+}

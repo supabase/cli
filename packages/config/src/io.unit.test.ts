@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { BunServices } from "@effect/platform-bun";
 import { mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -1053,5 +1053,138 @@ max_rows = "env(SUPABASE_REMOTE_MAX_ROWS_TEST)"
       }
       await rm(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+describe("config io deprecated [inbucket] back-compat", () => {
+  let warnings: Array<string> = [];
+  let errorSpy: ReturnType<typeof vi.spyOn> | undefined;
+
+  function captureWarnings() {
+    warnings = [];
+    // loadProjectConfigFile emits the deprecation warning via Console.error, whose
+    // default implementation delegates to globalThis.console.error (stderr).
+    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    });
+  }
+
+  afterEach(() => {
+    errorSpy?.mockRestore();
+    errorSpy = undefined;
+  });
+
+  async function loadToml(contents: string) {
+    const cwd = makeTempProject();
+    const path = await runConfigEffect(configTomlPath(cwd));
+    await mkdir(join(cwd, "supabase"), { recursive: true });
+    await writeFile(path, contents);
+    try {
+      return await runConfigEffect(loadProjectConfigFile(path));
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+
+  test("loads a deprecated [inbucket] section as [local_smtp]", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[inbucket]
+enabled = true
+port = 12345
+`,
+    );
+
+    expect(loaded.config.local_smtp.enabled).toBe(true);
+    expect(loaded.config.local_smtp.port).toBe(12345);
+    expect("inbucket" in loaded.config).toBe(false);
+    expect(loaded.document).not.toHaveProperty("inbucket");
+    expect(loaded.document).toHaveProperty("local_smtp");
+    expect(
+      warnings.some((m) =>
+        m.includes(
+          "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("fills schema defaults when a deprecated [inbucket] section is partial", async () => {
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[inbucket]
+port = 9999
+`,
+    );
+
+    // enabled is omitted by the user; the schema default (true) must survive the
+    // inbucket -> local_smtp rewrite rather than collapsing to a zero value.
+    expect(loaded.config.local_smtp.enabled).toBe(true);
+    expect(loaded.config.local_smtp.port).toBe(9999);
+  });
+
+  test("prefers an explicit [local_smtp] when both sections are present", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[inbucket]
+enabled = true
+port = 11111
+
+[local_smtp]
+enabled = true
+port = 22222
+`,
+    );
+
+    expect(loaded.config.local_smtp.port).toBe(22222);
+    expect(loaded.document).not.toHaveProperty("inbucket");
+    // The deprecation warning still fires because the deprecated key was present.
+    expect(warnings.some((m) => m.includes("[inbucket] is deprecated"))).toBe(true);
+  });
+
+  test("normalizes a deprecated [remotes.*.inbucket] section", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[remotes.staging]
+project_id = "stagingref"
+
+[remotes.staging.inbucket]
+enabled = true
+port = 33333
+`,
+    );
+
+    const staging = loaded.config.remotes.staging;
+    expect(staging?.local_smtp?.port).toBe(33333);
+    expect(staging).not.toHaveProperty("inbucket");
+    expect(
+      warnings.some((m) =>
+        m.includes(
+          "WARN: config section [remotes.staging.inbucket] is deprecated. Please use [remotes.staging.local_smtp] instead.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("does not warn when only [local_smtp] is used", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[local_smtp]
+enabled = true
+port = 54324
+`,
+    );
+
+    expect(loaded.config.local_smtp.port).toBe(54324);
+    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
   });
 });
