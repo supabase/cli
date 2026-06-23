@@ -40,6 +40,15 @@ describe("legacySeedChangedTargetFlags", () => {
       "local",
     ]);
   });
+
+  it("treats the --no-* negation form as changed (Effect CLI boolean negation)", () => {
+    expect(legacySeedChangedTargetFlags(["seed", "buckets", "--no-linked"])).toEqual(["linked"]);
+    expect(legacySeedChangedTargetFlags(["seed", "buckets", "--no-local"])).toEqual(["local"]);
+    expect(legacySeedChangedTargetFlags(["seed", "buckets", "--no-local", "--linked"])).toEqual([
+      "linked",
+      "local",
+    ]);
+  });
 });
 
 describe("legacyAssertSeedTargetsExclusive", () => {
@@ -51,6 +60,14 @@ describe("legacyAssertSeedTargetsExclusive", () => {
     expect(JSON.stringify(exit)).toContain(
       "if any flags in the group [linked local] are set none of the others can be; [linked local] were all set",
     );
+  });
+
+  it("fails for the --no-local --linked negation combo (both changed)", () => {
+    const exit = Effect.runSyncExit(
+      legacyAssertSeedTargetsExclusive(["seed", "buckets", "--no-local", "--linked"]),
+    );
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(JSON.stringify(exit)).toContain("[linked local] were all set");
   });
 
   it("succeeds when at most one target flag is set", () => {

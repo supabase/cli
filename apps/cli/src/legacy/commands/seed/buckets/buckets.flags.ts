@@ -34,11 +34,16 @@ export function legacySeedChangedTargetFlags(args: ReadonlyArray<string>): Reado
       const eqIdx = token.indexOf("=");
       const name = eqIdx === -1 ? token.slice(2) : token.slice(2, eqIdx);
       const isBare = eqIdx === -1;
-      if (name === "linked") {
+      // Treat Effect CLI's boolean negation form (`--no-linked`/`--no-local`) as
+      // "changed" too — it sets the flag false but is unambiguously present on
+      // argv, the TS equivalent of cobra's `pflag.Changed` (and the seed target
+      // is selected from Changed, not the value, so `--no-linked` is still the
+      // linked path). Mirrors the sibling DB scanner (legacy-db-target-flags.ts).
+      if (name === "linked" || name === "no-linked") {
         linked = true;
         continue;
       }
-      if (name === "local") {
+      if (name === "local" || name === "no-local") {
         local = true;
         continue;
       }
