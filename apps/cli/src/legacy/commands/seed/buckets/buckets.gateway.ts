@@ -293,7 +293,7 @@ export function legacyBucketBody(props: LegacyUpsertBucketProps): Record<string,
   return body;
 }
 
-export const makeLegacyStorageGateway = Effect.fnUntraced(function* (opts: {
+export const legacyMakeStorageGateway = Effect.fnUntraced(function* (opts: {
   readonly baseUrl: string;
   readonly apiKey: string;
   readonly userAgent: string;

@@ -29,7 +29,7 @@ import {
 import {
   type LegacyStorageGateway,
   type LegacyUpsertBucketProps,
-  makeLegacyStorageGateway,
+  legacyMakeStorageGateway,
 } from "./buckets.gateway.ts";
 import {
   LegacySeedApiKeysNetworkError,
@@ -418,7 +418,7 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     // BEFORE this scope, so it still honors `--dns-resolver https`, matching Go's
     // `tenant.GetApiKeys` → `GetSupabase`.
     const gatewayOps = Effect.gen(function* () {
-      const gateway = yield* makeLegacyStorageGateway({
+      const gateway = yield* legacyMakeStorageGateway({
         baseUrl,
         apiKey,
         userAgent: cliConfig.userAgent,
@@ -822,19 +822,25 @@ const handleVectorError = Effect.fnUntraced(function* (
 const LEGACY_SNIFF_LEN = 512;
 
 /**
- * Read the first ≤512 bytes of a file for content-type sniffing, mirroring Go's
- * `io.LimitReader(f, 512)` (`pkg/storage/objects.go:78-79`). Returns an empty
- * buffer on any read error — an unreadable file then fails at the streaming
+ * Read ONLY the first ≤512 bytes of a file for content-type sniffing, mirroring
+ * Go's `io.LimitReader(f, 512)` (`pkg/storage/objects.go:78-79`) — the file is
+ * NOT fully buffered (a large object would otherwise stall/OOM before the upload
+ * request starts). Opens a handle, reads one sniff window, and closes it via
+ * `Effect.scoped`. Returns an empty buffer on EOF (empty file → Go sniffs "" →
+ * text/plain) or any read error — an unreadable file then fails at the streaming
  * upload open below, so the sniff result is moot in that case.
  */
 const legacyReadSniffBytes = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   absPath: string,
 ) {
-  return yield* fs.readFile(absPath).pipe(
-    Effect.map((bytes) =>
-      bytes.length > LEGACY_SNIFF_LEN ? bytes.subarray(0, LEGACY_SNIFF_LEN) : bytes,
-    ),
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const handle = yield* fs.open(absPath, { flag: "r" });
+      return yield* handle.readAlloc(LEGACY_SNIFF_LEN);
+    }),
+  ).pipe(
+    Effect.map(Option.getOrElse(() => new Uint8Array(0))),
     Effect.catch(() => Effect.succeed(new Uint8Array(0))),
   );
 });
