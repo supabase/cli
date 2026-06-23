@@ -256,6 +256,29 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("tolerates a null element in a bucket list (Go zero-value struct)", () => {
+    // Go's encoding/json decodes a null array element into the zero-value struct
+    // (BucketResponse{Name:"", Id:""}) and the upsert loop continues
+    // (pkg/storage/buckets.go:21-27). A null element must not abort the run; the
+    // configured bucket is still created. A genuine type mismatch (string/number
+    // element) still aborts — that's covered by the malformed-response test.
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.docs]\npublic = false\n",
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [null, { name: "other", id: "o" }] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "docs" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Creating Storage bucket: docs");
+      expect(
+        requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
+      ).toBe(true);
+    });
+  });
+
   it.live("creates a new bucket and updates an existing one (overwrite default yes)", () => {
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.test]\npublic = true\n[storage.buckets.private]\npublic = false\n",
@@ -1728,6 +1751,8 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
+      // Go prints the override notice from inside config load (config.go:513).
+      expect(out.stderrText).toContain("Loading config override: [remotes.production]");
       // Both base and remote are present after the merge; the remote override
       // changed base.public from true → false (but both are still seeded).
       expect(out.stderrText).toContain("Creating Storage bucket: base");

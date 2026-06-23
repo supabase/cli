@@ -80,9 +80,10 @@ export interface LegacyStorageGateway {
  * Strict JSON decode mirroring Go's `fetcher.ParseJSON[T]`
  * (`pkg/fetcher/http.go` — `json.NewDecoder(r).Decode(&data)`): a body whose
  * shape doesn't match the typed target aborts before any bucket mutation. Only
- * missing fields, `null`, empty arrays, and extra keys are tolerated (zero
- * values); a non-matching top-level type, a non-object element, or a
- * present-but-wrong-typed string field all fail. The graceful-skip classifiers
+ * missing fields, `null` (decoded as the zero-value struct/field), empty arrays,
+ * and extra keys are tolerated (zero values); a non-matching top-level type, a
+ * non-null non-object element (number/array/string), or a present-but-wrong-typed
+ * string field all fail. The graceful-skip classifiers
  * never see these (the message doesn't match), so they propagate, like Go.
  */
 function failParse(detail: string): LegacySeedStorageNetworkError {
@@ -144,9 +145,18 @@ const parseJsonBody = (body: string): Effect.Effect<unknown, LegacySeedStorageNe
     catch: (cause) => failParse(String(cause)),
   });
 
-/** A non-null, non-array object, or `null` to signal a Go-struct decode failure. */
+/**
+ * A JSON object → itself; a JSON `null` → `{}` (Go's zero-value struct: decoding
+ * `null` into a non-pointer struct is a no-op that leaves it zero, no error —
+ * same `encoding/json` rule as the string-field level below); a number / array /
+ * string → `null` to signal a real Go-struct decode failure (`encoding/json`
+ * errors on those). Combined with the null-tolerant `decodeStringField`, a `null`
+ * list element decodes to the zero-value struct (empty `name`/`id`) and the
+ * upsert loops continue, exactly as Go's do.
+ */
 function asObject(entry: unknown): Record<string, unknown> | null {
-  return typeof entry === "object" && entry !== null && !Array.isArray(entry)
+  if (entry === null) return {};
+  return typeof entry === "object" && !Array.isArray(entry)
     ? (entry as Record<string, unknown>)
     : null;
 }

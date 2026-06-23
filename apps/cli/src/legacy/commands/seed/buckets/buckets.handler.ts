@@ -287,6 +287,16 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     // surface, exactly as the Go command does.
     const config = loaded === null ? legacyDecodeDefaultProjectConfig({}) : loaded.config;
     const document = loaded === null ? undefined : loaded.document;
+
+    // Go prints this from inside config load (`config.go:513`,
+    // `fmt.Fprintln(os.Stderr, "Loading config override:", idToName[projectId])`),
+    // unconditionally and before any command output, whenever a `[remotes.*]`
+    // block's project_id matched the linked ref. `appliedRemote` is the bare name,
+    // bracketed here to match Go's `idToName` value (`config.go:511`). Same emit as
+    // `config push` (push.handler.ts). stderr in all output modes (diagnostic-only).
+    if (loaded !== null && loaded.appliedRemote !== undefined) {
+      yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
+    }
     const bucketsConfig = config.storage.buckets ?? {};
     const bucketNames = Object.keys(bucketsConfig);
     const vectorEnabled = config.storage.vector.enabled;
@@ -396,11 +406,17 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
       }
     }
 
-    // All gateway operations are wrapped in a CA-aware fetch context when
-    // running against a local TLS stack. `FetchHttpClient.Fetch` is read per
-    // request from the fiber context (`fiber.getRef(Fetch)` in FetchHttpClient),
-    // so `Effect.provideService` at this scope correctly overrides it for every
-    // HTTP call the gateway makes.
+    // All gateway operations run with an explicit non-DoH fetch. Storage calls
+    // never use DoH in Go: `newLocalClient` uses `status.NewKongClient` and
+    // `newRemoteClient` uses `http.DefaultClient` — `withFallbackDNS` is installed
+    // only in `utils.GetSupabase` (Management API, `internal/utils/api.go:125-127`).
+    // `legacyHttpClientLayer` bakes the DoH wrapper into the shared client, so we
+    // override `FetchHttpClient.Fetch` at this scope UNCONDITIONALLY: a CA-trusting
+    // fetch for local + https, plain `globalThis.fetch` otherwise. (`Fetch` is read
+    // per request from the fiber context, so the scope override applies to every
+    // gateway call.) The api-keys lookup above runs through the platform API factory
+    // BEFORE this scope, so it still honors `--dns-resolver https`, matching Go's
+    // `tenant.GetApiKeys` → `GetSupabase`.
     const gatewayOps = Effect.gen(function* () {
       const gateway = yield* makeLegacyStorageGateway({
         baseUrl,
@@ -442,12 +458,14 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
       }
     });
 
-    // Provide a CA-trusting fetch for all gateway HTTP calls when local + TLS.
-    yield* localKongCa !== undefined
-      ? gatewayOps.pipe(
-          Effect.provideService(FetchHttpClient.Fetch, legacyKongCaFetch(localKongCa)),
-        )
-      : gatewayOps;
+    // Non-DoH fetch for every gateway call: CA-trusting for local + https, plain
+    // `globalThis.fetch` otherwise. Never the DoH-wrapped shared client.
+    yield* gatewayOps.pipe(
+      Effect.provideService(
+        FetchHttpClient.Fetch,
+        localKongCa !== undefined ? legacyKongCaFetch(localKongCa) : globalThis.fetch,
+      ),
+    );
   }).pipe(
     // Go's root `Execute` caches the linked project + fires org/project group
     // identify whenever `flags.ProjectRef` is set — only on the --linked path.
