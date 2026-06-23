@@ -3,8 +3,8 @@ import { Effect, Schema } from "effect";
 
 const links = [
   {
-    name: "Inbucket documentation",
-    link: "https://www.inbucket.org",
+    name: "Mailpit documentation",
+    link: "https://mailpit.axllent.org",
   },
 ];
 
@@ -16,7 +16,7 @@ const defaultPort = 54324;
 export const inbucket = Schema.Struct({
   enabled: Schema.Boolean.annotate({
     default: defaultEnabled,
-    description: "Enable the local Inbucket service.",
+    description: "Enable the local SMTP testing server.",
     tags,
     links,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),

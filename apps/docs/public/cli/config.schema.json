@@ -2926,7 +2926,7 @@
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Enable the local Inbucket service.",
+          "description": "Enable the local SMTP testing server.",
           "default": true
         },
         "port": {
@@ -6471,7 +6471,7 @@
                     "properties": {
                       "enabled": {
                         "type": "boolean",
-                        "description": "Enable the local Inbucket service.",
+                        "description": "Enable the local SMTP testing server.",
                         "default": true
                       },
                       "port": {
