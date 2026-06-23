@@ -18,7 +18,7 @@ import {
   type JsonWebKeyInput,
 } from "node:crypto";
 import { readFileSync, watch } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { styleText } from "node:util";
@@ -628,7 +628,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
     },
   });
   const loadedConfig = yield* Effect.acquireUseRelease(
-    Effect.sync(() => {
+    Effect.tryPromise(async () => {
       const previousEnv = new Map<string, string | undefined>();
       if (projectEnv !== null) {
         for (const [key, value] of Object.entries(projectEnv.values)) {
@@ -636,11 +636,29 @@ const resolveServeConfig = Effect.fnUntraced(function* (
           process.env[key] = value;
         }
       }
-      return previousEnv;
+      const hiddenEnvFiles =
+        projectEnv === null
+          ? []
+          : (
+              await Promise.all([
+                movePathIfExists(
+                  projectEnv.paths.envPath,
+                  `serve-hidden-${process.pid}-${Date.now()}-env`,
+                ),
+                movePathIfExists(
+                  projectEnv.paths.envLocalPath,
+                  `serve-hidden-${process.pid}-${Date.now()}-env-local`,
+                ),
+              ])
+            ).flatMap((entry) => (entry === undefined ? [] : [entry]));
+      return { previousEnv, hiddenEnvFiles };
     }),
     () => loadProjectConfig(projectRoot, projectRef === undefined ? undefined : { projectRef }),
-    (previousEnv) =>
-      Effect.sync(() => {
+    ({ previousEnv, hiddenEnvFiles }) =>
+      Effect.tryPromise(async () => {
+        for (const { originalPath, hiddenPath } of [...hiddenEnvFiles].reverse()) {
+          await rename(hiddenPath, originalPath);
+        }
         for (const [key, value] of previousEnv) {
           if (value === undefined) {
             delete process.env[key];
@@ -860,7 +878,9 @@ async function writeDockerMultilineEnvScript(
         throw new Error(`invalid multiline environment variable name for shell export: ${name}`);
       }
       const valueFile = `env-${index}`;
-      return `export ${name}="$(cat ${join(envDir, valueFile).replaceAll("\\", "/")})"`;
+      const valuePath = join(envDir, valueFile).replaceAll("\\", "/");
+      return `${name}="$(cat ${valuePath}; printf x)"
+export ${name}="\${${name}%x}"`;
     })
     .join("\n");
   await mkdir(hostEnvDir, { recursive: true });
@@ -940,6 +960,21 @@ function ambientProjectEnv() {
       value === undefined ? [] : [[key, value]],
     ),
   );
+}
+
+async function movePathIfExists(pathname: string, suffix: string) {
+  try {
+    await stat(pathname);
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+
+  const hiddenPath = `${pathname}.${suffix}`;
+  await rename(pathname, hiddenPath);
+  return { originalPath: pathname, hiddenPath };
 }
 
 const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {

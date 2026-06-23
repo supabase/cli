@@ -614,8 +614,9 @@ describe("legacy functions serve integration", () => {
       expect(script).toBeDefined();
       expect(files).toBeDefined();
       expect(script).toContain(
-        'export MULTILINE_SECRET="$(cat /root/.supabase/multiline-env/values/env-0)"',
+        'MULTILINE_SECRET="$(cat /root/.supabase/multiline-env/values/env-0; printf x)"',
       );
+      expect(script).toContain('export MULTILINE_SECRET="${MULTILINE_SECRET%x}"');
       expect(script).not.toContain(multilineValue);
       expect(script).not.toContain("EOF_ENV_0");
       expect(files?.["env-0"]).toBe(multilineValue);
