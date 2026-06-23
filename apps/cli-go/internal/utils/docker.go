@@ -160,6 +160,14 @@ var (
 	registryAuth sync.Map
 )
 
+// registryAuthEntry memoises a single registry's encoded auth so that
+// loadRegistryAuth runs at most once per registry, even when concurrent image
+// pulls request the same registry simultaneously.
+type registryAuthEntry struct {
+	once  sync.Once
+	value string
+}
+
 func GetRegistryAuth() string {
 	return getRegistryAuth(GetRegistry())
 }
@@ -177,15 +185,17 @@ func getRegistryAuth(registry string) string {
 	if registry == "docker.io" {
 		registry = "index.docker.io"
 	}
-	if auth, ok := registryAuth.Load(registry); ok {
-		return auth.(string)
-	}
-	// Cache every result, including the empty string, so a missing or
-	// unreadable credential entry does not re-read the Docker config file (and
-	// re-print the warning) on each fallback candidate and retry.
-	value := loadRegistryAuth(registry)
-	registryAuth.Store(registry, value)
-	return value
+	// LoadOrStore + a per-key sync.Once guarantees loadRegistryAuth runs exactly
+	// once per registry, even under the concurrent image pulls `supabase start`
+	// issues. The result (including the empty string for a missing or unreadable
+	// credential entry) is then reused, so the Docker config file is read once
+	// and the credential warning is printed at most once per registry.
+	cached, _ := registryAuth.LoadOrStore(registry, &registryAuthEntry{})
+	entry := cached.(*registryAuthEntry)
+	entry.once.Do(func() {
+		entry.value = loadRegistryAuth(registry)
+	})
+	return entry.value
 }
 
 func loadRegistryAuth(registry string) string {
@@ -323,14 +333,22 @@ func DockerResolveImageIfNotCached(ctx context.Context, imageName string) (strin
 		}
 	}
 	var pullErrors []string
+	var pullErr error
 	for _, imageUrl := range imageUrls {
-		if err := DockerImagePullWithRetry(ctx, imageUrl, 2); err == nil {
+		err := DockerImagePullWithRetry(ctx, imageUrl, 2)
+		if err == nil {
 			return imageUrl, nil
-		} else {
-			pullErrors = append(pullErrors, fmt.Sprintf("%s: %v", imageUrl, err))
+		}
+		pullErrors = append(pullErrors, fmt.Sprintf("%s: %v", imageUrl, err))
+		// Keep one representative error wrapped (preferring a connection
+		// failure) so DockerStart's client.IsErrConnectionFailed unwrap still
+		// fires and surfaces the install hint. Flattening every cause to a
+		// string would drop the connection-failed type from the chain.
+		if pullErr == nil || client.IsErrConnectionFailed(err) {
+			pullErr = err
 		}
 	}
-	return "", errors.Errorf("failed to pull docker image from all registries: %s", strings.Join(pullErrors, "; "))
+	return "", errors.Errorf("failed to pull docker image from all registries: %s: %w", strings.Join(pullErrors, "; "), pullErr)
 }
 
 var suggestDockerInstall = "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop"

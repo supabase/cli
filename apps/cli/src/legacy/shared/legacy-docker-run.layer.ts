@@ -62,15 +62,6 @@ export const legacyDockerRunLayer: Layer.Layer<
       return bytes;
     };
 
-    const collectStream = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
-      // Collect raw chunks and decode once: decoding per-chunk allocates a
-      // decoder each time and corrupts any multi-byte UTF-8 sequence that
-      // straddles a chunk boundary. Mirrors the concat-then-decode idiom used
-      // for the buffered stderr paths below.
-      Stream.runCollect(stream).pipe(
-        Effect.map((chunks) => new TextDecoder().decode(concat(chunks))),
-      );
-
     const hasLocalImage = (image: string): Effect.Effect<boolean> =>
       containerCliExitCode(spawner, ["image", "inspect", image]).pipe(
         Effect.map((exitCode) => exitCode === 0),
@@ -88,14 +79,35 @@ export const legacyDockerRunLayer: Layer.Layer<
           detached: false,
           extendEnv: true,
         }).pipe(Effect.mapError(() => new Error("spawn")));
-        const [stdout, stderr, exitCode] = yield* Effect.all(
+        // Tee pull progress to the parent terminal in real time so a large,
+        // uncached pull does not look frozen — Go streams the same progress via
+        // `jsonmessage.DisplayJSONMessagesToStream`. Progress goes to stderr so
+        // it never corrupts the captured stdout of the `db dump` run path. The
+        // buffered copies are kept only to classify retryable failures and to
+        // report the error on a non-zero exit. Decode each stream separately so
+        // a multi-byte UTF-8 sequence is never split across interleaved chunks.
+        const stdoutChunks: Array<Uint8Array> = [];
+        const stderrChunks: Array<Uint8Array> = [];
+        yield* Effect.all(
           [
-            collectStream(handle.stdout),
-            collectStream(handle.stderr),
-            handle.exitCode.pipe(Effect.map(Number)),
+            Stream.runForEach(handle.stdout, (chunk) =>
+              Effect.sync(() => {
+                stdoutChunks.push(chunk);
+                globalThis.process.stderr.write(chunk);
+              }),
+            ),
+            Stream.runForEach(handle.stderr, (chunk) =>
+              Effect.sync(() => {
+                stderrChunks.push(chunk);
+                globalThis.process.stderr.write(chunk);
+              }),
+            ),
           ],
           { concurrency: "unbounded" },
         );
+        const exitCode = yield* handle.exitCode.pipe(Effect.map(Number));
+        const stdout = new TextDecoder().decode(concat(stdoutChunks));
+        const stderr = new TextDecoder().decode(concat(stderrChunks));
         return {
           exitCode,
           stderr: `${stdout}${stderr}`.trim(),
@@ -139,14 +151,12 @@ export const legacyDockerRunLayer: Layer.Layer<
                 break;
               }
             } else {
-              const message = String(result.cause);
-              failures.push(`${candidate} attempt ${attempt}: ${message}`);
-              if (
-                !shouldRetryPull(message) ||
-                attemptIndex === DOCKER_PULL_RETRY_DELAYS_MS.length
-              ) {
-                break;
-              }
+              // A failed effect (rather than a non-zero exit, which returns a
+              // value) means the container runtime could not be spawned at all.
+              // No registry candidate can fix a missing Docker/Podman binary or
+              // a down daemon, so stop here and surface the install hint instead
+              // of an opaque, repeated spawn error across every candidate.
+              return yield* Effect.fail(spawnError());
             }
 
             const delay = DOCKER_PULL_RETRY_DELAYS_MS[attemptIndex];
