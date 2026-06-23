@@ -1,5 +1,16 @@
+import { Effect } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { legacyStorageGatewayRuntimeLayer } from "../../../shared/legacy-storage-runtime.layer.ts";
+import {
+  LegacyStorageLinkedFlagDef,
+  LegacyStorageLocalFlagDef,
+  legacyAssertStorageTargetsExclusive,
+} from "../storage.flags.ts";
 import { legacyStorageMv } from "./mv.handler.ts";
 
 const config = {
@@ -9,12 +20,8 @@ const config = {
     Flag.withAlias("r"),
     Flag.withDescription("Recursively move a directory."),
   ),
-  local: Flag.boolean("local").pipe(
-    Flag.withDescription("Connects to Storage API of the local database."),
-  ),
-  linked: Flag.boolean("linked").pipe(
-    Flag.withDescription("Connects to Storage API of the linked project."),
-  ),
+  linked: LegacyStorageLinkedFlagDef,
+  local: LegacyStorageLocalFlagDef,
 } as const;
 
 export type LegacyStorageMvFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -28,5 +35,19 @@ export const legacyStorageMvCommand = Command.make("mv", config).pipe(
       description: "Recursively move a directory within storage",
     },
   ]),
-  Command.withHandler((flags) => legacyStorageMv(flags)),
+  Command.withHandler((flags) =>
+    Effect.gen(function* () {
+      const cliArgs = yield* CliArgs;
+      yield* legacyAssertStorageTargetsExclusive(cliArgs.args);
+      const telemetryFlags = {
+        recursive: flags.recursive,
+        linked: flags.linked,
+        local: flags.local,
+      };
+      return yield* legacyStorageMv(flags).pipe(
+        withLegacyCommandInstrumentation({ flags: telemetryFlags }),
+      );
+    }).pipe(withJsonErrorHandling),
+  ),
+  Command.provide(legacyStorageGatewayRuntimeLayer(["storage", "mv"])),
 );

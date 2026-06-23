@@ -1485,7 +1485,7 @@ describe("legacy seed buckets", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       const json = JSON.stringify(exit);
-      expect(json).toContain("LegacySeedAuthTokenError");
+      expect(json).toContain("LegacyStorageAuthTokenError");
       expect(json).toContain("Authorization failed for the access token and project ref pair");
       expect(json).not.toContain("unexpected get api keys status");
       // Fails before any remote Storage call.
