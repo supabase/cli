@@ -472,6 +472,38 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("sets the object Content-Type from the file bytes, not the extension", () => {
+    // Go sniffs the first 512 bytes with http.DetectContentType and only refines
+    // a generic text/plain by extension (objects.go:77-108). A PNG named `.txt`
+    // must upload as image/png (bytes win), and a JSON text file refines to
+    // application/json via its extension.
+    mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
+    // Real PNG magic bytes — written raw (a UTF-8 string would mangle 0x89).
+    writeFileSync(
+      join(tmp.current, "supabase", "assets", "logo.txt"),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]),
+    );
+    writeFileSync(join(tmp.current, "supabase", "assets", "data.json"), '{"a":1}');
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/object/", body: {} },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
+      const byKey = (suffix: string) => uploads.find((r) => r.url.endsWith(suffix));
+      // PNG content named .txt → image/png (the bytes win over the extension).
+      expect(byKey("images/logo.txt")?.headers["content-type"]).toBe("image/png");
+      // JSON text → text/plain sniff refined to application/json by extension.
+      expect(byKey("images/data.json")?.headers["content-type"]).toBe("application/json");
+    });
+  });
+
   it.live("resolves an absolute objects_path as-is (Go IsAbs guard)", () => {
     const absRoot = join(tmp.current, "external-assets");
     mkdirSync(absRoot, { recursive: true });

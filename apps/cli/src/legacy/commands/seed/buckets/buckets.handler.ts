@@ -41,7 +41,7 @@ import {
 } from "./buckets.errors.ts";
 import {
   legacyBucketObjectKey,
-  legacyContentTypeForPath,
+  legacyContentTypeForUpload,
   legacyParseFileSizeLimit,
 } from "./buckets.upload.ts";
 import type { LegacyBucketsFlags } from "./buckets.command.ts";
@@ -817,6 +817,28 @@ const handleVectorError = Effect.fnUntraced(function* (
   return yield* Effect.fail(error);
 });
 
+// Content-type sniff window: Go reads the first 512 bytes (io.LimitReader,
+// `pkg/storage/objects.go:78-79`).
+const LEGACY_SNIFF_LEN = 512;
+
+/**
+ * Read the first ≤512 bytes of a file for content-type sniffing, mirroring Go's
+ * `io.LimitReader(f, 512)` (`pkg/storage/objects.go:78-79`). Returns an empty
+ * buffer on any read error — an unreadable file then fails at the streaming
+ * upload open below, so the sniff result is moot in that case.
+ */
+const legacyReadSniffBytes = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  absPath: string,
+) {
+  return yield* fs.readFile(absPath).pipe(
+    Effect.map((bytes) =>
+      bytes.length > LEGACY_SNIFF_LEN ? bytes.subarray(0, LEGACY_SNIFF_LEN) : bytes,
+    ),
+    Effect.catch(() => Effect.succeed(new Uint8Array(0))),
+  );
+});
+
 // Port of `pkg/storage/batch.go:UpsertObjects` (+ object walk in objects.go).
 const uploadObjects = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -851,13 +873,19 @@ const uploadObjects = Effect.fnUntraced(function* (
         Effect.gen(function* () {
           const dstPath = legacyBucketObjectKey(name, displayRoot, file.displayPath);
           yield* output.raw(`Uploading: ${file.displayPath} => ${dstPath}\n`, "stderr");
+          // Content-type is byte-driven: Go sniffs the first 512 bytes with
+          // http.DetectContentType, refining only a generic text/plain by
+          // extension (`pkg/storage/objects.go:77-108`). Read the sniff window
+          // here (an unreadable file → empty sniff; the streaming open below then
+          // surfaces the real error), then stream the full file into the body.
+          const sniff = yield* legacyReadSniffBytes(fs, file.absPath);
           // Stream the file into the request body — Go opens the file and streams
           // the io.Reader (`pkg/storage/objects.go:94-127`) rather than buffering
           // each object fully into memory.
           yield* gateway.uploadObject(
             dstPath,
             file.absPath,
-            legacyContentTypeForPath(file.absPath),
+            legacyContentTypeForUpload(sniff, file.absPath),
           );
           summary.objects_uploaded.push(dstPath);
         }),

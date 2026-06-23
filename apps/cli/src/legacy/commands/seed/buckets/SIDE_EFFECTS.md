@@ -166,8 +166,12 @@ configured`, or a 404 on `ListVectorBuckets`), a WARNING is printed and object
   upload still proceeds; the command exits `0`.
 - **Idempotent.** Existing buckets are updated (after an overwrite confirm),
   objects are uploaded with `x-upsert: true`.
-- **Content-Type** for uploaded objects is derived from the file extension — a
-  best-effort approximation of Go's `http.DetectContentType` + `mime.TypeByExtension`.
+- **Content-Type** for uploaded objects mirrors Go (`objects.go:77-108`): the first
+  512 bytes are sniffed with a 1:1 port of `http.DetectContentType`
+  (`legacy/shared/legacy-detect-content-type.ts`), and only a generic `text/plain`
+  result is refined by extension via Go's built-in `mime` table. (Go's
+  `mime.TypeByExtension` also consults the host OS MIME database, which is
+  host-dependent and not reproduced; the deterministic built-in table is used.)
 - **Local Kong TLS.** When `[api.tls] enabled = true` for a local stack, the
   cert/key pairing is validated before seeding (Go `(*api).Validate`, `config.go:845-861`):
   `cert_path` and `key_path` must both be set or both absent; setting only one exits `1`.

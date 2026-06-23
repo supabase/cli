@@ -2,9 +2,16 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   legacyBucketObjectKey,
-  legacyContentTypeForPath,
+  legacyContentTypeForUpload,
   legacyParseFileSizeLimit,
 } from "./buckets.upload.ts";
+
+/** Latin-1 byte view of a string fixture. */
+function bytes(s: string): Uint8Array {
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
+  return out;
+}
 
 describe("legacyBucketObjectKey", () => {
   it("maps a single-file objects_path to <bucket>/<basename>", () => {
@@ -71,18 +78,43 @@ describe("legacyParseFileSizeLimit", () => {
   });
 });
 
-describe("legacyContentTypeForPath", () => {
-  it("maps a known extension", () => {
-    expect(legacyContentTypeForPath("/x/a.png")).toBe("image/png");
-    expect(legacyContentTypeForPath("/x/a.json")).toBe("application/json");
+describe("legacyContentTypeForUpload", () => {
+  // Go: http.DetectContentType (bytes win) then refine only generic text/plain
+  // by extension via mime.TypeByExtension (objects.go:77-108).
+  it("lets the sniffed bytes win over the extension (PNG named .txt)", () => {
+    const png = bytes("\x89PNG\x0D\x0A\x1A\x0A\x00\x00");
+    expect(legacyContentTypeForUpload(png, "/x/a.txt")).toBe("image/png");
   });
 
-  it("is case-insensitive on the extension", () => {
-    expect(legacyContentTypeForPath("/x/A.JSON")).toBe("application/json");
+  it("refines a generic text/plain sniff via the file extension", () => {
+    const text = bytes('{"a":1}'); // sniffs as text/plain
+    expect(legacyContentTypeForUpload(text, "/x/a.json")).toBe("application/json");
+    expect(legacyContentTypeForUpload(text, "/x/a.css")).toBe("text/css; charset=utf-8");
   });
 
-  it("falls back to application/octet-stream for unknown extensions", () => {
-    expect(legacyContentTypeForPath("/x/a.unknownext")).toBe("application/octet-stream");
-    expect(legacyContentTypeForPath("/x/noext")).toBe("application/octet-stream");
+  it("is case-insensitive on the extension for the text refinement", () => {
+    expect(legacyContentTypeForUpload(bytes("plain text"), "/x/A.JSON")).toBe("application/json");
+  });
+
+  it("keeps text/plain when a text file has no/unknown extension", () => {
+    // mime.TypeByExtension returns "" → Go keeps the sniffed text/plain.
+    expect(legacyContentTypeForUpload(bytes("plain text"), "/x/a.unknownext")).toBe(
+      "text/plain; charset=utf-8",
+    );
+    expect(legacyContentTypeForUpload(bytes("plain text"), "/x/noext")).toBe(
+      "text/plain; charset=utf-8",
+    );
+  });
+
+  it("does not refine a non-text sniff result by extension", () => {
+    // An SVG body sniffs as text/xml (not text/plain), so the .svg extension
+    // refinement is NOT applied — matches Go (refine gate is text/plain only).
+    const svg = bytes('<?xml version="1.0"?><svg></svg>');
+    expect(legacyContentTypeForUpload(svg, "/x/a.svg")).toBe("text/xml; charset=utf-8");
+  });
+
+  it("falls back to application/octet-stream for unrecognized binary content", () => {
+    const blob = bytes("\x00\x01\x02\x03\x04\x05garbage");
+    expect(legacyContentTypeForUpload(blob, "/x/a.bin")).toBe("application/octet-stream");
   });
 });
