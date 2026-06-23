@@ -1,6 +1,6 @@
 import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
 
-export interface LegacyFunctionRecord {
+interface LegacyFunctionRecord {
   readonly id: string;
   readonly slug: string;
   readonly name: string;
@@ -127,7 +127,7 @@ function optionalGoJsonFields(function_: Functions[number]) {
   };
 }
 
-export function parseFunctionsResponse(value: unknown): ParsedFunctions | undefined {
+function parseFunctionsResponse(value: unknown): ParsedFunctions | undefined {
   if (value === null) {
     return { functions: [], isNil: true };
   }
@@ -193,7 +193,7 @@ export function decodeFunctionsResponse(
   }
 }
 
-export function escapeGoJsonHtmlChars(text: string): string {
+function escapeGoJsonHtmlChars(text: string): string {
   return text
     .replaceAll("<", "\\u003c")
     .replaceAll(">", "\\u003e")
@@ -208,7 +208,7 @@ export function hasJsonContentType(response: {
   return (response.headers["content-type"] ?? "").includes("json");
 }
 
-export function toGoYamlFunction(function_: Functions[number]) {
+function toGoYamlFunction(function_: Functions[number]) {
   const base = baseFunctionFields(function_);
   return {
     createdat: base.created_at,
@@ -226,7 +226,7 @@ export function toGoYamlFunction(function_: Functions[number]) {
   };
 }
 
-export function toGoJsonFunction(function_: Functions[number]) {
+function toGoJsonFunction(function_: Functions[number]) {
   const base = baseFunctionFields(function_);
   return {
     created_at: base.created_at,
@@ -240,7 +240,7 @@ export function toGoJsonFunction(function_: Functions[number]) {
   };
 }
 
-export function toGoTomlFunction(function_: Functions[number]) {
+function toGoTomlFunction(function_: Functions[number]) {
   const base = baseFunctionFields(function_);
   return {
     CreatedAt: base.created_at,
