@@ -5,14 +5,14 @@ FROM library/kong:2.8.1 AS kong
 FROM axllent/mailpit:v1.30.2 AS mailpit
 FROM postgrest/postgrest:v14.13 AS postgrest
 FROM supabase/postgres-meta:v0.96.6 AS pgmeta
-FROM supabase/studio:2026.06.15-sha-a412298 AS studio
+FROM supabase/studio:2026.06.22-sha-2207d7f AS studio
 FROM darthsim/imgproxy:v3.8.0 AS imgproxy
-FROM supabase/edge-runtime:v1.74.1 AS edgeruntime
+FROM supabase/edge-runtime:v1.74.2 AS edgeruntime
 FROM timberio/vector:0.53.0-alpine AS vector
 FROM supabase/supavisor:2.9.7 AS supavisor
-FROM supabase/gotrue:v2.190.0 AS gotrue
+FROM supabase/gotrue:v2.191.0 AS gotrue
 FROM supabase/realtime:v2.108.0 AS realtime
-FROM supabase/storage-api:v1.60.26 AS storage
+FROM supabase/storage-api:v1.60.29 AS storage
 FROM supabase/logflare:1.44.3 AS logflare
 # Append to JobImages when adding new dependencies below
 FROM supabase/pgadmin-schema-diff:cli-0.0.5 AS differ
