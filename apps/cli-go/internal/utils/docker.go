@@ -332,23 +332,19 @@ func DockerResolveImageIfNotCached(ctx context.Context, imageName string) (strin
 			return "", errors.Errorf("failed to inspect docker image: %w", err)
 		}
 	}
-	var pullErrors []string
-	var pullErr error
+	var pullErrors []error
 	for _, imageUrl := range imageUrls {
 		err := DockerImagePullWithRetry(ctx, imageUrl, 2)
 		if err == nil {
 			return imageUrl, nil
 		}
-		pullErrors = append(pullErrors, fmt.Sprintf("%s: %v", imageUrl, err))
-		// Keep one representative error wrapped (preferring a connection
-		// failure) so DockerStart's client.IsErrConnectionFailed unwrap still
-		// fires and surfaces the install hint. Flattening every cause to a
-		// string would drop the connection-failed type from the chain.
-		if pullErr == nil || client.IsErrConnectionFailed(err) {
-			pullErr = err
-		}
+		pullErrors = append(pullErrors, fmt.Errorf("%s: %w", imageUrl, err))
 	}
-	return "", errors.Errorf("failed to pull docker image from all registries: %s: %w", strings.Join(pullErrors, "; "), pullErr)
+	// errors.Join keeps every candidate's cause chain, so DockerStart's
+	// client.IsErrConnectionFailed unwrap still fires (errors.As traverses the
+	// Unwrap() []error tree) without flattening causes to a string or
+	// duplicating a representative error in the message.
+	return "", errors.Errorf("failed to pull docker image from all registries: %w", errors.Join(pullErrors...))
 }
 
 var suggestDockerInstall = "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop"
