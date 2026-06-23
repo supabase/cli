@@ -623,6 +623,21 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("fails on an invalid storage-level file_size_limit even with nothing to seed", () => {
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      // No buckets and no vector buckets — but Go decodes storage.FileSizeLimit
+      // at config-load before buckets.Run's no-op path, so it still aborts. The
+      // config-load validations must run before the no-op short-circuit.
+      toml: '[storage]\nfile_size_limit = "bogus"\n',
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("invalid size");
+      expect(requests).toHaveLength(0);
+    });
+  });
+
   it.live("inherits the storage-level file_size_limit when a bucket omits it", () => {
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       // Custom storage-level limit; the bucket omits file_size_limit, so Go's

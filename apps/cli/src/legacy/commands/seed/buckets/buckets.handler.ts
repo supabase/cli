@@ -266,7 +266,32 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     const vectorBucketNames = Object.keys(config.storage.vector.buckets);
     const hasVectorBuckets = vectorBucketNames.length > 0;
 
-    // 3. Short-circuit: nothing to seed (ref present → never short-circuits).
+    // 3. Config-load-time validations run BEFORE the no-op short-circuit: Go
+    // decodes the whole config (storage.FileSizeLimit, bucket sizes) and runs
+    // ValidateBucketName during config.Load — before `buckets.Run` can take its
+    // no-op path — so an invalid value fails even when there's nothing to seed.
+    //
+    // 3a. Bucket names (Go ValidateBucketName, config.go:899-903).
+    for (const name of bucketNames) {
+      yield* legacyValidateBucketName(name);
+    }
+
+    // 3b. Storage-level file_size_limit, parsed unconditionally (Go unmarshals
+    // `storage.FileSizeLimit` at config.Load regardless of buckets).
+    const storageFileSizeLimitBytes = yield* parseFileSizeLimitOrFail(
+      config.storage.file_size_limit,
+    );
+
+    // 3c. Per-bucket props (sizes parsed before any Storage call).
+    const bucketPropsByName = new Map<string, LegacyUpsertBucketProps>();
+    for (const [name, bucket] of Object.entries(bucketsConfig)) {
+      bucketPropsByName.set(
+        name,
+        yield* computeBucketProps(loaded.document, name, bucket, storageFileSizeLimitBytes),
+      );
+    }
+
+    // 3d. Short-circuit: nothing to seed (ref present → never short-circuits).
     if (projectRef === "" && bucketNames.length === 0 && !hasVectorBuckets) {
       // Go emits nothing in text mode; in the additive json/stream-json modes a
       // scripted caller still expects a result object, so emit an empty summary.
@@ -274,31 +299,6 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
         yield* output.success("", { ...emptySummary() });
       }
       return;
-    }
-
-    // 3a. Validate bucket names up front (Go ValidateBucketName, config.go:899-903),
-    // before `computeBucketProps` or any Storage call.
-    for (const name of bucketNames) {
-      yield* legacyValidateBucketName(name);
-    }
-
-    // 3b. Parse the storage-level file_size_limit once, up front and
-    // unconditionally — Go unmarshals `storage.FileSizeLimit` during
-    // config.Load, so an invalid value (e.g. "bogus") aborts before any Storage
-    // call even when no bucket inherits it or only vector buckets are configured.
-    const storageFileSizeLimitBytes = yield* parseFileSizeLimitOrFail(
-      config.storage.file_size_limit,
-    );
-
-    // 3c. Resolve + validate every bucket's props up front (Go parses sizes at
-    // config-load, before NewStorageAPI), so an invalid/omitted file_size_limit
-    // is settled before any Storage list/create/update.
-    const bucketPropsByName = new Map<string, LegacyUpsertBucketProps>();
-    for (const [name, bucket] of Object.entries(bucketsConfig)) {
-      bucketPropsByName.set(
-        name,
-        yield* computeBucketProps(loaded.document, name, bucket, storageFileSizeLimitBytes),
-      );
     }
 
     // 4. Build the Storage service-gateway client (local or remote).
