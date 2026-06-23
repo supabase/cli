@@ -33,6 +33,7 @@
     "dev:legacy": "pnpm exec bun src/legacy/main.ts",
     "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
     "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name --coverage.enabled",
+    "test:live": "nx run-many -t test:live --projects=$npm_package_name",
     "test:smoke": "bun run tests/smoke-test.ts",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
@@ -107,7 +108,8 @@
     "entry": [
       "src/shared/cli/bin.ts",
       "src/**/*.test.ts",
-      "src/**/*.e2e.test.ts"
+      "src/**/*.e2e.test.ts",
+      "src/**/*.live.test.ts"
     ],
     "ignore": [
       "scripts/*.ts",
