@@ -50,4 +50,33 @@ describe("supabase seed buckets (legacy)", () => {
       "if any flags in the group [linked local] are set none of the others can be",
     );
   });
+
+  // Go registers --linked/--local on seedCmd.PersistentFlags() (seed.go:27-29),
+  // so they're accepted BEFORE the subcommand too. These two cases exercise the
+  // real parser boundary, which the in-process suites bypass.
+  test(
+    "accepts --local before the subcommand (Go PersistentFlags)",
+    { timeout: E2E_TIMEOUT_MS },
+    async () => {
+      const { exitCode, stdout, stderr } = await runSupabase(["seed", "--local", "buckets"], {
+        entrypoint: "legacy",
+        cwd: projectDir,
+      });
+      // Parsed (no "Unrecognized flag") and routed to the local no-op path.
+      expect(`${stdout}${stderr}`).not.toContain("Unrecognized flag");
+      expect(exitCode).toBe(0);
+      expect(stdout.trim()).toBe("");
+    },
+  );
+
+  test("rejects --local --linked before the subcommand", { timeout: E2E_TIMEOUT_MS }, async () => {
+    const { exitCode, stdout, stderr } = await runSupabase(
+      ["seed", "--local", "--linked", "buckets"],
+      { entrypoint: "legacy", cwd: projectDir },
+    );
+    expect(exitCode).toBe(1);
+    expect(`${stdout}${stderr}`).toContain(
+      "if any flags in the group [linked local] are set none of the others can be",
+    );
+  });
 });
