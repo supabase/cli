@@ -571,9 +571,6 @@ func (c *config) load(v *viper.Viper) error {
 		if k := fmt.Sprintf("functions.%s.enabled", key); !v.IsSet(k) {
 			v.Set(k, true)
 		}
-		if k := fmt.Sprintf("functions.%s.verify_jwt", key); !v.IsSet(k) {
-			v.Set(k, true)
-		}
 	}
 	// Set default values when [auth.email.smtp] is defined
 	if smtp := v.GetStringMap("auth.email.smtp"); len(smtp) > 0 {

@@ -693,6 +693,7 @@ func TestLoadFunctionImportMap(t *testing.T) {
 		assert.NoError(t, config.Load("", fsys))
 		// Check that deno.json was set as import map
 		assert.Equal(t, "supabase/functions/hello/deno.json", config.Functions["hello"].ImportMap)
+		assert.Nil(t, config.Functions["hello"].VerifyJWT)
 	})
 
 	t.Run("uses deno.jsonc as import map when present", func(t *testing.T) {

@@ -105,6 +105,27 @@ func TestUpsertFunctions(t *testing.T) {
 		assert.Empty(t, gock.GetUnmatchedRequests())
 	})
 
+	t.Run("skips unchanged function when verify_jwt is not configured", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(mockApiHost).
+			Get("/v1/projects/" + mockProject + "/functions").
+			Reply(http.StatusOK).
+			JSON([]api.FunctionResponse{{
+				Slug:       "test-a",
+				VerifyJwt:  cast.Ptr(false),
+				EzbrSha256: cast.Ptr("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+			}})
+		// Run test
+		err := client.UpsertFunctions(context.Background(), config.FunctionConfig{
+			"test-a": {Enabled: true},
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
+	})
+
 	t.Run("handles concurrent deploy", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
