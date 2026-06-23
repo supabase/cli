@@ -28,9 +28,14 @@ interface LegacyFunctionRecord {
 }
 
 type Functions = ReadonlyArray<LegacyFunctionRecord>;
+type ParsedFunctions = {
+  readonly functions: Functions;
+  readonly isNil: boolean;
+};
 
 const INVALID_FIELD = Symbol("invalid function field");
 type InvalidField = typeof INVALID_FIELD;
+const EMPTY_FUNCTION_RECORD: Record<string, unknown> = {};
 
 class LegacyFunctionsListNetworkError extends Data.TaggedError("LegacyFunctionsListNetworkError")<{
   readonly message: string;
@@ -165,24 +170,28 @@ function readRequiredFunctionFields(
   };
 }
 
-function parseFunctionsResponse(value: unknown): Functions | undefined {
+function parseFunctionsResponse(value: unknown): ParsedFunctions | undefined {
+  if (value === null) {
+    return { functions: [], isNil: true };
+  }
   if (!Array.isArray(value)) {
     return undefined;
   }
   const functions: LegacyFunctionRecord[] = [];
   for (const item of value) {
-    if (!isRecord(item)) {
+    const record = item === null ? EMPTY_FUNCTION_RECORD : isRecord(item) ? item : undefined;
+    if (record === undefined) {
       return undefined;
     }
-    const required = readRequiredFunctionFields(item);
+    const required = readRequiredFunctionFields(record);
     if (required === undefined) {
       return undefined;
     }
-    const verifyJwt = readOptionalBoolean(item, "verify_jwt");
-    const importMap = readOptionalBoolean(item, "import_map");
-    const entrypointPath = readOptionalString(item, "entrypoint_path");
-    const importMapPath = readOptionalNullableString(item, "import_map_path");
-    const ezbrSha256 = readOptionalString(item, "ezbr_sha256");
+    const verifyJwt = readOptionalBoolean(record, "verify_jwt");
+    const importMap = readOptionalBoolean(record, "import_map");
+    const entrypointPath = readOptionalString(record, "entrypoint_path");
+    const importMapPath = readOptionalNullableString(record, "import_map_path");
+    const ezbrSha256 = readOptionalString(record, "ezbr_sha256");
     if (
       verifyJwt === INVALID_FIELD ||
       importMap === INVALID_FIELD ||
@@ -201,12 +210,12 @@ function parseFunctionsResponse(value: unknown): Functions | undefined {
       ezbr_sha256: ezbrSha256,
     });
   }
-  return functions;
+  return { functions, isNil: false };
 }
 
 function decodeFunctionsResponse(
   rawBody: string,
-): Effect.Effect<Functions, LegacyFunctionsListNetworkError> {
+): Effect.Effect<ParsedFunctions, LegacyFunctionsListNetworkError> {
   return Effect.gen(function* () {
     const parse = (): unknown => JSON.parse(rawBody);
     const parsed = yield* Effect.try({
@@ -228,7 +237,12 @@ function decodeFunctionsResponse(
 }
 
 function escapeGoJsonHtmlChars(text: string): string {
-  return text.replaceAll("<", "\\u003c").replaceAll(">", "\\u003e").replaceAll("&", "\\u0026");
+  return text
+    .replaceAll("<", "\\u003c")
+    .replaceAll(">", "\\u003e")
+    .replaceAll("&", "\\u0026")
+    .replaceAll("\u2028", "\\u2028")
+    .replaceAll("\u2029", "\\u2029");
 }
 
 function hasJsonContentType(response: { readonly headers: Readonly<Record<string, string>> }) {
@@ -353,10 +367,11 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
         message: `unexpected list functions status ${response.status}: ${body}`,
       });
     }
-    const functions = yield* decodeFunctionsResponse(rawBody).pipe(
+    const parsedFunctions = yield* decodeFunctionsResponse(rawBody).pipe(
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
     );
     yield* fetching?.clear() ?? Effect.void;
+    const { functions, isNil } = parsedFunctions;
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
@@ -366,7 +381,11 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
       });
     }
     if (goFmt === "json") {
-      yield* output.raw(escapeGoJsonHtmlChars(encodeGoJson(functions.map(toGoJsonFunction))));
+      yield* output.raw(
+        escapeGoJsonHtmlChars(
+          isNil ? encodeGoJson(null) : encodeGoJson(functions.map(toGoJsonFunction)),
+        ),
+      );
       return;
     }
     if (goFmt === "yaml") {

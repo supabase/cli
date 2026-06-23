@@ -43,6 +43,11 @@ const HTML_FUNCTION: Functions[number] = {
   name: "<Hello>&World>",
 };
 
+const LINE_SEPARATOR_FUNCTION: Functions[number] = {
+  ...SAMPLE_FUNCTION,
+  name: "Hello\u2028World\u2029",
+};
+
 const INVALID_OPTIONAL_FUNCTION = {
   ...SAMPLE_FUNCTION,
   verify_jwt: "true",
@@ -80,7 +85,10 @@ interface SetupOpts {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = mockLegacyPlatformApi({
-    response: { status: opts.status ?? 200, body: opts.response ?? [SAMPLE_FUNCTION] },
+    response: {
+      status: opts.status ?? 200,
+      body: Object.hasOwn(opts, "response") ? opts.response : [SAMPLE_FUNCTION],
+    },
     network: opts.network,
   });
   const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
@@ -96,7 +104,10 @@ function setup(opts: SetupOpts = {}) {
 function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = mockLegacyPlatformApi({
-    response: { status: opts.status ?? 200, body: opts.response ?? [SAMPLE_FUNCTION] },
+    response: {
+      status: opts.status ?? 200,
+      body: Object.hasOwn(opts, "response") ? opts.response : [SAMPLE_FUNCTION],
+    },
     network: opts.network,
   });
   const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
@@ -146,6 +157,15 @@ describe("legacy functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("renders an empty table when the API returns null", () => {
+    const { layer, out } = setup({ response: null });
+    return Effect.gen(function* () {
+      yield* legacyFunctionsList({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain("UPDATED_AT (UTC)");
+      expect(out.stdoutText).not.toContain("Hello World");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("emits a success event with { functions } for --output-format=json", () => {
     const { layer, out } = setup({ format: "json" });
     return Effect.gen(function* () {
@@ -183,8 +203,35 @@ describe("legacy functions list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("escapes Go JSON line separator characters", () => {
+    const { layer, out } = setup({ goOutput: "json", response: [LINE_SEPARATOR_FUNCTION] });
+    return Effect.gen(function* () {
+      yield* legacyFunctionsList({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain('"name": "Hello\\u2028World\\u2029"');
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("emits null for --output json when the API returns a null function list", () => {
+    const { layer, out } = setup({ goOutput: "json", response: null });
+    return Effect.gen(function* () {
+      yield* legacyFunctionsList({ projectRef: Option.none() });
+      expect(out.stdoutText).toBe("null\n");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("preserves Go zero values for omitted non-pointer fields", () => {
     const { layer, out } = setup({ goOutput: "json", response: [{}] });
+    return Effect.gen(function* () {
+      yield* legacyFunctionsList({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain('"created_at": 0');
+      expect(out.stdoutText).toContain('"id": ""');
+      expect(out.stdoutText).toContain('"status": ""');
+      expect(out.stdoutText).toContain('"version": 0');
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("preserves null function entries as zero-value rows", () => {
+    const { layer, out } = setup({ goOutput: "json", response: [null] });
     return Effect.gen(function* () {
       yield* legacyFunctionsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain('"created_at": 0');
