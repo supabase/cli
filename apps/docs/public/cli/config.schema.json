@@ -2921,7 +2921,7 @@
         }
       ]
     },
-    "inbucket": {
+    "local_smtp": {
       "type": "object",
       "properties": {
         "enabled": {
@@ -6466,7 +6466,7 @@
                       }
                     ]
                   },
-                  "inbucket": {
+                  "local_smtp": {
                     "type": "object",
                     "properties": {
                       "enabled": {
