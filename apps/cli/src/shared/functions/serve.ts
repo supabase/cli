@@ -44,6 +44,7 @@ import {
   isDockerRunning,
   localDockerId,
   normalizeProjectId,
+  rawFunctionConfigRecord,
   resolveEdgeRuntimeVersion,
   resolveFunctionConfigs,
   runChildProcess,
@@ -152,6 +153,7 @@ interface ServeResolvedConfig {
   readonly edgeRuntime: PlainServeEdgeRuntimeConfig;
   readonly configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
   readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
+  readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   readonly configPath?: string;
 }
 
@@ -701,6 +703,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
     edgeRuntime,
     configDeclaredFunctions,
     configFunctions,
+    rawConfigFunctions: rawFunctionConfigRecord(loadedConfig?.document),
     configPath: loadedConfig?.path,
   };
 });
@@ -808,7 +811,10 @@ function toFunctionContainerConfig(
   };
 
   return {
-    verifyJWT: config.verifyJwt,
+    // The Go serve path defaults verifyJWT to true when verify_jwt is not set in
+    // config.toml (serve.go: `verifyJWT := true; if fc.VerifyJWT != nil { ... }`),
+    // unlike deploy which omits it. Mirror that default here.
+    verifyJWT: config.verifyJwt ?? true,
     entrypointPath: toContainerPath(config.entrypoint),
     ...(config.importMap.length === 0 ? {} : { importMapPath: toContainerPath(config.importMap) }),
     ...(config.staticFiles.length === 0
@@ -1294,6 +1300,7 @@ const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
     supabaseDir,
     configFunctions: config.configFunctions,
     configDeclaredFunctions: config.configDeclaredFunctions,
+    rawConfigFunctions: config.rawConfigFunctions,
     importMapOverride,
     noVerifyJwtOverride,
   });

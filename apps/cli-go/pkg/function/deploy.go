@@ -28,6 +28,10 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 	if s.eszip != nil {
 		return s.UpsertFunctions(ctx, functionConfig)
 	}
+	remoteFunctions, err := s.listRemoteFunctionsForVerifyJwt(ctx, functionConfig)
+	if err != nil {
+		return err
+	}
 	// Convert all paths in functions config to relative when using api deploy
 	var toDeploy []FunctionDeployMetadata
 	for slug, fc := range functionConfig {
@@ -39,7 +43,12 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 			Name:           &slug,
 			EntrypointPath: toRelPath(fc.Entrypoint),
 			ImportMapPath:  cast.Ptr(toRelPath(fc.ImportMap)),
-			VerifyJwt:      &fc.VerifyJWT,
+			VerifyJwt:      fc.VerifyJWT,
+		}
+		if meta.VerifyJwt == nil {
+			if remote, ok := remoteFunctions[slug]; ok {
+				meta.VerifyJwt = remote.VerifyJwt
+			}
 		}
 		files := make([]string, len(fc.StaticFiles))
 		for i, sf := range fc.StaticFiles {
@@ -56,6 +65,30 @@ func (s *EdgeRuntimeAPI) Deploy(ctx context.Context, functionConfig config.Funct
 		return err
 	}
 	return s.bulkUpload(ctx, toDeploy, fsys)
+}
+
+func (s *EdgeRuntimeAPI) listRemoteFunctionsForVerifyJwt(ctx context.Context, functionConfig config.FunctionConfig) (map[string]api.FunctionResponse, error) {
+	needsRemote := false
+	for _, fc := range functionConfig {
+		if fc.Enabled && fc.VerifyJWT == nil {
+			needsRemote = true
+			break
+		}
+	}
+	if !needsRemote {
+		return nil, nil
+	}
+	resp, err := s.client.V1ListAllFunctionsWithResponse(ctx, s.project)
+	if err != nil {
+		return nil, errors.Errorf("failed to list functions: %w", err)
+	} else if resp.JSON200 == nil {
+		return nil, errors.Errorf("unexpected list functions status %d: %s", resp.StatusCode(), string(resp.Body))
+	}
+	remoteFunctions := make(map[string]api.FunctionResponse, len(*resp.JSON200))
+	for _, function := range *resp.JSON200 {
+		remoteFunctions[function.Slug] = function
+	}
+	return remoteFunctions, nil
 }
 
 func toRelPath(fp string) string {

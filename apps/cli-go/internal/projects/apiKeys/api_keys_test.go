@@ -73,3 +73,58 @@ func TestProjectApiKeysCommand(t *testing.T) {
 		assert.ErrorContains(t, err, "unexpected get api keys status 503:")
 	})
 }
+
+func TestToEnv(t *testing.T) {
+	t.Run("maps legacy keys by name only", func(t *testing.T) {
+		envs := ToEnv([]api.ApiKeyResponse{{
+			Name:   "anon",
+			ApiKey: nullable.NewNullableWithValue("anon-key"),
+		}, {
+			Name:   "service_role",
+			ApiKey: nullable.NewNullNullable[string](),
+		}})
+		assert.Equal(t, map[string]string{
+			"SUPABASE_ANON_KEY":         "anon-key",
+			"SUPABASE_SERVICE_ROLE_KEY": "******",
+		}, envs)
+	})
+
+	t.Run("adds SUPABASE_PUBLISHABLE_KEY for new-format keys", func(t *testing.T) {
+		envs := ToEnv([]api.ApiKeyResponse{{
+			Name:   "default",
+			Type:   nullable.NewNullableWithValue(api.ApiKeyResponseTypePublishable),
+			ApiKey: nullable.NewNullableWithValue("sb_publishable_test"),
+		}, {
+			Name:   "default",
+			Type:   nullable.NewNullableWithValue(api.ApiKeyResponseTypeSecret),
+			ApiKey: nullable.NewNullableWithValue("sb_secret_test"),
+		}})
+		assert.Equal(t, "sb_publishable_test", envs["SUPABASE_PUBLISHABLE_KEY"])
+		assert.Equal(t, "sb_secret_test", envs["SUPABASE_DEFAULT_KEY"])
+	})
+
+	t.Run("maps default publishable to SUPABASE_PUBLISHABLE_KEY alongside custom names", func(t *testing.T) {
+		envs := ToEnv([]api.ApiKeyResponse{{
+			Name:   "mobile",
+			Type:   nullable.NewNullableWithValue(api.ApiKeyResponseTypePublishable),
+			ApiKey: nullable.NewNullableWithValue("sb_publishable_mobile"),
+		}, {
+			Name:   "default",
+			Type:   nullable.NewNullableWithValue(api.ApiKeyResponseTypePublishable),
+			ApiKey: nullable.NewNullableWithValue("sb_publishable_default"),
+		}})
+		assert.Equal(t, map[string]string{
+			"SUPABASE_MOBILE_KEY":      "sb_publishable_mobile",
+			"SUPABASE_PUBLISHABLE_KEY": "sb_publishable_default",
+		}, envs)
+	})
+
+	t.Run("masks null publishable api key", func(t *testing.T) {
+		envs := ToEnv([]api.ApiKeyResponse{{
+			Name:   "default",
+			Type:   nullable.NewNullableWithValue(api.ApiKeyResponseTypePublishable),
+			ApiKey: nullable.NewNullNullable[string](),
+		}})
+		assert.Equal(t, "******", envs["SUPABASE_PUBLISHABLE_KEY"])
+	})
+}
