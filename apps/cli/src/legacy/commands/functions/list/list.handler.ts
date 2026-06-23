@@ -330,10 +330,17 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
-
-  const ref = yield* resolver.resolve(flags.projectRef);
+  let resolvedProjectRef = Option.none<string>();
 
   yield* Effect.gen(function* () {
+    const ref = yield* resolver.resolve(flags.projectRef).pipe(
+      Effect.tap((projectRef) =>
+        Effect.sync(() => {
+          resolvedProjectRef = Option.some(projectRef);
+        }),
+      ),
+    );
+
     const fetching =
       output.format === "text" ? yield* output.task("Fetching functions...") : undefined;
     const response = yield* api.executeRaw(operationDefinitions.v1ListAllFunctions, { ref }).pipe(
@@ -393,7 +400,7 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
       return;
     }
     if (goFmt === "toml") {
-      yield* output.raw(encodeToml({ functions: functions.map(toGoTomlFunction) }) + "\n");
+      yield* output.raw(encodeToml({ functions: functions.map(toGoTomlFunction) }));
       return;
     }
     if (goFmt === "pretty") {
@@ -407,5 +414,15 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
     }
 
     yield* output.raw(renderFunctionsTable(functions));
-  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
+  }).pipe(
+    Effect.ensuring(
+      Effect.suspend(() =>
+        Option.match(resolvedProjectRef, {
+          onNone: () => Effect.void,
+          onSome: (ref) => linkedProjectCache.cache(ref),
+        }),
+      ),
+    ),
+    Effect.ensuring(telemetryState.flush),
+  );
 });

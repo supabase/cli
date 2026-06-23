@@ -29,6 +29,7 @@
 | Variable                | Purpose                                                        | Required?                                                 |
 | ----------------------- | -------------------------------------------------------------- | --------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)           | no (falls back to keyring -> `~/.supabase/access-token`)  |
+| `SUPABASE_HOME`         | overrides where `telemetry.json` is read and written           | no (defaults to `~/.supabase`)                            |
 | `SUPABASE_PROFILE`      | select a built-in profile or YAML profile file with `api_url:` | no (falls back to `~/.supabase/profile` -> `supabase`)    |
 | `SUPABASE_PROJECT_ID`   | provides the project ref when `--project-ref` is unset         | no (falls back to `<workdir>/supabase/.temp/project-ref`) |
 | `SUPABASE_WORKDIR`      | sets `<workdir>` for local Supabase temp files                 | no (falls back to `--workdir` -> current working dir)     |

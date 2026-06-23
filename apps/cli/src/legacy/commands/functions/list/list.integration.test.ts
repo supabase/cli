@@ -1,6 +1,6 @@
 import type { V1ListAllFunctionsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Layer, Option } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
@@ -12,6 +12,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { legacyFunctionsList } from "./list.handler.ts";
@@ -277,6 +278,15 @@ ImportMap = false
 Name = "Hello World"`);
       expect(out.stdoutText).not.toContain("created_at");
       expect(out.stdoutText).not.toContain("entrypoint_path");
+      expect(out.stdoutText.endsWith("\n\n")).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("emits a single trailing newline for empty --output toml", () => {
+    const { layer, out } = setup({ goOutput: "toml", response: [] });
+    return Effect.gen(function* () {
+      yield* legacyFunctionsList({ projectRef: Option.none() });
+      expect(out.stdoutText).toBe("functions = []\n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -468,6 +478,32 @@ Name = "Hello World"`);
       yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("flushes telemetry when project ref resolution fails before the API call", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+    const telemetry = mockLegacyTelemetryStateTracked();
+    const cache = mockLegacyLinkedProjectCacheTracked();
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig,
+        telemetry: telemetry.layer,
+        linkedProjectCache: cache.layer,
+      }),
+      Layer.succeed(LegacyProjectRefResolver, {
+        resolve: () => Effect.fail(new Error("no linked project")),
+      }),
+    );
+    return Effect.gen(function* () {
+      yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
+      expect(telemetry.flushed).toBe(true);
+      expect(cache.cached).toBe(false);
+      expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
