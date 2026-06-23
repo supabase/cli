@@ -240,6 +240,7 @@ function localDockerId(name: string, projectId: string) {
 
 const dockerCliProjectLabel = "com.supabase.cli.project";
 const dockerComposeProjectLabel = "com.docker.compose.project";
+const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY", "NPM_AUTH_TOKEN"] as const;
 
 function dockerProjectLabels(projectId: string) {
   return {
@@ -265,6 +266,13 @@ function dockerBindHostPath(bind: string) {
   return separatorIndex === -1 ? withoutMode : withoutMode.slice(0, separatorIndex);
 }
 
+function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
+  return dockerNpmEnvNames.flatMap((name) => {
+    const value = env[name];
+    return value === undefined || value === "" ? [] : [name];
+  });
+}
+
 function toApiRelativePath(cwd: string, hostPath: string) {
   const resolved = resolve(hostPath);
   const relativePath = relative(cwd, resolved);
@@ -281,6 +289,17 @@ function isContainedPath(root: string, candidate: string) {
 
 function isContainedInAnyPath(roots: ReadonlyArray<string>, candidate: string) {
   return roots.some((root) => isContainedPath(root, candidate));
+}
+
+async function realpathIfExists(pathname: string) {
+  try {
+    return await realpath(resolve(pathname));
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return resolve(pathname);
+    }
+    throw error;
+  }
 }
 
 function humanSize(bytes: number) {
@@ -656,7 +675,8 @@ async function walkImportPaths(
       }
 
       const resolvedModule = resolve(modulePath);
-      if (!isContainedInAnyPath(allowedRoots, resolvedModule)) {
+      const containmentPath = await realpathIfExists(resolvedModule);
+      if (!isContainedInAnyPath(allowedRoots, containmentPath)) {
         await onWarning(`WARN: Skipping import path outside project root: ${modulePath}\n`);
         continue;
       }
@@ -1072,6 +1092,17 @@ async function buildDockerBinds(
   );
   await forEachLocalImportMapTarget(importMap, async (target) => {
     await appendBindWithinRoots(importMapAllowedRoots, target);
+    if ((await stat(target)).isDirectory()) {
+      return;
+    }
+    await walkLocalImportMapTargetImports(
+      importMap,
+      target,
+      importMapAllowedRoots,
+      projectRoot,
+      appendImportMapBind,
+      async () => {},
+    );
   });
   for (const pattern of config.staticFiles) {
     let files: ReadonlyArray<string>;
@@ -1256,8 +1287,8 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     ) {
       command.push("-e", "DENO_NO_PACKAGE_JSON=1");
     }
-    if (process.env["NPM_CONFIG_REGISTRY"] !== undefined) {
-      command.push("-e", `NPM_CONFIG_REGISTRY=${process.env["NPM_CONFIG_REGISTRY"]}`);
+    for (const env of dockerNpmEnv()) {
+      command.push("-e", env);
     }
 
     command.push(

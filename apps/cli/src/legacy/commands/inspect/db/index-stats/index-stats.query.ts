@@ -7,16 +7,23 @@ import {
 import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
 
 // Verbatim from `apps/cli-go/internal/inspect/index_stats/index_stats.sql`.
-const SQL = `-- Combined index statistics: size, usage percent, seq scans, and mark unused
+const SQL = `-- Combined index statistics: size, usage percent, seq scans, mark unused, expose table + columns
 WITH idx_sizes AS (
   SELECT
     i.indexrelid AS oid,
     FORMAT('%I.%I', n.nspname, c.relname) AS name,
+    FORMAT('%I.%I', tn.nspname, tc.relname) AS table_name,
+    (
+      SELECT STRING_AGG(pg_get_indexdef(i.indexrelid, ord::int, false), ',' ORDER BY ord)
+      FROM unnest(i.indkey::int[]) WITH ORDINALITY AS k(attnum, ord)
+    ) AS columns,
     pg_relation_size(i.indexrelid) AS index_size_bytes
   FROM pg_stat_user_indexes ui
   JOIN pg_index i ON ui.indexrelid = i.indexrelid
   JOIN pg_class c ON ui.indexrelid = c.oid
   JOIN pg_namespace n ON c.relnamespace = n.oid
+  JOIN pg_class tc ON tc.oid = i.indrelid
+  JOIN pg_namespace tn ON tn.oid = tc.relnamespace
   WHERE NOT n.nspname LIKE ANY($1)
 ),
 idx_usage AS (
@@ -46,6 +53,8 @@ usage_pct AS (
 )
 SELECT
   s.name,
+  s.table_name AS "table",
+  s.columns,
   pg_size_pretty(s.index_size_bytes) AS size,
   COALESCE(up.percent_used, 0)::text || '%' AS percent_used,
   COALESCE(u.idx_scans, 0) AS index_scans,
@@ -66,9 +75,20 @@ export const legacyIndexStatsSpec: LegacyInspectQuerySpec = {
   name: "index-stats",
   sql: SQL,
   params: () => [legacyLikeEscapeSchema(LEGACY_INTERNAL_SCHEMAS)],
-  headers: ["Name", "Size", "Percent used", "Index scans", "Seq scans", "Unused"],
+  headers: [
+    "Name",
+    "Table",
+    "Columns",
+    "Size",
+    "Percent used",
+    "Index scans",
+    "Seq scans",
+    "Unused",
+  ],
   project: (row) => [
     legacyInspectText(row["name"]),
+    legacyInspectText(row["table"]),
+    legacyInspectText(row["columns"]),
     legacyInspectText(row["size"]),
     legacyInspectText(row["percent_used"]),
     legacyInspectInt(row["index_scans"]),

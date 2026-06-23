@@ -526,7 +526,11 @@ vector --config /etc/vector/vector.yaml
 					// Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
 					"KONG_NGINX_PROXY_PROXY_BUFFER_SIZE=160k",
 					"KONG_NGINX_PROXY_PROXY_BUFFERS=64 160k",
-					"KONG_NGINX_WORKER_PROCESSES=1",
+					// Default to a single nginx worker to minimize the local stack's
+					// memory usage (Ref: #1271). Operators who need more throughput can
+					// override this from their shell, e.g. KONG_NGINX_WORKER_PROCESSES=auto
+					// for one worker per CPU core.
+					envOrDefault("KONG_NGINX_WORKER_PROCESSES", "1"),
 					// Use modern TLS certificate
 					"KONG_SSL_CERT=/home/kong/localhost.crt",
 					"KONG_SSL_CERT_KEY=/home/kong/localhost.key",
@@ -1407,6 +1411,15 @@ func appendGotrueExternalProviderEnv(env []string) []string {
 	return env
 }
 
+// envOrDefault formats a "KEY=value" container env entry, preferring the
+// operator's shell value for key when set and otherwise falling back to def.
+func envOrDefault(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok {
+		return key + "=" + v
+	}
+	return key + "=" + def
+}
+
 // appendStorageVectorEnv wires the storage container with the vector-bucket
 // env contract from supabase/storage#1094. The CLI provides three CLI-owned
 // defaults that the operator can override from their shell environment:
@@ -1422,12 +1435,6 @@ func appendGotrueExternalProviderEnv(env []string) []string {
 //     credentials, but operators are expected to override this to reach an
 //     external postgres in self-hosted setups.
 func appendStorageVectorEnv(env []string, dbConfig pgconn.Config) []string {
-	envOrDefault := func(key, def string) string {
-		if v, ok := os.LookupEnv(key); ok {
-			return key + "=" + v
-		}
-		return key + "=" + def
-	}
 	defaultVectorURL := fmt.Sprintf(
 		"postgresql://postgres:%s@%s:%d/%s",
 		dbConfig.Password,

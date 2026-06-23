@@ -103,6 +103,7 @@ interface SetupOpts {
   readonly poolerStatus?: number;
   readonly poolerBody?: Pooler;
   readonly apiKeysStatus?: number;
+  readonly apiKeysBody?: ApiKeys;
   readonly skipPrimary?: boolean;
 }
 
@@ -113,6 +114,7 @@ function buildApi(opts: SetupOpts) {
   const poolerStatus = opts.poolerStatus ?? 200;
   const poolerBody = opts.poolerBody ?? POOLER;
   const apiKeysStatus = opts.apiKeysStatus ?? 200;
+  const apiKeysBody = opts.apiKeysBody ?? KEYS;
   return mockLegacyPlatformApi({
     handler: (request) =>
       Effect.sync(() => {
@@ -130,7 +132,11 @@ function buildApi(opts: SetupOpts) {
           );
         }
         if (request.method === "GET" && request.url.includes("/api-keys")) {
-          return legacyJsonResponse(request, apiKeysStatus, apiKeysStatus === 200 ? KEYS : []);
+          return legacyJsonResponse(
+            request,
+            apiKeysStatus,
+            apiKeysStatus === 200 ? apiKeysBody : [],
+          );
         }
         if (request.method === "GET" && request.url.includes("/config/database/pooler")) {
           const body = opts.skipPrimary
@@ -211,6 +217,30 @@ describe("legacy branches get integration", () => {
       expect(success?.data).toHaveProperty("SUPABASE_JWT_SECRET");
       expect(success?.data).toHaveProperty("SUPABASE_ANON_KEY");
       expect(success?.data).toHaveProperty("SUPABASE_SERVICE_ROLE_KEY");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("emits SUPABASE_PUBLISHABLE_KEY for new-format api keys", () => {
+    const newFormatKeys: ApiKeys = [
+      {
+        name: "default",
+        type: "publishable",
+        api_key: "sb_publishable_test",
+      },
+      {
+        name: "default",
+        type: "secret",
+        api_key: "sb_secret_test",
+      },
+    ];
+    const { layer, out } = setup({ format: "json", apiKeysBody: newFormatKeys });
+    return Effect.gen(function* () {
+      yield* legacyBranchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
+      const success = out.messages.find((m) => m.type === "success");
+      expect(success?.data).toMatchObject({
+        SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
+        SUPABASE_DEFAULT_KEY: "sb_secret_test",
+      });
     }).pipe(Effect.provide(layer));
   });
 
