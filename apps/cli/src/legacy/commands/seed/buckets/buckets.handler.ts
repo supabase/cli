@@ -817,9 +817,11 @@ const uploadObjects = Effect.fnUntraced(function* (
  *    command, as Go's WalkDir does.
  *  - **Nested** entries use no-follow detection (Go reads `DirEntry` from
  *    `ReadDir`): real directories are descended; symlinks are NOT descended —
- *    Go's `isUploadableEntry` uploads a symlink only when its target is a
- *    regular file, and skips dangling symlinks / symlinks-to-directories /
- *    other non-regular entries with `Skipping non-regular file:` (no crash).
+ *    Go's `isUploadableEntry` OPENS the symlink target (`fsys.Open`, requiring
+ *    read access) then stats the handle, uploading only a regular file and
+ *    skipping dangling symlinks / symlinks-to-directories / unreadable targets
+ *    with `Skipping non-regular file:` (no crash). Stat alone would queue an
+ *    unreadable target and abort later at upload, so the symlink branch opens.
  */
 const collectFiles = (
   fs: FileSystem.FileSystem,
@@ -860,12 +862,21 @@ const collectDir = (
         Effect.catch(() => Effect.succeed(false)),
       );
       if (isSymlink) {
-        // Go `isUploadableEntry`: open + stat the target; upload only a regular
-        // file, otherwise skip (covers dangling symlinks and symlink-to-dir).
-        const targetType = yield* fs.stat(absChild).pipe(
-          Effect.map((i) => i.type),
-          Effect.catch(() => Effect.succeed("Unknown" as const)),
-        );
+        // Go `isUploadableEntry` (batch.go:73-84) OPENS the target (fsys.Open,
+        // requiring read access) then stats the handle; it uploads only a regular
+        // file and skips on either an open OR a stat error. `stat` alone follows
+        // the link but needs no read permission on the target, so a symlink to an
+        // unreadable-but-existing regular file would stat as "File", get queued,
+        // then abort the whole run when `uploadObject` opens it to stream. Mirror
+        // Go: open + stat, closing the handle (Go's `defer f.Close()`) via
+        // `Effect.scoped`. Any open/stat failure falls through to the skip path.
+        const targetType = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const handle = yield* fs.open(absChild, { flag: "r" });
+            const targetInfo = yield* handle.stat;
+            return targetInfo.type;
+          }),
+        ).pipe(Effect.catch(() => Effect.succeed("Unknown" as const)));
         if (targetType === "File") {
           collected.push({ absPath: absChild, displayPath: displayChild });
         } else {

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -1079,6 +1079,54 @@ describe("legacy seed buckets", () => {
       expect(uploads).toHaveLength(1);
     });
   });
+
+  // Root bypasses POSIX permission bits, so chmod 000 wouldn't block open() there
+  // and the open-vs-stat distinction this test relies on would vanish.
+  const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
+  it.live.skipIf(isRoot)(
+    "skips a symlink to an unreadable regular file and keeps seeding siblings (Go opens, not stats)",
+    () => {
+      // Go's isUploadableEntry OPENS the symlink target (batch.go:73), which needs
+      // read permission; a stat-only check would queue this unreadable file and then
+      // abort the whole run when uploadObject opens it to stream. Mode 000 makes
+      // stat succeed (type File) but open fail — the entry must be skipped, not fatal.
+      // The real unreadable file lives OUTSIDE the walked tree: a plain regular file
+      // inside assets/ would (per Go parity) be queued without an open-probe and would
+      // legitimately abort, so only the symlink may reach the unreadable target.
+      mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
+      mkdirSync(join(tmp.current, "supabase", "private"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
+      const secret = join(tmp.current, "supabase", "private", "secret.txt");
+      writeFileSync(secret, "top secret");
+      chmodSync(secret, 0o000);
+      symlinkSync(
+        "../private/secret.txt",
+        join(tmp.current, "supabase", "assets", "link-to-secret"),
+      );
+      const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/object/", body: {} },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain(
+          "Skipping non-regular file: supabase/assets/link-to-secret",
+        );
+        expect(out.stderrText).toContain("Uploading: supabase/assets/a.txt => images/a.txt");
+        // Only the readable sibling is uploaded; the unreadable symlink target is not.
+        const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
+        expect(uploads).toHaveLength(1);
+      });
+    },
+  );
 
   it.live(
     "does not descend into a symlinked directory (Go does not follow nested symlinks)",
