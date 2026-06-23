@@ -1201,6 +1201,42 @@ describe("legacy gen types", () => {
     });
   });
 
+  it.live("keeps not-running parity when podman reports the local db container is missing", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-podman-missing-"));
+    writeConfig(
+      workdir,
+      ['project_id = "demo"', "", "[api]", 'schemas = ["public"]', "", "[db]", "port = 54321"].join(
+        "\n",
+      ),
+    );
+    const child = mockDockerMissingChildProcessSpawner([
+      {
+        exitCode: 1,
+        stderr: ['Error: inspecting object: no such container "supabase_db_demo"'],
+      },
+    ]);
+    const { layer } = setup({
+      workdir,
+      childLayer: child.layer,
+    });
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyGenTypes(defaultFlags({ local: true })).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain("supabase start is not running.");
+      }
+      expect(child.spawned).toEqual([
+        { command: "docker", args: ["container", "inspect", "supabase_db_demo"] },
+        { command: "podman", args: ["container", "inspect", "supabase_db_demo"] },
+      ]);
+    });
+  });
+
   it.live(
     "preserves inspect failure details when local db inspection fails for other reasons",
     () => {

@@ -350,7 +350,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         ]);
         if (exitCode !== 0) {
           const message = stderr.trim();
-          if (message.includes("No such container")) {
+          if (message.toLowerCase().includes("no such container")) {
             return yield* Effect.fail(new Error("supabase start is not running."));
           }
           return yield* Effect.fail(
