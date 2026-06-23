@@ -52,6 +52,7 @@ jobs:
 
       - name: Create Pull Request
         if: steps.check.outputs.has_changes == 'true'
+        id: cpr
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           token: ${{ steps.app-token.outputs.token }}
@@ -63,3 +64,18 @@ jobs:
             Changes were detected in the upstream OpenAPI document exposed by `https://api.supabase.com/api/v1-json`.
           branch: sync/api-package
           base: develop
+
+      - name: Approve a PR
+        if: steps.check.outputs.has_changes == 'true' && steps.cpr.outputs.pull-request-operation == 'created'
+        continue-on-error: true
+        run: gh pr review --approve --repo "${{ github.repository }}" "${STEPS_CPR_OUTPUTS_PULL_REQUEST_NUMBER}"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          STEPS_CPR_OUTPUTS_PULL_REQUEST_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+
+      - name: Enable Pull Request Automerge
+        if: steps.check.outputs.has_changes == 'true'
+        run: gh pr merge --auto --squash --repo "${{ github.repository }}" "${STEPS_CPR_OUTPUTS_PULL_REQUEST_NUMBER}"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          STEPS_CPR_OUTPUTS_PULL_REQUEST_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
