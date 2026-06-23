@@ -28,6 +28,13 @@ func assertFormEqual(t *testing.T, actual []byte) {
 	assert.Equal(t, string(expected), string(actual))
 }
 
+func mockFunctionList(functions ...api.FunctionResponse) {
+	gock.New(mockApiHost).
+		Get("/v1/projects/" + mockProject + "/functions").
+		Reply(http.StatusOK).
+		JSON(functions)
+}
+
 func TestWriteForm(t *testing.T) {
 	t.Run("writes import map", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -91,6 +98,7 @@ func TestDeployAll(t *testing.T) {
 		fsys := testImports
 		// Setup mock api
 		defer gock.OffAll()
+		mockFunctionList()
 		gock.New(mockApiHost).
 			Post("/v1/projects/"+mockProject+"/functions/deploy").
 			MatchParam("slug", "demo").
@@ -113,6 +121,7 @@ func TestDeployAll(t *testing.T) {
 		fsys := testImports
 		// Setup mock api
 		defer gock.OffAll()
+		mockFunctionList()
 		gock.New(mockApiHost).
 			Post("/v1/projects/"+mockProject+"/functions/deploy").
 			MatchParam("slug", "demo").
@@ -147,6 +156,7 @@ func TestDeployAll(t *testing.T) {
 		fsys := testImports
 		// Setup mock api
 		defer gock.OffAll()
+		mockFunctionList()
 		for slug := range c {
 			gock.New(mockApiHost).
 				Post("/v1/projects/"+mockProject+"/functions/deploy").
@@ -181,6 +191,7 @@ func TestDeployAll(t *testing.T) {
 		fsys := testImports
 		// Setup mock api
 		defer gock.OffAll()
+		mockFunctionList()
 		for slug := range c {
 			gock.New(mockApiHost).
 				Post("/v1/projects/"+mockProject+"/functions/deploy").
@@ -205,6 +216,35 @@ func TestDeployAll(t *testing.T) {
 		assert.Empty(t, gock.GetUnmatchedRequests())
 	})
 
+	t.Run("preserves remote verify_jwt when not configured", func(t *testing.T) {
+		c := config.FunctionConfig{"demo": {
+			Enabled:    true,
+			Entrypoint: "testdata/shared/whatever.ts",
+		}}
+		// Setup in-memory fs
+		fsys := testImports
+		// Setup mock api
+		defer gock.OffAll()
+		mockFunctionList(api.FunctionResponse{
+			Id:        "demo",
+			Name:      "demo",
+			Slug:      "demo",
+			VerifyJwt: cast.Ptr(false),
+		})
+		gock.New(mockApiHost).
+			Post("/v1/projects/"+mockProject+"/functions/deploy").
+			MatchParam("slug", "demo").
+			BodyString(`"verify_jwt":false`).
+			Reply(http.StatusCreated).
+			JSON(api.DeployFunctionResponse{})
+		// Run test
+		err := client.Deploy(context.Background(), c, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, gock.Pending())
+		assert.Empty(t, gock.GetUnmatchedRequests())
+	})
+
 	t.Run("throws error on network failure", func(t *testing.T) {
 		errNetwork := errors.New("network")
 		c := config.FunctionConfig{"demo": {Enabled: true}}
@@ -212,6 +252,7 @@ func TestDeployAll(t *testing.T) {
 		fsys := fs.MapFS{}
 		// Setup mock api
 		defer gock.OffAll()
+		mockFunctionList()
 		gock.New(mockApiHost).
 			Post("/v1/projects/"+mockProject+"/functions/deploy").
 			MatchParam("slug", "demo").

@@ -52,6 +52,9 @@ describe("legacy functions deploy", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({
       handler: (request) => {
+        if (request.method === "GET") {
+          return Effect.succeed(legacyJsonResponse(request, 200, []));
+        }
         if (request.url.endsWith("/functions/deploy")) {
           return Effect.succeed(
             legacyJsonResponse(request, 201, {
@@ -95,12 +98,14 @@ describe("legacy functions deploy", () => {
 
       yield* legacyFunctionsDeploy(baseFlags);
 
-      expect(api.requests).toHaveLength(1);
-      expect(api.requests[0]?.method).toBe("POST");
-      expect(api.requests[0]?.url).toBe(
+      expect(api.requests).toHaveLength(2);
+      const deployRequest = api.requests.find(
+        (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+      );
+      expect(deployRequest?.url).toBe(
         "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst/functions/deploy",
       );
-      expect(api.requests[0]?.urlParams).toContain("slug=hello-world");
+      expect(deployRequest?.urlParams).toContain("slug=hello-world");
       expect(out.stdoutText).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
       );
@@ -117,8 +122,11 @@ describe("legacy functions deploy", () => {
   it.live("uses an explicit project ref when provided", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({
-      handler: (request) =>
-        Effect.succeed(
+      handler: (request) => {
+        if (request.method === "GET") {
+          return Effect.succeed(legacyJsonResponse(request, 200, []));
+        }
+        return Effect.succeed(
           legacyJsonResponse(request, 201, {
             id: "function-id",
             slug: "hello-world",
@@ -132,7 +140,8 @@ describe("legacy functions deploy", () => {
             entrypoint_path: "functions/hello-world/index.ts",
             import_map_path: "functions/hello-world/deno.json",
           }),
-        ),
+        );
+      },
     });
     const layer = Layer.mergeAll(
       buildLegacyTestRuntime({
@@ -166,7 +175,10 @@ describe("legacy functions deploy", () => {
         projectRef: Option.some("qrstuvwxyzabcdefghij"),
       });
 
-      expect(api.requests[0]?.url).toContain("/projects/qrstuvwxyzabcdefghij/functions/deploy");
+      const deployRequest = api.requests.find(
+        (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+      );
+      expect(deployRequest?.url).toContain("/projects/qrstuvwxyzabcdefghij/functions/deploy");
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(
@@ -179,8 +191,11 @@ describe("legacy functions deploy", () => {
     const callerDir = join(tempRoot.current, "caller");
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({
-      handler: (request) =>
-        Effect.succeed(
+      handler: (request) => {
+        if (request.method === "GET") {
+          return Effect.succeed(legacyJsonResponse(request, 200, []));
+        }
+        return Effect.succeed(
           legacyJsonResponse(request, 201, {
             id: "function-id",
             slug: "hello-world",
@@ -194,7 +209,8 @@ describe("legacy functions deploy", () => {
             entrypoint_path: "supabase/functions/hello-world/index.ts",
             import_map_path: "import_map.json",
           }),
-        ),
+        );
+      },
     });
     const layer = Layer.mergeAll(
       buildLegacyTestRuntime({
@@ -229,7 +245,7 @@ describe("legacy functions deploy", () => {
         importMap: Option.some("./import_map.json"),
       });
 
-      expect(api.requests).toHaveLength(1);
+      expect(api.requests).toHaveLength(2);
       expect(out.stdoutText).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
       );
@@ -305,8 +321,11 @@ describe("legacy functions deploy", () => {
   it.live("deploys config-declared custom entrypoints when deploying all functions", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({
-      handler: (request) =>
-        Effect.succeed(
+      handler: (request) => {
+        if (request.method === "GET") {
+          return Effect.succeed(legacyJsonResponse(request, 200, []));
+        }
+        return Effect.succeed(
           legacyJsonResponse(request, 201, {
             id: "function-id",
             slug: "custom-entry",
@@ -320,7 +339,8 @@ describe("legacy functions deploy", () => {
             entrypoint_path: "functions/custom-entry/handler.ts",
             import_map_path: "functions/custom-entry/deno.json",
           }),
-        ),
+        );
+      },
     });
     const layer = Layer.mergeAll(
       buildLegacyTestRuntime({
@@ -370,8 +390,11 @@ describe("legacy functions deploy", () => {
         functionNames: [],
       });
 
-      expect(api.requests).toHaveLength(1);
-      expect(api.requests[0]?.urlParams).toContain("slug=custom-entry");
+      expect(api.requests).toHaveLength(2);
+      const deployRequest = api.requests.find(
+        (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
+      );
+      expect(deployRequest?.urlParams).toContain("slug=custom-entry");
       expect(out.stdoutText).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: custom-entry\n",
       );
