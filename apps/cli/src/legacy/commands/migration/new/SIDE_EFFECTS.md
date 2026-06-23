@@ -36,18 +36,24 @@
 
 ### `--output-format text` (Go CLI compatible)
 
-Prints the path of the created migration file.
+Prints `Created new migration at <bold supabase/migrations/<timestamp>_<name>.sql>` to
+stdout. The path is **workdir-relative** (Go chdir's into `--workdir`, so the printed
+path is independent of the resolved project root).
 
 ### `--output-format json`
 
-Not applicable.
+Emits `output.success("Migration created", { path })` where `path` is the absolute
+path of the created file. No human-readable line is written.
 
 ### `--output-format stream-json`
 
-Not applicable.
+Same structured result as `json`, delivered as an NDJSON `result` event.
 
 ## Notes
 
 - Requires exactly one positional argument: the migration name.
 - The file timestamp uses the current UTC time in `YYYYMMDDHHMMSS` format.
-- If stdin is piped, the content is streamed into the new migration file.
+- If stdin is piped (non-TTY), the raw bytes are written verbatim into the new
+  migration file, including any trailing newline. A TTY (or an empty pipe) writes an
+  empty file.
+- The file is written with mode `0644`.

@@ -1,34 +1,21 @@
-import { Effect, type FileSystem, type Path } from "effect";
+import { Data, Effect, type FileSystem, type Path } from "effect";
 
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import {
+  INSERT_MIGRATION_VERSION,
+  MIGRATE_FILE_PATTERN,
+  legacyCreateMigrationTable,
+} from "./legacy-migration-history.ts";
 import { legacySplitAndTrim } from "./legacy-sql-split.ts";
 
 /**
- * Migration-history DDL/DML, verbatim from Go's `pkg/migration/history.go`.
+ * Applying a migration file failed (Go's `ApplyMigrations` / `ExecBatch` error).
+ * Used by `migration up` and `migration down`'s migrate-and-seed step. The
+ * declarative sync handler maps its own error type instead.
  */
-const SET_LOCK_TIMEOUT = "SET lock_timeout = '4s'";
-const CREATE_VERSION_SCHEMA = "CREATE SCHEMA IF NOT EXISTS supabase_migrations";
-const CREATE_VERSION_TABLE =
-  "CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)";
-const ADD_STATEMENTS_COLUMN =
-  "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS statements text[]";
-const ADD_NAME_COLUMN =
-  "ALTER TABLE supabase_migrations.schema_migrations ADD COLUMN IF NOT EXISTS name text";
-const INSERT_MIGRATION_VERSION =
-  "INSERT INTO supabase_migrations.schema_migrations(version, name, statements) VALUES($1, $2, $3)";
-
-// `pkg/migration/file.go` — `<digits>_<name>.sql`.
-const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/;
-
-/** Creates the migration-history schema/table (idempotent). Go's `CreateMigrationTable`. */
-const createMigrationTable = (session: LegacyDbSession) =>
-  Effect.gen(function* () {
-    yield* session.exec(SET_LOCK_TIMEOUT);
-    yield* session.exec(CREATE_VERSION_SCHEMA);
-    yield* session.exec(CREATE_VERSION_TABLE);
-    yield* session.exec(ADD_STATEMENTS_COLUMN);
-    yield* session.exec(ADD_NAME_COLUMN);
-  });
+export class LegacyMigrationApplyError extends Data.TaggedError("LegacyMigrationApplyError")<{
+  readonly message: string;
+}> {}
 
 /**
  * Applies a single migration file to the connected database and records it in
@@ -55,7 +42,7 @@ export const legacyApplyMigrationFile = <E>(
     const version = matches?.[1] ?? "";
     const name = matches?.[2] ?? "";
 
-    yield* createMigrationTable(session);
+    yield* legacyCreateMigrationTable(session);
     yield* session.exec("RESET ALL");
     yield* session.exec("BEGIN");
     // Mirror Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go:88-113`):

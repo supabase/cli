@@ -1,14 +1,137 @@
-import { Effect, Option } from "effect";
-import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
+import { Effect, FileSystem, Option, Path } from "effect";
+
+import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { Output } from "../../../../shared/output/output.service.ts";
+import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { legacyBold } from "../../../shared/legacy-colors.ts";
+import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
+import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
+import { legacyReadMigrationTable } from "../../../shared/legacy-migration-history.ts";
+import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
+import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import {
+  LegacyMigrationTargetFlagsError,
+  LegacyOperationCanceledError,
+} from "../migration.errors.ts";
+import { legacyMigrationConfirm } from "../migration.prompt.ts";
 import type { LegacyMigrationFetchFlags } from "./fetch.command.ts";
+import { LegacyMigrationFetchWriteError } from "./fetch.errors.ts";
+
+const runFetch = Effect.fnUntraced(function* (
+  flags: LegacyMigrationFetchFlags,
+  target: ReturnType<typeof resolveLegacyDbTargetFlags>,
+) {
+  const output = yield* Output;
+  const resolver = yield* LegacyDbConfigResolver;
+  const connection = yield* LegacyDbConnection;
+  const cliConfig = yield* LegacyCliConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const dnsResolver = yield* LegacyDnsResolverFlag;
+  const yes = yield* LegacyYesFlag;
+
+  if (target.setFlags.length > 1) {
+    return yield* Effect.fail(
+      new LegacyMigrationTargetFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+      }),
+    );
+  }
+
+  const fetchBody = Effect.gen(function* () {
+    const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
+
+    // Go: `MkdirIfNotExistFS` then `afero.IsEmpty`; prompt before overwriting a
+    // non-empty migrations dir (default YES). Cancel → `context.Canceled`.
+    yield* fs
+      .makeDirectory(migrationsDir, { recursive: true })
+      .pipe(
+        Effect.mapError((cause) => new LegacyMigrationFetchWriteError({ message: cause.message })),
+      );
+    const existing = yield* fs.readDirectory(migrationsDir).pipe(Effect.orElseSucceed(() => []));
+    if (existing.length > 0) {
+      const title = `Do you want to overwrite existing files in ${legacyBold("supabase/migrations")} directory?`;
+      const overwrite = yield* legacyMigrationConfirm(title, { defaultValue: true, yes });
+      if (!overwrite) {
+        return yield* Effect.fail(
+          new LegacyOperationCanceledError({ message: "context canceled" }),
+        );
+      }
+    }
+
+    // fetch defaults to `--linked` (Go: `Bool("linked", true)`); no password flag.
+    const cfg = yield* resolver.resolve({
+      dbUrl: flags.dbUrl,
+      connType: target.connType ?? "linked",
+      dnsResolver,
+    });
+
+    const migrations = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const session = yield* connection.connect(cfg.conn, {
+          isLocal: cfg.isLocal,
+          dnsResolver,
+        });
+        return yield* legacyReadMigrationTable(session);
+      }),
+    );
+
+    const written: Array<string> = [];
+    for (const file of migrations) {
+      // The version/name come from the remote `schema_migrations` table. A
+      // tampered/hostile remote could supply path separators or `..` to escape the
+      // migrations dir on write (CWE-22). Real migrations never contain these
+      // (version is digits, name is the sanitized file stem), so rejecting them is
+      // parity-neutral for legitimate data while closing the arbitrary-write vector.
+      if (
+        !/^\d+$/u.test(file.version) ||
+        /[/\\]/u.test(file.name) ||
+        file.name.split(/[/\\]/u).includes("..")
+      ) {
+        return yield* Effect.fail(
+          new LegacyMigrationFetchWriteError({
+            message: `failed to write migration: invalid version/name in history table: ${file.version}_${file.name}`,
+          }),
+        );
+      }
+      const name = `${file.version}_${file.name}.sql`;
+      const filePath = path.join(migrationsDir, name);
+      // Go: `strings.Join(statements, ";\n") + ";\n"`.
+      const contents = `${file.statements.join(";\n")};\n`;
+      yield* fs.writeFileString(filePath, contents, { mode: 0o644 }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new LegacyMigrationFetchWriteError({
+              message: `failed to write migration: ${cause.message}`,
+            }),
+        ),
+      );
+      written.push(filePath);
+    }
+
+    // Go is silent on success in text mode.
+    if (output.format !== "text") {
+      yield* output.success("Migration history fetched", { files: written });
+    }
+  });
+
+  if ((target.connType ?? "linked") === "linked") {
+    const projectRef = yield* LegacyProjectRefResolver;
+    const linkedProjectCache = yield* LegacyLinkedProjectCache;
+    const ref = yield* projectRef.loadProjectRef(Option.none());
+    return yield* fetchBody.pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
+  }
+  return yield* fetchBody;
+});
 
 export const legacyMigrationFetch = Effect.fn("legacy.migration.fetch")(function* (
   flags: LegacyMigrationFetchFlags,
 ) {
-  const proxy = yield* LegacyGoProxy;
-  const args: string[] = ["migration", "fetch"];
-  if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
-  if (flags.linked) args.push("--linked");
-  if (flags.local) args.push("--local");
-  yield* proxy.exec(args);
+  const telemetryState = yield* LegacyTelemetryState;
+  const cliArgs = yield* CliArgs;
+  const target = resolveLegacyDbTargetFlags(cliArgs.args);
+  yield* runFetch(flags, target).pipe(Effect.ensuring(telemetryState.flush));
 });

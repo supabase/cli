@@ -36,15 +36,26 @@
 
 ### `--output-format text` (Go CLI compatible)
 
-Prints the names of migration files fetched from the history table.
+Silent on success (Go prints nothing). Reads
+`SELECT version, coalesce(name, '') as name, statements FROM
+supabase_migrations.schema_migrations` and writes each row to
+`<workdir>/supabase/migrations/<version>_<name>.sql` (statements joined with
+`;\n` plus a trailing `;\n`, mode 0644).
 
 ### `--output-format json`
 
-Not applicable.
+Emits `output.success("Migration history fetched", { files: [<absolute path>] })`.
 
 ### `--output-format stream-json`
 
-Not applicable.
+Same structured `files` result delivered as an NDJSON `result` event.
+
+## Prompts
+
+- When the migrations directory is non-empty, prompts
+  `Do you want to overwrite existing files in supabase/migrations directory?`
+  (default **YES**). Declining exits non-zero (`context canceled`). `--yes`
+  auto-confirms; a non-interactive / machine-output run takes the default (YES).
 
 ## Notes
 

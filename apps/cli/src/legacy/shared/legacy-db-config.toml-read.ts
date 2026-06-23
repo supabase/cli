@@ -66,6 +66,30 @@ interface LegacyDbTomlValues {
    * these must self-invalidate cached catalogs.
    */
   readonly baseline: LegacyBaselineTomlConfig;
+  /** `[db.migrations] enabled` (default true) — gates `up`/`down` migration apply. */
+  readonly migrationsEnabled: boolean;
+  /** `[db.seed]` enabled + supabase-prefixed `sql_paths` globs — used by `down`. */
+  readonly seed: LegacyDbSeedTomlConfig;
+  /** `[db.vault]` secrets (name → resolved value) — upserted by `up`/`down`. */
+  readonly vault: ReadonlyArray<LegacyDbVaultSecretToml>;
+}
+
+/** `[db.seed]` config surfaced for `migration down`'s seed step. */
+interface LegacyDbSeedTomlConfig {
+  readonly enabled: boolean;
+  /** Glob patterns, each supabase-prefixed when relative (Go's `config.resolve`). */
+  readonly sqlPaths: ReadonlyArray<string>;
+}
+
+/**
+ * A `[db.vault]` secret. `resolved` mirrors Go's `len(SHA256) > 0` gate: a value
+ * that env-expanded to a non-empty, non-`env(...)` string. The HMAC itself is not
+ * reproduced — `UpsertVaultSecrets` only uses it as a resolved/unresolved flag.
+ */
+interface LegacyDbVaultSecretToml {
+  readonly name: string;
+  readonly value: string;
+  readonly resolved: boolean;
 }
 
 /** Cache-key inputs from `[auth]`/`[storage]`/`[realtime]`/`[api]`/`[db.vault]`. */
@@ -863,6 +887,55 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   const vaultRaw = asRecord(db?.["vault"]);
   const vaultNames = vaultRaw === undefined ? [] : Object.keys(vaultRaw).sort();
 
+  // `[db.migrations] enabled` — Go default true (`config.go:384`).
+  const migrationsRaw = asRecord(db?.["migrations"]);
+  const migrationsEnabled = yield* resolveBoolOrFail(
+    "db.migrations.enabled",
+    migrationsRaw?.["enabled"],
+    true,
+    lookup,
+  );
+
+  // `[db.seed]` — Go defaults enabled true, sql_paths ["seed.sql"]; relative
+  // patterns are supabase-prefixed (`config.go:801-806`).
+  const seedRaw = asRecord(db?.["seed"]);
+  const seedEnabled = yield* resolveBoolOrFail(
+    "db.seed.enabled",
+    seedRaw?.["enabled"],
+    true,
+    lookup,
+  );
+  const rawSqlPaths = seedRaw?.["sql_paths"];
+  const sqlPathPatterns = Array.isArray(rawSqlPaths)
+    ? rawSqlPaths.filter((pattern): pattern is string => typeof pattern === "string")
+    : ["seed.sql"];
+  const seedSqlPaths = sqlPathPatterns.map((pattern) => {
+    if (pattern.length === 0 || path.isAbsolute(pattern)) return pattern;
+    // Mirror Go's `path.Join("supabase", pattern)` (forward-slash, "./"-cleaned)
+    // so the glob — split on "/" — stays portable.
+    const segments = pattern.split("/").filter((segment) => segment !== "" && segment !== ".");
+    return ["supabase", ...segments].join("/");
+  });
+
+  // `[db.vault]` secrets: env-expand each value; `resolved` mirrors Go's
+  // `len(SHA256) > 0` gate (non-empty AND not an unexpanded `env(...)` ref).
+  // Dotenvx `encrypted:` ciphertext is NOT decrypted here, so such a value is
+  // treated as unresolved (skipped) rather than uploading the ciphertext blob —
+  // matching Go's outcome when no `DOTENV_PRIVATE_KEY` is available (decryption
+  // fails → empty SHA256 → skipped).
+  const vault =
+    vaultRaw === undefined
+      ? []
+      : Object.keys(vaultRaw)
+          .sort()
+          .map((name) => {
+            const raw = vaultRaw[name];
+            const value = typeof raw === "string" ? legacyExpandEnv(raw, lookup) : "";
+            const resolved =
+              value.length > 0 && !ENV_PATTERN.test(value) && !value.startsWith("encrypted:");
+            return { name, value, resolved };
+          });
+
   // `[api] auto_expose_new_tables` is a tri-state `*bool` (`pkg/config/api.go:25`):
   // present → Some(bool), absent → None (never false). Go applies the
   // `SUPABASE_API_AUTO_EXPOSE_NEW_TABLES` AutomaticEnv override and decodes the value
@@ -908,6 +981,9 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
       apiAutoExposeNewTables,
       vaultNames,
     },
+    migrationsEnabled,
+    seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },
+    vault,
   };
   return values;
 });
