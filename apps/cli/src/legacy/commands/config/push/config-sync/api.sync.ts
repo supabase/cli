@@ -2,7 +2,7 @@ import type { ProjectConfig } from "@supabase/config";
 
 import { diff } from "./config-sync.diff.ts";
 import { encodeToml, type TomlField, type TomlValue } from "./config-sync.toml.ts";
-import { intToUint } from "./config-sync.units.ts";
+import { intToUint } from "../../../../shared/legacy-size-units.ts";
 
 /**
  * Push-subset of Go's `api` struct (`pkg/config/api.go`). Only `toml`-tagged

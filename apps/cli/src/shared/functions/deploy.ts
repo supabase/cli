@@ -63,7 +63,7 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
 interface ResolvedDeployFunctionConfig {
   readonly slug: string;
   readonly enabled: boolean;
-  readonly verifyJwt: boolean;
+  readonly verifyJwt?: boolean;
   readonly entrypoint: string;
   readonly importMap: string;
   readonly staticFiles: ReadonlyArray<string>;
@@ -71,7 +71,7 @@ interface ResolvedDeployFunctionConfig {
 
 interface SourceDeployMetadata {
   readonly name: string;
-  readonly verify_jwt: boolean;
+  readonly verify_jwt?: boolean;
   readonly entrypoint_path: string;
   readonly import_map_path: string;
   readonly static_patterns: ReadonlyArray<string>;
@@ -79,7 +79,7 @@ interface SourceDeployMetadata {
 
 interface BundledDeployMetadata {
   readonly name: string;
-  readonly verify_jwt: boolean;
+  readonly verify_jwt?: boolean;
   readonly entrypoint_path: string;
   readonly import_map_path?: string;
   readonly static_patterns?: ReadonlyArray<string>;
@@ -156,8 +156,29 @@ function mapTransportError(prefix: string, error: unknown): Error {
   return new Error(`${prefix}: ${String(error)}`);
 }
 
-function withOptional(key: string, value: unknown) {
-  return value === undefined ? {} : { [key]: value };
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwnKey(value: Readonly<Record<string, unknown>> | undefined, key: string) {
+  return value !== undefined && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function rawFunctionConfigRecord(
+  document: Readonly<Record<string, unknown>> | undefined,
+): Readonly<Record<string, Readonly<Record<string, unknown>>>> {
+  const functions = document?.["functions"];
+  if (!isRecord(functions)) {
+    return {};
+  }
+
+  const configs: Record<string, Readonly<Record<string, unknown>>> = {};
+  for (const [slug, config] of Object.entries(functions)) {
+    if (isRecord(config)) {
+      configs[slug] = config;
+    }
+  }
+  return configs;
 }
 
 function validateDeploySlug(slug: string): Effect.Effect<void, InvalidFunctionDeploySlugError> {
@@ -983,10 +1004,12 @@ async function writeSourceDeployForm(
 function createSourceMetadata(
   cwd: string,
   config: ResolvedDeployFunctionConfig,
+  remote?: RemoteFunction,
 ): SourceDeployMetadata {
+  const verifyJwt = config.verifyJwt ?? remote?.verify_jwt;
   return {
     name: config.slug,
-    verify_jwt: config.verifyJwt,
+    ...(verifyJwt === undefined ? {} : { verify_jwt: verifyJwt }),
     entrypoint_path: toApiRelativePath(cwd, config.entrypoint),
     import_map_path: config.importMap.length > 0 ? toApiRelativePath(cwd, config.importMap) : "",
     static_patterns: config.staticFiles.map((pathname) => toApiRelativePath(cwd, pathname)),
@@ -999,7 +1022,7 @@ function createBundledMetadata(
 ): BundledDeployMetadata {
   return {
     name: config.slug,
-    verify_jwt: config.verifyJwt,
+    ...(config.verifyJwt === undefined ? {} : { verify_jwt: config.verifyJwt }),
     entrypoint_path: toBundledFileUrl(config.entrypoint),
     sha256,
     ...(config.importMap.length > 0 ? { import_map_path: toBundledFileUrl(config.importMap) } : {}),
@@ -1473,7 +1496,7 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
       .executeRaw(operationDefinitions.v1DeployAFunction, {
         ref: projectRef,
         slug: config.slug,
-        ...withOptional("bundleOnly", bundleOnly ? true : undefined),
+        ...(bundleOnly ? { bundleOnly: true } : {}),
         body: {
           metadata,
           ...(files.length > 0 ? { file: files } : {}),
@@ -1512,12 +1535,12 @@ function toBulkUpdateItem(remote: RemoteFunction | DeployFunctionResponse): Bulk
     name: remote.name,
     status: remote.status,
     version: remote.version,
-    ...withOptional("created_at", remote.created_at),
-    ...withOptional("verify_jwt", remote.verify_jwt),
-    ...withOptional("import_map", remote.import_map),
-    ...withOptional("entrypoint_path", remote.entrypoint_path),
-    ...withOptional("import_map_path", remote.import_map_path),
-    ...withOptional("ezbr_sha256", remote.ezbr_sha256),
+    ...(remote.created_at === undefined ? {} : { created_at: remote.created_at }),
+    ...(remote.verify_jwt == null ? {} : { verify_jwt: remote.verify_jwt }),
+    ...(remote.import_map == null ? {} : { import_map: remote.import_map }),
+    ...(remote.entrypoint_path == null ? {} : { entrypoint_path: remote.entrypoint_path }),
+    ...(remote.import_map_path == null ? {} : { import_map_path: remote.import_map_path }),
+    ...(remote.ezbr_sha256 == null ? {} : { ezbr_sha256: remote.ezbr_sha256 }),
   };
 }
 
@@ -1587,9 +1610,13 @@ const upsertBundledFunction = Effect.fnUntraced(function* (
     const action = shouldUpdate ? "update" : "create";
     const updateInput = {
       ref: projectRef,
-      verify_jwt: bundled.metadata.verify_jwt,
+      ...(bundled.metadata.verify_jwt === undefined
+        ? {}
+        : { verify_jwt: bundled.metadata.verify_jwt }),
       entrypoint_path: bundled.metadata.entrypoint_path,
-      ...withOptional("import_map_path", bundled.metadata.import_map_path),
+      ...(bundled.metadata.import_map_path === undefined
+        ? {}
+        : { import_map_path: bundled.metadata.import_map_path }),
       ezbr_sha256: bundled.metadata.sha256,
       body: bundled.body,
     };
@@ -1720,6 +1747,7 @@ const resolveFunctionConfigs = Effect.fnUntraced(function* (input: {
   readonly supabaseDir: string;
   readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
   readonly configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
+  readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   readonly importMapOverride: Option.Option<string>;
   readonly noVerifyJwtOverride: Option.Option<boolean>;
 }) {
@@ -1742,7 +1770,8 @@ const resolveFunctionConfigs = Effect.fnUntraced(function* (input: {
     const override = input.configDeclaredFunctions[slug];
     const enabled = configured.enabled;
     const verifyJwt = Option.match(input.noVerifyJwtOverride, {
-      onNone: () => configured.verify_jwt,
+      onNone: () =>
+        hasOwnKey(input.rawConfigFunctions[slug], "verify_jwt") ? configured.verify_jwt : undefined,
       onSome: (noVerifyJwt) => !noVerifyJwt,
     });
 
@@ -1805,7 +1834,7 @@ const resolveFunctionConfigs = Effect.fnUntraced(function* (input: {
     resolved.push({
       slug,
       enabled,
-      verifyJwt,
+      ...(verifyJwt === undefined ? {} : { verifyJwt }),
       entrypoint,
       importMap,
       staticFiles,
@@ -1853,14 +1882,19 @@ const deployViaApi = Effect.fnUntraced(function* (
     );
   }
 
+  const remoteBySlug = enabled.some((config) => config.verifyJwt === undefined)
+    ? new Map((yield* listRemoteFunctions(api, projectRef)).map((fn) => [fn.slug, fn]))
+    : new Map<string, RemoteFunction>();
+
   if (enabled.length === 1) {
+    const config = enabled[0]!;
     yield* uploadFunctionSource(
       api,
       projectRef,
       cwd,
       projectRoot,
-      enabled[0]!,
-      createSourceMetadata(cwd, enabled[0]!),
+      config,
+      createSourceMetadata(cwd, config, remoteBySlug.get(config.slug)),
       false,
     );
     return;
@@ -1878,7 +1912,7 @@ const deployViaApi = Effect.fnUntraced(function* (
             cwd,
             projectRoot,
             config,
-            createSourceMetadata(cwd, config),
+            createSourceMetadata(cwd, config, remoteBySlug.get(config.slug)),
             true,
           ),
         );
@@ -1920,7 +1954,8 @@ const deployViaDocker = Effect.fnUntraced(function* (
     const current = remoteBySlug.get(config.slug);
     if (
       current?.ezbr_sha256 === bundled.metadata.sha256 &&
-      current.verify_jwt === bundled.metadata.verify_jwt
+      (bundled.metadata.verify_jwt === undefined ||
+        current.verify_jwt === bundled.metadata.verify_jwt)
     ) {
       yield* output.raw(`No change found in Function: ${config.slug}\n`, "stderr");
       continue;
@@ -2060,6 +2095,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       config: deployConfig,
     });
     const configDeclaredFunctions = deployConfig?.functions ?? {};
+    const rawConfigFunctions = rawFunctionConfigRecord(loadedConfig?.document);
     yield* validateConfigFunctionSlugs(configDeclaredFunctions);
     const slugs =
       flags.functionNames.length > 0
@@ -2082,6 +2118,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       supabaseDir: dependencies.supabaseDir,
       configFunctions,
       configDeclaredFunctions,
+      rawConfigFunctions,
       importMapOverride: flags.importMap,
       noVerifyJwtOverride,
     });

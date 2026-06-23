@@ -154,6 +154,7 @@ function setup(opts: SetupOpts = {}) {
     BunServices.layer,
     out.layer,
     api.layer,
+    api.factoryLayer,
     api.httpClientLayer,
     cliConfig,
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),

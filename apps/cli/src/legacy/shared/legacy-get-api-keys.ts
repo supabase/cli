@@ -1,7 +1,7 @@
 import type { V1GetProjectApiKeysOutput } from "@supabase/api/effect";
 import { Effect } from "effect";
 
-import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import {
   LegacyProjectsApiKeysNetworkError,
   LegacyProjectsApiKeysUnexpectedStatusError,
@@ -28,9 +28,13 @@ const mapApiKeysError = mapLegacyHttpError({
  * (issue #4775). The param is omitted entirely when `reveal` is `false` to keep the
  * default request byte-identical to Go's (`bootstrap` only consumes the never-redacted
  * anon key, so it stays on the default path).
+ *
+ * Resolves the client lazily via `LegacyPlatformApiFactory.make` so callers on the local
+ * path (no `--linked`) never trigger Management API auth. The factory is memoised, so
+ * repeated calls in the same command invocation reuse the same client.
  */
 export const legacyGetProjectApiKeys = Effect.fnUntraced(function* (ref: string, reveal = false) {
-  const api = yield* LegacyPlatformApi;
+  const api = yield* (yield* LegacyPlatformApiFactory).make;
   const keys: ApiKeys = yield* api.v1
     .getProjectApiKeys(reveal ? { ref, reveal: true } : { ref })
     .pipe(Effect.catch(mapApiKeysError));
