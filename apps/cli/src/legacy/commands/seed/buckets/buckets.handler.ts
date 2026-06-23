@@ -2,9 +2,10 @@ import {
   KONG_LOCAL_CA_CERT,
   loadProjectConfig,
   type LoadProjectConfigOptions,
+  ProjectConfigSchema,
 } from "@supabase/config";
 import { defaultJwtSecret, generateJwt } from "@supabase/stack/effect";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import type { PlatformError } from "effect/PlatformError";
 
@@ -12,7 +13,8 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { legacyGetProjectApiKeys } from "../../../shared/legacy-get-api-keys.ts";
+import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
+import { legacyMapTenantApiKeysError } from "../../../shared/legacy-get-tenant-api-keys.ts";
 import { legacyExtractServiceKeys } from "../../../shared/legacy-tenant-keys.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -30,6 +32,8 @@ import {
   makeLegacyStorageGateway,
 } from "./buckets.gateway.ts";
 import {
+  LegacySeedApiKeysNetworkError,
+  LegacySeedAuthTokenError,
   LegacySeedConfigLoadError,
   LegacySeedMissingApiKeyError,
   LegacySeedStorageNetworkError,
@@ -89,7 +93,9 @@ function legacyKongCaFetch(ca: string): typeof globalThis.fetch {
  * // Once @supabase/config adds `(*api).Validate`, this helper can be removed and
  * // the error mapping moved to the `ProjectConfigParseError` catch above.
  *
- * Only called when `projectRef === ""` (local) AND `config.api.tls.enabled`.
+ * Only called when `projectRef === ""` (local) AND `config.api.enabled` AND
+ * `config.api.tls.enabled` — Go gates both path resolution (`config.go:795`)
+ * and validation (`config.go:841`) on `c.Api.Enabled`.
  */
 const validateLocalKongTls = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -204,6 +210,17 @@ function emptySummary(): SeedSummary {
 }
 
 /**
+ * Embedded-default project config, decoded from an empty object — the same
+ * `decodeUnknownSync(ProjectConfigSchema)({})` the loader uses internally
+ * (`packages/config/src/io.ts:54-56`). Go's `seed buckets` never aborts on a
+ * missing `config.toml`: it reads the package-global `utils.Config`, which is
+ * initialized to embedded defaults (`internal/utils/config.go:100`), and
+ * `config.Load` no-ops on a missing file (`mergeFileConfig` → nil). So "no
+ * config file" behaves like the embedded-default config.
+ */
+const legacyDecodeDefaultProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+
+/**
  * `supabase seed buckets` — seeds Storage buckets from
  * `[storage.buckets]` / `[storage.vector]` in `supabase/config.toml`.
  *
@@ -262,10 +279,14 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
           }),
       ),
     );
-    if (loaded === null) {
-      return;
-    }
-    const config = loaded.config;
+    // A missing config file is NOT an early exit: Go uses embedded defaults and
+    // still gates the no-op on `len(projectRef) == 0` (`internal/seed/buckets/
+    // buckets.go:16-20`). So local + no-config falls into the no-op short-circuit
+    // below (emitting the empty summary in json/stream-json); `--linked` +
+    // no-config falls through to the remote path so auth/project/API failures
+    // surface, exactly as the Go command does.
+    const config = loaded === null ? legacyDecodeDefaultProjectConfig({}) : loaded.config;
+    const document = loaded === null ? undefined : loaded.document;
     const bucketsConfig = config.storage.buckets ?? {};
     const bucketNames = Object.keys(bucketsConfig);
     const vectorEnabled = config.storage.vector.enabled;
@@ -293,7 +314,7 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     for (const [name, bucket] of Object.entries(bucketsConfig)) {
       bucketPropsByName.set(
         name,
-        yield* computeBucketProps(loaded.document, name, bucket, storageFileSizeLimitBytes),
+        yield* computeBucketProps(document, name, bucket, storageFileSizeLimitBytes),
       );
     }
 
@@ -320,7 +341,23 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
       if (envKey !== undefined && envKey.length > 0) {
         apiKey = envKey;
       } else {
-        const keys = legacyExtractServiceKeys(yield* legacyGetProjectApiKeys(projectRef, true));
+        // Go builds the remote Storage client via `tenant.GetApiKeys`
+        // (`internal/storage/client/api.go:22`), which maps a non-200 to
+        // `Authorization failed for the access token and project ref pair: <body>`
+        // (`internal/utils/tenant/client.go:15,77-78`) — NOT the `projects api-keys`
+        // helper's `unexpected get api keys status ...`. Resolve the client lazily
+        // so the local path never triggers Management API auth.
+        const api = yield* (yield* LegacyPlatformApiFactory).make;
+        const keys = legacyExtractServiceKeys(
+          yield* api.v1.getProjectApiKeys({ ref: projectRef, reveal: true }).pipe(
+            Effect.catch(
+              legacyMapTenantApiKeysError({
+                networkError: LegacySeedApiKeysNetworkError,
+                statusError: LegacySeedAuthTokenError,
+              }),
+            ),
+          ),
+        );
         // Go's tenant.GetApiKeys fails with errMissingKey ("Anon key not found.")
         // when the api-keys response yields nothing, before building the remote
         // Storage client (`internal/utils/tenant/client.go:24-26,80-82`).
@@ -333,23 +370,27 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
 
     // Kong CA trust for the LOCAL path. Go's `newLocalClient` installs
     // `status.NewKongClient` unconditionally (`internal/storage/client/api.go:30-37`)
-    // — its embedded CA only matters for https — and `(*api).Validate` reads
-    // `cert_path` and validates the cert/key pairing only when `api.tls.enabled`
-    // (`config.go:845-861`). So: validate (and resolve a cert_path CA) when
-    // tls is enabled; inject the CA whenever the resolved local URL is https
-    // (covering an explicit `https` `api.external_url` with `tls.enabled` false →
-    // embedded CA), and never for the remote `--linked` host.
+    // — its embedded CA only matters for https — and `(*api).Validate` resolves
+    // `cert_path`/`key_path` (`config.go:795`) and validates the cert/key pairing
+    // (`config.go:841-861`) only when `api.enabled && api.tls.enabled` (both
+    // blocks are gated on `c.Api.Enabled`). So: validate (and resolve a cert_path
+    // CA) only when the api is enabled AND tls is enabled; inject the CA whenever
+    // the resolved local URL is https — Go derives the scheme from `api.tls.enabled`
+    // alone (`config.go:639-642`, NOT gated on `api.enabled`), so an `enabled=false`
+    // + `tls.enabled=true` config still yields an https URL and the embedded CA —
+    // and never for the remote `--linked` host.
     let localKongCa: string | undefined;
     if (projectRef === "") {
-      const validatedCa = config.api.tls.enabled
-        ? yield* validateLocalKongTls(
-            fs,
-            path,
-            cliConfig.workdir,
-            config.api.tls.cert_path,
-            config.api.tls.key_path,
-          )
-        : undefined;
+      const validatedCa =
+        config.api.enabled && config.api.tls.enabled
+          ? yield* validateLocalKongTls(
+              fs,
+              path,
+              cliConfig.workdir,
+              config.api.tls.cert_path,
+              config.api.tls.key_path,
+            )
+          : undefined;
       if (baseUrl.startsWith("https:")) {
         localKongCa = validatedCa ?? KONG_LOCAL_CA_CERT;
       }

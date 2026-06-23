@@ -54,3 +54,27 @@ export class LegacySeedMutuallyExclusiveFlagsError extends Data.TaggedError(
 export class LegacySeedMissingApiKeyError extends Data.TaggedError("LegacySeedMissingApiKeyError")<{
   readonly message: string;
 }> {}
+
+/**
+ * Transport failure fetching the project's api-keys on `--linked`, mirroring Go's
+ * `tenant.GetApiKeys` network path (`failed to get api keys: <cause>`).
+ */
+export class LegacySeedApiKeysNetworkError extends Data.TaggedError(
+  "LegacySeedApiKeysNetworkError",
+)<{
+  readonly message: string;
+}> {}
+
+/**
+ * `GET /v1/projects/{ref}/api-keys?reveal=true` returned a non-200 status on a
+ * `--linked` run. Byte-matches Go's `tenant.GetApiKeys` → `ErrAuthToken`,
+ * `"Authorization failed for the access token and project ref pair: " + body`
+ * (`apps/cli-go/internal/utils/tenant/client.go:15,77-78`). This is the user-facing
+ * error for an invalid access token / project-ref pair — distinct from the
+ * `projects api-keys` helper's `unexpected get api keys status ...`.
+ */
+export class LegacySeedAuthTokenError extends Data.TaggedError("LegacySeedAuthTokenError")<{
+  readonly status: number;
+  readonly body: string;
+  readonly message: string;
+}> {}

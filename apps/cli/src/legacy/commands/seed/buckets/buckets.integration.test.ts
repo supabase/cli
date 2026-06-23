@@ -6,11 +6,13 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   legacyJsonResponse,
+  legacyStatusCodeFailure,
   legacyTransportFailure,
   mockLegacyCliConfig,
   mockLegacyPlatformApiService,
@@ -64,6 +66,8 @@ function setupLegacySeedBuckets(
     }>;
     /** When true, loadProjectRef fails with LegacyProjectNotLinkedError. */
     readonly linkedFails?: boolean;
+    /** When set, the Management API `getProjectApiKeys` call fails with this error. */
+    readonly apiKeysFail?: HttpClientError.HttpClientError;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -164,7 +168,10 @@ function setupLegacySeedBuckets(
   ];
   const managementApi = mockLegacyPlatformApiService({
     v1: {
-      getProjectApiKeys: () => Effect.succeed(opts.apiKeys ?? defaultApiKeys),
+      getProjectApiKeys: () =>
+        opts.apiKeysFail !== undefined
+          ? Effect.fail(opts.apiKeysFail)
+          : Effect.succeed(opts.apiKeys ?? defaultApiKeys),
     },
   });
 
@@ -226,6 +233,28 @@ describe("legacy seed buckets", () => {
   // rejection). It's covered by `legacyAssertSeedTargetsExclusive` in
   // buckets.flags.unit.test.ts rather than here, since the handler no longer
   // performs the check.
+
+  it.live("tolerates null string fields in 200 responses (Go encoding/json zero value)", () => {
+    // Go decodes these bodies into plain `string` fields (not *string); a JSON
+    // `null` leaves them at "" and does NOT abort (fetcher/http.go:144-151). A
+    // list entry with `name: null` and a create response with `message: null`
+    // must therefore be tolerated, not treated as a parse failure.
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.docs]\npublic = false\n",
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [{ name: null, id: "legacy" }] },
+        { method: "POST", match: "/storage/v1/bucket", body: { message: null } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Creating Storage bucket: docs");
+      expect(
+        requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
+      ).toBe(true);
+    });
+  });
 
   it.live("creates a new bucket and updates an existing one (overwrite default yes)", () => {
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
@@ -468,13 +497,64 @@ describe("legacy seed buckets", () => {
     });
   });
 
-  it.live("returns without output when no config.toml is found", () => {
+  it.live("treats a missing config file as embedded defaults: local no-op, no text output", () => {
+    // Go never aborts on a missing config.toml — it uses embedded defaults and
+    // no-ops the LOCAL path on empty buckets (internal/seed/buckets/buckets.go:16-20).
+    // Text mode emits nothing for the no-op, same as before.
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {});
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests).toHaveLength(0);
       expect(out.stderrText).toBe("");
+    });
+  });
+
+  it.live("emits an empty JSON result for a missing config file (local no-op, json mode)", () => {
+    // The missing-config local no-op flows through the same empty-summary path as
+    // an empty-but-present config, so scripted json callers still get a result.
+    const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, { format: "json" });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests).toHaveLength(0);
+      const success = out.messages.find((m) => m.type === "success");
+      expect(success?.data?.["buckets_created"]).toEqual([]);
+      expect(success?.data?.["objects_uploaded"]).toEqual([]);
+    });
+  });
+
+  it.live("does not skip a --linked run when the config file is absent", () => {
+    // A linked run never short-circuits (gating is len(projectRef) == 0), so even
+    // with no config file Go still builds the remote client, fetches the
+    // service-role key, and lists buckets — failures surface instead of a silent
+    // success. With no configured buckets the remote LIST must still happen.
+    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      projectRef: LEGACY_VALID_REF,
+      apiKeys: [
+        {
+          name: "service_role",
+          api_key: "remote-service-role-key",
+          type: "secret",
+          secret_jwt_template: { role: "service_role" },
+        },
+      ],
+      args: ["seed", "buckets", "--linked"],
+      routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      // The remote list call fired against the linked project — not a silent no-op.
+      expect(
+        requests.some(
+          (r) =>
+            r.method === "GET" &&
+            r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`) &&
+            r.url.includes("/storage/v1/bucket"),
+        ),
+      ).toBe(true);
     });
   });
 
@@ -1331,6 +1411,33 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live("--linked surfaces tenant.GetApiKeys auth error on a non-200 api-keys response", () => {
+    // Go resolves the service-role key via tenant.GetApiKeys (storage/client/api.go:22),
+    // which maps a non-200 to `Authorization failed for the access token and project
+    // ref pair: <body>` (tenant/client.go:15,77-78) — NOT the projects api-keys
+    // helper's `unexpected get api keys status ...`.
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.test]\npublic = true\n",
+      projectRef: LEGACY_VALID_REF,
+      apiKeysFail: legacyStatusCodeFailure(401),
+      args: ["seed", "buckets", "--linked"],
+      routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets({ linked: true, local: false }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      const json = JSON.stringify(exit);
+      expect(json).toContain("LegacySeedAuthTokenError");
+      expect(json).toContain("Authorization failed for the access token and project ref pair");
+      expect(json).not.toContain("unexpected get api keys status");
+      // Fails before any remote Storage call.
+      expect(requests.some((r) => r.url.includes("/storage/v1/"))).toBe(false);
+    });
+  });
+
   it.live("caches the linked project on --linked but not on local", () => {
     // Mirrors Go's ensureProjectGroupsCached (cmd/root.go), gated on a non-empty
     // resolved ref: --linked writes the linked-project cache + group identify;
@@ -1873,6 +1980,27 @@ describe("legacy seed buckets", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("failed to read TLS key:");
       expect(requests).toHaveLength(0);
+    });
+  });
+
+  it.live("skips TLS validation when api.enabled is false (Go gates on c.Api.Enabled)", () => {
+    // Go resolves and validates cert/key only inside `if c.Api.Enabled` blocks
+    // (config.go:795, 841), so a config with [api] enabled=false, [api.tls]
+    // enabled=true and only cert_path set is valid under the Go loader and must
+    // NOT fail here on the missing key_path — it seeds normally instead.
+    const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
+      toml: '[api]\nenabled = false\n[api.tls]\nenabled = true\ncert_path = "custom-ca.crt"\n[storage.buckets.docs]\npublic = false\n',
+      routes: [
+        { method: "GET", match: "/storage/v1/bucket", body: [] },
+        { method: "POST", match: "/storage/v1/bucket", body: { name: "docs" } },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(
+        requests.some((r) => r.method === "POST" && r.url.endsWith("/storage/v1/bucket")),
+      ).toBe(true);
     });
   });
 });

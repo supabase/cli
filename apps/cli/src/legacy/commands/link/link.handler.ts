@@ -17,7 +17,8 @@ import {
   GroupProject,
 } from "../../../shared/telemetry/event-catalog.ts";
 import { legacyDashboardUrl } from "../../shared/legacy-profile.ts";
-import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
+import { legacyMapTenantApiKeysError } from "../../shared/legacy-get-tenant-api-keys.ts";
+import { sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
 import { legacyLinkServicesCore } from "../../shared/legacy-link-services-core.ts";
 import { legacyExtractServiceKeys } from "../../shared/legacy-tenant-keys.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
@@ -73,12 +74,9 @@ const classifyProjectError = (
 
 type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, PlatformError>;
 
-const mapApiKeysError = mapLegacyHttpError({
+const mapApiKeysError = legacyMapTenantApiKeysError({
   networkError: LegacyLinkApiKeysNetworkError,
   statusError: LegacyLinkAuthTokenError,
-  networkMessage: (cause) => `failed to get api keys: ${cause}`,
-  statusMessage: (_status, body) =>
-    `Authorization failed for the access token and project ref pair: ${body}`,
 });
 
 export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkFlags) {

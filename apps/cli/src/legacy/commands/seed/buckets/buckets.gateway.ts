@@ -152,12 +152,17 @@ function asObject(entry: unknown): Record<string, unknown> | null {
 }
 
 /**
- * Go-struct string field: absent → "" (zero value, tolerated); present-but-not-a-
- * string → `null` (decode failure). Distinguish the failure via `=== null`.
+ * Go-struct string field: absent OR JSON `null` → "" (zero value, tolerated).
+ * Go decodes via `json.NewDecoder(...).Decode(&data)` (fetcher/http.go:144-151)
+ * into plain `string` fields (not `*string`), and `encoding/json` leaves a
+ * non-pointer scalar at its zero value for a `null` JSON value rather than
+ * erroring — so `{"name": null}` is `Name == ""`, not a parse failure. A
+ * present-but-not-a-string value → `null` (decode failure, matching Go's
+ * type-mismatch error). Distinguish the failure via `=== null`.
  */
 function decodeStringField(obj: Record<string, unknown>, key: string): string | null {
   const value = obj[key];
-  if (value === undefined) return "";
+  if (value === undefined || value === null) return "";
   return typeof value === "string" ? value : null;
 }
 
