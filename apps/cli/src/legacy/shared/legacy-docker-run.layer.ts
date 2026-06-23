@@ -1,7 +1,7 @@
 import { Effect, Exit, Layer, Stream } from "effect";
-import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
+import { containerCliExitCode, spawnContainerCli } from "./legacy-container-cli.ts";
 import {
   buildLegacyDockerArgs,
   legacyApplyBitbucketDockerFilter,
@@ -72,7 +72,7 @@ export const legacyDockerRunLayer: Layer.Layer<
       );
 
     const hasLocalImage = (image: string): Effect.Effect<boolean> =>
-      spawner.exitCode(ChildProcess.make("docker", ["image", "inspect", image])).pipe(
+      containerCliExitCode(spawner, ["image", "inspect", image]).pipe(
         Effect.map((exitCode) => exitCode === 0),
         Effect.catch(() => Effect.succeed(false)),
       );
@@ -81,16 +81,13 @@ export const legacyDockerRunLayer: Layer.Layer<
       image: string,
     ): Effect.Effect<{ readonly exitCode: number; readonly stderr: string }, Error> =>
       Effect.gen(function* () {
-        const command = ChildProcess.make("docker", ["pull", image], {
+        const handle = yield* spawnContainerCli(spawner, ["pull", image], {
           stdin: "inherit",
           stdout: "pipe",
           stderr: "pipe",
           detached: false,
           extendEnv: true,
-        });
-        const handle = yield* spawner
-          .spawn(command)
-          .pipe(Effect.mapError(() => new Error("spawn")));
+        }).pipe(Effect.mapError(() => new Error("spawn")));
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [
             collectStream(handle.stdout),
@@ -186,15 +183,14 @@ export const legacyDockerRunLayer: Layer.Layer<
             // captured and redirected to `--file`/post-processing. Go's `dockerExec`
             // does the same: stdout → caller's writer, stderr → `MultiWriter(os.Stderr,
             // errBuf)` (`apps/cli-go/internal/db/dump/dump.go:50-90`).
-            const command = ChildProcess.make("docker", args, {
+            const handle = yield* spawnContainerCli(spawner, args, {
               stdin: "inherit",
               stdout: "pipe",
               stderr: "pipe",
               detached: false,
               env: opts.env,
               extendEnv: true,
-            });
-            const handle = yield* spawner.spawn(command).pipe(Effect.mapError(spawnError));
+            }).pipe(Effect.mapError(spawnError));
 
             const stdoutChunks: Array<Uint8Array> = [];
             const stderrChunks: Array<Uint8Array> = [];
@@ -239,15 +235,14 @@ export const legacyDockerRunLayer: Layer.Layer<
             const args = buildLegacyDockerArgs(
               legacyApplyBitbucketDockerFilter(resolvedOpts, legacyIsBitbucketPipeline()),
             );
-            const command = ChildProcess.make("docker", args, {
+            const handle = yield* spawnContainerCli(spawner, args, {
               stdin: "inherit",
               stdout: "pipe",
               stderr: "pipe",
               detached: false,
               env: opts.env,
               extendEnv: true,
-            });
-            const handle = yield* spawner.spawn(command).pipe(Effect.mapError(spawnError));
+            }).pipe(Effect.mapError(spawnError));
 
             const stderrChunks: Array<Uint8Array> = [];
             // Stream stdout to the caller's sink in arrival order while draining
@@ -290,18 +285,17 @@ export const legacyDockerRunLayer: Layer.Layer<
             // and the secret never lands in `ps`/`/proc/<pid>/cmdline`.
             // `extendEnv: true` keeps the rest of process.env (PATH, DOCKER_HOST,
             // …) so the docker invocation behaves like the parent shell's.
-            const command = ChildProcess.make("docker", args, {
+            // Never embed the spawn error verbatim: it can leak the full argv and
+            // environment of the failed exec (CWE-214/209). Emit a fixed,
+            // credential-free message that still points at the likely cause.
+            const exitCode = yield* containerCliExitCode(spawner, args, {
               stdin: "inherit",
               stdout: "inherit",
               stderr: "inherit",
               detached: false,
               env: opts.env,
               extendEnv: true,
-            });
-            // Never embed the spawn error verbatim: it can leak the full argv and
-            // environment of the failed exec (CWE-214/209). Emit a fixed,
-            // credential-free message that still points at the likely cause.
-            const exitCode = yield* spawner.exitCode(command).pipe(
+            }).pipe(
               Effect.mapError(
                 () =>
                   new LegacyDockerRunError({
