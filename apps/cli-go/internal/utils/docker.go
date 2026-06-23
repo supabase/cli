@@ -157,32 +157,41 @@ func CliProjectFilter(projectId string) filters.Args {
 }
 
 var (
-	// Only supports one registry per command invocation
-	registryAuth string
-	registryOnce sync.Once
+	registryAuth sync.Map
 )
 
 func GetRegistryAuth() string {
-	registryOnce.Do(func() {
-		config := dockerConfig.LoadDefaultConfigFile(os.Stderr)
-		// Ref: https://docs.docker.com/engine/api/sdk/examples/#pull-an-image-with-authentication
-		auth, err := config.GetAuthConfig(GetRegistry())
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to load registry credentials:", err)
-			return
-		}
-		encoded, err := json.Marshal(auth)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to serialise auth config:", err)
-			return
-		}
-		registryAuth = base64.URLEncoding.EncodeToString(encoded)
-	})
-	return registryAuth
+	return getRegistryAuth(GetRegistry())
+}
+
+func GetRegistryAuthForImage(imageTag string) string {
+	return getRegistryAuth(registryFromImage(imageTag))
+}
+
+func getRegistryAuth(registry string) string {
+	if auth, ok := registryAuth.Load(registry); ok {
+		return auth.(string)
+	}
+	config := dockerConfig.LoadDefaultConfigFile(os.Stderr)
+	// Ref: https://docs.docker.com/engine/api/sdk/examples/#pull-an-image-with-authentication
+	auth, err := config.GetAuthConfig(registry)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to load registry credentials:", err)
+		return ""
+	}
+	encoded, err := json.Marshal(auth)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Failed to serialise auth config:", err)
+		return ""
+	}
+	value := base64.URLEncoding.EncodeToString(encoded)
+	registryAuth.Store(registry, value)
+	return value
 }
 
 // Defaults to Supabase public ECR for faster image pull
 const defaultRegistry = "public.ecr.aws"
+const ghcrRegistry = "ghcr.io"
 
 func GetRegistry() string {
 	registry := viper.GetString("INTERNAL_IMAGE_REGISTRY")
@@ -190,6 +199,10 @@ func GetRegistry() string {
 		return defaultRegistry
 	}
 	return strings.ToLower(registry)
+}
+
+func HasRegistryOverride() bool {
+	return len(viper.GetString("INTERNAL_IMAGE_REGISTRY")) > 0
 }
 
 func GetRegistryImageUrl(imageName string) string {
@@ -203,9 +216,54 @@ func GetRegistryImageUrl(imageName string) string {
 	return registry + "/supabase/" + imageName
 }
 
+func GetRegistryImageUrls(imageName string) []string {
+	if HasRegistryOverride() {
+		return []string{GetRegistryImageUrl(imageName)}
+	}
+	parts := strings.Split(imageName, "/")
+	lastPart := parts[len(parts)-1]
+	return dedupeStrings([]string{
+		defaultRegistry + "/supabase/" + lastPart,
+		ghcrRegistry + "/supabase/" + lastPart,
+		dockerHubFallbackImage(imageName, lastPart),
+	})
+}
+
+func dockerHubFallbackImage(imageName, lastPart string) string {
+	if strings.HasPrefix(imageName, defaultRegistry+"/supabase/") || strings.HasPrefix(imageName, ghcrRegistry+"/supabase/") {
+		return "supabase/" + lastPart
+	}
+	return imageName
+}
+
+func dedupeStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
+}
+
+func registryFromImage(imageTag string) string {
+	parts := strings.Split(imageTag, "/")
+	if len(parts) == 1 {
+		return "docker.io"
+	}
+	first := parts[0]
+	if strings.Contains(first, ".") || strings.Contains(first, ":") || first == "localhost" {
+		return first
+	}
+	return "docker.io"
+}
+
 func DockerImagePull(ctx context.Context, imageTag string, w io.Writer) error {
 	out, err := Docker.ImagePull(ctx, imageTag, image.PullOptions{
-		RegistryAuth: GetRegistryAuth(),
+		RegistryAuth: GetRegistryAuthForImage(imageTag),
 	})
 	if err != nil {
 		return errors.Errorf("failed to pull docker image: %w", err)
@@ -236,27 +294,43 @@ func DockerImagePullWithRetry(ctx context.Context, image string, retries int) er
 }
 
 func DockerPullImageIfNotCached(ctx context.Context, imageName string) error {
-	imageUrl := GetRegistryImageUrl(imageName)
-	if _, err := Docker.ImageInspect(ctx, imageUrl); err == nil {
-		return nil
-	} else if !errdefs.IsNotFound(err) {
-		return errors.Errorf("failed to inspect docker image: %w", err)
+	_, err := DockerResolveImageIfNotCached(ctx, imageName)
+	return err
+}
+
+func DockerResolveImageIfNotCached(ctx context.Context, imageName string) (string, error) {
+	imageUrls := GetRegistryImageUrls(imageName)
+	for _, imageUrl := range imageUrls {
+		if _, err := Docker.ImageInspect(ctx, imageUrl); err == nil {
+			return imageUrl, nil
+		} else if !errdefs.IsNotFound(err) {
+			return "", errors.Errorf("failed to inspect docker image: %w", err)
+		}
 	}
-	return DockerImagePullWithRetry(ctx, imageUrl, 2)
+	var pullErrors []string
+	for _, imageUrl := range imageUrls {
+		if err := DockerImagePullWithRetry(ctx, imageUrl, 2); err == nil {
+			return imageUrl, nil
+		} else {
+			pullErrors = append(pullErrors, fmt.Sprintf("%s: %v", imageUrl, err))
+		}
+	}
+	return "", errors.Errorf("failed to pull docker image from all registries: %s", strings.Join(pullErrors, "; "))
 }
 
 var suggestDockerInstall = "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop"
 
 func DockerStart(ctx context.Context, config container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig, containerName string) (string, error) {
 	// Pull container image
-	if err := DockerPullImageIfNotCached(ctx, config.Image); err != nil {
+	imageUrl, err := DockerResolveImageIfNotCached(ctx, config.Image)
+	if err != nil {
 		if client.IsErrConnectionFailed(err) {
 			CmdSuggestion = suggestDockerInstall
 		}
 		return "", err
 	}
 	// Setup default config
-	config.Image = GetRegistryImageUrl(config.Image)
+	config.Image = imageUrl
 	if config.Labels == nil {
 		config.Labels = make(map[string]string, 2)
 	}
