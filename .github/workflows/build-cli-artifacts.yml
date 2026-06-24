@@ -103,6 +103,24 @@ jobs:
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
 
+      # The GitHub-hosted ubuntu-latest runner ships only ~14 GB free on /, and
+      # build.ts cross-compiles 8 Bun binaries (each embeds the full Bun runtime)
+      # plus 6 Go binaries in parallel, then writes archives + Linux packages —
+      # which tips over "no space left on device" non-deterministically depending
+      # on the runner the attempt lands on. Reclaim the preinstalled toolchains we
+      # don't use (~25 GB) before building. Blacksmith runners have ample disk so
+      # this is gated to the github-hosted producer.
+      #   - tool-cache stays false: setup-go installed Go into
+      #     /opt/hostedtoolcache above, so removing it would break the Go build.
+      #   - swap-storage stays (false = keep): the parallel bun --compile fan-out
+      #     is memory-heavy and the swapfile guards against OOM kills.
+      - name: Free disk space before building
+        if: inputs.cache_key_suffix == '-github'
+        uses: supabase/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # supabase fork of jlumbroso/free-disk-space
+        with:
+          tool-cache: false
+          swap-storage: false
+
       - name: Build selected shell
         run: pnpm exec bun apps/cli/scripts/build.ts --version "${VERSION}" --shell "${BUN_SHELL}"
 
