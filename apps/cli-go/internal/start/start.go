@@ -244,7 +244,14 @@ func ensureImagesCached(ctx context.Context, project types.Project) error {
 		_, err := utils.DockerResolveImageIfNotCached(ctx, image)
 		return err
 	})
-	return errors.Join(result...)
+	// Set the install hint once, sequentially, after the concurrent resolve
+	// finishes, rather than from inside DockerResolveImageIfNotCached where the
+	// WaitAll goroutines would race on the CmdSuggestion global.
+	if err := errors.Join(result...); err != nil {
+		utils.SuggestDockerInstallIfConnectionFailed(err)
+		return err
+	}
+	return nil
 }
 
 func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, ignoreHealthCheck bool, options ...func(*pgx.ConnConfig)) error {
