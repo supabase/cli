@@ -20271,9 +20271,13 @@
           },
           "mfa_enabled": {
             "type": "boolean"
+          },
+          "avatar_url": {
+            "type": "string",
+            "nullable": true
           }
         },
-        "required": ["user_id", "user_name", "role_name", "mfa_enabled"]
+        "required": ["user_id", "user_name", "role_name", "mfa_enabled", "avatar_url"]
       },
       "V1OrganizationSlugResponse": {
         "type": "object",
