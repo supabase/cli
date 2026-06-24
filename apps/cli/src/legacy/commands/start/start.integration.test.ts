@@ -4,16 +4,25 @@ import { Effect, Layer, Option } from "effect";
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
+import type { OutputFormat } from "../../../shared/output/types.ts";
 import type { LegacyStartFlags } from "./start.command.ts";
 import { legacyStart } from "./start.handler.ts";
+
+type LegacyGoOutput = "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
 
 interface ProxyCall {
   readonly args: ReadonlyArray<string>;
   readonly stdin?: "inherit" | "ignore";
 }
 
-function setup(opts: { readonly goOutput?: "json"; readonly captureStdout?: string } = {}) {
-  const out = mockOutput();
+function setup(
+  opts: {
+    readonly format?: OutputFormat;
+    readonly goOutput?: LegacyGoOutput;
+    readonly captureStdout?: string;
+  } = {},
+) {
+  const out = mockOutput({ format: opts.format ?? "text" });
   const execCalls: ProxyCall[] = [];
   const execCaptureCalls: ProxyCall[] = [];
   const proxy = Layer.succeed(LegacyGoProxy, {
@@ -65,7 +74,51 @@ describe("legacy start", () => {
       yield* legacyStart(flags());
 
       expect(s.execCaptureCalls).toEqual([{ args: ["start"], stdin: "inherit" }]);
-      expect(s.execCalls).toEqual([{ args: ["status"] }]);
+      expect(s.execCalls).toEqual([{ args: ["status", "--output", "json"] }]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.live("captures Go start then emits Go status for --output-format json", () => {
+    const s = setup({ format: "json" });
+
+    return Effect.gen(function* () {
+      yield* legacyStart(flags());
+
+      expect(s.execCaptureCalls).toEqual([{ args: ["start"], stdin: "inherit" }]);
+      expect(s.execCalls).toEqual([{ args: ["status", "--output", "json"] }]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.live("captures Go start then emits Go status JSON for --output-format stream-json", () => {
+    const s = setup({ format: "stream-json" });
+
+    return Effect.gen(function* () {
+      yield* legacyStart(flags());
+
+      expect(s.execCaptureCalls).toEqual([{ args: ["start"], stdin: "inherit" }]);
+      expect(s.execCalls).toEqual([{ args: ["status", "--output", "json"] }]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.live("lets --output pretty defer to --output-format json", () => {
+    const s = setup({ format: "json", goOutput: "pretty" });
+
+    return Effect.gen(function* () {
+      yield* legacyStart(flags());
+
+      expect(s.execCaptureCalls).toEqual([{ args: ["start"], stdin: "inherit" }]);
+      expect(s.execCalls).toEqual([{ args: ["status", "--output", "json"] }]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.live("delegates --output yaml through Go status after start succeeds", () => {
+    const s = setup({ goOutput: "yaml" });
+
+    return Effect.gen(function* () {
+      yield* legacyStart(flags());
+
+      expect(s.execCaptureCalls).toEqual([{ args: ["start"], stdin: "inherit" }]);
+      expect(s.execCalls).toEqual([{ args: ["status", "--output", "yaml"] }]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -95,7 +148,7 @@ describe("legacy start", () => {
           stdin: "inherit",
         },
       ]);
-      expect(s.execCalls).toEqual([{ args: ["status"] }]);
+      expect(s.execCalls).toEqual([{ args: ["status", "--output", "json"] }]);
     }).pipe(Effect.provide(s.layer));
   });
 
