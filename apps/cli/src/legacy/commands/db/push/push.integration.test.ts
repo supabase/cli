@@ -32,7 +32,8 @@ import {
 import { legacyDbPush } from "./push.handler.ts";
 import type { LegacyDbPushFlags } from "./push.command.ts";
 
-const LIST_MIGRATIONS = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
+const LIST_MIGRATIONS =
+  "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
 const SELECT_SEEDS = "SELECT path, hash FROM supabase_migrations.seed_files";
 const READ_VAULT = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
 
@@ -71,6 +72,7 @@ function mockConnection(opts: {
   remoteSeeds?: Readonly<Record<string, string>>;
   vaultRows?: ReadonlyArray<{ id: string; name: string }>;
   noSeedTable?: boolean;
+  failExec?: string;
 }) {
   const execs: Array<string> = [];
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
@@ -80,34 +82,47 @@ function mockConnection(opts: {
         extensionExists: () => Effect.succeed(false),
         copyToCsv: () => Effect.succeed(new Uint8Array()),
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-        exec: (sql: string) =>
-          Effect.sync(() => {
+        exec: (sql: string): Effect.Effect<void, LegacyDbExecError> =>
+          Effect.suspend((): Effect.Effect<void, LegacyDbExecError> => {
             execs.push(sql);
-          }),
-        query: (sql: string, params?: ReadonlyArray<unknown>) =>
-          Effect.suspend(() => {
-            queries.push({ sql, params });
-            if (sql === LIST_MIGRATIONS) {
-              return Effect.succeed((opts.remoteMigrations ?? []).map((version) => ({ version })));
-            }
-            if (sql === SELECT_SEEDS) {
-              if (opts.noSeedTable === true) {
-                return Effect.fail(
-                  new LegacyDbExecError({
-                    message: 'relation "supabase_migrations.seed_files" does not exist',
-                    code: "42P01",
-                  }),
-                );
-              }
-              return Effect.succeed(
-                Object.entries(opts.remoteSeeds ?? {}).map(([path, hash]) => ({ path, hash })),
+            if (opts.failExec !== undefined && sql === opts.failExec) {
+              return Effect.fail(
+                new LegacyDbExecError({ message: "ERROR: boom (SQLSTATE 42601)" }),
               );
             }
-            if (sql === READ_VAULT) {
-              return Effect.succeed(opts.vaultRows ?? []);
-            }
-            return Effect.succeed([]);
+            return Effect.void;
           }),
+        query: (
+          sql: string,
+          params?: ReadonlyArray<unknown>,
+        ): Effect.Effect<ReadonlyArray<Record<string, unknown>>, LegacyDbExecError> =>
+          Effect.suspend(
+            (): Effect.Effect<ReadonlyArray<Record<string, unknown>>, LegacyDbExecError> => {
+              queries.push({ sql, params });
+              if (sql === LIST_MIGRATIONS) {
+                return Effect.succeed(
+                  (opts.remoteMigrations ?? []).map((version) => ({ version })),
+                );
+              }
+              if (sql === SELECT_SEEDS) {
+                if (opts.noSeedTable === true) {
+                  return Effect.fail(
+                    new LegacyDbExecError({
+                      message: 'relation "supabase_migrations.seed_files" does not exist',
+                      code: "42P01",
+                    }),
+                  );
+                }
+                return Effect.succeed(
+                  Object.entries(opts.remoteSeeds ?? {}).map(([path, hash]) => ({ path, hash })),
+                );
+              }
+              if (sql === READ_VAULT) {
+                return Effect.succeed(opts.vaultRows ?? []);
+              }
+              return Effect.succeed([]);
+            },
+          ),
       }),
   });
   return {
@@ -137,6 +152,7 @@ function setup(
     remoteSeeds?: Readonly<Record<string, string>>;
     vaultRows?: ReadonlyArray<{ id: string; name: string }>;
     noSeedTable?: boolean;
+    failExec?: string;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -239,7 +255,9 @@ describe("legacy db push", () => {
       // The migration body + history insert ran inside a transaction.
       expect(conn.execs).toContain("BEGIN");
       expect(conn.execs).toContain("COMMIT");
-      expect(conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(true);
+      expect(conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations"))).toBe(
+        true,
+      );
     });
   });
 
@@ -343,9 +361,9 @@ describe("legacy db push", () => {
     return Effect.gen(function* () {
       yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
-      expect(conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files"))).toBe(
-        true,
-      );
+      expect(
+        conn.queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files")),
+      ).toBe(true);
     });
   });
 
@@ -398,6 +416,237 @@ describe("legacy db push", () => {
     return Effect.gen(function* () {
       yield* legacyDbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Schema migrations are up to date.");
+    });
+  });
+
+  it.live("returns context canceled when the roles prompt is declined", () => {
+    const { layer } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { "supabase/roles.sql": "create role app;" },
+      confirm: [false],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("context canceled");
+    });
+  });
+
+  it.live("returns context canceled when the seed prompt is declined", () => {
+    const { layer } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { "supabase/seed.sql": "insert into t values (1);" },
+      confirm: [false],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("context canceled");
+    });
+  });
+
+  it.live("re-hashes a dirty seed without re-running its statements", () => {
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { "supabase/seed.sql": "insert into t values (1);" },
+      // Remote hash differs → dirty.
+      remoteSeeds: { "supabase/seed.sql": "stalehash" },
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Updating seed hash to supabase/seed.sql...");
+      // Dirty seed only upserts the hash; the body statement is not executed.
+      expect(conn.execs).not.toContain("insert into t values (1);");
+    });
+  });
+
+  it.live("treats every seed as pending when the seed_files table is absent", () => {
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { "supabase/seed.sql": "insert into t values (1);" },
+      noSeedTable: true,
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
+    });
+  });
+
+  it.live("warns and reports up to date when no seed files match", () => {
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["missing.sql"]\n',
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("WARN: no files matched pattern: supabase/missing.sql");
+      expect(out.stdoutText).toBe("Local database is up to date.\n");
+    });
+  });
+
+  it.live("reports seed files up to date when migrations push but no seeds match", () => {
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["missing.sql"]\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Seed files are up to date.");
+    });
+  });
+
+  it.live("upserts vault secrets (update existing, create new) before migrating", () => {
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.vault]\nexisting = "v1"\nfresh = "v2"\n',
+      files: migrationFile("20240101000000"),
+      // `existing` already present remotely → update; `fresh` → create.
+      vaultRows: [{ id: "id-1", name: "existing" }],
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Updating vault secrets...");
+      const sqls = conn.queries.map((q) => q.sql);
+      expect(sqls).toContain("SELECT vault.update_secret($1, $2)");
+      expect(sqls).toContain("SELECT vault.create_secret($1, $2)");
+    });
+  });
+
+  it.live("defaults to the linked target when no target flag is set", () => {
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "push"],
+      isLocal: false,
+      projectRef: LEGACY_VALID_REF,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Connecting to remote database...");
+      expect(out.stdoutText).toBe("Remote database is up to date.\n");
+    });
+  });
+
+  it.live("surfaces an apply error with statement context", () => {
+    const { layer } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile("20240101000000", "BOOM;"),
+      failExec: "BOOM",
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("At statement: 0");
+      }
+    });
+  });
+
+  it.live("dry-run lists roles, migrations and seeds without applying", () => {
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: {
+        ...migrationFile("20240101000000"),
+        "supabase/roles.sql": "create role app;",
+        "supabase/seed.sql": "insert into t values (1);",
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({
+        ...DEFAULT_FLAGS,
+        dryRun: true,
+        includeRoles: true,
+        includeSeed: true,
+      }).pipe(Effect.provide(layer));
+      // The roles path is wrapped in Bold (ANSI), matching Go's utils.Bold.
+      expect(out.stderrText).toContain("Would create custom roles");
+      expect(out.stderrText).toContain("roles.sql");
+      expect(out.stderrText).toContain("Would push these migrations:");
+      expect(out.stderrText).toContain("Would seed these files:");
+      expect(conn.execs).not.toContain("BEGIN");
+    });
+  });
+
+  it.live("dry-run with only custom roles lists them without a migration section", () => {
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { "supabase/roles.sql": "create role app;" },
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, dryRun: true, includeRoles: true }).pipe(
+        Effect.provide(layer),
+      );
+      expect(out.stderrText).toContain("Would create custom roles");
+      expect(out.stderrText).not.toContain("Would push these migrations:");
+    });
+  });
+
+  it.live("uses embedded defaults when no config file is present", () => {
+    const { layer, out } = setup(tmp.current, {
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      // No config.toml written → loadProjectConfig returns null → default config
+      // (migrations enabled), and the vault document is absent.
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
+    });
+  });
+
+  it.live("fails when config.toml cannot be parsed", () => {
+    const { layer } = setup(tmp.current, { toml: "this is = = not [[[ valid toml" });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("failed to parse supabase/config.toml");
+      }
+    });
+  });
+
+  it.live("announces a matching [remotes.*] override on the linked path", () => {
+    const { layer, out } = setup(tmp.current, {
+      toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${LEGACY_VALID_REF}"\n`,
+      args: ["db", "push", "--linked"],
+      isLocal: false,
+      projectRef: LEGACY_VALID_REF,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
+        Effect.provide(layer),
+      );
+      expect(out.stderrText).toContain("Loading config override: [remotes.preview]");
+    });
+  });
+
+  it.live("pushes to the linked project and caches the project ref (json)", () => {
+    const { layer, out, linkedCache } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile("20240101000000"),
+      args: ["db", "push", "--linked"],
+      isLocal: false,
+      projectRef: LEGACY_VALID_REF,
+      format: "json",
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
+        Effect.provide(layer),
+      );
+      expect(out.stderrText).toContain("Connecting to remote database...");
+      expect(linkedCache.cached).toBe(true);
+      expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+      const success = out.messages.find((m) => m.type === "success");
+      expect(success?.data?.["migrations"]).toEqual(["20240101000000_test.sql"]);
     });
   });
 });

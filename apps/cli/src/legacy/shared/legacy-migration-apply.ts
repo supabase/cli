@@ -105,7 +105,9 @@ export const legacyApplyMigrationFile = <E>(
   mapError: (message: string) => E,
 ): Effect.Effect<void, E> =>
   Effect.gen(function* () {
-    yield* legacyCreateMigrationTable(session).pipe(Effect.mapError((e) => mapError(errMessage(e))));
+    yield* legacyCreateMigrationTable(session).pipe(
+      Effect.mapError((e) => mapError(errMessage(e))),
+    );
     yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
   });
 
@@ -125,7 +127,9 @@ export const legacyApplyMigrations = <E>(
   Effect.gen(function* () {
     const output = yield* Output;
     if (pending.length === 0) return;
-    yield* legacyCreateMigrationTable(session).pipe(Effect.mapError((e) => mapError(errMessage(e))));
+    yield* legacyCreateMigrationTable(session).pipe(
+      Effect.mapError((e) => mapError(errMessage(e))),
+    );
     for (const migrationPath of pending) {
       yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
       yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);

@@ -162,12 +162,15 @@ const globOne = (
   Effect.gen(function* () {
     // No metacharacters: a direct existence check (Go's `fs.Glob` fast path).
     if (!META_CHARS.test(pattern)) {
-      const exists = yield* fs.exists(path.join(workdir, pattern)).pipe(Effect.orElseSucceed(() => false));
+      const exists = yield* fs
+        .exists(path.join(workdir, pattern))
+        .pipe(Effect.orElseSucceed(() => false));
       return exists ? [pattern] : [];
     }
     const { dir, file } = splitPath(pattern);
     // Resolve the directory level first (recursively if it, too, is a glob).
-    const dirs = dir === "" || !META_CHARS.test(dir) ? [dir] : yield* globOne(fs, path, workdir, dir);
+    const dirs =
+      dir === "" || !META_CHARS.test(dir) ? [dir] : yield* globOne(fs, path, workdir, dir);
     const result: Array<string> = [];
     for (const d of dirs) {
       const absDir = d === "" ? workdir : path.join(workdir, d);
@@ -192,9 +195,7 @@ const readRemoteSeeds = (session: LegacyDbSession) =>
       return applied;
     }),
     Effect.catch((error: LegacyDbExecError) =>
-      isUndefinedTable(error)
-        ? Effect.succeed(new Map<string, string>())
-        : Effect.fail(error),
+      isUndefinedTable(error) ? Effect.succeed(new Map<string, string>()) : Effect.fail(error),
     ),
   );
 

@@ -36,7 +36,7 @@ import {
   legacyGetPendingSeeds,
   legacySeedData,
 } from "../shared/legacy-seed-ops.ts";
-import { legacyUpsertVaultSecrets } from "../shared/legacy-vault.ts";
+import { legacyReadVaultDocument, legacyUpsertVaultSecrets } from "../shared/legacy-vault.ts";
 // Listing the remote `schema_migrations` history (with the 42P01 → empty rule) is
 // already implemented for `db pull`; reused here. A future hoist of this single
 // helper into `db/shared/` would let `db reset` share it too.
@@ -58,29 +58,9 @@ const decodeDefaultConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 
 const toSlash = (p: string): string => p.replaceAll("\\", "/");
 
-const baseName = (p: string): string => {
-  const normalized = p.replace(/[/\\]+$/u, "");
-  const slash = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
-  return slash === -1 ? normalized : normalized.slice(slash + 1);
-};
-
-/** Reads the raw `[db.vault]` table from the loaded config document. */
-const readVaultDocument = (
-  document: Record<string, unknown> | undefined,
-): Readonly<Record<string, string>> | undefined => {
-  const db = document?.["db"];
-  const vault = typeof db === "object" && db !== null ? (db as Record<string, unknown>)["vault"] : undefined;
-  if (typeof vault !== "object" || vault === null) return undefined;
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(vault)) {
-    if (typeof value === "string") result[key] = value;
-  }
-  return result;
-};
-
 /** Go's `confirmPushAll` (`internal/db/push/push.go:123-129`) — bold filenames. */
-const confirmPushAll = (pending: ReadonlyArray<string>): string =>
-  pending.map((p) => ` • ${legacyBold(baseName(p))}\n`).join("");
+const confirmPushAll = (filenames: ReadonlyArray<string>): string =>
+  filenames.map((name) => ` • ${legacyBold(name)}\n`).join("");
 
 /** Go's `confirmSeedAll` (`internal/db/push/push.go:131-140`) — bold paths, hash notice. */
 const confirmSeedAll = (seeds: ReadonlyArray<LegacySeedFile>): string =>
@@ -161,7 +141,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       dbUrl: flags.dbUrl,
       connType,
       dnsResolver,
-      password: flags.password ?? Option.none(),
+      password: flags.password,
     });
     const databaseName = cfg.isLocal ? "local database" : "remote database";
     const statusTarget = cfg.isLocal ? "Local database" : "Remote database";
@@ -262,11 +242,14 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
 
         if (flags.dryRun) {
           if (globals.length > 0) {
-            yield* output.raw(`Would create custom roles ${legacyBold(globals[0]!)}...\n`, "stderr");
+            yield* output.raw(
+              `Would create custom roles ${legacyBold(globals[0]!)}...\n`,
+              "stderr",
+            );
           }
           if (pending.length > 0) {
             yield* output.raw("Would push these migrations:\n", "stderr");
-            yield* output.raw(confirmPushAll(pending), "stderr");
+            yield* output.raw(confirmPushAll(pending.map((p) => path.basename(p))), "stderr");
           }
           if (seeds.length > 0) {
             yield* output.raw("Would seed these files:\n", "stderr");
@@ -282,7 +265,9 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
               true,
             );
             if (!ok) {
-              return yield* Effect.fail(new LegacyDbPushCancelledError({ message: "context canceled" }));
+              return yield* Effect.fail(
+                new LegacyDbPushCancelledError({ message: "context canceled" }),
+              );
             }
             yield* legacySeedGlobals(
               session,
@@ -298,13 +283,15 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
             const ok = yield* legacyPromptYesNo(
               output,
               yes,
-              `Do you want to push these migrations to the ${databaseName}?\n${confirmPushAll(pending)}`,
+              `Do you want to push these migrations to the ${databaseName}?\n${confirmPushAll(pending.map((p) => path.basename(p)))}`,
               true,
             );
             if (!ok) {
-              return yield* Effect.fail(new LegacyDbPushCancelledError({ message: "context canceled" }));
+              return yield* Effect.fail(
+                new LegacyDbPushCancelledError({ message: "context canceled" }),
+              );
             }
-            yield* legacyUpsertVaultSecrets(session, readVaultDocument(document), applyError);
+            yield* legacyUpsertVaultSecrets(session, legacyReadVaultDocument(document), applyError);
             yield* legacyApplyMigrations(session, fs, path, pending, applyError);
             // Go best-effort caches the migrations catalog for pg-delta; a failure
             // only warns (`push.go:99-101`). The catalog cache is not yet ported, so
@@ -322,7 +309,9 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
               true,
             );
             if (!ok) {
-              return yield* Effect.fail(new LegacyDbPushCancelledError({ message: "context canceled" }));
+              return yield* Effect.fail(
+                new LegacyDbPushCancelledError({ message: "context canceled" }),
+              );
             }
             yield* legacySeedData(session, fs, workdir, path, seeds, applyError);
           } else if (flags.includeSeed) {
@@ -336,7 +325,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
           yield* output.success("Finished supabase db push.", {
             upToDate: false,
             dryRun: flags.dryRun,
-            migrations: pending.map((p) => baseName(p)),
+            migrations: pending.map((p) => path.basename(p)),
             seeds: seeds.map((s) => s.path),
             roles: globals,
           });

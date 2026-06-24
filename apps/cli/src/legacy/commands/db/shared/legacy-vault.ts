@@ -20,6 +20,25 @@ const ENV_REFERENCE_PATTERN = /^env\([A-Z_][A-Z0-9_]*\)$/u;
 const ENCRYPTED_PREFIX = "encrypted:";
 
 /**
+ * Extracts the raw `[db.vault]` string entries from a loaded config document.
+ * The document is the post-`env()` raw TOML (values are typed `unknown`), so
+ * non-string entries are defensively skipped.
+ */
+export function legacyReadVaultDocument(
+  document: Record<string, unknown> | undefined,
+): Readonly<Record<string, string>> | undefined {
+  const db = document?.["db"];
+  const vault =
+    typeof db === "object" && db !== null ? (db as Record<string, unknown>)["vault"] : undefined;
+  if (typeof vault !== "object" || vault === null) return undefined;
+  const result: Record<string, string> = {};
+  for (const [key, value] of Object.entries(vault)) {
+    if (typeof value === "string") result[key] = value;
+  }
+  return result;
+}
+
+/**
  * Selects the `[db.vault]` entries Go would sync. Go's secret decode
  * (`pkg/config/secret.go:86-108`) sets a non-empty `SHA256` — the gate
  * `UpsertVaultSecrets` keys on — only for non-empty, non-`env()` values, so those
@@ -72,6 +91,4 @@ export const legacyUpsertVaultSecrets = <E>(
     for (const [key, value] of toInsert) {
       yield* session.query(CREATE_VAULT_KV, [value, key]);
     }
-  }).pipe(
-    Effect.mapError((error: LegacyDbExecError) => mapError(error.message)),
-  );
+  }).pipe(Effect.mapError((error: LegacyDbExecError) => mapError(error.message)));
