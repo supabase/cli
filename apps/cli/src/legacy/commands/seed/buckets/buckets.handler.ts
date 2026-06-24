@@ -8,7 +8,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import type { PlatformError } from "effect/PlatformError";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacySeedChangedTargetFlags } from "./buckets.flags.ts";
@@ -131,7 +131,8 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const cliArgs = yield* CliArgs;
-  const yes = yield* LegacyYesFlag;
+  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
+  const yes = yield* legacyResolveYes;
 
   // Set once --linked resolves a ref; drives the post-run linked-project cache
   // write + org/project group identify, mirroring Go's `ensureProjectGroupsCached`

@@ -5,7 +5,7 @@ import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyWorkdirFlag, LegacyYesFlag } from "../../../shared/legacy/global-flags.ts";
+import { LegacyWorkdirFlag, legacyResolveYes } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -61,7 +61,8 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const workdirFlag = yield* LegacyWorkdirFlag;
-  const yesFlag = yield* LegacyYesFlag;
+  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
+  const yesFlag = yield* legacyResolveYes;
 
   const isText = output.format === "text";
   const retry = { schedule: retrySchedule, times: LEGACY_BOOTSTRAP_MAX_RETRIES } as const;

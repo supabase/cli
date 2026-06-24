@@ -38,6 +38,11 @@ Auth: `apikey` header always; `Authorization: Bearer <key>` unless the key is `s
 | `SUPABASE_ACCESS_TOKEN`          | linked: Management API auth                          | no (→ `~/.supabase/access-token`)  |
 | `SUPABASE_PROJECT_ID`            | linked: project-ref resolution                       | no                                 |
 | `SUPABASE_SERVICES_HOSTNAME`     | local baseUrl host                                   | no (→ Docker host → `127.0.0.1`)   |
+| `SUPABASE_EXPERIMENTAL`          | experimental gate: `--experimental` equivalent       | yes, unless `--experimental` given |
+
+`storage` is an experimental command (Go `root.go:63`): every subcommand requires
+`--experimental` (or `SUPABASE_EXPERIMENTAL`), else it exits 1 with
+`must set the --experimental flag to run this command` before any other work.
 
 ## Exit Codes
 

@@ -38,6 +38,10 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 `SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_AUTH_JWT_SECRET`, `SUPABASE_ACCESS_TOKEN`,
 `SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME`, plus `SUPABASE_YES` (auto-confirm).
 
+`storage` is an experimental command (Go `root.go:63`): `rm` requires `--experimental`
+(or `SUPABASE_EXPERIMENTAL`), else it exits 1 with
+`must set the --experimental flag to run this command` before any other work.
+
 ## Exit Codes
 
 | Code | Condition                                                                                                                                                                    |

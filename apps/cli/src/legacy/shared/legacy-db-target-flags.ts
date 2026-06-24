@@ -38,10 +38,12 @@ export interface LegacyDbTargetSelection {
  * cause the immediately following token to be skipped during the target-selector
  * scan.
  *
- * Sources: all legacy command files that call `resolveLegacyDbTargetFlags`
- * (`db lint`, `db advisors`, `test db`) plus the shared global flags
+ * Sources: every legacy command that calls `resolveLegacyDbTargetFlags`
+ * (`db lint`, `db advisors`, `test db`) or `legacyChangedLinkedLocalFlags`
+ * (`seed buckets`, `storage cp/ls/mv/rm`), plus the shared global flags
  * (`src/shared/legacy/global-flags.ts`, `src/shared/cli/global-flags.ts`).
- * `Flag.string` / `Flag.choice` → value-consuming; `Flag.boolean` → not.
+ * `Flag.string` / `Flag.choice` / `Flag.integer` → value-consuming;
+ * `Flag.boolean` → not.
  */
 export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   // db-family command flags
@@ -52,6 +54,10 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "type",
   // inspect report flag (StringVar, no short alias)
   "output-dir",
+  // storage cp command flags (Flag.string / Flag.integer)
+  "cache-control",
+  "content-type",
+  "jobs",
   // legacy global flags (Flag.string / Flag.choice)
   "output",
   "output-format",
@@ -69,6 +75,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
 export const VALUE_CONSUMING_SHORT_FLAGS = new Set([
   "s", // --schema / -s
   "o", // --output / -o
+  "j", // --jobs / -j (storage cp)
 ]);
 
 /**

@@ -39,6 +39,8 @@ describe("supabase storage (legacy)", () => {
   });
 
   test("rejects passing both --local and --linked", { timeout: E2E_TIMEOUT_MS }, async () => {
+    // Go validates flag groups (mutual exclusivity) BEFORE the experimental gate
+    // in PersistentPreRunE, so this fails on the mutex even without --experimental.
     const { exitCode, stdout, stderr } = await runSupabase(
       ["storage", "ls", "--local", "--linked", "ss:///"],
       { entrypoint: "legacy", cwd: projectDir },
@@ -49,15 +51,38 @@ describe("supabase storage (legacy)", () => {
     );
   });
 
+  test(
+    "rejects storage subcommands without --experimental",
+    { timeout: E2E_TIMEOUT_MS },
+    async () => {
+      // `storageCmd` is in Go's experimental slice (root.go:63); running it without
+      // --experimental is rejected by the PersistentPreRunE gate (root.go:91-96).
+      const { exitCode, stdout, stderr } = await runSupabase(
+        ["storage", "ls", "ss:///", "--local"],
+        {
+          entrypoint: "legacy",
+          cwd: projectDir,
+        },
+      );
+      expect(exitCode).toBe(1);
+      expect(`${stdout}${stderr}`).toContain(
+        "must set the --experimental flag to run this command",
+      );
+    },
+  );
+
   test("accepts --local after the subcommand token", { timeout: E2E_TIMEOUT_MS }, async () => {
     // `--linked`/`--local` are per-leaf flags (Effect CLI requires unique
     // global-flag names tree-wide and `seed` owns them), so they follow the
-    // subcommand. There's no live local stack here, so the command fails to
-    // connect — but it must PARSE (no "Unrecognized flag").
-    const { stdout, stderr } = await runSupabase(["storage", "ls", "ss:///", "--local"], {
-      entrypoint: "legacy",
-      cwd: projectDir,
-    });
-    expect(`${stdout}${stderr}`).not.toContain("Unrecognized flag");
+    // subcommand. With --experimental it parses and passes the gate; there's no
+    // live local stack so it fails to connect — but it must PARSE (no
+    // "Unrecognized flag") and must NOT be blocked by the experimental gate.
+    const { stdout, stderr } = await runSupabase(
+      ["storage", "ls", "ss:///", "--local", "--experimental"],
+      { entrypoint: "legacy", cwd: projectDir },
+    );
+    const combined = `${stdout}${stderr}`;
+    expect(combined).not.toContain("Unrecognized flag");
+    expect(combined).not.toContain("must set the --experimental flag");
   });
 });

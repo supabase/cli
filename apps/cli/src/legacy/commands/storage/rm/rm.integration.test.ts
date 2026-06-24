@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
+import { afterEach } from "vitest";
 
 import { setupLegacyStorage } from "../../../../../tests/helpers/legacy-storage.ts";
 import { useLegacyTempWorkdir } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -20,6 +21,10 @@ function prefixCount(body: unknown): number {
 
 describe("legacy storage rm", () => {
   const tmp = useLegacyTempWorkdir("supabase-storage-rm-");
+
+  afterEach(() => {
+    delete process.env["SUPABASE_YES"];
+  });
 
   it.live("deletes multiple objects after confirmation", () => {
     const { layer, requests } = setupLegacyStorage(tmp.current, {
@@ -67,6 +72,28 @@ describe("legacy storage rm", () => {
       expect(out.stderrText).toContain("Confirm deleting files in bucket");
       expect(out.stderrText).toContain("[y/N] y");
       expect(out.stderrText).toContain("Deleting objects: [a.pdf]");
+    });
+  });
+
+  it.live("auto-confirms via SUPABASE_YES even without the --yes flag", () => {
+    // viper AutomaticEnv (root.go:318-320) means `SUPABASE_YES` is equivalent to
+    // `--yes`; the flag layer is left at its default `false` to prove the env path.
+    process.env["SUPABASE_YES"] = "1";
+    const { layer, out, requests } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: true,
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("[y/N] y");
+      expect(requests.some((r) => r.method === "DELETE")).toBe(true);
     });
   });
 
