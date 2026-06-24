@@ -6,7 +6,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, Exit, FileSystem, Path } from "effect";
 
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
-import { legacyApplyMigrationFile } from "./legacy-migration-apply.ts";
+import {
+  legacyApplyMigrationFile,
+  legacyIsPipelineIncompatible,
+} from "./legacy-migration-apply.ts";
 
 class TestError extends Data.TaggedError("TestError")<{ readonly message: string }> {}
 
@@ -102,5 +105,117 @@ describe("legacyApplyMigrationFile", () => {
         }),
       ),
     );
+  });
+
+  it.effect("runs a pipeline-incompatible statement outside the surrounding transaction", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_add_index.sql");
+    writeFileSync(
+      file,
+      "create table a (id int);\nCREATE INDEX CONCURRENTLY a_idx ON a(id);\nALTER TABLE a ENABLE ROW LEVEL SECURITY;",
+    );
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const execs = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+          const concurrently = "CREATE INDEX CONCURRENTLY a_idx ON a(id)";
+          expect(execs).toContain(concurrently);
+          // The CONCURRENTLY statement must not run inside an open transaction, or
+          // PostgreSQL rejects it (SQLSTATE 25001). The batch is flushed first, so the
+          // BEGIN/COMMIT counts before it must balance (no open transaction).
+          const before = execs.slice(0, execs.indexOf(concurrently));
+          expect(before.filter((s) => s === "BEGIN").length).toBe(
+            before.filter((s) => s === "COMMIT").length,
+          );
+          // The compatible statements still ran inside a transaction...
+          expect(before).toContain("BEGIN");
+          expect(before).toContain("COMMIT");
+          // ...and the trailing compatible statement reopens a transaction after it.
+          const after = execs.slice(execs.indexOf(concurrently) + 1);
+          expect(after).toContain("BEGIN");
+          expect(after.indexOf("ALTER TABLE a ENABLE ROW LEVEL SECURITY")).toBeGreaterThanOrEqual(
+            0,
+          );
+          // The migration is still recorded once every statement succeeds.
+          const insert = calls.find((c) => c.kind === "query");
+          expect(insert?.params?.[0]).toBe("20240101120000");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reports a pipeline-incompatible statement failure with its statement index", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_add_index.sql");
+    writeFileSync(file, "create table a (id int);\nCREATE INDEX CONCURRENTLY a_idx ON a(id);");
+    const { session, calls } = fakeSession({ failOn: "CONCURRENTLY" });
+    return run(session, file).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const msg = JSON.stringify(exit.cause);
+            // Index 1: the leading `create table a` (index 0) committed in its own batch first.
+            expect(msg).toContain("At statement: 1");
+            expect(msg).toContain("CREATE INDEX CONCURRENTLY a_idx ON a(id)");
+          }
+          // The migration version is not recorded when a statement fails.
+          expect(calls.some((c) => c.kind === "query")).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+});
+
+describe("legacyIsPipelineIncompatible", () => {
+  // Mirrors Go's `TestIsPipelineIncompatible` (`pkg/migration/file_test.go`, supabase/cli#5156).
+  const cases: ReadonlyArray<readonly [string, string, boolean]> = [
+    [
+      "create index concurrently",
+      "CREATE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)",
+      true,
+    ],
+    [
+      "create unique index concurrently",
+      "CREATE UNIQUE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)",
+      true,
+    ],
+    [
+      "create index concurrently after comments",
+      "-- cannot run in a transaction\n/* generated */\nCREATE INDEX CONCURRENTLY widgets_id_idx ON public.widgets(id)",
+      true,
+    ],
+    ["reindex table concurrently", "REINDEX TABLE CONCURRENTLY public.widgets", true],
+    [
+      "reindex with options concurrently",
+      "REINDEX (VERBOSE) INDEX CONCURRENTLY widgets_id_idx",
+      true,
+    ],
+    ["vacuum bare", "VACUUM", true],
+    ["vacuum with options", "VACUUM (FULL, ANALYZE) public.widgets", true],
+    ["alter system", "ALTER SYSTEM SET wal_level = 'logical'", true],
+    ["cluster", "CLUSTER public.widgets USING widgets_id_idx", true],
+    [
+      "lower-case create index concurrently",
+      "create index concurrently widgets_id_idx on public.widgets(id)",
+      true,
+    ],
+    ["leading whitespace before concurrently", "   CREATE INDEX CONCURRENTLY a_idx ON a(id)", true],
+    // Negatives — compatible statements that must keep running inside the batch transaction.
+    ["plain create index", "CREATE INDEX widgets_id_idx ON public.widgets(id)", false],
+    ["create table", "create table public.widgets(id bigint primary key)", false],
+    ["reindex without concurrently", "REINDEX TABLE public.widgets", false],
+    ["vacuum-prefixed identifier", "VACUUMING analytics", false],
+    ["concurrently as a column name", "CREATE TABLE t (concurrently int)", false],
+    ["insert", "INSERT INTO public.widgets VALUES (1)", false],
+    ["cluster-prefixed identifier", "CLUSTERED", false],
+  ];
+
+  it.each(cases)("%s", (_name, sql, want) => {
+    expect(legacyIsPipelineIncompatible(sql)).toBe(want);
   });
 });
