@@ -2,7 +2,10 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 
 import { setupLegacyStorage } from "../../../../../tests/helpers/legacy-storage.ts";
-import { useLegacyTempWorkdir } from "../../../../../tests/helpers/legacy-mocks.ts";
+import {
+  LEGACY_VALID_REF,
+  useLegacyTempWorkdir,
+} from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacyStorageMv } from "./mv.handler.ts";
 import type { LegacyStorageMvFlags } from "./mv.command.ts";
 
@@ -233,6 +236,111 @@ describe("legacy storage mv", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["message"]).toBe("Successfully moved");
+    });
+  });
+
+  it.live("targets the linked project's Storage host and flushes telemetry", () => {
+    const { layer, requests, telemetry, linkedCache } = setupLegacyStorage(tmp.current, {
+      // No `--local`, so the linked path resolves the ref + service-role key.
+      routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageMv(
+        mvFlags({ src: "ss:///private/a", dst: "ss:///private/b", local: false }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(
+        requests.some((r) => r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)),
+      ).toBe(true);
+      expect(telemetry.flushed).toBe(true);
+      expect(linkedCache.cached).toBe(true);
+      expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+    });
+  });
+
+  it.live("propagates a 503 from the move endpoint even when recursive", () => {
+    // Only a `not_found` body triggers the recursive fallback; a 503 must surface.
+    const { layer } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      routes: [{ method: "POST", match: MOVE, status: 503, body: { message: "unavailable" } }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageMv(
+        mvFlags({ src: "ss:///private/a", dst: "ss:///private/b", recursive: true }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("Error status 503");
+    });
+  });
+
+  it.live(
+    'emits a { message: "", moved } result for the recursive fallback in stream-json mode',
+    () => {
+      const { layer, out } = setupLegacyStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        local: true,
+        format: "stream-json",
+        routes: [
+          {
+            method: "POST",
+            match: MOVE,
+            when: (b) => (b as { destinationKey?: string }).destinationKey === "docs",
+            status: 404,
+            body: { error: "not_found" },
+          },
+          { method: "POST", match: LIST("private"), body: [{ name: "abstract.pdf", id: "id" }] },
+          {
+            method: "POST",
+            match: MOVE,
+            when: (b) => (b as { sourceKey?: string }).sourceKey === "abstract.pdf",
+            body: { message: "ok" },
+          },
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyStorageMv(
+          mvFlags({ src: "ss:///private", dst: "ss:///private/docs", recursive: true }),
+        ).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        const success = out.messages.find((m) => m.type === "success");
+        expect(success?.data?.["message"]).toBe("");
+        expect(success?.data?.["moved"]).toBe(1);
+      });
+    },
+  );
+
+  it.live("recursively moves on the linked path when the direct move is not_found", () => {
+    const { layer, requests, telemetry, linkedCache } = setupLegacyStorage(tmp.current, {
+      routes: [
+        {
+          method: "POST",
+          match: MOVE,
+          when: (b) => (b as { destinationKey?: string }).destinationKey === "docs",
+          status: 404,
+          body: { error: "not_found" },
+        },
+        { method: "POST", match: LIST("private"), body: [{ name: "abstract.pdf", id: "id" }] },
+        {
+          method: "POST",
+          match: MOVE,
+          when: (b) => (b as { sourceKey?: string }).sourceKey === "abstract.pdf",
+          body: { message: "ok" },
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageMv(
+        mvFlags({ src: "ss:///private", dst: "ss:///private/docs", recursive: true, local: false }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const perObject = requests.find(
+        (r) =>
+          r.url.includes(MOVE) && (r.body as { sourceKey?: string }).sourceKey === "abstract.pdf",
+      );
+      expect(perObject?.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)).toBe(true);
+      expect(telemetry.flushed).toBe(true);
+      expect(linkedCache.cached).toBe(true);
     });
   });
 });
