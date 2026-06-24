@@ -3,7 +3,10 @@ import { Effect, Exit } from "effect";
 import { afterEach } from "vitest";
 
 import { setupLegacyStorage } from "../../../../../tests/helpers/legacy-storage.ts";
-import { useLegacyTempWorkdir } from "../../../../../tests/helpers/legacy-mocks.ts";
+import {
+  LEGACY_VALID_REF,
+  useLegacyTempWorkdir,
+} from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacyStorageRm } from "./rm.handler.ts";
 
 const BUCKET = "/storage/v1/bucket";
@@ -403,6 +406,99 @@ describe("legacy storage rm", () => {
       local: true,
       yes: true,
       format: "json",
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: true,
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const success = out.messages.find((m) => m.type === "success");
+      expect(success?.data?.["deleted"]).toEqual(["a.pdf"]);
+      expect(success?.data?.["buckets_deleted"]).toEqual([]);
+    });
+  });
+
+  it.live("propagates a 500 from the object DELETE", () => {
+    // A non-404 status escapes the bucket-not-found tolerance and fails hard.
+    const { layer } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      yes: true,
+      routes: [
+        {
+          method: "DELETE",
+          match: DELETE_OBJECT("private"),
+          status: 500,
+          body: { message: "internal error" },
+        },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: true,
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("Error status 500");
+    });
+  });
+
+  it.live("propagates a 503 from the bucket service when listing for -r", () => {
+    const { layer, requests } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      yes: true,
+      routes: [{ method: "GET", match: BUCKET, status: 503, body: { message: "unavailable" } }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageRm({
+        files: [],
+        recursive: true,
+        linked: true,
+        local: true,
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("Error status 503");
+      // The command fails before any delete is attempted.
+      expect(requests.some((r) => r.method === "DELETE")).toBe(false);
+    });
+  });
+
+  it.live("targets the linked project's Storage host and flushes telemetry", () => {
+    const { layer, requests, telemetry, linkedCache } = setupLegacyStorage(tmp.current, {
+      // No `--local`, so the linked path resolves the ref + service-role key.
+      yes: true,
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: false,
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(
+        requests.some((r) => r.url.startsWith(`https://${LEGACY_VALID_REF}.supabase.co`)),
+      ).toBe(true);
+      expect(telemetry.flushed).toBe(true);
+      expect(linkedCache.cached).toBe(true);
+      expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+    });
+  });
+
+  it.live("emits a { deleted, buckets_deleted } result in stream-json mode", () => {
+    const { layer, out } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      yes: true,
+      format: "stream-json",
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
     return Effect.gen(function* () {
