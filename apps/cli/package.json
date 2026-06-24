@@ -29,6 +29,7 @@
     "build:next": "bun scripts/build-binary.ts next",
     "build:legacy": "bun scripts/build-binary.ts legacy",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
+    "generate:go-serve-template": "bun scripts/generate-go-serve-template.ts",
     "dev:next": "pnpm exec bun src/next/main.ts",
     "dev:legacy": "pnpm exec bun src/legacy/main.ts",
     "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
