@@ -120,6 +120,7 @@ const promptForIdeSettings = Effect.fnUntraced(function* (
   }
 
   if (!tty.stdinIsTty) {
+    yield* output.raw("Generate VS Code settings for Deno? [Y/n]\n", "stderr");
     yield* writeVscodeConfig(workdir, { announce }).pipe(Effect.mapError(mapIdeWriteError));
     return;
   }
@@ -196,6 +197,7 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const tty = yield* Tty;
 
   yield* Effect.gen(function* () {
     const invalidSlugMessage = validateFunctionSlugMessage(flags.functionName);
@@ -277,7 +279,9 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
     );
 
     if (output.format === "text") {
-      yield* output.raw(`Created new Function at ${legacyBold(relFunctionDir)}\n`);
+      yield* output.raw(
+        `Created new Function at ${tty.stdoutIsTty ? legacyBold(relFunctionDir) : relFunctionDir}\n`,
+      );
     }
 
     if (isFirstFunction) {

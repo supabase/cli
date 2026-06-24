@@ -87,6 +87,7 @@ describe("legacy functions new integration", () => {
       expect(readFileSync(join(functionDir, ".npmrc"), "utf8")).toBe(LEGACY_FUNCTIONS_NEW_NPMRC);
       expect(out.stdoutText).toContain("Created new Function at ");
       expect(out.stdoutText).toContain(join("supabase", "functions", "hello-world"));
+      expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n]");
       expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(true);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));

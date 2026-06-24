@@ -61,7 +61,7 @@ console.log("Hello from Functions!");
 export default {
   fetch: withSupabase({ auth: ["publishable", "secret"] }, async (req, ctx) => {
     // Called by another service with a secret key
-    // ctx.supabaseAdmin bypasses RLS - use for privileged operations
+    // ctx.supabaseAdmin bypasses RLS — use for privileged operations
     /*
     if (ctx.authMode === "secret") {
       const { user_id } = await req.json();
