@@ -17,12 +17,11 @@ import {
   sign as signJwtBytes,
   type JsonWebKeyInput,
 } from "node:crypto";
-import { readFileSync, watch } from "node:fs";
+import { watch } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { styleText } from "node:util";
-import { fileURLToPath } from "node:url";
 import { Cause, Duration, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
@@ -88,7 +87,6 @@ const legacyDefaultEdgeRuntimeVersion = "v1.74.1";
 const defaultSupabaseEnv = "development";
 const clerkDomainPattern = /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/;
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const serveMainSourcePath = new URL("./serve.main.ts", import.meta.url);
 let cachedLegacyFunctionsServeMainTemplate: string | undefined;
 const watchIgnoreGlobs = [
   "**/.git/**",
@@ -221,57 +219,33 @@ export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
 );
 
 /**
- * `serve.main.ts` is authored as a TypeScript module so it can be type-checked
- * and linted in this repo, but it runs verbatim as a Deno entrypoint inside the
- * edge-runtime container. Strip the TypeScript-only preamble — the
- * `// @ts-nocheck` pragma and the `declare const` ambient shims — so the injected
- * `/root/index.ts` matches the Go CLI's `templates/main.ts` (which starts at the
- * first `import`). Tolerant of reordering/extra blank lines so a small edit to the
- * preamble does not silently ship the shims into the container.
+ * `serve.main.ts` runs verbatim as a Deno entrypoint inside the edge-runtime
+ * container (written to `/root/index.ts`). It is bundled into a single
+ * self-contained module so its `jose` and local helper dependencies are inlined and
+ * the runtime needs no network access on start (supabase/supabase#45570).
+ *
+ * Compiled builds embed the pre-bundled template via the
+ * `SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE` define (see `scripts/build.ts`), so the
+ * shipped binary never bundles at runtime. Running from source (`bun src/supabase.ts`)
+ * bundles on demand.
  */
-export function stripServeMainTypecheckPreamble(source: string): string {
-  const lines = source.split("\n");
-  let start = 0;
-  while (start < lines.length) {
-    const line = lines[start]!;
-    if (line === "// @ts-nocheck" || line.length === 0 || line.startsWith("declare ")) {
-      start += 1;
-      continue;
-    }
-    break;
+function getLegacyFunctionsServeMainTemplate(): Promise<string> {
+  if (cachedLegacyFunctionsServeMainTemplate !== undefined) {
+    return Promise.resolve(cachedLegacyFunctionsServeMainTemplate);
   }
-  return lines.slice(start).join("\n");
-}
-
-function getLegacyFunctionsServeMainTemplate(): string {
-  if (cachedLegacyFunctionsServeMainTemplate === undefined) {
-    const rawTemplateSource =
-      typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string"
-        ? SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE
-        : readLegacyFunctionsServeMainTemplateFromDisk();
-
-    cachedLegacyFunctionsServeMainTemplate = stripServeMainTypecheckPreamble(rawTemplateSource);
+  if (typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string") {
+    cachedLegacyFunctionsServeMainTemplate = SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE;
+    return Promise.resolve(cachedLegacyFunctionsServeMainTemplate);
   }
-  return cachedLegacyFunctionsServeMainTemplate;
-}
-
-function readLegacyFunctionsServeMainTemplateFromDisk() {
-  const candidates = [
-    fileURLToPath(serveMainSourcePath),
-    resolve(dirname(process.execPath), "..", "src", "shared", "functions", "serve.main.ts"),
-  ];
-
-  for (const candidate of candidates) {
-    try {
-      return readFileSync(candidate, "utf8");
-    } catch (error) {
-      if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
-        throw error;
-      }
-    }
-  }
-
-  throw new Error("failed to load functions serve runtime template");
+  // Running from source: the build-time define is absent, so bundle on demand. The
+  // bundler (and its esbuild dependency) is imported lazily and only here, so it is
+  // never loaded by shipped binaries — which always take the define branch above.
+  return import("./serve-main-bundler.ts")
+    .then(({ bundleServeMainTemplate }) => bundleServeMainTemplate())
+    .then((bundled) => {
+      cachedLegacyFunctionsServeMainTemplate = bundled;
+      return bundled;
+    });
 }
 
 function reveal(value: string | Redacted.Redacted<string> | undefined): string | undefined {
@@ -1445,6 +1419,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       ...buildFunctionsServeInspectArgs(input.inspectMode, input.flags.inspectMain),
       ...(input.debug ? ["--verbose"] : []),
     ];
+    const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());
     const command = [
       "run",
       "-d",
@@ -1476,7 +1451,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       legacyGetRegistryImageUrl(`supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`),
       "-c",
       buildServeEntrypointScript(
-        getLegacyFunctionsServeMainTemplate(),
+        serveMainTemplate,
         runtimeCommand,
         dockerMultilineEnvScript?.scriptPath,
       ),

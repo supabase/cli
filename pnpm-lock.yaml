@@ -88,6 +88,10 @@ importers:
         version: 6.7.2(typanion@3.14.0)
 
   apps/cli:
+    dependencies:
+      jose:
+        specifier: ^6.2.3
+        version: 6.2.3
     devDependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.177
@@ -161,6 +165,9 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 4.0.0-beta.83
+      esbuild:
+        specifier: ^0.28.1
+        version: 0.28.1
       ink:
         specifier: ^7.0.6
         version: 7.0.6(@types/react@19.2.17)(react-devtools-core@7.0.1)(react@19.2.7)

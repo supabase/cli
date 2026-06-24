@@ -2,10 +2,9 @@
 declare const Deno: any;
 declare const EdgeRuntime: any;
 
-import { STATUS_CODE, STATUS_TEXT } from "https://deno.land/std/http/status.ts";
-import * as posix from "https://deno.land/std/path/posix/mod.ts";
+import { dirname, join, STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
 
-import * as jose from "jsr:@panva/jose@6";
+import * as jose from "jose";
 
 const SB_SPECIFIC_ERROR_CODE = {
   BootError: STATUS_CODE.ServiceUnavailable /** Service Unavailable (RFC 7231, 6.6.4) */,
@@ -193,7 +192,7 @@ async function shouldUsePackageJsonDiscovery({
   if (importMapPath) {
     return false;
   }
-  const packageJsonPath = posix.join(posix.dirname(entrypointPath), "package.json");
+  const packageJsonPath = join(dirname(entrypointPath), "package.json");
   try {
     await Deno.lstat(packageJsonPath);
   } catch (err) {
@@ -254,7 +253,7 @@ Deno.serve({
       }
     }
 
-    const servicePath = posix.dirname(functionsConfig[functionName].entrypointPath);
+    const servicePath = dirname(functionsConfig[functionName].entrypointPath);
     console.error(`serving the request with ${servicePath}`);
 
     // Ref: https://supabase.com/docs/guides/functions/limits
@@ -295,8 +294,8 @@ Deno.serve({
     // This need to be kept for Deno 1 compatibility.
     const decoratorType = "tc39";
 
-    const absEntrypoint = posix.join(Deno.cwd(), functionsConfig[functionName].entrypointPath);
-    const maybeEntrypoint = posix.toFileUrl(absEntrypoint).href;
+    const absEntrypoint = join(Deno.cwd(), functionsConfig[functionName].entrypointPath);
+    const maybeEntrypoint = toFileUrl(absEntrypoint).href;
     const usePackageJson = await shouldUsePackageJsonDiscovery(functionsConfig[functionName]);
 
     const staticPatterns = functionsConfig[functionName].staticFiles;

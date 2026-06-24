@@ -4,6 +4,7 @@ import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 
 const MUSL_TARGETS = [
   {
@@ -92,9 +93,8 @@ const TARGETS = [
 const entrypoint = path.join(root, "apps/cli/src", shell, "main.ts");
 const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
-const serveMainTemplateSource = path.join(root, "apps/cli/src/shared/functions/serve.main.ts");
 const serveMainTemplateDefine = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
-  await readFile(serveMainTemplateSource, "utf8"),
+  await bundleServeMainTemplate(),
 )}`;
 const posthogBuildDefines = [
   `--define=process.env.SUPABASE_CLI_POSTHOG_KEY=${JSON.stringify(process.env.POSTHOG_API_KEY ?? "")}`,
