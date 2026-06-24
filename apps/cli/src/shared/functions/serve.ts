@@ -24,7 +24,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { styleText } from "node:util";
 import { fileURLToPath } from "node:url";
 import { Cause, Duration, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import { parseDotEnv } from "../../legacy/shared/legacy-dotenv.ts";
 import { Output } from "../output/output.service.ts";
@@ -1157,14 +1158,12 @@ const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   for (;;) {
-    const child = yield* spawner.spawn(
-      ChildProcess.make("docker", ["logs", "-f", "--timestamps", containerId], {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        extendEnv: true,
-      }),
-    );
+    const child = yield* spawnContainerCli(spawner, ["logs", "-f", "--timestamps", containerId], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      extendEnv: true,
+    });
 
     let stderrText = "";
     const [exitCode] = yield* Effect.all(

@@ -270,12 +270,12 @@ Auto-trigger paths leave `version` empty: semantic-release computes it from comm
 `**build` (ubuntu-latest):\*\*
 
 1. `[pnpm exec bun apps/cli/scripts/sync-versions.ts --version X.Y.Z](../scripts/sync-versions.ts)` — writes the release version into every `package.json` (umbrella + eight platform packages) and resolves the umbrella's `workspace:`\* `optionalDependencies` to `X.Y.Z`.
-2. `[pnpm exec bun apps/cli/scripts/build.ts --version X.Y.Z --shell <legacy|next>](../scripts/build.ts)` — cross-compiles the Bun SFE for all eight targets (including windows-arm64), cross-compiles the Go sidecar (`--shell legacy` only), builds the six Linux packages via `nfpm`, produces the tar/zip archives, and writes `dist/checksums.txt`.
+2. `[pnpm exec bun apps/cli/scripts/build.ts --version X.Y.Z --shell <legacy|next>](../scripts/build.ts)` — cross-compiles the Bun SFE for all eight targets (including windows-arm64), cross-compiles the Go sidecar (`--shell legacy` only), **ad-hoc signs the macOS binaries** (see [Code signing (macOS)](#code-signing-macos)), builds the six Linux packages via `nfpm`, produces the tar/zip archives, and writes `dist/checksums.txt`.
 3. `actions/upload-artifact` preserves `packages/cli-*/bin/` and `dist/` for the downstream jobs.
 
 `**smoke-test` (matrix: `ubuntu-latest`, `macos-latest`, `macos-15-intel`, `windows-latest`):\*\*
 
-Downloads the build artifact, makes the SFE executable (`chmod +x` on non-Windows), installs Scoop on Windows, and runs `pnpm run test:smoke -- --version X.Y.Z --tag <latest|beta|alpha>` from `apps/cli`. Any failure blocks publishing.
+Downloads the build artifact, makes the SFE executable (`chmod +x` on non-Windows), installs Scoop on Windows, and runs `pnpm run test:smoke -- --version X.Y.Z --tag <latest|beta|alpha>` from `apps/cli`. On the macOS legs this also verifies each binary's signature (`codesign --verify --strict`, correct identifier, not linker-signed) and executes `supabase --version`, which is the real AMFI gate. Any failure blocks publishing.
 
 The matrix does not yet include `windows-11-arm` (gate 6) or an Alpine musl runner (also gate 6). Until those land, arm64 / musl regressions only surface in Ring 2 validation.
 
@@ -300,6 +300,26 @@ Once the channels are live, two reusable workflows run automatically (last in `r
 
 - `[setup-cli-smoke-test.yml](../../../.github/workflows/setup-cli-smoke-test.yml)` (`setup-cli-smoke` job) — installs the released version through `supabase/setup-cli` (the GitHub Release download path) on Linux, macOS, Windows, and Alpine.
 - `[verify-install-channels.yml](../../../.github/workflows/verify-install-channels.yml)` (`verify-install-channels` job) — runs a **real** `brew install` (macOS **and** Linux, so both the `on_macos` and `on_linux` stanzas of the formula are exercised), `scoop install`, and `curl|bash` install of the **published** install script (fetched from the release asset, not the repo checkout) against the just-published Homebrew tap, Scoop bucket, and GitHub Release. Each leg then asserts `supabase --version` matches and runs `supabase completion bash` (a Go-proxied command) so a package that omits or misplaces the `supabase-go` sidecar fails too. brew, scoop, and the install script each verify the published `sha256`/`hash` against the downloaded tarball, so this is the signal that would have caught CLI v2.107.0 (where the brew/scoop manifests shipped checksums that did not match the release tarballs and every `brew install` / `scoop install` failed). It only runs for `beta`/`stable` (the channels that publish brew/scoop) and can be dispatched manually against any already-published version via the Actions tab.
+
+### Code signing (macOS)
+
+The macOS binaries (`supabase` Bun SFE + `supabase-go` sidecar, `darwin-arm64` and `darwin-x64`) are signed inside `build.ts` between compilation and archiving, so the signed bytes flow into every channel that consumes `packages/cli-darwin-*/bin/` — npm platform packages, Homebrew, and the GitHub Release tarballs (which also feed the `install` script and `setup-cli`). Background: [ADR 0014](../../../docs/adr/0014-macos-code-signing-and-notarization.md).
+
+Why this exists: `bun build --compile` and the Go linker emit only a degenerate "linker-signed" ad-hoc signature (identifier `a.out`, no requirements blob). macOS 26+ AMFI rejects it and SIGKILLs the process at launch ([CLI-1621](https://linear.app/supabase/issue/CLI-1621) / [#5556](https://github.com/supabase/cli/issues/5556)). A full ad-hoc signature fixes it.
+
+- **Signing runs on the Linux build runner** via [`rcodesign`](https://github.com/indygreg/apple-platform-rs) (the apple-codesign project), which signs Mach-O binaries without a macOS host. No macOS signing job exists, and **no Apple credentials are required for the current ad-hoc signing** (Phase 1). The version + sha256 are pinned in the "Install rcodesign" step of [`build-cli-artifacts.yml`](../../../.github/workflows/build-cli-artifacts.yml).
+- **CI hard-fails if signing is unavailable**: the build job sets `SUPABASE_CLI_REQUIRE_SIGNING=1`, so a missing `rcodesign` fails the build rather than silently shipping unsigned binaries. Local builds without `rcodesign` degrade to a warning and skip signing.
+- **Validation gate (required before every production cut):** signing is produced on Linux, so it must be _proven_ on a real Mac before publishing. This is automatic — `publish` has `needs: smoke-test` and the macOS smoke legs (`macos-latest`, `macos-15-intel`) both check the signature and run the binary; a bad signature fails smoke-test and blocks publish. **Before relying on a release, dispatch a staged dry run and confirm the macOS smoke legs are green:**
+
+  ```sh
+  gh workflow run release.yml --field channel=beta --field version=0.0.0-beta.99 --field dry_run=true
+  # Watch the run; the macOS smoke-test legs must pass. `dry_run=true` runs build + smoke
+  # (signature verification + `supabase --version`) but skips publish.
+  ```
+
+  This is the gate that catches any divergence between an `rcodesign`-produced ad-hoc signature and what macOS AMFI accepts. Do not promote a real (`dry_run=false`) release until a dry run on the same commit has shown the macOS smoke legs green.
+
+> **Phase 2 (Developer ID + notarization)** is not yet enabled. It only matters for the _direct-download_ path (a quarantined `.tar.gz`/`.zip` from the GitHub Release), not for Homebrew/npm/Scoop. It will be added behind Apple credential secrets — see [ADR 0014](../../../docs/adr/0014-macos-code-signing-and-notarization.md).
 
 ### Verification
 

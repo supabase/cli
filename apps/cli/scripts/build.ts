@@ -112,6 +112,20 @@ const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
   "bun-windows-arm64": { goos: "windows", goarch: "arm64" },
 };
 
+// macOS code-signing identifiers per binary. `bun build --compile` and the Go
+// linker emit a degenerate "linker-signed" ad-hoc signature (identifier
+// `a.out`, no requirements blob) that macOS 26+ AMFI rejects, SIGKILLing the
+// process at launch (CLI-1621 / GitHub #5556). Re-signing with a full ad-hoc
+// signature — a complete CodeDirectory + RequirementSet + (empty) CMS, the
+// same shape `codesign --sign -` produces — fixes it without any Apple
+// credentials. Phase 2 will add Developer ID signing + notarization on top.
+const MACOS_IDENTIFIERS: Record<string, string> = {
+  supabase: "com.supabase.cli",
+  "supabase-go": "com.supabase.cli-go",
+};
+
+type SignMode = "adhoc" | "off";
+
 function libcForBunTarget(target: string): "glibc" | "musl" | "" {
   if (!target.startsWith("bun-linux-")) {
     return "";
@@ -183,6 +197,76 @@ async function buildGoTarget(target: (typeof TARGETS)[number]) {
     CGO_ENABLED: "0",
   });
   console.log(`[${target.pkg}] Go binary done.`);
+}
+
+/**
+ * Decide how to sign the macOS binaries.
+ *
+ * `rcodesign` (the apple-codesign project) signs Mach-O binaries from Linux,
+ * so signing happens inline on the existing build runner. Release CI installs
+ * it and sets SUPABASE_CLI_REQUIRE_SIGNING=1 so a missing tool fails the build;
+ * local builds without rcodesign degrade to "off" with a warning so
+ * contributors can still produce (unsigned) binaries.
+ */
+function resolveSignMode(): SignMode {
+  if (Bun.which("rcodesign")) {
+    return "adhoc";
+  }
+  if (process.env.SUPABASE_CLI_REQUIRE_SIGNING === "1") {
+    console.error(
+      "rcodesign not found but SUPABASE_CLI_REQUIRE_SIGNING=1 is set. Release builds " +
+        "must sign the macOS binaries. Install rcodesign (https://github.com/indygreg/apple-platform-rs).",
+    );
+    process.exit(1);
+  }
+  console.warn(
+    "WARNING: rcodesign not found — macOS binaries will keep Bun's linker-signed ad-hoc " +
+      "signature, which macOS 26+ SIGKILLs at launch (CLI-1621). Install rcodesign to " +
+      "produce runnable macOS binaries locally.",
+  );
+  return "off";
+}
+
+async function signDarwinBinaries(mode: SignMode) {
+  if (mode === "off") {
+    return;
+  }
+
+  const darwinTargets = TARGETS.filter((target) => target.bunTarget.startsWith("bun-darwin"));
+
+  for (const target of darwinTargets) {
+    const binDir = path.join(root, "packages", target.pkg, "bin");
+    const binaries = ["supabase"];
+    if (shell === "legacy") {
+      binaries.push("supabase-go");
+    }
+
+    for (const binary of binaries) {
+      const binPath = path.join(binDir, binary);
+      const identifier = MACOS_IDENTIFIERS[binary];
+      if (!identifier) {
+        throw new Error(`No macOS signing identifier configured for ${binary}`);
+      }
+
+      console.log(`[${target.pkg}] Ad-hoc signing ${binary} (${identifier})...`);
+      // No key material => rcodesign emits a complete ad-hoc signature
+      // (CodeDirectory + RequirementSet + empty CMS), equivalent to
+      // `codesign --sign -`, replacing Bun/Go's linker-signed signature.
+      await $`rcodesign sign --binary-identifier ${identifier} ${binPath}`;
+
+      // Linux-side verification that runs on every build: the signature must
+      // carry our identifier and must no longer be linker-signed.
+      const info = await $`rcodesign print-signature-info ${binPath}`.text();
+      if (!info.includes(`identifier: ${identifier}`)) {
+        throw new Error(
+          `Signing ${binPath} failed: identifier ${identifier} not found in signature`,
+        );
+      }
+      if (info.includes("LINKER_SIGNED")) {
+        throw new Error(`Signing ${binPath} failed: signature is still linker-signed`);
+      }
+    }
+  }
 }
 
 async function archiveTarget(target: (typeof TARGETS)[number]) {
@@ -354,6 +438,13 @@ if (shell === "legacy") {
   console.log("\nCompiling Go CLI for all targets...");
   await Promise.all(TARGETS.map(buildGoTarget));
 }
+
+// Sign macOS binaries before archiving so every channel (npm platform
+// packages, Homebrew, GitHub Release archives, checksums) ships the signed
+// bytes. Must run before archiveTarget / buildLinuxPackages / generateChecksums.
+const signMode = resolveSignMode();
+console.log(`\nSigning macOS binaries (mode: ${signMode})...`);
+await signDarwinBinaries(signMode);
 
 await mkdir(distDir, { recursive: true });
 await Promise.all(TARGETS.map(archiveTarget));

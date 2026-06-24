@@ -71,11 +71,6 @@ updates:
       - dependency-name: "supabase/realtime"
         versions:
           - ">= 2.109.0"
-      # Held back: 1.45.0 is not mirrored to the ghcr registry CI pulls from
-      # ("manifest unknown"). Remove once a mirrored tag is available.
-      - dependency-name: "supabase/logflare"
-        versions:
-          - ">= 1.45.0"
     cooldown:
       default-days: 7
       exclude:

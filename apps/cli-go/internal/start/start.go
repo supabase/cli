@@ -172,7 +172,7 @@ func isPermanentError(err error) bool {
 // ImagePull wraps the Docker client's ImagePull with retry logic and registry auth
 func (cli *RetryClient) ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error) {
 	if len(options.RegistryAuth) == 0 {
-		options.RegistryAuth = utils.GetRegistryAuth()
+		options.RegistryAuth = utils.GetRegistryAuthForImage(refStr)
 	}
 	pull := func() (io.ReadCloser, error) {
 		resp, err := cli.Client.ImagePull(ctx, refStr, options)

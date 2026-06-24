@@ -10,9 +10,10 @@ import {
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config";
 import { Duration, Effect, Option, Schema, Stream } from "effect";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { Output } from "../output/output.service.ts";
+import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import { invalidFunctionSlugDetail, validateFunctionSlugMessage } from "./functions.shared.ts";
 import {
@@ -1289,6 +1290,10 @@ async function shouldUsePackageJsonDiscovery(entrypoint: string, importMap: stri
   }
 }
 
+// Runs a container CLI command and collects its output. Every caller runs
+// `docker`, so the spawn goes through `spawnContainerCli` to fall back to
+// `podman` on Docker-less hosts. `command` is retained for the extendEnv
+// default and the `functions serve` dependency-injection seam.
 export const runChildProcess = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
@@ -1300,15 +1305,13 @@ export const runChildProcess = Effect.fnUntraced(function* (
   } = {},
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const child = yield* spawner.spawn(
-    ChildProcess.make(command, [...args], {
-      stdin: "ignore",
-      stdout: opts.stdout ?? "pipe",
-      stderr: opts.stderr ?? "pipe",
-      env: opts.env,
-      extendEnv: opts.extendEnv ?? command === "docker",
-    }),
-  );
+  const child = yield* spawnContainerCli(spawner, [...args], {
+    stdin: "ignore",
+    stdout: opts.stdout ?? "pipe",
+    stderr: opts.stderr ?? "pipe",
+    env: opts.env,
+    extendEnv: opts.extendEnv ?? command === "docker",
+  });
 
   const [stdout, stderr, exitCode] = yield* Effect.all(
     [

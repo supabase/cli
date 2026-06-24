@@ -2921,12 +2921,12 @@
         }
       ]
     },
-    "inbucket": {
+    "local_smtp": {
       "type": "object",
       "properties": {
         "enabled": {
           "type": "boolean",
-          "description": "Enable the local Inbucket service.",
+          "description": "Enable the local SMTP testing server.",
           "default": true
         },
         "port": {
@@ -6466,12 +6466,12 @@
                       }
                     ]
                   },
-                  "inbucket": {
+                  "local_smtp": {
                     "type": "object",
                     "properties": {
                       "enabled": {
                         "type": "boolean",
-                        "description": "Enable the local Inbucket service.",
+                        "description": "Enable the local SMTP testing server.",
                         "default": true
                       },
                       "port": {

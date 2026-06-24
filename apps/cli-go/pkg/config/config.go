@@ -144,7 +144,7 @@ type (
 		Db           db             `toml:"db" json:"db"`
 		Realtime     realtime       `toml:"realtime" json:"realtime"`
 		Studio       studio         `toml:"studio" json:"studio"`
-		Inbucket     inbucket       `toml:"inbucket" json:"inbucket"`
+		Inbucket     inbucket       `toml:"local_smtp" json:"local_smtp"`
 		Storage      storage        `toml:"storage" json:"storage"`
 		Auth         auth           `toml:"auth" json:"auth"`
 		EdgeRuntime  edgeRuntime    `toml:"edge_runtime" json:"edge_runtime"`
@@ -493,13 +493,17 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 		viper.ExperimentalBindStruct(),
 		viper.EnvKeyReplacer(strings.NewReplacer(".", "_")),
 	)
+	fileConfig := viper.New()
 	v.SetEnvPrefix("SUPABASE")
 	v.AutomaticEnv()
 	if err := c.mergeDefaultValues(v); err != nil {
 		return err
 	} else if err := mergeFileConfig(v, filename, fsys); err != nil {
 		return err
+	} else if err := mergeFileConfig(fileConfig, filename, fsys); err != nil {
+		return err
 	}
+	v = normalizeDeprecatedSMTPConfig(v, fileConfig)
 	// Find [remotes.*] block to override base config
 	idToName := map[string]string{}
 	for name, remote := range v.GetStringMap("remotes") {
@@ -517,6 +521,82 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 		}
 	}
 	return c.load(v)
+}
+
+func normalizeDeprecatedSMTPConfig(v, fileConfig *viper.Viper) *viper.Viper {
+	settings := v.AllSettings()
+	changed := false
+	if fileConfig.IsSet("inbucket") {
+		fmt.Fprintln(os.Stderr, `WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.`)
+		renameDeprecatedSMTP(settings, !fileConfig.IsSet("local_smtp"))
+		changed = true
+	}
+	if remotes, ok := settings["remotes"].(map[string]any); ok {
+		for name, raw := range remotes {
+			remote, ok := raw.(map[string]any)
+			if !ok || !fileConfig.IsSet(fmt.Sprintf("remotes.%s.inbucket", name)) {
+				continue
+			}
+			fmt.Fprintf(
+				os.Stderr,
+				"WARN: config section [remotes.%s.inbucket] is deprecated. Please use [remotes.%s.local_smtp] instead.\n",
+				name,
+				name,
+			)
+			renameDeprecatedSMTP(remote, !fileConfig.IsSet(fmt.Sprintf("remotes.%s.local_smtp", name)))
+			changed = true
+		}
+	}
+	if !changed {
+		return v
+	}
+	// Rebuild the viper from the rewritten settings so the now-removed
+	// `inbucket` key does not trip UnmarshalExact. Preserve the env-binding
+	// options from the original instance, otherwise SUPABASE_-prefixed env
+	// overrides bound via ExperimentalBindStruct would be silently dropped.
+	u := viper.NewWithOptions(
+		viper.ExperimentalBindStruct(),
+		viper.EnvKeyReplacer(strings.NewReplacer(".", "_")),
+	)
+	u.SetEnvPrefix("SUPABASE")
+	u.AutomaticEnv()
+	if err := u.MergeConfigMap(settings); err != nil {
+		return v
+	}
+	return u
+}
+
+// renameDeprecatedSMTP removes the deprecated `inbucket` key from settings. When
+// promote is true (no explicit `local_smtp` is present), the inbucket values are
+// deep-merged over any existing `local_smtp` defaults so a partial `[inbucket]`
+// section keeps the template defaults it omits (e.g. `enabled = true`).
+func renameDeprecatedSMTP(settings map[string]any, promote bool) {
+	inbucket, ok := settings["inbucket"]
+	delete(settings, "inbucket")
+	if !ok || !promote {
+		return
+	}
+	if existing, ok := settings["local_smtp"].(map[string]any); ok {
+		if override, ok := inbucket.(map[string]any); ok {
+			mergeConfigMaps(existing, override)
+			return
+		}
+	}
+	settings["local_smtp"] = inbucket
+}
+
+// mergeConfigMaps deep-merges src into dst, overwriting leaf values while
+// recursing into nested maps, mirroring viper's own config merge semantics.
+func mergeConfigMaps(dst, src map[string]any) {
+	for k, val := range src {
+		if srcMap, ok := val.(map[string]any); ok {
+			if dstMap, ok := dst[k].(map[string]any); ok {
+				mergeConfigMaps(dstMap, srcMap)
+				continue
+			}
+		}
+		dst[k] = val
+	}
 }
 
 func (c *config) mergeDefaultValues(v *viper.Viper) error {
@@ -912,7 +992,7 @@ func (c *config) Validate(fsys fs.FS) error {
 	// Validate smtp config
 	if c.Inbucket.Enabled {
 		if c.Inbucket.Port == 0 {
-			return errors.New("Missing required field in config: inbucket.port")
+			return errors.New("Missing required field in config: local_smtp.port")
 		}
 	}
 	// Validate auth config

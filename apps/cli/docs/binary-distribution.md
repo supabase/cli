@@ -95,8 +95,9 @@ This:
 
 1. Compiles the TS CLI to a Bun SFE for each platform → `packages/cli-{platform}/bin/supabase`
 2. Cross-compiles the Go CLI (`CGO_ENABLED=0`) for each platform → `packages/cli-{platform}/bin/supabase-go`
-3. Bundles both binaries into the platform archives (`.tar.gz` / `.zip`)
-4. Includes both binaries in the Linux package manager packages (deb/rpm/apk)
+3. Signs the macOS binaries (both `supabase` and `supabase-go`) before archiving, so every channel ships the signed bytes — see [release-process.md § Code signing (macOS)](./release-process.md#code-signing-macos) and [ADR 0014](../../../docs/adr/0014-macos-code-signing-and-notarization.md)
+4. Bundles both binaries into the platform archives (`.tar.gz` / `.zip`)
+5. Includes both binaries in the Linux package manager packages (deb/rpm/apk)
 
 ## See Also
 
