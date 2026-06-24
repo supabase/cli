@@ -89,3 +89,13 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 - DQ-1: Go help shows `--content-type` DefValue `auto-detect`; the runtime default is
   `""` (empty ⇒ auto-detect). Effect renders the real `""` (cosmetic help diff only).
 - Relative local paths resolve against the original cwd (Go's `utils.CurrentDirAbs`).
+- **Recursive download path traversal (accepted risk).** Recursive download writes
+  to `path.join(localPath, relPath)` where `relPath` is derived from the
+  server-returned object name. Like Go's `filepath.Join` (`cp.go:72-73`),
+  `path.join` normalizes `..`, so a hostile or compromised endpoint returning a
+  name like `../../../etc/...` can resolve a write **outside** `localPath` — parent
+  dirs are `mkdir -p`'d and files open `O_TRUNC`, making it a write/overwrite
+  primitive. This matches the Go CLI exactly and is intentionally **not** guarded:
+  adding a containment check would diverge from Go's behavior. Blast radius is
+  gated behind `--experimental` + `cp -r` + remote→local + a hostile endpoint.
+  `downloadSingle` is unaffected (user-supplied path, `O_EXCL` `wx`).
