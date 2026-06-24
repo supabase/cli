@@ -1,6 +1,5 @@
 import { loadProjectConfig } from "@supabase/config";
 import { Effect } from "effect";
-import { join } from "node:path";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -39,7 +38,10 @@ import {
   storageSubsetFromConfig,
   storageToUpdateBody,
 } from "./config-sync/storage.sync.ts";
-import { loadAuthEmailContent } from "./config-sync/config-sync.auth-email-content.ts";
+import {
+  loadAuthEmailContent,
+  projectDirsFromConfigPath,
+} from "./config-sync/config-sync.auth-email-content.ts";
 import { getCostMatrix } from "./push.cost-matrix.ts";
 import { legacyPresenceIn } from "./push.raw-presence.ts";
 import {
@@ -134,15 +136,12 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // `[remotes.*]` block introduces.
     const presence = legacyPresenceIn(loaded.document);
 
+    const { projectRoot, supabaseDir } = projectDirsFromConfigPath(loaded.path);
+
     // Go's `email.validate` runs during `LoadConfig` before any network call.
     const authEmailContent = authEnabled(config)
       ? yield* Effect.try({
-          try: () =>
-            loadAuthEmailContent(
-              runtimeInfo.cwd,
-              join(runtimeInfo.cwd, "supabase"),
-              config.auth.email,
-            ),
+          try: () => loadAuthEmailContent(projectRoot, supabaseDir, config.auth.email),
           catch: (cause) =>
             new LegacyConfigPushLoadConfigError({
               message: cause instanceof Error ? cause.message : String(cause),

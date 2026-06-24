@@ -8,7 +8,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { loadAuthEmailContent } from "./config-sync.auth-email-content.ts";
+import {
+  loadAuthEmailContent,
+  projectDirsFromConfigPath,
+} from "./config-sync.auth-email-content.ts";
 
 const emptyEmail = {
   enable_signup: true,
@@ -21,6 +24,15 @@ const emptyEmail = {
   template: {},
   notification: {},
 };
+
+describe("projectDirsFromConfigPath", () => {
+  it("derives project root and supabase dir from a config file path", () => {
+    expect(projectDirsFromConfigPath("/home/user/myapp/supabase/config.toml")).toEqual({
+      projectRoot: "/home/user/myapp",
+      supabaseDir: "/home/user/myapp/supabase",
+    });
+  });
+});
 
 describe("loadAuthEmailContent", () => {
   let workdir = "";

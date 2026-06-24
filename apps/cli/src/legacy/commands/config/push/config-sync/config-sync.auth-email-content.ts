@@ -10,7 +10,7 @@
 
 import type { ProjectConfig } from "@supabase/config";
 import { readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, dirname, join } from "node:path";
 
 type AuthEmail = ProjectConfig["auth"]["email"];
 
@@ -28,6 +28,22 @@ const EMPTY_AUTH_EMAIL_CONTENT: AuthEmailContent = {
   template: {},
   notification: {},
 };
+
+/**
+ * Derives project root and `supabase/` paths from a loaded config file path.
+ *
+ * Config lives at `<projectRoot>/supabase/config.{toml,json}` — the same rule
+ * `loadProjectConfigFile` uses for env resolution.
+ *
+ * @param configPath - Absolute path returned by `loadProjectConfig` (`loaded.path`).
+ */
+export function projectDirsFromConfigPath(configPath: string): {
+  readonly projectRoot: string;
+  readonly supabaseDir: string;
+} {
+  const projectRoot = dirname(dirname(configPath));
+  return { projectRoot, supabaseDir: join(projectRoot, "supabase") };
+}
 
 /**
  * Resolves a `content_path` to an absolute filesystem path.
@@ -72,7 +88,7 @@ function readTemplateContent(
  * templates resolve `content_path` from the project root; notifications resolve
  * from `supabase/` and are only read when `enabled = true`.
  *
- * @param cwd - Project workdir (parent of `supabase/`).
+ * @param cwd - Discovered project root (parent of `supabase/`).
  * @param supabaseDir - Absolute path to the `supabase/` directory.
  * @param email - Decoded `config.auth.email` from `@supabase/config`.
  * @returns Loaded HTML keyed by template/notification name. Empty records when
