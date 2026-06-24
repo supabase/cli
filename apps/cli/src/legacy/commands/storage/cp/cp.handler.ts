@@ -67,6 +67,10 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
   const runtimeInfo = yield* RuntimeInfo;
 
   const jobsFlag = Option.getOrElse(flags.jobs, () => 1);
+  // Intentional deviation from Go: `--jobs` is a uint there, so `--jobs 0` is
+  // accepted and reaches NewJobQueue(0) (apps/cli-go/pkg/queue/queue.go), whose
+  // unbuffered channel + zero-run priming loop deadlocks the first Put. We clamp
+  // `< 1 → 1` to avoid that hang — do not "restore parity" by removing it.
   const jobs = jobsFlag < 1 ? 1 : jobsFlag;
   const contentTypeFlag = Option.getOrElse(flags.contentType, () => "");
   const cacheControlRaw = Option.getOrElse(flags.cacheControl, () => "max-age=3600");
