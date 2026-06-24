@@ -40,7 +40,7 @@ func GetDenoPath() (string, error) {
 	if len(DenoPathOverride) > 0 {
 		return DenoPathOverride, nil
 	}
-	home, err := os.UserHomeDir()
+	home, err := SupabaseHomeDir()
 	if err != nil {
 		return "", err
 	}
@@ -48,7 +48,7 @@ func GetDenoPath() (string, error) {
 	if runtime.GOOS == "windows" {
 		denoBinName = "deno.exe"
 	}
-	denoPath := filepath.Join(home, ".supabase", denoBinName)
+	denoPath := filepath.Join(home, denoBinName)
 	return denoPath, nil
 }
 

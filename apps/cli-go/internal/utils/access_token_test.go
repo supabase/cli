@@ -2,6 +2,7 @@ package utils
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/afero"
@@ -128,6 +129,24 @@ func TestSaveTokenFallback(t *testing.T) {
 		contents, err := afero.ReadFile(fsys, path)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte(token), contents)
+	})
+
+	t.Run("fallback saves to SUPABASE_HOME when configured", func(t *testing.T) {
+		t.Setenv("HOME", "/home/test")
+		t.Setenv("SUPABASE_HOME", "/custom/supabase")
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		assert.NoError(t, fallbackSaveToken(token, fsys))
+		// Validate saved token
+		configuredPath := filepath.Join("/custom/supabase", AccessTokenKey)
+		contents, err := afero.ReadFile(fsys, configuredPath)
+		assert.NoError(t, err)
+		assert.Equal(t, []byte(token), contents)
+		defaultPath := filepath.Join("/home/test", ".supabase", AccessTokenKey)
+		exists, err := afero.Exists(fsys, defaultPath)
+		assert.NoError(t, err)
+		assert.False(t, exists)
 	})
 
 	t.Run("throws error on home dir failure", func(t *testing.T) {

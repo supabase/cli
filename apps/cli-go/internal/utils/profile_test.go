@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/go-playground/validator/v10"
@@ -74,5 +75,24 @@ func TestLoadProfile(t *testing.T) {
 		err := LoadProfile(context.Background(), fsys)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrNotExist)
+	})
+}
+
+func TestSaveProfileName(t *testing.T) {
+	t.Run("saves to SUPABASE_HOME when configured", func(t *testing.T) {
+		t.Setenv("HOME", "/home/test")
+		t.Setenv("SUPABASE_HOME", "/custom/supabase")
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Run test
+		err := SaveProfileName("supabase-staging", fsys)
+		// Check error
+		assert.NoError(t, err)
+		contents, err := afero.ReadFile(fsys, filepath.Join("/custom/supabase", "profile"))
+		assert.NoError(t, err)
+		assert.Equal(t, "supabase-staging", string(contents))
+		exists, err := afero.Exists(fsys, filepath.Join("/home/test", ".supabase", "profile"))
+		assert.NoError(t, err)
+		assert.False(t, exists)
 	})
 }
