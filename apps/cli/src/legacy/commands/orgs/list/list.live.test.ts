@@ -21,4 +21,16 @@ describeLive("supabase orgs list (live)", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // Negative path: a bad token must round-trip to the real Management API, come
+  // back 401, and surface as a non-zero exit with the upstream "Unauthorized"
+  // message — i.e. the cli's auth + error mapping work against the live stack,
+  // not just the golden path. Overrides only the token (profile stays set).
+  test("fails with Unauthorized for an invalid token", { timeout: LIVE_TIMEOUT_MS }, async () => {
+    const { exitCode, stdout, stderr } = await runSupabaseLive(["orgs", "list"], {
+      env: { SUPABASE_ACCESS_TOKEN: `sbp_${"0".repeat(40)}` },
+    });
+    expect(exitCode).not.toBe(0);
+    expect(`${stdout}${stderr}`).toContain("Unauthorized");
+  });
 });
