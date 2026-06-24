@@ -1,10 +1,14 @@
 import { Effect, type FileSystem, Option, type Path } from "effect";
 
 import { legacyListLocalMigrations } from "../commands/db/shared/legacy-pgdelta.cache.ts";
-import { LegacyMigrationsReadError } from "../commands/db/shared/legacy-pgdelta.errors.ts";
 import { legacyBold } from "./legacy-colors.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import {
+  LEGACY_MIGRATION_VERSION_MAX,
+  legacyParseMigrationVersion,
+} from "./legacy-migration-timestamp.format.ts";
+import { LegacyMigrationsReadError } from "./legacy-migration.errors.ts";
 import { legacySplitAndTrim } from "./legacy-sql-split.ts";
 
 /**
@@ -120,40 +124,27 @@ export function legacyReconcileMigrations(
   remote: ReadonlyArray<string>,
   local: ReadonlyArray<string>,
 ): LegacyMigrationSync {
-  // Go's `math.MaxInt` on a 64-bit build == math.MaxInt64; the exhausted side pins
-  // here. Use BigInt so the full int64 range compares EXACTLY — `Number` loses
-  // precision above `Number.MAX_SAFE_INTEGER` (e.g. `Number("9999999999999999")`
-  // rounds to 1e16), which would mis-order versions Go accepts.
-  const MAX = 9223372036854775807n;
+  // `LEGACY_MIGRATION_VERSION_MAX` is Go's `math.MaxInt` (int64 max) and pins the
+  // exhausted side; `legacyParseMigrationVersion` mirrors Go's `strconv.Atoi`
+  // (digits only, within int64, BigInt for exact ordering) and is shared with
+  // `migration list` so both surfaces skip the same edge-case versions.
   const extraRemote: Array<string> = [];
   const extraLocal: Array<string> = [];
   let i = 0;
   let j = 0;
-  // Matches Go's `strconv.Atoi`: digits only, no empty/whitespace/sign/float. A
-  // non-parseable version is skipped (Go's `Atoi` error → `continue`). On 64-bit
-  // builds `Atoi` parses the full int64 range and returns a range error ONLY for
-  // values above int64 max; reject only those (so e.g. `9999999999999999`, which Go
-  // accepts and surfaces as a conflict, is NOT skipped) while still rejecting
-  // 19+-digit values above the sentinel so they can never exceed the exhausted-side
-  // pin and stall the two-pointer scan.
-  const parseVersion = (v: string): bigint | undefined => {
-    if (!/^\d+$/u.test(v)) return undefined;
-    const parsed = BigInt(v);
-    return parsed > MAX ? undefined : parsed;
-  };
   while (i < remote.length || j < local.length) {
-    let remoteTs = MAX;
+    let remoteTs = LEGACY_MIGRATION_VERSION_MAX;
     if (i < remote.length) {
-      const parsed = parseVersion(remote[i]!);
+      const parsed = legacyParseMigrationVersion(remote[i]!);
       if (parsed === undefined) {
         i++;
         continue;
       }
       remoteTs = parsed;
     }
-    let localTs = MAX;
+    let localTs = LEGACY_MIGRATION_VERSION_MAX;
     if (j < local.length) {
-      const parsed = parseVersion(local[j]!);
+      const parsed = legacyParseMigrationVersion(local[j]!);
       if (parsed === undefined) {
         j++;
         continue;

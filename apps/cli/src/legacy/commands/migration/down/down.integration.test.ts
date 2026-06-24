@@ -24,6 +24,8 @@ import type {
 } from "../../../shared/legacy-db-config.types.ts";
 import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyMigrationDropError } from "../../../shared/legacy-drop-objects.ts";
+import { LegacyMigrationSeedError } from "../../../shared/legacy-seed.ts";
 import { legacyMigrationDown } from "./down.handler.ts";
 import type { LegacyMigrationDownFlags } from "./down.command.ts";
 
@@ -36,6 +38,7 @@ interface SetupOpts {
   readonly confirm?: boolean;
   readonly remote?: ReadonlyArray<string>;
   readonly failDrop?: boolean;
+  readonly failSeed?: boolean;
   readonly config?: string;
   readonly seedTable?: ReadonlyArray<{ path: string; hash: string }>;
 }
@@ -78,9 +81,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         exec: (sql: string) =>
           Effect.suspend(() => {
             execs.push(sql);
-            return opts.failDrop === true && sql.startsWith("do $$")
-              ? Effect.fail(new LegacyDbExecError({ message: "permission denied" }))
-              : Effect.void;
+            if (opts.failDrop === true && sql.startsWith("do $$")) {
+              return Effect.fail(new LegacyDbExecError({ message: "permission denied" }));
+            }
+            if (opts.failSeed === true && sql.startsWith("insert into")) {
+              return Effect.fail(new LegacyDbExecError({ message: "boom" }));
+            }
+            return Effect.void;
           }),
         query: (sql: string, params?: ReadonlyArray<unknown>) =>
           Effect.suspend(() => {
@@ -247,7 +254,9 @@ describe("legacy migration down", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
-        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyMigrationDropError");
+        expect(Option.isSome(failure) && failure.value instanceof LegacyMigrationDropError).toBe(
+          true,
+        );
       }
     }).pipe(Effect.provide(layer));
   });
@@ -265,6 +274,26 @@ describe("legacy migration down", () => {
       expect(
         queries.some((q) => q.sql.includes("INSERT INTO supabase_migrations.seed_files")),
       ).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports a seed-apply failure", () => {
+    seed(tmp.current, "20240101000000_a.sql");
+    writeFileSync(join(tmp.current, "supabase", "seed.sql"), "insert into a values (1);\n");
+    const { layer } = setup(tmp.current, {
+      confirm: true,
+      remote: ["20240101000000", "20240102000000"],
+      failSeed: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationDown(flags({ last: 1 })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value instanceof LegacyMigrationSeedError).toBe(
+          true,
+        );
+      }
     }).pipe(Effect.provide(layer));
   });
 

@@ -199,6 +199,24 @@ describe("legacy migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("rejects a hostile version/name from the history table (path traversal guard)", () => {
+    // A tampered remote `schema_migrations` row could use `..`/separators to
+    // escape the migrations dir (CWE-22). The guard rejects it before writing.
+    const { layer } = setup(tmp.current, {
+      rows: [{ version: "20240101000000", name: "../../../etc/passwd", statements: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyMigrationFetchWriteError");
+      }
+      // Nothing is written when the guard fires.
+      expect(readdirSync(migrationsDir(tmp.current))).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("reports a write failure", () => {
     // A file at <workdir>/supabase makes `makeDirectory(supabase/migrations)` fail.
     writeFileSync(join(tmp.current, "supabase"), "not a directory");

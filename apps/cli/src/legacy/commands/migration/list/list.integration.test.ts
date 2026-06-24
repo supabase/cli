@@ -16,8 +16,8 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { LegacyMigrationsReadError } from "../../db/shared/legacy-pgdelta.errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import { LegacyMigrationsReadError } from "../../../shared/legacy-migration.errors.ts";
 import type {
   LegacyDbConfigFlags,
   LegacyResolvedDbConfig,

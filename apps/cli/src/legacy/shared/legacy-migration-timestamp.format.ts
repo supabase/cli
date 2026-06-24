@@ -39,3 +39,25 @@ export function legacyFormatTimestampVersion(version: string): string {
   }
   return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
 }
+
+/**
+ * Go's `math.MaxInt` on a 64-bit build (== `math.MaxInt64`) — the sentinel that
+ * pins the exhausted side of a migration-version two-pointer merge.
+ */
+export const LEGACY_MIGRATION_VERSION_MAX = 9223372036854775807n;
+
+/**
+ * Parses a migration version like Go's `strconv.Atoi` (`makeTable` /
+ * `assertRemoteInSync`): digits only — no empty/whitespace/sign/float — within
+ * the int64 range. A non-parseable version, or one above the int64 sentinel,
+ * returns `undefined` (Go's `Atoi` error → `continue`). Using BigInt keeps the
+ * full int64 range exact: `Number` loses precision above `Number.MAX_SAFE_INTEGER`
+ * (e.g. `Number("9999999999999999")` rounds to 1e16), which would mis-order
+ * versions Go accepts. 19+-digit values above the sentinel are rejected so they
+ * can never exceed the exhausted-side pin and stall the scan.
+ */
+export const legacyParseMigrationVersion = (value: string): bigint | undefined => {
+  if (!/^\d+$/u.test(value)) return undefined;
+  const parsed = BigInt(value);
+  return parsed > LEGACY_MIGRATION_VERSION_MAX ? undefined : parsed;
+};

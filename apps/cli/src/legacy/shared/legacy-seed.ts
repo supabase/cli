@@ -8,10 +8,11 @@ import {
   legacyReadSeedTable,
   UPSERT_SEED_FILE,
 } from "./legacy-migration-history.ts";
+import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "./legacy-path-match.ts";
 import { legacySplitAndTrim } from "./legacy-sql-split.ts";
 
 /** Applying a seed file failed (Go's `SeedData` / `ExecBatchWithCache` errors). */
-class LegacyMigrationSeedError extends Data.TaggedError("LegacyMigrationSeedError")<{
+export class LegacyMigrationSeedError extends Data.TaggedError("LegacyMigrationSeedError")<{
   readonly message: string;
 }> {}
 
@@ -30,37 +31,13 @@ interface LegacyPendingSeed {
 
 const hasMeta = (pattern: string): boolean => /[*?[]/u.test(pattern);
 
-const escapeRegExpChar = (char: string): string => char.replace(/[.+^${}()|\\]/gu, "\\$&");
-
-/** Compile one path segment to a RegExp matching Go's `path.Match` (no `/`, no `**`). */
-const segmentToRegExp = (segment: string): RegExp => {
-  let source = "";
-  for (let i = 0; i < segment.length; i++) {
-    const char = segment[i]!;
-    if (char === "*") source += "[^/]*";
-    else if (char === "?") source += "[^/]";
-    else if (char === "[") {
-      const end = segment.indexOf("]", i + 1);
-      if (end === -1) {
-        source += "\\[";
-      } else {
-        // Go's `path.Match` negates a class only with a leading `^` (`!` is a
-        // literal member), so pass the class through verbatim — `[^...]` and a
-        // literal `[!...]` already mean the same in JS RegExp.
-        source += `[${segment.slice(i + 1, end)}]`;
-        i = end;
-      }
-    } else source += escapeRegExpChar(char);
-  }
-  return new RegExp(`^${source}$`, "u");
-};
-
 /**
  * Resolves a single glob pattern against the workdir, returning the matched
  * paths RELATIVE to the workdir (so `seed_files.path` stays Go-compatible).
  * Mirrors Go's `fs.Glob`: a literal pattern returns itself iff it exists; a
  * pattern with metacharacters lists each parent directory and matches per
- * segment via `path.Match` semantics.
+ * segment via `legacyPathMatch` (Go's `path.Match`). The caller validates the
+ * whole pattern up front, so a malformed class never reaches here.
  */
 const globPattern = (
   fs: FileSystem.FileSystem,
@@ -81,19 +58,20 @@ const globPattern = (
     const dirs = hasMeta(dirPattern)
       ? yield* globPattern(fs, path, workdir, dirPattern)
       : [dirPattern];
-    const matcher = segmentToRegExp(filePattern);
     const result: Array<string> = [];
     for (const dir of dirs) {
       const absDir = dir.length === 0 ? workdir : path.join(workdir, dir);
       const names = yield* fs.readDirectory(absDir).pipe(Effect.orElseSucceed(() => []));
       for (const name of names) {
-        if (matcher.test(name)) result.push(dir.length === 0 ? name : `${dir}/${name}`);
+        if (legacyPathMatch(filePattern, name).matched) {
+          result.push(dir.length === 0 ? name : `${dir}/${name}`);
+        }
       }
     }
     return result;
   });
 
-/** Go's `config.Glob.Files`: glob each pattern, sort, dedup; warn on no-match. */
+/** Go's `config.Glob.Files`: glob each pattern, sort, dedup; warn on bad/no-match. */
 const resolveSeedFiles = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -106,6 +84,13 @@ const resolveSeedFiles = (
     const result: Array<string> = [];
     const unmatched: Array<string> = [];
     for (const pattern of patterns) {
+      // Go's `fs.Glob` validates the whole pattern up front (`Match(pattern, "")`);
+      // a malformed glob is reported as `failed to glob files: <ErrBadPattern>` and
+      // contributes no matches, exactly like `Glob.Files`'s error branch.
+      if (legacyPathMatch(pattern, "").badPattern) {
+        unmatched.push(`failed to glob files: ${LEGACY_BAD_PATTERN_MESSAGE}`);
+        continue;
+      }
       const matches = [...(yield* globPattern(fs, path, workdir, pattern))].sort();
       if (matches.length === 0) unmatched.push(`no files matched pattern: ${pattern}`);
       for (const match of matches) {

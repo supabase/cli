@@ -23,6 +23,7 @@ import type {
 } from "../../../shared/legacy-db-config.types.ts";
 import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyMigrationVaultError } from "../../../shared/legacy-vault.ts";
 import { legacyMigrationUp } from "./up.handler.ts";
 import type { LegacyMigrationUpFlags } from "./up.command.ts";
 
@@ -34,6 +35,7 @@ interface SetupOpts {
   readonly args?: ReadonlyArray<string>;
   readonly remote?: ReadonlyArray<string>;
   readonly failApply?: boolean;
+  readonly failVault?: boolean;
   readonly config?: string;
   readonly existingVault?: ReadonlyArray<{ id: string; name: string }>;
 }
@@ -78,6 +80,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         query: (sql: string, params?: ReadonlyArray<unknown>) =>
           Effect.suspend(() => {
             queries.push({ sql, params });
+            if (opts.failVault === true && sql === READ_VAULT)
+              return Effect.fail(new LegacyDbExecError({ message: "boom" }));
             if (sql === LIST_SQL)
               return Effect.succeed((opts.remote ?? []).map((version) => ({ version })));
             if (sql === READ_VAULT)
@@ -206,6 +210,25 @@ describe("legacy migration up", () => {
       expect(stripAnsi(out.stderrText)).toContain("Updating vault secrets...");
       const create = queries.find((q) => q.sql.includes("create_secret"));
       expect(create?.params).toEqual(["shhh", "my_secret"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports a vault upsert failure", () => {
+    seed(tmp.current, "20240101000000_a.sql");
+    const { layer } = setup(tmp.current, {
+      remote: [],
+      config: '[db.vault]\nmy_secret = "shhh"\n',
+      failVault: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationUp(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value instanceof LegacyMigrationVaultError).toBe(
+          true,
+        );
+      }
     }).pipe(Effect.provide(layer));
   });
 

@@ -3,7 +3,7 @@ import { Data, Effect } from "effect";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 
 /** Dropping the user schemas failed (Go's `DropUserSchemas` error). */
-class LegacyMigrationDropError extends Data.TaggedError("LegacyMigrationDropError")<{
+export class LegacyMigrationDropError extends Data.TaggedError("LegacyMigrationDropError")<{
   readonly message: string;
 }> {}
 

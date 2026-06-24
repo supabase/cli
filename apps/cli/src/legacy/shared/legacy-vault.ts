@@ -4,7 +4,7 @@ import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 
 /** Reading or updating `vault.secrets` failed (Go's `UpsertVaultSecrets` errors). */
-class LegacyMigrationVaultError extends Data.TaggedError("LegacyMigrationVaultError")<{
+export class LegacyMigrationVaultError extends Data.TaggedError("LegacyMigrationVaultError")<{
   readonly message: string;
 }> {}
 

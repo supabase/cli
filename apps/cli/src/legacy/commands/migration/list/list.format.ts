@@ -1,4 +1,8 @@
-import { legacyFormatTimestampVersion } from "../../../shared/legacy-migration-timestamp.format.ts";
+import {
+  LEGACY_MIGRATION_VERSION_MAX,
+  legacyFormatTimestampVersion,
+  legacyParseMigrationVersion,
+} from "../../../shared/legacy-migration-timestamp.format.ts";
 
 /** A merged local/remote migration row. `local`/`remote` are empty when absent. */
 export interface LegacyMigrationListRow {
@@ -6,18 +10,6 @@ export interface LegacyMigrationListRow {
   readonly remote: string;
   readonly time: string;
 }
-
-// int64 max — Go's `math.MaxInt` sentinel for the exhausted side of the merge.
-const MAX = 9223372036854775807n;
-
-// Matches Go's `strconv.Atoi` (`makeTable`): digits only, within int64. A
-// non-parseable version is skipped (`Atoi` error → continue); 19+-digit values
-// above the sentinel are skipped too so they can't stall the two-pointer scan.
-const parseVersion = (value: string): bigint | undefined => {
-  if (!/^\d+$/u.test(value)) return undefined;
-  const parsed = BigInt(value);
-  return parsed > MAX ? undefined : parsed;
-};
 
 /**
  * Two-pointer merge of remote + local migration versions into chronological
@@ -33,18 +25,18 @@ export function legacyMakeMigrationListRows(
   let i = 0;
   let j = 0;
   while (i < remote.length || j < local.length) {
-    let remoteTs = MAX;
+    let remoteTs = LEGACY_MIGRATION_VERSION_MAX;
     if (i < remote.length) {
-      const parsed = parseVersion(remote[i]!);
+      const parsed = legacyParseMigrationVersion(remote[i]!);
       if (parsed === undefined) {
         i++;
         continue;
       }
       remoteTs = parsed;
     }
-    let localTs = MAX;
+    let localTs = LEGACY_MIGRATION_VERSION_MAX;
     if (j < local.length) {
-      const parsed = parseVersion(local[j]!);
+      const parsed = legacyParseMigrationVersion(local[j]!);
       if (parsed === undefined) {
         j++;
         continue;

@@ -178,6 +178,23 @@ describe("legacy migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "repair-all with --status reverted wipes the whole history (no upserts, no deletes)",
+    () => {
+      // Go's repair-all + reverted queues ONLY TRUNCATE: the per-version DELETE is
+      // the non-repair-all path and the UPSERT is the applied path, so the net
+      // effect is wiping the entire history table (`repair.go:64-79`).
+      seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+      const { layer, execs, queries } = setup(tmp.current, { confirm: true });
+      return Effect.gen(function* () {
+        yield* legacyMigrationRepair(input({ versions: [], status: "reverted" }));
+        expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
+        expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(false);
+        expect(queries.some((q) => q.sql.includes("WHERE version = ANY"))).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("repair-all cancels on a declined prompt", () => {
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs } = setup(tmp.current, { confirm: false });

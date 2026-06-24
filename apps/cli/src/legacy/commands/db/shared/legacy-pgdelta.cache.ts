@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { Effect, type FileSystem, Option, type Path } from "effect";
 
-import { LegacyMigrationsReadError } from "./legacy-pgdelta.errors.ts";
+import { LegacyMigrationsReadError } from "../../../shared/legacy-migration.errors.ts";
 
 /**
  * Declarative catalog-cache key builders + on-disk catalog resolution, ported
