@@ -39,6 +39,7 @@ type fakeAnalytics struct {
 	captures   []captureCall
 	identifies []identifyCall
 	aliases    []aliasCall
+	aliasErr   error
 }
 
 type captureCall struct {
@@ -70,6 +71,11 @@ func (f *fakeAnalytics) Identify(distinctID string, properties map[string]any) e
 }
 
 func (f *fakeAnalytics) Alias(distinctID string, alias string) error {
+	if f.aliasErr != nil {
+		err := f.aliasErr
+		f.aliasErr = nil
+		return err
+	}
 	f.aliases = append(f.aliases, aliasCall{distinctID: distinctID, alias: alias})
 	return nil
 }
@@ -149,6 +155,7 @@ func TestLoginTelemetryStitching(t *testing.T) {
 		service, err := phtelemetry.NewService(fsys, phtelemetry.Options{
 			Analytics: analytics,
 			Now:       func() time.Time { return now },
+			IsTTY:     true,
 		})
 		require.NoError(t, err)
 		return service
@@ -177,6 +184,60 @@ func TestLoginTelemetryStitching(t *testing.T) {
 		state, err := phtelemetry.LoadState(fsys)
 		require.NoError(t, err)
 		assert.Equal(t, "user-123", state.DistinctID)
+	})
+
+	t.Run("login in ephemeral runtime stamps capture without alias or state write", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		analytics := &fakeAnalytics{enabled: true}
+		t.Setenv("SUPABASE_HOME", "/tmp/supabase-home")
+		service, err := phtelemetry.NewService(fsys, phtelemetry.Options{
+			Analytics: analytics,
+			Now:       func() time.Time { return now },
+			IsCI:      true,
+		})
+		require.NoError(t, err)
+		ctx := phtelemetry.WithService(context.Background(), service)
+
+		err = Run(ctx, os.Stdout, RunParams{
+			Token: token,
+			Fsys:  fsys,
+			GetProfile: func(context.Context) (string, error) {
+				return "user-789", nil
+			},
+		})
+
+		require.NoError(t, err)
+		assert.Empty(t, analytics.aliases)
+		assert.Empty(t, analytics.identifies)
+		require.Len(t, analytics.captures, 1)
+		assert.Equal(t, "user-789", analytics.captures[0].distinctID)
+		state, err := phtelemetry.LoadState(fsys)
+		require.NoError(t, err)
+		assert.Empty(t, state.DistinctID)
+	})
+
+	t.Run("token login keeps capture stamped when alias enqueue fails", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		analytics := &fakeAnalytics{enabled: true, aliasErr: assert.AnError}
+		ctx := phtelemetry.WithService(context.Background(), newService(t, fsys, analytics))
+
+		err := Run(ctx, os.Stdout, RunParams{
+			Token: token,
+			Fsys:  fsys,
+			GetProfile: func(context.Context) (string, error) {
+				return "user-987", nil
+			},
+		})
+
+		require.NoError(t, err)
+		assert.Empty(t, analytics.aliases)
+		assert.Empty(t, analytics.identifies)
+		require.Len(t, analytics.captures, 1)
+		assert.Equal(t, phtelemetry.EventLoginCompleted, analytics.captures[0].event)
+		assert.Equal(t, "user-987", analytics.captures[0].distinctID)
+		state, err := phtelemetry.LoadState(fsys)
+		require.NoError(t, err)
+		assert.Empty(t, state.DistinctID)
 	})
 
 	t.Run("browser login also stitches with gotrue_id", func(t *testing.T) {

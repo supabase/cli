@@ -20,3 +20,13 @@ export function legacyAqua(text: string): string {
 export function legacyBold(text: string): string {
   return styleText("bold", text, { stream: process.stderr });
 }
+
+/** Port of Go's `utils.Yellow` — lipgloss colour "11" (bright yellow). */
+export function legacyYellow(text: string): string {
+  return styleText("yellow", text, { stream: process.stderr });
+}
+
+/** Port of Go's `utils.Red` — lipgloss colour "9" (bright red). */
+export function legacyRed(text: string): string {
+  return styleText("red", text, { stream: process.stderr });
+}

@@ -31,6 +31,7 @@ describe("download-openapi", () => {
   });
 
   test("applies OpenAPI JSON Patch overrides", () => {
+    const samlProperties: Record<string, unknown> = {};
     const document = {
       paths: {},
       components: {
@@ -42,6 +43,7 @@ describe("download-openapi", () => {
                   properties: {
                     saml: {
                       required: ["id", "entity_id"],
+                      properties: samlProperties,
                     },
                   },
                 },
@@ -63,12 +65,17 @@ describe("download-openapi", () => {
         path: "/components/schemas/ListProvidersResponse/properties/items/items/properties/saml/required",
         value: ["entity_id"],
       },
+      {
+        op: "add",
+        path: "/components/schemas/ListProvidersResponse/properties/items/items/properties/saml/properties/high_availability",
+        value: { type: "boolean" },
+      },
     ]);
 
-    expect(
-      document.components.schemas.ListProvidersResponse.properties.items.items.properties.saml
-        .required,
-    ).toEqual(["entity_id"]);
+    const saml =
+      document.components.schemas.ListProvidersResponse.properties.items.items.properties.saml;
+    expect(saml.required).toEqual(["entity_id"]);
+    expect(samlProperties.high_availability).toEqual({ type: "boolean" });
   });
 
   test("fails when an OpenAPI override test no longer matches", () => {
@@ -84,5 +91,20 @@ describe("download-openapi", () => {
         ],
       ),
     ).toThrow("OpenAPI override test failed");
+  });
+
+  test("fails when an OpenAPI add override already exists", () => {
+    expect(() =>
+      applyOpenApiOverrides(
+        { paths: {}, components: { schemas: { Body: { properties: { enabled: {} } } } } },
+        [
+          {
+            op: "add",
+            path: "/components/schemas/Body/properties/enabled",
+            value: { type: "boolean" },
+          },
+        ],
+      ),
+    ).toThrow("cannot be added");
   });
 });

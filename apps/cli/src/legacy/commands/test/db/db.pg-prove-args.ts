@@ -30,6 +30,11 @@ export function legacyToDockerPath(absHostPath: string): string {
  * - Relative paths resolve against `cwd` (Go's `utils.CurrentDirAbs`, the original
  *   invocation directory).
  * - `--verbose` is appended when debug logging is enabled (Go's `viper.GetBool("DEBUG")`).
+ *
+ * Intentional divergence from Go (CLI-1139): for a file path we mount its parent
+ * *directory* rather than the lone file, so psql `\ir`/`\i` includes resolve. Go
+ * mounts the file alone, which breaks single-file runs that include a sibling.
+ * Output is unchanged — the full file path is still passed to `pg_prove`.
  */
 export function buildLegacyPgProveArgs(opts: {
   readonly paths: ReadonlyArray<string>;
@@ -42,6 +47,7 @@ export function buildLegacyPgProveArgs(opts: {
 
   const cmd: string[] = ["pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"];
   const binds: string[] = [];
+  const seenTargets = new Set<string>();
   // `testFiles` is never empty (it defaults to supabase/tests), so the first
   // iteration always sets this; Go derives workingDir from the first path only.
   let workingDir = "";
@@ -50,11 +56,24 @@ export function buildLegacyPgProveArgs(opts: {
     const fp = nodePath.isAbsolute(candidate) ? candidate : nodePath.join(opts.cwd, candidate);
     const dockerPath = legacyToDockerPath(fp);
     cmd.push(dockerPath);
-    binds.push(`${fp}:${dockerPath}:ro`);
-    if (workingDir === "") {
-      workingDir =
-        nodePath.posix.extname(dockerPath) !== "" ? nodePath.posix.dirname(dockerPath) : dockerPath;
+
+    // Mount the *directory* containing a test file (not the lone file) so psql
+    // `\ir ./sibling.sql` includes resolve: they look relative to the test file's
+    // own directory, and a single-file bind leaves siblings absent in the
+    // container (CLI-1139). Directories are mounted as-is. The file-vs-directory
+    // heuristic (presence of an extension) matches Go's workingDir logic.
+    const isFile = nodePath.posix.extname(dockerPath) !== "";
+    const hostMount = isFile ? nodePath.dirname(fp) : fp;
+    const dockerMount = legacyToDockerPath(hostMount);
+
+    // Dedupe by container target: two files in the same directory (or a file plus
+    // its containing directory) would otherwise emit duplicate `-v` mounts, which
+    // Docker rejects.
+    if (!seenTargets.has(dockerMount)) {
+      seenTargets.add(dockerMount);
+      binds.push(`${hostMount}:${dockerMount}:ro`);
     }
+    if (workingDir === "") workingDir = dockerMount;
   }
 
   if (opts.debug) cmd.push("--verbose");

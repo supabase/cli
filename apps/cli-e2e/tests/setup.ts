@@ -1,112 +1,23 @@
 import type { ProvidedContext } from "vitest";
-import { createHarness, exec } from "@supabase/cli-test-helpers";
 import { startPgMock } from "../src/server/pg-mock.ts";
 import { startReplayServer } from "../src/server/replay-server.ts";
-import { ACCESS_TOKEN, isRecording, ORG_ID, PROJECT_REF, TARGET } from "../src/tests/env.ts";
+import { ACCESS_TOKEN, isRecording, ORG_ID, PROJECT_REF } from "../src/tests/env.ts";
+import {
+  cleanupProjectsByName,
+  createTestProject,
+  deleteTestProject,
+  generateDbPassword,
+  resolveOrgId,
+  waitForProjectReady,
+} from "./staging-project.ts";
+import "./provided-context.ts"; // centralized `inject()` key augmentation
 
 const FIXTURES_DIR = new URL("../fixtures", import.meta.url).pathname;
-
-declare module "vitest" {
-  export interface ProvidedContext {
-    replayServerUrl: string;
-    projectRef: string;
-    orgId: string;
-    storageBucket: string;
-    pgMockPort: number;
-    /** DOCKER_HOST value (tcp://host:port) pointing at the relay server.
-     *  In record mode the relay forwards to the real Docker socket; in replay
-     *  mode it serves recorded Docker API fixtures. */
-    dockerHostUrl: string;
-  }
-}
 
 function resolveDockerSocket(): string {
   const dockerHost = process.env["DOCKER_HOST"];
   if (dockerHost?.startsWith("unix://")) return dockerHost.slice("unix://".length);
   return "/var/run/docker.sock";
-}
-
-function harness(serverUrl: string) {
-  return createHarness(TARGET, { apiUrl: serverUrl, accessToken: ACCESS_TOKEN });
-}
-
-async function resolveOrgId(serverUrl: string): Promise<string> {
-  const result = await exec(harness(serverUrl), ["orgs", "list", "--output", "json"]);
-  if (result.exitCode !== 0) throw new Error(`orgs list failed: ${result.stderr}`);
-  const first = (JSON.parse(result.stdout) as Array<{ id: string }>)[0]?.id;
-  if (!first) throw new Error("No orgs found — cannot create test project");
-  return first;
-}
-
-async function cleanupProjectsByName(serverUrl: string, names: string[]): Promise<void> {
-  const listResult = await exec(harness(serverUrl), ["projects", "list", "--output", "json"]);
-  if (listResult.exitCode !== 0) return;
-
-  const projects = JSON.parse(listResult.stdout) as Array<{
-    id: string;
-    ref?: string;
-    name: string;
-  }>;
-
-  for (const project of projects.filter((p) => names.includes(p.name))) {
-    const ref = project.ref ?? project.id;
-    if (ref && /^[a-z]{20}$/.test(ref)) {
-      await exec(harness(serverUrl), ["projects", "delete", ref, "--yes"]);
-    }
-  }
-}
-
-async function waitForProjectReady(
-  stagingApiUrl: string,
-  projectRef: string,
-  timeoutMs = 300_000,
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const res = await fetch(`${stagingApiUrl}/v1/projects/${projectRef}`, {
-      headers: { Authorization: `Bearer ${ACCESS_TOKEN}` },
-    });
-    if (res.ok) {
-      const project = (await res.json()) as { status?: string };
-      if (project.status === "ACTIVE_HEALTHY") return;
-    }
-    await new Promise((r) => setTimeout(r, 5_000));
-  }
-  throw new Error(`Project ${projectRef} did not become ACTIVE_HEALTHY within ${timeoutMs}ms`);
-}
-
-async function createTestProject(serverUrl: string, orgId: string): Promise<string> {
-  const result = await exec(harness(serverUrl), [
-    "projects",
-    "create",
-    "cli-e2e-test",
-    "--org-id",
-    orgId,
-    "--db-password",
-    "cli-e2e-password-123",
-    "--region",
-    "us-east-1",
-    "--output",
-    "json",
-  ]);
-  if (result.exitCode !== 0) throw new Error(`projects create failed: ${result.stderr}`);
-  const project = JSON.parse(result.stdout) as { id?: string; ref?: string };
-  const ref = project.ref ?? project.id;
-  if (!ref || !/^[a-z]{20}$/.test(ref)) {
-    throw new Error(`Unexpected project ref from create: ${result.stdout}`);
-  }
-  return ref;
-}
-
-async function deleteTestProject(serverUrl: string, projectRef: string): Promise<void> {
-  try {
-    const result = await exec(harness(serverUrl), ["projects", "delete", projectRef, "--yes"]);
-    if (result.exitCode !== 0) {
-      console.error(`Warning: failed to delete test project ${projectRef}: ${result.stderr}`);
-    }
-  } catch (err) {
-    console.error(`Warning: exception deleting test project ${projectRef}:`, err);
-  }
 }
 
 export async function setup({
@@ -153,7 +64,12 @@ export async function setup({
 
   // Create a fresh project for this recording run.  Its ref is used by branches,
   // functions, secrets, and api-keys tests.
-  const projectRef = await createTestProject(server.url, orgId);
+  const projectRef = await createTestProject(
+    server.url,
+    orgId,
+    "cli-e2e-test",
+    generateDbPassword(),
+  );
   provide("projectRef", projectRef);
   provide("orgId", orgId);
 

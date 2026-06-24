@@ -8,10 +8,8 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, Layer, Option } from "effect";
 import { afterEach, beforeEach } from "vitest";
 
-import {
-  LegacyPlatformApi,
-  LegacyPlatformApiFactory,
-} from "../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
+import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "./legacy-project-ref.service.ts";
@@ -267,6 +265,65 @@ describe("legacyProjectRefLayer", () => {
         const { resolveOptional } = yield* LegacyProjectRefResolver;
         const ref = yield* resolveOptional(Option.none());
         expect(Option.isNone(ref)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  describe("loadProjectRef (Go flags.LoadProjectRef — non-prompting)", () => {
+    it.effect("prefers flag, then projectId, then the ref file", () => {
+      writeRefFile(tempRoot, ANOTHER_REF);
+      const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
+      return Effect.gen(function* () {
+        const { loadProjectRef } = yield* LegacyProjectRefResolver;
+        expect(yield* loadProjectRef(Option.some(VALID_REF))).toBe(VALID_REF);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("reads the ref file when flag and projectId are unset", () => {
+      writeRefFile(tempRoot, VALID_REF);
+      const { layer } = makeLayer({ workdir: tempRoot });
+      return Effect.gen(function* () {
+        const { loadProjectRef } = yield* LegacyProjectRefResolver;
+        expect(yield* loadProjectRef(Option.none())).toBe(VALID_REF);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fails fast with LegacyProjectNotLinkedError and never prompts on a TTY", () => {
+      // The crux of the parity fix: even on an interactive TTY with projects
+      // available, loadProjectRef must NOT open the picker (that is `resolve`'s
+      // job). Go's `db lint`/`db advisors --linked` use LoadProjectRef, which
+      // returns ErrNotLinked instead of prompting.
+      const { layer, out } = makeLayer({
+        workdir: tempRoot,
+        stdinIsTty: true,
+        projects: [
+          { id: VALID_REF, name: "alpha", organization_slug: "acme", region: "us-east-1" },
+        ],
+        promptSelectResponses: [VALID_REF],
+      });
+      return Effect.gen(function* () {
+        const { loadProjectRef } = yield* LegacyProjectRefResolver;
+        const exit = yield* Effect.exit(loadProjectRef(Option.none()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const errorJson = JSON.stringify(exit.cause);
+          expect(errorJson).toContain("LegacyProjectNotLinkedError");
+          expect(errorJson).toContain("supabase link");
+        }
+        // No project picker was opened.
+        expect(out.promptSelectCalls).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("validates the resolved ref format", () => {
+      const { layer } = makeLayer({ workdir: tempRoot, projectId: "not-a-valid-ref" });
+      return Effect.gen(function* () {
+        const { loadProjectRef } = yield* LegacyProjectRefResolver;
+        const exit = yield* Effect.exit(loadProjectRef(Option.none()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+        }
       }).pipe(Effect.provide(layer));
     });
   });

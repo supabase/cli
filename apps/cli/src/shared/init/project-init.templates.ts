@@ -102,7 +102,7 @@ openai_api_key = "env(OPENAI_API_KEY)"
 
 # Email testing server. Emails sent with the local dev setup are not actually sent - rather, they
 # are monitored, and you can view the emails that would have been sent from the web interface.
-[inbucket]
+[local_smtp]
 enabled = true
 # Port to use for the email testing server web interface.
 port = 54324
@@ -404,9 +404,10 @@ s3_access_key = "env(S3_ACCESS_KEY)"
 # Configures AWS_SECRET_ACCESS_KEY for S3 bucket
 s3_secret_key = "env(S3_SECRET_KEY)"
 
-# [experimental.pgdelta]
-# When enabled, pg-delta becomes the active engine for supported schema flows.
-# enabled = false
+# pg-delta is the schema diff engine for db diff / db pull / db remote commit.
+# Set enabled = false to fall back to the legacy migra engine.
+[experimental.pgdelta]
+enabled = true
 # Directory under \`supabase/\` where declarative files are written.
 # declarative_schema_path = "./database"
 # JSON string passed through to pg-delta SQL formatting.

@@ -1,5 +1,5 @@
 import { loadProjectConfig } from "@supabase/config";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -9,6 +9,7 @@ import {
   LegacyProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
+import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { legacyTempPaths } from "../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -16,14 +17,13 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
-import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
 import {
   buildPostgresUrl,
   defaultSchemas,
   localDbContainerId,
   localDbPassword,
   localNetworkId,
-  normalizeSchemaFlags,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
   probeTlsSupport,
@@ -220,7 +220,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
   }
 
-  const schemas = normalizeSchemaFlags(flags.schema);
+  // flags.schema is already CSV-parsed and validated by `Flag.mapTryCatch(legacyParseSchemaFlags)`
+  // in types.command.ts — use it directly.
+  const schemas = flags.schema;
   const queryTimeoutSeconds = yield* parseQueryTimeoutSeconds(flags.queryTimeout);
   const lang = flags.lang;
   const swiftAccessControl = flags.swiftAccessControl;
@@ -306,13 +308,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           "node",
           "dist/server/server.js",
         ];
-        const child = yield* spawner.spawn(
-          ChildProcess.make("docker", args, {
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "pipe",
-          }),
-        );
+        const child = yield* spawnContainerCli(spawner, args, {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
         const [exitCode] = yield* Effect.all(
           [
@@ -335,12 +335,14 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         // We only need the exit code and stderr (Go uses Docker's ContainerInspect API,
         // which reads no stdout). Discard stdout so the inspect JSON can never fill the
         // pipe buffer and deadlock the unconsumed stream.
-        const child = yield* spawner.spawn(
-          ChildProcess.make("docker", ["container", "inspect", localDbContainerId(projectId)], {
+        const child = yield* spawnContainerCli(
+          spawner,
+          ["container", "inspect", localDbContainerId(projectId)],
+          {
             stdin: "ignore",
             stdout: "ignore",
             stderr: "pipe",
-          }),
+          },
         );
         const [exitCode, stderr] = yield* Effect.all([
           child.exitCode.pipe(Effect.map(Number)),
@@ -348,7 +350,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         ]);
         if (exitCode !== 0) {
           const message = stderr.trim();
-          if (message.includes("No such container")) {
+          if (message.toLowerCase().includes("no such container")) {
             return yield* Effect.fail(new Error("supabase start is not running."));
           }
           return yield* Effect.fail(

@@ -2,6 +2,7 @@ package rm
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -108,6 +109,35 @@ func TestStorageRM(t *testing.T) {
 			"ss:///private/abstract.pdf",
 			"ss:///private/docs/readme.md",
 		}, false, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("chunks explicit object deletes by storage api cap", func(t *testing.T) {
+		t.Cleanup(fstest.MockStdin(t, "y"))
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		// Setup mock api
+		defer gock.OffAll()
+		gock.New(utils.DefaultApiHost).
+			Get("/v1/projects/" + flags.ProjectRef + "/api-keys").
+			Reply(http.StatusOK).
+			JSON(apiKeys)
+		prefixes := numberedStorageFiles(1001)
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
+			Delete("/storage/v1/object/private").
+			JSON(storage.DeleteObjectsRequest{Prefixes: prefixes[:1000]}).
+			Reply(http.StatusOK).
+			JSON(deleteObjectsResponse(prefixes[:1000]))
+		gock.New("https://" + utils.GetSupabaseHost(flags.ProjectRef)).
+			Delete("/storage/v1/object/private").
+			JSON(storage.DeleteObjectsRequest{Prefixes: prefixes[1000:]}).
+			Reply(http.StatusOK).
+			JSON(deleteObjectsResponse(prefixes[1000:]))
+		// Run test
+		paths := storageURLs("private", prefixes)
+		err := Run(context.Background(), paths, false, fsys)
 		// Check error
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -262,6 +292,42 @@ func TestRemoveAll(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
+	t.Run("chunks recursive object deletes by storage api cap", func(t *testing.T) {
+		// Setup mock api
+		defer gock.OffAll()
+		prefixes := numberedStorageFiles(1001)
+		for page := 0; page <= len(prefixes)/storage.PAGE_LIMIT; page++ {
+			start := page * storage.PAGE_LIMIT
+			end := min(start+storage.PAGE_LIMIT, len(prefixes))
+			gock.New("http://127.0.0.1").
+				Post("/storage/v1/object/list/private").
+				JSON(storage.ListObjectsQuery{
+					Prefix: "tmp/",
+					Search: "",
+					Limit:  storage.PAGE_LIMIT,
+					Offset: start,
+				}).
+				Reply(http.StatusOK).
+				JSON(objectResponses(prefixes[start:end]))
+		}
+		files := prefixedStorageFiles("tmp/", prefixes)
+		gock.New("http://127.0.0.1").
+			Delete("/storage/v1/object/private").
+			JSON(storage.DeleteObjectsRequest{Prefixes: files[:1000]}).
+			Reply(http.StatusOK).
+			JSON(deleteObjectsResponse(files[:1000]))
+		gock.New("http://127.0.0.1").
+			Delete("/storage/v1/object/private").
+			JSON(storage.DeleteObjectsRequest{Prefixes: files[1000:]}).
+			Reply(http.StatusOK).
+			JSON(deleteObjectsResponse(files[1000:]))
+		// Run test
+		err := RemoveStoragePathAll(context.Background(), mockApi, "private", "tmp/")
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
 	t.Run("removes empty bucket", func(t *testing.T) {
 		// Setup mock api
 		defer gock.OffAll()
@@ -323,4 +389,48 @@ func TestRemoveAll(t *testing.T) {
 		assert.ErrorContains(t, err, "Error status 503:")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+}
+
+func numberedStorageFiles(count int) []string {
+	files := make([]string, count)
+	for i := range files {
+		files[i] = fmt.Sprintf("file-%04d.txt", i)
+	}
+	return files
+}
+
+func storageURLs(bucket string, prefixes []string) []string {
+	paths := make([]string, len(prefixes))
+	for i, prefix := range prefixes {
+		paths[i] = fmt.Sprintf("ss:///%s/%s", bucket, prefix)
+	}
+	return paths
+}
+
+func prefixedStorageFiles(prefix string, files []string) []string {
+	paths := make([]string, len(files))
+	for i, file := range files {
+		paths[i] = prefix + file
+	}
+	return paths
+}
+
+func objectResponses(files []string) []storage.ObjectResponse {
+	objects := make([]storage.ObjectResponse, len(files))
+	for i, file := range files {
+		objects[i] = mockFile
+		objects[i].Name = file
+	}
+	return objects
+}
+
+func deleteObjectsResponse(prefixes []string) []storage.DeleteObjectsResponse {
+	objects := make([]storage.DeleteObjectsResponse, len(prefixes))
+	for i, prefix := range prefixes {
+		objects[i] = storage.DeleteObjectsResponse{
+			BucketId: "private",
+			Name:     prefix,
+		}
+	}
+	return objects
 }

@@ -10,3 +10,7 @@
 /apps/cli-go/pkg/config/templates/Dockerfile
 /pnpm-lock.yaml
 /pnpm-workspace.yaml
+
+# Generated code. These ownerless rules override the catch-all above so
+# CI-green sync PRs (e.g. Management API OpenAPI spec) can be auto-merged.
+/packages/api/src/generated/

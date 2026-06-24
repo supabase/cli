@@ -4,6 +4,7 @@ import {
   legacyBuildConnectionUrl,
   legacyIsTerminalConnectError,
   legacyIsUnixSocketHost,
+  legacyMergedConnectionOptions,
   legacySslConfigsFor,
   legacySslOptionFor,
 } from "./legacy-db-connection.sql-pg.layer.ts";
@@ -55,13 +56,62 @@ describe("legacyBuildConnectionUrl", () => {
       "@h2.example.com:5433/",
     );
   });
+
+  it("forwards runtimeParams as -c flags in the options startup param (Go RuntimeParams)", () => {
+    const url = legacyBuildConnectionUrl(
+      {
+        user: "postgres",
+        password: "pw",
+        port: 5432,
+        database: "postgres",
+        host: "db.example.com",
+        runtimeParams: { search_path: "tenant", statement_timeout: "5000" },
+      },
+      "db.example.com",
+    );
+    const options = new URL(url).searchParams.get("options");
+    expect(options).toBe("-c search_path=tenant -c statement_timeout=5000");
+  });
+});
+
+describe("legacyMergedConnectionOptions", () => {
+  const base = { user: "postgres", password: "pw", port: 5432, database: "postgres", host: "h" };
+
+  it("returns undefined when neither options nor runtimeParams are set", () => {
+    expect(legacyMergedConnectionOptions(base)).toBeUndefined();
+  });
+
+  it("returns the libpq options verbatim when there are no runtimeParams", () => {
+    expect(legacyMergedConnectionOptions({ ...base, options: "reference=abc" })).toBe(
+      "reference=abc",
+    );
+  });
+
+  it("appends -c flags for each runtimeParam, preserving the existing options", () => {
+    expect(
+      legacyMergedConnectionOptions({
+        ...base,
+        options: "reference=abc",
+        runtimeParams: { search_path: "tenant" },
+      }),
+    ).toBe("reference=abc -c search_path=tenant");
+  });
+
+  it("backslash-escapes spaces in a runtimeParam value (libpq options syntax)", () => {
+    expect(
+      legacyMergedConnectionOptions({
+        ...base,
+        runtimeParams: { application_name: "my app" },
+      }),
+    ).toBe("-c application_name=my\\ app");
+  });
 });
 
 describe("legacySslOptionFor", () => {
-  it("returns undefined for local connections regardless of sslmode", () => {
-    expect(legacySslOptionFor(undefined, true, undefined)).toBeUndefined();
-    expect(legacySslOptionFor("verify-full", true, undefined)).toBeUndefined();
-    expect(legacySslOptionFor("disable", true, undefined)).toBeUndefined();
+  it("returns ssl=false for local connections regardless of sslmode or PGSSLMODE", () => {
+    expect(legacySslOptionFor(undefined, true, undefined)).toBe(false);
+    expect(legacySslOptionFor("verify-full", true, undefined)).toBe(false);
+    expect(legacySslOptionFor("disable", true, undefined)).toBe(false);
   });
 
   it("uses TLS without verification for remote connections by default", () => {
@@ -97,6 +147,20 @@ describe("legacySslOptionFor", () => {
     }
   });
 
+  it("attaches the client cert (cert/key/passphrase) to every TLS mode (pgconn parity)", () => {
+    const clientCert = { cert: "CERT", key: "KEY", passphrase: "pw" };
+    // verify-full / verify-ca / require|prefer all carry the client certificate.
+    expect(
+      legacySslOptionFor("verify-full", false, undefined, undefined, clientCert),
+    ).toMatchObject({ cert: "CERT", key: "KEY", passphrase: "pw" });
+    expect(legacySslOptionFor("require", false, undefined, undefined, clientCert)).toMatchObject({
+      cert: "CERT",
+      key: "KEY",
+    });
+    // Plaintext modes carry no client cert.
+    expect(legacySslOptionFor("disable", false, undefined, undefined, clientCert)).toBe(false);
+  });
+
   it("carries the servername into verifying modes (so a DoH IP verifies the hostname)", () => {
     expect(legacySslOptionFor("verify-full", false, "db.example.com")).toEqual({
       rejectUnauthorized: true,
@@ -130,7 +194,7 @@ describe("legacySslOptionFor", () => {
 
 describe("legacySslConfigsFor (pgconn fallback list)", () => {
   it("local connections try a single plaintext (no-TLS) config", () => {
-    expect(legacySslConfigsFor(undefined, true, undefined)).toEqual([undefined]);
+    expect(legacySslConfigsFor(undefined, true, undefined)).toEqual([false]);
   });
 
   it("disable is plaintext only", () => {
@@ -196,9 +260,9 @@ describe("legacySslConfigsFor (pgconn fallback list)", () => {
     // plaintext even though the host is not the local services hostname (isLocal=false).
     expect(
       legacySslConfigsFor("require", false, undefined, undefined, "/var/run/postgresql"),
-    ).toEqual([undefined]);
+    ).toEqual([false]);
     expect(legacySslConfigsFor("verify-full", false, undefined, "ca", "/tmp/.s.PGSQL")).toEqual([
-      undefined,
+      false,
     ]);
     // A non-socket host still follows the normal sslmode fallback list.
     expect(legacySslConfigsFor("require", false, undefined, undefined, "db.example.com")).toEqual([

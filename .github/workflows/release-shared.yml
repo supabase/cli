@@ -53,9 +53,11 @@ on:
         required: false
       ANTHROPIC_API_KEY:
         required: false
+      DF_FIREWALL_TOKEN:
+        required: false
 jobs:
-  build:
-    name: Build CLI artifacts
+  build-blacksmith:
+    name: Build CLI artifacts (Blacksmith)
     uses: ./.github/workflows/build-cli-artifacts.yml
     with:
       version: ${{ inputs.version }}
@@ -64,35 +66,55 @@ jobs:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
       POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+  build-github:
+    name: Build CLI artifacts (GitHub hosted)
+    uses: ./.github/workflows/build-cli-artifacts.yml
+    with:
+      version: ${{ inputs.version }}
+      shell: ${{ inputs.shell }}
+      runner: ubuntu-latest
+      cache_key_suffix: -github
+    secrets:
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+      POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+      POSTHOG_ENDPOINT: ${{ secrets.POSTHOG_ENDPOINT }}
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   smoke-test:
-    needs: build
+    needs:
+      - build-blacksmith
     strategy:
       fail-fast: false
       matrix:
         runner:
           - blacksmith-8vcpu-ubuntu-2404
-          - blacksmith-6vcpu-macos-latest
-          - macos-15-intel
           - blacksmith-8vcpu-windows-2025
-          - windows-11-arm
     runs-on: ${{ matrix.runner }}
     env:
       NPM_TAG: ${{ inputs.npm_tag }}
       VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Setup
         uses: ./.github/actions/setup
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Restore build artifacts cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
 
       # Docker's classic image store keeps a single platform manifest per
       # tag, so pulling `alpine:3.21` for amd64 and again for arm64 leaves
@@ -108,9 +130,39 @@ jobs:
           sudo systemctl restart docker
           docker info --format '{{.DriverStatus}}'
 
+      # The host's binfmt_misc must be mounted BEFORE installing QEMU. On cold
+      # Blacksmith VMs it is not mounted by default; the privileged
+      # tonistiigi/binfmt installer that setup-qemu-action runs then registers
+      # the qemu interpreters inside its own mount namespace — it prints
+      # "installing: arm64 OK" but the handlers vanish when the container exits,
+      # so the host kernel never gains arm64 emulation and every
+      # `docker run --platform linux/arm64` dies with "exec format error".
+      # Warm/reused VMs already had it mounted, which is why this only failed
+      # intermittently (on cache-miss, i.e. cold-VM, runs). Mount it on the host
+      # after the docker restart so the registration lands in the host kernel
+      # and persists through to the smoke tests.
+      - name: Ensure binfmt_misc is mounted on the host
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          if ! mountpoint -q /proc/sys/fs/binfmt_misc; then
+            sudo modprobe binfmt_misc || true
+            sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc
+          fi
+          mountpoint /proc/sys/fs/binfmt_misc
+
       - name: Setup QEMU for cross-platform Docker
         if: runner.os == 'Linux'
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+
+      - name: Verify linux/arm64 emulation is registered
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          # Fail fast with a clear message instead of opaque "exec format error"
+          # lines in the smoke tests if the qemu-aarch64 handler did not land in
+          # the host kernel. Reads binfmt_misc directly — no image pull, no network.
+          grep -q enabled /proc/sys/fs/binfmt_misc/qemu-aarch64
 
       # Cache the smoke-test base images across runs. Without this, eight
       # parallel `docker run` calls in smoke-test-linux.ts race on first-time
@@ -171,8 +223,47 @@ jobs:
         run: pnpm run test:smoke -- --version "${VERSION}" --tag "${NPM_TAG}"
         working-directory: apps/cli
 
+  smoke-test-macos:
+    needs:
+      - build-github
+    runs-on: macos-latest
+    env:
+      NPM_TAG: ${{ inputs.npm_tag }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Restore build artifacts cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+
+      - name: Fix binary permissions
+        run: chmod +x packages/cli-*/bin/supabase || true
+
+      - name: Run smoke tests
+        shell: bash
+        run: pnpm run test:smoke -- --version "${VERSION}" --tag "${NPM_TAG}"
+        working-directory: apps/cli
+
   publish:
-    needs: smoke-test
+    needs:
+      - build-github
+      - smoke-test
+      - smoke-test-macos
     if: ${{ !inputs.dry_run }}
     # npm provenance verification rejects non-GitHub-hosted runners with
     # E422 ("Unsupported GitHub Actions runner environment: self-hosted").
@@ -198,18 +289,25 @@ jobs:
           permission-workflows: write
 
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: true
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup
         uses: ./.github/actions/setup
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Restore build artifacts cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
 
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
@@ -324,6 +422,8 @@ jobs:
       tag: v${{ inputs.version }}
       apply: true
       non_blocking: true
+    secrets:
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   # Once the raw semantic-release block is in the release body, ask Claude to
   # rewrite it into user-centric notes and open a PR for human approval. Stable
@@ -340,27 +440,43 @@ jobs:
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
+      DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
+    # github-hosted to share a cache store with build-github/publish, whose
+    # -github-v1 artifacts this job's checksums must match.
     runs-on: ubuntu-latest
     env:
       BREW_NAME: ${{ inputs.brew_name }}
       VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Setup
         uses: ./.github/actions/setup
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      # Must restore the github-hosted build (-github-v1), the same artifacts
+      # the publish job uploads to the GitHub Release. The Bun-compiled binaries
+      # are not byte-for-byte reproducible across the blacksmith and github
+      # builds, so the blacksmith dist/checksums.txt does not match the released
+      # tarballs. Reading it here produced a formula whose sha256 rejected the
+      # downloaded archive ("Formula reports different checksum").
+      - name: Restore build artifacts cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
 
       - name: Generate Homebrew tap token
         id: app-token
@@ -391,23 +507,38 @@ jobs:
   publish-scoop:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
+    # github-hosted to share a cache store with build-github/publish, whose
+    # -github-v1 artifacts this job's checksums must match.
     runs-on: ubuntu-latest
     env:
       SCOOP_NAME: ${{ inputs.scoop_name }}
       VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Setup
         uses: ./.github/actions/setup
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      # Must restore the github-hosted build (-github-v1), the same artifacts
+      # the publish job uploads to the GitHub Release. The Bun-compiled binaries
+      # are not byte-for-byte reproducible across the blacksmith and github
+      # builds, so the blacksmith dist/checksums.txt does not match the released
+      # tarballs. Reading it here would produce a manifest whose hash rejects the
+      # downloaded archive.
+      - name: Restore build artifacts cache
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            packages/cli-*/bin/
+            dist/
+          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
 
       - name: Generate Scoop bucket token
         id: app-token
@@ -453,3 +584,22 @@ jobs:
     uses: ./.github/workflows/setup-cli-smoke-test.yml
     with:
       version: ${{ inputs.version }}
+
+  # Post-publish end-to-end check that the Homebrew tap, Scoop bucket, and the
+  # curl|bash install script actually install the just-released CLI. brew/scoop
+  # verify the published checksum against the downloaded tarball, so this is the
+  # signal that would have caught CLI v2.107.0 (mismatched brew/scoop sha256s).
+  #
+  # Only runs when brew/scoop were published (beta/stable) and both pushes
+  # succeeded — alpha publishes neither channel and is covered by the GitHub
+  # Release download path in setup-cli-smoke. Like setup-cli-smoke, it runs last
+  # and does not gate the rest of the channel: by the time it runs the manifests
+  # are already live, so a failure surfaces as a red post-release signal.
+  verify-install-channels:
+    needs: [publish, publish-homebrew, publish-scoop]
+    if: ${{ always() && !inputs.dry_run && inputs.publish_brew_scoop && needs.publish-homebrew.result == 'success' && needs.publish-scoop.result == 'success' }}
+    uses: ./.github/workflows/verify-install-channels.yml
+    with:
+      version: ${{ inputs.version }}
+      brew_name: ${{ inputs.brew_name }}
+      scoop_name: ${{ inputs.scoop_name }}

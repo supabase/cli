@@ -144,6 +144,7 @@ function setup(opts: SetupOpts = {}) {
       Effect.sync(() => {
         proxyCalls.push({ args, env: execOpts?.env });
       }),
+    execCapture: () => Effect.succeed(""),
   });
 
   const loginApi = mockLegacyLoginApi({ gotrueId: "gotrue-user" });
@@ -153,6 +154,7 @@ function setup(opts: SetupOpts = {}) {
     BunServices.layer,
     out.layer,
     api.layer,
+    api.factoryLayer,
     api.httpClientLayer,
     cliConfig,
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),

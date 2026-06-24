@@ -85,6 +85,15 @@ interface OutputShape {
    * output layer so tests can capture it without monkey-patching `process.stdout` / `process.stderr`.
    */
   readonly raw: (text: string, stream?: "stdout" | "stderr") => Effect.Effect<void>;
+  /**
+   * Writes raw bytes to stdout or stderr without framing or text re-encoding.
+   *
+   * Like {@link raw} but byte-exact: for payloads that may not be valid UTF-8 (e.g. a
+   * `pg_dump` of a SQL_ASCII/LATIN1 database streamed to stdout), decoding to a string
+   * and back would corrupt the bytes, so callers that must preserve the exact wire
+   * bytes use this instead.
+   */
+  readonly rawBytes: (bytes: Uint8Array, stream?: "stdout" | "stderr") => Effect.Effect<void>;
 }
 
 /**

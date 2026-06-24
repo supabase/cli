@@ -2,6 +2,7 @@ import { createServer, type Server, type Socket } from "node:net";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
+import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import {
   buildPostgresUrl,
   defaultSchemas,
@@ -9,7 +10,6 @@ import {
   localDbContainerId,
   localDbPassword,
   localNetworkId,
-  normalizeSchemaFlags,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
   probeTlsSupport,
@@ -186,10 +186,13 @@ describe("resolvePgmetaImage", () => {
 
 describe("schema and id helpers", () => {
   it("normalizes comma separated and repeated schema flags", () => {
-    expect(normalizeSchemaFlags(["public, auth", " storage ", ""])).toEqual([
+    // Go's pflag StringSlice parses each value via encoding/csv with NO
+    // trimming (spf13/pflag readAsCSV → csv.Reader), and an empty value yields
+    // no field. Whitespace is preserved verbatim, matching Go.
+    expect(legacyParseSchemaFlags(["public, auth", " storage ", ""])).toEqual([
       "public",
-      "auth",
-      "storage",
+      " auth",
+      " storage ",
     ]);
   });
 

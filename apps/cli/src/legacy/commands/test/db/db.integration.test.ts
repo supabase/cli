@@ -10,6 +10,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
@@ -51,6 +52,7 @@ const REMOTE_CONN: LegacyPgConnInput = {
 function mockResolver(opts: { conn?: LegacyPgConnInput; isLocal?: boolean } = {}) {
   return Layer.succeed(LegacyDbConfigResolver, {
     resolve: () => Effect.succeed({ conn: opts.conn ?? LOCAL_CONN, isLocal: opts.isLocal ?? true }),
+    resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 }
 
@@ -73,6 +75,8 @@ function mockDbConnection(opts: {
         }
       }),
     extensionExists: () => Effect.succeed(opts.existed ?? false),
+    queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+    copyToCsv: () => Effect.succeed(new Uint8Array()),
     query: () => Effect.succeed([]),
   };
   const connectCalls: Array<{
@@ -110,6 +114,18 @@ function mockDockerRun(opts: { exitCode?: number; runFails?: boolean }) {
         ? Effect.fail(new LegacyDockerRunError({ message: "failed to run docker: not found" }))
         : Effect.succeed(opts.exitCode ?? 0);
     },
+    runCapture: (runOpts) => {
+      lastOpts = runOpts;
+      return opts.runFails === true
+        ? Effect.fail(new LegacyDockerRunError({ message: "failed to run docker: not found" }))
+        : Effect.succeed({ exitCode: opts.exitCode ?? 0, stdout: new Uint8Array(0), stderr: "" });
+    },
+    runStream: (runOpts) => {
+      lastOpts = runOpts;
+      return opts.runFails === true
+        ? Effect.fail(new LegacyDockerRunError({ message: "failed to run docker: not found" }))
+        : Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: "" });
+    },
   });
   return {
     layer,
@@ -142,6 +158,8 @@ interface SetupOpts {
   networkId?: string;
   workdir?: string;
   dnsResolver?: "native" | "https";
+  /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
+  args?: ReadonlyArray<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -164,6 +182,7 @@ function setup(opts: SetupOpts = {}) {
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
     ),
     Layer.succeed(LegacyDnsResolverFlag, opts.dnsResolver ?? "native"),
+    Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     BunServices.layer,
   );
   return { layer, out, telemetry, connection, docker };
@@ -257,12 +276,15 @@ describe("legacy test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("passes explicit paths as read-only binds", () => {
+  it.live("mounts a single file's containing directory so `\\ir` includes resolve", () => {
+    // CLI-1139: a lone-file bind leaves sibling files absent in the container, so
+    // `\ir ./sibling.sql` fails. The containing directory is mounted instead; the
+    // file path is still what pg_prove runs.
     const { layer, docker } = setup();
     return Effect.gen(function* () {
       yield* legacyTestDb(flags({ paths: ["/abs/a_test.sql"] }));
       const run = docker.lastOpts;
-      expect(run?.binds).toEqual(["/abs/a_test.sql:/abs/a_test.sql:ro"]);
+      expect(run?.binds).toEqual(["/abs:/abs:ro"]);
       expect(run?.cmd).toContain("/abs/a_test.sql");
     }).pipe(Effect.provide(layer));
   });
@@ -276,9 +298,13 @@ describe("legacy test db integration", () => {
   });
 
   it.live("db-url mode: uses host networking and the resolved host/port", () => {
-    const { layer, docker, connection } = setup({ conn: REMOTE_CONN, isLocal: false });
+    const { layer, docker, connection } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      args: ["--db-url=postgres://x"],
+    });
     return Effect.gen(function* () {
-      yield* legacyTestDb(flags({ dbUrl: Option.some("postgres://x"), local: false }));
+      yield* legacyTestDb(flags({ dbUrl: Option.some("postgres://x") }));
       const run = docker.lastOpts;
       expect(run?.network).toEqual({ _tag: "host" });
       expect(run?.env["PGHOST"]).toBe(REMOTE_CONN.host);
@@ -296,9 +322,10 @@ describe("legacy test db integration", () => {
       conn: REMOTE_CONN,
       isLocal: false,
       dnsResolver: "https",
+      args: ["--db-url=postgres://x"],
     });
     return Effect.gen(function* () {
-      yield* legacyTestDb(flags({ dbUrl: Option.some("postgres://x"), local: false }));
+      yield* legacyTestDb(flags({ dbUrl: Option.some("postgres://x") }));
       // Go installs the DoH fallback resolver for remote connects when
       // `--dns-resolver https` is set (`connect.go:211-213`); the handler must
       // hand the same value to the driver rather than silently using OS DNS.
@@ -368,16 +395,42 @@ describe("legacy test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("rejects mutually exclusive connection flags (--linked + --local)", () => {
-    const { layer } = setup();
+  it.live("rejects mutually exclusive connection flags (--linked + --local via args)", () => {
+    const { layer } = setup({ args: ["--linked", "--local"] });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyTestDb(flags({ linked: true, local: true })));
+      const exit = yield* Effect.exit(legacyTestDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
         );
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--local=false --linked fails with mutual-exclusion (sorted set [linked local])", () => {
+    // Both flags Changed → mutual exclusion fires with cobra's sorted alphabetical set.
+    const { layer } = setup({ args: ["--local=false", "--linked"] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyTestDb(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--linked=false routes to the linked branch (Changed, not value)", () => {
+    // cobra's Changed fires when the flag appears regardless of value:
+    // `--linked=false` is still "explicitly set" → linked branch.
+    // The resolver mock will be called with connType="linked".
+    const { layer } = setup({ args: ["--linked=false"] });
+    return Effect.gen(function* () {
+      // The resolver mock doesn't validate — success means routing reached resolver.resolve
+      // with connType "linked" (no mutual-exclusion error, no local fallback error).
+      yield* legacyTestDb(flags());
     }).pipe(Effect.provide(layer));
   });
 
@@ -413,9 +466,13 @@ describe("legacy test db integration", () => {
   });
 
   it.live("labels the connection diagnostic 'remote' for non-local connections", () => {
-    const { layer, out } = setup({ conn: REMOTE_CONN, isLocal: false });
+    const { layer, out } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      args: ["--db-url=postgres://x"],
+    });
     return Effect.gen(function* () {
-      yield* legacyTestDb(flags({ dbUrl: Option.some("postgres://x"), local: false }));
+      yield* legacyTestDb(flags({ dbUrl: Option.some("postgres://x") }));
       expect(out.stderrText).toContain("Connecting to remote database...");
     }).pipe(Effect.provide(layer));
   });

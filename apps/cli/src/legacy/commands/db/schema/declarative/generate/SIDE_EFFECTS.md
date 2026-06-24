@@ -1,60 +1,72 @@
 # `supabase db schema declarative generate`
 
+Generates declarative schema files from a database by diffing a platform-baseline
+pg-delta catalog (source) against the target database's catalog (target).
+
 ## Files Read
 
-| Path                                    | Format     | When                                              |
-| --------------------------------------- | ---------- | ------------------------------------------------- |
-| `~/.supabase/access-token`              | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` |
-| `<workdir>/supabase/config.toml`        | TOML       | always, to load project config                    |
-| `<workdir>/.supabase/.temp/project-ref` | plain text | when `--linked`                                   |
+| Path                                            | Format     | When                                               |
+| ----------------------------------------------- | ---------- | -------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                | TOML       | always — pg-delta gate, ports, format options      |
+| `<workdir>/supabase/.temp/pgdelta-version`      | plain text | always — pins the `@supabase/pg-delta` npm version |
+| `<workdir>/supabase/.temp/edge-runtime-version` | plain text | always — pins the edge-runtime image tag           |
+| `<workdir>/supabase/.temp/postgres-version`     | plain text | shadow-DB image resolution (Go seam)               |
+| `<workdir>/supabase/migrations/*.sql`           | SQL        | smart mode — detect whether migrations exist       |
+| `<workdir>/supabase/.temp/pgdelta/*.json`       | JSON       | catalog cache (read/written by the Go seam)        |
+| `~/.supabase/access-token`                      | plain text | `--linked` (token resolution)                      |
 
 ## Files Written
 
-| Path                                                       | Format | When                                 |
-| ---------------------------------------------------------- | ------ | ------------------------------------ |
-| `<workdir>/supabase/schema/<schema>.sql` (declarative dir) | SQL    | always (overwrites if `--overwrite`) |
+| Path                                                                                                                        | Format | When                                         |
+| --------------------------------------------------------------------------------------------------------------------------- | ------ | -------------------------------------------- |
+| `<workdir>/supabase/database/**/*.sql` (declarative dir; configurable via `[experimental.pgdelta] declarative_schema_path`) | SQL    | always — the entire dir is wiped + rewritten |
+| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                                                                           | JSON   | catalog cache (written by the Go seam)       |
 
-## API Routes
+## Subprocesses / Containers
 
-| Method | Path | Auth | Request body | Response (used fields) |
-| ------ | ---- | ---- | ------------ | ---------------------- |
-| —      | —    | —    | —            | —                      |
+| What                                                                                                                                                                            | When                                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `supabase-go db schema declarative __catalog --mode baseline --experimental` (hidden seam) — provisions a shadow Postgres + `start.SetupDatabase`, exports the baseline catalog | always                                                         |
+| Edge-runtime container (`supabase/edge-runtime`) running the pg-delta declarative-export Deno script (host network, deno-cache volume `supabase_edge_runtime_<projectId>`)      | always                                                         |
+| `supabase-go db reset --local`                                                                                                                                                  | smart-mode Local choice when reset is confirmed (or `--reset`) |
 
 ## Environment Variables
 
-| Variable                | Purpose                                 | Required?                                               |
-| ----------------------- | --------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` mode          | no (falls back to keyring → `~/.supabase/access-token`) |
-| `DB_PASSWORD`           | password for direct database connection | no                                                      |
+| Variable                     | Purpose                                            | Required? |
+| ---------------------------- | -------------------------------------------------- | --------- |
+| `SUPABASE_ACCESS_TOKEN`      | auth token for `--linked`                          | no        |
+| `DB_PASSWORD`                | password for `--linked` / `--db-url`               | no        |
+| `PGDELTA_NPM_REGISTRY`       | private `@supabase` npm registry for pg-delta      | no        |
+| `PGDELTA_DEBUG`              | verbose pg-delta diagnostics                       | no        |
+| `SUPABASE_GO_BINARY`         | override the `supabase-go` seam binary             | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local` (Go `GetHostname`)     | no        |
+| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback | no        |
 
 ## Exit Codes
 
-| Code | Condition                      |
-| ---- | ------------------------------ |
-| `0`  | success                        |
-| `1`  | database connection failure    |
-| `1`  | schema generation error        |
-| `1`  | pg-delta not enabled in config |
+| Code | Condition                                                             |
+| ---- | --------------------------------------------------------------------- |
+| `0`  | success (files written, or skipped after a declined prompt)           |
+| `1`  | conflicting `--db-url`/`--linked`/`--local` (mutually exclusive)      |
+| `1`  | pg-delta not enabled (no `--experimental` / `[experimental.pgdelta]`) |
+| `1`  | non-interactive mode with no explicit target                          |
+| `1`  | shadow-database / edge-runtime / export failure                       |
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
-
-Prints `Finished supabase db schema declarative generate.` on success.
-
-### `--output-format json`
-
-Not applicable.
-
-### `--output-format stream-json`
-
-Not applicable.
+Text mode only (no machine envelope). Diagnostics + the final
+`Declarative schema written to <dir>` go to stderr; the PostRun prints
+`Finished supabase db schema declarative generate.` to stdout on success.
 
 ## Notes
 
-- Requires `--experimental` flag or `[experimental.pgdelta] enabled = true` in `config.toml`.
-- `--db-url`, `--linked`, and `--local` are mutually exclusive.
-- In interactive mode (no explicit target), prompts user to choose the source database.
-- `--reset` resets the local database before generating (local data will be lost).
-- `--overwrite` skips the confirmation prompt when declarative schema files already exist.
-- `--no-cache` forces a fresh shadow database setup, bypassing catalog snapshots.
+- Requires `--experimental` or `[experimental.pgdelta] enabled = true`.
+- `--db-url` / `--linked` / `--local` are mutually exclusive; absent all three,
+  smart mode prompts (existing-files overwrite → Local/Custom choice + reset offer).
+- Remote Supabase targets (`--linked` / `--db-url`) get the embedded pg-delta CA
+  bundle written under `supabase/.temp/pgdelta/` and the URL rewritten to
+  `sslmode=verify-ca`; local / non-Supabase targets connect without it.
+- **Architecture:** the shadow-database platform baseline is provisioned by the
+  bundled `supabase-go` via the hidden `db schema declarative __catalog` command
+  (it runs `start.SetupDatabase`'s auth/storage/realtime service migrations). The
+  rest — orchestration, pg-delta diff/export, file writes, prompts — is native.

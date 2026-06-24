@@ -20,10 +20,8 @@ import {
   LegacyInvalidAccessTokenError,
   LegacyNotLoggedInError,
 } from "../../src/legacy/auth/legacy-errors.ts";
-import {
-  LegacyPlatformApi,
-  LegacyPlatformApiFactory,
-} from "../../src/legacy/auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../../src/legacy/auth/legacy-platform-api-factory.service.ts";
+import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
 import {
   LegacyLoginApi,
   type LegacyLoginSessionResponse,
@@ -69,6 +67,7 @@ export const mockLegacyTelemetryStateLayer = Layer.succeed(LegacyTelemetryState,
   flush: Effect.void,
   stitchLogin: () => Effect.void,
   clearDistinctId: Effect.void,
+  resetIdentity: Effect.void,
 });
 
 // Default LegacyCredentials mock. `mockLegacyCliConfig` defaults to an env-set
@@ -267,10 +266,12 @@ export function mockLegacyTelemetryStateTracked(): {
   readonly flushed: boolean;
   readonly stitchedDistinctId: string | undefined;
   readonly clearedDistinctId: boolean;
+  readonly identityReset: boolean;
 } {
   let flushed = false;
   let stitchedDistinctId: string | undefined;
   let clearedDistinctId = false;
+  let identityReset = false;
   const layer = Layer.succeed(LegacyTelemetryState, {
     get flush() {
       return Effect.sync(() => {
@@ -286,6 +287,11 @@ export function mockLegacyTelemetryStateTracked(): {
         clearedDistinctId = true;
       });
     },
+    get resetIdentity() {
+      return Effect.sync(() => {
+        identityReset = true;
+      });
+    },
   });
   return {
     layer,
@@ -298,24 +304,33 @@ export function mockLegacyTelemetryStateTracked(): {
     get clearedDistinctId() {
       return clearedDistinctId;
     },
+    get identityReset() {
+      return identityReset;
+    },
   };
 }
 
 export function mockLegacyLinkedProjectCacheTracked(): {
   readonly layer: Layer.Layer<LegacyLinkedProjectCache>;
   readonly cached: boolean;
+  readonly cachedRef: string | undefined;
 } {
   let cached = false;
+  let cachedRef: string | undefined;
   const layer = Layer.succeed(LegacyLinkedProjectCache, {
-    cache: (_ref: string) =>
+    cache: (ref: string) =>
       Effect.sync(() => {
         cached = true;
+        cachedRef = ref;
       }),
   });
   return {
     layer,
     get cached() {
       return cached;
+    },
+    get cachedRef() {
+      return cachedRef;
     },
   };
 }
@@ -461,6 +476,9 @@ export interface MockLegacyPlatformApiResult {
   // still recording requests into the shared `requests` array.
   readonly httpClientLayer: Layer.Layer<HttpClient.HttpClient>;
   readonly requests: ReadonlyArray<LegacyRecordedRequest>;
+  // Wraps `layer` in a `LegacyPlatformApiFactory` for commands that switched
+  // from yielding `LegacyPlatformApi` directly to the lazy factory shape.
+  readonly factoryLayer: Layer.Layer<LegacyPlatformApiFactory>;
 }
 
 export function mockLegacyPlatformApi(
@@ -520,7 +538,11 @@ export function mockLegacyPlatformApi(
     }),
   ).pipe(Layer.provide(httpClientLayer));
 
-  return { layer, httpClientLayer, requests };
+  const factoryLayer = Layer.succeed(LegacyPlatformApiFactory, {
+    make: LegacyPlatformApi.pipe(Effect.provide(layer)),
+  });
+
+  return { layer, httpClientLayer, requests, factoryLayer };
 }
 
 // ---------------------------------------------------------------------------
@@ -674,9 +696,14 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
     ),
   );
 
+  const topLevelFactory = Layer.succeed(LegacyPlatformApiFactory, {
+    make: LegacyPlatformApi.pipe(Effect.provide(opts.api.layer)),
+  });
+
   return Layer.mergeAll(
     opts.out.layer,
     opts.api.layer,
+    topLevelFactory,
     opts.cliConfig,
     tty,
     processControl,

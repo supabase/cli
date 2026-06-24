@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Supabase support
+    url: https://supabase.com/support
+    about: Get help with your Supabase project, account, billing, or hosted services.
+  - name: Supabase documentation
+    url: https://supabase.com/docs/reference/cli
+    about: Read the Supabase CLI command reference and guides.

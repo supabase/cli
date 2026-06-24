@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { BunServices } from "@effect/platform-bun";
 import { mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -670,9 +670,13 @@ major_version = 16
     const document = Schema.toJsonSchemaDocument(ProjectConfigSchema).schema;
     const schemaString = JSON.stringify(document);
 
+    expect(schemaString).toContain("local_smtp");
     expect(schemaString).toContain("remotes");
     expect(schemaString).toContain("static_files");
     expect(schemaString).toContain("env");
+    // The deprecated implementation name must not leak anywhere in the schema,
+    // including descriptions (case-insensitive guard).
+    expect(schemaString.toLowerCase()).not.toContain("inbucket");
     expect(schemaString).not.toContain("versions");
   });
 
@@ -811,5 +815,378 @@ port = "env(SUPABASE_DB_PORT_TEST)"
       }
       await rm(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+describe("config io [remotes.*] merge", () => {
+  async function writeTomlProject(toml: string): Promise<string> {
+    const cwd = makeTempProject();
+    await mkdir(join(cwd, "supabase"), { recursive: true });
+    await writeFile(join(cwd, "supabase", "config.toml"), toml);
+    return cwd;
+  }
+
+  const BASE_WITH_REMOTES = `project_id = "baseref"
+
+[api]
+enabled = true
+schemas = ["public", "custom_base"]
+max_rows = 123
+
+[db]
+major_version = 15
+
+[remotes.preview]
+project_id = "previewref"
+[remotes.preview.api]
+schemas = ["remote_only"]
+max_rows = 999
+
+[remotes.staging]
+project_id = "stagingref"
+[remotes.staging.api]
+enabled = false
+`;
+
+  test("merges the matching remote subtree over the base before decode", async () => {
+    const cwd = await writeTomlProject(BASE_WITH_REMOTES);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      expect(loaded!.appliedRemote).toBe("preview");
+      // remote block's project_id overrides the base
+      expect(loaded!.config.project_id).toBe("previewref");
+      // remote scalar wins
+      expect(loaded!.config.api.max_rows).toBe(999);
+      // array replaced wholesale (not element-merged)
+      expect(loaded!.config.api.schemas).toEqual(["remote_only"]);
+      // base-only sibling under the same table survives
+      expect(loaded!.config.api.enabled).toBe(true);
+      // a non-matching remote ([remotes.staging]) is not applied
+      expect(loaded!.config.db.major_version).toBe(15);
+      // remotes are stripped from the merged document before decode
+      expect(loaded!.document?.remotes).toBeUndefined();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("loads the base config verbatim when no remote matches", async () => {
+    const cwd = await writeTomlProject(BASE_WITH_REMOTES);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "unknownref" }));
+      expect(loaded!.appliedRemote).toBeUndefined();
+      expect(loaded!.config.project_id).toBe("baseref");
+      expect(loaded!.config.api.max_rows).toBe(123);
+      expect(loaded!.config.api.schemas).toEqual(["public", "custom_base"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("does not merge remotes when no projectRef is requested", async () => {
+    const cwd = await writeTomlProject(BASE_WITH_REMOTES);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.appliedRemote).toBeUndefined();
+      expect(loaded!.config.api.max_rows).toBe(123);
+      expect(Object.keys(loaded!.config.remotes)).toEqual(["preview", "staging"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects duplicate project_id across remotes with Go's message", async () => {
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.a]
+project_id = "dupref"
+
+[remotes.b]
+project_id = "dupref"
+`);
+    try {
+      const message = await Effect.runPromise(
+        loadProjectConfig(cwd, { projectRef: "dupref" }).pipe(
+          Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
+            Effect.succeed(error.message),
+          ),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects duplicate project_id among remotes that do not match projectRef", async () => {
+    // Go builds the duplicate map across all [remotes.*] blocks before applying the
+    // matching override, so a clash between two non-target remotes still fails even
+    // though neither shares projectRef (config.go:503-518).
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.target]
+project_id = "previewref"
+
+[remotes.a]
+project_id = "dupref"
+
+[remotes.b]
+project_id = "dupref"
+`);
+    try {
+      const message = await Effect.runPromise(
+        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
+          Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
+            Effect.succeed(error.message),
+          ),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects two remotes that both omit project_id", async () => {
+    // A missing project_id reads as "" (Go's viper.GetString), so two remotes that
+    // both omit it collide on the empty key.
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.a]
+[remotes.a.api]
+max_rows = 1
+
+[remotes.b]
+[remotes.b.api]
+max_rows = 2
+`);
+    try {
+      const message = await Effect.runPromise(
+        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
+          Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
+            Effect.succeed(error.message),
+          ),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("the merged document carries pointer sections introduced by the remote", async () => {
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.preview]
+project_id = "previewref"
+[remotes.preview.db.ssl_enforcement]
+enabled = true
+`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      // `legacyPresenceIn` reads `document` to detect optional pointer sections;
+      // a remote-introduced `db.ssl_enforcement` must be present there.
+      const db = loaded!.document?.db;
+      expect(typeof db === "object" && db !== null && "ssl_enforcement" in db).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("forces db.seed.enabled false when the matching remote omits it", async () => {
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[db.seed]
+enabled = true
+
+[remotes.preview]
+project_id = "previewref"
+[remotes.preview.api]
+max_rows = 5
+`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      expect(loaded!.config.db.seed.enabled).toBe(false);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves db.seed.enabled when the matching remote sets it", async () => {
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.preview]
+project_id = "previewref"
+[remotes.preview.db.seed]
+enabled = true
+`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      expect(loaded!.config.db.seed.enabled).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves env() references inside the matching remote before merge", async () => {
+    const previous = process.env.SUPABASE_REMOTE_MAX_ROWS_TEST;
+    process.env.SUPABASE_REMOTE_MAX_ROWS_TEST = "777";
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[api]
+max_rows = 1
+
+[remotes.preview]
+project_id = "previewref"
+[remotes.preview.api]
+max_rows = "env(SUPABASE_REMOTE_MAX_ROWS_TEST)"
+`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      expect(loaded!.config.api.max_rows).toBe(777);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SUPABASE_REMOTE_MAX_ROWS_TEST;
+      } else {
+        process.env.SUPABASE_REMOTE_MAX_ROWS_TEST = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("config io deprecated [inbucket] back-compat", () => {
+  let warnings: Array<string> = [];
+  let errorSpy: ReturnType<typeof vi.spyOn> | undefined;
+
+  function captureWarnings() {
+    warnings = [];
+    // loadProjectConfigFile emits the deprecation warning via Console.error, whose
+    // default implementation delegates to globalThis.console.error (stderr).
+    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    });
+  }
+
+  afterEach(() => {
+    errorSpy?.mockRestore();
+    errorSpy = undefined;
+  });
+
+  async function loadToml(contents: string) {
+    const cwd = makeTempProject();
+    const path = await runConfigEffect(configTomlPath(cwd));
+    await mkdir(join(cwd, "supabase"), { recursive: true });
+    await writeFile(path, contents);
+    try {
+      return await runConfigEffect(loadProjectConfigFile(path));
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+
+  test("loads a deprecated [inbucket] section as [local_smtp]", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[inbucket]
+enabled = true
+port = 12345
+`,
+    );
+
+    expect(loaded.config.local_smtp.enabled).toBe(true);
+    expect(loaded.config.local_smtp.port).toBe(12345);
+    expect("inbucket" in loaded.config).toBe(false);
+    expect(loaded.document).not.toHaveProperty("inbucket");
+    expect(loaded.document).toHaveProperty("local_smtp");
+    expect(
+      warnings.some((m) =>
+        m.includes(
+          "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("fills schema defaults when a deprecated [inbucket] section is partial", async () => {
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[inbucket]
+port = 9999
+`,
+    );
+
+    // enabled is omitted by the user; the schema default (true) must survive the
+    // inbucket -> local_smtp rewrite rather than collapsing to a zero value.
+    expect(loaded.config.local_smtp.enabled).toBe(true);
+    expect(loaded.config.local_smtp.port).toBe(9999);
+  });
+
+  test("prefers an explicit [local_smtp] when both sections are present", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[inbucket]
+enabled = true
+port = 11111
+
+[local_smtp]
+enabled = true
+port = 22222
+`,
+    );
+
+    expect(loaded.config.local_smtp.port).toBe(22222);
+    expect(loaded.document).not.toHaveProperty("inbucket");
+    // The deprecation warning still fires because the deprecated key was present.
+    expect(warnings.some((m) => m.includes("[inbucket] is deprecated"))).toBe(true);
+  });
+
+  test("normalizes a deprecated [remotes.*.inbucket] section", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[remotes.staging]
+project_id = "stagingref"
+
+[remotes.staging.inbucket]
+enabled = true
+port = 33333
+`,
+    );
+
+    const staging = loaded.config.remotes.staging;
+    expect(staging?.local_smtp?.port).toBe(33333);
+    expect(staging).not.toHaveProperty("inbucket");
+    expect(
+      warnings.some((m) =>
+        m.includes(
+          "WARN: config section [remotes.staging.inbucket] is deprecated. Please use [remotes.staging.local_smtp] instead.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("does not warn when only [local_smtp] is used", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[local_smtp]
+enabled = true
+port = 54324
+`,
+    );
+
+    expect(loaded.config.local_smtp.port).toBe(54324);
+    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
   });
 });

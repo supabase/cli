@@ -1,24 +1,18 @@
-import { findProjectPaths } from "@supabase/config";
-import { Effect, FileSystem } from "effect";
-import * as SmolToml from "smol-toml";
-
 import type { AuthPresence } from "./config-sync/auth.sync.ts";
 
 /**
- * Which optional `*pointer` sections are actually present in `config.toml`.
+ * Which optional `*pointer` sections are actually present in the (merged) config
+ * document.
  *
  * Go models `db.ssl_enforcement`, `storage.image_transformation`, and
  * `storage.s3_protocol` as `*pointer` fields that are `nil` unless the user
  * declares them — and `config push` skips them entirely when nil. But
  * `@supabase/config` decodes all three to a defaulted struct (e.g.
  * `{ enabled: false }`) whether or not the section appears, so their presence
- * can't be recovered from the decoded config. We therefore re-read the raw
- * `config.toml`/`.json` document and check key presence directly, matching Go's
- * nil-pointer skip semantics.
- *
- * `[remotes.*]` blocks need no special handling here: the handler aborts before
- * this runs when a remote block targets the ref (see matchesRemoteProjectRef),
- * so only the base config's sections are ever inspected.
+ * can't be recovered from the decoded config. We therefore inspect the raw
+ * config document (`LoadedProjectConfig.document`, with any matching `[remotes.*]`
+ * override already merged in) and check key presence directly, matching Go's
+ * nil-pointer skip semantics — including sections introduced by the remote block.
  */
 export interface LegacyConfigPushPresence {
   readonly sslEnforcement: boolean;
@@ -28,42 +22,12 @@ export interface LegacyConfigPushPresence {
   readonly auth: AuthPresence;
 }
 
-const ABSENT_AUTH: AuthPresence = {
-  captcha: false,
-  smtp: false,
-  hooks: {
-    mfa_verification_attempt: false,
-    password_verification_attempt: false,
-    custom_access_token: false,
-    send_sms: false,
-    send_email: false,
-    before_user_created: false,
-  },
-  externalProviders: [],
-};
-
-const ABSENT: LegacyConfigPushPresence = {
-  sslEnforcement: false,
-  imageTransformation: false,
-  s3Protocol: false,
-  auth: ABSENT_AUTH,
-};
-
 type RawDoc = { readonly [key: string]: unknown };
 
 function asRecord(value: unknown): RawDoc | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as RawDoc)
     : undefined;
-}
-
-/** Best-effort parse of the raw config document; returns `undefined` on any error. */
-function parseDocument(configPath: string, content: string): unknown {
-  try {
-    return configPath.endsWith(".json") ? JSON.parse(content) : SmolToml.parse(content);
-  } catch {
-    return undefined;
-  }
 }
 
 function authPresenceIn(doc: RawDoc | undefined): AuthPresence {
@@ -86,7 +50,11 @@ function authPresenceIn(doc: RawDoc | undefined): AuthPresence {
   };
 }
 
-function presenceIn(doc: RawDoc | undefined): LegacyConfigPushPresence {
+/**
+ * Reports which optional pointer sections are declared in the (already merged)
+ * config document. Returns all `false` / empty when `doc` is undefined.
+ */
+export function legacyPresenceIn(doc: RawDoc | undefined): LegacyConfigPushPresence {
   const db = asRecord(doc?.["db"]);
   const storage = asRecord(doc?.["storage"]);
   return {
@@ -96,20 +64,3 @@ function presenceIn(doc: RawDoc | undefined): LegacyConfigPushPresence {
     auth: authPresenceIn(doc),
   };
 }
-
-/**
- * Reads the raw config document and reports which optional pointer sections are
- * declared in the base config. Returns all `false` when no config file exists.
- */
-export const loadConfigPresence = Effect.fn("legacy.config.push.raw-presence")(function* (
-  cwd: string,
-) {
-  const fs = yield* FileSystem.FileSystem;
-  const paths = yield* findProjectPaths(cwd);
-  if (paths === null) {
-    return ABSENT;
-  }
-  const content = yield* fs.readFileString(paths.configPath).pipe(Effect.orElseSucceed(() => ""));
-  const doc = parseDocument(paths.configPath, content);
-  return presenceIn(asRecord(doc));
-});

@@ -242,6 +242,49 @@ format_options = "not-json"
 		err := config.Load("", fsys)
 		assert.ErrorContains(t, err, "experimental.pgdelta.format_options")
 	})
+
+	t.Run("init scaffold opts into pgdelta", func(t *testing.T) {
+		config := NewConfig()
+		// supabase init renders the scaffold with the pg-delta opt-in flag set
+		config.Experimental.PgDeltaInitEnabled = true
+		var buf bytes.Buffer
+		require.NoError(t, config.Eject(&buf))
+		fsys := fs.MapFS{"supabase/config.toml": &fs.MapFile{Data: buf.Bytes()}}
+		// Reloading the generated config resolves to pg-delta
+		require.NoError(t, config.Load("", fsys))
+		require.NotNil(t, config.Experimental.PgDelta)
+		assert.True(t, config.Experimental.PgDelta.Enabled)
+	})
+
+	t.Run("absent pgdelta section falls back to migra", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental]
+orioledb_version = ""
+`)},
+		}
+
+		// The default ejected by mergeDefaultValues keeps pg-delta disabled, so a config
+		// without the section resolves to migra (PgDelta is non-nil only for version pinning).
+		require.NoError(t, config.Load("", fsys))
+		require.NotNil(t, config.Experimental.PgDelta)
+		assert.False(t, config.Experimental.PgDelta.Enabled)
+	})
+
+	t.Run("explicit enabled false restores migra", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[experimental.pgdelta]
+enabled = false
+`)},
+		}
+
+		require.NoError(t, config.Load("", fsys))
+		require.NotNil(t, config.Experimental.PgDelta)
+		assert.False(t, config.Experimental.PgDelta.Enabled)
+	})
 }
 
 func TestPgDeltaNpmVersionPinning(t *testing.T) {
@@ -650,6 +693,7 @@ func TestLoadFunctionImportMap(t *testing.T) {
 		assert.NoError(t, config.Load("", fsys))
 		// Check that deno.json was set as import map
 		assert.Equal(t, "supabase/functions/hello/deno.json", config.Functions["hello"].ImportMap)
+		assert.Nil(t, config.Functions["hello"].VerifyJWT)
 	})
 
 	t.Run("uses deno.jsonc as import map when present", func(t *testing.T) {
@@ -863,4 +907,88 @@ func TestVersionCompare(t *testing.T) {
 			assert.Equal(t, tt.r, result)
 		})
 	}
+}
+
+func TestDeprecatedSMTPConfig(t *testing.T) {
+	t.Run("maps deprecated [inbucket] to local_smtp", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[inbucket]
+enabled = true
+port = 12345
+`)},
+		}
+		require.NoError(t, config.Load("", fsys))
+		assert.True(t, config.Inbucket.Enabled)
+		assert.Equal(t, uint16(12345), config.Inbucket.Port)
+	})
+
+	t.Run("keeps template defaults for a partial [inbucket] section", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[inbucket]
+port = 9999
+`)},
+		}
+		require.NoError(t, config.Load("", fsys))
+		// enabled is omitted by the user; the template default (true) must survive
+		// the inbucket -> local_smtp rewrite via deep merge instead of collapsing
+		// to the zero value.
+		assert.True(t, config.Inbucket.Enabled)
+		assert.Equal(t, uint16(9999), config.Inbucket.Port)
+	})
+
+	t.Run("prefers explicit [local_smtp] over deprecated [inbucket]", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[inbucket]
+enabled = true
+port = 11111
+
+[local_smtp]
+enabled = true
+port = 22222
+`)},
+		}
+		require.NoError(t, config.Load("", fsys))
+		assert.Equal(t, uint16(22222), config.Inbucket.Port)
+	})
+
+	t.Run("normalizes deprecated [remotes.*.inbucket]", func(t *testing.T) {
+		config := NewConfig()
+		config.ProjectId = "abcdefghijklmnopqrst"
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[remotes.staging]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.staging.inbucket]
+enabled = true
+port = 33333
+`)},
+		}
+		require.NoError(t, config.Load("", fsys))
+		assert.Equal(t, uint16(33333), config.Inbucket.Port)
+	})
+
+	t.Run("preserves env overrides when rewriting [inbucket]", func(t *testing.T) {
+		config := NewConfig()
+		fsys := fs.MapFS{
+			"supabase/config.toml": &fs.MapFile{Data: []byte(`
+[inbucket]
+enabled = true
+port = 12345
+`)},
+		}
+		// Env overrides are applied via ExperimentalBindStruct at unmarshal time, not
+		// captured by AllSettings(). Rebuilding the viper without those options while
+		// rewriting [inbucket] would silently drop this override.
+		t.Setenv("SUPABASE_AUTH_SITE_URL", "http://env-override.example/")
+		require.NoError(t, config.Load("", fsys))
+		assert.Equal(t, "http://env-override.example/", config.Auth.SiteUrl)
+		assert.Equal(t, uint16(12345), config.Inbucket.Port)
+	})
 }

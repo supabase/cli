@@ -132,6 +132,13 @@ func TestServeFunctions(t *testing.T) {
 	require.NoError(t, utils.Config.Load("testdata/config.toml", testdata))
 	utils.UpdateDockerIds()
 
+	t.Run("starts main service with regular remote module imports", func(t *testing.T) {
+		assert.Contains(t, mainFuncEmbed, `from "https://deno.land/std/http/status.ts"`)
+		assert.Contains(t, mainFuncEmbed, `from "https://deno.land/std/path/posix/mod.ts"`)
+		assert.Contains(t, mainFuncEmbed, `from "jsr:@panva/jose@6"`)
+		assert.Contains(t, mainFuncEmbed, `pathname === "/_internal/health"`)
+	})
+
 	t.Run("runs inspect mode", func(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.FromIOFS{FS: testdata}

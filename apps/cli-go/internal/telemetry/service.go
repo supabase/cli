@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/utils"
 )
@@ -37,6 +38,7 @@ type Service struct {
 	analytics  Analytics
 	now        func() time.Time
 	state      State
+	userID     string
 	isFirstRun bool
 	isTTY      bool
 	isCI       bool
@@ -129,12 +131,30 @@ func (s *Service) Capture(ctx context.Context, event string, properties map[stri
 	return s.analytics.Capture(s.distinctID(), event, mergedProperties, mergeGroups(linkedProjectGroups(s.fsys), mergeGroups(command.Groups, groups)))
 }
 
+// StitchLogin records the authenticated user as the identity for all
+// subsequent captures in this process. In persistent runtimes it also merges
+// the device's pre-login history via $create_alias and persists the identity
+// for future runs; ephemeral runtimes get the in-memory stamp only.
+// See docs/adr/0013-hybrid-stitch-stamp-identity-attribution.md.
 func (s *Service) StitchLogin(distinctID string) error {
 	if s == nil {
 		return nil
 	}
-	if s.canSend() {
+	// Alias only the first identity this device ever sees. Re-aliasing on
+	// re-login (or on the login command's call after the response hook has
+	// already stitched) would merge a second user into the device's existing
+	// person graph in PostHog.
+	firstIdentity := s.state.DistinctID == ""
+	s.userID = distinctID
+	if s.isEphemeralIdentityRuntime() {
+		return nil
+	}
+	if firstIdentity && s.canSend() {
 		if err := s.analytics.Alias(distinctID, s.state.DeviceID); err != nil {
+			// Leave the identity re-stitchable without dropping the in-memory
+			// stamp: nothing was enqueued, so a retry (e.g. the login command
+			// after the response hook errored) must still qualify as the first
+			// identity, but captures in this process should remain attributed.
 			return err
 		}
 	}
@@ -142,16 +162,48 @@ func (s *Service) StitchLogin(distinctID string) error {
 	return SaveState(s.state, s.fsys)
 }
 
+// ObserveAuthenticatedUser records who the current process is authenticated
+// as. First-time identities get the full stitch; when an identity already
+// exists (e.g. telemetry.json holds a previous user but the active token
+// belongs to another), only the in-memory stamp is updated — re-aliasing the
+// device to a second user would merge unrelated person graphs in PostHog.
+func (s *Service) ObserveAuthenticatedUser(distinctID string) error {
+	if s == nil {
+		return nil
+	}
+	if s.NeedsIdentityStitch() {
+		return s.StitchLogin(distinctID)
+	}
+	s.userID = distinctID
+	return nil
+}
+
+// ResetIdentity severs the link between this device and the logged-out user:
+// the identity is forgotten and the device ID is rotated, so a later login as
+// a different account aliases a fresh device instead of one already merged
+// into the previous user's person graph. Logout-only — transient failure
+// paths use ClearDistinctID, which keeps the device ID.
+func (s *Service) ResetIdentity() error {
+	if s == nil {
+		return nil
+	}
+	s.userID = ""
+	s.state.DistinctID = ""
+	s.state.DeviceID = uuid.NewString()
+	return SaveState(s.state, s.fsys)
+}
+
 func (s *Service) ClearDistinctID() error {
 	if s == nil {
 		return nil
 	}
+	s.userID = ""
 	s.state.DistinctID = ""
 	return SaveState(s.state, s.fsys)
 }
 
 func (s *Service) NeedsIdentityStitch() bool {
-	return s != nil && s.state.DistinctID == "" && s.canSend() && !s.isEphemeralIdentityRuntime()
+	return s != nil && s.userID == "" && s.state.DistinctID == "" && s.canSend()
 }
 
 func (s *Service) isEphemeralIdentityRuntime() bool {
@@ -201,6 +253,9 @@ func (s *Service) basePropertiesWith(properties map[string]any) map[string]any {
 }
 
 func (s *Service) distinctID() string {
+	if s.userID != "" {
+		return s.userID
+	}
 	if s.state.DistinctID != "" {
 		return s.state.DistinctID
 	}

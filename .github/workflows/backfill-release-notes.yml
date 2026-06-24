@@ -17,6 +17,9 @@ on:
         required: false
         type: boolean
         default: false
+    secrets:
+      DF_FIREWALL_TOKEN:
+        required: false
   workflow_dispatch:
     inputs:
       tag:
@@ -48,6 +51,8 @@ jobs:
           persist-credentials: false
 
       - uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Backfill release notes
         run: |

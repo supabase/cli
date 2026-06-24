@@ -5,7 +5,6 @@ package api
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -938,6 +937,16 @@ const (
 	PgGraphqlIntrospectionChange ProjectUpgradeEligibilityResponseWarnings0Type = "pg_graphql_introspection_change"
 )
 
+// Defines values for ProjectUpgradeEligibilityResponseWarnings1Type.
+const (
+	LtreeReindexRequired ProjectUpgradeEligibilityResponseWarnings1Type = "ltree_reindex_required"
+)
+
+// Defines values for ProjectUpgradeEligibilityResponseWarnings2Type.
+const (
+	OperatorEstimatorGate ProjectUpgradeEligibilityResponseWarnings2Type = "operator_estimator_gate"
+)
+
 // Defines values for RegionsInfoAllSmartGroupCode.
 const (
 	RegionsInfoAllSmartGroupCodeAmericas RegionsInfoAllSmartGroupCode = "americas"
@@ -1822,6 +1831,12 @@ const (
 	Asc  V1ListAllSnippetsParamsSortOrder = "asc"
 	Desc V1ListAllSnippetsParamsSortOrder = "desc"
 )
+
+// AcceptInviteExternalUserJitAccessBody defines model for AcceptInviteExternalUserJitAccessBody.
+type AcceptInviteExternalUserJitAccessBody struct {
+	Email openapi_types.Email `json:"email"`
+	Token string              `json:"token"`
+}
 
 // ActionRunResponse defines model for ActionRunResponse.
 type ActionRunResponse struct {
@@ -2849,6 +2864,43 @@ type GetProviderResponse struct {
 	UpdatedAt *string `json:"updated_at,omitempty"`
 }
 
+// InviteExternalUserJitAccessBody defines model for InviteExternalUserJitAccessBody.
+type InviteExternalUserJitAccessBody struct {
+	Email openapi_types.Email `json:"email"`
+	Roles []struct {
+		AllowedNetworks *struct {
+			AllowedCidrs *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs,omitempty"`
+			AllowedCidrsV6 *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs_v6,omitempty"`
+		} `json:"allowed_networks,omitempty"`
+		BranchesOnly *bool    `json:"branches_only,omitempty"`
+		ExpiresAt    *float32 `json:"expires_at,omitempty"`
+		Role         string   `json:"role"`
+	} `json:"roles"`
+}
+
+// InviteExternalUserJitResponse defines model for InviteExternalUserJitResponse.
+type InviteExternalUserJitResponse struct {
+	Email     openapi_types.Email `json:"email"`
+	InviteId  openapi_types.UUID  `json:"invite_id"`
+	UserRoles []struct {
+		AllowedNetworks *struct {
+			AllowedCidrs *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs,omitempty"`
+			AllowedCidrsV6 *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs_v6,omitempty"`
+		} `json:"allowed_networks,omitempty"`
+		BranchesOnly *bool    `json:"branches_only,omitempty"`
+		ExpiresAt    *float32 `json:"expires_at,omitempty"`
+		Role         string   `json:"role"`
+	} `json:"user_roles"`
+}
+
 // JitAccessRequestRequest defines model for JitAccessRequestRequest.
 type JitAccessRequestRequest struct {
 	State JitAccessRequestRequestState `json:"state"`
@@ -2859,7 +2911,7 @@ type JitAccessRequestRequestState string
 
 // JitAccessResponse defines model for JitAccessResponse.
 type JitAccessResponse struct {
-	UserId    openapi_types.UUID `json:"user_id"`
+	UserId    *openapi_types.UUID `json:"user_id,omitempty"`
 	UserRoles []struct {
 		AllowedNetworks *struct {
 			AllowedCidrs *[]struct {
@@ -2895,22 +2947,54 @@ type JitAuthorizeAccessResponse struct {
 
 // JitListAccessResponse defines model for JitListAccessResponse.
 type JitListAccessResponse struct {
-	Items []struct {
-		UserId    openapi_types.UUID `json:"user_id"`
-		UserRoles []struct {
-			AllowedNetworks *struct {
-				AllowedCidrs *[]struct {
-					Cidr string `json:"cidr"`
-				} `json:"allowed_cidrs,omitempty"`
-				AllowedCidrsV6 *[]struct {
-					Cidr string `json:"cidr"`
-				} `json:"allowed_cidrs_v6,omitempty"`
-			} `json:"allowed_networks,omitempty"`
-			BranchesOnly *bool    `json:"branches_only,omitempty"`
-			ExpiresAt    *float32 `json:"expires_at,omitempty"`
-			Role         string   `json:"role"`
-		} `json:"user_roles"`
-	} `json:"items"`
+	Items []JitListAccessResponse_Items_Item `json:"items"`
+}
+
+// JitListAccessResponseItems0 defines model for .
+type JitListAccessResponseItems0 struct {
+	ExpiresAt    nullable.Nullable[string]             `json:"expires_at"`
+	InviteId     nullable.Nullable[openapi_types.UUID] `json:"invite_id"`
+	PrimaryEmail nullable.Nullable[string]             `json:"primary_email"`
+	UserId       openapi_types.UUID                    `json:"user_id"`
+	UserRoles    []struct {
+		AllowedNetworks *struct {
+			AllowedCidrs *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs,omitempty"`
+			AllowedCidrsV6 *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs_v6,omitempty"`
+		} `json:"allowed_networks,omitempty"`
+		BranchesOnly *bool    `json:"branches_only,omitempty"`
+		ExpiresAt    *float32 `json:"expires_at,omitempty"`
+		Role         string   `json:"role"`
+	} `json:"user_roles"`
+}
+
+// JitListAccessResponseItems1 defines model for .
+type JitListAccessResponseItems1 struct {
+	ExpiresAt    string                                `json:"expires_at"`
+	InviteId     openapi_types.UUID                    `json:"invite_id"`
+	PrimaryEmail string                                `json:"primary_email"`
+	UserId       nullable.Nullable[openapi_types.UUID] `json:"user_id"`
+	UserRoles    []struct {
+		AllowedNetworks *struct {
+			AllowedCidrs *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs,omitempty"`
+			AllowedCidrsV6 *[]struct {
+				Cidr string `json:"cidr"`
+			} `json:"allowed_cidrs_v6,omitempty"`
+		} `json:"allowed_networks,omitempty"`
+		BranchesOnly *bool    `json:"branches_only,omitempty"`
+		ExpiresAt    *float32 `json:"expires_at,omitempty"`
+		Role         string   `json:"role"`
+	} `json:"user_roles"`
+}
+
+// JitListAccessResponse_Items_Item defines model for JitListAccessResponse.items.Item.
+type JitListAccessResponse_Items_Item struct {
+	union json.RawMessage
 }
 
 // JitStateResponse defines model for JitStateResponse.
@@ -3569,6 +3653,22 @@ type ProjectUpgradeEligibilityResponseWarnings0 struct {
 
 // ProjectUpgradeEligibilityResponseWarnings0Type defines model for ProjectUpgradeEligibilityResponse.Warnings.0.Type.
 type ProjectUpgradeEligibilityResponseWarnings0Type string
+
+// ProjectUpgradeEligibilityResponseWarnings1 defines model for .
+type ProjectUpgradeEligibilityResponseWarnings1 struct {
+	Type ProjectUpgradeEligibilityResponseWarnings1Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseWarnings1Type defines model for ProjectUpgradeEligibilityResponse.Warnings.1.Type.
+type ProjectUpgradeEligibilityResponseWarnings1Type string
+
+// ProjectUpgradeEligibilityResponseWarnings2 defines model for .
+type ProjectUpgradeEligibilityResponseWarnings2 struct {
+	Type ProjectUpgradeEligibilityResponseWarnings2Type `json:"type"`
+}
+
+// ProjectUpgradeEligibilityResponseWarnings2Type defines model for ProjectUpgradeEligibilityResponse.Warnings.2.Type.
+type ProjectUpgradeEligibilityResponseWarnings2Type string
 
 // ProjectUpgradeEligibilityResponse_Warnings_Item defines model for ProjectUpgradeEligibilityResponse.warnings.Item.
 type ProjectUpgradeEligibilityResponse_Warnings_Item struct {
@@ -4557,6 +4657,9 @@ type V1CreateProjectBody struct {
 	// DesiredInstanceSize Desired instance size. Omit this field to always default to the smallest possible size.
 	DesiredInstanceSize *V1CreateProjectBodyDesiredInstanceSize `json:"desired_instance_size,omitempty"`
 
+	// HighAvailability [Experimental] Whether to enable high availability for the project.
+	HighAvailability *bool `json:"high_availability,omitempty"`
+
 	// KpsEnabled This field is deprecated and is ignored in this request
 	// Deprecated:
 	KpsEnabled *bool `json:"kps_enabled,omitempty"`
@@ -4754,11 +4857,12 @@ type V1ListMigrationsResponse = []struct {
 
 // V1OrganizationMemberResponse defines model for V1OrganizationMemberResponse.
 type V1OrganizationMemberResponse struct {
-	Email      *string `json:"email,omitempty"`
-	MfaEnabled bool    `json:"mfa_enabled"`
-	RoleName   string  `json:"role_name"`
-	UserId     string  `json:"user_id"`
-	UserName   string  `json:"user_name"`
+	AvatarUrl  nullable.Nullable[string] `json:"avatar_url"`
+	Email      *string                   `json:"email,omitempty"`
+	MfaEnabled bool                      `json:"mfa_enabled"`
+	RoleName   string                    `json:"role_name"`
+	UserId     string                    `json:"user_id"`
+	UserName   string                    `json:"user_name"`
 }
 
 // V1OrganizationSlugResponse defines model for V1OrganizationSlugResponse.
@@ -5122,6 +5226,7 @@ type V1AuthorizeUserParams struct {
 
 	// OrganizationSlug Organization slug
 	OrganizationSlug *string `form:"organization_slug,omitempty" json:"organization_slug,omitempty"`
+	TargetFlow       *string `form:"target_flow,omitempty" json:"target_flow,omitempty"`
 
 	// Resource Resource indicator for MCP (Model Context Protocol) clients
 	Resource *string `form:"resource,omitempty" json:"resource,omitempty"`
@@ -5493,6 +5598,12 @@ type V1AuthorizeJitAccessJSONRequestBody = AuthorizeJitAccessBody
 
 // V1UpdateJitAccessJSONRequestBody defines body for V1UpdateJitAccess for application/json ContentType.
 type V1UpdateJitAccessJSONRequestBody = UpdateJitAccessBody
+
+// V1InviteExternalJitAccessJSONRequestBody defines body for V1InviteExternalJitAccess for application/json ContentType.
+type V1InviteExternalJitAccessJSONRequestBody = InviteExternalUserJitAccessBody
+
+// V1AcceptInviteExternalJitAccessJSONRequestBody defines body for V1AcceptInviteExternalJitAccess for application/json ContentType.
+type V1AcceptInviteExternalJitAccessJSONRequestBody = AcceptInviteExternalUserJitAccessBody
 
 // V1ApplyAMigrationJSONRequestBody defines body for V1ApplyAMigration for application/json ContentType.
 type V1ApplyAMigrationJSONRequestBody = V1CreateMigrationBody
@@ -6121,6 +6232,68 @@ func (t DiskResponse_Attributes) MarshalJSON() ([]byte, error) {
 }
 
 func (t *DiskResponse_Attributes) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsJitListAccessResponseItems0 returns the union data inside the JitListAccessResponse_Items_Item as a JitListAccessResponseItems0
+func (t JitListAccessResponse_Items_Item) AsJitListAccessResponseItems0() (JitListAccessResponseItems0, error) {
+	var body JitListAccessResponseItems0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromJitListAccessResponseItems0 overwrites any union data inside the JitListAccessResponse_Items_Item as the provided JitListAccessResponseItems0
+func (t *JitListAccessResponse_Items_Item) FromJitListAccessResponseItems0(v JitListAccessResponseItems0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeJitListAccessResponseItems0 performs a merge with any union data inside the JitListAccessResponse_Items_Item, using the provided JitListAccessResponseItems0
+func (t *JitListAccessResponse_Items_Item) MergeJitListAccessResponseItems0(v JitListAccessResponseItems0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsJitListAccessResponseItems1 returns the union data inside the JitListAccessResponse_Items_Item as a JitListAccessResponseItems1
+func (t JitListAccessResponse_Items_Item) AsJitListAccessResponseItems1() (JitListAccessResponseItems1, error) {
+	var body JitListAccessResponseItems1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromJitListAccessResponseItems1 overwrites any union data inside the JitListAccessResponse_Items_Item as the provided JitListAccessResponseItems1
+func (t *JitListAccessResponse_Items_Item) FromJitListAccessResponseItems1(v JitListAccessResponseItems1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeJitListAccessResponseItems1 performs a merge with any union data inside the JitListAccessResponse_Items_Item, using the provided JitListAccessResponseItems1
+func (t *JitListAccessResponse_Items_Item) MergeJitListAccessResponseItems1(v JitListAccessResponseItems1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t JitListAccessResponse_Items_Item) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *JitListAccessResponse_Items_Item) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -6902,7 +7075,6 @@ func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibi
 
 // FromProjectUpgradeEligibilityResponseWarnings0 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings0
 func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings0(v ProjectUpgradeEligibilityResponseWarnings0) error {
-	v.Type = ""
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
@@ -6910,7 +7082,6 @@ func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeElig
 
 // MergeProjectUpgradeEligibilityResponseWarnings0 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings0
 func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings0(v ProjectUpgradeEligibilityResponseWarnings0) error {
-	v.Type = ""
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -6921,25 +7092,56 @@ func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEli
 	return err
 }
 
-func (t ProjectUpgradeEligibilityResponse_Warnings_Item) Discriminator() (string, error) {
-	var discriminator struct {
-		Discriminator string `json:"type"`
-	}
-	err := json.Unmarshal(t.union, &discriminator)
-	return discriminator.Discriminator, err
+// AsProjectUpgradeEligibilityResponseWarnings1 returns the union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as a ProjectUpgradeEligibilityResponseWarnings1
+func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibilityResponseWarnings1() (ProjectUpgradeEligibilityResponseWarnings1, error) {
+	var body ProjectUpgradeEligibilityResponseWarnings1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
 }
 
-func (t ProjectUpgradeEligibilityResponse_Warnings_Item) ValueByDiscriminator() (interface{}, error) {
-	discriminator, err := t.Discriminator()
+// FromProjectUpgradeEligibilityResponseWarnings1 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings1
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings1(v ProjectUpgradeEligibilityResponseWarnings1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseWarnings1 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings1
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings1(v ProjectUpgradeEligibilityResponseWarnings1) error {
+	b, err := json.Marshal(v)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	switch discriminator {
-	case "":
-		return t.AsProjectUpgradeEligibilityResponseWarnings0()
-	default:
-		return nil, errors.New("unknown discriminator value: " + discriminator)
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsProjectUpgradeEligibilityResponseWarnings2 returns the union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as a ProjectUpgradeEligibilityResponseWarnings2
+func (t ProjectUpgradeEligibilityResponse_Warnings_Item) AsProjectUpgradeEligibilityResponseWarnings2() (ProjectUpgradeEligibilityResponseWarnings2, error) {
+	var body ProjectUpgradeEligibilityResponseWarnings2
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromProjectUpgradeEligibilityResponseWarnings2 overwrites any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item as the provided ProjectUpgradeEligibilityResponseWarnings2
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) FromProjectUpgradeEligibilityResponseWarnings2(v ProjectUpgradeEligibilityResponseWarnings2) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeProjectUpgradeEligibilityResponseWarnings2 performs a merge with any union data inside the ProjectUpgradeEligibilityResponse_Warnings_Item, using the provided ProjectUpgradeEligibilityResponseWarnings2
+func (t *ProjectUpgradeEligibilityResponse_Warnings_Item) MergeProjectUpgradeEligibilityResponseWarnings2(v ProjectUpgradeEligibilityResponseWarnings2) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
 	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
 }
 
 func (t ProjectUpgradeEligibilityResponse_Warnings_Item) MarshalJSON() ([]byte, error) {

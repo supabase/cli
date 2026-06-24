@@ -23,6 +23,21 @@ import (
 )
 
 func ToPostgresURL(config pgconn.Config) string {
+	return toPostgresURL(config, url.UserPassword(config.User, config.Password))
+}
+
+// ToPostgresURLWithoutPassword renders the connection URL exactly like
+// ToPostgresURL but omits the password from the userinfo. Use it for callers that
+// print the URL to stdout (the hidden `db __shadow` seam): embedding the password
+// there is clear-text logging of a credential (CWE-312, flagged by CodeQL). The
+// password is never the seam's to share — the TS caller that consumes the seam
+// output re-injects the local Postgres password it already resolves from
+// config.toml (`utils.Config.Db.Password`).
+func ToPostgresURLWithoutPassword(config pgconn.Config) string {
+	return toPostgresURL(config, url.User(config.User))
+}
+
+func toPostgresURL(config pgconn.Config, userinfo *url.Userinfo) string {
 	timeoutSecond := int64(config.ConnectTimeout.Seconds())
 	if timeoutSecond == 0 {
 		timeoutSecond = 10
@@ -38,7 +53,7 @@ func ToPostgresURL(config pgconn.Config) string {
 	}
 	return fmt.Sprintf(
 		"postgresql://%s@%s:%d/%s?%s",
-		url.UserPassword(config.User, config.Password),
+		userinfo,
 		host,
 		config.Port,
 		url.PathEscape(config.Database),

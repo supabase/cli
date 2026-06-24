@@ -264,7 +264,12 @@ function formatSection(label: string, go: string, ts: string): string {
   ].join("\n");
 }
 
-function compareRunResults(cmdStr: string, go: RunResult, ts: RunResult): void {
+function compareRunResults(
+  cmdStr: string,
+  go: RunResult,
+  ts: RunResult,
+  opts: { compareStdout: boolean } = { compareStdout: true },
+): void {
   const summary: string[] = [];
   const diffs: string[] = [];
 
@@ -276,7 +281,9 @@ function compareRunResults(cmdStr: string, go: RunResult, ts: RunResult): void {
     summary.push(`  ✓ exit code: ${go.exitCode.toString()}`);
   }
 
-  if (go.stdout !== ts.stdout) {
+  if (!opts.compareStdout) {
+    summary.push("  – stdout: comparison skipped (compareStdout: false)");
+  } else if (go.stdout !== ts.stdout) {
     summary.push("  ✗ stdout differs");
     diffs.push(formatSection("stdout", go.stdout, ts.stdout));
   } else {
@@ -331,6 +338,12 @@ export interface ParityOptions {
   /** Sort table data rows before comparing stdout. Use when the Go CLI produces
    *  non-deterministic row order (e.g. from map iteration). */
   sortStdoutRows?: boolean;
+  /** Compare stdout (default true). Set false only when stdout is not faithfully
+   *  reproducible through the test mocks AND is covered by lower-level tests — e.g.
+   *  `inspect report`, whose rules summary is computed from COPY CSV content the
+   *  pg-mock cannot emit, and where Go's csvq panics on the empty mock CSVs. The
+   *  other dimensions (exit code, stderr, request log, filesystem) are still compared. */
+  compareStdout?: boolean;
   /** Additional environment variables injected into both CLI subprocesses. */
   extraEnv?: Record<string, string>;
   /** Fine-grained normalization controls for stdout/stderr parity comparison. */
@@ -395,7 +408,9 @@ export async function runParity(opts: ParityOptions, cmd: string[]): Promise<voi
       ? { ...tsResult, stdout: sortTableRows(tsResult.stdout) }
       : tsResult;
 
-    compareRunResults(cmd.join(" "), finalGoResult, finalTsResult);
+    compareRunResults(cmd.join(" "), finalGoResult, finalTsResult, {
+      compareStdout: opts.compareStdout ?? true,
+    });
   } finally {
     goDir[Symbol.dispose]();
     tsDir[Symbol.dispose]();

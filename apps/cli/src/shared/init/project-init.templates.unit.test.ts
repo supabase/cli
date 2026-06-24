@@ -25,9 +25,17 @@ describe("project init templates", () => {
   it("renders config.toml with the same content as the Go scaffold", () => {
     const expected = readGoTemplate("pkg", "config", "templates", "config.toml")
       .replace("{{ .ProjectId }}", "demo-project")
-      .replace("{{ .Experimental.OrioleDBVersion }}", "15.1.0.150");
+      .replace("{{ .Experimental.OrioleDBVersion }}", "15.1.0.150")
+      // supabase init always opts new projects into pg-delta; the Go template renders
+      // this from a flag set only on the init path (false when deriving defaults).
+      .replace("{{ .Experimental.PgDeltaInitEnabled }}", "true");
 
     expect(normalizeNewlines(renderProjectConfigTemplate("demo-project", true))).toBe(expected);
+  });
+
+  it("enables pg-delta by default in the generated config", () => {
+    const rendered = renderProjectConfigTemplate("demo-project", false);
+    expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");
   });
 
   it("matches the Go .gitignore scaffold", () => {

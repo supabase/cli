@@ -7,3 +7,5 @@ type StorageAPI struct {
 }
 
 const PAGE_LIMIT = 100
+
+const DELETE_OBJECTS_LIMIT = 1000

@@ -1,17 +1,17 @@
-import { FetchHttpClient } from "effect/unstable/http";
-import { Effect, FileSystem, Layer, Path } from "effect";
-import * as HttpClient from "effect/unstable/http/HttpClient";
+import { Layer } from "effect";
 
 import { legacyCredentialsLayer } from "../../../auth/legacy-credentials.layer.ts";
-import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
-import { legacyMakePlatformApi } from "../../../auth/legacy-platform-api.layer.ts";
-import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api.service.ts";
+import { legacyPlatformApiFactoryLayer } from "../../../auth/legacy-platform-api-factory.layer.ts";
+import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
 import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
-import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
+import {
+  LegacyIdentityStitch,
+  legacyIdentityStitchLayer,
+} from "../../../shared/legacy-identity-stitch.ts";
 import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -19,8 +19,6 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { CommandRuntime } from "../../../../shared/runtime/command-runtime.service.ts";
-import { Analytics } from "../../../../shared/telemetry/analytics.service.ts";
-import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
 
 /**
  * `gen types --local` and `--db-url` do not use the Management API, so this
@@ -35,52 +33,39 @@ export const legacyGenTypesRuntimeLayer = (() => {
     Layer.provide(cliConfig),
     Layer.provide(legacyDebugLoggerLayer),
   );
-  const platformApiFactory = Layer.effect(
-    LegacyPlatformApiFactory,
-    Effect.gen(function* () {
-      const analytics = yield* Analytics;
-      const cliConfigService = yield* LegacyCliConfig;
-      const credentialsService = yield* LegacyCredentials;
-      const debugLogger = yield* LegacyDebugLogger;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const telemetryRuntime = yield* TelemetryRuntime;
-
-      return LegacyPlatformApiFactory.of({
-        make: legacyMakePlatformApi.pipe(
-          Effect.provideService(Analytics, analytics),
-          Effect.provideService(LegacyCliConfig, cliConfigService),
-          Effect.provideService(LegacyCredentials, credentialsService),
-          Effect.provideService(LegacyDebugLogger, debugLogger),
-          Effect.provideService(FileSystem.FileSystem, fs),
-          Effect.provideService(Path.Path, path),
-          Effect.provideService(TelemetryRuntime, telemetryRuntime),
-          Effect.provide(FetchHttpClient.layer),
-        ),
-      });
-    }),
-  );
-  const platformApiFactoryStack = platformApiFactory.pipe(
+  // `legacyIdentityStitchLayer` (one per-command identity stitcher) is provided by
+  // the SAME reference to the platform-API factory and the linked-project cache so
+  // memoisation gives both a single `stitchAttempted` guard — Go's one root-context
+  // `sync.Once`.
+  const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliConfig),
     Layer.provide(legacyDebugLoggerLayer),
+    Layer.provide(legacyIdentityStitchLayer),
   );
 
   const built = Layer.mergeAll(
-    httpClient,
-    credentials,
     cliConfig,
-    legacyDebugLoggerLayer,
-    platformApiFactoryStack,
-    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactoryStack), Layer.provide(cliConfig)),
+    platformApiFactory,
+    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
     legacyLinkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
       Layer.provide(cliConfig),
       Layer.provide(httpClient),
+      Layer.provide(legacyIdentityStitchLayer),
     ),
     legacyTelemetryStateLayer,
+    // The one per-command identity stitcher (Go's single root-context `sync.Once`),
+    // exposed at top level so `withLegacyCommandInstrumentation` can read
+    // `stitchedDistinctId()` and attribute the cli_command_executed event to the
+    // gotrue id. The SAME reference is provided to platformApiFactory /
+    // linkedProjectCache above, so memoisation gives both a single
+    // `stitchAttempted` guard — aliasing/persisting at most once. Its
+    // Analytics / TelemetryRuntime / FileSystem / Path deps are ambient (root
+    // runtime). Mirrors advisors.layers.ts / lint.layers.ts.
+    legacyIdentityStitchLayer,
     commandRuntimeLayer(["gen", "types"]),
-  ).pipe(Layer.provide(FetchHttpClient.layer));
+  );
 
   const _serviceCoverageCheck: Layer.Layer<LegacyGenTypesServices, unknown, unknown> = built;
   void _serviceCoverageCheck;
@@ -89,12 +74,10 @@ export const legacyGenTypesRuntimeLayer = (() => {
 })();
 
 type LegacyGenTypesServices =
-  | HttpClient.HttpClient
-  | LegacyCredentials
-  | LegacyCliConfig
-  | LegacyDebugLogger
   | LegacyPlatformApiFactory
+  | LegacyCliConfig
   | LegacyProjectRefResolver
   | LegacyLinkedProjectCache
   | LegacyTelemetryState
+  | LegacyIdentityStitch
   | CommandRuntime;

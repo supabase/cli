@@ -34,6 +34,96 @@ const VALID_SSLMODES = new Set([
   "verify-full",
 ]);
 
+// pgconn's `notRuntimeParams` (`pgconn@v1.14.3/config.go:287-322`): connection
+// settings that are NOT forwarded to the server as startup `RuntimeParams`. Everything
+// else in a DSN (e.g. `search_path`, `statement_timeout`, `application_name`) is a
+// runtime param Go's `ToPostgresURL` re-appends. `options` is technically a runtime
+// param but is carried as its own field here (Supavisor pooler routing), so it is
+// excluded from this collection to avoid emitting it twice. `dbname`/`hostaddr` are
+// structural and handled separately.
+const NOT_RUNTIME_PARAMS = new Set([
+  "host",
+  "hostaddr",
+  "port",
+  "database",
+  "dbname",
+  "user",
+  "password",
+  "passfile",
+  "connect_timeout",
+  "sslmode",
+  "sslkey",
+  "sslcert",
+  "sslrootcert",
+  "sslpassword",
+  "sslsni",
+  "sslnegotiation",
+  "krbspn",
+  "krbsrvname",
+  "gssencmode",
+  "target_session_attrs",
+  "service",
+  "servicefile",
+  "options",
+]);
+
+/**
+ * Collect the startup `RuntimeParams`, mirroring pgconn: every key not in
+ * `NOT_RUNTIME_PARAMS` is forwarded to the server (and so to pg-delta via
+ * `ToPostgresURL`). pgconn builds these from the *fully merged* settings —
+ * `mergeSettings(defaultSettings, envSettings, serviceSettings, connStringSettings)`
+ * (`pgconn/config.go:249-322`) — so a `pg_service.conf` entry's `search_path` or
+ * `PGAPPNAME → application_name` (`config.go:423`) are runtime params too, not just
+ * the connection-string query. Merge in pgconn's precedence (env → service →
+ * connString, last write wins). Returns `undefined` when there are none.
+ */
+function collectRuntimeParams(
+  connStringEntries: Iterable<readonly [string, string]>,
+  serviceSettings: Map<string, string> | undefined,
+  env: LegacyParseEnv,
+): Record<string, string> | undefined {
+  const params: Record<string, string> = {};
+  const add = (key: string, value: string): void => {
+    if (!NOT_RUNTIME_PARAMS.has(key)) params[key] = value;
+  };
+  // env: the only PG* var pgconn maps into RuntimeParams is PGAPPNAME → application_name
+  // (the rest are connection settings in `notRuntimeParams`). Empty is treated as unset.
+  const appName = libpqEnv(env, "PGAPPNAME");
+  if (appName !== undefined) add("application_name", appName);
+  // service: pgconn copies every service key verbatim into the merged settings, so its
+  // non-connection keys (search_path, application_name, …) are runtime params.
+  if (serviceSettings !== undefined) {
+    for (const [key, value] of serviceSettings) add(key, value);
+  }
+  // connString: highest precedence (overrides env/service).
+  for (const [key, value] of connStringEntries) add(key, value);
+  return Object.keys(params).length > 0 ? params : undefined;
+}
+
+/**
+ * Resolve libpq client-certificate settings (`sslcert`/`sslkey`/`sslpassword`) with
+ * pgconn's connection-string → service → `PG*` precedence. pgconn's `configTLS`
+ * loads `sslcert`+`sslkey` into the client TLS certificate and requires **both or
+ * neither** (`pgconn/config.go:710-711`); `sslpassword` decrypts an encrypted key.
+ * Returns `"invalid"` when exactly one of cert/key is present (a pgconn parse error).
+ */
+function resolveClientCert(
+  get: (key: string) => string | null | undefined,
+  svc: (key: string) => string | undefined,
+  env: LegacyParseEnv,
+): { sslcert?: string; sslkey?: string; sslpassword?: string } | "invalid" {
+  const pick = (key: string, pg: string): string | undefined => {
+    const value = get(key) ?? svc(key) ?? libpqEnv(env, pg);
+    return value !== null && value !== undefined && value.length > 0 ? value : undefined;
+  };
+  const sslcert = pick("sslcert", "PGSSLCERT");
+  const sslkey = pick("sslkey", "PGSSLKEY");
+  const sslpassword = pick("sslpassword", "PGSSLPASSWORD");
+  if ((sslcert === undefined) !== (sslkey === undefined)) return "invalid";
+  if (sslcert === undefined) return {};
+  return { sslcert, sslkey, ...(sslpassword !== undefined ? { sslpassword } : {}) };
+}
+
 /** Whether a resolved sslmode is present and not one pgconn accepts. */
 function isInvalidSslmode(sslmode: string | null | undefined): boolean {
   return (
@@ -409,7 +499,16 @@ function parseUrlConnectionString(
       svc("sslrootcert") ??
       libpqEnv(env, "PGSSLROOTCERT") ??
       null;
+    // libpq client cert (query, service, or PGSSLCERT/PGSSLKEY/PGSSLPASSWORD); both
+    // or neither (pgconn config.go:710-711), else this is a parse error.
+    const clientCert = resolveClientCert((key) => url.searchParams.get(key), svc, env);
+    if (clientCert === "invalid") {
+      return undefined;
+    }
     const options = url.searchParams.get("options") ?? svc("options") ?? null;
+    // Every other query setting (e.g. search_path, statement_timeout) is a startup
+    // runtime param Go forwards to the server / pg-delta.
+    const runtimeParams = collectRuntimeParams(query, serviceSettings, env);
     // A `passfile=` setting (query or service) points `.pgpass` resolution at a
     // non-default file (pgconn `config.go:293`); non-empty wins over `PGPASSFILE`.
     // A present `passfile=` (even empty) overrides PGPASSFILE/default; a present-empty
@@ -529,8 +628,10 @@ function parseUrlConnectionString(
       database,
       ...(hostList.length > 1 ? { fallbacks: hostList.slice(1) } : {}),
       ...(options !== null && options.length > 0 ? { options } : {}),
+      ...(runtimeParams !== undefined ? { runtimeParams } : {}),
       ...(sslmode !== null && sslmode.length > 0 ? { sslmode } : {}),
       ...(sslrootcert !== null && sslrootcert.length > 0 ? { sslrootcert } : {}),
+      ...clientCert,
       ...(connectTimeout !== undefined ? { connectTimeoutSeconds: connectTimeout } : {}),
     };
   } catch {
@@ -645,7 +746,13 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   if (isInvalidSslmode(sslmode)) return undefined;
   const sslrootcert =
     params.get("sslrootcert") ?? svc("sslrootcert") ?? libpqEnv(env, "PGSSLROOTCERT");
+  // libpq client cert (keyword, service, or PG*); both or neither (config.go:710-711).
+  const clientCert = resolveClientCert((key) => params.get(key), svc, env);
+  if (clientCert === "invalid") return undefined;
   const options = params.get("options") ?? svc("options");
+  // Every other keyword setting (e.g. search_path, statement_timeout) is a startup
+  // runtime param Go forwards to the server / pg-delta.
+  const runtimeParams = collectRuntimeParams(params, serviceSettings, env);
   // A `passfile=` setting (keyword or service) points `.pgpass` resolution at a
   // non-default file (pgconn `config.go:293`); non-empty wins over `PGPASSFILE`.
   // A present `passfile=` (even empty) overrides PGPASSFILE/default (see URL branch).
@@ -678,8 +785,10 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
     database,
     ...(hostList.length > 1 ? { fallbacks: hostList.slice(1) } : {}),
     ...(options !== undefined && options.length > 0 ? { options } : {}),
+    ...(runtimeParams !== undefined ? { runtimeParams } : {}),
     ...(sslmode !== undefined && sslmode.length > 0 ? { sslmode } : {}),
     ...(sslrootcert !== undefined && sslrootcert.length > 0 ? { sslrootcert } : {}),
+    ...clientCert,
     ...(connectTimeout !== undefined ? { connectTimeoutSeconds: connectTimeout } : {}),
   };
 }

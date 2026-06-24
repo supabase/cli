@@ -11,6 +11,66 @@
   },
   {
     "op": "test",
+    "path": "/components/schemas/GetProviderResponse/properties/saml/required",
+    "value": ["id", "entity_id"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/GetProviderResponse/properties/saml/required",
+    "value": ["entity_id"]
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/CreateProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": ["keys"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/CreateProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": []
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/GetProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": ["keys"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/GetProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": []
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/ListProvidersResponse/properties/items/items/properties/saml/properties/attribute_mapping/required",
+    "value": ["keys"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/ListProvidersResponse/properties/items/items/properties/saml/properties/attribute_mapping/required",
+    "value": []
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/UpdateProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": ["keys"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/UpdateProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": []
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/DeleteProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": ["keys"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/DeleteProviderResponse/properties/saml/properties/attribute_mapping/required",
+    "value": []
+  },
+  {
+    "op": "test",
     "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/properties/ssl/required",
     "value": ["status", "validation_records"]
   },
@@ -18,6 +78,26 @@
     "op": "replace",
     "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/properties/ssl/required",
     "value": ["status"]
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/UpdateCustomHostnameResponse/required",
+    "value": ["status", "custom_hostname", "data"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/UpdateCustomHostnameResponse/required",
+    "value": ["data"]
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/required",
+    "value": ["id", "hostname", "ssl", "ownership_verification", "custom_origin_server", "status"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/UpdateCustomHostnameResponse/properties/data/properties/result/required",
+    "value": ["id", "hostname", "ssl", "custom_origin_server", "status"]
   },
   {
     "op": "test",
@@ -503,5 +583,37 @@
       "custom_oauth_enabled",
       "custom_oauth_max_providers"
     ]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/FunctionResponse/properties/import_map_path",
+    "value": {
+      "type": "string",
+      "nullable": true
+    }
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/BulkUpdateFunctionResponse/properties/functions/items/properties/import_map_path",
+    "value": {
+      "type": "string",
+      "nullable": true
+    }
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/DeployFunctionResponse/properties/import_map_path",
+    "value": {
+      "type": "string",
+      "nullable": true
+    }
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/FunctionSlugResponse/properties/import_map_path",
+    "value": {
+      "type": "string",
+      "nullable": true
+    }
   }
 ]

@@ -394,3 +394,20 @@ func TestPostgresURL(t *testing.T) {
 	})
 	assert.Equal(t, `postgresql://postgres:%21%40%23$%25%5E&%2A%28%29@[2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432/?connect_timeout=10&options=test`, url)
 }
+
+func TestPostgresURLWithoutPassword(t *testing.T) {
+	config := pgconn.Config{
+		Host:     "2406:da18:4fd:9b0d:80ec:9812:3e65:450b",
+		Port:     5432,
+		User:     "postgres",
+		Password: "!@#$%^&*()",
+		RuntimeParams: map[string]string{
+			"options": "test",
+		},
+	}
+	url := ToPostgresURLWithoutPassword(config)
+	// Same as ToPostgresURL but with the password omitted from the userinfo, so a
+	// credential is never written to stdout by the db __shadow seam.
+	assert.Equal(t, `postgresql://postgres@[2406:da18:4fd:9b0d:80ec:9812:3e65:450b]:5432/?connect_timeout=10&options=test`, url)
+	assert.NotContains(t, url, "%21%40%23")
+}

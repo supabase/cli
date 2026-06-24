@@ -305,7 +305,7 @@ export const textOutputLayer = Layer.effect(
             cancel("Operation cancelled.");
             return yield* Effect.interrupt;
           }
-          return value.trim();
+          return typeof value === "string" ? value.trim() : "";
         }),
       promptConfirm: (message: string, opts?: { defaultValue?: boolean }) =>
         Effect.gen(function* () {
@@ -359,6 +359,14 @@ export const textOutputLayer = Layer.effect(
             process.stderr.write(text);
           } else {
             process.stdout.write(text);
+          }
+        }),
+      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
+        Effect.sync(() => {
+          if (stream === "stderr") {
+            process.stderr.write(bytes);
+          } else {
+            process.stdout.write(bytes);
           }
         }),
     });
@@ -430,6 +438,11 @@ export const jsonOutputLayer = Layer.effect(
         writeStdout(JSON.stringify({ _tag: "Error", error: err }) + "\n"),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
         stream === "stderr" ? writeStderr(text) : writeStdout(text),
+      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
+        Stream.make(bytes).pipe(
+          Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
+          Effect.orDie,
+        ),
     });
   }),
 );
@@ -528,6 +541,11 @@ export const streamJsonOutputLayer = Layer.effect(
       },
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
         stream === "stderr" ? writeStderr(text) : writeStdout(text),
+      rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
+        Stream.make(bytes).pipe(
+          Stream.run(stream === "stderr" ? stdio.stderr() : stdio.stdout()),
+          Effect.orDie,
+        ),
     });
   }),
 );

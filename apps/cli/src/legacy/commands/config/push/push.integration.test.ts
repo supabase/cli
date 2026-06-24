@@ -148,19 +148,54 @@ describe("legacy config push integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("aborts when a [remotes.*] block targets the project, before any network call", () => {
-    const { layer, api } = setup({
-      toml: `${API_ONLY_TOML}[remotes.staging]
+  it.live("merges a matching [remotes.*] block over the base and pushes it", () => {
+    const { layer, out, api } = setup({
+      toml: `${API_ONLY_TOML}[api]
+enabled = true
+schemas = ["public"]
+
+[remotes.staging]
 project_id = "abcdefghijklmnopqrst"
 [remotes.staging.api]
-enabled = true
+schemas = ["public", "remote_schema"]
+`,
+      yes: true,
+      routes: {
+        postgrestGet: { status: 200, body: POSTGREST_DISABLED },
+        postgresGet: { status: 200, body: {} },
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      // Go prints the override line, before the "Pushing config to project" line.
+      expect(out.stderrText).toContain("Loading config override: [remotes.staging]");
+      expect(out.stderrText.indexOf("Loading config override: [remotes.staging]")).toBeLessThan(
+        out.stderrText.indexOf("Pushing config to project:"),
+      );
+      // The remote's schema override is what gets pushed (proving the merge).
+      const patch = api.requests.find((r) => r.method === "PATCH" && r.url.includes("/postgrest"));
+      expect(patch).toBeDefined();
+      expect(patch?.body).toMatchObject({ db_schema: "public,remote_schema" });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("aborts when two [remotes.*] blocks share the target project_id", () => {
+    const { layer, api } = setup({
+      toml: `${API_ONLY_TOML}[remotes.a]
+project_id = "abcdefghijklmnopqrst"
+[remotes.b]
+project_id = "abcdefghijklmnopqrst"
 `,
       yes: true,
     });
     return Effect.gen(function* () {
-      const exit = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      // No network call should have fired (guard runs before the cost matrix).
+      const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+        Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+          Effect.succeed(error.message),
+        ),
+      );
+      expect(message).toContain("duplicate project_id for [remotes.");
+      // The guard runs during config load, before any network call.
       expect(api.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });

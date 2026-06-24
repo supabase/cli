@@ -57,7 +57,7 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
   let gitBranchForBody = Option.getOrUndefined(flags.gitBranch);
 
   if (branchName.length === 0) {
-    const gitBranch = yield* detectGitBranch;
+    const gitBranch = yield* detectGitBranch();
     if (Option.isSome(gitBranch) && gitBranch.value.length > 0) {
       // Go's `create.go:20-25` calls `utils.NewConsole().PromptYesNo(...)`
       // unconditionally — on a TTY it blocks for input, off-TTY it reads stdin

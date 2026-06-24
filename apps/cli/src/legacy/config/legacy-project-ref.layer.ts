@@ -1,9 +1,9 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
-import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
-import { legacyTempPaths } from "../shared/legacy-temp-paths.ts";
+import { legacyReadProjectRefFile } from "../shared/legacy-temp-paths.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 import {
   LegacyInvalidProjectRefError,
@@ -36,15 +36,7 @@ export const legacyProjectRefLayer = Layer.effect(
     const output = yield* Output;
     const platformApi = yield* LegacyPlatformApiFactory;
 
-    const refPath = legacyTempPaths(path, cliConfig.workdir).projectRef;
-
-    const readRefFile = Effect.gen(function* () {
-      const exists = yield* fs.exists(refPath).pipe(Effect.orElseSucceed(() => false));
-      if (!exists) return Option.none<string>();
-      const content = yield* fs.readFileString(refPath).pipe(Effect.orElseSucceed(() => ""));
-      const trimmed = content.trim();
-      return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
-    });
+    const readRefFile = legacyReadProjectRefFile(fs, path, cliConfig.workdir);
 
     const promptForProjectRef = Effect.fnUntraced(function* (title: string) {
       const api = yield* platformApi.make.pipe(
@@ -134,7 +126,29 @@ export const legacyProjectRefLayer = Layer.effect(
           if (Option.isSome(cliConfig.projectId)) {
             return cliConfig.projectId;
           }
-          return yield* readRefFile;
+          // Soft load: Go's `projects list` ignores ALL `LoadProjectRef` errors and
+          // only uses the value as a "linked" marker (`list.go:31-33`), so a real
+          // ref-file read error degrades to "not linked" here (unlike the hard
+          // `resolve`/`loadProjectRef` paths, which surface it).
+          return yield* readRefFile.pipe(Effect.orElseSucceed(() => Option.none<string>()));
+        }),
+      loadProjectRef: (flagValue) =>
+        Effect.gen(function* () {
+          // Go's `flags.LoadProjectRef`: flag → env → ref file → hard
+          // `ErrNotLinked`, with format validation, and NO interactive prompt.
+          if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+            return yield* assertValid(flagValue.value);
+          }
+          if (Option.isSome(cliConfig.projectId)) {
+            return yield* assertValid(cliConfig.projectId.value);
+          }
+          const fileValue = yield* readRefFile;
+          if (Option.isSome(fileValue)) {
+            return yield* assertValid(fileValue.value);
+          }
+          return yield* Effect.fail(
+            new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
+          );
         }),
       promptProjectRef: promptForProjectRef,
     });

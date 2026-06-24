@@ -84,6 +84,7 @@ var (
 	usePgAdmin     bool
 	usePgSchema    bool
 	usePgDelta     bool
+	useDeclarative bool
 	pullDiffEngine = utils.EnumFlag{
 		Allowed: []string{"migra", "pg-delta"},
 		Value:   "migra",
@@ -106,7 +107,7 @@ var (
 					return diff.RunExplicit(cmd.Context(), diffFrom, diffTo, schema, outputPath, afero.NewOsFs())
 				}
 			}
-			useDelta := shouldUsePgDelta()
+			useDelta := resolveDiffEngine(cmd.Flags().Changed("use-migra"), usePgAdmin, usePgSchema, shouldUsePgDelta())
 			if usePgAdmin {
 				return diff.RunPgAdmin(cmd.Context(), schema, file, flags.DbConfig, afero.NewOsFs())
 			}
@@ -176,16 +177,93 @@ var (
 			if len(args) > 0 {
 				name = args[0]
 			}
+			// Declarative export is opt-in via --declarative. Enabling pg-delta in config
+			// does not switch db pull to declarative output; it keeps the migration-file
+			// workflow and only defaults the shadow diff engine below.
+			useDeclarativePgDelta := useDeclarative
+			usePgDeltaDiff := resolvePullDiffEngine(
+				cmd.Flags().Changed("diff-engine"),
+				pullDiffEngine.Value,
+				shouldUsePgDelta(),
+			)
 			pullDiffer := diff.DiffSchemaMigra
-			usePgDeltaDiff := pullDiffEngine.Value == "pg-delta"
 			if usePgDeltaDiff {
 				pullDiffer = diff.DiffPgDelta
 			}
-			useDeclarativePgDelta := shouldUseDeclarativePgDeltaPull(usePgDeltaDiff)
 			return pull.Run(cmd.Context(), schema, flags.DbConfig, name, useDeclarativePgDelta, usePgDeltaDiff, pullDiffer, afero.NewOsFs())
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase db pull") + ".")
+		},
+	}
+
+	shadowMode        string
+	shadowTargetLocal bool
+	shadowUsePgDelta  bool
+	shadowSchema      []string
+	shadowProjectRef  string
+
+	// dbShadowCmd is a hidden seam used by the native-TypeScript db diff/pull
+	// commands to provision the throwaway shadow database that the diff "source"
+	// runs against, then leave it running so the TS caller can run the differ
+	// (migra or pg-delta) itself and remove the container afterwards. It prints
+	// three newline-separated lines to stdout: the container id, the source
+	// Postgres URL, and an optional target-override URL (empty unless the
+	// local-target declarative branch redirects the diff target to a second
+	// shadow database). The URLs are emitted WITHOUT the password
+	// (ToPostgresURLWithoutPassword) so we never log a credential to stdout
+	// (CWE-312); the TS caller re-injects the local Postgres password it already
+	// resolves from config.toml, which is the same value the shadow uses. Shadow
+	// provisioning (start.SetupDatabase) is not yet ported, which is why this
+	// stays in Go.
+	dbShadowCmd = &cobra.Command{
+		Use:    "__shadow",
+		Hidden: true,
+		Short:  "Internal: provision a shadow database for the native db diff/pull commands",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// The hidden __shadow command carries none of the db-url/local/linked
+			// target flags, so the root PersistentPreRunE's ParseDatabaseConfig
+			// never loads supabase/config.toml (it only loads when a target flag
+			// is set, internal/utils/flags/db_url.go:46-90). Load it explicitly so
+			// the shadow is provisioned from the project's [db] settings — shadow
+			// port, Postgres version, service baseline, and especially the
+			// password: the native-TS caller injects the config.toml password into
+			// the seam URLs, so the shadow must be created with that same password.
+			fsys := afero.NewOsFs()
+			// On the linked path the native-TS caller passes the resolved project
+			// ref via --project-ref so the shadow is built from the same
+			// remote-merged config the Go monolith uses: LoadConfig seeds
+			// utils.Config.ProjectId from flags.ProjectRef and merges the matching
+			// [remotes.<ref>] block (pkg/config/config.go). Omitted on local/db-url
+			// shadows, which the monolith never remote-merges, so the base config is
+			// used exactly as before.
+			if len(shadowProjectRef) > 0 {
+				flags.ProjectRef = shadowProjectRef
+			}
+			if err := flags.LoadConfig(fsys); err != nil {
+				return err
+			}
+			var src diff.ShadowSource
+			var err error
+			switch shadowMode {
+			case "declarative":
+				src, err = diff.PrepareRawShadow(cmd.Context())
+			case "diff", "":
+				src, err = diff.PrepareShadowSource(cmd.Context(), shadowSchema, shadowTargetLocal, shadowUsePgDelta, fsys)
+			default:
+				return fmt.Errorf("unknown shadow mode: %s", shadowMode)
+			}
+			if err != nil {
+				return err
+			}
+			fmt.Println(src.Container)
+			fmt.Println(utils.ToPostgresURLWithoutPassword(src.Source))
+			if src.TargetOverride != nil {
+				fmt.Println(utils.ToPostgresURLWithoutPassword(*src.TargetOverride))
+			} else {
+				fmt.Println("")
+			}
+			return nil
 		},
 	}
 
@@ -210,8 +288,15 @@ var (
 		Use:        "commit",
 		Short:      "Commit remote changes as a new migration",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			useDelta := shouldUsePgDelta()
-			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", useDelta, false, diff.DiffSchemaMigra, afero.NewOsFs())
+			// remote commit always writes a timestamped migration file. When pg-delta is
+			// enabled it only swaps the shadow diff engine; it never switches to the
+			// declarative export path.
+			usePgDeltaDiff := shouldUsePgDelta()
+			pullDiffer := diff.DiffSchemaMigra
+			if usePgDeltaDiff {
+				pullDiffer = diff.DiffPgDelta
+			}
+			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", false, usePgDeltaDiff, pullDiffer, afero.NewOsFs())
 		},
 	}
 
@@ -361,11 +446,28 @@ func shouldUsePgDelta() bool {
 	return utils.IsPgDeltaEnabled() || usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")
 }
 
-func shouldUseDeclarativePgDeltaPull(usePgDeltaDiff bool) bool {
-	if usePgDeltaDiff {
+// resolveDiffEngine reports whether `db diff` should run in pg-delta mode. The config /
+// env default (pgDeltaDefault) applies unless an explicit non-pg-delta engine is selected:
+// --use-migra, --use-pgadmin, or --use-pg-schema is an authoritative rollback that clears
+// pg-delta mode so diff.Run skips pg-delta-specific declarative shadow setup and the
+// PGDELTA_DEBUG capture path. --use-migra defaults to true, so only an explicit pass
+// (useMigraChanged) counts as opting out.
+func resolveDiffEngine(useMigraChanged, usePgAdmin, usePgSchema, pgDeltaDefault bool) bool {
+	if useMigraChanged || usePgAdmin || usePgSchema {
 		return false
 	}
-	return shouldUsePgDelta()
+	return pgDeltaDefault
+}
+
+// resolvePullDiffEngine selects whether migration-style db pull uses pg-delta for the
+// shadow diff step. An explicit --diff-engine flag always wins, so --diff-engine migra is
+// an authoritative rollback even when pg-delta is enabled in config; otherwise the default
+// follows whether pg-delta is the active engine (config / env).
+func resolvePullDiffEngine(engineFlagChanged bool, engine string, pgDeltaDefault bool) bool {
+	if engineFlagChanged {
+		return engine == "pg-delta"
+	}
+	return pgDeltaDefault
 }
 
 func init() {
@@ -427,19 +529,30 @@ func init() {
 	dbCmd.AddCommand(dbPushCmd)
 	// Build pull command
 	pullFlags := dbPullCmd.Flags()
-	// This flag activates declarative pull output through pg-delta instead of the
-	// legacy migration SQL pull path.
-	pullFlags.BoolVar(&usePgDelta, "use-pg-delta", false, "Use pg-delta to pull declarative schema.")
+	// --declarative switches pull output from a timestamped migration to declarative
+	// schema files exported through pg-delta. --use-pg-delta is the deprecated alias.
+	pullFlags.BoolVar(&useDeclarative, "declarative", false, "Pull schema as declarative files using pg-delta instead of creating a migration.")
+	pullFlags.BoolVar(&useDeclarative, "use-pg-delta", false, "Use pg-delta to pull declarative schema.")
+	cobra.CheckErr(pullFlags.MarkDeprecated("use-pg-delta", "use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead."))
 	pullFlags.Var(&pullDiffEngine, "diff-engine", "Diff engine to use for migration-style db pull.")
 	pullFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	pullFlags.String("db-url", "", "Pulls from the database specified by the connection string (must be percent-encoded).")
 	pullFlags.Bool("linked", true, "Pulls from the linked project.")
 	pullFlags.Bool("local", false, "Pulls from the local database.")
 	dbPullCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
+	dbPullCmd.MarkFlagsMutuallyExclusive("declarative", "diff-engine")
 	dbPullCmd.MarkFlagsMutuallyExclusive("use-pg-delta", "diff-engine")
 	pullFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pullFlags.Lookup("password")))
 	dbCmd.AddCommand(dbPullCmd)
+	// Build hidden shadow-provisioning seam command
+	shadowFlags := dbShadowCmd.Flags()
+	shadowFlags.StringVar(&shadowMode, "mode", "diff", "Shadow mode: diff (baseline + migrations) or declarative (bare shadow).")
+	shadowFlags.BoolVar(&shadowTargetLocal, "target-local", false, "Whether the diff target is the local database (enables the declarative-schema branch).")
+	shadowFlags.BoolVar(&shadowUsePgDelta, "use-pg-delta", false, "Whether pg-delta is the active diff engine (selects the declarative-apply path).")
+	shadowFlags.StringSliceVarP(&shadowSchema, "schema", "s", []string{}, "Comma separated list of schema to include.")
+	shadowFlags.StringVar(&shadowProjectRef, "project-ref", "", "Linked project ref, so the shadow merges the matching [remotes.<ref>] config override.")
+	dbCmd.AddCommand(dbShadowCmd)
 	// Build remote command
 	remoteFlags := dbRemoteCmd.PersistentFlags()
 	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")
