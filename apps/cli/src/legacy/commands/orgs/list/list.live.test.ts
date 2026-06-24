@@ -22,6 +22,22 @@ describeLive("supabase orgs list (live)", () => {
     },
   );
 
+  test(
+    "emits machine-readable JSON with --output-format json",
+    { timeout: LIVE_TIMEOUT_MS },
+    async () => {
+      const { exitCode, stdout } = await runSupabaseLive([
+        "orgs",
+        "list",
+        "--output-format",
+        "json",
+      ]);
+      expect(exitCode).toBe(0);
+      // stdout must be payload-only valid JSON in json mode (no spinner/log noise).
+      expect(() => JSON.parse(stdout)).not.toThrow();
+    },
+  );
+
   // Negative path: a bad token must round-trip to the real Management API, come
   // back 401, and surface as a non-zero exit with the upstream "Unauthorized"
   // message — i.e. the cli's auth + error mapping work against the live stack,
