@@ -22,7 +22,7 @@ const INSERT_MIGRATION_VERSION =
 const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/;
 
 /** Creates the migration-history schema/table (idempotent). Go's `CreateMigrationTable`. */
-export const legacyCreateMigrationTable = (session: LegacyDbSession) =>
+const legacyCreateMigrationTable = (session: LegacyDbSession) =>
   Effect.gen(function* () {
     yield* session.exec(SET_LOCK_TIMEOUT);
     yield* session.exec(CREATE_VERSION_SCHEMA);

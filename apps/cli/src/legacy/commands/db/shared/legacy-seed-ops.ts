@@ -96,7 +96,7 @@ export function legacyMatchPattern(pattern: string, name: string): boolean {
 }
 
 /** Result of resolving `[db.seed].sql_paths` against the workspace. */
-export interface LegacyGlobResult {
+interface LegacyGlobResult {
   /** Workdir-relative, forward-slashed matches, deduplicated in pattern order. */
   readonly files: ReadonlyArray<string>;
   /** Per-pattern warnings (`no files matched pattern: …`), joined by Go's `errors.Join`. */
@@ -111,7 +111,7 @@ export interface LegacyGlobResult {
  * first-seen order across patterns. A pattern that matches nothing contributes a
  * `no files matched pattern: <pattern>` warning but is not fatal.
  */
-export const legacyGlobSeedFiles = Effect.fnUntraced(function* (
+const legacyGlobSeedFiles = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   patterns: ReadonlyArray<string>,
