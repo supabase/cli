@@ -254,7 +254,7 @@ Not all runtime files live in the repo.
 Auth is still machine-global today:
 
 - keyring entry: `Supabase CLI/access-token`
-- filesystem fallback: `~/.supabase/access-token`
+- filesystem fallback: `<SUPABASE_HOME or ~/.supabase>/access-token`
 
 ### Telemetry and traces
 
@@ -268,7 +268,13 @@ Telemetry state remains in `SUPABASE_HOME`:
 Downloaded binaries remain shared across projects in:
 
 ```text
-~/.supabase/bin/
+<SUPABASE_HOME or ~/.supabase>/bin/
+```
+
+The legacy Go installer stores its Deno binary directly under the state root:
+
+```text
+<SUPABASE_HOME or ~/.supabase>/deno
 ```
 
 ### Live runtime sockets

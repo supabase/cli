@@ -4,7 +4,7 @@ Log out of Supabase and remove the stored access token from your system.
 
 ## When to use
 
-Run to revoke local CLI access — for example when switching accounts, on a shared machine, or after finishing work. The stored token is deleted from your system keyring (or the fallback file `~/.supabase/access-token`). After logging out, commands that require auth will prompt you to log in again.
+Run to revoke local CLI access — for example when switching accounts, on a shared machine, or after finishing work. The stored token is deleted from your system keyring (or the fallback file `<SUPABASE_HOME or ~/.supabase>/access-token`). After logging out, commands that require auth will prompt you to log in again.
 
 <!-- USAGE:START -->
 <!-- USAGE:END -->
