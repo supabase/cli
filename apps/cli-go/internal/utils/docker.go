@@ -329,6 +329,12 @@ func DockerResolveImageIfNotCached(ctx context.Context, imageName string) (strin
 		if _, err := Docker.ImageInspect(ctx, imageUrl); err == nil {
 			return imageUrl, nil
 		} else if !errdefs.IsNotFound(err) {
+			// Surface the install hint here too: callers like ensureImagesCached
+			// resolve images before DockerStart runs, so this is the first place a
+			// "Docker not running" failure is seen.
+			if client.IsErrConnectionFailed(err) {
+				CmdSuggestion = suggestDockerInstall
+			}
 			return "", errors.Errorf("failed to inspect docker image: %w", err)
 		}
 	}

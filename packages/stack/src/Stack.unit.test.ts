@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { createHmac } from "node:crypto";
-import { Effect, Fiber, Layer, Stream } from "effect";
+import { Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
@@ -362,6 +362,39 @@ describe("Stack", () => {
       const exit = yield* stack.startService("nonexistent").pipe(Effect.exit);
 
       expect(exit._tag).toBe("Failure");
+    }).pipe(Effect.provide(layer));
+  });
+
+  // Regression guard for https://github.com/supabase/cli/issues/5068: image
+  // acquisition must complete during preparation, so a failed pull aborts start
+  // instead of letting containers come up before their images are ready.
+  // it.live is required because the mock spawner resolves exit codes on the real
+  // clock; it.effect's TestClock would leave those sleeps pending.
+  it.live("start fails and never starts containers when a docker image pull fails", () => {
+    // Fail binary resolution so every service falls back to Docker, then fail
+    // every spawned docker command (image inspect + pull).
+    const resolver = mockBinaryResolver({ failServices: ["postgres", "postgrest", "auth"] });
+    const spawner = mockChildProcessSpawner({ exitCode: 1 });
+    const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
+    const coordinatorLayer = StackLifecycleCoordinator.layer(defaultConfig).pipe(
+      Layer.provide(StackBuilder.layer),
+      Layer.provide(stackPreparationLayer),
+      Layer.provide(StackMetadataPersistence.noop),
+    );
+    const layer = Stack.layer(defaultConfig).pipe(
+      Layer.provide(coordinatorLayer),
+      Layer.provide(spawner.layer),
+      Layer.provide(BunServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const exit = yield* stack.start().pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      // No container was ever started: only prepare-phase docker commands ran.
+      const startedContainers = spawner.spawned.filter((record) => record.args[0] === "run");
+      expect(startedContainers).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 });

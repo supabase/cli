@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	composeTypes "github.com/compose-spec/compose-go/v2/types"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
@@ -18,6 +19,7 @@ import (
 	"github.com/h2non/gock"
 	"github.com/jackc/pgconn"
 	"github.com/spf13/afero"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	phtelemetry "github.com/supabase/cli/internal/telemetry"
@@ -146,16 +148,20 @@ func TestDatabaseStart(t *testing.T) {
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
 			Reply(http.StatusCreated).
 			JSON(network.CreateResponse{})
-		// Caches all dependencies
+		// Caches all dependencies. Each image is inspected several times during start:
+		// the compose pre-pull, the ensureImagesCached completeness pass, and the
+		// per-container DockerStart. Persist the inspect mocks so every lookup is a hit.
 		imageUrl := utils.GetRegistryImageUrl(utils.Config.Db.Image)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
+			Persist().
 			Reply(http.StatusOK).
 			JSON(image.InspectResponse{})
 		for _, img := range config.Images.Services() {
 			service := utils.GetRegistryImageUrl(img)
 			gock.New(utils.Docker.DaemonHost()).
 				Get("/v" + utils.Docker.ClientVersion() + "/images/" + service + "/json").
+				Persist().
 				Reply(http.StatusOK).
 				JSON(image.InspectResponse{})
 		}
@@ -274,10 +280,12 @@ func TestDatabaseStart(t *testing.T) {
 			Post("/v" + utils.Docker.ClientVersion() + "/networks/create").
 			Reply(http.StatusCreated).
 			JSON(network.CreateResponse{})
-		// Caches all dependencies
+		// Caches all dependencies. The db image is inspected by the compose pre-pull,
+		// the ensureImagesCached completeness pass, and DockerStart, so persist the mock.
 		imageUrl := utils.GetRegistryImageUrl(utils.Config.Db.Image)
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + imageUrl + "/json").
+			Persist().
 			Reply(http.StatusOK).
 			JSON(image.InspectResponse{})
 		// Start postgres
@@ -304,6 +312,73 @@ func TestDatabaseStart(t *testing.T) {
 		err := run(context.Background(), fsys, exclude, pgconn.Config{Host: utils.DbId}, false)
 		// Check error
 		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+func TestEnsureImagesCached(t *testing.T) {
+	// Force a single registry candidate per image so the resolved URL is the raw
+	// image name, keeping the mocks simple. The multi-registry fallback itself is
+	// covered by utils.TestPullImage.
+	viper.Set("INTERNAL_IMAGE_REGISTRY", "docker.io")
+	t.Cleanup(func() { viper.Set("INTERNAL_IMAGE_REGISTRY", "") })
+
+	t.Run("pulls images the best-effort pre-pull skipped", func(t *testing.T) {
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		cached := utils.GetRegistryImageUrl("test-image-cached")
+		missing := utils.GetRegistryImageUrl("test-image-missing")
+		// Already cached locally: resolved without a pull.
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + cached + "/json").
+			Reply(http.StatusOK).
+			JSON(image.InspectResponse{})
+		// Missed by the compose pre-pull: must be pulled before ensureImagesCached returns.
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + missing + "/json").
+			Reply(http.StatusNotFound)
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v"+utils.Docker.ClientVersion()+"/images/create").
+			MatchParam("fromImage", missing).
+			MatchParam("tag", "latest").
+			Reply(http.StatusAccepted)
+		// Run test
+		project := composeTypes.Project{
+			Name: "supabase-cli",
+			Services: composeTypes.Services{
+				"cached":  {Name: "cached", Image: cached},
+				"missing": {Name: "missing", Image: missing},
+			},
+		}
+		err := ensureImagesCached(context.Background(), project)
+		// Check error: gock.IsDone proves the missed image's images/create mock was
+		// consumed, i.e. the pull happened before ensureImagesCached returned. A no-op
+		// completeness pass would leave it pending and fail this assertion.
+		assert.NoError(t, err)
+		assert.True(t, gock.IsDone())
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("returns an error when an image cannot be resolved", func(t *testing.T) {
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		broken := utils.GetRegistryImageUrl("test-image-broken")
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/images/" + broken + "/json").
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		project := composeTypes.Project{
+			Name: "supabase-cli",
+			Services: composeTypes.Services{
+				"broken": {Name: "broken", Image: broken},
+			},
+		}
+		err := ensureImagesCached(context.Background(), project)
+		// Check error: a failed resolve must propagate so run() aborts before any
+		// container is created.
+		assert.Error(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }

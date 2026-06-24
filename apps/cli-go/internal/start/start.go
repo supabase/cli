@@ -215,6 +215,38 @@ func pullImagesUsingCompose(ctx context.Context, project types.Project) error {
 	return service.Pull(ctx, &project, api.PullOptions{IgnoreFailures: true})
 }
 
+// ensureImagesCached guarantees every image required by the project is present in
+// the local Docker cache before any container is started. The compose pre-pull is
+// best effort (PullOptions.IgnoreFailures) and only targets the primary registry,
+// so any image it skips would otherwise be pulled lazily by DockerStart while
+// containers are already starting. Resolving each image here, using the same
+// multi-registry fallback as DockerStart, keeps all pulls ahead of container start.
+//
+// project.Services[*].Image is the registry-normalized URL produced by GetServices
+// (via GetRegistryImageUrl), which DockerResolveImageIfNotCached expands back into
+// the same candidate set DockerStart later resolves against. On a warm cache this
+// is one ImageInspect per image (no pull, no output); that cost is intentional and
+// bounded by the fixed service count.
+func ensureImagesCached(ctx context.Context, project types.Project) error {
+	seen := make(map[string]struct{}, len(project.Services))
+	var images []string
+	for _, service := range project.Services {
+		if service.Image == "" {
+			continue
+		}
+		if _, ok := seen[service.Image]; ok {
+			continue
+		}
+		seen[service.Image] = struct{}{}
+		images = append(images, service.Image)
+	}
+	result := utils.WaitAll(images, func(image string) error {
+		_, err := utils.DockerResolveImageIfNotCached(ctx, image)
+		return err
+	})
+	return errors.Join(result...)
+}
+
 func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConfig pgconn.Config, ignoreHealthCheck bool, options ...func(*pgx.ConnConfig)) error {
 	excluded := make(map[string]bool)
 	for _, name := range excludedContainers {
@@ -236,6 +268,11 @@ func run(ctx context.Context, fsys afero.Fs, excludedContainers []string, dbConf
 		Services: utils.GetServices().Filter(notExcluded),
 	}
 	if err := pullImagesUsingCompose(ctx, project); err != nil {
+		return err
+	}
+	// Pull any images the best-effort compose pre-pull skipped, so that all pulls
+	// finish before containers start (https://github.com/supabase/cli/issues/5068).
+	if err := ensureImagesCached(ctx, project); err != nil {
 		return err
 	}
 

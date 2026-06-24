@@ -3,6 +3,7 @@ import { Deferred, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { BinaryResolver } from "./BinaryResolver.ts";
+import { DockerPullError } from "./errors.ts";
 import { prefetch } from "./prefetch.ts";
 import {
   ServiceDownloadFinished,
@@ -158,6 +159,38 @@ describe("prefetch", () => {
       "supabase/gotrue:v2.188.0-rc.15",
       "ghcr.io/supabase/gotrue:v2.188.0-rc.15",
     ]);
+  });
+
+  test("preparation fails with DockerPullError when all registry candidates fail", async () => {
+    const resolver = mockBinaryResolver({ failServices: ["auth"] });
+    // 3 image inspects (not cached locally) followed by a non-retryable pull for
+    // each registry candidate (ECR, Docker Hub, GHCR). "manifest unknown" is not a
+    // retryable pattern, so each candidate gets exactly one pull attempt: 3 + 3 = 6
+    // spawns. With the whole fallback chain failing, preparation must fail rather
+    // than defer the pull to startup.
+    const spawner = mockSequenceSpawner([
+      { exitCode: 1 },
+      { exitCode: 1 },
+      { exitCode: 1 },
+      { exitCode: 1, stderr: ["manifest unknown"] },
+      { exitCode: 1, stderr: ["manifest unknown"] },
+      { exitCode: 1, stderr: ["manifest unknown"] },
+    ]);
+
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const error = await Effect.runPromise(
+      prefetch({ mode: "docker", services: ["auth"] }).pipe(Effect.provide(layer), Effect.flip),
+    );
+
+    expect(error).toBeInstanceOf(DockerPullError);
+    // Guard the spawn-count assumption above: if the retry/candidate logic changes
+    // so more spawns occur, the mock would default the extras to success and mask
+    // the failure. Assert the exact count so that regresses loudly instead.
+    expect(spawner.spawned).toHaveLength(6);
   });
 
   test("does not report downloading when the docker image is already cached locally", async () => {
