@@ -213,9 +213,13 @@ const downloadAll = (
       : localPath0;
 
     const tasks: Array<{ objectPath: string; dstPath: string; isDir: boolean }> = [];
-    // Capture the iteration error as a value so the `count === 0` check can run
-    // first — Go's `count == 0 → "Object not found"` precedes the errors.Join,
-    // masking an iteration error when nothing was walked (`cp.go:93-95`).
+    // Capture the walk error as a value rather than failing on it immediately:
+    // Go returns `errors.Join(walkErr, jq.Collect())` (`cp.go:96`), so two
+    // ordering rules hold. (1) The `count == 0 → "Object not found"` check
+    // precedes the join (`cp.go:93-95`), masking a walk error when nothing was
+    // visited. (2) A walk that errors partway still runs the already-queued
+    // downloads before the walk error surfaces — so the check is sequenced after
+    // the download pass below, not before it.
     const iterError = yield* legacyIterateStoragePathsAll(
       gateway,
       output,
@@ -236,9 +240,6 @@ const downloadAll = (
 
     if (tasks.length === 0) {
       return yield* new LegacyStorageObjectNotFoundError(remotePath);
-    }
-    if (iterError !== undefined) {
-      return yield* Effect.fail(iterError);
     }
 
     yield* Effect.forEach(
@@ -267,6 +268,14 @@ const downloadAll = (
             }),
       { concurrency: jobs },
     );
+
+    // Surface the walk error only after the queued downloads have run, matching
+    // `errors.Join(walkErr, jq.Collect())`. A download failure propagates from
+    // the pass above (the job queue's first error); the rare walk-error +
+    // download-error pair is collapsed to whichever fails first.
+    if (iterError !== undefined) {
+      return yield* Effect.fail(iterError);
+    }
   });
 
 const makeDirIfNotExist = (fs: FileSystem.FileSystem, dir: string) =>

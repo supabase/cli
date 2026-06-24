@@ -308,6 +308,44 @@ describe("legacy storage cp", () => {
     });
   });
 
+  it.live("runs already-queued downloads when the walk errors partway (errors.Join parity)", () => {
+    const dst = join(tmp.current, "partial");
+    const { layer } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      routes: [
+        // Root list queues a.txt (file) and discovers folder/ (recursed next).
+        {
+          method: "POST",
+          match: LIST("private"),
+          when: (b) => prefixOf(b) === "",
+          body: [
+            { name: "a.txt", id: "ai" },
+            { name: "folder", id: null },
+          ],
+        },
+        // The folder listing fails mid-walk, after a.txt is already queued.
+        {
+          method: "POST",
+          match: LIST("private"),
+          when: (b) => prefixOf(b) === "folder/",
+          status: 500,
+          body: { error: "boom" },
+        },
+        { method: "GET", match: OBJECT("private/a.txt"), rawBody: "a-content" },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageCp(
+        cpFlags({ src: "ss:///private/", dst, recursive: true }),
+      ).pipe(Effect.provide(layer), Effect.exit);
+      // Go's errors.Join(walkErr, jq.Collect()) runs the queued a.txt download
+      // (file written) before the walk error surfaces — the command still fails.
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(readFileSync(join(dst, "a.txt"), "utf8")).toBe("a-content");
+    });
+  });
+
   it.live("rejects copying between buckets", () => {
     const { layer } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
