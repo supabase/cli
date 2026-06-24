@@ -49,6 +49,41 @@ export function isLiveConfigured(): boolean {
 export const describeLive = describe.skipIf(!isLiveConfigured());
 
 /**
+ * Project ref for project-scoped live scenarios (functions, branches, db,
+ * storage, …). The cli-e2e-ci runner sets this once a project has been
+ * provisioned on the stack; absent → those suites skip. Returns `undefined`
+ * when unset so callers can branch; use `requireLiveProjectRef` inside a
+ * `describeLiveProject` block where presence is already guaranteed.
+ */
+export function liveProjectRef(): string | undefined {
+  return process.env["SUPABASE_LIVE_PROJECT_REF"];
+}
+
+/**
+ * The live project ref, or a thrown error if unset. Safe to call inside a
+ * `describeLiveProject` block (the gate guarantees it is present) and gives a
+ * typed `string` without a non-null assertion.
+ */
+export function requireLiveProjectRef(): string {
+  const ref = liveProjectRef();
+  if (!ref) {
+    throw new Error(
+      "SUPABASE_LIVE_PROJECT_REF must be set for project-scoped live tests " +
+        "(the cli-e2e-ci runner sets it after provisioning a project).",
+    );
+  }
+  return ref;
+}
+
+/**
+ * `describe` for project-scoped live suites: runs only when the live env is
+ * configured AND a project ref is available. On a control-plane-only stack
+ * (e.g. local macOS where project instances can't be built) these skip rather
+ * than fail. See `requireLiveProjectRef`.
+ */
+export const describeLiveProject = describe.skipIf(!isLiveConfigured() || !liveProjectRef());
+
+/**
  * Spawn the built CLI against the live platform, injecting the profile so the
  * Management API base resolves to the stack. Defaults to the `legacy` shell,
  * which hosts the platform commands (orgs, projects, branches, functions, …).
