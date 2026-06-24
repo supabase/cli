@@ -1,4 +1,5 @@
 import { Effect, Layer, Option, Redacted } from "effect";
+import { resolveSupabaseHome } from "../../shared/config/supabase-home.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { resolvePosthogConfig } from "../../shared/telemetry/posthog-config.ts";
 import { CliConfig } from "./cli-config.service.ts";
@@ -41,10 +42,7 @@ const makeCliConfig = Effect.gen(function* () {
       Redacted.make(token, { label: "SUPABASE_ACCESS_TOKEN" }),
     ),
     noKeyring: readEnv(effectiveEnv, "SUPABASE_NO_KEYRING"),
-    supabaseHome: Option.getOrElse(
-      readEnv(effectiveEnv, "SUPABASE_HOME"),
-      () => `${runtimeInfo.homeDir}/.supabase`,
-    ),
+    supabaseHome: resolveSupabaseHome(effectiveEnv, runtimeInfo.homeDir),
     debug: readEnv(effectiveEnv, "SUPABASE_DEBUG"),
     telemetryDebug: readEnv(effectiveEnv, "SUPABASE_TELEMETRY_DEBUG"),
     telemetryDisabled: readEnv(effectiveEnv, "SUPABASE_TELEMETRY_DISABLED"),

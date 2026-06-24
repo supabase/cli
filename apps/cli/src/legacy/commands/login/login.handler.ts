@@ -36,7 +36,7 @@ export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLog
 
   // Mirrors Go's login `PostRunE` (`cmd/login.go:42-48`): when a profile was
   // explicitly chosen (`--profile` over its default, else `SUPABASE_PROFILE`),
-  // persist it to `~/.supabase/profile` on success so later commands resolve the
+  // persist it to `<SUPABASE_HOME or ~/.supabase>/profile` on success so later commands resolve the
   // same profile. The raw token is written (Go's `viper.GetString("PROFILE")`),
   // so a YAML-path profile round-trips. A write failure is fatal (Go: "Failure
   // to save should block subsequent commands on CI").

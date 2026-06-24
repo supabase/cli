@@ -10,8 +10,9 @@ const VALID_TOKEN = "sbp_" + "a".repeat(40);
 
 describe("supabase login (legacy)", () => {
   // Golden path: --token persists the access token and reports success. The e2e
-  // harness sets SUPABASE_NO_KEYRING=1, so the token lands in the isolated
-  // HOME's ~/.supabase/access-token rather than the OS keyring.
+  // harness sets SUPABASE_NO_KEYRING=1 and points SUPABASE_HOME at the isolated
+  // home dir, so the token lands in <SUPABASE_HOME>/access-token rather than the
+  // OS keyring.
   test(
     "login --token persists the token and prints the logged-in message",
     { timeout: E2E_TIMEOUT_MS },
@@ -24,7 +25,7 @@ describe("supabase login (legacy)", () => {
       });
       expect(exitCode).toBe(0);
       expect(stdout).toContain("You are now logged in. Happy coding!");
-      expect(existsSync(join(home.dir, ".supabase", "access-token"))).toBe(true);
+      expect(existsSync(join(home.dir, "access-token"))).toBe(true);
     },
   );
 
