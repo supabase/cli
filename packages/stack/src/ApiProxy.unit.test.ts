@@ -58,12 +58,70 @@ function startEchoBackend(): Promise<EchoServer> {
   });
 }
 
+interface FlakyServer {
+  readonly port: number;
+  readonly attempts: () => number;
+  readonly stop: () => Promise<void>;
+}
+
+// Backend that resets the connection (transport failure) for the first
+// `failFirst` requests, then responds 200 with `body`. Mirrors an edge-runtime
+// dropping connections while it cold-boots a user worker on first request.
+function startFlakyBackend(opts: { failFirst: number; body: string }): Promise<FlakyServer> {
+  return new Promise((resolve, reject) => {
+    let attempts = 0;
+    const server = http.createServer((req, incomingRes) => {
+      attempts += 1;
+      if (attempts <= opts.failFirst) {
+        req.socket.destroy();
+        return;
+      }
+      incomingRes.writeHead(200, {
+        "Content-Type": "text/plain",
+        "Content-Length": Buffer.byteLength(opts.body),
+      });
+      incomingRes.end(opts.body);
+    });
+
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      if (!addr || typeof addr === "string") {
+        reject(new Error("Unexpected server address"));
+        return;
+      }
+      resolve({
+        port: addr.port,
+        attempts: () => attempts,
+        stop: () =>
+          new Promise<void>((res, rej) => server.close((err) => (err ? rej(err) : res()))),
+      });
+    });
+
+    server.on("error", reject);
+  });
+}
+
 // Builds the full proxy layer backed by a Node HTTP server.
 function buildProxyLayer(config: ProxyConfig): Layer.Layer<ApiProxy, never, never> {
   return ApiProxy.layer(config).pipe(
     Layer.provide(NodeHttpServer.layer(() => http.createServer(), { port: 0 }).pipe(Layer.orDie)),
     Layer.provide(FetchHttpClient.layer),
   ) as Layer.Layer<ApiProxy, never, never>;
+}
+
+// Spins up a proxy for an ad-hoc config and returns its URL plus a disposer.
+async function startProxy(
+  config: ProxyConfig,
+): Promise<{ url: string; dispose: () => Promise<void> }> {
+  const proxyRuntime = ManagedRuntime.make(buildProxyLayer(config));
+  const proxy = await proxyRuntime.runPromise(ApiProxy);
+  const addr = proxy.address;
+  let url = "";
+  if (addr._tag === "TcpAddress") {
+    const host = addr.hostname === "0.0.0.0" ? "127.0.0.1" : addr.hostname;
+    url = `http://${host}:${addr.port}`;
+  }
+  return { url, dispose: () => proxyRuntime.dispose() };
 }
 
 describe("ApiProxy", () => {
@@ -325,6 +383,109 @@ describe("ApiProxy", () => {
       expect(res.status).toBe(502);
     } finally {
       await deadRuntime.dispose();
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Edge-function cold-start: retry transient connection failures
+  // ---------------------------------------------------------------------------
+
+  function configForPort(port: number): ProxyConfig {
+    return {
+      listenPort: 0,
+      gotruePort: port,
+      postgrestPort: port,
+      postgrestAdminPort: port,
+      edgeRuntimePort: port,
+      realtimePort: port,
+      storagePort: port,
+      pgmetaPort: port,
+      analyticsPort: port,
+      poolerPort: port,
+      studioPort: port,
+      publishableKey: PUBLISHABLE_KEY,
+      secretKey: SECRET_KEY,
+      anonJwt: ANON_JWT,
+      serviceRoleJwt: SERVICE_ROLE_JWT,
+    };
+  }
+
+  test("retries transient connection failures on the functions route until it is servable", async () => {
+    const backend = await startFlakyBackend({ failFirst: 1, body: "hello" });
+    const proxy = await startProxy(configForPort(backend.port));
+    try {
+      const res = await fetch(`${proxy.url}/functions/v1/hello`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("hello");
+      expect(backend.attempts()).toBeGreaterThanOrEqual(2);
+    } finally {
+      await proxy.dispose();
+      await backend.stop();
+    }
+  });
+
+  test("does not retry non-functions routes on a connection failure", async () => {
+    const backend = await startFlakyBackend({ failFirst: 1, body: "ok" });
+    const proxy = await startProxy(configForPort(backend.port));
+    try {
+      const res = await fetch(`${proxy.url}/rest/v1/users`);
+      expect(res.status).toBe(502);
+      expect(backend.attempts()).toBe(1);
+    } finally {
+      await proxy.dispose();
+      await backend.stop();
+    }
+  });
+
+  test("replays the request body when retrying the functions route", async () => {
+    let attempts = 0;
+    // First request: reset the connection. Second: echo the received body back,
+    // so the assertion fails unless the buffered body was re-sent on retry.
+    const echoBody = await new Promise<FlakyServer>((resolve, reject) => {
+      const server = http.createServer((req, incomingRes) => {
+        attempts += 1;
+        if (attempts === 1) {
+          req.socket.destroy();
+          return;
+        }
+        let data = "";
+        req.on("data", (chunk) => (data += chunk));
+        req.on("end", () => {
+          incomingRes.writeHead(200, {
+            "Content-Type": "text/plain",
+            "Content-Length": Buffer.byteLength(data),
+          });
+          incomingRes.end(data);
+        });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const addr = server.address();
+        if (!addr || typeof addr === "string") {
+          reject(new Error("Unexpected server address"));
+          return;
+        }
+        resolve({
+          port: addr.port,
+          attempts: () => attempts,
+          stop: () =>
+            new Promise<void>((res, rej) => server.close((err) => (err ? rej(err) : res()))),
+        });
+      });
+      server.on("error", reject);
+    });
+
+    const proxy = await startProxy(configForPort(echoBody.port));
+    try {
+      const res = await fetch(`${proxy.url}/functions/v1/hello`, {
+        method: "POST",
+        body: "payload",
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("payload");
+      expect(echoBody.attempts()).toBeGreaterThanOrEqual(2);
+    } finally {
+      await proxy.dispose();
+      await echoBody.stop();
     }
   });
 });
