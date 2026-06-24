@@ -11,6 +11,7 @@ local → if changed, print the unified diff and confirm → PATCH/PUT/POST.
 | ------------------------------------------------ | ------------------------- | --------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml`                 | TOML                      | always, before any network call (parse error aborts, exit 1)    |
 | `<workdir>/supabase/.env`, `.env.local`          | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`   |
+| Auth email template HTML (`content_path`)        | HTML                      | when `auth.enabled`; paths resolved per Go rules (see below)    |
 | `~/.supabase/<workdir-hash>/linked-project.json` | JSON                      | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file) |
 | `~/.supabase/access-token`                       | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable      |
 
@@ -60,13 +61,14 @@ when its local gate is off.
 
 ## Exit Codes
 
-| Code | Condition                                                                             |
-| ---- | ------------------------------------------------------------------------------------- |
-| `0`  | success, **including** declining a confirmation prompt (Go returns nil and continues) |
-| `1`  | malformed `config.toml`                                                               |
-| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref              |
-| `1`  | list-addons failure (network or non-200)                                              |
-| `1`  | any per-service read/update failure (network or unexpected status)                    |
+| Code | Condition                                                                                  |
+| ---- | ------------------------------------------------------------------------------------------ |
+| `0`  | success, **including** declining a confirmation prompt (Go returns nil and continues)      |
+| `1`  | malformed `config.toml`                                                                    |
+| `1`  | invalid `auth.email.*.content_path` (missing/unreadable template file when `auth.enabled`) |
+| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref                   |
+| `1`  | list-addons failure (network or non-200)                                                   |
+| `1`  | any per-service read/update failure (network or unexpected status)                         |
 
 ## Output
 

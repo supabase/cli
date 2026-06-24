@@ -424,6 +424,39 @@ function methodsOf(apiMock: ReturnType<typeof setupService>["apiMock"]): Array<s
 }
 
 describe("legacy config push gated services", () => {
+  it.live("pushes auth email template HTML loaded from content_path", () => {
+    const templateDir = join(tempRoot.current, "templates");
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, "invite.html"), "<h1>Invite</h1>");
+
+    const toml = `project_id = "test"
+[storage]
+enabled = false
+[auth]
+enabled = true
+site_url = "http://localhost:3000"
+[auth.email.template.invite]
+subject = "You are invited"
+content_path = "./templates/invite.html"
+`;
+    const { layer, apiMock } = setupService({
+      toml,
+      yes: true,
+      v1: {
+        getAuthServiceConfig: () => Effect.succeed({}),
+        updateAuthServiceConfig: () => Effect.succeed({}),
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
+      expect(update).toBeDefined();
+      const input = update?.input as Record<string, unknown>;
+      expect(input["mailer_subjects_invite"]).toBe("You are invited");
+      expect(input["mailer_templates_invite_content"]).toBe("<h1>Invite</h1>");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live(
     "sends the raw captcha secret (not the hash) when pushing auth (security regression)",
     () => {
