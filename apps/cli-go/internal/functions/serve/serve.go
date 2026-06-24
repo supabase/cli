@@ -67,7 +67,12 @@ const (
 	dockerRuntimeInspectorPort = 8083
 )
 
-//go:embed templates/main.ts
+// The bootstrap template is bundled (jose + std deps inlined) so the edge-runtime
+// worker boots without network access (supabase/supabase#45570). It is generated
+// from the canonical apps/cli/src/shared/functions/serve.main.ts via
+// `bun scripts/generate-go-serve-template.ts`; a unit test guards against drift.
+//
+//go:embed templates/main.bundled.js
 var mainFuncEmbed string
 
 func Run(ctx context.Context, envFilePath string, noVerifyJWT *bool, importMapPath string, runtimeOption RuntimeOption, fsys afero.Fs) error {
