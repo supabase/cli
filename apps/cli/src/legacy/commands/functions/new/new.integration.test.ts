@@ -235,7 +235,7 @@ describe("legacy functions new integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits structured success in json mode", () => {
+  it.live("stays payload-only in json mode without writing IDE files", () => {
     const { layer, out, workdir } = setup({ format: "json" });
     return Effect.gen(function* () {
       yield* legacyFunctionsNew({ functionName: "json-fn", auth: "apikey" });
@@ -246,7 +246,11 @@ describe("legacy functions new integration", () => {
         auth: "apikey",
       });
       expect(out.stdoutText).toBe("");
-      expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(true);
+      // Machine formats are payload-only: the IDE prompt is suppressed and no IDE settings
+      // are scaffolded as an undisclosed side effect.
+      expect(out.stderrText).not.toContain("Generate VS Code settings");
+      expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(false);
+      expect(existsSync(join(workdir, ".idea", "deno.xml"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -281,6 +285,21 @@ describe("legacy functions new integration", () => {
       );
       const exit = yield* Effect.exit(legacyFunctionsNew({ functionName: "dupe", auth: "apikey" }));
       expect(exitTag(exit)).toBe("LegacyFunctionsNewFileExistsError");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails with a write error when config.toml cannot be appended", () => {
+    const { layer, telemetry, workdir } = setup();
+    return Effect.gen(function* () {
+      // A directory at the config.toml path makes the append write fail (EISDIR).
+      yield* Effect.tryPromise(() =>
+        mkdir(join(workdir, "supabase", "config.toml"), { recursive: true }),
+      );
+      const exit = yield* Effect.exit(
+        legacyFunctionsNew({ functionName: "write-fail", auth: "apikey" }),
+      );
+      expect(exitTag(exit)).toBe("LegacyFunctionsNewWriteError");
+      expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 });

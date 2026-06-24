@@ -14,16 +14,16 @@
 
 ## Files Written
 
-| Path                                            | Format     | When                                                                                               |
-| ----------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/functions/<name>/index.ts`  | TypeScript | always                                                                                             |
-| `<workdir>/supabase/functions/<name>/deno.json` | JSON       | always                                                                                             |
-| `<workdir>/supabase/functions/<name>/.npmrc`    | plain text | always                                                                                             |
-| `<workdir>/supabase/config.toml`                | TOML       | always unless `[functions.<name>]` is already declared                                             |
-| `<workdir>/.vscode/extensions.json`             | JSON       | when this is the first function and VS Code settings are accepted or auto-accepted                 |
-| `<workdir>/.vscode/settings.json`               | JSON       | when this is the first function and VS Code settings are accepted or auto-accepted                 |
-| `<workdir>/.idea/deno.xml`                      | XML        | when this is the first function, VS Code settings are declined, and IntelliJ settings are accepted |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON       | after command completion, flushed on both success and failure paths                                |
+| Path                                            | Format     | When                                                                                                               |
+| ----------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/functions/<name>/index.ts`  | TypeScript | always                                                                                                             |
+| `<workdir>/supabase/functions/<name>/deno.json` | JSON       | always                                                                                                             |
+| `<workdir>/supabase/functions/<name>/.npmrc`    | plain text | always                                                                                                             |
+| `<workdir>/supabase/config.toml`                | TOML       | always unless `[functions.<name>]` is already declared                                                             |
+| `<workdir>/.vscode/extensions.json`             | JSON       | text mode only, when this is the first function and VS Code settings are accepted or auto-accepted                 |
+| `<workdir>/.vscode/settings.json`               | JSON       | text mode only, when this is the first function and VS Code settings are accepted or auto-accepted                 |
+| `<workdir>/.idea/deno.xml`                      | XML        | text mode only, when this is the first function, VS Code settings are declined, and IntelliJ settings are accepted |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON       | after command completion, flushed on both success and failure paths                                                |
 
 ## API Routes
 
@@ -64,11 +64,11 @@ Prints `Created new Function at <path>` and, when this is the first function, ma
 
 ### `--output-format json`
 
-Emits a structured success payload with `path`, `function_name`, and `auth`.
+Emits a structured success payload with `path`, `function_name`, and `auth`. No IDE settings are scaffolded and no IDE prompt is printed — machine formats are payload-only.
 
 ### `--output-format stream-json`
 
-Emits a structured success result event with `path`, `function_name`, and `auth`.
+Emits a structured success result event with `path`, `function_name`, and `auth`. No IDE settings are scaffolded and no IDE prompt is printed — machine formats are payload-only.
 
 ## Notes
 
@@ -76,4 +76,7 @@ Emits a structured success result event with `path`, `function_name`, and `auth`
 - Requires exactly one argument: the function name.
 - `--auth` selects the auth-mode template (`none` | `apikey` | `user`, default: `apikey`).
 - Best-effort config parsing is intentionally non-fatal here: malformed `config.toml` does not block scaffolding or config append, matching the Go command.
+- The `[functions.<name>]` config section is **appended** (`O_APPEND` semantics, `flag: "a"`), never rewritten, so the existing file is left byte-for-byte untouched and a partial write cannot truncate it — matching Go's `appendConfigFile`.
+- Existing-declaration detection scans the raw `config.toml` text (`^\s*\[functions\.<slug>\]\s*$`) rather than the parsed config map Go uses. This is a deliberate divergence: config loading here is non-fatal, so a raw-text scan stays deterministic even when the file fails to parse. For all well-formed configs the two approaches agree.
+- IDE settings scaffolding (`.vscode`, `.idea`) only runs in `--output-format text`; json / stream-json runs are payload-only.
 - No Management API requests are made; all behavior is local filesystem work plus telemetry flush.

@@ -18,6 +18,7 @@ import {
   LegacyFunctionsNewFileExistsError,
   LegacyFunctionsNewInvalidSlugError,
   LegacyFunctionsNewWriteError,
+  mapLegacyFunctionsNewWriteError,
 } from "./new.errors.ts";
 import {
   LEGACY_FUNCTIONS_NEW_DENO_JSON,
@@ -33,6 +34,12 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Go's `appendConfigFile` checks the *parsed* config map (`utils.Config.Functions[slug]`)
+// after a best-effort `flags.LoadConfig`. We intentionally scan the raw TOML text instead:
+// config loading here is non-fatal (a malformed `config.toml` must still allow scaffolding,
+// matching Go), so a raw-text section scan is the deterministic fallback that does not depend
+// on a successful parse. The strict `^\s*\[functions\.<slug>\]\s*$` anchoring keeps this in
+// practical lock-step with the parsed-map check for all well-formed configs.
 function readDeclaredFunctionSlugs(contents: string): ReadonlySet<string> {
   const slugs = new Set<string>();
   const pattern = /^\s*\[functions\.([^\]\s]+)\]\s*$/gm;
@@ -48,19 +55,6 @@ function readDeclaredFunctionSlugs(contents: string): ReadonlySet<string> {
 function hasFunctionConfigDeclaration(contents: string, slug: string): boolean {
   const pattern = new RegExp(`^\\s*\\[functions\\.${escapeRegExp(slug)}\\]\\s*$`, "m");
   return pattern.test(contents);
-}
-
-function mapIdeWriteError(cause: unknown): LegacyFunctionsNewWriteError {
-  if (typeof cause === "object" && cause !== null && "message" in cause) {
-    return new LegacyFunctionsNewWriteError({
-      path: ".vscode",
-      message: String(cause.message),
-    });
-  }
-  return new LegacyFunctionsNewWriteError({
-    path: ".vscode",
-    message: String(cause),
-  });
 }
 
 const listExistingFunctionSlugs = Effect.fnUntraced(function* (workdir: string) {
@@ -104,33 +98,39 @@ const resolveTemplateInputs = Effect.fnUntraced(function* (workdir: string, slug
   };
 });
 
-const promptForIdeSettings = Effect.fnUntraced(function* (
-  workdir: string,
-  announce: boolean,
-  format: "text" | "json" | "stream-json",
-) {
+// Mirrors Go's `_init.PromptForIDESettings` (console-driven). Only invoked in text mode — the
+// caller gates on `output.format === "text"` so json / stream-json runs stay payload-only and
+// never scaffold IDE settings as an undisclosed side effect.
+const promptForIdeSettings = Effect.fnUntraced(function* (workdir: string) {
   const output = yield* Output;
   const tty = yield* Tty;
   const yes = yield* LegacyYesFlag;
 
+  // `--yes`: echo the accepted prompt and write, matching Go's `viper.GetBool("YES")` branch
+  // (`fmt.Fprintln(os.Stderr, label+"y")`).
   if (yes) {
     yield* output.raw("Generate VS Code settings for Deno? [Y/n] y\n", "stderr");
-    yield* writeVscodeConfig(workdir, { announce }).pipe(Effect.mapError(mapIdeWriteError));
+    yield* writeVscodeConfig(workdir).pipe(
+      Effect.mapError(mapLegacyFunctionsNewWriteError(".vscode")),
+    );
     return;
   }
 
+  // Non-TTY: Go's `PromptYesNo` prints the label, reads nothing within the 100ms timeout, and
+  // falls back to the default (`true` for VS Code). The trailing space + newline matches the
+  // bytes Go writes — the `"... [Y/n] "` label followed by the echoed empty line.
   if (!tty.stdinIsTty) {
-    yield* output.raw("Generate VS Code settings for Deno? [Y/n]\n", "stderr");
-    yield* writeVscodeConfig(workdir, { announce }).pipe(Effect.mapError(mapIdeWriteError));
-    return;
-  }
-
-  if (format !== "text") {
+    yield* output.raw("Generate VS Code settings for Deno? [Y/n] \n", "stderr");
+    yield* writeVscodeConfig(workdir).pipe(
+      Effect.mapError(mapLegacyFunctionsNewWriteError(".vscode")),
+    );
     return;
   }
 
   if (yield* output.promptConfirm("Generate VS Code settings for Deno?", { defaultValue: true })) {
-    yield* writeVscodeConfig(workdir, { announce: true }).pipe(Effect.mapError(mapIdeWriteError));
+    yield* writeVscodeConfig(workdir).pipe(
+      Effect.mapError(mapLegacyFunctionsNewWriteError(".vscode")),
+    );
     return;
   }
 
@@ -139,17 +139,8 @@ const promptForIdeSettings = Effect.fnUntraced(function* (
       defaultValue: false,
     })
   ) {
-    yield* writeIntelliJConfig(workdir, { announce: true }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new LegacyFunctionsNewWriteError({
-            path: ".idea/deno.xml",
-            message:
-              typeof cause === "object" && cause !== null && "message" in cause
-                ? String(cause.message)
-                : String(cause),
-          }),
-      ),
+    yield* writeIntelliJConfig(workdir).pipe(
+      Effect.mapError(mapLegacyFunctionsNewWriteError(".idea/deno.xml")),
     );
   }
 });
@@ -174,19 +165,21 @@ const appendFunctionConfig = Effect.fnUntraced(function* (
     return;
   }
 
-  const next = `${Option.getOrElse(existing, () => "")}${renderLegacyFunctionsNewConfig(
-    slug,
-    verifyJwt,
-  )}`;
-  yield* fs.writeFileString(configPath, next).pipe(
-    Effect.mapError(
-      (cause) =>
-        new LegacyFunctionsNewWriteError({
-          path: relPath,
-          message: `failed to append config: ${String(cause)}`,
-        }),
-    ),
-  );
+  // Append (never rewrite) the rendered section, matching Go's
+  // `os.OpenFile(ConfigPath, O_WRONLY|O_CREATE|O_APPEND)`: the existing file is left
+  // byte-for-byte untouched and a partial write can never truncate it. The template begins
+  // with a newline, so it attaches cleanly whether or not the file ends with one.
+  yield* fs
+    .writeFileString(configPath, renderLegacyFunctionsNewConfig(slug, verifyJwt), { flag: "a" })
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyFunctionsNewWriteError({
+            path: relPath,
+            message: `failed to append config: ${String(cause)}`,
+          }),
+      ),
+    );
 });
 
 export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
@@ -284,8 +277,10 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
       );
     }
 
-    if (isFirstFunction) {
-      yield* promptForIdeSettings(cliConfig.workdir, output.format === "text", output.format);
+    // IDE scaffolding is a human-facing nicety: only offer it in text mode so json /
+    // stream-json runs stay payload-only and never write IDE files as an undisclosed side effect.
+    if (isFirstFunction && output.format === "text") {
+      yield* promptForIdeSettings(cliConfig.workdir);
     }
 
     if (output.format === "json" || output.format === "stream-json") {
