@@ -14,18 +14,21 @@ export async function setup(): Promise<void> {
     return;
   }
 
-  const healthUrl = `${liveApiBaseUrl()}/v1/health`;
+  // Reachability gate only. Any HTTP response — including 401/404 — proves the
+  // Management API is up and routing, which is all this probe needs to assert.
+  // supabox's mgmt-api requires auth on every route and exposes no public health
+  // endpoint (`/v1/health` 404s; an unauthenticated request is rejected by the
+  // auth middleware with 401), so we deliberately do NOT require a 2xx here.
+  // Functional and auth coverage is the live tests' job (e.g. `orgs list`).
+  const probeUrl = `${liveApiBaseUrl()}/v1/organizations`;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
-    const response = await fetch(healthUrl, { signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`${healthUrl} responded with ${response.status}`);
-    }
+    await fetch(probeUrl, { signal: controller.signal });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Live platform is not reachable at ${healthUrl}: ${reason}.\n` +
+      `Live platform is not reachable at ${probeUrl}: ${reason}.\n` +
         "Ensure the supabox stack is up and the host can reach mgmt-api (see cli-e2e-ci).",
     );
   } finally {
