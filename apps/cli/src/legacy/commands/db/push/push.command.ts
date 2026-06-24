@@ -1,6 +1,10 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyDbPush } from "./push.handler.ts";
+import { legacyDbPushRuntimeLayer } from "./push.layers.ts";
 
 const config = {
   includeAll: Flag.boolean("include-all").pipe(
@@ -37,5 +41,24 @@ export type LegacyDbPushFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const legacyDbPushCommand = Command.make("push", config).pipe(
   Command.withDescription("Push new migrations to the remote database."),
   Command.withShortDescription("Push new migrations to the remote database"),
-  Command.withHandler((flags) => legacyDbPush(flags)),
+  Command.withHandler((flags) =>
+    legacyDbPush(flags).pipe(
+      withLegacyCommandInstrumentation({
+        flags: {
+          "include-all": flags.includeAll,
+          "include-roles": flags.includeRoles,
+          "include-seed": flags.includeSeed,
+          "dry-run": flags.dryRun,
+          "db-url": flags.dbUrl,
+          linked: flags.linked,
+          local: flags.local,
+          // `password` is a credential — always reaches telemetry as `<redacted>`.
+          password: flags.password,
+        },
+        aliases: { p: "password" },
+      }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyDbPushRuntimeLayer),
 );
