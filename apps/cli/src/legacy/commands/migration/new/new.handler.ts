@@ -36,6 +36,22 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
       flags.migrationName,
     );
 
+    // The name is a positional CLI arg; `path.join` collapses `..` segments, so a
+    // name like `../../../foo` resolves OUTSIDE the migrations directory and lets
+    // `migration new` write an arbitrary file (CWE-22) — reachable when the name
+    // comes from an agent/CI template rather than a human. Real names are simple
+    // identifiers, so containing the write to `supabase/migrations` is
+    // parity-neutral for legitimate input while closing the arbitrary-write
+    // vector — the same TS-only hardening `migration fetch` applies to remote rows.
+    const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
+    if (!migrationPath.startsWith(migrationsDir + path.sep)) {
+      return yield* Effect.fail(
+        new LegacyMigrationNewWriteError({
+          message: `invalid migration name: "${flags.migrationName}" must not escape the ${path.join("supabase", "migrations")} directory`,
+        }),
+      );
+    }
+
     // Go's `CopyStdinIfExists` copies raw stdin bytes verbatim when stdin is NOT a
     // char device (piped/redirected). A TTY writes nothing → empty file. An empty
     // pipe (`readPipedBytes` → none) also yields an empty file, matching Go.

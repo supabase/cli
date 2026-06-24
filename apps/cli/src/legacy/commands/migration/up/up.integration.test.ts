@@ -149,9 +149,14 @@ describe("legacy migration up", () => {
     return Effect.gen(function* () {
       yield* legacyMigrationUp(flags());
       const stderr = stripAnsi(out.stderrText);
+      const stdout = stripAnsi(out.stdoutText);
       expect(stderr).toContain("Applying migration 20240102000000_b.sql...");
       expect(stderr).toContain("Applying migration 20240103000000_c.sql...");
-      expect(stripAnsi(out.stdoutText)).toContain("Local database is up to date.");
+      expect(stdout).toContain("Local database is up to date.");
+      // Lock Go's channel split: "Applying ..." is stderr (`fmt.Fprintf(os.Stderr, ...)`)
+      // and the final "up to date" is stdout (`fmt.Println`) — neither bleeds across.
+      expect(stdout).not.toContain("Applying migration");
+      expect(stderr).not.toContain("Local database is up to date.");
       expect(insertedVersions(queries)).toEqual(["20240102000000", "20240103000000"]);
     }).pipe(Effect.provide(layer));
   });

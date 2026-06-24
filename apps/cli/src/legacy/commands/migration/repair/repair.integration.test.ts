@@ -240,6 +240,23 @@ describe("legacy migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("prints multiple repaired versions using Go's %v slice format", () => {
+    // Go prints the []string via `fmt.Fprintf(..., "%v", version)` (`repair.go:85`):
+    // space-separated, bracketed, NO commas. A `.join(", ")` "cleanup" reads more
+    // natural in TS but would silently break byte parity, so lock the format here.
+    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+    seedMigration(tmp.current, "20240102000000_more.sql", "create table b;\n");
+    const { layer, out } = setup(tmp.current);
+    return Effect.gen(function* () {
+      yield* legacyMigrationRepair(
+        input({ versions: ["20240101000000", "20240102000000"], status: "applied" }),
+      );
+      expect(stripAnsi(out.stderrText)).toContain(
+        "Repaired migration history: [20240101000000 20240102000000] => applied",
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("reports a missing local file in applied mode", () => {
     const { layer } = setup(tmp.current); // no seeded file
     return Effect.gen(function* () {

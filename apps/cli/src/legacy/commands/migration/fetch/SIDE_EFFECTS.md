@@ -61,3 +61,14 @@ Same structured `files` result delivered as an NDJSON `result` event.
 
 - `--linked` (default true), `--local`, and `--db-url` are mutually exclusive.
 - Fetches migration file contents from the `supabase_migrations.schema_migrations` history table.
+- **Empty-statements rows (Go parity):** a row whose `statements` array is empty
+  (NULL/`{}` — possible on older projects or manually-inserted rows) is written as
+  exactly `;\n`, because Go does `strings.Join(statements, ";\n") + ";\n"`. The port
+  reproduces these bytes verbatim rather than emitting an empty file; changing this
+  would be a deliberate divergence from the Go CLI.
+- **Path-traversal hardening (TS-only):** before writing, each row's `version`/`name`
+  is validated (`version` is all digits; `name` has no `/`, `\`, or `..` segment).
+  A tampered/hostile remote could otherwise supply separators to escape the
+  migrations directory (CWE-22). Go has no such check; the guard is parity-neutral
+  for legitimate rows (real versions are digits and names are sanitized file stems)
+  and fails with `failed to write migration: invalid version/name in history table`.

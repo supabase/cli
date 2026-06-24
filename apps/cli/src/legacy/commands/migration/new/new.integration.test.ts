@@ -132,4 +132,25 @@ describe("legacy migration new", () => {
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+
+  it.live("rejects a name that escapes the migrations directory and writes nothing", () => {
+    const { layer, telemetry } = setup(tmp.current, { isTTY: false, piped: "DROP DATABASE;\n" });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationNew({
+        migrationName: "../../../escapes",
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure)) {
+          expect(failure.value).toBeInstanceOf(LegacyMigrationNewWriteError);
+        }
+      }
+      // The guard fires before any directory/file is touched: nothing is created
+      // under the workdir (not the migrations dir, not the escaped target).
+      expect(existsSync(join(tmp.current, "supabase"))).toBe(false);
+      expect(telemetry.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
 });

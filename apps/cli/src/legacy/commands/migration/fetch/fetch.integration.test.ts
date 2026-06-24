@@ -134,6 +134,22 @@ describe("legacy migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("writes a lone separator for a row with no statements (Go parity)", () => {
+    // A `schema_migrations` row can legally have a NULL/empty `statements` array
+    // (older projects, manually-inserted rows). Go does `strings.Join(stmts, ";\n")
+    // + ";\n"`, so an empty array yields exactly ";\n" — a file with a stray
+    // semicolon, not an empty file. The strict-1:1 port keeps these bytes; lock it
+    // so a future "emit an empty file instead" refactor is a conscious divergence.
+    const { layer } = setup(tmp.current, {
+      rows: [{ version: "20240101000000", name: "empty", statements: [] }],
+    });
+    return Effect.gen(function* () {
+      yield* legacyMigrationFetch(flags());
+      const dir = migrationsDir(tmp.current);
+      expect(readFileSync(join(dir, "20240101000000_empty.sql"), "utf8")).toBe(";\n");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("prompts before overwriting a non-empty directory and proceeds on yes", () => {
     mkdirSync(migrationsDir(tmp.current), { recursive: true });
     writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
