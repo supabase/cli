@@ -26,7 +26,7 @@ catalog:
   "@vitest/coverage-istanbul": "^4.1.8"
   "effect": "4.0.0-beta.83"
   "knip": "^6.15.0"
-  "nx": "^22.7.5"
+  "nx": "^23.0.0"
   "oxfmt": "^0.54.0"
   "oxlint": "^1.68.0"
   "oxlint-tsgolint": "^0.23.0"
