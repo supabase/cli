@@ -427,3 +427,34 @@ func TestLoadSchemasSkipsEmptySchemaPathGlobs(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, []string{filepath.ToSlash(matched)}, schemas)
 }
+
+func TestLoadSchemasErrorsOnMissingLiteralSchemaPath(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	utils.Config.Db.Migrations.SchemaPaths = []string{
+		filepath.Join(utils.SupabaseDirPath, "schemas", "tables", "players.sql"),
+	}
+	t.Cleanup(func() {
+		utils.Config.Db.Migrations.SchemaPaths = nil
+	})
+
+	schemas, err := loadDeclaredSchemas(fsys)
+
+	assert.ErrorContains(t, err, "no files matched pattern")
+	assert.Empty(t, schemas)
+}
+
+func TestLoadSchemasErrorsWhenAllSchemaPathGlobsAreEmpty(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	utils.Config.Db.Migrations.SchemaPaths = []string{
+		filepath.Join(utils.SupabaseDirPath, "schemas", "tables", "*.sql"),
+		filepath.Join(utils.SupabaseDirPath, "schemas", "views", "*.sql"),
+	}
+	t.Cleanup(func() {
+		utils.Config.Db.Migrations.SchemaPaths = nil
+	})
+
+	schemas, err := loadDeclaredSchemas(fsys)
+
+	assert.ErrorContains(t, err, "no files matched pattern")
+	assert.Empty(t, schemas)
+}

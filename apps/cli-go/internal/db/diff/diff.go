@@ -97,11 +97,17 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 
 func loadSchemaPaths(fsys fs.FS, schemas []string) ([]string, error) {
 	var declared []string
+	var skipped []string
 	set := make(map[string]struct{})
 	for _, pattern := range schemas {
 		matches, err := fs.Glob(fsys, filepath.ToSlash(pattern))
 		if err != nil {
 			return nil, errors.Errorf("failed to glob files: %w", err)
+		} else if len(matches) == 0 && !hasWildcardStar(pattern) {
+			return nil, errors.Errorf("no files matched pattern: %s", pattern)
+		} else if len(matches) == 0 {
+			skipped = append(skipped, pattern)
+			continue
 		}
 		sort.Strings(matches)
 		for _, item := range matches {
@@ -113,7 +119,18 @@ func loadSchemaPaths(fsys fs.FS, schemas []string) ([]string, error) {
 			declared = append(declared, fp)
 		}
 	}
+	if len(declared) == 0 && len(skipped) > 0 {
+		var errs []error
+		for _, pattern := range skipped {
+			errs = append(errs, errors.Errorf("no files matched pattern: %s", pattern))
+		}
+		return nil, errors.Join(errs...)
+	}
 	return declared, nil
+}
+
+func hasWildcardStar(pattern string) bool {
+	return strings.Contains(pattern, "*")
 }
 
 // https://github.com/djrobstep/migra/blob/master/migra/statements.py#L6
