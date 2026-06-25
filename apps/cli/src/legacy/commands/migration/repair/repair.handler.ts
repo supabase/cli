@@ -150,6 +150,33 @@ const runRepair = Effect.fnUntraced(function* (
 
   const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
   const repairAll = input.versions.length === 0;
+  const connType = target.connType ?? "linked"; // repair defaults to `--linked` (Go: `Bool("linked", true)`).
+
+  // Resolve the DB config (and, for the linked default, the project ref) BEFORE any
+  // prompt — mirroring Go's root `PersistentPreRunE` (`apps/cli-go/cmd/root.go:118`),
+  // which parses the DB config and loads the project ref before `repair.Run` asks
+  // anything. An unlinked / invalid-config run then surfaces that error immediately
+  // instead of prompting and returning `context canceled` on decline.
+  const cfg = yield* resolver.resolve({
+    dbUrl: input.dbUrl,
+    connType,
+    dnsResolver,
+    password: input.password,
+  });
+
+  // Linked repair caches the project ref on success (Go's `PersistentPostRun`). The ref
+  // is loaded now (pre-run), but the cache is attached to the repair body below, so a
+  // declined prompt returns before it ever runs — matching Go (PostRun is skipped on a
+  // non-nil RunE error).
+  const cacheLinkedRef =
+    connType === "linked"
+      ? yield* Effect.gen(function* () {
+          const projectRef = yield* LegacyProjectRefResolver;
+          const linkedProjectCache = yield* LegacyLinkedProjectCache;
+          const ref = yield* projectRef.loadProjectRef(Option.none());
+          return linkedProjectCache.cache(ref);
+        })
+      : undefined;
 
   // repair-all confirmation (default NO). Then load every local version.
   let versions = input.versions;
@@ -165,14 +192,6 @@ const runRepair = Effect.fnUntraced(function* (
   }
 
   const repairBody = Effect.gen(function* () {
-    // repair defaults to `--linked` (Go: `Bool("linked", true)`).
-    const cfg = yield* resolver.resolve({
-      dbUrl: input.dbUrl,
-      connType: target.connType ?? "linked",
-      dnsResolver,
-      password: input.password,
-    });
-
     yield* Effect.scoped(
       Effect.gen(function* () {
         const session = yield* connection.connect(cfg.conn, {
@@ -207,13 +226,9 @@ const runRepair = Effect.fnUntraced(function* (
     }
   });
 
-  if ((target.connType ?? "linked") === "linked") {
-    const projectRef = yield* LegacyProjectRefResolver;
-    const linkedProjectCache = yield* LegacyLinkedProjectCache;
-    const ref = yield* projectRef.loadProjectRef(Option.none());
-    return yield* repairBody.pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
-  }
-  return yield* repairBody;
+  return yield* cacheLinkedRef === undefined
+    ? repairBody
+    : repairBody.pipe(Effect.ensuring(cacheLinkedRef));
 });
 
 export const legacyMigrationRepair = Effect.fn("legacy.migration.repair")(function* (

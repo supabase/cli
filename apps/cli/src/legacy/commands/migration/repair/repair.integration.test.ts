@@ -15,6 +15,7 @@ import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
+import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
@@ -32,6 +33,7 @@ interface SetupOpts {
   readonly confirm?: boolean;
   readonly args?: ReadonlyArray<string>;
   readonly failSql?: string;
+  readonly failResolve?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -47,17 +49,23 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   const resolver = Layer.succeed(LegacyDbConfigResolver, {
     resolve: (_flags: LegacyDbConfigFlags) =>
-      Effect.succeed({
-        conn: {
-          host: "127.0.0.1",
-          port: 54322,
-          user: "postgres",
-          password: "x",
-          database: "postgres",
-        },
-        isLocal: false,
-        ref: Option.some(LEGACY_VALID_REF),
-      } satisfies LegacyResolvedDbConfig),
+      opts.failResolve === true
+        ? Effect.fail(
+            new LegacyProjectNotLinkedError({
+              message: "Cannot find project ref. Have you run link?",
+            }),
+          )
+        : Effect.succeed({
+            conn: {
+              host: "127.0.0.1",
+              port: 54322,
+              user: "postgres",
+              password: "x",
+              database: "postgres",
+            },
+            isLocal: false,
+            ref: Option.some(LEGACY_VALID_REF),
+          } satisfies LegacyResolvedDbConfig),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
@@ -248,6 +256,23 @@ describe("legacy migration repair", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
       }
+      expect(out.promptConfirmCalls.length).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("surfaces a DB-config error before prompting (repair-all, unlinked)", () => {
+    const { layer, out } = setup(tmp.current, { failResolve: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationRepair(input({ versions: [], status: "applied" })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyProjectNotLinkedError");
+      }
+      // Go resolves the DB config in PersistentPreRunE before repair.Run prompts, so the
+      // config error surfaces immediately and the repair-all confirmation is never shown.
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
