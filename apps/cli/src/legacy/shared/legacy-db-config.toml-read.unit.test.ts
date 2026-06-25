@@ -63,6 +63,59 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  // Go's test vector (`apps/cli-go/pkg/config/secret_test.go`): this ciphertext
+  // decrypts to "value" under the keypair below.
+  const VAULT_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+  const VAULT_ENCRYPTED =
+    "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+
+  it.effect("decrypts an encrypted: [db.vault] secret when DOTENV_PRIVATE_KEY is set", () => {
+    const previous = process.env["DOTENV_PRIVATE_KEY"];
+    process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+    const dir = withConfig(["[db.vault]", `my_secret = "${VAULT_ENCRYPTED}"`, ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.vault).toEqual([{ name: "my_secret", value: "value", resolved: true }]);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
+          else process.env["DOTENV_PRIVATE_KEY"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("fails the load for an encrypted: [db.vault] secret with no private key", () => {
+    // Go aborts the whole command (`failed to parse config: missing private key`)
+    // rather than silently skipping the secret (`secret.go`, `config.go:661-667`).
+    const previous = process.env["DOTENV_PRIVATE_KEY"];
+    delete process.env["DOTENV_PRIVATE_KEY"];
+    const dir = withConfig(["[db.vault]", `my_secret = "${VAULT_ENCRYPTED}"`, ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "failed to parse config: missing private key",
+            );
+          }
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous !== undefined) process.env["DOTENV_PRIVATE_KEY"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("reads [edge_runtime] deno_version = 1 (selects the deno1 image)", () => {
     const dir = withConfig(["[edge_runtime]", "deno_version = 1", ""].join("\n"));
     return read(dir).pipe(

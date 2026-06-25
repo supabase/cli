@@ -2,6 +2,11 @@ import { Effect, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
 import { LegacyDbConfigLoadError } from "./legacy-db-config.errors.ts";
 import { parseDotEnv } from "./legacy-dotenv.ts";
+import {
+  legacyCollectDotenvPrivateKeys,
+  legacyDecryptSecret,
+  legacyIsEncryptedSecret,
+} from "./legacy-vault-decrypt.ts";
 
 /** Resolves a config `env(VAR)` reference: shell env first, then project `.env`. */
 type EnvLookup = (name: string) => string | undefined;
@@ -82,9 +87,12 @@ interface LegacyDbSeedTomlConfig {
 }
 
 /**
- * A `[db.vault]` secret. `resolved` mirrors Go's `len(SHA256) > 0` gate: a value
- * that env-expanded to a non-empty, non-`env(...)` string. The HMAC itself is not
- * reproduced — `UpsertVaultSecrets` only uses it as a resolved/unresolved flag.
+ * A `[db.vault]` secret. `value` is the resolved plaintext: env-expanded and, for
+ * a dotenvx `encrypted:` ciphertext, decrypted. `resolved` mirrors Go's
+ * `len(SHA256) > 0` gate (true once the value resolved to a non-empty, non-`env(...)`
+ * string — including a successful decrypt). The HMAC itself is not reproduced;
+ * `UpsertVaultSecrets` only uses it as a resolved/unresolved flag, and `resolved`
+ * stands in for it.
  */
 interface LegacyDbVaultSecretToml {
   readonly name: string;
@@ -951,24 +959,38 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     return ["supabase", ...segments].join("/");
   });
 
-  // `[db.vault]` secrets: env-expand each value; `resolved` mirrors Go's
-  // `len(SHA256) > 0` gate (non-empty AND not an unexpanded `env(...)` ref).
-  // Dotenvx `encrypted:` ciphertext is NOT decrypted here, so such a value is
-  // treated as unresolved (skipped) rather than uploading the ciphertext blob —
-  // matching Go's outcome when no `DOTENV_PRIVATE_KEY` is available (decryption
-  // fails → empty SHA256 → skipped).
-  const vault =
-    vaultRaw === undefined
-      ? []
-      : Object.keys(vaultRaw)
-          .sort()
-          .map((name) => {
-            const raw = vaultRaw[name];
-            const value = typeof raw === "string" ? legacyExpandEnv(raw, lookup) : "";
-            const resolved =
-              value.length > 0 && !ENV_PATTERN.test(value) && !value.startsWith("encrypted:");
-            return { name, value, resolved };
-          });
+  // `[db.vault]` secrets: env-expand each value, then decrypt dotenvx `encrypted:`
+  // ciphertext. `resolved` mirrors Go's `len(SHA256) > 0` gate (Go sets SHA256 only
+  // after a successful decrypt-or-passthrough; `UpsertVaultSecrets` upserts only
+  // resolved secrets). Go's `DecryptSecretHookFunc` runs inside `config.Load`, so an
+  // `encrypted:` value that cannot be decrypted aborts the command with
+  // `failed to parse config: <error>` (`secret.go:30-73`, `config.go:661-667`) — it
+  // is never silently skipped, which an earlier port did and which diverged from Go.
+  const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...process.env });
+  const vault: Array<LegacyDbVaultSecretToml> = [];
+  if (vaultRaw !== undefined) {
+    for (const name of Object.keys(vaultRaw).sort()) {
+      const raw = vaultRaw[name];
+      const value = typeof raw === "string" ? legacyExpandEnv(raw, lookup) : "";
+      // Empty or an unexpanded `env(...)` reference → unresolved (Go returns these
+      // verbatim from the hook without hashing, so SHA256 stays empty).
+      if (value.length === 0 || ENV_PATTERN.test(value)) {
+        vault.push({ name, value, resolved: false });
+        continue;
+      }
+      if (legacyIsEncryptedSecret(value)) {
+        const decrypted = legacyDecryptSecret(value, dotenvPrivateKeys);
+        if (!decrypted.ok) {
+          return yield* Effect.fail(
+            new LegacyDbConfigLoadError({ message: `failed to parse config: ${decrypted.error}` }),
+          );
+        }
+        vault.push({ name, value: decrypted.value, resolved: true });
+        continue;
+      }
+      vault.push({ name, value, resolved: true });
+    }
+  }
 
   // `[api] auto_expose_new_tables` is a tri-state `*bool` (`pkg/config/api.go:25`):
   // present → Some(bool), absent → None (never false). Go applies the

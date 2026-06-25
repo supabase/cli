@@ -21,9 +21,10 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                        | Required?                                               |
-| ----------------------- | ------------------------------ | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` mode | no (falls back to keyring → `~/.supabase/access-token`) |
+| Variable                   | Purpose                                                                            | Required?                                               |
+| -------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`    | auth token for `--linked` mode                                                     | no (falls back to keyring → `~/.supabase/access-token`) |
+| `DOTENV_PRIVATE_KEY[_*]`   | dotenvx private key(s) to decrypt `encrypted:` `[db.vault]` secrets before upsert  | no (required only if a `[db.vault]` value is encrypted) |
 
 ## Exit Codes
 
@@ -64,4 +65,6 @@ Same structured result delivered as an NDJSON `result` event.
 - `--local` (default true), `--linked`, and `--db-url` are mutually exclusive.
 - Takes no positional arguments.
 - Skips Go's best-effort `pgcache.TryCacheMigrationsCatalog` (documented divergence).
-- Dotenvx-encrypted (`encrypted:`) `[db.vault]` values are not decrypted (rare).
+- Dotenvx-encrypted (`encrypted:`) `[db.vault]` values are decrypted during config
+  load using `DOTENV_PRIVATE_KEY[_*]`; an `encrypted:` value with no working key
+  aborts the command with `failed to parse config: …`, matching Go.
