@@ -29,7 +29,13 @@ interface LegacyPendingSeed {
   readonly dirty: boolean;
 }
 
-const hasMeta = (pattern: string): boolean => /[*?[]/u.test(pattern);
+// Go's `io/fs.hasMeta` magic-character set is `*`, `?`, `[`, and `\` (escape) —
+// `glob.go` `hasMeta`. `\` must count so a pattern whose only meta syntax is a
+// backslash escape (e.g. `foo\.sql`, `seed\*.sql`) is globbed via `legacyPathMatch`
+// (which handles the escape) instead of being treated as a literal filename and
+// missing the real file. Go applies `filepath.ToSlash` before globbing, so a `\`
+// here is always a glob escape, never a path separator.
+const hasMeta = (pattern: string): boolean => /[*?[\\]/u.test(pattern);
 
 // Go globs/reads seed paths through an OS-root-rooted `afero.NewOsFs`, where the
 // CLI's "workdir" is just `os.Chdir(workdir)` (`internal/utils/misc.go`) — which
