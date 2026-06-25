@@ -62,13 +62,21 @@ describe("legacyApplyMigrationFile", () => {
             const execs = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
             expect(execs).toContain("CREATE SCHEMA IF NOT EXISTS supabase_migrations");
             expect(execs).toContain("RESET ALL");
-            // Statements run between BEGIN and COMMIT.
-            const begin = execs.indexOf("BEGIN");
-            const commit = execs.indexOf("COMMIT");
-            expect(begin).toBeGreaterThanOrEqual(0);
-            expect(commit).toBeGreaterThan(begin);
-            expect(execs.indexOf("ALTER TABLE a ADD COLUMN b int")).toBeGreaterThan(begin);
-            expect(execs.indexOf("CREATE INDEX i ON a(b)")).toBeLessThan(commit);
+            // The history-table setup scopes lock_timeout to its own transaction
+            // (SET LOCAL), so it reverts on COMMIT and never leaks into the migration's
+            // statements — matching Go's implicit ExecBatch transaction.
+            const firstBegin = execs.indexOf("BEGIN");
+            const setupCommit = execs.indexOf("COMMIT");
+            const setLocal = execs.indexOf("SET LOCAL lock_timeout = '4s'");
+            expect(firstBegin).toBe(0);
+            expect(setLocal).toBeGreaterThan(firstBegin);
+            expect(setLocal).toBeLessThan(setupCommit);
+            // The migration's own statements run in a later, separate transaction.
+            const lastBegin = execs.lastIndexOf("BEGIN");
+            const lastCommit = execs.lastIndexOf("COMMIT");
+            expect(lastBegin).toBeGreaterThan(setupCommit);
+            expect(execs.indexOf("ALTER TABLE a ADD COLUMN b int")).toBeGreaterThan(lastBegin);
+            expect(execs.indexOf("CREATE INDEX i ON a(b)")).toBeLessThan(lastCommit);
             // History insert carries version, name, and the statements array.
             const insert = calls.find((c) => c.kind === "query");
             expect(insert?.sql).toContain("supabase_migrations.schema_migrations");

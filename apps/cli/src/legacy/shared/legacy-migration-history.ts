@@ -21,7 +21,13 @@ import { legacySplitAndTrim } from "./legacy-sql-split.ts";
  */
 
 // Migration-history DDL/DML, verbatim from Go's `pkg/migration/history.go`.
-const SET_LOCK_TIMEOUT = "SET lock_timeout = '4s'";
+// `SET LOCAL` (not bare `SET`) scopes the timeout to the wrapping transaction so it
+// reverts on `COMMIT` — reproducing Go, where `CreateMigrationTable`/`CreateSeedTable`
+// run through `pgconn.ExecBatch` (an implicit transaction whose `SET` reverts when the
+// batch ends; `history.go:32-33`, `file.go:87`). A bare session-level `SET` would leak
+// the 4s timeout into a caller's real work (e.g. `migration repair`'s TRUNCATE/UPSERT
+// or seed SQL), which Go never does.
+const SET_LOCAL_LOCK_TIMEOUT = "SET LOCAL lock_timeout = '4s'";
 const CREATE_VERSION_SCHEMA = "CREATE SCHEMA IF NOT EXISTS supabase_migrations";
 const CREATE_VERSION_TABLE =
   "CREATE TABLE IF NOT EXISTS supabase_migrations.schema_migrations (version text NOT NULL PRIMARY KEY)";
@@ -63,23 +69,36 @@ const SELECT_SEED_TABLE = "SELECT path, hash FROM supabase_migrations.seed_files
 /** `pkg/migration/file.go` — `<digits>_<name>.sql`. */
 export const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/u;
 
-/** Creates the migration-history schema/table (idempotent). Go's `CreateMigrationTable`. */
+/**
+ * Creates the migration-history schema/table (idempotent). Go's `CreateMigrationTable`.
+ * The setup runs in one transaction so `SET LOCAL lock_timeout` is scoped to it and
+ * reverts on `COMMIT`, matching Go's implicit `pgconn.ExecBatch` transaction; the GUC
+ * never leaks into the caller's subsequent work. A failed statement rolls back.
+ */
 export const legacyCreateMigrationTable = (session: LegacyDbSession) =>
   Effect.gen(function* () {
-    yield* session.exec(SET_LOCK_TIMEOUT);
+    yield* session.exec("BEGIN");
+    yield* session.exec(SET_LOCAL_LOCK_TIMEOUT);
     yield* session.exec(CREATE_VERSION_SCHEMA);
     yield* session.exec(CREATE_VERSION_TABLE);
     yield* session.exec(ADD_STATEMENTS_COLUMN);
     yield* session.exec(ADD_NAME_COLUMN);
-  });
+    yield* session.exec("COMMIT");
+  }).pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
 
-/** Creates the `seed_files` schema/table (idempotent). Go's `CreateSeedTable`. */
+/**
+ * Creates the `seed_files` schema/table (idempotent). Go's `CreateSeedTable`. Same
+ * transaction-scoped `SET LOCAL lock_timeout` as `legacyCreateMigrationTable` so the
+ * timeout reverts on `COMMIT` and never leaks into the seed SQL the caller runs next.
+ */
 export const legacyCreateSeedTable = (session: LegacyDbSession) =>
   Effect.gen(function* () {
-    yield* session.exec(SET_LOCK_TIMEOUT);
+    yield* session.exec("BEGIN");
+    yield* session.exec(SET_LOCAL_LOCK_TIMEOUT);
     yield* session.exec(CREATE_VERSION_SCHEMA);
     yield* session.exec(CREATE_SEED_TABLE);
-  });
+    yield* session.exec("COMMIT");
+  }).pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
 
 /** A recorded seed file's path + content hash. Go's `migration.SeedFile`. */
 export interface LegacySeedRow {
