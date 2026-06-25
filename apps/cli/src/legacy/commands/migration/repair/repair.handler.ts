@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { LegacyDnsResolverFlag, legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
@@ -116,7 +116,7 @@ const runRepair = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
-  const yes = yield* LegacyYesFlag;
+  const yes = yield* legacyResolveYes; // --yes OR SUPABASE_YES (Go viper AutomaticEnv, root.go:318-334).
 
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(

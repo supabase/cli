@@ -317,6 +317,28 @@ describe("legacy migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("auto-confirms repair-all via SUPABASE_YES (no --yes flag)", () => {
+    // Go binds --yes to viper AutomaticEnv, so SUPABASE_YES=1 auto-confirms without --yes
+    // (root.go:318-334 → console.go PromptYesNo viper.GetBool("YES")).
+    const previous = process.env["SUPABASE_YES"];
+    process.env["SUPABASE_YES"] = "1";
+    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+    const { layer, execs, queries } = setup(tmp.current);
+    return Effect.gen(function* () {
+      yield* legacyMigrationRepair(input({ versions: [], status: "applied" }));
+      expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
+      expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_YES"];
+          else process.env["SUPABASE_YES"] = previous;
+        }),
+      ),
+    );
+  });
+
   it.live("surfaces a DB-config error before prompting (repair-all, unlinked)", () => {
     const { layer, out } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {
