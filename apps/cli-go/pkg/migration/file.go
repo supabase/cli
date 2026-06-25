@@ -5,8 +5,8 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
+	stderrors "errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -33,7 +33,12 @@ var (
 	typeNamePattern    = regexp.MustCompile(`type "([^"]+)" does not exist`)
 )
 
+const defaultSeedFileSizeLimit = 10 << 30
+
 func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
+	if isCompressedSQL(path) {
+		return nil, errors.Errorf("compressed SQL files are only supported for seed files: %s", path)
+	}
 	lines, err := parseFile(path, fsys)
 	if err != nil {
 		return nil, err
@@ -50,17 +55,22 @@ func NewMigrationFromFile(path string, fsys fs.FS) (*MigrationFile, error) {
 }
 
 func parseFile(path string, fsys fs.FS) ([]string, error) {
-	sql, scannerBufferSize, err := openSQL(path, fsys, "migration file")
+	sql, err := fsys.Open(path)
+	if err != nil {
+		return nil, errors.Errorf("failed to open migration file: %w", err)
+	}
+	defer sql.Close()
+	setScannerCapacity(fileSize(sql))
+	return parser.SplitAndTrim(sql)
+}
+
+func parseSeedFile(path string, fsys fs.FS) ([]string, error) {
+	sql, scannerBufferSize, err := openSeedSQL(path, fsys)
 	if err != nil {
 		return nil, err
 	}
 	defer sql.Close()
-	// Unless explicitly specified, use file length as max buffer size.
-	if !viper.IsSet("SCANNER_BUFFER_SIZE") {
-		if scannerBufferSize > parser.MaxScannerCapacity {
-			parser.MaxScannerCapacity = scannerBufferSize
-		}
-	}
+	setScannerCapacity(scannerBufferSize)
 	return parser.SplitAndTrim(sql)
 }
 
@@ -182,11 +192,13 @@ type SeedFile struct {
 }
 
 func NewSeedFile(path string, fsys fs.FS) (*SeedFile, error) {
-	sql, _, err := openSQL(path, fsys, "seed file")
+	sql, _, err := openSeedSQL(path, fsys)
 	if err != nil {
 		return nil, err
 	}
 	defer sql.Close()
+	// Seed history hashes the decompressed SQL so gzip metadata changes and
+	// equivalent recompressions do not mark the seed dirty.
 	hash := sha256.New()
 	if _, err := io.Copy(hash, sql); err != nil {
 		return nil, errors.Errorf("failed to hash file: %w", err)
@@ -195,61 +207,49 @@ func NewSeedFile(path string, fsys fs.FS) (*SeedFile, error) {
 	return &SeedFile{Path: path, Hash: digest}, nil
 }
 
-func openSQL(path string, fsys fs.FS, kind string) (io.ReadCloser, int, error) {
+func openSeedSQL(path string, fsys fs.FS) (io.ReadCloser, int, error) {
 	sql, err := fsys.Open(path)
 	if err != nil {
-		return nil, 0, errors.Errorf("failed to open %s: %w", kind, err)
+		return nil, 0, errors.Errorf("failed to open seed file: %w", err)
 	}
-	scannerBufferSize := maxScannerBufferSize(path, sql)
 	if !isCompressedSQL(path) {
-		return sql, scannerBufferSize, nil
+		return sql, fileSize(sql), nil
 	}
 	gz, err := gzip.NewReader(sql)
 	if err != nil {
 		_ = sql.Close()
-		return nil, 0, errors.Errorf("failed to decompress %s: %w", kind, err)
+		return nil, 0, errors.Errorf("failed to decompress seed file: %w", err)
 	}
-	return &compressedSQLReader{Reader: gz, gz: gz, file: sql}, scannerBufferSize, nil
+	return &compressedSQLReader{
+		gz:       gz,
+		file:     sql,
+		maxBytes: seedFileSizeLimit(),
+	}, 0, nil
 }
 
-func maxScannerBufferSize(path string, sql fs.File) int {
+func setScannerCapacity(scannerBufferSize int) {
+	// Unless explicitly specified, use file length as max buffer size.
+	if !viper.IsSet("SCANNER_BUFFER_SIZE") {
+		if scannerBufferSize > parser.MaxScannerCapacity {
+			parser.MaxScannerCapacity = scannerBufferSize
+		}
+	}
+}
+
+func fileSize(sql fs.File) int {
 	info, err := sql.Stat()
 	if err != nil {
 		return 0
 	}
-	size := info.Size()
-	if isCompressedSQL(path) {
-		if uncompressedSize, ok := gzipUncompressedSize(sql); ok && uncompressedSize > size {
-			size = uncompressedSize
-		}
-	}
-	return safeInt(size)
+	return safeInt(info.Size())
 }
 
-func gzipUncompressedSize(sql fs.File) (int64, bool) {
-	seeker, ok := sql.(io.Seeker)
-	if !ok {
-		return 0, false
+func seedFileSizeLimit() int64 {
+	limit := int64(viper.GetSizeInBytes("SEED_FILE_SIZE_LIMIT"))
+	if limit <= 0 {
+		return defaultSeedFileSizeLimit
 	}
-	pos, err := seeker.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return 0, false
-	}
-	defer func() {
-		_, _ = seeker.Seek(pos, io.SeekStart)
-	}()
-	end, err := seeker.Seek(0, io.SeekEnd)
-	if err != nil || end < 4 {
-		return 0, false
-	}
-	if _, err := seeker.Seek(-4, io.SeekEnd); err != nil {
-		return 0, false
-	}
-	var footer [4]byte
-	if _, err := io.ReadFull(sql, footer[:]); err != nil {
-		return 0, false
-	}
-	return int64(binary.LittleEndian.Uint32(footer[:])), true
+	return limit
 }
 
 func safeInt(size int64) int {
@@ -268,25 +268,42 @@ func isCompressedSQL(path string) bool {
 }
 
 type compressedSQLReader struct {
-	io.Reader
-	gz   *gzip.Reader
-	file fs.File
+	gz        *gzip.Reader
+	file      fs.File
+	maxBytes  int64
+	bytesRead int64
+}
+
+func (r *compressedSQLReader) Read(p []byte) (int, error) {
+	if r.maxBytes > 0 {
+		remaining := r.maxBytes - r.bytesRead
+		if remaining <= 0 {
+			var probe [1]byte
+			n, err := r.gz.Read(probe[:])
+			if n > 0 {
+				return 0, errors.Errorf("decompressed seed file exceeds %d bytes", r.maxBytes)
+			}
+			return 0, err
+		}
+		if int64(len(p)) > remaining {
+			p = p[:remaining]
+		}
+	}
+	n, err := r.gz.Read(p)
+	r.bytesRead += int64(n)
+	if n > 0 && err == io.EOF {
+		return n, nil
+	}
+	return n, err
 }
 
 func (r *compressedSQLReader) Close() error {
-	var firstErr error
-	if err := r.gz.Close(); err != nil {
-		firstErr = err
-	}
-	if err := r.file.Close(); err != nil && firstErr == nil {
-		firstErr = err
-	}
-	return firstErr
+	return stderrors.Join(r.gz.Close(), r.file.Close())
 }
 
 func (m *SeedFile) ExecBatchWithCache(ctx context.Context, conn *pgx.Conn, fsys fs.FS) error {
 	// Parse each file individually to reduce memory usage
-	lines, err := parseFile(m.Path, fsys)
+	lines, err := parseSeedFile(m.Path, fsys)
 	if err != nil {
 		return err
 	}

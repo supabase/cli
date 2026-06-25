@@ -30,6 +30,14 @@ func TestMigrationFile(t *testing.T) {
 		assert.Equal(t, "20220727064247", migration.Version)
 	})
 
+	t.Run("new from gzipped file returns clear error", func(t *testing.T) {
+		// Run test
+		migration, err := NewMigrationFromFile("20220727064247_create_table.sql.gz", fs.MapFS{})
+		// Check error
+		assert.ErrorContains(t, err, "compressed SQL files are only supported for seed files")
+		assert.Nil(t, migration)
+	})
+
 	t.Run("new from reader errors on max token", func(t *testing.T) {
 		viper.Reset()
 		sql := "\tBEGIN; " + strings.Repeat("a", parser.MaxScannerCapacity)

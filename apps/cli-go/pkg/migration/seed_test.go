@@ -4,13 +4,19 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
+	"io"
+	stdfs "io/fs"
 	"os"
 	"testing"
 	fs "testing/fstest"
+	"time"
 
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v4"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/pkg/pgtest"
@@ -58,6 +64,26 @@ func TestPendingSeeds(t *testing.T) {
 		assert.False(t, seeds[0].Dirty)
 	})
 
+	t.Run("finds dirty gzipped seeds", func(t *testing.T) {
+		pending := []string{"testdata/seed.sql.gz"}
+		fsys := fs.MapFS{
+			pending[0]: &fs.MapFile{Data: gzipData(t, testSeed)},
+		}
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(SELECT_SEED_TABLE).
+			Reply("SELECT 1", SeedFile{Path: pending[0], Hash: "outdated"})
+		// Run test
+		seeds, err := GetPendingSeeds(context.Background(), pending, conn.MockClient(t), fsys)
+		// Check error
+		assert.NoError(t, err)
+		require.Len(t, seeds, 1)
+		assert.Equal(t, seeds[0].Path, pending[0])
+		assert.Equal(t, seeds[0].Hash, "61868484fc0ddca2a2022217629a9fd9a4cf1ca479432046290797d6d40ffcc3")
+		assert.True(t, seeds[0].Dirty)
+	})
+
 	t.Run("throws error on invalid gzipped seed", func(t *testing.T) {
 		pending := []string{"testdata/seed.sql.gz"}
 		fsys := fs.MapFS{
@@ -72,6 +98,64 @@ func TestPendingSeeds(t *testing.T) {
 		_, err := GetPendingSeeds(context.Background(), pending, conn.MockClient(t), fsys)
 		// Check error
 		assert.ErrorContains(t, err, "failed to decompress seed file")
+	})
+
+	t.Run("throws error on truncated gzipped seed", func(t *testing.T) {
+		pending := []string{"testdata/seed.sql.gz"}
+		compressed := gzipData(t, testSeed)
+		fsys := fs.MapFS{
+			pending[0]: &fs.MapFile{Data: compressed[:len(compressed)/2]},
+		}
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(SELECT_SEED_TABLE).
+			Reply("SELECT 0")
+		// Run test
+		_, err := GetPendingSeeds(context.Background(), pending, conn.MockClient(t), fsys)
+		// Check error
+		assert.ErrorContains(t, err, "failed to hash file")
+		assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+	})
+
+	t.Run("throws error when gzipped seed exceeds size limit", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		viper.Set("SEED_FILE_SIZE_LIMIT", 8)
+		pending := []string{"testdata/seed.sql.gz"}
+		fsys := fs.MapFS{
+			pending[0]: &fs.MapFile{Data: gzipData(t, testSeed)},
+		}
+		// Setup mock postgres
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(SELECT_SEED_TABLE).
+			Reply("SELECT 0")
+		// Run test
+		_, err := GetPendingSeeds(context.Background(), pending, conn.MockClient(t), fsys)
+		// Check error
+		assert.ErrorContains(t, err, "decompressed seed file exceeds 8 bytes")
+	})
+
+	t.Run("hashes gzipped seed from non-seekable fs", func(t *testing.T) {
+		path := "testdata/seed.sql.gz"
+		seed, err := NewSeedFile(path, nonSeekFS{
+			path: gzipData(t, testSeed),
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, "61868484fc0ddca2a2022217629a9fd9a4cf1ca479432046290797d6d40ffcc3", seed.Hash)
+	})
+
+	t.Run("hashes multistream gzipped seed", func(t *testing.T) {
+		path := "testdata/seed.sql.gz"
+		first := "insert into countries(id) values (1);\n"
+		second := "insert into countries(id) values (2);\n"
+		seed, err := NewSeedFile(path, fs.MapFS{
+			path: &fs.MapFile{Data: append(gzipData(t, first), gzipData(t, second)...)},
+		})
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, hashSQL(first+second), seed.Hash)
 	})
 
 	t.Run("finds dirty seeds", func(t *testing.T) {
@@ -175,12 +259,12 @@ func TestSeedData(t *testing.T) {
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
 		mockSeedHistory(conn).
-			Query(testSeed).
-			Reply("INSERT 0 1").
-			Query(UPSERT_SEED_FILE, seed.Path, seed.Hash).
+			Query(testSeed + `;INSERT INTO supabase_migrations.seed_files(path, hash) VALUES( 'testdata/seed.sql.gz' ,  '61868484fc0ddca2a2022217629a9fd9a4cf1ca479432046290797d6d40ffcc3' ) ON CONFLICT (path) DO UPDATE SET hash = EXCLUDED.hash`).
 			Reply("INSERT 0 1")
 		// Run test
-		err := SeedData(context.Background(), []SeedFile{seed}, conn.MockClient(t), fsys)
+		err := SeedData(context.Background(), []SeedFile{seed}, conn.MockClient(t, func(cc *pgx.ConnConfig) {
+			cc.PreferSimpleProtocol = true
+		}), fsys)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -233,22 +317,6 @@ func TestSeedGlobals(t *testing.T) {
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: database "postgres" does not exist (SQLSTATE 3D000)`)
 	})
-
-	t.Run("seeds from gzipped file", func(t *testing.T) {
-		pending := []string{"testdata/1_globals.sql.gz"}
-		fsys := fs.MapFS{
-			pending[0]: &fs.MapFile{Data: gzipData(t, testGlobals)},
-		}
-		// Setup mock postgres
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(testGlobals).
-			Reply("CREATE ROLE")
-		// Run test
-		err := SeedGlobals(context.Background(), pending, conn.MockClient(t), fsys)
-		// Check error
-		assert.NoError(t, err)
-	})
 }
 
 func gzipData(t *testing.T, input string) []byte {
@@ -259,4 +327,70 @@ func gzipData(t *testing.T, input string) []byte {
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 	return compressed.Bytes()
+}
+
+func hashSQL(sql string) string {
+	hash := sha256.Sum256([]byte(sql))
+	return hex.EncodeToString(hash[:])
+}
+
+type nonSeekFS map[string][]byte
+
+func (f nonSeekFS) Open(name string) (stdfs.File, error) {
+	data, ok := f[name]
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	return &nonSeekFile{
+		reader: bytes.NewReader(data),
+		name:   name,
+		size:   int64(len(data)),
+	}, nil
+}
+
+type nonSeekFile struct {
+	reader *bytes.Reader
+	name   string
+	size   int64
+}
+
+func (f *nonSeekFile) Read(p []byte) (int, error) {
+	return f.reader.Read(p)
+}
+
+func (f *nonSeekFile) Close() error {
+	return nil
+}
+
+func (f *nonSeekFile) Stat() (stdfs.FileInfo, error) {
+	return fileInfo{name: f.name, size: f.size}, nil
+}
+
+type fileInfo struct {
+	name string
+	size int64
+}
+
+func (f fileInfo) Name() string {
+	return f.name
+}
+
+func (f fileInfo) Size() int64 {
+	return f.size
+}
+
+func (f fileInfo) Mode() stdfs.FileMode {
+	return 0
+}
+
+func (f fileInfo) ModTime() time.Time {
+	return time.Time{}
+}
+
+func (f fileInfo) IsDir() bool {
+	return false
+}
+
+func (f fileInfo) Sys() any {
+	return nil
 }
