@@ -183,6 +183,19 @@ func TestPrintStatus(t *testing.T) {
 		assert.Equal(t, "{\n  \"DB_URL\": \"postgresql://postgres:postgres@127.0.0.1:0/postgres\"\n}\n", stdout.String())
 	})
 
+	t.Run("omits excluded services from json object", func(t *testing.T) {
+		utils.Config.Studio.Enabled = true
+		utils.Config.Studio.Port = 54323
+		t.Cleanup(func() {
+			utils.Config.Studio.Enabled = false
+		})
+		// Run test
+		var stdout bytes.Buffer
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL", StudioURL: "STUDIO_URL"}, utils.OutputJson, &stdout, utils.StudioId))
+		// Check error
+		assert.Equal(t, "{\n  \"DB_URL\": \"postgresql://postgres:postgres@127.0.0.1:0/postgres\"\n}\n", stdout.String())
+	})
+
 	t.Run("outputs yaml properties", func(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer

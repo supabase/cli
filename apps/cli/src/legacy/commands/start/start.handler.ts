@@ -45,6 +45,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
   if (statusOutput !== undefined) {
     yield* proxy.execCapture(args, { stdin: "inherit" });
     const statusArgs = ["status", "--output", statusOutput];
+    for (const name of flags.exclude) statusArgs.push("--exclude", name);
     if (flags.ignoreHealthCheck) statusArgs.push("--ignore-health-check");
     if (output.format === "stream-json" && legacyOutput === undefined) {
       const statusJson = yield* proxy.execCapture(statusArgs, { env: helperStatusEnv });

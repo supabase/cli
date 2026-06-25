@@ -170,7 +170,16 @@ describe("legacy start", () => {
       ]);
       expect(s.execCalls).toEqual([
         {
-          args: ["status", "--output", "json", "--ignore-health-check"],
+          args: [
+            "status",
+            "--output",
+            "json",
+            "--exclude",
+            "analytics",
+            "--exclude",
+            "studio",
+            "--ignore-health-check",
+          ],
           env: helperStatusEnv,
         },
       ]);
