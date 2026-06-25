@@ -187,7 +187,17 @@ function applyRemoteOverride(
       typeof block["project_id"] === "string" &&
       legacyExpandEnv(block["project_id"], lookup) === ref
     ) {
-      return deepMergeDoc(doc, block);
+      const merged = deepMergeDoc(doc, block);
+      // Go's `mergeRemoteConfig` (`pkg/config/config.go:638-640`) forces
+      // `db.seed.enabled` to `false` whenever the matched remote block itself does
+      // NOT set it — independent of the base config — so `migration down --linked`
+      // against a remote that relied on the default of not seeding never applies
+      // local seed files. The check is on the block, not the merged result.
+      const blockSeed = asRecord(asRecord(block["db"])?.["seed"]);
+      if (blockSeed?.["enabled"] === undefined) {
+        return deepMergeDoc(merged, { db: { seed: { enabled: false } } });
+      }
+      return merged;
     }
   }
   return doc;
@@ -909,7 +919,12 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   const sqlPathPatterns = Array.isArray(rawSqlPaths)
     ? rawSqlPaths.filter((pattern): pattern is string => typeof pattern === "string")
     : ["seed.sql"];
-  const seedSqlPaths = sqlPathPatterns.map((pattern) => {
+  const seedSqlPaths = sqlPathPatterns.map((rawPattern) => {
+    // Go's `LoadEnvHook` (`pkg/config/decode_hooks.go`) expands `env(VAR)` on every
+    // string element of `db.seed.sql_paths` during unmarshal, BEFORE `resolve()`
+    // supabase-prefixes relative patterns (`config.go`). Expand first, then prefix —
+    // otherwise `["env(SEED_SQL)"]` would glob the literal `supabase/env(SEED_SQL)`.
+    const pattern = legacyExpandEnv(rawPattern, lookup);
     if (pattern.length === 0 || path.isAbsolute(pattern)) return pattern;
     // Mirror Go's `path.Join("supabase", pattern)` (forward-slash, "./"-cleaned)
     // so the glob — split on "/" — stays portable.

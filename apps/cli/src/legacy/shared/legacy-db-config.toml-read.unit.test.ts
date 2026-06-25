@@ -156,6 +156,54 @@ describe("legacyReadDbToml", () => {
       );
     });
 
+    it.effect("forces db.seed.enabled false when the matched remote block omits it", () => {
+      // Go's mergeRemoteConfig (config.go:638-640) forces db.seed.enabled=false when the
+      // matched remote block itself doesn't set it — even if the base config enables it.
+      const dir = withConfig(
+        [
+          'project_id = "base"',
+          "[db.seed]",
+          "enabled = true",
+          "[remotes.production]",
+          'project_id = "prodprodprodprodprod"',
+          "[remotes.production.db]",
+          "major_version = 17",
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, "prodprodprodprodprod").pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.seed.enabled).toBe(false);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    });
+
+    it.effect("keeps db.seed.enabled true when the matched remote block sets it explicitly", () => {
+      const dir = withConfig(
+        [
+          'project_id = "base"',
+          "[db.seed]",
+          "enabled = false",
+          "[remotes.production]",
+          'project_id = "prodprodprodprodprod"',
+          "[remotes.production.db.seed]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, "prodprodprodprodprod").pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.seed.enabled).toBe(true);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    });
+
     it.effect("rejects two remote blocks with the same project_id (any command)", () => {
       // Go's config.Load aborts on duplicate project_id regardless of ref (config.go:506).
       const dir = withConfig(
@@ -558,6 +606,23 @@ describe("legacyReadDbToml", () => {
           expect(v.password).toBe("from-env");
           delete process.env["LEGACY_DB_PW"];
           delete process.env["LEGACY_DB_PORT"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("expands env(VAR) in db.seed.sql_paths entries before supabase-prefixing", () => {
+    // Go's LoadEnvHook expands env(VAR) on every string element of db.seed.sql_paths
+    // during unmarshal, before resolve() prefixes relative patterns — so the glob is
+    // the expanded value, not the literal `supabase/env(...)`.
+    process.env["LEGACY_SEED_SQL"] = "custom/data.sql";
+    const dir = withConfig(["[db.seed]", 'sql_paths = ["env(LEGACY_SEED_SQL)"]', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.sqlPaths).toEqual(["supabase/custom/data.sql"]);
+          delete process.env["LEGACY_SEED_SQL"];
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
