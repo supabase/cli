@@ -11,7 +11,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
@@ -29,6 +29,7 @@ import { legacyMigrationRepair, type LegacyMigrationRepairInput } from "./repair
 interface SetupOpts {
   readonly format?: OutputFormat;
   readonly isTTY?: boolean;
+  readonly pipedInput?: string;
   readonly yes?: boolean;
   readonly confirm?: boolean;
   readonly args?: ReadonlyArray<string>;
@@ -112,6 +113,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
+    mockStdin(opts.isTTY ?? true, opts.pipedInput),
     BunServices.layer,
   );
   return { layer, out, telemetry, execs, queries, cache };
@@ -280,9 +282,9 @@ describe("legacy migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("repair-all defaults to NO without a TTY (no prompt → cancel)", () => {
-    // Go gates the prompt on stdin being a terminal (console.go:27), not output
-    // format — a non-interactive run returns the default (NO) without prompting.
+  it.live("repair-all without a TTY and no piped answer falls back to NO (cancel)", () => {
+    // Go reads stdin regardless of TTY (IsTTY only changes the timeout, console.go:38-61);
+    // with no piped answer the empty read falls back to the default (NO) → cancel.
     const { layer, out } = setup(tmp.current, { isTTY: false });
     return Effect.gen(function* () {
       const exit = yield* legacyMigrationRepair(input({ versions: [], status: "applied" })).pipe(
@@ -294,6 +296,19 @@ describe("legacy migration repair", () => {
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
       }
       expect(out.promptConfirmCalls.length).toBe(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("repair-all honors a piped 'y' answer without a TTY (proceeds)", () => {
+    // Go's PromptYesNo reads piped stdin even when non-interactive; a piped `y` overrides
+    // the default NO, so repair-all truncates and reapplies (console.go:64-82).
+    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+    const { layer, execs, queries } = setup(tmp.current, { isTTY: false, pipedInput: "y\n" });
+    return Effect.gen(function* () {
+      yield* legacyMigrationRepair(input({ versions: [], status: "applied" }));
+      // Proceeded: repair-all truncates then upserts the local file.
+      expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
+      expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 

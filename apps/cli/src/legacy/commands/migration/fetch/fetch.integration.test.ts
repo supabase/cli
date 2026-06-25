@@ -11,7 +11,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
@@ -38,6 +38,7 @@ interface MigrationRow {
 interface SetupOpts {
   readonly format?: OutputFormat;
   readonly isTTY?: boolean;
+  readonly pipedInput?: string;
   readonly yes?: boolean;
   readonly confirm?: boolean;
   readonly rows?: ReadonlyArray<MigrationRow>;
@@ -110,6 +111,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: [] }),
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
+    mockStdin(opts.isTTY ?? true, opts.pipedInput),
     BunServices.layer,
   );
   return { layer, out, telemetry };
@@ -190,6 +192,28 @@ describe("legacy migration fetch", () => {
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
       }
       // No new file written on cancel.
+      expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("honors a piped 'n' answer without a TTY (cancels the overwrite)", () => {
+    // The overwrite prompt defaults to YES; Go reads piped stdin even when non-interactive,
+    // so a piped `n` overrides the default and cancels (console.go:64-82). Proves the
+    // non-TTY path reads the answer instead of blindly taking the default.
+    mkdirSync(migrationsDir(tmp.current), { recursive: true });
+    writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
+    const { layer } = setup(tmp.current, {
+      isTTY: false,
+      pipedInput: "n\n",
+      rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
+      }
       expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
