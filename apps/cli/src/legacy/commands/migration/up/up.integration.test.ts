@@ -150,6 +150,8 @@ describe("legacy migration up", () => {
       yield* legacyMigrationUp(flags());
       const stderr = stripAnsi(out.stderrText);
       const stdout = stripAnsi(out.stdoutText);
+      // Go prints the connection banner to stderr before dialing (connect.go:343-348).
+      expect(stderr).toContain("Connecting to local database...");
       expect(stderr).toContain("Applying migration 20240102000000_b.sql...");
       expect(stderr).toContain("Applying migration 20240103000000_c.sql...");
       expect(stdout).toContain("Local database is up to date.");

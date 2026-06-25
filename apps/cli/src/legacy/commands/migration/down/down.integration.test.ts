@@ -181,6 +181,8 @@ describe("legacy migration down", () => {
     });
     return Effect.gen(function* () {
       yield* legacyMigrationDown(flags({ last: 1 }));
+      // Go prints the connection banner to stderr before dialing (connect.go:343-348).
+      expect(stripAnsi(out.stderrText)).toContain("Connecting to local database...");
       expect(stripAnsi(out.stderrText)).toContain("Resetting database to version: 20240101000000");
       // dropped user schemas, then re-applied the migration <= target version.
       expect(execs.some((sql) => sql.startsWith("do $$"))).toBe(true);

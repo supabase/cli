@@ -134,6 +134,8 @@ describe("legacy migration list", () => {
     });
     return Effect.gen(function* () {
       yield* legacyMigrationList(flags());
+      // Go prints the connection banner to stderr before dialing (connect.go:343-348).
+      expect(stripAnsi(ctx.out.stderrText)).toContain("Connecting to remote database...");
       const stdout = stripAnsi(ctx.out.stdoutText);
       expect(stdout).toContain("Local");
       expect(stdout).toContain("Time (UTC)");

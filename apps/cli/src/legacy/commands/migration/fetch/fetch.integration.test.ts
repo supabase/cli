@@ -126,7 +126,7 @@ const tmp = useLegacyTempWorkdir();
 
 describe("legacy migration fetch", () => {
   it.live("writes migration files joined with the Go separator when the dir is empty", () => {
-    const { layer } = setup(tmp.current, {
+    const { layer, out } = setup(tmp.current, {
       rows: [
         {
           version: "20240101000000",
@@ -137,6 +137,8 @@ describe("legacy migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* legacyMigrationFetch(flags());
+      // Go prints the connection banner to stderr before dialing (connect.go:343-348).
+      expect(out.stderrText).toContain("Connecting to remote database...");
       const dir = migrationsDir(tmp.current);
       const files = readdirSync(dir);
       expect(files).toEqual(["20240101000000_init.sql"]);

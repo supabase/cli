@@ -107,6 +107,12 @@ const runFetch = Effect.fnUntraced(function* (
 
     const migrations = yield* Effect.scoped(
       Effect.gen(function* () {
+        // Go's `utils.ConnectByConfig` prints this to stderr before dialing
+        // (`internal/utils/connect.go:343-348`), local/remote per `IsLocalDatabase`.
+        yield* output.raw(
+          `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
+          "stderr",
+        );
         const session = yield* connection.connect(cfg.conn, {
           isLocal: cfg.isLocal,
           dnsResolver,
