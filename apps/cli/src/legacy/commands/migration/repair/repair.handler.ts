@@ -118,20 +118,6 @@ const runRepair = Effect.fnUntraced(function* (
   const dnsResolver = yield* LegacyDnsResolverFlag;
   const yes = yield* LegacyYesFlag;
 
-  // Numeric validation runs first (Go validates the provided versions before the
-  // repair-all branch) via `strconv.Atoi` (`internal/migration/repair/repair.go:27-31`),
-  // which rejects non-numeric AND out-of-int64-range values. `legacyParseMigrationVersion`
-  // mirrors that exactly. `failed to parse <v>: invalid version number`.
-  for (const version of input.versions) {
-    if (legacyParseMigrationVersion(version) === undefined) {
-      return yield* Effect.fail(
-        new LegacyMigrationInvalidVersionError({
-          message: `failed to parse ${version}: invalid version number`,
-        }),
-      );
-    }
-  }
-
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
       new LegacyMigrationTargetFlagsError({
@@ -152,11 +138,12 @@ const runRepair = Effect.fnUntraced(function* (
   const repairAll = input.versions.length === 0;
   const connType = target.connType ?? "linked"; // repair defaults to `--linked` (Go: `Bool("linked", true)`).
 
-  // Resolve the DB config (and, for the linked default, the project ref) BEFORE any
-  // prompt — mirroring Go's root `PersistentPreRunE` (`apps/cli-go/cmd/root.go:118`),
-  // which parses the DB config and loads the project ref before `repair.Run` asks
-  // anything. An unlinked / invalid-config run then surfaces that error immediately
-  // instead of prompting and returning `context canceled` on decline.
+  // Resolve the DB config (and, for the linked default, the project ref) BEFORE the
+  // version parse and any prompt — mirroring Go's cobra order: root `PersistentPreRunE`
+  // runs `ParseDatabaseConfig` (`apps/cli-go/cmd/root.go:118`) before `repair.Run`'s
+  // `strconv.Atoi` version loop (`internal/migration/repair/repair.go:27-31`). So an
+  // unlinked / invalid-config / malformed-`--db-url` run surfaces that error before an
+  // invalid positional version or a prompt.
   const cfg = yield* resolver.resolve({
     dbUrl: input.dbUrl,
     connType,
@@ -164,10 +151,12 @@ const runRepair = Effect.fnUntraced(function* (
     password: input.password,
   });
 
-  // Linked repair caches the project ref on success (Go's `PersistentPostRun`). The ref
-  // is loaded now (pre-run), but the cache is attached to the repair body below, so a
-  // declined prompt returns before it ever runs — matching Go (PostRun is skipped on a
-  // non-nil RunE error).
+  // Linked repair caches the project ref + identifies project groups — Go's
+  // `ensureProjectGroupsCached`, called from `Execute()` (`apps/cli-go/cmd/root.go:174`)
+  // gated on `executedCmd != nil`, NOT on the RunE error. The ref is loaded now (pre-run,
+  // via `ParseDatabaseConfig`'s `LoadProjectRef`), and the cache is attached to the whole
+  // repair flow via `Effect.ensuring` below — so it runs even when the version parse fails
+  // or the repair-all prompt is declined (Go caches on `context.Canceled` too).
   const cacheLinkedRef =
     connType === "linked"
       ? yield* Effect.gen(function* () {
@@ -178,22 +167,43 @@ const runRepair = Effect.fnUntraced(function* (
         })
       : undefined;
 
-  // repair-all confirmation (default NO). Then load every local version.
-  let versions = input.versions;
-  if (repairAll) {
-    const confirmed = yield* legacyMigrationConfirm(
-      "Do you want to repair the entire migration history table to match local migration files?",
-      { defaultValue: false, yes },
-    );
-    if (!confirmed) {
-      return yield* Effect.fail(new LegacyOperationCanceledError({ message: "context canceled" }));
+  const repairFlow = Effect.gen(function* () {
+    // Version validation runs after DB-config resolution (Go's `strconv.Atoi` loop lives
+    // inside `repair.Run`, after `PersistentPreRunE`). Rejects non-numeric AND
+    // out-of-int64-range values; `legacyParseMigrationVersion` mirrors that exactly.
+    for (const version of input.versions) {
+      if (legacyParseMigrationVersion(version) === undefined) {
+        return yield* Effect.fail(
+          new LegacyMigrationInvalidVersionError({
+            message: `failed to parse ${version}: invalid version number`,
+          }),
+        );
+      }
     }
-    versions = yield* legacyLoadLocalVersions(fs, path, migrationsDir);
-  }
 
-  const repairBody = Effect.gen(function* () {
+    // repair-all confirmation (default NO). Then load every local version.
+    let versions = input.versions;
+    if (repairAll) {
+      const confirmed = yield* legacyMigrationConfirm(
+        "Do you want to repair the entire migration history table to match local migration files?",
+        { defaultValue: false, yes },
+      );
+      if (!confirmed) {
+        return yield* Effect.fail(
+          new LegacyOperationCanceledError({ message: "context canceled" }),
+        );
+      }
+      versions = yield* legacyLoadLocalVersions(fs, path, migrationsDir);
+    }
+
     yield* Effect.scoped(
       Effect.gen(function* () {
+        // Go's `utils.ConnectByConfig` prints this to stderr before dialing
+        // (`internal/utils/connect.go:343-348`), local/remote per `IsLocalDatabase`.
+        yield* output.raw(
+          `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
+          "stderr",
+        );
         const session = yield* connection.connect(cfg.conn, {
           isLocal: cfg.isLocal,
           dnsResolver,
@@ -227,8 +237,8 @@ const runRepair = Effect.fnUntraced(function* (
   });
 
   return yield* cacheLinkedRef === undefined
-    ? repairBody
-    : repairBody.pipe(Effect.ensuring(cacheLinkedRef));
+    ? repairFlow
+    : repairFlow.pipe(Effect.ensuring(cacheLinkedRef));
 });
 
 export const legacyMigrationRepair = Effect.fn("legacy.migration.repair")(function* (

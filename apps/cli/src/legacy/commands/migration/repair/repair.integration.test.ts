@@ -114,7 +114,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
     BunServices.layer,
   );
-  return { layer, out, telemetry, execs, queries };
+  return { layer, out, telemetry, execs, queries, cache };
 }
 
 const input = (over: Partial<LegacyMigrationRepairInput> = {}): LegacyMigrationRepairInput => ({
@@ -139,15 +139,52 @@ const tmp = useLegacyTempWorkdir();
 describe("legacy migration repair", () => {
   it.live("marks a version as applied by upserting from its local file", () => {
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
-    const { layer, execs, queries } = setup(tmp.current);
+    const { layer, execs, queries, out } = setup(tmp.current);
     return Effect.gen(function* () {
       yield* legacyMigrationRepair(input({ versions: ["20240101000000"], status: "applied" }));
+      // Go prints the connection banner to stderr before dialing (connect.go:343-348).
+      expect(stripAnsi(out.stderrText)).toContain("Connecting to remote database...");
       // One transaction: BEGIN ... COMMIT, no ROLLBACK.
       expect(execs).toContain("BEGIN");
       expect(execs).toContain("COMMIT");
       expect(execs).not.toContain("ROLLBACK");
       const upsert = queries.find((q) => q.sql.includes("ON CONFLICT"));
       expect(upsert?.params).toEqual(["20240101000000", "init", ["create table a"]]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("resolves the DB target before parsing positional versions", () => {
+    // Go's cobra order runs ParseDatabaseConfig (PersistentPreRunE, root.go:118) before
+    // repair.Run's strconv.Atoi loop, so an unlinked target error wins over a bad version.
+    const { layer } = setup(tmp.current, { failResolve: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationRepair(
+        input({ versions: ["not-a-number"], status: "applied" }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        // The config/target error surfaces first, NOT the invalid-version error.
+        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyProjectNotLinkedError");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("caches the linked project even when the repair-all prompt is declined", () => {
+    // Go calls ensureProjectGroupsCached from Execute() (root.go:174) regardless of the
+    // RunE error, so a declined repair-all (context.Canceled) still caches the ref.
+    const { layer, cache } = setup(tmp.current, { confirm: false });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationRepair(input({ versions: [], status: "applied" })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
+      }
+      expect(cache.cached).toBe(true);
+      expect(cache.cachedRef).toBe(LEGACY_VALID_REF);
     }).pipe(Effect.provide(layer));
   });
 
