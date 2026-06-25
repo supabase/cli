@@ -18,7 +18,7 @@ interface LegacyCredentialsShape {
    * Deletes the access token, reproducing Go's `utils.DeleteAccessToken`
    * (`apps/cli-go/internal/utils/access_token.go:100-119`) exactly:
    *
-   *   1. Remove `~/.supabase/access-token` first. A non-`ENOENT` removal error
+   *   1. Remove `<SUPABASE_HOME or ~/.supabase>/access-token` first. A non-`ENOENT` removal error
    *      fails `LegacyDeleteTokenError`; a missing file is ignored.
    *   2. Best-effort delete of the legacy `access-token` keyring account — any
    *      error other than not-found is swallowed and never affects the outcome.

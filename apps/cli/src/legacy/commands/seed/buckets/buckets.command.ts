@@ -6,7 +6,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { LegacySeedLinkedFlag, LegacySeedLocalFlag } from "../seed.flags.ts";
 import { legacyAssertSeedTargetsExclusive } from "./buckets.flags.ts";
-import { legacySeedRuntimeLayer } from "../seed.layers.ts";
+import { legacyStorageGatewayRuntimeLayer } from "../../../shared/legacy-storage-runtime.layer.ts";
 import { legacySeedBuckets } from "./buckets.handler.ts";
 
 // `--linked`/`--local` are scoped globals on the `seed` group (`seed.flags.ts`),
@@ -36,5 +36,5 @@ export const legacyBucketsCommand = Command.make("buckets").pipe(
       return yield* legacySeedBuckets(flags).pipe(withLegacyCommandInstrumentation({ flags }));
     }).pipe(withJsonErrorHandling),
   ),
-  Command.provide(legacySeedRuntimeLayer(["seed", "buckets"])),
+  Command.provide(legacyStorageGatewayRuntimeLayer(["seed", "buckets"])),
 );

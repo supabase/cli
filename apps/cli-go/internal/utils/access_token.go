@@ -130,10 +130,9 @@ func fallbackDeleteToken(fsys afero.Fs) error {
 }
 
 func getAccessTokenPath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := SupabaseHomeDir()
 	if err != nil {
-		return "", errors.Errorf("failed to get $HOME directory: %w", err)
+		return "", err
 	}
-	// TODO: fallback to workdir
-	return filepath.Join(home, ".supabase", AccessTokenKey), nil
+	return filepath.Join(home, AccessTokenKey), nil
 }

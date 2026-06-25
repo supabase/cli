@@ -132,11 +132,12 @@ func TestServeFunctions(t *testing.T) {
 	require.NoError(t, utils.Config.Load("testdata/config.toml", testdata))
 	utils.UpdateDockerIds()
 
-	t.Run("starts main service with regular remote module imports", func(t *testing.T) {
-		assert.Contains(t, mainFuncEmbed, `from "https://deno.land/std/http/status.ts"`)
-		assert.Contains(t, mainFuncEmbed, `from "https://deno.land/std/path/posix/mod.ts"`)
-		assert.Contains(t, mainFuncEmbed, `from "jsr:@panva/jose@6"`)
-		assert.Contains(t, mainFuncEmbed, `pathname === "/_internal/health"`)
+	t.Run("starts main service from a self-contained offline bundle", func(t *testing.T) {
+		// The template is bundled so the worker boots without network access
+		// (supabase/supabase#45570): no remote module specifiers must remain.
+		assert.NotContains(t, mainFuncEmbed, "https://deno.land")
+		assert.NotContains(t, mainFuncEmbed, "jsr:")
+		assert.Contains(t, mainFuncEmbed, "/_internal/health")
 	})
 
 	t.Run("runs inspect mode", func(t *testing.T) {

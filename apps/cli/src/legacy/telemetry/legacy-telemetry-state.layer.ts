@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { isEphemeralIdentityRuntime } from "../../shared/telemetry/identity.ts";
+import { legacySupabaseHome } from "../config/legacy-profile-file.ts";
 import { LegacyTelemetryState } from "./legacy-telemetry-state.service.ts";
 
 interface State {
@@ -19,11 +20,7 @@ const SCHEMA_VERSION = 1;
 const SESSION_ROTATION_MS = 30 * 60 * 1000;
 
 function legacyTelemetryPath(env: Record<string, string | undefined>, pathSvc: Path.Path): string {
-  const supabaseHome = env["SUPABASE_HOME"]?.trim();
-  if (supabaseHome !== undefined && supabaseHome.length > 0) {
-    return pathSvc.join(supabaseHome, "telemetry.json");
-  }
-  return pathSvc.join(homedir(), ".supabase", "telemetry.json");
+  return pathSvc.join(legacySupabaseHome(homedir(), env), "telemetry.json");
 }
 
 interface PriorState {

@@ -96,6 +96,19 @@ describe("legacyCliConfigLayer", () => {
     }).pipe(Effect.provide(makeLayer({ home, cwd: tempRoot })));
   });
 
+  it.effect("reads the persisted profile file from SUPABASE_HOME when configured", () => {
+    const home = join(tempRoot, "home");
+    const supabaseHome = join(tempRoot, "custom-supabase-home");
+    mkdirSync(supabaseHome, { recursive: true });
+    writeFileSync(join(supabaseHome, "profile"), "supabase-staging\n");
+    return Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.profile).toBe("supabase-staging");
+    }).pipe(
+      Effect.provide(makeLayer({ home, cwd: tempRoot, env: { SUPABASE_HOME: supabaseHome } })),
+    );
+  });
+
   it.effect("debug logs the persisted profile file source", () => {
     const home = join(tempRoot, "home");
     const profilePath = join(home, ".supabase", "profile");

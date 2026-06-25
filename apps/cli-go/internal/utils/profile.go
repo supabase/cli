@@ -3,7 +3,6 @@ package utils
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -136,11 +135,11 @@ func getProfileName(fsys afero.Fs) string {
 }
 
 func getProfilePath() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := SupabaseHomeDir()
 	if err != nil {
-		return "", errors.Errorf("failed to get $HOME directory: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".supabase", "profile"), nil
+	return filepath.Join(home, "profile"), nil
 }
 
 func SaveProfileName(prof string, fsys afero.Fs) error {

@@ -256,6 +256,17 @@ describe("legacyCredentialsLayer.getAccessToken", () => {
     }).pipe(Effect.provide(makeLayer()));
   });
 
+  it.effect("falls back to SUPABASE_HOME/access-token when configured", () => {
+    const supabaseHome = join(tempHome, "custom-supabase-home");
+    mkdirSync(supabaseHome, { recursive: true });
+    writeFileSync(join(supabaseHome, "access-token"), `${VALID_TOKEN}\n`, { mode: 0o600 });
+    return Effect.gen(function* () {
+      const { getAccessToken } = yield* LegacyCredentials;
+      const token = yield* getAccessToken;
+      expectSomeToken(token, VALID_TOKEN);
+    }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_HOME: supabaseHome } })));
+  });
+
   it.effect("returns None when no source provides a token", () =>
     Effect.gen(function* () {
       const { getAccessToken } = yield* LegacyCredentials;
@@ -342,6 +353,18 @@ describe("legacyCredentialsLayer.saveAccessToken", () => {
       expect(content).toBe(VALID_TOKEN);
     }).pipe(Effect.provide(makeLayer()));
   });
+
+  it.effect("filesystem fallback honors SUPABASE_HOME when configured", () => {
+    throwOnSetPassword = true;
+    const supabaseHome = join(tempHome, "custom-supabase-home");
+    return Effect.gen(function* () {
+      const { saveAccessToken } = yield* LegacyCredentials;
+      yield* saveAccessToken(VALID_TOKEN);
+      const content = readFileSync(join(supabaseHome, "access-token"), "utf-8");
+      expect(content).toBe(VALID_TOKEN);
+      expect(existsSync(join(tempHome, ".supabase", "access-token"))).toBe(false);
+    }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_HOME: supabaseHome } })));
+  });
 });
 
 // Go's `utils.DeleteAccessToken` (`access_token.go:100-119`) collapses three
@@ -367,6 +390,19 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
       expect(passwords.has("Supabase CLI/access-token")).toBe(false);
       expect(tokenFileExists(tempHome)).toBe(false);
     }).pipe(Effect.provide(makeLayer()));
+  });
+
+  it.effect("logged in via keyring profile entry → deletes the SUPABASE_HOME file", () => {
+    const supabaseHome = join(tempHome, "custom-supabase-home");
+    mkdirSync(supabaseHome, { recursive: true });
+    writeFileSync(join(supabaseHome, "access-token"), VALID_TOKEN, { mode: 0o600 });
+    passwords.set("Supabase CLI/supabase", VALID_TOKEN);
+    return Effect.gen(function* () {
+      const { deleteAccessToken } = yield* LegacyCredentials;
+      yield* deleteAccessToken;
+      expect(passwords.has("Supabase CLI/supabase")).toBe(false);
+      expect(existsSync(join(supabaseHome, "access-token"))).toBe(false);
+    }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_HOME: supabaseHome } })));
   });
 
   it.effect(

@@ -349,13 +349,22 @@ func DockerResolveImageIfNotCached(ctx context.Context, imageName string) (strin
 
 var suggestDockerInstall = "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop"
 
+// SuggestDockerInstallIfConnectionFailed sets the install hint when err is a
+// Docker daemon connection failure. Callers that resolve images before
+// DockerStart (e.g. the concurrent ensureImagesCached pre-pull) call this once
+// on the aggregated error, so the hint is surfaced without racing on the
+// CmdSuggestion global from multiple goroutines.
+func SuggestDockerInstallIfConnectionFailed(err error) {
+	if client.IsErrConnectionFailed(err) {
+		CmdSuggestion = suggestDockerInstall
+	}
+}
+
 func DockerStart(ctx context.Context, config container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig, containerName string) (string, error) {
 	// Pull container image
 	imageUrl, err := DockerResolveImageIfNotCached(ctx, config.Image)
 	if err != nil {
-		if client.IsErrConnectionFailed(err) {
-			CmdSuggestion = suggestDockerInstall
-		}
+		SuggestDockerInstallIfConnectionFailed(err)
 		return "", err
 	}
 	// Setup default config

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
@@ -8,10 +8,10 @@ import { makeTempHome, runSupabase } from "../../../../tests/helpers/cli.ts";
 const E2E_TIMEOUT_MS = 30_000;
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
 
+// The e2e harness points SUPABASE_HOME at the isolated home dir, so the fallback
+// token file lives at <SUPABASE_HOME>/access-token.
 function seedTokenFile(home: string): string {
-  const supaDir = join(home, ".supabase");
-  mkdirSync(supaDir, { recursive: true });
-  const tokenPath = join(supaDir, "access-token");
+  const tokenPath = join(home, "access-token");
   writeFileSync(tokenPath, VALID_TOKEN, { mode: 0o600 });
   return tokenPath;
 }

@@ -220,6 +220,7 @@ export const V1OrganizationMemberResponse = Schema.Struct({
   email: Schema.optionalKey(Schema.String),
   role_name: Schema.String,
   mfa_enabled: Schema.Boolean,
+  avatar_url: Schema.Union([Schema.String, Schema.Null]),
 });
 // binary input helpers
 export const BinaryInput = Schema.Union([

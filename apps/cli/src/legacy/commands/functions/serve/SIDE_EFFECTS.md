@@ -2,16 +2,16 @@
 
 ## Files Read
 
-| Path                                                                 | Format     | When                                                                 |
-| -------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                                     | TOML       | on every startup / restart when the project config exists            |
-| `<workdir>/supabase/.temp/edge-runtime-version`                      | plain text | when present, to override the bundled edge-runtime image tag         |
-| `<workdir>/supabase/functions/.env`                                  | dotenv     | when `--env-file` is unset and the fallback env file exists          |
-| `<env-file>`                                                         | dotenv     | when `--env-file` is set; relative paths resolve from the caller cwd |
-| `<workdir>/supabase/functions/*/index.ts`                            | TypeScript | to discover filesystem-backed functions                              |
-| config-declared entrypoints / import maps / static files and imports | mixed      | for each enabled function while resolving Docker bind mounts         |
-| `<signing_keys_path>`                                                | JSON       | when `auth.signing_keys_path` is configured                          |
-| `apps/cli/src/shared/functions/serve.main.ts`                        | TypeScript | as the CLI-owned worker bootstrap template source                    |
+| Path                                                                   | Format     | When                                                                                                                                        |
+| ---------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                       | TOML       | on every startup / restart when the project config exists                                                                                   |
+| `<workdir>/supabase/.temp/edge-runtime-version`                        | plain text | when present, to override the bundled edge-runtime image tag                                                                                |
+| `<workdir>/supabase/functions/.env`                                    | dotenv     | when `--env-file` is unset and the fallback env file exists                                                                                 |
+| `<env-file>`                                                           | dotenv     | when `--env-file` is set; relative paths resolve from the caller cwd                                                                        |
+| `<workdir>/supabase/functions/*/index.ts`                              | TypeScript | to discover filesystem-backed functions                                                                                                     |
+| config-declared entrypoints / import maps / static files and imports   | mixed      | for each enabled function while resolving Docker bind mounts                                                                                |
+| `<signing_keys_path>`                                                  | JSON       | when `auth.signing_keys_path` is configured                                                                                                 |
+| `apps/cli/src/shared/functions/serve.main.ts` (+ `serve-main-deps.ts`) | TypeScript | only when running from source (`bun src/supabase.ts`), bundled on demand; compiled binaries embed the pre-bundled template and read nothing |
 
 ## Files Written
 
@@ -99,3 +99,4 @@ Long-running raw log / error events only; there is no terminal `result` event on
 - Inspector mode exposes the configured `edge_runtime.inspector_port` on the host and sets `SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=0`, matching the Go serve path.
 - Config `env()` interpolation uses a project environment resolved by the command itself (ambient `process.env` layered under `.env.<env>.local` / `.env.local` / `.env.<env>` / `.env`, matching Go) and passed into `loadProjectConfig`. The command does not mutate `process.env` or move/hide any project files.
 - A container crash terminates the command with a non-zero exit; only a watched-file change restarts the container. The Go CLI never auto-restarts a crashed container.
+- The worker bootstrap template (`serve.main.ts`) is bundled into a single self-contained module with `jose` and the local path/status helpers inlined, so the edge-runtime worker boots without any network access (supabase/supabase#45570). The bundle is embedded at build time for shipped binaries and produced on demand (esbuild) when running from source.
