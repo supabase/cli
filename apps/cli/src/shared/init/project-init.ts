@@ -163,7 +163,10 @@ function updateJsonFile(pathname: string, template: string) {
   });
 }
 
-const writeVscodeConfig = Effect.fnUntraced(function* (cwd: string) {
+export const writeVscodeConfig = Effect.fnUntraced(function* (
+  cwd: string,
+  options?: { readonly announce?: boolean },
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const output = yield* Output;
@@ -176,13 +179,18 @@ const writeVscodeConfig = Effect.fnUntraced(function* (cwd: string) {
   yield* updateJsonFile(extensionsPath, VSCODE_EXTENSIONS_TEMPLATE);
   yield* updateJsonFile(settingsPath, VSCODE_SETTINGS_TEMPLATE);
 
-  yield* output.raw("Generated VS Code settings in .vscode/settings.json.\n");
-  yield* output.raw(
-    "Please install the Deno extension for VS Code: https://marketplace.visualstudio.com/items?itemName=denoland.vscode-deno\n",
-  );
+  if (options?.announce ?? true) {
+    yield* output.raw("Generated VS Code settings in .vscode/settings.json.\n");
+    yield* output.raw(
+      "Please install the Deno extension for VS Code: https://marketplace.visualstudio.com/items?itemName=denoland.vscode-deno\n",
+    );
+  }
 });
 
-const writeIntelliJConfig = Effect.fnUntraced(function* (cwd: string) {
+export const writeIntelliJConfig = Effect.fnUntraced(function* (
+  cwd: string,
+  options?: { readonly announce?: boolean },
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const output = yield* Output;
@@ -193,10 +201,12 @@ const writeIntelliJConfig = Effect.fnUntraced(function* (cwd: string) {
   yield* fs.makeDirectory(intellijDir, { recursive: true });
   yield* fs.writeFileString(denoPath, INTELLIJ_DENO_TEMPLATE);
 
-  yield* output.raw("Generated IntelliJ settings in .idea/deno.xml.\n");
-  yield* output.raw(
-    "Please install the Deno plugin for IntelliJ: https://plugins.jetbrains.com/plugin/14382-deno\n",
-  );
+  if (options?.announce ?? true) {
+    yield* output.raw("Generated IntelliJ settings in .idea/deno.xml.\n");
+    yield* output.raw(
+      "Please install the Deno plugin for IntelliJ: https://plugins.jetbrains.com/plugin/14382-deno\n",
+    );
+  }
 });
 
 const promptForIdeSettings = Effect.fnUntraced(function* (cwd: string) {
