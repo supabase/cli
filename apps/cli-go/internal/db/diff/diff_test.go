@@ -409,3 +409,21 @@ func TestLoadSchemas(t *testing.T) {
 	assert.NoError(t, err)
 	assert.ElementsMatch(t, expected, schemas)
 }
+
+func TestLoadSchemasSkipsEmptySchemaPathGlobs(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	matched := filepath.Join(utils.SupabaseDirPath, "schemas", "tables", "players.sql")
+	require.NoError(t, afero.WriteFile(fsys, matched, nil, 0644))
+	utils.Config.Db.Migrations.SchemaPaths = []string{
+		filepath.Join(utils.SupabaseDirPath, "schemas", "tables", "*.sql"),
+		filepath.Join(utils.SupabaseDirPath, "schemas", "materialized_views", "*.sql"),
+	}
+	t.Cleanup(func() {
+		utils.Config.Db.Migrations.SchemaPaths = nil
+	})
+
+	schemas, err := loadDeclaredSchemas(fsys)
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{filepath.ToSlash(matched)}, schemas)
+}

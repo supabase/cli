@@ -70,7 +70,7 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 		}
 	}
 	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
-		return schemas.Files(afero.NewIOFS(fsys))
+		return loadSchemaPaths(afero.NewIOFS(fsys), schemas)
 	}
 	if exists, err := afero.DirExists(fsys, utils.SchemasDir); err != nil {
 		return nil, errors.Errorf("failed to check schemas: %w", err)
@@ -92,6 +92,27 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 	// Keep file application order deterministic so diff output stays stable across
 	// filesystems and operating systems. This is only if no schema paths in config are set.
 	sort.Strings(declared)
+	return declared, nil
+}
+
+func loadSchemaPaths(fsys fs.FS, schemas []string) ([]string, error) {
+	var declared []string
+	set := make(map[string]struct{})
+	for _, pattern := range schemas {
+		matches, err := fs.Glob(fsys, filepath.ToSlash(pattern))
+		if err != nil {
+			return nil, errors.Errorf("failed to glob files: %w", err)
+		}
+		sort.Strings(matches)
+		for _, item := range matches {
+			fp := filepath.ToSlash(item)
+			if _, exists := set[fp]; exists {
+				continue
+			}
+			set[fp] = struct{}{}
+			declared = append(declared, fp)
+		}
+	}
 	return declared, nil
 }
 
