@@ -27,6 +27,14 @@ import { runSupabase } from "./cli.ts";
 /** Default profile for the host runner: api_url → localhost:8080, project_host → supabase.red. */
 export const LIVE_DEFAULT_PROFILE = "supabase-local";
 
+/**
+ * Default subprocess exit timeout for live runs. `runSupabase` otherwise caps at
+ * 60s, which would kill a slow-but-valid supabox call before the live tests'
+ * own (60–120s+) timeouts fire. Generous, but under the `live` project's 300s
+ * cap so the per-test timeout stays the real gate. Callers may override.
+ */
+export const LIVE_EXIT_TIMEOUT_MS = 240_000;
+
 /** Management API base URL probed by the live readiness check. */
 export function liveApiBaseUrl(): string {
   return process.env["SUPABASE_LIVE_API_URL"] ?? "http://localhost:8080";
@@ -95,6 +103,7 @@ export function runSupabaseLive(
   return runSupabase(args, {
     entrypoint: "legacy",
     ...options,
+    exitTimeoutMs: options?.exitTimeoutMs ?? LIVE_EXIT_TIMEOUT_MS,
     env: {
       SUPABASE_PROFILE: process.env["SUPABASE_PROFILE"] ?? LIVE_DEFAULT_PROFILE,
       ...options?.env,

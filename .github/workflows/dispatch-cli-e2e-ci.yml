@@ -23,7 +23,12 @@ permissions:
 
 jobs:
   dispatch:
-    if: contains(github.event.pull_request.labels.*.name, 'run-live-e2e-ci')
+    # Same-repo PRs only: fork PRs don't receive secrets (GH_APP_PRIVATE_KEY), so
+    # the App-token step would fail and leave a red check. Skip them cleanly —
+    # fork PRs use cli-e2e-ci's workflow_dispatch with `cli_ref` instead.
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'run-live-e2e-ci')
+      && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       # App token scoped to cli-e2e-ci with contents:write — the
