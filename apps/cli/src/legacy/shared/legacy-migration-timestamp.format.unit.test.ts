@@ -37,23 +37,33 @@ describe("legacyParseMigrationVersion", () => {
     expect(legacyParseMigrationVersion("0")).toBe(0n);
   });
 
-  it("rejects non-digit versions like Go's strconv.Atoi", () => {
+  it("rejects non-integer versions like Go's strconv.Atoi", () => {
     expect(legacyParseMigrationVersion("")).toBeUndefined();
     expect(legacyParseMigrationVersion("abc")).toBeUndefined();
-    expect(legacyParseMigrationVersion("-1")).toBeUndefined();
     expect(legacyParseMigrationVersion(" 12")).toBeUndefined();
     expect(legacyParseMigrationVersion("1.0")).toBeUndefined();
+    expect(legacyParseMigrationVersion("0x10")).toBeUndefined();
+    expect(legacyParseMigrationVersion("+")).toBeUndefined();
   });
 
-  it("accepts the full int64 range but rejects values above the sentinel", () => {
+  it("accepts a leading +/- sign like strconv.Atoi (for malformed history rows)", () => {
+    // Go's `Atoi` == `ParseInt(s, 10, 0)` accepts a leading sign, so `migration repair -1`
+    // can delete a malformed `-1` row and the two-pointer merge orders `-1` before `0`.
+    expect(legacyParseMigrationVersion("-1")).toBe(-1n);
+    expect(legacyParseMigrationVersion("+5")).toBe(5n);
+  });
+
+  it("accepts the full int64 range but rejects values outside it", () => {
     // 16 digits Go accepts and surfaces as a conflict — must NOT be skipped.
     expect(legacyParseMigrationVersion("9999999999999999")).toBe(9999999999999999n);
-    // int64 max parses; one above it is rejected (Go's Atoi range error).
+    // int64 max/min parse; one beyond either bound is rejected (Go's Atoi range error).
     expect(legacyParseMigrationVersion(LEGACY_MIGRATION_VERSION_MAX.toString())).toBe(
       LEGACY_MIGRATION_VERSION_MAX,
     );
     expect(
       legacyParseMigrationVersion((LEGACY_MIGRATION_VERSION_MAX + 1n).toString()),
     ).toBeUndefined();
+    expect(legacyParseMigrationVersion("-9223372036854775808")).toBe(-9223372036854775808n);
+    expect(legacyParseMigrationVersion("-9223372036854775809")).toBeUndefined();
   });
 });

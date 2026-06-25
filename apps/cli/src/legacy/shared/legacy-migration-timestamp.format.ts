@@ -46,18 +46,25 @@ export function legacyFormatTimestampVersion(version: string): string {
  */
 export const LEGACY_MIGRATION_VERSION_MAX = 9223372036854775807n;
 
+/** Go's `math.MinInt64` — `strconv.Atoi`'s lower bound (`ParseInt(s, 10, 0)`). */
+const LEGACY_MIGRATION_VERSION_MIN = -9223372036854775808n;
+
 /**
  * Parses a migration version like Go's `strconv.Atoi` (`makeTable` /
- * `assertRemoteInSync`): digits only — no empty/whitespace/sign/float — within
- * the int64 range. A non-parseable version, or one above the int64 sentinel,
- * returns `undefined` (Go's `Atoi` error → `continue`). Using BigInt keeps the
- * full int64 range exact: `Number` loses precision above `Number.MAX_SAFE_INTEGER`
- * (e.g. `Number("9999999999999999")` rounds to 1e16), which would mis-order
- * versions Go accepts. 19+-digit values above the sentinel are rejected so they
- * can never exceed the exhausted-side pin and stall the scan.
+ * `assertRemoteInSync`): `Atoi` == `ParseInt(s, 10, 0)`, so it accepts an optional
+ * leading `+`/`-` sign and base-10 digits within the int64 range, and rejects empty,
+ * whitespace, floats, and `0x`/`0b` forms. A non-parseable or out-of-range version
+ * returns `undefined` (Go's `Atoi` error → `continue`). Signs only ever appear on
+ * malformed history rows (e.g. `-1`); Go still validates and orders them by signed
+ * int — so `migration repair -1 --status reverted` can delete that text row, and the
+ * two-pointer merge sorts `-1` before `0`. BigInt keeps the full int64 range exact:
+ * `Number` loses precision above `Number.MAX_SAFE_INTEGER` (e.g. `Number("9999999999999999")`
+ * rounds to 1e16), which would mis-order versions Go accepts.
  */
 export const legacyParseMigrationVersion = (value: string): bigint | undefined => {
-  if (!/^\d+$/u.test(value)) return undefined;
+  if (!/^[+-]?\d+$/u.test(value)) return undefined;
   const parsed = BigInt(value);
-  return parsed > LEGACY_MIGRATION_VERSION_MAX ? undefined : parsed;
+  return parsed > LEGACY_MIGRATION_VERSION_MAX || parsed < LEGACY_MIGRATION_VERSION_MIN
+    ? undefined
+    : parsed;
 };
