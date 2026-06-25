@@ -74,8 +74,10 @@ jobs:
     with:
       version: ${{ inputs.version }}
       shell: ${{ inputs.shell }}
-      runner: ubuntu-latest
+      runner: large-linux-x86
       cache_key_suffix: -github
+      timeout_minutes: 45
+      build_timeout_minutes: 20
     secrets:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
@@ -92,6 +94,7 @@ jobs:
           - blacksmith-8vcpu-ubuntu-2404
           - blacksmith-8vcpu-windows-2025
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     env:
       NPM_TAG: ${{ inputs.npm_tag }}
       VERSION: ${{ inputs.version }}
@@ -227,6 +230,7 @@ jobs:
     needs:
       - build-github
     runs-on: macos-latest
+    timeout-minutes: 25
     env:
       NPM_TAG: ${{ inputs.npm_tag }}
       VERSION: ${{ inputs.version }}
@@ -271,6 +275,7 @@ jobs:
     # publish job must stay on a github-hosted runner. The job is short
     # and not compute-bound, so the wall-clock cost is negligible.
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       CHANNEL: ${{ inputs.channel }}
       NPM_TAG: ${{ inputs.npm_tag }}
@@ -448,6 +453,7 @@ jobs:
     # github-hosted to share a cache store with build-github/publish, whose
     # -github-v1 artifacts this job's checksums must match.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       BREW_NAME: ${{ inputs.brew_name }}
       VERSION: ${{ inputs.version }}
@@ -510,6 +516,7 @@ jobs:
     # github-hosted to share a cache store with build-github/publish, whose
     # -github-v1 artifacts this job's checksums must match.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       SCOOP_NAME: ${{ inputs.scoop_name }}
       VERSION: ${{ inputs.version }}
