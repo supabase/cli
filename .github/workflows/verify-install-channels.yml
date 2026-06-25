@@ -100,7 +100,45 @@ jobs:
           # its current git HEAD and installs from source, verifying the
           # formula's sha256 against the downloaded tarball. A checksum mismatch
           # (the v2.107.0 failure mode) aborts the install here.
-          brew install "supabase/tap/${BREW_NAME}"
+          #
+          # Retry ONLY Homebrew's intermittent "Broken pipe" failures. During its
+          # bash startup brew runs pipelines like
+          #   grep -E "^(flags|Features)" /proc/cpuinfo | grep -q ssse3
+          # where the downstream `grep -q` matches and exits early, closing the
+          # pipe; the still-writing upstream takes SIGPIPE and brew aborts with
+          # `Error: Broken pipe` (exit 1). It is a timing race (more likely on
+          # multi-core runners with a larger /proc/cpuinfo), so it is flaky, not
+          # deterministic, and a re-run succeeds. macOS reads CPU features via
+          # sysctl, not /proc/cpuinfo, which is why only the Linux leg hits it.
+          # Upstream fix: Homebrew/brew#21366.
+          #
+          # Any OTHER failure (notably a sha256 mismatch — the regression this
+          # job exists to catch) is non-transient and fails immediately, so the
+          # retry never masks a genuinely broken release.
+          attempts=0
+          max_attempts=3
+          while :; do
+            attempts=$((attempts + 1))
+            if out="$(brew install "supabase/tap/${BREW_NAME}" 2>&1)"; then
+              printf '%s\n' "${out}"
+              break
+            fi
+            printf '%s\n' "${out}" >&2
+            case "${out}" in
+              *"Broken pipe"*)
+                if [ "${attempts}" -ge "${max_attempts}" ]; then
+                  echo "brew install still failing with 'Broken pipe' after ${attempts} attempts" >&2
+                  exit 1
+                fi
+                echo "Transient Homebrew 'Broken pipe' on attempt ${attempts}; retrying in $((attempts * 5))s..." >&2
+                sleep "$((attempts * 5))"
+                ;;
+              *)
+                echo "brew install failed with a non-transient error; not retrying." >&2
+                exit 1
+                ;;
+            esac
+          done
       - name: Verify supabase --version
         run: |
           set -euo pipefail
