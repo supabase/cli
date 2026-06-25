@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -16,6 +16,7 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
   LegacyDbConfigFlags,
@@ -40,6 +41,7 @@ interface SetupOpts {
   readonly yes?: boolean;
   readonly confirm?: boolean;
   readonly rows?: ReadonlyArray<MigrationRow>;
+  readonly resolveFails?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -52,17 +54,23 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   const resolver = Layer.succeed(LegacyDbConfigResolver, {
     resolve: (_flags: LegacyDbConfigFlags) =>
-      Effect.succeed({
-        conn: {
-          host: "127.0.0.1",
-          port: 54322,
-          user: "postgres",
-          password: "x",
-          database: "postgres",
-        },
-        isLocal: false,
-        ref: Option.some(LEGACY_VALID_REF),
-      } satisfies LegacyResolvedDbConfig),
+      opts.resolveFails === true
+        ? Effect.fail(
+            new LegacyDbConfigLoadError({
+              message: "failed to parse config: invalid connection string",
+            }),
+          )
+        : Effect.succeed({
+            conn: {
+              host: "127.0.0.1",
+              port: 54322,
+              user: "postgres",
+              password: "x",
+              database: "postgres",
+            },
+            isLocal: false,
+            ref: Option.some(LEGACY_VALID_REF),
+          } satisfies LegacyResolvedDbConfig),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
@@ -246,6 +254,24 @@ describe("legacy migration fetch", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyMigrationFetchWriteError");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("resolves DB config before creating the migrations dir or prompting", () => {
+    // Go's root PersistentPreRunE parses the DB config before fetch.Run (cmd/root.go:118),
+    // so an invalid target fails before any filesystem/prompt side effect. With the resolver
+    // failing, the supabase/migrations dir must NOT be created and no prompt is shown.
+    const { layer, out } = setup(tmp.current, { resolveFails: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyDbConfigLoadError");
+      }
+      // The config failed before any side effect: no migrations dir, no overwrite prompt.
+      expect(existsSync(migrationsDir(tmp.current))).toBe(false);
+      expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
 });

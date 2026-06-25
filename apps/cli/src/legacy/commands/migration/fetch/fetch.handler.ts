@@ -41,6 +41,34 @@ const runFetch = Effect.fnUntraced(function* (
     );
   }
 
+  const connType = target.connType ?? "linked"; // fetch defaults to `--linked` (Go: `Bool("linked", true)`).
+
+  // Resolve the DB config BEFORE any filesystem/prompt side effects — mirroring Go's
+  // root `PersistentPreRunE` (`apps/cli-go/cmd/root.go:118`), which parses the DB config
+  // before `migrationFetchCmd.RunE` calls `fetch.Run`. An invalid `--db-url`/`config.toml`
+  // then fails immediately, instead of first creating `supabase/migrations` or letting a
+  // declined overwrite prompt mask the real error with `context canceled`. Same fix as
+  // `migration repair`.
+  const cfg = yield* resolver.resolve({
+    dbUrl: flags.dbUrl,
+    connType,
+    dnsResolver,
+  });
+
+  // Linked fetch caches the project ref on success (Go's `PersistentPostRun`). The ref is
+  // loaded now (pre-run), but the cache write is attached to the body via `Effect.ensuring`,
+  // so a declined prompt returns before it runs — matching Go (PostRun is skipped on a
+  // non-nil RunE error).
+  const cacheLinkedRef =
+    connType === "linked"
+      ? yield* Effect.gen(function* () {
+          const projectRef = yield* LegacyProjectRefResolver;
+          const linkedProjectCache = yield* LegacyLinkedProjectCache;
+          const ref = yield* projectRef.loadProjectRef(Option.none());
+          return linkedProjectCache.cache(ref);
+        })
+      : undefined;
+
   const fetchBody = Effect.gen(function* () {
     const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
 
@@ -76,13 +104,6 @@ const runFetch = Effect.fnUntraced(function* (
         );
       }
     }
-
-    // fetch defaults to `--linked` (Go: `Bool("linked", true)`); no password flag.
-    const cfg = yield* resolver.resolve({
-      dbUrl: flags.dbUrl,
-      connType: target.connType ?? "linked",
-      dnsResolver,
-    });
 
     const migrations = yield* Effect.scoped(
       Effect.gen(function* () {
@@ -133,13 +154,9 @@ const runFetch = Effect.fnUntraced(function* (
     }
   });
 
-  if ((target.connType ?? "linked") === "linked") {
-    const projectRef = yield* LegacyProjectRefResolver;
-    const linkedProjectCache = yield* LegacyLinkedProjectCache;
-    const ref = yield* projectRef.loadProjectRef(Option.none());
-    return yield* fetchBody.pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
-  }
-  return yield* fetchBody;
+  return yield* cacheLinkedRef === undefined
+    ? fetchBody
+    : fetchBody.pipe(Effect.ensuring(cacheLinkedRef));
 });
 
 export const legacyMigrationFetch = Effect.fn("legacy.migration.fetch")(function* (
