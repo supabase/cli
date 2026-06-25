@@ -130,18 +130,8 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         schema: flags.schema,
         noCache: flags.noCache,
       };
-      let localPostgresImageChecked = false;
-      const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent().pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            localPostgresImageChecked = true;
-          }),
-        ),
-      );
+      const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent();
       const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
-      if (declarativeFilesExist && shouldEnsureLocalPostgresImageCurrent(flags.noApply)) {
-        yield* ensureLocalPostgresImageCurrent;
-      }
 
       // Go's `saveApplyDebugBundle`: warn (rather than masking the apply error) and
       // treat the bundle path as empty when the debug directory cannot be created, so
@@ -319,9 +309,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       if (!shouldApply) return;
 
       // Step 8: apply the migration to the local database (native).
-      if (!localPostgresImageChecked) {
-        yield* ensureLocalPostgresImageCurrent;
-      }
+      yield* ensureLocalPostgresImageCurrent;
       const applyExit = yield* applyMigrationToLocal(
         { port: toml.port, password: toml.password, dnsResolver },
         migrationPath,
@@ -437,10 +425,6 @@ const declarativeDirHasFiles = Effect.fnUntraced(function* (
   const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]));
   return entries.length > 0;
 });
-
-function shouldEnsureLocalPostgresImageCurrent(noApply: Option.Option<boolean>): boolean {
-  return !Option.getOrElse(noApply, () => false);
-}
 
 /** Connects to the local database and applies the single migration file (Go's `applyMigrationToLocal`). */
 const applyMigrationToLocal = (

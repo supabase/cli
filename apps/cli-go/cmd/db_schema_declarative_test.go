@@ -264,11 +264,6 @@ func TestEnsureLocalPostgresImageCurrent(t *testing.T) {
 	})
 }
 
-func TestShouldEnsureLocalPostgresImageCurrent(t *testing.T) {
-	assert.False(t, shouldEnsureLocalPostgresImageCurrent(true), "--no-apply writes a migration without touching local Postgres")
-	assert.True(t, shouldEnsureLocalPostgresImageCurrent(false), "apply paths can touch the local database")
-}
-
 func TestHasDeclarativeFiles(t *testing.T) {
 	t.Run("returns false when dir does not exist", func(t *testing.T) {
 		assert.False(t, hasDeclarativeFiles(mockFsys()))

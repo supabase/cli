@@ -243,17 +243,40 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("checks the local Postgres image before diffing when apply may run", () => {
+  it.effect("non-interactive default dry-run does not check the local Postgres image", () => {
     seedDeclarative(tmp.current);
-    const s = setup(tmp.current, { experimental: true, staleLocalImage: true });
+    const s = setup(tmp.current, {
+      experimental: true,
+      staleLocalImage: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+    });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags()));
+      yield* legacyDbSchemaDeclarativeSync(flags());
+      const migrations = readdirSync(join(tmp.current, "supabase", "migrations"));
+      expect(migrations).toHaveLength(1);
+      expect(s.localPostgresImageChecks).toEqual([]);
+      expect(s.dbExec).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--apply checks the local Postgres image before applying", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      staleLocalImage: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) })),
+      );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
         _tag: "LegacyDeclarativeShadowDbError",
         message: "local Postgres container image is stale",
       });
       expect(s.localPostgresImageChecks).toHaveLength(1);
+      expect(s.dbExec).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -262,12 +285,14 @@ describe("legacy db schema declarative sync integration", () => {
     const s = setup(tmp.current, {
       experimental: true,
       staleLocalImage: true,
-      diffSql: "",
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      const migrations = readdirSync(join(tmp.current, "supabase", "migrations"));
+      expect(migrations).toHaveLength(1);
       expect(s.localPostgresImageChecks).toEqual([]);
-      expect(s.out.rawChunks.some((c) => c.text.includes("No schema changes found"))).toBe(true);
+      expect(s.dbExec).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 

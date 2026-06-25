@@ -192,10 +192,6 @@ func ensureLocalPostgresImageCurrent(ctx context.Context, inspect inspectContain
 	return fmt.Errorf("local Postgres container image is stale: running %s but expected %s", actual, expected)
 }
 
-func shouldEnsureLocalPostgresImageCurrent(noApply bool) bool {
-	return !noApply
-}
-
 // hasExplicitTargetFlag returns true if the user explicitly set --local, --linked, or --db-url.
 func hasExplicitTargetFlag(cmd *cobra.Command) bool {
 	return cmd.Flags().Changed("local") || cmd.Flags().Changed("linked") || cmd.Flags().Changed("db-url")
@@ -376,14 +372,6 @@ func runDeclarativeSync(cmd *cobra.Command, args []string) error {
 	fsys := afero.NewOsFs()
 	console := utils.NewConsole()
 	declarativeFilesExist := hasDeclarativeFiles(fsys)
-	localPostgresImageChecked := false
-
-	if declarativeFilesExist && shouldEnsureLocalPostgresImageCurrent(declarativeNoApply) {
-		if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
-			return err
-		}
-		localPostgresImageChecked = true
-	}
 
 	// Step 1: Check if declarative dir has files
 	if !declarativeFilesExist {
@@ -475,10 +463,8 @@ func runDeclarativeSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if shouldApply {
-		if !localPostgresImageChecked {
-			if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
-				return err
-			}
+		if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
+			return err
 		}
 		if applyErr := applyMigrationToLocal(ctx, path, fsys); applyErr != nil {
 			fmt.Fprintln(os.Stderr, utils.Red("Migration failed to apply: "+applyErr.Error()))
