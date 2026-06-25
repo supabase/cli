@@ -286,6 +286,57 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("bootstrap linked target does not run the local Postgres image check", () => {
+    // The stale-image guard only matters once bootstrap chooses a local source. A
+    // linked/custom bootstrap can build fresh catalogs and skip local apply, so it
+    // must reach the target prompt before any local-container inspection.
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      staleLocalImage: true,
+      projectId: Option.some("abcdefghijklmnopqrst"),
+      promptConfirmResponses: [true], // generate a new one? yes
+      promptSelectResponses: ["linked"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
+      );
+      expect(s.localPostgresImageChecks).toEqual([]);
+      expect(JSON.stringify(exit)).not.toContain("local Postgres container image is stale");
+      expect((s.out.promptSelectCalls[0]?.options ?? []).map((o) => o.value)).toEqual([
+        "local",
+        "linked",
+        "custom",
+      ]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("bootstrap local target checks the local Postgres image", () => {
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      staleLocalImage: true,
+      promptConfirmResponses: [true], // generate a new one? yes
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeShadowDbError",
+        message: "local Postgres container image is stale",
+      });
+      expect(s.localPostgresImageChecks).toHaveLength(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("bootstrap: an unreadable migrations path is treated as no migrations", () => {
     // Go's delegated hasMigrationFiles returns false on ANY ListLocalMigrations error
     // (db_schema_declarative.go:164-169), flowing into the no-migrations local generate.

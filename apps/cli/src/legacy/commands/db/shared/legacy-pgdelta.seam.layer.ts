@@ -356,7 +356,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             };
             const stderr = decodeChunks(stderrChunks);
             if (inspectExit !== 0) {
-              if (stderr.includes("No such container")) return;
+              if (legacyIsMissingContainerInspectError(stderr)) return;
               return yield* Effect.fail(
                 new LegacyDeclarativeShadowDbError({
                   message:
@@ -519,4 +519,8 @@ function dockerImageTag(image: string): string {
   const index = trimmed.lastIndexOf(":");
   if (index < 0 || index === trimmed.length - 1) return "";
   return trimmed.slice(index + 1);
+}
+
+export function legacyIsMissingContainerInspectError(stderr: string): boolean {
+  return stderr.toLowerCase().includes("no such container");
 }

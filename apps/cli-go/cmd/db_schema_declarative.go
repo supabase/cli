@@ -192,8 +192,8 @@ func ensureLocalPostgresImageCurrent(ctx context.Context, inspect inspectContain
 	return fmt.Errorf("local Postgres container image is stale: running %s but expected %s", actual, expected)
 }
 
-func shouldEnsureLocalPostgresImageCurrent(noCache, noApply, declarativeFilesExist bool) bool {
-	return !noCache || !noApply || !declarativeFilesExist
+func shouldEnsureLocalPostgresImageCurrent(noCache, noApply bool) bool {
+	return !noCache || !noApply
 }
 
 // hasExplicitTargetFlag returns true if the user explicitly set --local, --linked, or --db-url.
@@ -247,6 +247,11 @@ func runDeclarativeGenerate(cmd *cobra.Command, args []string) error {
 
 	// When an explicit target flag is provided, use the direct path.
 	if hasExplicitTargetFlag(cmd) {
+		if declarativeLocal {
+			if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
+				return err
+			}
+		}
 		if err := ensureLocalDatabaseStarted(ctx, declarativeLocal, utils.AssertSupabaseDbIsRunning, func(ctx context.Context) error {
 			return start.Run(ctx, "", fsys)
 		}); err != nil {
@@ -306,6 +311,9 @@ func runDeclarativeGenerate(cmd *cobra.Command, args []string) error {
 
 		switch choice.Index {
 		case 0: // Local database
+			if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
+				return err
+			}
 			if err := ensureLocalDatabaseStarted(ctx, true, utils.AssertSupabaseDbIsRunning, func(ctx context.Context) error {
 				return start.Run(ctx, "", fsys)
 			}); err != nil {
@@ -348,6 +356,9 @@ func runDeclarativeGenerate(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		// No migrations — generate from local DB
+		if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
+			return err
+		}
 		if err := ensureLocalDatabaseStarted(ctx, true, utils.AssertSupabaseDbIsRunning, func(ctx context.Context) error {
 			return start.Run(ctx, "", fsys)
 		}); err != nil {
@@ -366,7 +377,7 @@ func runDeclarativeSync(cmd *cobra.Command, args []string) error {
 	console := utils.NewConsole()
 	declarativeFilesExist := hasDeclarativeFiles(fsys)
 
-	if shouldEnsureLocalPostgresImageCurrent(declarativeNoCache, declarativeNoApply, declarativeFilesExist) {
+	if declarativeFilesExist && shouldEnsureLocalPostgresImageCurrent(declarativeNoCache, declarativeNoApply) {
 		if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
 			return err
 		}
