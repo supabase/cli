@@ -1,0 +1,60 @@
+import { Data } from "effect";
+
+/**
+ * Conflicting database-target flags. Reproduces cobra's
+ * `MarkFlagsMutuallyExclusive("db-url", "linked", "local")` (`cmd/db.go:573`).
+ */
+export class LegacyDbResetTargetFlagsError extends Data.TaggedError(
+  "LegacyDbResetTargetFlagsError",
+)<{
+  readonly message: string;
+}> {}
+
+/**
+ * `--version` and `--last` together. Reproduces cobra's
+ * `MarkFlagsMutuallyExclusive("version", "last")` (`cmd/db.go:576`).
+ */
+export class LegacyDbResetVersionFlagsError extends Data.TaggedError(
+  "LegacyDbResetVersionFlagsError",
+)<{
+  readonly message: string;
+}> {}
+
+/**
+ * `--version` is not a valid integer. Byte-matches Go's
+ * `failed to parse <v>: invalid version number` (`repair.go:24-29`).
+ */
+export class LegacyDbResetInvalidVersionError extends Data.TaggedError(
+  "LegacyDbResetInvalidVersionError",
+)<{
+  readonly message: string;
+}> {}
+
+/**
+ * No migration file matches `--version`. Byte-matches Go's
+ * `glob supabase/migrations/<version>_*.sql: file does not exist`
+ * (`repair.GetMigrationFile`).
+ */
+export class LegacyDbResetMigrationFileError extends Data.TaggedError(
+  "LegacyDbResetMigrationFileError",
+)<{
+  readonly message: string;
+}> {}
+
+/**
+ * The user declined the reset confirmation. Go returns
+ * `errors.New(context.Canceled)` (`internal/db/reset/reset.go:248`).
+ */
+export class LegacyDbResetCancelledError extends Data.TaggedError("LegacyDbResetCancelledError")<{
+  readonly message: string;
+}> {}
+
+/** `supabase/config.toml` failed to parse. */
+export class LegacyDbResetConfigLoadError extends Data.TaggedError("LegacyDbResetConfigLoadError")<{
+  readonly message: string;
+}> {}
+
+/** A drop / migrate / seed / vault statement failed during the remote reset. */
+export class LegacyDbResetApplyError extends Data.TaggedError("LegacyDbResetApplyError")<{
+  readonly message: string;
+}> {}

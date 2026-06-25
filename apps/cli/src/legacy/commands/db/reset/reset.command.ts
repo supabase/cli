@@ -1,6 +1,10 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyDbReset } from "./reset.handler.ts";
+import { legacyDbResetRuntimeLayer } from "./reset.layers.ts";
 
 const config = {
   dbUrl: Flag.string("db-url").pipe(
@@ -33,5 +37,23 @@ export type LegacyDbResetFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const legacyDbResetCommand = Command.make("reset", config).pipe(
   Command.withDescription("Resets the local database to current migrations."),
   Command.withShortDescription("Resets the local database to current migrations"),
-  Command.withHandler((flags) => legacyDbReset(flags)),
+  Command.withHandler((flags) =>
+    legacyDbReset(flags).pipe(
+      withLegacyCommandInstrumentation({
+        flags: {
+          "db-url": flags.dbUrl,
+          linked: flags.linked,
+          local: flags.local,
+          "no-seed": flags.noSeed,
+          version: flags.version,
+          last: flags.last,
+        },
+        // Go marks `--version` telemetry-safe for migration/squash; reset reuses
+        // the same package-level var, so keep it safe here too.
+        safeFlags: ["version"],
+      }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyDbResetRuntimeLayer),
 );
