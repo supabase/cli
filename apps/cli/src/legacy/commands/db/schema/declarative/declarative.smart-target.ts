@@ -19,6 +19,7 @@ import {
   LegacyDeclarativeApplyError,
   LegacyDeclarativeInvalidDbUrlError,
 } from "./declarative.errors.ts";
+import type { LegacyDeclarativeShadowDbError } from "../../shared/legacy-pgdelta.errors.ts";
 import { LegacyDeclarativeSeam } from "../../shared/legacy-pgdelta.seam.service.ts";
 
 /**
@@ -84,10 +85,12 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
   path: Path.Path,
   workdir: string,
   linkedRef: Option.Option<string>,
+  beforeLocalTarget: Effect.Effect<void, LegacyDeclarativeShadowDbError> = Effect.void,
 ) {
   if (!hasMigrations) {
     // No migrations → generate from local. Go runs ensureLocalDatabaseStarted first
     // (db_schema_declarative.go:291), starting a stopped stack.
+    yield* beforeLocalTarget;
     yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
     return legacyLocalUrl(local);
   }
@@ -149,6 +152,7 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
 
   // "Local database" choice: Go runs ensureLocalDatabaseStarted before the reset
   // prompt (db_schema_declarative.go:249), starting a stopped stack.
+  yield* beforeLocalTarget;
   yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
 
   let shouldReset = flags.reset;

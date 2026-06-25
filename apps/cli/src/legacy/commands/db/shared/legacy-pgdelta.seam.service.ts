@@ -74,6 +74,15 @@ interface LegacyDeclarativeSeamShape {
    */
   readonly ensureLocalDatabaseStarted: () => Effect.Effect<void, LegacyDeclarativeShadowDbError>;
   /**
+   * Checks the running local Postgres container image tag against the currently
+   * resolved Postgres image. A missing container is accepted: catalog cache keys
+   * self-invalidate on setup inputs, and local-apply paths will start/connect later.
+   */
+  readonly ensureLocalPostgresImageCurrent: () => Effect.Effect<
+    void,
+    LegacyDeclarativeShadowDbError
+  >;
+  /**
    * Provisions a live shadow database via the bundled Go binary's hidden
    * `db __shadow` command and returns it running (the container is NOT removed —
    * the caller must call `removeShadowContainer` when the diff completes). This
