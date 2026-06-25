@@ -26,6 +26,16 @@ on:
         required: false
         type: string
         default: ""
+      timeout_minutes:
+        description: Maximum minutes to allow for the build job
+        required: false
+        type: number
+        default: 30
+      build_timeout_minutes:
+        description: Maximum minutes to allow for the artifact build step after setup
+        required: false
+        type: number
+        default: 4
     secrets:
       SENTRY_DSN:
         required: false
@@ -43,6 +53,7 @@ jobs:
   build:
     name: Build CLI artifacts
     runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
       BUN_SHELL: ${{ inputs.shell }}
       VERSION: ${{ inputs.version }}
@@ -64,10 +75,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-          # The GitHub-hosted producer frees disk space by deleting the pnpm
-          # store before exiting, which would make the post-job pnpm cache save
-          # fail with a path validation error. Skip the dependency cache there.
-          dependency-cache: ${{ inputs.cache_key_suffix != '-github' }}
 
       - name: Setup Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
@@ -103,25 +110,8 @@ jobs:
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
 
-      # The GitHub-hosted ubuntu-latest runner ships only ~14 GB free on /, and
-      # build.ts cross-compiles 8 Bun binaries (each embeds the full Bun runtime)
-      # plus 6 Go binaries in parallel, then writes archives + Linux packages —
-      # which tips over "no space left on device" non-deterministically depending
-      # on the runner the attempt lands on. Reclaim the preinstalled toolchains we
-      # don't use (~25 GB) before building. Blacksmith runners have ample disk so
-      # this is gated to the github-hosted producer.
-      #   - tool-cache stays false: setup-go installed Go into
-      #     /opt/hostedtoolcache above, so removing it would break the Go build.
-      #   - swap-storage stays (false = keep): the parallel bun --compile fan-out
-      #     is memory-heavy and the swapfile guards against OOM kills.
-      - name: Free disk space before building
-        if: inputs.cache_key_suffix == '-github'
-        uses: supabase/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # supabase fork of jlumbroso/free-disk-space
-        with:
-          tool-cache: false
-          swap-storage: false
-
       - name: Build selected shell
+        timeout-minutes: ${{ inputs.build_timeout_minutes }}
         run: pnpm exec bun apps/cli/scripts/build.ts --version "${VERSION}" --shell "${BUN_SHELL}"
 
       - name: Verify build artifacts
@@ -145,14 +135,6 @@ jobs:
             if echo "$info" | grep -q 'LINKER_SIGNED'; then echo "::error::$bin still linker-signed"; exit 1; fi
             echo "::endgroup::"
           done
-
-      - name: Free space before saving GitHub-hosted artifacts cache
-        if: inputs.cache_key_suffix == '-github'
-        run: |
-          rm -rf node_modules apps/*/node_modules packages/*/node_modules
-          chmod -R u+w "$HOME/.cache/go-build" "$HOME/go/pkg/mod" 2>/dev/null || true
-          rm -rf "$(pnpm store path --silent)" "$HOME/.cache/go-build" "$HOME/go/pkg/mod"
-          df -h
 
       - name: Check existing build artifacts cache
         id: build-artifacts-cache

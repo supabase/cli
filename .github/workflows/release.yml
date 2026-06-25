@@ -54,6 +54,7 @@ jobs:
       github.event.pull_request.base.ref == 'main' &&
       github.event.review.state == 'approved'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -78,6 +79,7 @@ jobs:
     name: Plan release
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     outputs:
       should_release: ${{ steps.compute.outputs.should_release }}
       version: ${{ steps.compute.outputs.version }}
