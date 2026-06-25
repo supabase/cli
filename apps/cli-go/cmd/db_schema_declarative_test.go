@@ -265,10 +265,8 @@ func TestEnsureLocalPostgresImageCurrent(t *testing.T) {
 }
 
 func TestShouldEnsureLocalPostgresImageCurrent(t *testing.T) {
-	assert.False(t, shouldEnsureLocalPostgresImageCurrent(true, true), "--no-cache --no-apply builds fresh catalogs and skips local apply")
-	assert.True(t, shouldEnsureLocalPostgresImageCurrent(false, true), "cache-enabled dry run can reuse local catalog snapshots")
-	assert.True(t, shouldEnsureLocalPostgresImageCurrent(true, false), "apply path can touch the local database")
-	assert.True(t, shouldEnsureLocalPostgresImageCurrent(false, false), "default sync can reuse caches and apply locally")
+	assert.False(t, shouldEnsureLocalPostgresImageCurrent(true), "--no-apply writes a migration without touching local Postgres")
+	assert.True(t, shouldEnsureLocalPostgresImageCurrent(false), "apply paths can touch the local database")
 }
 
 func TestHasDeclarativeFiles(t *testing.T) {

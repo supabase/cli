@@ -450,6 +450,7 @@ describe("legacy db schema declarative generate integration", () => {
       expect(s.seamCalls).toContain("baseline");
       // ... but did NOT auto-start (value is false).
       expect(s.ensureStartedCalls).toBe(0);
+      expect(s.localPostgresImageChecks).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 

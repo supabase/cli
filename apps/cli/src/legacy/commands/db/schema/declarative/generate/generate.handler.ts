@@ -139,8 +139,8 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           // `ensureLocalDatabaseStarted` (`db_schema_declarative.go:190`), which
           // short-circuits `if !local { return nil }` (`:127-128`). So `--local=false`
           // selects the local target but must NOT start a stopped stack.
+          yield* seam.ensureLocalPostgresImageCurrent();
           if (Option.getOrElse(flags.local, () => false)) {
-            yield* seam.ensureLocalPostgresImageCurrent();
             yield* seam.ensureLocalDatabaseStarted();
           }
           targetUrl = legacyLocalUrl(local);

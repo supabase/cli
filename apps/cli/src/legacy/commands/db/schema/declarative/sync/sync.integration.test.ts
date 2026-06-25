@@ -243,13 +243,11 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("checks the local Postgres image before diffing on the shipped sync path", () => {
+  it.effect("checks the local Postgres image before diffing when apply may run", () => {
     seedDeclarative(tmp.current);
     const s = setup(tmp.current, { experimental: true, staleLocalImage: true });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
-      );
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
         _tag: "LegacyDeclarativeShadowDbError",
@@ -259,7 +257,7 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("--no-cache --no-apply skips the local Postgres image check", () => {
+  it.effect("--no-apply skips the local Postgres image check", () => {
     seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       experimental: true,
@@ -267,7 +265,7 @@ describe("legacy db schema declarative sync integration", () => {
       diffSql: "",
     });
     return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) }));
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
       expect(s.localPostgresImageChecks).toEqual([]);
       expect(s.out.rawChunks.some((c) => c.text.includes("No schema changes found"))).toBe(true);
     }).pipe(Effect.provide(s.layer));

@@ -139,10 +139,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         ),
       );
       const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
-      if (
-        declarativeFilesExist &&
-        shouldEnsureLocalPostgresImageCurrent(flags.noCache, flags.noApply)
-      ) {
+      if (declarativeFilesExist && shouldEnsureLocalPostgresImageCurrent(flags.noApply)) {
         yield* ensureLocalPostgresImageCurrent;
       }
 
@@ -441,11 +438,8 @@ const declarativeDirHasFiles = Effect.fnUntraced(function* (
   return entries.length > 0;
 });
 
-function shouldEnsureLocalPostgresImageCurrent(
-  noCache: boolean,
-  noApply: Option.Option<boolean>,
-): boolean {
-  return !(noCache && Option.getOrElse(noApply, () => false));
+function shouldEnsureLocalPostgresImageCurrent(noApply: Option.Option<boolean>): boolean {
+  return !Option.getOrElse(noApply, () => false);
 }
 
 /** Connects to the local database and applies the single migration file (Go's `applyMigrationToLocal`). */
