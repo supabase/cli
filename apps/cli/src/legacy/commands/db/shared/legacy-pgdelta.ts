@@ -185,6 +185,42 @@ const LegacyDeclarativeApplyResultSchema = Schema.Struct({
 
 const decodeApplyResult = Schema.decodeUnknownEffect(LegacyDeclarativeApplyResultSchema);
 
+const parseApplyResult = (stdout: string) =>
+  Effect.try({
+    try: () => JSON.parse(stdout),
+    catch: (cause) =>
+      new LegacyDeclarativeParseOutputError({
+        message: `failed to parse pg-delta apply output: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+      }),
+  }).pipe(
+    Effect.flatMap((parsed) =>
+      decodeApplyResult(parsed).pipe(
+        Effect.map((decoded) => {
+          const normalized: LegacyDeclarativeApplyResult = {
+            status: decoded.status,
+            totalStatements: decoded.totalStatements ?? 0,
+            totalRounds: decoded.totalRounds ?? 0,
+            totalApplied: decoded.totalApplied ?? 0,
+            totalSkipped: decoded.totalSkipped ?? 0,
+            errors: decoded.errors ?? [],
+            stuckStatements: decoded.stuckStatements ?? [],
+            validationErrors: decoded.validationErrors ?? [],
+            diagnostics: decoded.diagnostics ?? [],
+          };
+          return normalized;
+        }),
+        Effect.mapError(
+          (cause) =>
+            new LegacyDeclarativeParseOutputError({
+              message: `failed to parse pg-delta apply output: ${cause.message}`,
+            }),
+        ),
+      ),
+    ),
+  );
+
 /**
  * Diffs SOURCE → TARGET via the pg-delta diff script. Mirrors Go's
  * `DiffPgDeltaRefDetailed` (`internal/db/diff/pgdelta.go:108`). `sourceRef` may
@@ -333,40 +369,13 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
       extraEnv: npm.extraEnv,
       denoVersion: ctx.denoVersion,
     })
-    .pipe(Effect.mapError(toDeclarativeEdgeRuntimeError));
-
-  return yield* Effect.try({
-    try: () => JSON.parse(result.stdout),
-    catch: (cause) =>
-      new LegacyDeclarativeParseOutputError({
-        message: `failed to parse pg-delta apply output: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
-      }),
-  }).pipe(
-    Effect.flatMap((parsed) =>
-      decodeApplyResult(parsed).pipe(
-        Effect.map((decoded) => {
-          const normalized: LegacyDeclarativeApplyResult = {
-            status: decoded.status,
-            totalStatements: decoded.totalStatements ?? 0,
-            totalRounds: decoded.totalRounds ?? 0,
-            totalApplied: decoded.totalApplied ?? 0,
-            totalSkipped: decoded.totalSkipped ?? 0,
-            errors: decoded.errors ?? [],
-            stuckStatements: decoded.stuckStatements ?? [],
-            validationErrors: decoded.validationErrors ?? [],
-            diagnostics: decoded.diagnostics ?? [],
-          };
-          return normalized;
-        }),
-        Effect.mapError(
-          (cause) =>
-            new LegacyDeclarativeParseOutputError({
-              message: `failed to parse pg-delta apply output: ${cause.message}`,
-            }),
-        ),
+    .pipe(
+      Effect.catchTag("LegacyEdgeRuntimeScriptError", (error) =>
+        error.stdout === undefined || error.stdout.length === 0
+          ? Effect.fail(toDeclarativeEdgeRuntimeError(error))
+          : Effect.succeed({ stdout: error.stdout, stderr: error.stderr ?? "" }),
       ),
-    ),
-  );
+    );
+
+  return yield* parseApplyResult(result.stdout);
 });

@@ -124,16 +124,19 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
           // Go ignores the error when stderr reports the runtime tore down its
           // worker after the script completed (the script's output is still
           // valid). Any other non-zero exit is a real failure.
+          const stdout = new TextDecoder().decode(result.stdout);
           if (result.exitCode !== 0 && !result.stderr.includes("main worker has been destroyed")) {
             return yield* Effect.fail(
               new LegacyEdgeRuntimeScriptError({
                 message: `${opts.errPrefix}: error running container: exit ${result.exitCode}:\n${result.stderr}`,
+                stdout,
+                stderr: result.stderr,
               }),
             );
           }
 
           return {
-            stdout: new TextDecoder().decode(result.stdout),
+            stdout,
             stderr: result.stderr,
           };
         }),

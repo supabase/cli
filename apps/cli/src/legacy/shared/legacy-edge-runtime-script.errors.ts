@@ -10,4 +10,6 @@ import { Data } from "effect";
  */
 export class LegacyEdgeRuntimeScriptError extends Data.TaggedError("LegacyEdgeRuntimeScriptError")<{
   readonly message: string;
+  readonly stdout?: string;
+  readonly stderr?: string;
 }> {}

@@ -34,7 +34,13 @@ function fakeEdgeRuntime(outcome: { stdout?: string; stderr?: string; fail?: str
     run: (opts: LegacyEdgeRuntimeRunOpts) => {
       calls.push(opts);
       if (outcome.fail !== undefined) {
-        return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: outcome.fail }));
+        return Effect.fail(
+          new LegacyEdgeRuntimeScriptError({
+            message: outcome.fail,
+            stdout: outcome.stdout,
+            stderr: outcome.stderr,
+          }),
+        );
       }
       return Effect.succeed({
         stdout: outcome.stdout ?? "",
@@ -101,6 +107,41 @@ describe("legacyApplyDeclarativePgDelta", () => {
           expect((failError(exit) as { message: string }).message).toContain(
             "failed to parse pg-delta apply output:",
           );
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+    );
+  });
+
+  it.effect("parses structured apply output when edge-runtime exits non-zero", () => {
+    const edge = fakeEdgeRuntime({
+      fail: "error running pg-delta script: error running container: exit 1",
+      stderr: "pg-delta apply failed with status: error",
+      stdout: JSON.stringify({
+        status: "error",
+        totalStatements: 2,
+        totalRounds: 1,
+        totalApplied: 1,
+        totalSkipped: 0,
+        errors: ["permission denied"],
+        stuckStatements: [{ sql: "alter table public.todos add column title text" }],
+        validationErrors: [{ message: "function body failed validation" }],
+        diagnostics: [],
+      }),
+    });
+    return legacyApplyDeclarativePgDelta(CTX, {
+      declarativeDir: "/proj/supabase/database",
+      targetRef: "postgresql://t",
+    }).pipe(
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(result.status).toBe("error");
+          expect(result.totalApplied).toBe(1);
+          expect(result.errors).toEqual(["permission denied"]);
+          expect(result.stuckStatements).toEqual([
+            { sql: "alter table public.todos add column title text" },
+          ]);
+          expect(result.validationErrors).toEqual([{ message: "function body failed validation" }]);
         }),
       ),
       Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
