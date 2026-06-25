@@ -168,6 +168,28 @@ describe("legacy migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("rejects a version outside Go's int range before any DB mutation", () => {
+    const { layer, execs, queries } = setup(tmp.current);
+    return Effect.gen(function* () {
+      // Go validates explicit versions with strconv.Atoi (repair.go:27-31), which
+      // rejects values above the int64 range; a 20-digit version must fail
+      // `invalid version number` before any glob/upsert/delete.
+      const exit = yield* legacyMigrationRepair(
+        input({ versions: ["99999999999999999999"], status: "applied" }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe(
+          "LegacyMigrationInvalidVersionError",
+        );
+      }
+      // Validation runs before connecting, so no transaction or upsert occurred.
+      expect(execs).not.toContain("BEGIN");
+      expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("repair-all truncates and reapplies local files on confirm", () => {
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
     const { layer, execs, queries } = setup(tmp.current, { confirm: true });

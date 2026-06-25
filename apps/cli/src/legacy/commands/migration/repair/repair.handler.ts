@@ -22,6 +22,7 @@ import {
   TRUNCATE_VERSION_TABLE,
   UPSERT_MIGRATION_VERSION,
 } from "../../../shared/legacy-migration-history.ts";
+import { legacyParseMigrationVersion } from "../../../shared/legacy-migration-timestamp.format.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -42,10 +43,6 @@ export interface LegacyMigrationRepairInput {
   readonly local: boolean;
   readonly password: Option.Option<string>;
 }
-
-// Go's `strconv.Atoi`: digits only (no sign/whitespace/float). Range doesn't
-// matter — Go only checks the value parses, then reuses it verbatim.
-const isNumericVersion = (value: string): boolean => /^\d+$/u.test(value);
 
 /** Go's `repair.UpdateMigrationTable` — create the table, then run one batch txn. */
 const updateMigrationTable = Effect.fnUntraced(function* (
@@ -122,9 +119,11 @@ const runRepair = Effect.fnUntraced(function* (
   const yes = yield* LegacyYesFlag;
 
   // Numeric validation runs first (Go validates the provided versions before the
-  // repair-all branch). `failed to parse <v>: invalid version number`.
+  // repair-all branch) via `strconv.Atoi` (`internal/migration/repair/repair.go:27-31`),
+  // which rejects non-numeric AND out-of-int64-range values. `legacyParseMigrationVersion`
+  // mirrors that exactly. `failed to parse <v>: invalid version number`.
   for (const version of input.versions) {
-    if (!isNumericVersion(version)) {
+    if (legacyParseMigrationVersion(version) === undefined) {
       return yield* Effect.fail(
         new LegacyMigrationInvalidVersionError({
           message: `failed to parse ${version}: invalid version number`,
