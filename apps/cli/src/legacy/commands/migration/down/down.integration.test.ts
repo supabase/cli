@@ -12,7 +12,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
@@ -33,6 +33,7 @@ const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDE
 
 interface SetupOpts {
   readonly format?: OutputFormat;
+  readonly isTTY?: boolean;
   readonly args?: ReadonlyArray<string>;
   readonly yes?: boolean;
   readonly confirm?: boolean;
@@ -122,6 +123,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    mockTty({ stdinIsTty: opts.isTTY ?? true }),
     BunServices.layer,
   );
   return { layer, out, telemetry, execs, queries };
@@ -208,9 +210,11 @@ describe("legacy migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("defaults to NO (cancels) in json mode without --yes", () => {
-    const { layer } = setup(tmp.current, {
-      format: "json",
+  it.live("defaults to NO (cancels) without a TTY", () => {
+    // Non-interactive (no stdin TTY) → return the default (NO) without prompting,
+    // matching Go's PromptYesNo gate on term.IsTerminal, independent of output format.
+    const { layer, out } = setup(tmp.current, {
+      isTTY: false,
       remote: ["20240101000000", "20240102000000"],
     });
     return Effect.gen(function* () {
@@ -220,6 +224,7 @@ describe("legacy migration down", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
       }
+      expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
 

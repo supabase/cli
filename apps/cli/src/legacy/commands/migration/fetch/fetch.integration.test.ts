@@ -11,7 +11,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
@@ -36,6 +36,7 @@ interface MigrationRow {
 
 interface SetupOpts {
   readonly format?: OutputFormat;
+  readonly isTTY?: boolean;
   readonly yes?: boolean;
   readonly confirm?: boolean;
   readonly rows?: ReadonlyArray<MigrationRow>;
@@ -100,6 +101,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: [] }),
+    mockTty({ stdinIsTty: opts.isTTY ?? true }),
     BunServices.layer,
   );
   return { layer, out, telemetry };

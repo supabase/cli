@@ -11,7 +11,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
@@ -27,6 +27,7 @@ import { legacyMigrationRepair, type LegacyMigrationRepairInput } from "./repair
 
 interface SetupOpts {
   readonly format?: OutputFormat;
+  readonly isTTY?: boolean;
   readonly yes?: boolean;
   readonly confirm?: boolean;
   readonly args?: ReadonlyArray<string>;
@@ -102,6 +103,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    mockTty({ stdinIsTty: opts.isTTY ?? true }),
     BunServices.layer,
   );
   return { layer, out, telemetry, execs, queries };
@@ -233,8 +235,10 @@ describe("legacy migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("repair-all defaults to NO in json mode (no prompt → cancel)", () => {
-    const { layer } = setup(tmp.current, { format: "json" });
+  it.live("repair-all defaults to NO without a TTY (no prompt → cancel)", () => {
+    // Go gates the prompt on stdin being a terminal (console.go:27), not output
+    // format — a non-interactive run returns the default (NO) without prompting.
+    const { layer, out } = setup(tmp.current, { isTTY: false });
     return Effect.gen(function* () {
       const exit = yield* legacyMigrationRepair(input({ versions: [], status: "applied" })).pipe(
         Effect.exit,
@@ -244,6 +248,7 @@ describe("legacy migration repair", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
       }
+      expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
 
