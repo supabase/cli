@@ -181,6 +181,125 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect(
+    "expands env() before splitting a string sql_paths (LoadEnv before StringToSlice)",
+    () => {
+      // Go runs LoadEnvHook before StringToSliceHookFunc(","), so env(SEEDS)=a.sql,b.sql
+      // expands first and then splits into two patterns.
+      const previous = process.env["SEEDS"];
+      process.env["SEEDS"] = "a.sql,b.sql";
+      const dir = withConfig(["[db.seed]", 'sql_paths = "env(SEEDS)"', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.seed.sqlPaths).toEqual(["supabase/a.sql", "supabase/b.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SEEDS"];
+            else process.env["SEEDS"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("expands an env() array element but does NOT split it (Go array asymmetry)", () => {
+    // A TOML array element is decoded string→string: LoadEnvHook expands it, but
+    // StringToSliceHookFunc does not fire, so it stays one (comma-containing) pattern.
+    const previous = process.env["SEEDS"];
+    process.env["SEEDS"] = "a.sql,b.sql";
+    const dir = withConfig(["[db.seed]", 'sql_paths = ["env(SEEDS)"]', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.sqlPaths).toEqual(["supabase/a.sql,b.sql"]);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SEEDS"];
+          else process.env["SEEDS"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("decodes a numeric db.seed.enabled = 0 as false (Go weak-bool decode)", () => {
+    const dir = withConfig(["[db.seed]", "enabled = 0", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.enabled).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("decodes a numeric db.migrations.enabled = 0 as false", () => {
+    const dir = withConfig(["[db.migrations]", "enabled = 0", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.migrationsEnabled).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("matches a remote block by a SUPABASE_REMOTES_<NAME>_PROJECT_ID env override", () => {
+    // Viper AutomaticEnv supplies/overrides remotes.prod.project_id, so the block merges
+    // even with no TOML project_id (here it lifts major_version 15 over the base default).
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
+    process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = ref;
+    const dir = withConfig(["[remotes.prod]", "db.major_version = 15", ""].join("\n"));
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.majorVersion).toBe(15);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
+          else process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("validates a remote project_id supplied only via env (no TOML literal)", () => {
+    // Without the env value the block (no TOML project_id) would fail Validate; the env
+    // override supplies a valid ref, so the load succeeds.
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
+    process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = ref;
+    const dir = withConfig(["[remotes.prod]", "db.major_version = 15", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          // Load succeeded (no invalid-remote error); read() without a ref leaves the base
+          // major_version default (17) since the block is not merged.
+          expect(v.majorVersion).toBe(17);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
+          else process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("a remote block forcing db.seed.enabled=false beats SUPABASE_DB_SEED_ENABLED", () => {
     // Go's mergeRemoteConfig v.Set(false) is an override-tier value above AutomaticEnv,
     // so a remote that omits db.seed.enabled stays unseeded even with the env var set.

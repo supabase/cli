@@ -190,6 +190,27 @@ interface LegacyRemoteOverride {
   readonly forcedSeedDisabled: boolean;
 }
 
+/**
+ * The effective `project_id` of a `[remotes.<name>]` block. Viper's `AutomaticEnv` binds
+ * the config key `remotes.<name>.project_id` to `SUPABASE_REMOTES_<NAME>_PROJECT_ID`
+ * (`SetEnvPrefix("SUPABASE")` + `EnvKeyReplacer(".","_")`, `config.go:494-498`), and the
+ * remote loop reads it via `v.GetString("remotes.<name>.project_id")` (`config.go:510`),
+ * so a non-empty env value wins OUTRIGHT over the TOML literal — even an `env(...)` form —
+ * and participates in both block-matching and duplicate detection. An empty env value is
+ * dropped (`AllowEmptyEnv=false`; godotenv never overrides an empty shell var), falling
+ * back to the env-expanded TOML literal.
+ */
+function legacyResolveRemoteProjectId(
+  name: string,
+  block: RawDoc | undefined,
+  lookup: EnvLookup,
+): string | undefined {
+  const fromEnv = lookup(`SUPABASE_REMOTES_${name.toUpperCase()}_PROJECT_ID`);
+  if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
+  const literal = block?.["project_id"];
+  return typeof literal === "string" ? legacyExpandEnv(literal, lookup) : undefined;
+}
+
 function applyRemoteOverride(
   doc: RawDoc | undefined,
   ref: string,
@@ -200,13 +221,9 @@ function applyRemoteOverride(
   for (const name of Object.keys(remotes)) {
     const block = asRecord(remotes[name]);
     if (block === undefined) continue;
-    // Go decodes the remote `project_id` through `LoadEnvHook` before matching it
-    // against the resolved ref (`config.go:503-518`), so an `env(VAR)` block id is
-    // compared by its expanded value.
-    if (
-      typeof block["project_id"] === "string" &&
-      legacyExpandEnv(block["project_id"], lookup) === ref
-    ) {
+    // Match on the effective project_id (env override > expanded TOML literal), so a
+    // block whose id comes from `SUPABASE_REMOTES_<NAME>_PROJECT_ID` still merges.
+    if (legacyResolveRemoteProjectId(name, block, lookup) === ref) {
       const merged = deepMergeDoc(doc, block);
       // Go's `mergeRemoteConfig` (`pkg/config/config.go:638-640`) forces
       // `db.seed.enabled` to `false` whenever the matched remote block itself does
@@ -240,12 +257,9 @@ function findDuplicateRemoteProjectId(
   const seen = new Map<string, string>();
   for (const name of Object.keys(remotes)) {
     const block = asRecord(remotes[name]);
-    // Go decodes each remote `project_id` through `LoadEnvHook` before the
-    // duplicate check (`config.go:506-511`), so dedupe on the expanded value.
-    const projectId =
-      block !== undefined && typeof block["project_id"] === "string"
-        ? legacyExpandEnv(block["project_id"], lookup)
-        : undefined;
+    // Dedupe on the effective project_id (env override > expanded TOML literal), matching
+    // Go's `v.GetString` duplicate check (`config.go:506-511`).
+    const projectId = legacyResolveRemoteProjectId(name, block, lookup);
     if (projectId === undefined) continue;
     const prior = seen.get(projectId);
     if (prior !== undefined) return { name, other: prior };
@@ -285,13 +299,10 @@ function findInvalidRemoteProjectId(
   if (remotes === undefined) return undefined;
   for (const name of Object.keys(remotes)) {
     const block = asRecord(remotes[name]);
-    const rawProjectId = block !== undefined ? block["project_id"] : undefined;
-    // Go expands `env(VAR)` via `LoadEnvHook` before `Validate` checks the ref
-    // pattern (`config.go:832-836`), so an env-backed `project_id` is validated by
-    // its resolved value. An unset/empty expansion still fails (Go's `refPattern`
-    // rejects the literal `env(...)` / empty string).
-    const projectId =
-      typeof rawProjectId === "string" ? legacyExpandEnv(rawProjectId, lookup) : rawProjectId;
+    // Validate the effective project_id (env override > expanded TOML literal), matching
+    // Go's `Validate` over the env-resolved value (`config.go:832-836`). An unset/empty
+    // value still fails (Go's `refPattern` rejects an `env(...)` literal / empty string).
+    const projectId = legacyResolveRemoteProjectId(name, block, lookup);
     if (typeof projectId !== "string" || !LEGACY_PROJECT_REF_PATTERN.test(projectId)) {
       return name;
     }
@@ -503,6 +514,11 @@ function resolveBool(value: unknown, fallback: boolean, lookup: EnvLookup): bool
     const parsed = legacyParseGoBool(legacyExpandEnv(value, lookup));
     return parsed ?? "invalid";
   }
+  // Go decodes a numeric config value into a bool via mapstructure's weakly-typed input:
+  // `value != 0` (mapstructure `decodeBool`; `getKind` collapses every int/uint/float
+  // width). A TOML number (`enabled = 0`) is therefore an explicit false, NOT absent — it
+  // must not fall through to the schema default.
+  if (typeof value === "number") return value !== 0;
   return fallback;
 }
 
@@ -562,6 +578,8 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
     return Option.some(parsed);
   }
   if (typeof value === "boolean") return Option.some(value);
+  // Numeric `*bool` value decodes the same way under weak typing: `value != 0`.
+  if (typeof value === "number") return Option.some(value !== 0);
   if (typeof value === "string") {
     const parsed = legacyParseGoBool(legacyExpandEnv(value, lookup));
     if (parsed === undefined) {
@@ -989,33 +1007,37 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     lookup,
     remoteForcedSeedDisabled ? undefined : envOverride("SUPABASE_DB_SEED_ENABLED"),
   );
-  // Go decodes a STRING `db.seed.sql_paths` — whether from the `SUPABASE_DB_SEED_SQL_PATHS`
-  // env override (viper AutomaticEnv) or a TOML string value — via
-  // `mapstructure.StringToSliceHookFunc(",")`: a bare comma split with NO whitespace
-  // trimming, and an empty string → `[]` (`config.go:494-498,691`; `decode_hooks.go`). An
-  // array TOML value stays an array; an absent (or non-string/non-array) value falls back to
-  // the `["seed.sql"]` default. The env override (non-empty; `envOverride` drops empties to
-  // match `AllowEmptyEnv=false`) wins over the TOML value.
-  const splitGoSeedPaths = (value: string): ReadonlyArray<string> =>
-    value.length === 0 ? [] : value.split(",");
+  // Go decodes `db.seed.sql_paths` through the mapstructure hook chain in order:
+  // `LoadEnvHook` (expands `env(VAR)`) runs BEFORE `StringToSliceHookFunc(",")`
+  // (`config.go:687-695`; `decode_hooks.go`). So a STRING value — the
+  // `SUPABASE_DB_SEED_SQL_PATHS` env override (viper AutomaticEnv) or a TOML string — is
+  // env-expanded FIRST, then comma-split (no trimming; empty → `[]`). A TOML ARRAY is
+  // decoded element-by-element: each element is env-expanded but NOT re-split
+  // (`StringToSliceHookFunc` only fires string→[]string), so `["env(SEEDS)"]` stays one
+  // pattern. The env override (non-empty; `envOverride` drops empties to match
+  // `AllowEmptyEnv=false`) wins over the TOML value; an absent (or non-string/non-array)
+  // value falls back to the `["seed.sql"]` default.
+  const splitGoSeedPaths = (value: string): ReadonlyArray<string> => {
+    const expanded = legacyExpandEnv(value, lookup);
+    return expanded.length === 0 ? [] : expanded.split(",");
+  };
   const rawSqlPaths = seedRaw?.["sql_paths"];
   const sqlPathsOverride = envOverride("SUPABASE_DB_SEED_SQL_PATHS");
   const sqlPathPatterns =
     sqlPathsOverride !== undefined
       ? splitGoSeedPaths(sqlPathsOverride)
       : Array.isArray(rawSqlPaths)
-        ? rawSqlPaths.filter((pattern): pattern is string => typeof pattern === "string")
+        ? rawSqlPaths
+            .filter((pattern): pattern is string => typeof pattern === "string")
+            .map((pattern) => legacyExpandEnv(pattern, lookup))
         : typeof rawSqlPaths === "string"
           ? splitGoSeedPaths(rawSqlPaths)
           : ["seed.sql"];
-  const seedSqlPaths = sqlPathPatterns.map((rawPattern) => {
-    // Go's `LoadEnvHook` (`pkg/config/decode_hooks.go`) expands `env(VAR)` on every
-    // string element of `db.seed.sql_paths` during unmarshal, BEFORE `resolve()`
-    // supabase-prefixes relative patterns (`config.go`). Expand first, then prefix —
-    // otherwise `["env(SEED_SQL)"]` would glob the literal `supabase/env(SEED_SQL)`.
-    const pattern = legacyExpandEnv(rawPattern, lookup);
+  const seedSqlPaths = sqlPathPatterns.map((pattern) => {
+    // Patterns are already env-expanded above (Go's LoadEnvHook runs before the split), so
+    // an absolute path is used verbatim and a relative one is supabase-prefixed via Go's
+    // `path.Join("supabase", pattern)` → `path.Clean` (collapses `.`/`..`).
     if (pattern.length === 0 || path.isAbsolute(pattern)) return pattern;
-    // Mirror Go's `path.Join("supabase", pattern)` → `path.Clean` (collapses `.`/`..`).
     return legacyJoinSupabaseSeedPath(pattern);
   });
 
