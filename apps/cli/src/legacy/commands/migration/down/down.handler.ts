@@ -45,11 +45,8 @@ const runDown = Effect.fnUntraced(function* (
   const dnsResolver = yield* LegacyDnsResolverFlag;
   const yes = yield* LegacyYesFlag;
 
-  if (flags.last === 0) {
-    return yield* Effect.fail(
-      new LegacyMigrationLastZeroError({ message: "--last must be greater than 0" }),
-    );
-  }
+  // Flag-group mutual-exclusion first: cobra's `MarkFlagsMutuallyExclusive` validates at
+  // parse time, ahead of the root `PersistentPreRunE` (`cmd/migration.go:156`).
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
       new LegacyMigrationTargetFlagsError({
@@ -58,13 +55,41 @@ const runDown = Effect.fnUntraced(function* (
     );
   }
 
-  const downBody = Effect.gen(function* () {
-    // down defaults to `--local` (Go: `Bool("local", true)`).
-    const cfg = yield* resolver.resolve({
-      dbUrl: flags.dbUrl,
-      connType: target.connType ?? "local",
-      dnsResolver,
-    });
+  const connType = target.connType ?? "local"; // down defaults to `--local` (Go: `Bool("local", true)`).
+
+  // Resolve the DB config BEFORE the `--last` validation — Go's root `PersistentPreRunE`
+  // runs `ParseDatabaseConfig` (`cmd/root.go:118`) before `down.Run`'s `last == 0` check
+  // (`internal/migration/down/down.go:20-23`), so an unlinked/invalid target surfaces
+  // before the `--last must be greater than 0` error.
+  const cfg = yield* resolver.resolve({
+    dbUrl: flags.dbUrl,
+    connType,
+    dnsResolver,
+  });
+
+  // Linked down caches the project ref (Go's `ensureProjectGroupsCached` from `Execute()`,
+  // gated on the ref loaded in pre-run, NOT on the RunE error). Load it now and attach the
+  // cache to the whole flow via `Effect.ensuring`, so it runs even on the `--last`/cancel
+  // failure paths.
+  const cacheLinkedRef =
+    connType === "linked"
+      ? yield* Effect.gen(function* () {
+          const projectRef = yield* LegacyProjectRefResolver;
+          const linkedProjectCache = yield* LegacyLinkedProjectCache;
+          const linkedRef = yield* projectRef.loadProjectRef(Option.none());
+          return linkedProjectCache.cache(linkedRef);
+        })
+      : undefined;
+
+  const downFlow = Effect.gen(function* () {
+    // `--last` zero-value validation runs after DB-config resolution (Go's check is inside
+    // `down.Run`, after `PersistentPreRunE`).
+    if (flags.last === 0) {
+      return yield* Effect.fail(
+        new LegacyMigrationLastZeroError({ message: "--last must be greater than 0" }),
+      );
+    }
+
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
     const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref);
 
@@ -121,13 +146,9 @@ const runDown = Effect.fnUntraced(function* (
     );
   });
 
-  if ((target.connType ?? "local") === "linked") {
-    const projectRef = yield* LegacyProjectRefResolver;
-    const linkedProjectCache = yield* LegacyLinkedProjectCache;
-    const linkedRef = yield* projectRef.loadProjectRef(Option.none());
-    return yield* downBody.pipe(Effect.ensuring(linkedProjectCache.cache(linkedRef)));
-  }
-  return yield* downBody;
+  return yield* cacheLinkedRef === undefined
+    ? downFlow
+    : downFlow.pipe(Effect.ensuring(cacheLinkedRef));
 });
 
 export const legacyMigrationDown = Effect.fn("legacy.migration.down")(function* (

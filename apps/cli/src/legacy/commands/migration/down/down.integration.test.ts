@@ -17,6 +17,7 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
   LegacyDbConfigFlags,
@@ -39,6 +40,7 @@ interface SetupOpts {
   readonly yes?: boolean;
   readonly confirm?: boolean;
   readonly remote?: ReadonlyArray<string>;
+  readonly failResolve?: boolean;
   readonly failDrop?: boolean;
   readonly failSeed?: boolean;
   readonly config?: string;
@@ -63,17 +65,23 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   const resolver = Layer.succeed(LegacyDbConfigResolver, {
     resolve: (_flags: LegacyDbConfigFlags) =>
-      Effect.succeed({
-        conn: {
-          host: "127.0.0.1",
-          port: 54322,
-          user: "postgres",
-          password: "x",
-          database: "postgres",
-        },
-        isLocal: true,
-        ref: Option.none(),
-      } satisfies LegacyResolvedDbConfig),
+      opts.failResolve === true
+        ? Effect.fail(
+            new LegacyProjectNotLinkedError({
+              message: "Cannot find project ref. Have you run link?",
+            }),
+          )
+        : Effect.succeed({
+            conn: {
+              host: "127.0.0.1",
+              port: 54322,
+              user: "postgres",
+              password: "x",
+              database: "postgres",
+            },
+            isLocal: true,
+            ref: Option.none(),
+          } satisfies LegacyResolvedDbConfig),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
@@ -162,6 +170,21 @@ describe("legacy migration down", () => {
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyMigrationLastZeroError");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("resolves the DB target before rejecting --last 0", () => {
+    // Go runs ParseDatabaseConfig (PersistentPreRunE, root.go:118) before down.Run's
+    // last==0 check, so an unlinked/invalid target error wins over --last 0.
+    const { layer } = setup(tmp.current, { failResolve: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationDown(flags({ last: 0 })).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        // The target/config error surfaces first, NOT the --last 0 error.
+        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyProjectNotLinkedError");
       }
     }).pipe(Effect.provide(layer));
   });
