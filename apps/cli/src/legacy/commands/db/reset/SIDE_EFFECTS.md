@@ -10,47 +10,47 @@ is ported (CLI-1325 Stage 3).
 
 ## Files Read
 
-| Path                             | Format     | When                                                            |
-| -------------------------------- | ---------- | --------------------------------------------------------------- |
-| `<workdir>/supabase/migrations/` | directory  | to validate `--version` / resolve `--last`, and to load migrations |
-| `<workdir>/supabase/config.toml` | TOML       | remote path (embedded defaults when absent)                     |
-| `~/.supabase/<hash>/project-ref` | plain text | `--linked`, to resolve the ref                                  |
-| `~/.supabase/access-token`       | plain text | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted |
-| seed files from `[db.seed].sql_paths` | SQL   | remote path, when `[db.seed].enabled` and not `--no-seed`       |
+| Path                                  | Format     | When                                                                     |
+| ------------------------------------- | ---------- | ------------------------------------------------------------------------ |
+| `<workdir>/supabase/migrations/`      | directory  | to validate `--version` / resolve `--last`, and to load migrations       |
+| `<workdir>/supabase/config.toml`      | TOML       | remote path (embedded defaults when absent)                              |
+| `~/.supabase/<hash>/project-ref`      | plain text | `--linked`, to resolve the ref                                           |
+| `~/.supabase/access-token`            | plain text | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted |
+| seed files from `[db.seed].sql_paths` | SQL        | remote path, when `[db.seed].enabled` and not `--no-seed`                |
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON | `--linked` (post-run cache) |
-| `~/.supabase/telemetry.json` | JSON | always (post-run telemetry flush) |
+| Path                                             | Format | When                              |
+| ------------------------------------------------ | ------ | --------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | `--linked` (post-run cache)       |
+| `~/.supabase/telemetry.json`                     | JSON   | always (post-run telemetry flush) |
 
 The local / experimental paths additionally produce whatever the delegated Go
 binary writes (container volumes, `_current_branch`, etc.).
 
 ## Database Mutations (remote path)
 
-| Statement | When |
-| --------- | ---- |
-| `drop.sql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations) | always, first |
-| `SELECT vault.update_secret(...)` / `vault.create_secret(...)` | when `[db.vault]` has syncable secrets |
-| migration statements + `schema_migrations` history insert (per file, transactional) | when `[db.migrations].enabled`, for migrations `≤ --version` |
-| seed statements + `seed_files` hash upsert | when `[db.seed].enabled` and not `--no-seed` |
+| Statement                                                                                       | When                                                         |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `drop.sql` `DO` block (drops user schemas/extensions/public objects, truncates auth/migrations) | always, first                                                |
+| `SELECT vault.update_secret(...)` / `vault.create_secret(...)`                                  | when `[db.vault]` has syncable secrets                       |
+| migration statements + `schema_migrations` history insert (per file, transactional)             | when `[db.migrations].enabled`, for migrations `≤ --version` |
+| seed statements + `seed_files` hash upsert                                                      | when `[db.seed].enabled` and not `--no-seed`                 |
 
 ## API Routes
 
-| Method | Path | Auth | Request body | Response (used fields) |
-| ------ | ---- | ---- | ------------ | ---------------------- |
+| Method | Path | Auth | Request body | Response (used fields)                                                                                                       |
+| ------ | ---- | ---- | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | —      | —    | —    | —            | Connects to Postgres directly. The `--linked` db-config resolver may call the Management API to mint a temporary login role. |
 
 ## Environment Variables
 
-| Variable                | Purpose                                       | Required?                                               |
-| ----------------------- | --------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for the `--linked` resolver path   | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`  | password for the linked/remote connection     | no                                                      |
-| `SUPABASE_YES`          | auto-confirm the reset prompt                 | no (also `--yes`)                                       |
-| `SUPABASE_EXPERIMENTAL` | routes the experimental schema-files path to Go | no (also `--experimental`)                            |
+| Variable                | Purpose                                         | Required?                                               |
+| ----------------------- | ----------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token for the `--linked` resolver path     | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`  | password for the linked/remote connection       | no                                                      |
+| `SUPABASE_YES`          | auto-confirm the reset prompt                   | no (also `--yes`)                                       |
+| `SUPABASE_EXPERIMENTAL` | routes the experimental schema-files path to Go | no (also `--experimental`)                              |
 
 ## Exit Codes
 

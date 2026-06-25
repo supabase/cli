@@ -28,11 +28,11 @@
 
 ## 2. What is already done (Stages 1–2, on this branch)
 
-| Command | Status | Where |
-| --- | --- | --- |
-| `db push` | **ported** (fully native) | `apps/cli/src/legacy/commands/db/push/` |
+| Command    | Status                                                                    | Where                                    |
+| ---------- | ------------------------------------------------------------------------- | ---------------------------------------- |
+| `db push`  | **ported** (fully native)                                                 | `apps/cli/src/legacy/commands/db/push/`  |
 | `db reset` | **partial** — remote path native; local + `--experimental` delegate to Go | `apps/cli/src/legacy/commands/db/reset/` |
-| `db start` | **wrapped** (Go proxy, untouched) | `apps/cli/src/legacy/commands/db/start/` |
+| `db start` | **wrapped** (Go proxy, untouched)                                         | `apps/cli/src/legacy/commands/db/start/` |
 
 Commits (newest first): `docs(cli): document db reset…`, `feat(cli): implement
 native db reset remote path`, `docs(cli): document db push…`, `test(cli): expand db
@@ -76,7 +76,7 @@ All under `apps/cli/src/legacy/`:
   lazy `legacyPlatformApiFactoryLayer` so `--local`/`--db-url` never resolve a token
   at layer-build time; single shared `legacyIdentityStitchLayer`.
 - Handler body wrapped in `.pipe(Effect.ensuring(linkedProjectCache.cache(ref)),
-  Effect.ensuring(telemetryState.flush))`.
+Effect.ensuring(telemetryState.flush))`.
 - **Delegating to Go without double-counting telemetry**: call
   `proxy.exec(args, { env: { SUPABASE_TELEMETRY_DISABLED: "1" } })`. The TS
   instrumentation wrapper then fires `cli_command_executed` exactly once. This is
@@ -99,24 +99,26 @@ Entry: `cmd/db.go:337` → `start.Run(ctx, fromBackup, fsys)`. Flag: `--from-bac
 
 1. `flags.LoadConfig(fsys)`.
 2. `AssertSupabaseDbIsRunning()`: if already running → `fmt.Fprintln(os.Stderr,
-   "Postgres database is already running.")` and **return nil** (exit 0). If the
+"Postgres database is already running.")` and **return nil** (exit 0). If the
    error is anything other than `utils.ErrNotRunning`, return it.
 3. `StartDatabase(ctx, fromBackup, fsys, os.Stderr)`; on error,
    `utils.DockerRemoveAll(...)` cleanup then return the error.
 
 `StartDatabase` (lines 133-190): builds container/host/network config
 (`NewContainerConfig`/`NewHostConfig`), handles `--from-backup` (restore entrypoint
-+ bind mount `/etc/backup.sql:ro`), inspects the db volume to set
-`utils.NoBackupVolume`, then:
-- `NoBackupVolume` → `Starting database...`; else if `--from-backup` →
+
+- bind mount `/etc/backup.sql:ro`), inspects the db volume to set
+  `utils.NoBackupVolume`, then:
+
+* `NoBackupVolume` → `Starting database...`; else if `--from-backup` →
   `Starting database from backup...` (lines 168-174; both to the writer `w` =
   stderr).
-- `WaitForHealthyService(ctx, Config.Db.HealthTimeout, utils.DbId)` — health check
+* `WaitForHealthyService(ctx, Config.Db.HealthTimeout, utils.DbId)` — health check
   **skipped** when `--from-backup` is set (line 180).
-- If `NoBackupVolume && no --from-backup` → `SetupLocalDatabase(ctx, "", fsys, w)`
+* If `NoBackupVolume && no --from-backup` → `SetupLocalDatabase(ctx, "", fsys, w)`
   (line 185), which prints `Initialising schema...` (line 244) and applies initial
   schema + roles + migrations + seed.
-- `initCurrentBranch(fsys)` (line 189) — writes the `_current_branch` file.
+* `initCurrentBranch(fsys)` (line 189) — writes the `_current_branch` file.
 
 **Important parity facts**: `db start` does **NOT** print the full status table and
 does **NOT** fire `cli_stack_started` — those belong to the top-level `supabase
@@ -130,13 +132,14 @@ delegating to Go (`reset.handler.ts:146`). Version/`--last` resolution
 (`reset.go:34-52`) is **already ported** and runs before the split — reuse it.
 
 Local flow (`reset.go:57-77`):
+
 1. `AssertSupabaseDbIsRunning()` — error if the db container isn't up.
 2. `resetDatabase(ctx, version, fsys)` → `Resetting local database<toLogMessage>`
    (line 81), then branch on `Config.Db.MajorVersion`:
    - **≤ 14** → `resetDatabase14` (line 95): `recreateDatabase` (drop/recreate
      `postgres` + `_supabase` dbs), `initDatabase`, `RestartDatabase`
      (`Restarting containers...`), connect, `apply.MigrateAndSeed(ctx, version,
-     conn, fsys)`.
+conn, fsys)`.
    - **≥ 15** → `resetDatabase15` (line 113): `Docker.ContainerRemove(DbId, Force)`,
      `Docker.VolumeRemove(DbId, force)`, `Recreating database...` (line 129),
      recreate container via `DockerStart(NewContainerConfig()/NewHostConfig())`,
@@ -146,7 +149,7 @@ Local flow (`reset.go:57-77`):
    `supabase/buckets/` (reset.go:65-74). The **legacy `seed buckets` command is
    already ported** (`commands/seed/buckets/`) — reuse `legacySeedBuckets`/its core.
 4. `branch := utils.GetGitBranch(fsys)`; `Finished supabase db reset on branch
-   <branch>.` to stderr (line 76; `supabase db reset` and `<branch>` are Aqua).
+<branch>.` to stderr (line 76; `supabase db reset` and `<branch>` are Aqua).
 
 `restartServices` (reset.go:226-240) restarts `[StorageId, GotrueId, RealtimeId,
 PoolerId]`. `apply.MigrateAndSeed` is the same routine `db reset` remote uses — the
@@ -162,8 +165,9 @@ Mirror `__shadow` (`apps/cli-go/cmd/db.go:219-268`). Add a hidden command that
 exposes the un-ported container primitives so the TS side can invoke them and then
 do the SQL orchestration itself (connect, migrate, seed, restart). Suggested
 sub-operations (drive via a `--mode` flag like `__shadow`):
+
 - `start` → `start.StartDatabase(fromBackup)` (create + health + `SetupLocalDatabase`
-  + `initCurrentBranch`).
+  - `initCurrentBranch`).
 - `recreate` → `reset.resetDatabase15` container remove/volume-remove/recreate +
   `SetupLocalDatabase(version)` (the PG15 path), or `resetDatabase14` for PG≤14.
 - `restart-services` → `reset.restartServices`.
