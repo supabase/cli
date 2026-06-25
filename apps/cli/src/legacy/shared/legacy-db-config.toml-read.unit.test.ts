@@ -252,6 +252,54 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("an explicit remote db.migrations.enabled beats SUPABASE_DB_MIGRATIONS_ENABLED", () => {
+    // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv
+    // (config.go:635-637), so an explicit remote value wins over the env var.
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
+    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
+    const dir = withConfig(
+      ["[remotes.prod]", `project_id = "${ref}"`, "db.migrations.enabled = true", ""].join("\n"),
+    );
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.migrationsEnabled).toBe(true);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
+          else process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("SUPABASE_DB_MIGRATIONS_ENABLED still wins when the remote block omits it", () => {
+    // Control: the env override is suppressed only for keys the matched block explicitly
+    // set; a block that omits db.migrations.enabled leaves the env override in force.
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
+    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
+    const dir = withConfig(["[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"));
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.migrationsEnabled).toBe(false);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
+          else process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("matches a remote block by a SUPABASE_REMOTES_<NAME>_PROJECT_ID env override", () => {
     // Viper AutomaticEnv supplies/overrides remotes.prod.project_id, so the block merges
     // even with no TOML project_id (here it lifts major_version 15 over the base default).

@@ -181,13 +181,15 @@ function deepMergeDoc(base: RawDoc, override: RawDoc): RawDoc {
 interface LegacyRemoteOverride {
   readonly doc: RawDoc | undefined;
   /**
-   * True when the matched remote block omitted `db.seed.enabled` and we injected the
-   * forced `false`. Go applies this via `v.Set` (`mergeRemoteConfig`, `config.go:639`),
-   * which sits at viper's override tier — ABOVE `AutomaticEnv` (`viper.go:1167-1174` vs
-   * `:1226-1237`). So in this case the forced `false` must outrank `SUPABASE_DB_SEED_ENABLED`,
-   * unlike a plain TOML `false` (which env still overrides).
+   * The config keys the matched remote block contributed at viper's OVERRIDE tier. Go's
+   * `mergeRemoteConfig` applies every block key via `v.Set(...)` after `AutomaticEnv`
+   * (`config.go:635-640`), and `v.Set` sits ABOVE `AutomaticEnv` (`viper.go:1167-1174` vs
+   * `:1226-1237`), so each explicitly-set remote key — plus the forced `db.seed.enabled`
+   * default Go injects when the block omits it — must outrank the matching `SUPABASE_*`
+   * env override (a plain TOML value elsewhere is still env-overridable). Holds the dotted
+   * keys we env-override: `db.migrations.enabled`, `db.seed.enabled`, `db.seed.sql_paths`.
    */
-  readonly forcedSeedDisabled: boolean;
+  readonly remoteOverrideKeys: ReadonlySet<string>;
 }
 
 /**
@@ -217,7 +219,7 @@ function applyRemoteOverride(
   lookup: EnvLookup,
 ): LegacyRemoteOverride {
   const remotes = asRecord(doc?.["remotes"]);
-  if (doc === undefined || remotes === undefined) return { doc, forcedSeedDisabled: false };
+  if (doc === undefined || remotes === undefined) return { doc, remoteOverrideKeys: new Set() };
   for (const name of Object.keys(remotes)) {
     const block = asRecord(remotes[name]);
     if (block === undefined) continue;
@@ -225,22 +227,30 @@ function applyRemoteOverride(
     // block whose id comes from `SUPABASE_REMOTES_<NAME>_PROJECT_ID` still merges.
     if (legacyResolveRemoteProjectId(name, block, lookup) === ref) {
       const merged = deepMergeDoc(doc, block);
-      // Go's `mergeRemoteConfig` (`pkg/config/config.go:638-640`) forces
-      // `db.seed.enabled` to `false` whenever the matched remote block itself does
-      // NOT set it — independent of the base config — so `migration down --linked`
-      // against a remote that relied on the default of not seeding never applies
-      // local seed files. The check is on the block, not the merged result.
-      const blockSeed = asRecord(asRecord(block["db"])?.["seed"]);
+      const blockDb = asRecord(block["db"]);
+      const blockMigrations = asRecord(blockDb?.["migrations"]);
+      const blockSeed = asRecord(blockDb?.["seed"]);
+      // Every key the matched block sets is applied via `v.Set` (override tier), beating
+      // its `SUPABASE_*` env var (`config.go:635-637`). Record the env-overridable keys
+      // the block explicitly provided so the resolution below suppresses their env value.
+      const remoteOverrideKeys = new Set<string>();
+      if (blockMigrations?.["enabled"] !== undefined)
+        remoteOverrideKeys.add("db.migrations.enabled");
+      if (blockSeed?.["sql_paths"] !== undefined) remoteOverrideKeys.add("db.seed.sql_paths");
+      // `db.seed.enabled` is ALWAYS override-tier for a matched block: either the block set
+      // it, or Go's `mergeRemoteConfig` forces it `false` when omitted (`config.go:638-640`)
+      // — so env never overrides it on a matched-remote linked run.
+      remoteOverrideKeys.add("db.seed.enabled");
       if (blockSeed?.["enabled"] === undefined) {
         return {
           doc: deepMergeDoc(merged, { db: { seed: { enabled: false } } }),
-          forcedSeedDisabled: true,
+          remoteOverrideKeys,
         };
       }
-      return { doc: merged, forcedSeedDisabled: false };
+      return { doc: merged, remoteOverrideKeys };
     }
   }
-  return { doc, forcedSeedDisabled: false };
+  return { doc, remoteOverrideKeys: new Set() };
 }
 
 /**
@@ -650,9 +660,9 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   let experimentalRaw: RawDoc | undefined;
   let functionsRaw: RawDoc | undefined;
   let projectId = Option.none<string>();
-  // True when a matched remote block forced `db.seed.enabled=false` (Go's override-tier
-  // `v.Set`), so it must beat `SUPABASE_DB_SEED_ENABLED` in the seed resolution below.
-  let remoteForcedSeedDisabled = false;
+  // Config keys a matched remote block contributed at viper's override tier (Go's
+  // `v.Set`), so they must beat the matching `SUPABASE_*` env overrides below.
+  let remoteOverrideKeys: ReadonlySet<string> = new Set();
   if (Option.isSome(maybeContent)) {
     let doc: RawDoc | undefined;
     try {
@@ -689,10 +699,10 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     // `project_id` equals the resolved ref over the base, config.go:503-562).
     const remoteOverride =
       ref === undefined
-        ? { doc, forcedSeedDisabled: false }
+        ? { doc, remoteOverrideKeys: new Set<string>() }
         : applyRemoteOverride(doc, ref, lookup);
     const effectiveDoc = remoteOverride.doc;
-    remoteForcedSeedDisabled = remoteOverride.forcedSeedDisabled;
+    remoteOverrideKeys = remoteOverride.remoteOverrideKeys;
     db = asRecord(effectiveDoc?.["db"]);
     experimentalRaw = asRecord(effectiveDoc?.["experimental"]);
     pgDeltaRaw = asRecord(experimentalRaw?.["pgdelta"]);
@@ -985,27 +995,31 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   const vaultNames = vaultRaw === undefined ? [] : Object.keys(vaultRaw).sort();
 
   // `[db.migrations] enabled` — Go default true (`config.go:384`); overridable by
-  // `SUPABASE_DB_MIGRATIONS_ENABLED` via viper AutomaticEnv (`config.go:494-498`).
+  // `SUPABASE_DB_MIGRATIONS_ENABLED` via viper AutomaticEnv (`config.go:494-498`) — EXCEPT
+  // when the matched remote block explicitly set it (then the remote override-tier value
+  // wins, `config.go:635-637`).
   const migrationsRaw = asRecord(db?.["migrations"]);
   const migrationsEnabled = yield* resolveBoolOrFail(
     "db.migrations.enabled",
     migrationsRaw?.["enabled"],
     true,
     lookup,
-    envOverride("SUPABASE_DB_MIGRATIONS_ENABLED"),
+    remoteOverrideKeys.has("db.migrations.enabled")
+      ? undefined
+      : envOverride("SUPABASE_DB_MIGRATIONS_ENABLED"),
   );
 
   // `[db.seed]` — Go defaults enabled true, sql_paths ["seed.sql"]; relative
   // patterns are supabase-prefixed (`config.go:801-806`). `db.seed.enabled` is
   // overridable by `SUPABASE_DB_SEED_ENABLED` via viper AutomaticEnv — EXCEPT when a
-  // remote block forced it false at the override tier (then the forced false wins).
+  // matched remote block supplied it at the override tier (set or forced false).
   const seedRaw = asRecord(db?.["seed"]);
   const seedEnabled = yield* resolveBoolOrFail(
     "db.seed.enabled",
     seedRaw?.["enabled"],
     true,
     lookup,
-    remoteForcedSeedDisabled ? undefined : envOverride("SUPABASE_DB_SEED_ENABLED"),
+    remoteOverrideKeys.has("db.seed.enabled") ? undefined : envOverride("SUPABASE_DB_SEED_ENABLED"),
   );
   // Go decodes `db.seed.sql_paths` through the mapstructure hook chain in order:
   // `LoadEnvHook` (expands `env(VAR)`) runs BEFORE `StringToSliceHookFunc(",")`
@@ -1022,7 +1036,9 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     return expanded.length === 0 ? [] : expanded.split(",");
   };
   const rawSqlPaths = seedRaw?.["sql_paths"];
-  const sqlPathsOverride = envOverride("SUPABASE_DB_SEED_SQL_PATHS");
+  const sqlPathsOverride = remoteOverrideKeys.has("db.seed.sql_paths")
+    ? undefined
+    : envOverride("SUPABASE_DB_SEED_SQL_PATHS");
   const sqlPathPatterns =
     sqlPathsOverride !== undefined
       ? splitGoSeedPaths(sqlPathsOverride)
