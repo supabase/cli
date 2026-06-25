@@ -24,6 +24,7 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import { LegacyDeclarativeShadowDbError } from "../../../shared/legacy-pgdelta.errors.ts";
 import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { legacyDbSchemaDeclarativeSync } from "./sync.handler.ts";
@@ -40,6 +41,7 @@ interface SetupOpts {
   promptTextResponses?: ReadonlyArray<string>;
   networkId?: string;
   projectId?: Option.Option<string>;
+  staleLocalImage?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -51,6 +53,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const execInheritCalls: ReadonlyArray<string>[] = [];
+  const localPostgresImageChecks: Array<true> = [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode }) => Effect.succeed(`supabase/.temp/pgdelta/${mode}.json`),
     execInherit: (args) =>
@@ -59,6 +62,20 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         return opts.resetExitCode ?? 0;
       }),
     ensureLocalDatabaseStarted: () => Effect.void,
+    ensureLocalPostgresImageCurrent: () =>
+      Effect.sync(() => {
+        localPostgresImageChecks.push(true);
+      }).pipe(
+        Effect.flatMap(() =>
+          opts.staleLocalImage === true
+            ? Effect.fail(
+                new LegacyDeclarativeShadowDbError({
+                  message: "local Postgres container image is stale",
+                }),
+              )
+            : Effect.void,
+        ),
+      ),
     provisionShadow: () => Effect.die("provisionShadow not used in declarative tests"),
     removeShadowContainer: () => Effect.void,
   });
@@ -123,7 +140,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
     BunServices.layer,
   );
-  return { layer, out, execInheritCalls, dbExec, cache };
+  return { layer, out, execInheritCalls, dbExec, cache, localPostgresImageChecks };
 }
 
 const flags = (
@@ -203,6 +220,36 @@ describe("legacy db schema declarative sync integration", () => {
         "no declarative schema found",
       );
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("checks the local Postgres image before diffing on the shipped sync path", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, { experimental: true, staleLocalImage: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeShadowDbError",
+        message: "local Postgres container image is stale",
+      });
+      expect(s.localPostgresImageChecks).toHaveLength(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--no-cache --no-apply skips the local Postgres image check", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      staleLocalImage: true,
+      diffSql: "",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) }));
+      expect(s.localPostgresImageChecks).toEqual([]);
+      expect(s.out.rawChunks.some((c) => c.text.includes("No schema changes found"))).toBe(true);
+    }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("--yes bypasses the bootstrap prompt when no declarative files exist", () => {

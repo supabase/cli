@@ -88,6 +88,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       Effect.sync(() => {
         ensureStartedCalls += 1;
       }),
+    ensureLocalPostgresImageCurrent: () => Effect.void,
     provisionShadow: () => Effect.die("provisionShadow not used in declarative tests"),
     removeShadowContainer: () => Effect.void,
   });

@@ -109,7 +109,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         pgDeltaEnabled: toml.pgDelta.enabled,
         configPath: path.join("supabase", "config.toml"),
       });
-
       // `path.resolve` (not `path.join`) so an absolute `declarative_schema_path` is
       // used as-is, matching Go's `config.resolve` (which only prefixes the workdir onto
       // a relative path). `path.join(workdir, abs)` would mangle the absolute path.
@@ -131,6 +130,12 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         schema: flags.schema,
         noCache: flags.noCache,
       };
+      const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
+      if (
+        shouldEnsureLocalPostgresImageCurrent(flags.noCache, flags.noApply, declarativeFilesExist)
+      ) {
+        yield* seam.ensureLocalPostgresImageCurrent();
+      }
 
       // Go's `saveApplyDebugBundle`: warn (rather than masking the apply error) and
       // treat the bundle path as empty when the debug directory cannot be created, so
@@ -148,7 +153,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         );
 
       // Step 1: declarative files must exist; in a TTY, offer to generate them.
-      if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
+      if (!declarativeFilesExist) {
         const noFiles = new LegacyDeclarativeNonInteractiveError({
           message: "no declarative schema found. Run supabase db schema declarative generate first",
         });
@@ -422,6 +427,14 @@ const declarativeDirHasFiles = Effect.fnUntraced(function* (
   const entries = yield* fs.readDirectory(dir).pipe(Effect.orElseSucceed(() => [] as string[]));
   return entries.length > 0;
 });
+
+function shouldEnsureLocalPostgresImageCurrent(
+  noCache: boolean,
+  noApply: Option.Option<boolean>,
+  declarativeFilesExist: boolean,
+): boolean {
+  return !(noCache && Option.getOrElse(noApply, () => false) && declarativeFilesExist);
+}
 
 /** Connects to the local database and applies the single migration file (Go's `applyMigrationToLocal`). */
 const applyMigrationToLocal = (

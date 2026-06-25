@@ -264,6 +264,14 @@ func TestEnsureLocalPostgresImageCurrent(t *testing.T) {
 	})
 }
 
+func TestShouldEnsureLocalPostgresImageCurrent(t *testing.T) {
+	assert.False(t, shouldEnsureLocalPostgresImageCurrent(true, true, true), "--no-cache --no-apply builds fresh catalogs and skips local apply")
+	assert.True(t, shouldEnsureLocalPostgresImageCurrent(true, true, false), "bootstrap may generate from the local database")
+	assert.True(t, shouldEnsureLocalPostgresImageCurrent(false, true, true), "cache-enabled dry run can reuse local catalog snapshots")
+	assert.True(t, shouldEnsureLocalPostgresImageCurrent(true, false, true), "apply path can touch the local database")
+	assert.True(t, shouldEnsureLocalPostgresImageCurrent(false, false, true), "default sync can reuse caches and apply locally")
+}
+
 func TestHasDeclarativeFiles(t *testing.T) {
 	t.Run("returns false when dir does not exist", func(t *testing.T) {
 		assert.False(t, hasDeclarativeFiles(mockFsys()))

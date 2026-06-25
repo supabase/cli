@@ -192,6 +192,10 @@ func ensureLocalPostgresImageCurrent(ctx context.Context, inspect inspectContain
 	return fmt.Errorf("local Postgres container image is stale: running %s but expected %s", actual, expected)
 }
 
+func shouldEnsureLocalPostgresImageCurrent(noCache, noApply, declarativeFilesExist bool) bool {
+	return !noCache || !noApply || !declarativeFilesExist
+}
+
 // hasExplicitTargetFlag returns true if the user explicitly set --local, --linked, or --db-url.
 func hasExplicitTargetFlag(cmd *cobra.Command) bool {
 	return cmd.Flags().Changed("local") || cmd.Flags().Changed("linked") || cmd.Flags().Changed("db-url")
@@ -360,13 +364,16 @@ func runDeclarativeSync(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	fsys := afero.NewOsFs()
 	console := utils.NewConsole()
+	declarativeFilesExist := hasDeclarativeFiles(fsys)
 
-	if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
-		return err
+	if shouldEnsureLocalPostgresImageCurrent(declarativeNoCache, declarativeNoApply, declarativeFilesExist) {
+		if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
+			return err
+		}
 	}
 
 	// Step 1: Check if declarative dir has files
-	if !hasDeclarativeFiles(fsys) {
+	if !declarativeFilesExist {
 		if !isTTY() && !viper.GetBool("YES") {
 			return fmt.Errorf("no declarative schema found. Run %s first", utils.Aqua("supabase db schema declarative generate"))
 		}
