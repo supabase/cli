@@ -87,6 +87,12 @@ func TestFormatApplyFailure(t *testing.T) {
 	assertContains(t, formatted, `SQL: CREATE EXTENSION pgmq WITH SCHEMA pgmq;`)
 }
 
+func TestDeclarativeApplyTemplateDoesNotThrowForStructuredNonSuccess(t *testing.T) {
+	assertContains(t, pgDeltaDeclarativeApplyScript, "console.log(JSON.stringify(payload));")
+	assertNotContains(t, pgDeltaDeclarativeApplyScript, `apply.status !== "success"`)
+	assertNotContains(t, pgDeltaDeclarativeApplyScript, "pg-delta apply failed with status")
+}
+
 // TestApplyResultUnmarshalValidationErrors reproduces the payload shape pg-delta
 // emits when the final check_function_bodies=on pass fails: totalApplied
 // matches totalStatements, errors and stuckStatements are empty, but status is

@@ -117,3 +117,13 @@ export const legacyResolveExperimental = Effect.gen(function* () {
   const flag = yield* LegacyExperimentalFlag;
   return flag || legacyViperEnvBool("SUPABASE_EXPERIMENTAL");
 });
+
+/**
+ * `--debug` resolved with Go's viper `AutomaticEnv` fallback. Go diagnostics
+ * read `viper.GetBool("DEBUG")`, so `SUPABASE_DEBUG=true` enables the same
+ * verbose paths as passing `--debug`.
+ */
+export const legacyResolveDebug = Effect.gen(function* () {
+  const flag = yield* LegacyDebugFlag;
+  return flag || legacyViperEnvBool("SUPABASE_DEBUG");
+});

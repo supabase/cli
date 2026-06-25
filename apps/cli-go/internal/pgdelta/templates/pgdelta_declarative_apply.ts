@@ -45,9 +45,6 @@ try {
       diagnostics: result.diagnostics ?? [],
     };
     console.log(JSON.stringify(payload));
-    if (apply.status !== "success") {
-      throw new Error("pg-delta apply failed with status: " + apply.status);
-    }
   }
 } catch (e) {
   throw e instanceof Error ? e : new Error(String(e));

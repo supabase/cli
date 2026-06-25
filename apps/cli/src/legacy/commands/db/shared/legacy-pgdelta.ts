@@ -49,6 +49,7 @@ interface LegacyDeclarativeApplyResult {
   readonly stuckStatements: ReadonlyArray<unknown>;
   readonly validationErrors: ReadonlyArray<unknown>;
   readonly diagnostics: ReadonlyArray<unknown>;
+  readonly raw: string;
 }
 
 /** Result of a pg-delta diff: the SQL statements plus edge-runtime stderr. */
@@ -208,6 +209,7 @@ const parseApplyResult = (stdout: string) =>
             stuckStatements: decoded.stuckStatements ?? [],
             validationErrors: decoded.validationErrors ?? [],
             diagnostics: decoded.diagnostics ?? [],
+            raw: stdout,
           };
           return normalized;
         }),

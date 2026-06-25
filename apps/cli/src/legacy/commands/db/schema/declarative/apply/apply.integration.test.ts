@@ -40,20 +40,45 @@ const APPLY_ERROR_JSON = JSON.stringify({
   totalRounds: 1,
   totalApplied: 1,
   totalSkipped: 0,
-  errors: [{ message: "boom" }],
+  errors: [
+    {
+      statement: {
+        id: "schemas/public/functions/create_device.sql:0",
+        sql: "CREATE FUNCTION public.create_device() RETURNS void LANGUAGE plpgsql AS $$ BEGIN Invalid sql statement; END; $$;",
+        statementClass: "CREATE_FUNCTION",
+      },
+      code: "42601",
+      message: 'syntax error at or near "Invalid"',
+      position: 72,
+      detail: "The statement body is not valid SQL.",
+      hint: "Check the function body.",
+    },
+  ],
   stuckStatements: [],
   validationErrors: [],
-  diagnostics: [{ message: "diagnostic" }],
+  diagnostics: [
+    {
+      code: "UNRESOLVED_DEPENDENCY",
+      message: "No producer found for function.",
+      statementId: {
+        filePath: "schemas/public/functions/create_device.sql",
+        statementIndex: 0,
+        sourceOffset: 0,
+      },
+      suggestedFix: "Add the missing function first.",
+    },
+  ],
 });
 
 interface SetupOpts {
   experimental?: boolean;
   debug?: boolean;
+  format?: "text" | "json" | "stream-json";
   applyJson?: string;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
-  const out = mockOutput();
+  const out = mockOutput({ format: opts.format });
   const telemetry = mockLegacyTelemetryStateTracked();
   const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
@@ -71,6 +96,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       Effect.sync(() => {
         ensureStartedCalls += 1;
       }),
+    ensureLocalPostgresImageCurrent: () => Effect.void,
     provisionShadow: () => Effect.die("provisionShadow not used in declarative apply tests"),
     removeShadowContainer: () => Effect.void,
   });
@@ -122,6 +148,28 @@ describe("legacy db schema declarative apply integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("gate: honors SUPABASE_EXPERIMENTAL", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, { experimental: false });
+    const previous = process.env["SUPABASE_EXPERIMENTAL"];
+    process.env["SUPABASE_EXPERIMENTAL"] = "true";
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeApply(flags());
+      expect(s.ensureStartedCalls).toBe(1);
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) {
+            delete process.env["SUPABASE_EXPERIMENTAL"];
+          } else {
+            process.env["SUPABASE_EXPERIMENTAL"] = previous;
+          }
+        }),
+      ),
+    );
+  });
+
   it.effect("fails when there are no declarative files", () => {
     const { layer } = setup(tmp.current);
     return Effect.gen(function* () {
@@ -152,6 +200,26 @@ describe("legacy db schema declarative apply integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("emits structured success for JSON output modes", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, { format: "json" });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeApply(flags());
+
+      expect(s.out.messages).toContainEqual({
+        type: "success",
+        message: "Declarative schema applied.",
+        data: {
+          status: "success",
+          totalStatements: 2,
+          totalRounds: 1,
+          totalApplied: 2,
+          totalSkipped: 0,
+        },
+      });
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("surfaces unsuccessful pg-delta apply results", () => {
     seedDeclarative(tmp.current);
     const s = setup(tmp.current, { applyJson: APPLY_ERROR_JSON });
@@ -163,8 +231,41 @@ describe("legacy db schema declarative apply integration", () => {
         message: "pg-delta declarative apply failed with status: error",
       });
       expect(s.out.stderrText).toContain('pg-delta apply returned status "error"');
+      expect(s.out.stderrText).toContain("schemas/public/functions/create_device.sql:0");
+      expect(s.out.stderrText).toContain(
+        'syntax error at or near "Invalid" (SQLSTATE 42601, position 72)',
+      );
+      expect(s.out.stderrText).toContain("Detail: The statement body is not valid SQL.");
+      expect(s.out.stderrText).toContain("Hint: Check the function body.");
       expect(s.out.stderrText).toContain("1 pg-topo diagnostic(s) omitted");
       expect(s.telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("prints raw pg-delta payload and diagnostics when SUPABASE_DEBUG is enabled", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, { applyJson: APPLY_ERROR_JSON });
+    const previous = process.env["SUPABASE_DEBUG"];
+    process.env["SUPABASE_DEBUG"] = "true";
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeApply(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(s.out.stderrText).toContain("Diagnostics:");
+      expect(s.out.stderrText).toContain("[UNRESOLVED_DEPENDENCY] No producer found for function.");
+      expect(s.out.stderrText).toContain("Suggested fix: Add the missing function first.");
+      expect(s.out.stderrText).toContain("pg-delta apply result:");
+      expect(s.out.stderrText).toContain('"status": "error"');
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) {
+            delete process.env["SUPABASE_DEBUG"];
+          } else {
+            process.env["SUPABASE_DEBUG"] = previous;
+          }
+        }),
+      ),
+    );
   });
 });

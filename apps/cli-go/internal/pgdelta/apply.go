@@ -323,8 +323,9 @@ func ApplyDeclarative(ctx context.Context, config pgconn.Config, fsys afero.Fs) 
 	fmt.Fprintln(os.Stderr, "Applying declarative schemas via pg-delta...")
 	var stdout, stderr bytes.Buffer
 	script := pkgconfig.InterpolatePgDeltaScript(pkgconfig.Config(&utils.Config), pgDeltaDeclarativeApplyScript)
-	if err := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error running pg-delta script", &stdout, &stderr, utils.PgDeltaNpmRegistryOption()); err != nil {
-		return err
+	runErr := utils.RunEdgeRuntimeScript(ctx, env, script, binds, "error running pg-delta script", &stdout, &stderr, utils.PgDeltaNpmRegistryOption())
+	if runErr != nil && len(bytes.TrimSpace(stdout.Bytes())) == 0 {
+		return runErr
 	}
 
 	var result ApplyResult
@@ -348,6 +349,9 @@ func ApplyDeclarative(ctx context.Context, config pgconn.Config, fsys afero.Fs) 
 			}
 		}
 		return errors.Errorf("pg-delta declarative apply failed with status: %s", result.Status)
+	}
+	if runErr != nil {
+		return runErr
 	}
 	fmt.Fprintf(os.Stderr, "Applied %d statements in %d round(s).\n", result.TotalApplied, result.TotalRounds)
 	return nil
