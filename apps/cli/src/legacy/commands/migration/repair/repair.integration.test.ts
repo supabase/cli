@@ -113,7 +113,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
-    mockStdin(opts.isTTY ?? true, opts.pipedInput),
+    mockStdin(
+      opts.isTTY ?? true,
+      // Migration prompts read stdin directly (Go's PromptYesNo), so a confirm answer is
+      // supplied via piped stdin rather than the Output prompt mock.
+      opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
+    ),
     BunServices.layer,
   );
   return { layer, out, telemetry, execs, queries, cache };

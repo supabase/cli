@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Stdio, Stream } from "effect";
+import { Duration, Effect, Layer, Option, Stdio, Stream } from "effect";
 
 import { Tty } from "./tty.service.ts";
 import { Stdin } from "./stdin.service.ts";
@@ -30,6 +30,22 @@ const makeStdin = Effect.gen(function* () {
     return Option.some(bytes);
   }).pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
 
+  // Read one line (up to the first newline), trimmed, bounded by `timeoutMillis`.
+  // Mirrors Go's `Console.ReadLine` (`internal/utils/console.go:38-61`); `Stream.take(1)`
+  // stops at the first line so an interactive TTY isn't drained to EOF. A timeout, EOF,
+  // or read error all collapse to `None` (Go returns "" — i.e. the default — for each).
+  const readLine = (timeoutMillis: number): Effect.Effect<Option.Option<string>> =>
+    stdio.stdin.pipe(
+      Stream.decodeText(),
+      Stream.splitLines,
+      Stream.take(1),
+      Stream.runHead,
+      Effect.map(Option.map((line) => line.trim())),
+      Effect.timeoutOption(Duration.millis(timeoutMillis)),
+      Effect.map(Option.flatten),
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
+
   return Stdin.of({
     isTTY: tty.stdinIsTty,
     readPipedBytes,
@@ -42,6 +58,7 @@ const makeStdin = Effect.gen(function* () {
         return text ? Option.some(text) : Option.none<string>();
       }),
     ),
+    readLine,
   });
 });
 

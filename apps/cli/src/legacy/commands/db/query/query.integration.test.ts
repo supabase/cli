@@ -152,6 +152,12 @@ function mockStdin(opts: { isTTY?: boolean; piped?: string }) {
         ? Option.none()
         : Option.some(opts.piped.trim()),
     ),
+    readLine: () =>
+      Effect.succeed(
+        opts.piped === undefined || opts.piped.split(/\r?\n/u)[0]!.trim() === ""
+          ? Option.none()
+          : Option.some(opts.piped.split(/\r?\n/u)[0]!.trim()),
+      ),
   });
 }
 

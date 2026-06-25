@@ -2,7 +2,10 @@ import { Effect, Option } from "effect";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
-import { Tty } from "../../../shared/runtime/tty.service.ts";
+
+/** Go's `Console.ReadLine` timeouts (`internal/utils/console.go:35-36`). */
+const TTY_TIMEOUT_MILLIS = 10 * 60 * 1000;
+const NON_TTY_TIMEOUT_MILLIS = 100;
 
 /** Go's `parseYesNo` (`internal/utils/console.go:84-93`): case-insensitive y/yes/n/no. */
 const parseYesNo = (value: string): boolean | undefined => {
@@ -14,20 +17,16 @@ const parseYesNo = (value: string): boolean | undefined => {
 
 /**
  * Port of Go's `utils.NewConsole().PromptYesNo(ctx, label, def)`
- * (`internal/utils/console.go`), shared by the prompting migration subcommands
- * (fetch / repair / down / squash):
+ * (`internal/utils/console.go:64-107`), shared by the prompting migration subcommands
+ * (fetch / repair / down / squash).
  *
- *  - `--yes` always returns `true` and echoes `<title> [Y/n|y/N] y` to stderr,
- *    matching Go's `viper.GetBool("YES")` branch (checked before reading stdin).
- *  - Otherwise Go ALWAYS prints the label and reads one line of stdin; `IsTTY` only
- *    changes the read timeout, it does NOT gate whether stdin is read
- *    (`console.go:38-61,96-107`). On a TTY we use the interactive confirm; without a
- *    TTY we read the piped answer, echo it (Go echoes non-TTY input, `console.go:104`),
- *    and parse it. An empty / unparseable answer falls back to `def`.
- *
- * Note: Go bounds the non-TTY read with a 100 ms timeout (`console.go:36`) so an
- * open-but-silent stdin can't hang. We read to EOF instead (piped/CI stdin closes),
- * which honors piped answers; reproducing the exact timed read is a separate refinement.
+ * Go writes the label to STDERR and reads one line of STDIN regardless of the `--output`
+ * format (which only shapes stdout); `IsTTY` changes only the read timeout (10 min vs
+ * 100 ms) and whether the input is echoed. So this prompts independently of
+ * `output.format` and does NOT route through `output.promptConfirm` — the json/stream-json
+ * Output layers make that non-interactive, which would silently auto-default a real TTY run
+ * under `--output-format json` (fetch auto-overwriting, down/repair-all auto-cancelling).
+ * `--yes` short-circuits to `true`, echoing `<label> y` like Go's `viper.GetBool("YES")`.
  */
 export const legacyMigrationConfirm = (
   title: string,
@@ -35,27 +34,20 @@ export const legacyMigrationConfirm = (
 ) =>
   Effect.gen(function* () {
     const output = yield* Output;
+    const stdin = yield* Stdin;
     const choices = options.defaultValue ? "Y/n" : "y/N";
+    const label = `${title} [${choices}] `;
     if (options.yes) {
-      yield* output.raw(`${title} [${choices}] y\n`, "stderr");
+      yield* output.raw(`${label}y\n`, "stderr");
       return true;
     }
 
-    const tty = yield* Tty;
-    if (tty.stdinIsTty) {
-      return yield* output
-        .promptConfirm(title, { defaultValue: options.defaultValue })
-        .pipe(Effect.orElseSucceed(() => options.defaultValue));
-    }
-
-    // Non-TTY: Go still prints the label (`fmt.Fprint(os.Stderr, label)`) and reads
-    // stdin, so a piped `y`/`n` answer is honored. Take the first line (Go reads one
-    // line via `bufio.Scanner`), echo it like Go's non-TTY branch, then parse.
-    const stdin = yield* Stdin;
-    yield* output.raw(`${title} [${choices}] `, "stderr");
-    const input = Option.getOrElse(yield* stdin.readPipedText, () => "")
-      .split(/\r?\n/u)[0]!
-      .trim();
-    yield* output.raw(`${input}\n`, "stderr");
+    // Go's `PromptText`: print the label to stderr, read one line of stdin (TTY 10 min /
+    // non-TTY 100 ms). A non-TTY run echoes the input back to stderr (`console.go:104`); a
+    // TTY echoes via the terminal. An empty / unparseable answer falls back to the default.
+    yield* output.raw(label, "stderr");
+    const line = yield* stdin.readLine(stdin.isTTY ? TTY_TIMEOUT_MILLIS : NON_TTY_TIMEOUT_MILLIS);
+    const input = Option.getOrElse(line, () => "");
+    if (!stdin.isTTY) yield* output.raw(`${input}\n`, "stderr");
     return parseYesNo(input) ?? options.defaultValue;
   });

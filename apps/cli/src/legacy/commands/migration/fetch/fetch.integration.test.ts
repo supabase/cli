@@ -111,7 +111,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: [] }),
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
-    mockStdin(opts.isTTY ?? true, opts.pipedInput),
+    mockStdin(
+      opts.isTTY ?? true,
+      // Migration prompts read stdin directly (Go's PromptYesNo), so a confirm answer is
+      // supplied via piped stdin rather than the Output prompt mock.
+      opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
+    ),
     BunServices.layer,
   );
   return { layer, out, telemetry };
@@ -232,15 +237,21 @@ describe("legacy migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits fetched files in json without prompting", () => {
+  it.live("still prompts on stderr in json mode and proceeds on a piped yes", () => {
+    // Go writes the prompt to stderr and reads stdin regardless of --output (console.go),
+    // so --output-format json must NOT silently auto-accept: the overwrite prompt fires on
+    // stderr and a piped `y` proceeds, while the json result still goes to stdout.
     mkdirSync(migrationsDir(tmp.current), { recursive: true });
     writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
     const { layer, out } = setup(tmp.current, {
       format: "json",
+      pipedInput: "y\n",
       rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
     });
     return Effect.gen(function* () {
       yield* legacyMigrationFetch(flags());
+      // The prompt label reached stderr (it was NOT format-gated into a silent default).
+      expect(out.stderrText).toContain("[Y/n]");
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
@@ -248,6 +259,27 @@ describe("legacy migration fetch", () => {
           data: { files: [join(migrationsDir(tmp.current), "20240101000000_init.sql")] },
         }),
       );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("honors a piped no in json mode (cancels the overwrite, no auto-accept)", () => {
+    // Regression guard: before the fix, json mode routed through the non-interactive Output
+    // prompt and auto-accepted (default YES), overwriting. Now a piped `n` is honored.
+    mkdirSync(migrationsDir(tmp.current), { recursive: true });
+    writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
+    const { layer } = setup(tmp.current, {
+      format: "json",
+      pipedInput: "n\n",
+      rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
+      }
+      expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
 

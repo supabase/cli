@@ -39,7 +39,8 @@ const dbConfig = legacyDbConfigLayer.pipe(
  * pg-delta / migra stack (no Docker, edge-runtime, SSL probe, or shadow seam):
  * the db-config resolver + connection, the lazy linked-resolver auth stack
  * (project-ref + linked-project cache), the shared identity stitcher, telemetry
- * flush, and the command runtime span. `Output`, `Analytics`, `Stdio`,
+ * flush, piped stdin (for the migration confirm prompt — Go's `PromptYesNo` reads
+ * stdin), and the command runtime span. `Output`, `Analytics`, `Stdio`,
  * `FileSystem`, `Path`, `Clock`, `Tty`, and `LegacyYesFlag` come from the root.
  *
  * `legacyIdentityStitchLayer` is provided by the SAME reference to `dbConfig` and
@@ -53,6 +54,7 @@ export const legacyMigrationDbRuntimeLayer = (commandPath: ReadonlyArray<string>
     cliConfig,
     legacyIdentityStitchLayer,
     legacyTelemetryStateLayer,
+    stdinLayer,
     legacyLinkedDbResolverRuntimeLayer(commandPath).pipe(Layer.provide(legacyIdentityStitchLayer)),
     commandRuntimeLayer(commandPath),
   );
