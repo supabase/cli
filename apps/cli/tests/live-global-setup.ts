@@ -1,4 +1,6 @@
-import { isLiveConfigured, liveApiBaseUrl } from "./helpers/live.ts";
+// Import from the Vitest-free env module — globalSetup runs in a context where
+// importing Vitest test APIs (which `helpers/live.ts` pulls in) is not valid.
+import { isLiveConfigured, liveApiBaseUrl } from "./helpers/live-env.ts";
 
 /**
  * Global setup for the `live` Vitest project. When the live environment is not
