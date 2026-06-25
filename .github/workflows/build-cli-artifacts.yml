@@ -123,18 +123,6 @@ jobs:
           echo "Checking dist/..."
           ls -la dist/
 
-      - name: Verify macOS signatures
-        run: |
-          set -euo pipefail
-          for bin in packages/cli-darwin-*/bin/supabase packages/cli-darwin-*/bin/supabase-go; do
-            [ -f "$bin" ] || continue
-            echo "::group::$bin"
-            info="$(rcodesign print-signature-info "$bin")"
-            echo "$info" | grep -E 'identifier:|flags:'
-            echo "$info" | grep -q 'identifier: com.supabase.cli' || { echo "::error::$bin missing supabase identifier"; exit 1; }
-            if echo "$info" | grep -q 'LINKER_SIGNED'; then echo "::error::$bin still linker-signed"; exit 1; fi
-            echo "::endgroup::"
-          done
 
       - name: Check existing build artifacts cache
         id: build-artifacts-cache

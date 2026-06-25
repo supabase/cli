@@ -15,6 +15,7 @@ import { diff } from "./config-sync.diff.ts";
 import { type TomlField, type TomlValue, encodeToml } from "./config-sync.toml.ts";
 import { intToUint } from "../../../../shared/legacy-size-units.ts";
 import { durationString, parseDuration, secondsToDurationString } from "./config-sync.duration.ts";
+import type { AuthEmailContent } from "./config-sync.auth-email-content.ts";
 import { secretHash } from "./config-sync.secret.ts";
 
 // ---------------------------------------------------------------------------
@@ -912,6 +913,7 @@ export function authSubsetFromConfig(
   config: ProjectConfig,
   projectId: string,
   presence: AuthPresence,
+  emailContent: AuthEmailContent = { template: {}, notification: {} },
 ): AuthSubset {
   const a = config.auth;
 
@@ -1004,15 +1006,16 @@ export function authSubsetFromConfig(
     inactivity_timeout: normalizeDurationStr(sessConfig?.inactivity_timeout),
   };
 
-  // Email templates: TS config has `subject` (string) and `content_path` (string)
-  // There is no `content` field in the TS config; content is set only via fromAuthConfig.
+  // Email templates: `content` is loaded from `content_path` by `loadAuthEmailContent`
+  // before this call (Go's `email.validate`).
   const emailTmplMap = a.email.template;
   const templateEntries: Record<string, EmailTemplateSubset> = {};
   for (const [k, t] of Object.entries(emailTmplMap)) {
+    const contentPath = t.content_path ?? "";
     templateEntries[k] = {
       subject: t.subject !== undefined ? t.subject : undefined,
-      content: undefined, // TS config has no content field
-      content_path: t.content_path ?? "",
+      content: contentPath.length > 0 ? emailContent.template[k] : undefined,
+      content_path: contentPath,
     };
   }
   // Nil map (no templates configured) → undefined, mirrors Go nil map behaviour.
@@ -1022,11 +1025,12 @@ export function authSubsetFromConfig(
   const emailNotifMap = a.email.notification;
   const notificationEntries: Record<string, NotificationSubset> = {};
   for (const [k, n] of Object.entries(emailNotifMap)) {
+    const contentPath = n.content_path ?? "";
     notificationEntries[k] = {
       enabled: n.enabled,
       subject: n.subject !== undefined ? n.subject : undefined,
-      content: undefined, // TS config has no content field
-      content_path: n.content_path ?? "",
+      content: n.enabled && contentPath.length > 0 ? emailContent.notification[k] : undefined,
+      content_path: contentPath,
     };
   }
   // Nil map (no notifications configured) → undefined.
