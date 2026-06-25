@@ -510,7 +510,6 @@ const (
 
 // Defines values for JitStateResponse1UnavailableReason.
 const (
-	ManualMigrationRequired JitStateResponse1UnavailableReason = "manual_migration_required"
 	PostgresUpgradeRequired JitStateResponse1UnavailableReason = "postgres_upgrade_required"
 	TemporarilyUnavailable  JitStateResponse1UnavailableReason = "temporarily_unavailable"
 )

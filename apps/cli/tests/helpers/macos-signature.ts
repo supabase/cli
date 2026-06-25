@@ -1,16 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { macIdentifierFor } from "../../scripts/macos-signing.ts";
 import { runCli } from "./release-shell.ts";
 
 export type SignatureCheckResult = {
   readonly passed: boolean;
   readonly detail: string;
-};
-
-const EXPECTED_IDENTIFIERS: Record<string, string> = {
-  supabase: "com.supabase.cli",
-  "supabase-go": "com.supabase.cli-go",
 };
 
 /**
@@ -25,7 +21,7 @@ const EXPECTED_IDENTIFIERS: Record<string, string> = {
  */
 export async function verifyMacSignature(binPath: string): Promise<SignatureCheckResult> {
   const binary = path.basename(binPath);
-  const expectedId = EXPECTED_IDENTIFIERS[binary];
+  const expectedId = macIdentifierFor(binary);
   if (!expectedId) {
     return { passed: false, detail: `no expected identifier configured for ${binary}` };
   }
@@ -42,7 +38,11 @@ export async function verifyMacSignature(binPath: string): Promise<SignatureChec
   const display = await runCli("codesign", ["-dvv", binPath]);
   const info = [display.stdout, display.stderr].filter(Boolean).join("\n");
 
-  if (!info.includes(`Identifier=${expectedId}`)) {
+  // Match the whole identifier value (codesign prints `Identifier=<id>` on its
+  // own line) so the SFE's `com.supabase.cli` can't satisfy the sidecar's
+  // `com.supabase.cli-go` by substring.
+  const actualId = info.match(/^Identifier=(.+)$/m)?.[1]?.trim();
+  if (actualId !== expectedId) {
     return { passed: false, detail: `expected Identifier=${expectedId}, got:\n${info}` };
   }
   if (info.includes("linker-signed")) {

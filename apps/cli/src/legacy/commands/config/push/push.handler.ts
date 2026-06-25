@@ -38,6 +38,10 @@ import {
   storageSubsetFromConfig,
   storageToUpdateBody,
 } from "./config-sync/storage.sync.ts";
+import {
+  loadAuthEmailContent,
+  projectDirsFromConfigPath,
+} from "./config-sync/config-sync.auth-email-content.ts";
 import { getCostMatrix } from "./push.cost-matrix.ts";
 import { legacyPresenceIn } from "./push.raw-presence.ts";
 import {
@@ -131,6 +135,19 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // to restore Go's nil-pointer skip semantics — including sections a matching
     // `[remotes.*]` block introduces.
     const presence = legacyPresenceIn(loaded.document);
+
+    const { projectRoot, supabaseDir } = projectDirsFromConfigPath(loaded.path);
+
+    // Go's `email.validate` runs during `LoadConfig` before any network call.
+    const authEmailContent = authEnabled(config)
+      ? yield* Effect.try({
+          try: () => loadAuthEmailContent(projectRoot, supabaseDir, config.auth.email),
+          catch: (cause) =>
+            new LegacyConfigPushLoadConfigError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        })
+      : { template: {}, notification: {} };
 
     // 2. Cost matrix (drives cost-aware prompts).
     const cost = yield* getCostMatrix(ref);
@@ -338,7 +355,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
             }),
           ),
         );
-        let local = authSubsetFromConfig(config, projectId, presence.auth);
+        let local = authSubsetFromConfig(config, projectId, presence.auth, authEmailContent);
         const projected = applyRemoteAuthConfig(local, remote);
         // MFA phone/webauthn are paid addons: confirm cost before enabling.
         if (mfaPhoneNewlyEnabled(local, projected) && !(yield* keep("auth_mfa_phone"))) {
