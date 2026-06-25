@@ -989,19 +989,25 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     lookup,
     remoteForcedSeedDisabled ? undefined : envOverride("SUPABASE_DB_SEED_ENABLED"),
   );
-  // Go's viper AutomaticEnv also feeds `SUPABASE_DB_SEED_SQL_PATHS` into
-  // `db.seed.sql_paths`, decoding a string via `StringToSliceHookFunc(",")` — a bare
-  // comma split with NO whitespace trimming (`config.go:494-498,691`). The env value
-  // takes precedence over the TOML array; an empty env value falls back (envOverride
-  // already drops empties, matching `AllowEmptyEnv=false`).
+  // Go decodes a STRING `db.seed.sql_paths` — whether from the `SUPABASE_DB_SEED_SQL_PATHS`
+  // env override (viper AutomaticEnv) or a TOML string value — via
+  // `mapstructure.StringToSliceHookFunc(",")`: a bare comma split with NO whitespace
+  // trimming, and an empty string → `[]` (`config.go:494-498,691`; `decode_hooks.go`). An
+  // array TOML value stays an array; an absent (or non-string/non-array) value falls back to
+  // the `["seed.sql"]` default. The env override (non-empty; `envOverride` drops empties to
+  // match `AllowEmptyEnv=false`) wins over the TOML value.
+  const splitGoSeedPaths = (value: string): ReadonlyArray<string> =>
+    value.length === 0 ? [] : value.split(",");
   const rawSqlPaths = seedRaw?.["sql_paths"];
   const sqlPathsOverride = envOverride("SUPABASE_DB_SEED_SQL_PATHS");
   const sqlPathPatterns =
     sqlPathsOverride !== undefined
-      ? sqlPathsOverride.split(",")
+      ? splitGoSeedPaths(sqlPathsOverride)
       : Array.isArray(rawSqlPaths)
         ? rawSqlPaths.filter((pattern): pattern is string => typeof pattern === "string")
-        : ["seed.sql"];
+        : typeof rawSqlPaths === "string"
+          ? splitGoSeedPaths(rawSqlPaths)
+          : ["seed.sql"];
   const seedSqlPaths = sqlPathPatterns.map((rawPattern) => {
     // Go's `LoadEnvHook` (`pkg/config/decode_hooks.go`) expands `env(VAR)` on every
     // string element of `db.seed.sql_paths` during unmarshal, BEFORE `resolve()`

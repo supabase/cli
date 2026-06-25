@@ -155,6 +155,32 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("decodes a STRING db.seed.sql_paths via StringToSliceHookFunc (comma, no trim)", () => {
+    // Go decodes a non-array sql_paths string into a slice (config.go:691), not just the
+    // env override; `"a.sql,b.sql"` → two supabase-prefixed paths, no trimming.
+    const dir = withConfig(["[db.seed]", 'sql_paths = "a.sql,b.sql"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.sqlPaths).toEqual(["supabase/a.sql", "supabase/b.sql"]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("treats an empty-string db.seed.sql_paths as no patterns (Go []string{})", () => {
+    const dir = withConfig(["[db.seed]", 'sql_paths = ""', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.sqlPaths).toEqual([]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("a remote block forcing db.seed.enabled=false beats SUPABASE_DB_SEED_ENABLED", () => {
     // Go's mergeRemoteConfig v.Set(false) is an override-tier value above AutomaticEnv,
     // so a remote that omits db.seed.enabled stays unseeded even with the env var set.
