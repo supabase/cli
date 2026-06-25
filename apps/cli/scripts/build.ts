@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { darwinBinariesForShell, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
 const MUSL_TARGETS = [
   {
@@ -112,18 +113,6 @@ const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
   "bun-windows-arm64": { goos: "windows", goarch: "arm64" },
 };
 
-// macOS code-signing identifiers per binary. `bun build --compile` and the Go
-// linker emit a degenerate "linker-signed" ad-hoc signature (identifier
-// `a.out`, no requirements blob) that macOS 26+ AMFI rejects, SIGKILLing the
-// process at launch (CLI-1621 / GitHub #5556). Re-signing with a full ad-hoc
-// signature — a complete CodeDirectory + RequirementSet + (empty) CMS, the
-// same shape `codesign --sign -` produces — fixes it without any Apple
-// credentials. Phase 2 will add Developer ID signing + notarization on top.
-const MACOS_IDENTIFIERS: Record<string, string> = {
-  supabase: "com.supabase.cli",
-  "supabase-go": "com.supabase.cli-go",
-};
-
 type SignMode = "adhoc" | "off";
 
 function libcForBunTarget(target: string): "glibc" | "musl" | "" {
@@ -227,26 +216,20 @@ function resolveSignMode(): SignMode {
   return "off";
 }
 
-async function signDarwinBinaries(mode: SignMode) {
+async function signDarwinBinaries(mode: SignMode, shell: "legacy" | "next") {
   if (mode === "off") {
     return;
   }
 
   const darwinTargets = TARGETS.filter((target) => target.bunTarget.startsWith("bun-darwin"));
+  const binaries = darwinBinariesForShell(shell);
 
   for (const target of darwinTargets) {
     const binDir = path.join(root, "packages", target.pkg, "bin");
-    const binaries = ["supabase"];
-    if (shell === "legacy") {
-      binaries.push("supabase-go");
-    }
 
     for (const binary of binaries) {
       const binPath = path.join(binDir, binary);
       const identifier = MACOS_IDENTIFIERS[binary];
-      if (!identifier) {
-        throw new Error(`No macOS signing identifier configured for ${binary}`);
-      }
 
       console.log(`[${target.pkg}] Ad-hoc signing ${binary} (${identifier})...`);
       // No key material => rcodesign emits a complete ad-hoc signature
@@ -255,11 +238,14 @@ async function signDarwinBinaries(mode: SignMode) {
       await $`rcodesign sign --binary-identifier ${identifier} ${binPath}`;
 
       // Linux-side verification that runs on every build: the signature must
-      // carry our identifier and must no longer be linker-signed.
+      // carry exactly our identifier (matched on the whole value, so the SFE's
+      // `com.supabase.cli` can't satisfy the sidecar's `com.supabase.cli-go`)
+      // and must no longer be linker-signed.
       const info = await $`rcodesign print-signature-info ${binPath}`.text();
-      if (!info.includes(`identifier: ${identifier}`)) {
+      const signedIdentifier = info.match(/^\s*identifier:\s*(\S+)\s*$/m)?.[1];
+      if (signedIdentifier !== identifier) {
         throw new Error(
-          `Signing ${binPath} failed: identifier ${identifier} not found in signature`,
+          `Signing ${binPath} failed: expected identifier ${identifier}, got ${signedIdentifier ?? "none"}`,
         );
       }
       if (info.includes("LINKER_SIGNED")) {
@@ -444,7 +430,7 @@ if (shell === "legacy") {
 // bytes. Must run before archiveTarget / buildLinuxPackages / generateChecksums.
 const signMode = resolveSignMode();
 console.log(`\nSigning macOS binaries (mode: ${signMode})...`);
-await signDarwinBinaries(signMode);
+await signDarwinBinaries(signMode, shell);
 
 await mkdir(distDir, { recursive: true });
 await Promise.all(TARGETS.map(archiveTarget));
