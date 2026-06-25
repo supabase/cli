@@ -31,6 +31,16 @@ interface LegacyPendingSeed {
 
 const hasMeta = (pattern: string): boolean => /[*?[]/u.test(pattern);
 
+// Go globs/reads seed paths through an OS-root-rooted `afero.NewOsFs`, where the
+// CLI's "workdir" is just `os.Chdir(workdir)` (`internal/utils/misc.go`) — which
+// only affects RELATIVE paths. An absolute `[db.seed].sql_paths` entry, preserved
+// verbatim by the config loader (`pkg/config/config.go`, gated on `!filepath.IsAbs`),
+// therefore resolves at the OS root, never under the workdir. Mirror that: only
+// join under the workdir when the path is relative (`path.join` would otherwise
+// collapse `/repo` + `/tmp/seed.sql` to `/repo/tmp/seed.sql`).
+const resolveUnderWorkdir = (path: Path.Path, workdir: string, p: string): string =>
+  path.isAbsolute(p) ? p : path.join(workdir, p);
+
 /**
  * Resolves a single glob pattern against the workdir, returning the matched
  * paths RELATIVE to the workdir (so `seed_files.path` stays Go-compatible).
@@ -48,7 +58,7 @@ const globPattern = (
   Effect.gen(function* () {
     if (!hasMeta(pattern)) {
       const exists = yield* fs
-        .exists(path.join(workdir, pattern))
+        .exists(resolveUnderWorkdir(path, workdir, pattern))
         .pipe(Effect.orElseSucceed(() => false));
       return exists ? [pattern] : [];
     }
@@ -60,7 +70,7 @@ const globPattern = (
       : [dirPattern];
     const result: Array<string> = [];
     for (const dir of dirs) {
-      const absDir = dir.length === 0 ? workdir : path.join(workdir, dir);
+      const absDir = dir.length === 0 ? workdir : resolveUnderWorkdir(path, workdir, dir);
       const names = yield* fs.readDirectory(absDir).pipe(Effect.orElseSucceed(() => []));
       for (const name of names) {
         if (legacyPathMatch(filePattern, name).matched) {
@@ -135,7 +145,7 @@ export const legacyApplySeedFiles = (
 
     const pending: Array<LegacyPendingSeed> = [];
     for (const relativePath of locals) {
-      const content = yield* fs.readFile(path.join(workdir, relativePath)).pipe(
+      const content = yield* fs.readFile(resolveUnderWorkdir(path, workdir, relativePath)).pipe(
         Effect.mapError(
           (cause) =>
             new LegacyMigrationSeedError({
