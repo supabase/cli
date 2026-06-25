@@ -2440,9 +2440,9 @@
               "type": "array",
               "items": {
                 "type": "string",
-                "description": "Path to a SQL file used to seed the database."
+                "description": "Path to a SQL or gzipped SQL file used to seed the database."
               },
-              "description": "Ordered list of seed files to load during db reset.",
+              "description": "Ordered list of seed files to load during db reset. Supports .sql and .sql.gz files.",
               "default": [
                 "./seed.sql"
               ]
@@ -5985,9 +5985,9 @@
                             "type": "array",
                             "items": {
                               "type": "string",
-                              "description": "Path to a SQL file used to seed the database."
+                              "description": "Path to a SQL or gzipped SQL file used to seed the database."
                             },
-                            "description": "Ordered list of seed files to load during db reset.",
+                            "description": "Ordered list of seed files to load during db reset. Supports .sql and .sql.gz files.",
                             "default": [
                               "./seed.sql"
                             ]

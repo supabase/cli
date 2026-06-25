@@ -151,13 +151,14 @@ export const db = Schema.Struct({
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultSeedEnabled))),
     sql_paths: Schema.Array(
       Schema.String.annotate({
-        description: "Path to a SQL file used to seed the database.",
+        description: "Path to a SQL or gzipped SQL file used to seed the database.",
         tags,
       }),
     )
       .annotate({
         default: defaultSqlPaths,
-        description: "Ordered list of seed files to load during db reset.",
+        description:
+          "Ordered list of seed files to load during db reset. Supports .sql and .sql.gz files.",
         tags,
       })
       .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultSqlPaths]))),
