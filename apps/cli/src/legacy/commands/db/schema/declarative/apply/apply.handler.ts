@@ -12,6 +12,7 @@ import {
   legacyResolveDeclarativeDir,
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
 import { legacyToPostgresURL } from "../../../../../shared/legacy-postgres-url.ts";
+import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyApplyDeclarativePgDelta } from "../../../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
 import {
@@ -27,64 +28,68 @@ export const legacyDbSchemaDeclarativeApply = Effect.fn("legacy.db.schema.declar
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const cliConfig = yield* LegacyCliConfig;
+    const telemetryState = yield* LegacyTelemetryState;
     const experimental = yield* LegacyExperimentalFlag;
     const debug = yield* LegacyDebugFlag;
     const seam = yield* LegacyDeclarativeSeam;
 
-    const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-    yield* legacyRequirePgDelta({
-      experimental,
-      pgDeltaEnabled: toml.pgDelta.enabled,
-      configPath: path.join("supabase", "config.toml"),
-    });
+    yield* Effect.gen(function* () {
+      const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      yield* legacyRequirePgDelta({
+        experimental,
+        pgDeltaEnabled: toml.pgDelta.enabled,
+        configPath: path.join("supabase", "config.toml"),
+      });
 
-    const declarativeDir = path.resolve(
-      cliConfig.workdir,
-      legacyResolveDeclarativeDir(path, toml.pgDelta),
-    );
-    if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
-      return yield* Effect.fail(
-        new LegacyDeclarativeNonInteractiveError({
-          message: "no declarative schema found. Run supabase db schema declarative generate first",
-        }),
+      const declarativeDir = path.resolve(
+        cliConfig.workdir,
+        legacyResolveDeclarativeDir(path, toml.pgDelta),
       );
-    }
+      if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
+        return yield* Effect.fail(
+          new LegacyDeclarativeNonInteractiveError({
+            message:
+              "no declarative schema found. Run supabase db schema declarative generate first",
+          }),
+        );
+      }
 
-    yield* seam.ensureLocalDatabaseStarted();
+      yield* seam.ensureLocalDatabaseStarted();
 
-    yield* output.raw("Applying declarative schemas via pg-delta...\n", "stderr");
-    const result = yield* legacyApplyDeclarativePgDelta(
-      {
-        projectId: Option.getOrElse(cliConfig.projectId, () => ""),
-        cwd: cliConfig.workdir,
-        npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
-        denoVersion: toml.denoVersion,
-      },
-      {
-        declarativeDir,
-        targetRef: legacyToPostgresURL({
-          host: legacyGetHostname(),
-          port: toml.port,
-          user: "postgres",
-          password: toml.password,
-          database: "postgres",
-        }),
-      },
-    );
-
-    if (result.status !== "success") {
-      yield* output.raw(`${formatApplyFailure(result, debug)}\n`, "stderr");
-      return yield* Effect.fail(
-        new LegacyDeclarativeApplyError({
-          message: `pg-delta declarative apply failed with status: ${result.status}`,
-        }),
+      yield* output.raw("Applying declarative schemas via pg-delta...\n", "stderr");
+      const result = yield* legacyApplyDeclarativePgDelta(
+        {
+          projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+          cwd: cliConfig.workdir,
+          npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
+          denoVersion: toml.denoVersion,
+        },
+        {
+          declarativeDir,
+          targetRef: legacyToPostgresURL({
+            host: legacyGetHostname(),
+            port: toml.port,
+            user: "postgres",
+            password: toml.password,
+            database: "postgres",
+          }),
+        },
       );
-    }
 
-    yield* output.raw(
-      `Applied ${result.totalApplied} statements in ${result.totalRounds} round(s).\n`,
-      "stderr",
-    );
+      if (result.status !== "success") {
+        yield* output.raw(`${formatApplyFailure(result, debug)}\n`, "stderr");
+        return yield* Effect.fail(
+          new LegacyDeclarativeApplyError({
+            message: `pg-delta declarative apply failed with status: ${result.status}`,
+          }),
+        );
+      }
+
+      yield* output.raw(
+        `Applied ${result.totalApplied} statements in ${result.totalRounds} round(s).\n`,
+        "stderr",
+      );
+    }).pipe(Effect.ensuring(telemetryState.flush));
   },
 );
 

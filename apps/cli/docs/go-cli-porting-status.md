@@ -316,6 +316,7 @@ Legend:
 | `db remote commit`                     | `wrapped`     | [`../src/legacy/commands/db/remote/commit/commit.command.ts`](../src/legacy/commands/db/remote/commit/commit.command.ts)                                                                                                                                                   |
 | `db schema declarative sync`           | `ported`      | [`../src/legacy/commands/db/schema/declarative/sync/sync.command.ts`](../src/legacy/commands/db/schema/declarative/sync/sync.command.ts)                                                                                                                                   |
 | `db schema declarative generate`       | `ported`      | [`../src/legacy/commands/db/schema/declarative/generate/generate.command.ts`](../src/legacy/commands/db/schema/declarative/generate/generate.command.ts)                                                                                                                   |
+| `db schema declarative apply`          | `ported`      | [`../src/legacy/commands/db/schema/declarative/apply/apply.command.ts`](../src/legacy/commands/db/schema/declarative/apply/apply.command.ts) — native pg-delta direct local apply                                                                                          |
 
 Flag divergences from the Go reference:
 

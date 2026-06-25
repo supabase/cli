@@ -7,6 +7,7 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { mockOutput } from "../../../../../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCliConfig,
+  mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../../../tests/helpers/legacy-mocks.ts";
 import {
@@ -53,6 +54,7 @@ interface SetupOpts {
 
 function setup(workdir: string, opts: SetupOpts = {}) {
   const out = mockOutput();
+  const telemetry = mockLegacyTelemetryStateTracked();
   const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) =>
@@ -76,6 +78,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     out.layer,
     edge,
     seam,
+    telemetry.layer,
     mockLegacyCliConfig({ workdir, projectId: Option.some("test") }),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
     Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
@@ -84,6 +87,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   return {
     layer,
     out,
+    telemetry,
     edgeCalls,
     get ensureStartedCalls() {
       return ensureStartedCalls;
@@ -144,6 +148,7 @@ describe("legacy db schema declarative apply integration", () => {
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
       expect(s.out.stderrText).toContain("Applying declarative schemas via pg-delta");
       expect(s.out.stderrText).toContain("Applied 2 statements in 1 round(s).");
+      expect(s.telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -159,6 +164,7 @@ describe("legacy db schema declarative apply integration", () => {
       });
       expect(s.out.stderrText).toContain('pg-delta apply returned status "error"');
       expect(s.out.stderrText).toContain("1 pg-topo diagnostic(s) omitted");
+      expect(s.telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 });
