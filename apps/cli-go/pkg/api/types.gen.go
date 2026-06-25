@@ -5328,6 +5328,14 @@ type V1GetProjectLogsParams struct {
 	IsoTimestampEnd   *time.Time `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
 }
 
+// V1GetProjectLogsAllParams defines parameters for V1GetProjectLogsAll.
+type V1GetProjectLogsAllParams struct {
+	// Sql Custom SQL query to execute on the logs. See [querying logs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer) for more details.
+	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
+	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
+	IsoTimestampEnd   *time.Time `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
+}
+
 // V1GetProjectUsageApiCountParams defines parameters for V1GetProjectUsageApiCount.
 type V1GetProjectUsageApiCountParams struct {
 	Interval *V1GetProjectUsageApiCountParamsInterval `form:"interval,omitempty" json:"interval,omitempty"`

@@ -58,6 +58,7 @@ interface SetupOpts {
   networkId?: Option.Option<string>;
   projectId?: Option.Option<string>;
   exportFailsForMode?: LegacyCatalogMode;
+  staleLocalImage?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -71,6 +72,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const seamCalls: LegacyCatalogMode[] = [];
   const seamExportCalls: Array<{ mode: LegacyCatalogMode; projectRef?: string }> = [];
   const execInheritCalls: ReadonlyArray<string>[] = [];
+  const localPostgresImageChecks: Array<true> = [];
   let ensureStartedCalls = 0;
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode, projectRef }) => {
@@ -88,6 +90,20 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       Effect.sync(() => {
         ensureStartedCalls += 1;
       }),
+    ensureLocalPostgresImageCurrent: () =>
+      Effect.sync(() => {
+        localPostgresImageChecks.push(true);
+      }).pipe(
+        Effect.flatMap(() =>
+          opts.staleLocalImage === true
+            ? Effect.fail(
+                new LegacyDeclarativeShadowDbError({
+                  message: "local Postgres container image is stale",
+                }),
+              )
+            : Effect.void,
+        ),
+      ),
     provisionShadow: () => Effect.die("provisionShadow not used in declarative tests"),
     removeShadowContainer: () => Effect.void,
   });
@@ -148,6 +164,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     edgeCalls,
     resolverCalls,
     proxyCalls,
+    localPostgresImageChecks,
     get ensureStartedCalls() {
       return ensureStartedCalls;
     },
@@ -225,6 +242,23 @@ describe("legacy db schema declarative generate integration", () => {
       );
       // Go runs ensureLocalDatabaseStarted before generating from local.
       expect(s.ensureStartedCalls).toBe(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("explicit --local checks the local Postgres image before generating", () => {
+    const s = setup(tmp.current, { experimental: true, staleLocalImage: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeShadowDbError",
+        message: "local Postgres container image is stale",
+      });
+      expect(s.localPostgresImageChecks).toHaveLength(1);
+      expect(s.ensureStartedCalls).toBe(0);
+      expect(s.edgeCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -416,6 +450,7 @@ describe("legacy db schema declarative generate integration", () => {
       expect(s.seamCalls).toContain("baseline");
       // ... but did NOT auto-start (value is false).
       expect(s.ensureStartedCalls).toBe(0);
+      expect(s.localPostgresImageChecks).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -558,6 +593,27 @@ describe("legacy db schema declarative generate integration", () => {
       const options = s.out.promptSelectCalls[0]?.options ?? [];
       expect(options.map((o) => o.value)).toEqual(["local", "linked", "custom"]);
       expect(s.resolverCalls).toContainEqual(expect.objectContaining({ connType: "linked" }));
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("smart mode: local target checks the local Postgres image before generating", () => {
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      staleLocalImage: true,
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyDbSchemaDeclarativeGenerate(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeShadowDbError",
+        message: "local Postgres container image is stale",
+      });
+      expect(s.localPostgresImageChecks).toHaveLength(1);
+      expect(s.edgeCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
