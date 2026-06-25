@@ -220,11 +220,12 @@ func openSeedSQL(path string, fsys fs.FS) (io.ReadCloser, int, error) {
 		_ = sql.Close()
 		return nil, 0, errors.Errorf("failed to decompress seed file: %w", err)
 	}
+	limit := seedFileSizeLimit()
 	return &compressedSQLReader{
 		gz:       gz,
 		file:     sql,
-		maxBytes: seedFileSizeLimit(),
-	}, 0, nil
+		maxBytes: limit,
+	}, safeInt(limit), nil
 }
 
 func setScannerCapacity(scannerBufferSize int) {

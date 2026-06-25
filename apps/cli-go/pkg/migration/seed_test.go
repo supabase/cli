@@ -10,6 +10,7 @@ import (
 	"io"
 	stdfs "io/fs"
 	"os"
+	"strings"
 	"testing"
 	fs "testing/fstest"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/supabase/cli/pkg/parser"
 	"github.com/supabase/cli/pkg/pgtest"
 )
 
@@ -134,6 +136,25 @@ func TestPendingSeeds(t *testing.T) {
 		_, err := GetPendingSeeds(context.Background(), pending, conn.MockClient(t), fsys)
 		// Check error
 		assert.ErrorContains(t, err, "decompressed seed file exceeds 8 bytes")
+	})
+
+	t.Run("parses gzipped seed with large statement", func(t *testing.T) {
+		t.Cleanup(viper.Reset)
+		originalMaxScannerCapacity := parser.MaxScannerCapacity
+		parser.MaxScannerCapacity = 256 * 1024
+		t.Cleanup(func() {
+			parser.MaxScannerCapacity = originalMaxScannerCapacity
+		})
+		path := "testdata/seed.sql.gz"
+		sql := "select '" + strings.Repeat("a", parser.MaxScannerCapacity) + "'"
+		fsys := fs.MapFS{
+			path: &fs.MapFile{Data: gzipData(t, sql)},
+		}
+		// Run test
+		lines, err := parseSeedFile(path, fsys)
+		// Check error
+		assert.NoError(t, err)
+		assert.Equal(t, []string{sql}, lines)
 	})
 
 	t.Run("hashes gzipped seed from non-seekable fs", func(t *testing.T) {
