@@ -629,6 +629,49 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("honors SUPABASE_DB_SEED_ENABLED over the TOML value (Go AutomaticEnv)", () => {
+    process.env["SUPABASE_DB_SEED_ENABLED"] = "false";
+    const dir = withConfig(["[db.seed]", "enabled = true", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.enabled).toBe(false);
+          delete process.env["SUPABASE_DB_SEED_ENABLED"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("honors SUPABASE_DB_MIGRATIONS_ENABLED over the default (Go AutomaticEnv)", () => {
+    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
+    const dir = withConfig(undefined);
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.migrationsEnabled).toBe(false);
+          delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("fails the load on a malformed SUPABASE_DB_SEED_ENABLED override", () => {
+    process.env["SUPABASE_DB_SEED_ENABLED"] = "notabool";
+    const dir = withConfig(undefined);
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          delete process.env["SUPABASE_DB_SEED_ENABLED"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect(
     "expands env(VAR) for the top-level project_id (Go config.Load before Docker IDs)",
     () => {

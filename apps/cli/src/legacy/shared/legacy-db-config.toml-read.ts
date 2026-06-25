@@ -460,13 +460,28 @@ function resolveBool(value: unknown, fallback: boolean, lookup: EnvLookup): bool
   return fallback;
 }
 
-/** `resolveBool` that fails the config load on a malformed bool (Go's parse error). */
+/**
+ * `resolveBool` that fails the config load on a malformed bool (Go's parse error).
+ * `envValue` is the `SUPABASE_*` AutomaticEnv override (`pkg/config/config.go:494-498`):
+ * when set it wins over the TOML value/default, matching viper's env > config-file
+ * precedence (`envOverride` already drops empty values, like `AllowEmptyEnv=false`).
+ */
 const resolveBoolOrFail = Effect.fnUntraced(function* (
   field: string,
   value: unknown,
   fallback: boolean,
   lookup: EnvLookup,
+  envValue?: string,
 ) {
+  if (envValue !== undefined) {
+    const parsed = legacyParseGoBool(envValue);
+    if (parsed === undefined) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
+      );
+    }
+    return parsed;
+  }
   const resolved = resolveBool(value, fallback, lookup);
   if (resolved === "invalid") {
     return yield* Effect.fail(
@@ -897,23 +912,27 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   const vaultRaw = asRecord(db?.["vault"]);
   const vaultNames = vaultRaw === undefined ? [] : Object.keys(vaultRaw).sort();
 
-  // `[db.migrations] enabled` — Go default true (`config.go:384`).
+  // `[db.migrations] enabled` — Go default true (`config.go:384`); overridable by
+  // `SUPABASE_DB_MIGRATIONS_ENABLED` via viper AutomaticEnv (`config.go:494-498`).
   const migrationsRaw = asRecord(db?.["migrations"]);
   const migrationsEnabled = yield* resolveBoolOrFail(
     "db.migrations.enabled",
     migrationsRaw?.["enabled"],
     true,
     lookup,
+    envOverride("SUPABASE_DB_MIGRATIONS_ENABLED"),
   );
 
   // `[db.seed]` — Go defaults enabled true, sql_paths ["seed.sql"]; relative
-  // patterns are supabase-prefixed (`config.go:801-806`).
+  // patterns are supabase-prefixed (`config.go:801-806`). `db.seed.enabled` is
+  // overridable by `SUPABASE_DB_SEED_ENABLED` via viper AutomaticEnv.
   const seedRaw = asRecord(db?.["seed"]);
   const seedEnabled = yield* resolveBoolOrFail(
     "db.seed.enabled",
     seedRaw?.["enabled"],
     true,
     lookup,
+    envOverride("SUPABASE_DB_SEED_ENABLED"),
   );
   const rawSqlPaths = seedRaw?.["sql_paths"];
   const sqlPathPatterns = Array.isArray(rawSqlPaths)
