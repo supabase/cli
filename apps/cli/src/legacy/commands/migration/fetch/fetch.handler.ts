@@ -51,7 +51,22 @@ const runFetch = Effect.fnUntraced(function* (
       .pipe(
         Effect.mapError((cause) => new LegacyMigrationFetchWriteError({ message: cause.message })),
       );
-    const existing = yield* fs.readDirectory(migrationsDir).pipe(Effect.orElseSucceed(() => []));
+    // Go's `fetch.Run` gates the overwrite prompt on `afero.IsEmpty`, which aborts on
+    // ANY read failure before fetching/writing (`internal/migration/fetch/fetch.go:21-22`).
+    // Only a missing directory counts as "empty"; a read error (e.g. an unreadable dir)
+    // must propagate — collapsing it to empty would skip the confirmation and clobber
+    // existing migrations.
+    const existing = yield* fs.readDirectory(migrationsDir).pipe(
+      Effect.catchTag("PlatformError", (cause) =>
+        cause.reason._tag === "NotFound"
+          ? Effect.succeed<ReadonlyArray<string>>([])
+          : Effect.fail(
+              new LegacyMigrationFetchWriteError({
+                message: `failed to read migrations: ${cause.message}`,
+              }),
+            ),
+      ),
+    );
     if (existing.length > 0) {
       const title = `Do you want to overwrite existing files in ${legacyBold("supabase/migrations")} directory?`;
       const overwrite = yield* legacyMigrationConfirm(title, { defaultValue: true, yes });
