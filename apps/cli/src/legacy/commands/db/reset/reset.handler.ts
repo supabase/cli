@@ -6,6 +6,7 @@ import {
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import {
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
@@ -13,6 +14,7 @@ import {
 import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { legacyAqua } from "../../../shared/legacy-colors.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
@@ -22,9 +24,11 @@ import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-fla
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyDropUserSchemas } from "../shared/legacy-drop-schemas.ts";
+import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
 import { legacyListLocalMigrations } from "../shared/legacy-pgdelta.cache.ts";
 import { legacyGetPendingSeeds, legacySeedData } from "../shared/legacy-seed-ops.ts";
 import { legacyReadVaultDocument, legacyUpsertVaultSecrets } from "../shared/legacy-vault.ts";
+import { legacySeedBucketsRun } from "../../seed/buckets/buckets.handler.ts";
 import type { LegacyDbResetFlags } from "./reset.command.ts";
 import {
   LegacyDbResetApplyError,
@@ -32,6 +36,7 @@ import {
   LegacyDbResetConfigLoadError,
   LegacyDbResetInvalidVersionError,
   LegacyDbResetMigrationFileError,
+  LegacyDbResetNotRunningError,
   LegacyDbResetTargetFlagsError,
   LegacyDbResetVersionFlagsError,
 } from "./reset.errors.ts";
@@ -47,15 +52,19 @@ const applyError = (message: string) => new LegacyDbResetApplyError({ message })
 const toLogMessage = (version: string): string =>
   version.length > 0 ? ` to version: ${version}` : "...";
 
-/** Rebuilds the `db reset` argv for the Go-delegated (local / experimental) paths. */
+/**
+ * Rebuilds the `db reset` argv for the remaining Go-delegated path: a remote
+ * `--experimental` reset with no resolved version. Only the flags reachable on
+ * that path are forwarded — `--local` always takes the native path, and a set
+ * `--version`/`--last` resolves a non-empty version which disables the experimental
+ * delegation (a degenerate `--last 0` resolves to "" and is behaviourally identical
+ * whether or not it is forwarded, so it is omitted).
+ */
 const buildResetArgs = (flags: LegacyDbResetFlags): Array<string> => {
   const args = ["db", "reset"];
   if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
   if (flags.linked) args.push("--linked");
-  if (flags.local) args.push("--local");
   if (flags.noSeed) args.push("--no-seed");
-  if (Option.isSome(flags.version)) args.push("--version", flags.version.value);
-  if (Option.isSome(flags.last)) args.push("--last", String(flags.last.value));
   return args;
 };
 
@@ -72,6 +81,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
   const resolver = yield* LegacyDbConfigResolver;
   const dbConn = yield* LegacyDbConnection;
   const proxy = yield* LegacyGoProxy;
+  const seam = yield* LegacyDbBootstrapSeam;
   const cliConfig = yield* LegacyCliConfig;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
@@ -141,10 +151,44 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     const connType = target.connType ?? "local";
     const cfg = yield* resolver.resolve({ dbUrl: flags.dbUrl, connType, dnsResolver });
 
-    // Local target → container reset, not yet ported. Delegate to the Go binary
-    // (telemetry disabled so the TS instrumentation wrapper counts the run once).
+    // Local target → native local reset. The container-recreate primitives live
+    // behind the hidden Go `db __db-bootstrap` seam; TS orchestrates the rest
+    // (running check, messages, bucket seeding, git-branch line, output shaping).
+    // Mirrors `internal/db/reset/reset.go:57-77`.
     if (cfg.isLocal) {
-      yield* proxy.exec(buildResetArgs(flags), { env: { SUPABASE_TELEMETRY_DISABLED: "1" } });
+      // AssertSupabaseDbIsRunning — error if the local db container is down.
+      const running = yield* seam.isDbRunning();
+      if (!running) {
+        return yield* Effect.fail(
+          new LegacyDbResetNotRunningError({
+            message: `${legacyAqua("supabase start")} is not running.`,
+          }),
+        );
+      }
+      // resetDatabase: "Resetting local database…" then recreate + migrate + seed.
+      yield* output.raw(`Resetting local database${toLogMessage(resolvedVersion)}\n`, "stderr");
+      yield* seam.recreateDatabase({ version: resolvedVersion, noSeed: flags.noSeed });
+
+      // Seed objects from supabase/buckets when storage is up (Go gates buckets on
+      // an existing, healthy storage container). Reuses the ported seed-buckets
+      // local path; its summary is suppressed (reset emits its own result).
+      const storageReady = yield* seam.awaitStorageReady();
+      if (storageReady) {
+        yield* legacySeedBucketsRun({ projectRef: "", emitSummary: false });
+      }
+
+      // "Finished supabase db reset on branch <branch>." (both Aqua).
+      const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");
+      yield* output.raw(
+        `Finished ${legacyAqua("supabase db reset")} on branch ${legacyAqua(branch)}.\n`,
+        "stderr",
+      );
+      if (output.format !== "text") {
+        yield* output.success("Reset local database.", {
+          target: "local",
+          version: resolvedVersion,
+        });
+      }
       return;
     }
 

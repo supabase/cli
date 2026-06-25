@@ -119,40 +119,33 @@ const legacyDecodeDefaultProjectConfig = Schema.decodeUnknownSync(ProjectConfigS
  * passed, the remote Storage gateway is used with the project's service-role key;
  * otherwise the local stack is used.
  */
-export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
-  // Target is selected from the changed-flag set (Go's flag.Changed), not the
-  // parsed value, so the flags arg itself is unused here.
-  _flags: LegacyBucketsFlags,
-) {
+/**
+ * Core of `seed buckets`: load config (merging `[remotes.<ref>]` for a non-empty
+ * `projectRef`), validate bucket config, then upsert/seed buckets + objects against
+ * the Storage service gateway. Extracted from the command handler so `db reset
+ * --local` can reuse the exact local-seed path Go invokes via
+ * `buckets.Run(ctx, "", false, fsys)` (`internal/db/reset/reset.go:71`).
+ *
+ * `emitSummary` controls whether the machine-readable summary is written to stdout:
+ * the `seed buckets` command emits it; `db reset` does NOT (it emits its own
+ * result), matching Go where reset's `buckets.Run` prints nothing to stdout.
+ *
+ * The caller owns project-ref resolution, the linked-project cache write, and the
+ * telemetry flush (Go's PersistentPostRun) — this core does none of those.
+ */
+export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
+  readonly projectRef: string;
+  readonly emitSummary: boolean;
+}) {
   const output = yield* Output;
   const cliConfig = yield* LegacyCliConfig;
-  const telemetryState = yield* LegacyTelemetryState;
-  const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cliArgs = yield* CliArgs;
   // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
   const yes = yield* legacyResolveYes;
+  const { projectRef, emitSummary } = opts;
 
-  // Set once --linked resolves a ref; drives the post-run linked-project cache
-  // write + org/project group identify, mirroring Go's `ensureProjectGroupsCached`
-  // (`cmd/root.go`, gated on a non-empty `flags.ProjectRef`). Empty on the local
-  // path, so the cache is never written there.
-  let linkedRef = "";
-
-  yield* Effect.gen(function* () {
-    // 1. Resolve the project ref for --linked BEFORE loading config, so that
-    // the matching `[remotes.<name>]` override (whose `project_id == ref`) is
-    // merged over the base config by `loadProjectConfig`. Go selects the target
-    // from `flag.Changed`, not the flag value: `--linked` is the linked path
-    // whenever it's *set* (even `--linked=false`).
-    const setFlags = legacySeedChangedTargetFlags(cliArgs.args);
-    const projectRefResolver = yield* LegacyProjectRefResolver;
-    const projectRef = setFlags.includes("linked")
-      ? yield* projectRefResolver.loadProjectRef(Option.none())
-      : "";
-    linkedRef = projectRef;
-
+  {
     // 2. Load config.toml, passing projectRef so `[remotes.*]` overrides are
     // merged for --linked. A parse failure aborts before any network call.
     const loadOptions: LoadProjectConfigOptions | undefined =
@@ -210,7 +203,7 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
 
     // 3d. Short-circuit: nothing to seed (ref present → never short-circuits).
     if (projectRef === "" && bucketNames.length === 0 && !hasVectorBuckets) {
-      if (output.format !== "text") {
+      if (emitSummary && output.format !== "text") {
         yield* output.success("", { ...emptySummary() });
       }
       return;
@@ -259,7 +252,7 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
       yield* uploadObjects(fs, path, output, gateway, cliConfig.workdir, bucketsConfig, summary);
 
       // 9. Machine-readable summary (Go has none; text mode emits nothing extra).
-      if (output.format !== "text") {
+      if (emitSummary && output.format !== "text") {
         yield* output.success("", { ...summary });
       }
     });
@@ -270,6 +263,37 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
         legacyStorageGatewayFetch(credentials.localKongCa),
       ),
     );
+  }
+});
+
+export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
+  // Target is selected from the changed-flag set (Go's flag.Changed), not the
+  // parsed value, so the flags arg itself is unused here.
+  _flags: LegacyBucketsFlags,
+) {
+  const telemetryState = yield* LegacyTelemetryState;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
+  const cliArgs = yield* CliArgs;
+
+  // Set once --linked resolves a ref; drives the post-run linked-project cache
+  // write + org/project group identify, mirroring Go's `ensureProjectGroupsCached`
+  // (`cmd/root.go`, gated on a non-empty `flags.ProjectRef`). Empty on the local
+  // path, so the cache is never written there.
+  let linkedRef = "";
+
+  yield* Effect.gen(function* () {
+    // 1. Resolve the project ref for --linked BEFORE loading config, so that
+    // the matching `[remotes.<name>]` override (whose `project_id == ref`) is
+    // merged over the base config by `loadProjectConfig`. Go selects the target
+    // from `flag.Changed`, not the flag value: `--linked` is the linked path
+    // whenever it's *set* (even `--linked=false`).
+    const setFlags = legacySeedChangedTargetFlags(cliArgs.args);
+    const projectRefResolver = yield* LegacyProjectRefResolver;
+    const projectRef = setFlags.includes("linked")
+      ? yield* projectRefResolver.loadProjectRef(Option.none())
+      : "";
+    linkedRef = projectRef;
+    yield* legacySeedBucketsRun({ projectRef, emitSummary: true });
   }).pipe(
     // Go's root `Execute` caches the linked project + fires org/project group
     // identify whenever `flags.ProjectRef` is set — only on the --linked path.

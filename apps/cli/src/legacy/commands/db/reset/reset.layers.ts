@@ -12,6 +12,7 @@ import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.laye
 import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
 import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
+import { legacyDbBootstrapSeamLayer } from "../shared/legacy-db-bootstrap.seam.layer.ts";
 
 /**
  * Runtime layer for `supabase db reset`. Same composition as `db push` / `db lint`:
@@ -60,8 +61,15 @@ export const legacyDbResetRuntimeLayer = Layer.mergeAll(
   httpClient,
   credentials,
   projectRef,
+  // Exposed (not just provided to `projectRef`) because the local reset path reuses
+  // the seed-buckets core, whose `legacyResolveStorageCredentials` requires the
+  // (lazy) Management-API factory for the linked branch — never hit on `--local`,
+  // but a static service requirement of the shared core.
+  platformApiFactory,
   linkedProjectCache,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
+  // Container-recreate / storage-health primitives for the native local reset.
+  legacyDbBootstrapSeamLayer.pipe(Layer.provide(cliConfig)),
   commandRuntimeLayer(["db", "reset"]),
 );

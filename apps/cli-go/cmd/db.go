@@ -271,6 +271,7 @@ var (
 	bootstrapMode       string
 	bootstrapFromBackup string
 	bootstrapVersion    string
+	bootstrapNoSeed     bool
 
 	// dbBootstrapCmd is a hidden seam used by the native-TypeScript `db start` and
 	// `db reset --local` commands to drive the container-bootstrap primitives that
@@ -306,7 +307,12 @@ var (
 				return nil
 			case "recreate":
 				// The PG14/PG15 container-recreate half of local db reset. The TS
-				// caller has already printed "Resetting local database…".
+				// caller has already printed "Resetting local database…". Mirror the
+				// `db reset` command's `--no-seed` handling (cmd/db.go dbResetCmd):
+				// disable the seed before MigrateAndSeed runs inside the recreate.
+				if bootstrapNoSeed {
+					utils.Config.Db.Seed.Enabled = false
+				}
 				return reset.RecreateLocalDatabase(cmd.Context(), bootstrapVersion, fsys)
 			case "await-storage":
 				ready, err := reset.AwaitStorageReady(cmd.Context())
@@ -616,6 +622,7 @@ func init() {
 	bootstrapFlags.StringVar(&bootstrapMode, "mode", "start", "Bootstrap mode: start, recreate, or await-storage.")
 	bootstrapFlags.StringVar(&bootstrapFromBackup, "from-backup", "", "Path to a logical backup file (start mode).")
 	bootstrapFlags.StringVar(&bootstrapVersion, "version", "", "Reset up to the specified version (recreate mode).")
+	bootstrapFlags.BoolVar(&bootstrapNoSeed, "no-seed", false, "Skip the seed script after recreate (recreate mode).")
 	dbCmd.AddCommand(dbBootstrapCmd)
 	// Build remote command
 	remoteFlags := dbRemoteCmd.PersistentFlags()

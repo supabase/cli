@@ -166,9 +166,14 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
           ["--mode", "start", ...(fromBackup !== undefined ? ["--from-backup", fromBackup] : [])],
           false,
         ).pipe(Effect.asVoid),
-      recreateDatabase: ({ version }) =>
+      recreateDatabase: ({ version, noSeed }) =>
         runBootstrap(
-          ["--mode", "recreate", ...(version !== "" ? ["--version", version] : [])],
+          [
+            "--mode",
+            "recreate",
+            ...(version !== "" ? ["--version", version] : []),
+            ...(noSeed ? ["--no-seed"] : []),
+          ],
           false,
         ).pipe(Effect.asVoid),
       awaitStorageReady: () =>

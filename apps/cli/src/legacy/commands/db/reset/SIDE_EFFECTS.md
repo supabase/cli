@@ -4,19 +4,22 @@ Native TypeScript port of `apps/cli-go/internal/db/reset/reset.go`. Reinitialise
 database from local migrations (plus seed). The **remote** path (`--linked`, or a
 remote `--db-url`) is native: drop all user schemas, upsert vault secrets, then
 re-apply migrations and seed. The **local** path (`--local`/default, or a `--db-url`
-pointing at the local stack) and the niche `--experimental` schema-files path
-delegate to the bundled Go binary — an interim until the container-bootstrap seam
-is ported (CLI-1325 Stage 3).
+pointing at the local stack) is also native: TS orchestrates the running check,
+messages, bucket seeding, and git-branch line, while the container-recreate
+primitives run behind the hidden Go `db __db-bootstrap` seam. Only the niche
+**`--experimental`** remote schema-files path still delegates to the Go binary.
 
 ## Files Read
 
 | Path                                  | Format     | When                                                                     |
 | ------------------------------------- | ---------- | ------------------------------------------------------------------------ |
 | `<workdir>/supabase/migrations/`      | directory  | to validate `--version` / resolve `--last`, and to load migrations       |
-| `<workdir>/supabase/config.toml`      | TOML       | remote path (embedded defaults when absent)                              |
+| `<workdir>/supabase/config.toml`      | TOML       | remote path + local bucket seeding (embedded defaults when absent)       |
+| `<workdir>/.git/HEAD` (walked upward) | plain text | local path, for the `Finished … on branch <branch>.` line                |
 | `~/.supabase/<hash>/project-ref`      | plain text | `--linked`, to resolve the ref                                           |
 | `~/.supabase/access-token`            | plain text | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted |
 | seed files from `[db.seed].sql_paths` | SQL        | remote path, when `[db.seed].enabled` and not `--no-seed`                |
+| `<workdir>/supabase/buckets/`         | files      | local path, when storage is up and `[storage.buckets]` configure objects |
 
 ## Files Written
 
@@ -25,10 +28,25 @@ is ported (CLI-1325 Stage 3).
 | `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | `--linked` (post-run cache)       |
 | `~/.supabase/telemetry.json`                     | JSON   | always (post-run telemetry flush) |
 
-The local / experimental paths additionally produce whatever the delegated Go
-binary writes (container volumes, `_current_branch`, etc.).
+On the local path the Go seam additionally recreates the `supabase_db_<project>`
+container/volume and applies the initial schema (`SetupLocalDatabase`); the
+`--experimental` remote path produces whatever the delegated Go binary writes.
 
-## Database Mutations (remote path)
+## Subprocesses
+
+| Command                                                                     | When                                | Purpose                                                                 |
+| --------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------------------------------------- |
+| `docker container inspect supabase_db_<project>`                            | local path                          | `AssertSupabaseDbIsRunning` probe (Podman fallback)                     |
+| `supabase-go db __db-bootstrap --mode recreate [--version <v>] [--no-seed]` | local path                          | recreate container + init schema + migrate + seed + restart services    |
+| `supabase-go db __db-bootstrap --mode await-storage`                        | local path                          | storage health gate before bucket seeding (`ready` / `absent`)          |
+| `supabase-go db reset --linked\|--db-url … [--no-seed]`                     | `--experimental` remote, no version | the un-ported experimental schema-files apply path (telemetry disabled) |
+
+The seam subprocesses run with `SUPABASE_TELEMETRY_DISABLED=1`, stderr inherited;
+`--network-id` / a flag-selected `--profile` are forwarded.
+
+## Database Mutations
+
+### Remote path (native, in TS)
 
 | Statement                                                                                       | When                                                         |
 | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
@@ -37,11 +55,19 @@ binary writes (container volumes, `_current_branch`, etc.).
 | migration statements + `schema_migrations` history insert (per file, transactional)             | when `[db.migrations].enabled`, for migrations `≤ --version` |
 | seed statements + `seed_files` hash upsert                                                      | when `[db.seed].enabled` and not `--no-seed`                 |
 
+### Local path (inside the Go seam)
+
+The recreate seam drops & recreates the `postgres`/`_supabase` databases (PG≤14) or
+removes & recreates the db container/volume (PG15), applies the initial schema +
+roles, then runs `MigrateAndSeed` (migrations `≤ --version`, seed unless `--no-seed`)
+and restarts the storage/auth/realtime/pooler containers. Bucket objects are then
+seeded over the Storage gateway (reusing the `seed buckets` local path).
+
 ## API Routes
 
-| Method | Path | Auth | Request body | Response (used fields)                                                                                                       |
-| ------ | ---- | ---- | ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| —      | —    | —    | —            | Connects to Postgres directly. The `--linked` db-config resolver may call the Management API to mint a temporary login role. |
+| Method | Path | Auth | Request body | Response (used fields)                                                                                                                                             |
+| ------ | ---- | ---- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| —      | —    | —    | —            | Connects to Postgres directly. The `--linked` resolver may call the Management API to mint a temporary login role; local bucket seeding calls the Storage gateway. |
 
 ## Environment Variables
 
@@ -51,6 +77,7 @@ binary writes (container volumes, `_current_branch`, etc.).
 | `SUPABASE_DB_PASSWORD`  | password for the linked/remote connection       | no                                                      |
 | `SUPABASE_YES`          | auto-confirm the reset prompt                   | no (also `--yes`)                                       |
 | `SUPABASE_EXPERIMENTAL` | routes the experimental schema-files path to Go | no (also `--experimental`)                              |
+| `SUPABASE_PROJECT_ID`   | overrides the local container id (`utils.DbId`) | no                                                      |
 
 ## Exit Codes
 
@@ -61,40 +88,50 @@ binary writes (container volumes, `_current_branch`, etc.).
 | `1`  | `--version` + `--last` together (`[last version]`)               |
 | `1`  | `--version` not an integer (`invalid version number`)            |
 | `1`  | `--version` has no matching migration file                       |
+| `1`  | local: database not running (`supabase start is not running.`)   |
 | `1`  | user declined the reset confirmation (`context canceled`)        |
 | `1`  | `config.toml` parse failure                                      |
 | `1`  | drop / migrate / seed / vault apply failure, or connection error |
+| `1`  | local: container recreate / storage health-gate failure (seam)   |
 
 ## Output
 
 The remote path prints `Resetting remote database…` to **stderr**, then the
-drop/migrate/seed progress (`Applying migration …`, `Seeding data from …`). Unlike
-`db push`, Go connects with `io.Discard`, so there is **no** `Connecting to …
-database…` line and **no** `Finished …` line.
+drop/migrate/seed progress (`Applying migration …`, `Seeding data from …`). Go
+connects with `io.Discard`, so there is **no** `Connecting to … database…` line and
+**no** `Finished …` line on the remote path.
+
+The local path prints `Resetting local database…` to **stderr**, then the seam's
+`Recreating database...` / `Restarting containers...` progress, and finally
+`Finished supabase db reset on branch <branch>.` (`supabase db reset` and `<branch>`
+in Aqua).
 
 ### `--output-format text` (Go CLI compatible)
 
-Byte-matches Go's stderr progress for the remote path. The local / experimental
-paths pass the delegated Go binary's output through unchanged.
+Byte-matches Go's stderr progress for both the remote and local paths. The
+`--experimental` remote path passes the delegated Go binary's output through
+unchanged.
 
 ### `--output-format json` / `stream-json`
 
-stdout is payload-only; on a confirmed remote reset a `result` object is emitted:
+stdout is payload-only; a `result` object is emitted:
 
 ```json
-{ "target": "remote", "version": "<resolved version or empty>" }
+{ "target": "remote" | "local", "version": "<resolved version or empty>" }
 ```
 
-In machine modes the confirmation prompt is non-interactive and takes its default
-(`false`), so a remote reset is declined unless `--yes` is set.
+In machine modes the remote confirmation prompt is non-interactive and takes its
+default (`false`), so a remote reset is declined unless `--yes` is set. The local
+path has no confirmation prompt.
 
 ## Notes
 
 - **Target/local split** follows Go's `IsLocalDatabase(resolved config)`, not the
-  flag name: a `--db-url` pointing at the local stack is treated as a local reset
-  and delegated.
-- `--no-seed` forces seeding off (Go sets `Config.Db.Seed.Enabled = false`).
-- `--last n` reverts the most recent `n` migrations; if `n ≥ total`, the reset
-  target version becomes `-` (revert everything).
-- **Known interim**: local `db reset` and `--experimental` remote resets run via the
-  Go binary; the best-effort pg-delta catalog cache is not ported (no output impact).
+  flag name: a `--db-url` pointing at the local stack is treated as a local reset.
+- `--no-seed` forces seeding off (Go sets `Config.Db.Seed.Enabled = false`); on the
+  local path it is forwarded to the recreate seam so `MigrateAndSeed` skips the seed.
+- `--last n` reverts the most recent `n` migrations; if `n ≥ total`, the reset target
+  version becomes `-` (revert everything).
+- **Known interim**: only `--experimental` remote resets run via the Go binary; the
+  best-effort pg-delta catalog cache (inside the seam) is not surfaced (no output
+  impact). `encrypted:` vault secrets are skipped on the remote path.

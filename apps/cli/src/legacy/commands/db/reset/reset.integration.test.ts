@@ -4,15 +4,20 @@ import { dirname, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
+  mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
+import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import {
   LegacyDnsResolverFlag,
@@ -31,6 +36,7 @@ import {
   LegacyDbConnection,
   type LegacyPgConnInput,
 } from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
 import { legacyDbReset } from "./reset.handler.ts";
 import type { LegacyDbResetFlags } from "./reset.command.ts";
 
@@ -113,6 +119,48 @@ function mockConnection(opts: { remoteSeeds?: Readonly<Record<string, string>> }
   };
 }
 
+/**
+ * Stateful mock of the container-bootstrap seam. `running` drives
+ * `AssertSupabaseDbIsRunning`; `storageReady` drives the bucket-seed gate. Records
+ * the recreate args so tests can assert version / `--no-seed` propagation.
+ */
+function mockBootstrapSeam(opts: { running?: boolean; storageReady?: boolean }) {
+  const recreateCalls: Array<{ version: string; noSeed: boolean }> = [];
+  let storageChecked = false;
+  const layer = Layer.succeed(LegacyDbBootstrapSeam, {
+    isDbRunning: () => Effect.succeed(opts.running ?? true),
+    startDatabase: () => Effect.void,
+    recreateDatabase: (args: { version: string; noSeed: boolean }) =>
+      Effect.sync(() => {
+        recreateCalls.push(args);
+      }),
+    awaitStorageReady: () =>
+      Effect.sync(() => {
+        storageChecked = true;
+        return opts.storageReady ?? false;
+      }),
+  });
+  return {
+    layer,
+    get recreateCalls() {
+      return recreateCalls;
+    },
+    get storageChecked() {
+      return storageChecked;
+    },
+  };
+}
+
+// Dummy HTTP client; the local-reset bucket-seed core only reaches it when storage
+// is ready AND buckets are configured (no reset test configures buckets, so the
+// gateway is never actually called). Present to satisfy the handler's R.
+const mockStorageHttp = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) =>
+    Effect.succeed(HttpClientResponse.fromWeb(request, new Response("{}", { status: 404 }))),
+  ),
+);
+
 function mockProxy() {
   const calls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
   const layer = Layer.succeed(LegacyGoProxy, {
@@ -144,6 +192,8 @@ function setup(
     remoteSeeds?: Readonly<Record<string, string>>;
     yes?: boolean;
     omitRef?: boolean;
+    running?: boolean;
+    storageReady?: boolean;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -159,13 +209,18 @@ function setup(
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
   const proxy = mockProxy();
+  const seam = mockBootstrapSeam({ running: opts.running, storageReady: opts.storageReady });
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedCache = mockLegacyLinkedProjectCacheTracked();
+  // The local-reset bucket-seed core statically requires the (lazy) Management-API
+  // factory; never invoked on `--local` (projectRef === "").
+  const platformApi = mockLegacyPlatformApiService({});
 
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
     proxy.layer,
+    seam.layer,
     mockResolver({
       isLocal: opts.isLocal ?? false,
       ref: opts.ref ?? LEGACY_VALID_REF,
@@ -173,6 +228,11 @@ function setup(
     }),
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
+    mockRuntimeInfo(),
+    mockStorageHttp,
+    Layer.succeed(LegacyPlatformApiFactory, {
+      make: LegacyPlatformApi.pipe(Effect.provide(platformApi.layer)),
+    }),
     Layer.succeed(CliArgs, { args: opts.args ?? ["db", "reset", "--linked"] }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
@@ -180,7 +240,7 @@ function setup(
     telemetry.layer,
     linkedCache.layer,
   );
-  return { layer, out, conn, proxy, telemetry, linkedCache };
+  return { layer, out, conn, proxy, seam, telemetry, linkedCache };
 }
 
 const migrationFile = (version: string, body = "create table t ();") => ({
@@ -190,19 +250,100 @@ const migrationFile = (version: string, body = "create table t ();") => ({
 describe("legacy db reset", () => {
   const tmp = useLegacyTempWorkdir("supabase-db-reset-");
 
-  it.live("delegates a local reset to the Go binary with telemetry disabled", () => {
-    const { layer, proxy, conn } = setup(tmp.current, {
+  it.live("resets the local database via the bootstrap seam", () => {
+    const { layer, out, seam, proxy } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       args: ["db", "reset"],
       isLocal: true,
+      running: true,
     });
     return Effect.gen(function* () {
       yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(proxy.calls).toHaveLength(1);
-      expect(proxy.calls[0]!.args).toEqual(["db", "reset"]);
-      expect(proxy.calls[0]!.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
-      // No native DB work on the delegated path.
-      expect(conn.execs).toHaveLength(0);
+      // Native path — no Go delegation.
+      expect(proxy.calls).toHaveLength(0);
+      expect(out.stderrText).toContain("Resetting local database...");
+      expect(seam.recreateCalls).toEqual([{ version: "", noSeed: false }]);
+      // Storage gate checked; with no buckets configured nothing is seeded.
+      expect(seam.storageChecked).toBe(true);
+      expect(out.stderrText).toContain("Finished ");
+      expect(out.stderrText).toContain("on branch ");
+    });
+  });
+
+  it.live("fails a local reset when the database is not running", () => {
+    const { layer, seam } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "reset"],
+      isLocal: true,
+      running: false,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("is not running.");
+      expect(seam.recreateCalls).toHaveLength(0);
+    });
+  });
+
+  it.live("seeds buckets after a local reset when storage is ready", () => {
+    const { layer, seam } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "reset"],
+      isLocal: true,
+      running: true,
+      storageReady: true,
+    });
+    return Effect.gen(function* () {
+      // No buckets configured → the seed-buckets core short-circuits, but the
+      // storage gate is still consulted (Go inspects storage before buckets.Run).
+      yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(seam.storageChecked).toBe(true);
+      expect(seam.recreateCalls).toHaveLength(1);
+    });
+  });
+
+  it.live("uses the detected git branch in the Finished line", () => {
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { ".git/HEAD": "ref: refs/heads/feature-x\n" },
+      args: ["db", "reset"],
+      isLocal: true,
+      running: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      // The branch name is wrapped in ANSI (legacyAqua), so assert on the token.
+      expect(out.stderrText).toContain("on branch ");
+      expect(out.stderrText).toContain("feature-x");
+    });
+  });
+
+  it.live("fails a remote reset on a malformed config.toml", () => {
+    const { layer } = setup(tmp.current, { toml: 'project_id = "unterminated\n' });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("failed to parse supabase/config.toml");
+      }
+    });
+  });
+
+  it.live("emits a json result for a local reset", () => {
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "reset"],
+      isLocal: true,
+      running: true,
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      const success = out.messages.find((m) => m.type === "success");
+      expect(success?.data?.["target"]).toBe("local");
     });
   });
 
@@ -380,34 +521,60 @@ describe("legacy db reset", () => {
     return Effect.gen(function* () {
       yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
       expect(proxy.calls).toHaveLength(1);
+      expect(proxy.calls[0]!.args).toEqual(["db", "reset", "--linked"]);
       expect(proxy.calls[0]!.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
     });
   });
 
-  it.live("forwards all flags to the Go binary on the delegated local path", () => {
+  it.live("forwards --db-url and --no-seed on an experimental remote db-url reset", () => {
     const { layer, proxy } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      experimental: true,
+      args: ["db", "reset", "--db-url", "postgresql://db.example.com:5432/postgres"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({
+        ...DEFAULT_FLAGS,
+        dbUrl: Option.some("postgresql://db.example.com:5432/postgres"),
+        noSeed: true,
+      }).pipe(Effect.provide(layer));
+      expect(proxy.calls[0]!.args).toEqual([
+        "db",
+        "reset",
+        "--db-url",
+        "postgresql://db.example.com:5432/postgres",
+        "--no-seed",
+      ]);
+    });
+  });
+
+  it.live("passes --no-seed and the resolved --last version to the recreate seam", () => {
+    const { layer, seam } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: { ...migrationFile("20240101000000"), ...migrationFile("20240202000000") },
       args: ["db", "reset", "--local"],
       isLocal: true,
+      running: true,
     });
     return Effect.gen(function* () {
+      // last=1 with 2 local migrations → recreate up to version 20240101000000.
       yield* legacyDbReset({
         ...DEFAULT_FLAGS,
         local: true,
         noSeed: true,
         last: Option.some(1),
       }).pipe(Effect.provide(layer));
-      expect(proxy.calls[0]!.args).toEqual(["db", "reset", "--local", "--no-seed", "--last", "1"]);
+      expect(seam.recreateCalls).toEqual([{ version: "20240101000000", noSeed: true }]);
     });
   });
 
-  it.live("forwards --db-url and --version when delegating a local db-url reset", () => {
-    const { layer, proxy } = setup(tmp.current, {
+  it.live("recreates to a specific --version on a local db-url reset", () => {
+    const { layer, out, seam } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
       args: ["db", "reset", "--db-url", "postgresql://localhost:54322/postgres"],
       isLocal: true,
+      running: true,
     });
     return Effect.gen(function* () {
       yield* legacyDbReset({
@@ -415,14 +582,8 @@ describe("legacy db reset", () => {
         dbUrl: Option.some("postgresql://localhost:54322/postgres"),
         version: Option.some("20240101000000"),
       }).pipe(Effect.provide(layer));
-      expect(proxy.calls[0]!.args).toEqual([
-        "db",
-        "reset",
-        "--db-url",
-        "postgresql://localhost:54322/postgres",
-        "--version",
-        "20240101000000",
-      ]);
+      expect(out.stderrText).toContain("Resetting local database to version: 20240101000000");
+      expect(seam.recreateCalls).toEqual([{ version: "20240101000000", noSeed: false }]);
     });
   });
 
