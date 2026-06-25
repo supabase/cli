@@ -116,6 +116,89 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("collapses . and .. in relative seed sql_paths like Go's path.Join", () => {
+    // Go prefixes each relative pattern with `path.Join("supabase", pattern)`, which
+    // runs `path.Clean` (`config.go:881-886`). The cleaned path is the seed_files key.
+    const dir = withConfig(
+      ["[db.seed]", 'sql_paths = ["../seed.sql", "sub/../other.sql", "./plain.sql"]', ""].join(
+        "\n",
+      ),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.sqlPaths).toEqual(["seed.sql", "supabase/other.sql", "supabase/plain.sql"]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("honors SUPABASE_DB_SEED_SQL_PATHS over the TOML array (comma split, no trim)", () => {
+    // Go's StringToSliceHookFunc(",") splits without trimming, so " b.sql" keeps its space.
+    const previous = process.env["SUPABASE_DB_SEED_SQL_PATHS"];
+    process.env["SUPABASE_DB_SEED_SQL_PATHS"] = "a.sql, b.sql";
+    const dir = withConfig(["[db.seed]", 'sql_paths = ["ignored.sql"]', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.sqlPaths).toEqual(["supabase/a.sql", "supabase/ b.sql"]);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_DB_SEED_SQL_PATHS"];
+          else process.env["SUPABASE_DB_SEED_SQL_PATHS"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("a remote block forcing db.seed.enabled=false beats SUPABASE_DB_SEED_ENABLED", () => {
+    // Go's mergeRemoteConfig v.Set(false) is an override-tier value above AutomaticEnv,
+    // so a remote that omits db.seed.enabled stays unseeded even with the env var set.
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_DB_SEED_ENABLED"];
+    process.env["SUPABASE_DB_SEED_ENABLED"] = "true";
+    const dir = withConfig(["[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"));
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.enabled).toBe(false);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_DB_SEED_ENABLED"];
+          else process.env["SUPABASE_DB_SEED_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("SUPABASE_DB_SEED_ENABLED still wins on the local path (no remote force)", () => {
+    // Negative control: with no matched remote block, the env override applies normally.
+    const previous = process.env["SUPABASE_DB_SEED_ENABLED"];
+    process.env["SUPABASE_DB_SEED_ENABLED"] = "false";
+    const dir = withConfig(["[db.seed]", "enabled = true", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.enabled).toBe(false);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_DB_SEED_ENABLED"];
+          else process.env["SUPABASE_DB_SEED_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("reads [edge_runtime] deno_version = 1 (selects the deno1 image)", () => {
     const dir = withConfig(["[edge_runtime]", "deno_version = 1", ""].join("\n"));
     return read(dir).pipe(

@@ -178,13 +178,25 @@ function deepMergeDoc(base: RawDoc, override: RawDoc): RawDoc {
  * config (Go's `config.Load`, `config.go:503-518` + `mergeRemoteConfig`). The block
  * key name is only used for diagnostics in Go; the match is on `project_id`.
  */
+interface LegacyRemoteOverride {
+  readonly doc: RawDoc | undefined;
+  /**
+   * True when the matched remote block omitted `db.seed.enabled` and we injected the
+   * forced `false`. Go applies this via `v.Set` (`mergeRemoteConfig`, `config.go:639`),
+   * which sits at viper's override tier — ABOVE `AutomaticEnv` (`viper.go:1167-1174` vs
+   * `:1226-1237`). So in this case the forced `false` must outrank `SUPABASE_DB_SEED_ENABLED`,
+   * unlike a plain TOML `false` (which env still overrides).
+   */
+  readonly forcedSeedDisabled: boolean;
+}
+
 function applyRemoteOverride(
   doc: RawDoc | undefined,
   ref: string,
   lookup: EnvLookup,
-): RawDoc | undefined {
+): LegacyRemoteOverride {
   const remotes = asRecord(doc?.["remotes"]);
-  if (doc === undefined || remotes === undefined) return doc;
+  if (doc === undefined || remotes === undefined) return { doc, forcedSeedDisabled: false };
   for (const name of Object.keys(remotes)) {
     const block = asRecord(remotes[name]);
     if (block === undefined) continue;
@@ -203,12 +215,15 @@ function applyRemoteOverride(
       // local seed files. The check is on the block, not the merged result.
       const blockSeed = asRecord(asRecord(block["db"])?.["seed"]);
       if (blockSeed?.["enabled"] === undefined) {
-        return deepMergeDoc(merged, { db: { seed: { enabled: false } } });
+        return {
+          doc: deepMergeDoc(merged, { db: { seed: { enabled: false } } }),
+          forcedSeedDisabled: true,
+        };
       }
-      return merged;
+      return { doc: merged, forcedSeedDisabled: false };
     }
   }
-  return doc;
+  return { doc, forcedSeedDisabled: false };
 }
 
 /**
@@ -356,6 +371,29 @@ function resolveConfigInt(value: unknown, lookup: EnvLookup): number | "absent" 
     if (/^\d+$/.test(expanded)) return Number(expanded);
   }
   return "invalid";
+}
+
+/**
+ * Replicates Go's `path.Join("supabase", pattern)` for a relative seed `sql_paths`
+ * entry (`pkg/config/config.go:881-886`). Go's `path.Join` runs `path.Clean`, which
+ * collapses `.`/`..` segments (`../seed.sql` → `seed.sql`, `sub/../seed.sql` →
+ * `supabase/seed.sql`, `../../x.sql` → `../x.sql`). The cleaned path is the
+ * `seed_files` hash key, so a non-collapsed key would miss Go's record and re-run/
+ * re-record the seed on a cross-CLI switch. Forward-slash only (Go uses `path.Join`,
+ * not the platform `filepath.Join`).
+ */
+function legacyJoinSupabaseSeedPath(pattern: string): string {
+  const out: Array<string> = [];
+  for (const segment of `supabase/${pattern}`.split("/")) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (out.length > 0 && out[out.length - 1] !== "..") out.pop();
+      else out.push("..");
+    } else {
+      out.push(segment);
+    }
+  }
+  return out.length === 0 ? "." : out.join("/");
 }
 
 /** `[db]` ports default through the development env unless `SUPABASE_ENV` overrides. */
@@ -594,6 +632,9 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   let experimentalRaw: RawDoc | undefined;
   let functionsRaw: RawDoc | undefined;
   let projectId = Option.none<string>();
+  // True when a matched remote block forced `db.seed.enabled=false` (Go's override-tier
+  // `v.Set`), so it must beat `SUPABASE_DB_SEED_ENABLED` in the seed resolution below.
+  let remoteForcedSeedDisabled = false;
   if (Option.isSome(maybeContent)) {
     let doc: RawDoc | undefined;
     try {
@@ -628,7 +669,12 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     }
     // Apply a matching `[remotes.<name>]` override (Go merges the block whose
     // `project_id` equals the resolved ref over the base, config.go:503-562).
-    const effectiveDoc = ref === undefined ? doc : applyRemoteOverride(doc, ref, lookup);
+    const remoteOverride =
+      ref === undefined
+        ? { doc, forcedSeedDisabled: false }
+        : applyRemoteOverride(doc, ref, lookup);
+    const effectiveDoc = remoteOverride.doc;
+    remoteForcedSeedDisabled = remoteOverride.forcedSeedDisabled;
     db = asRecord(effectiveDoc?.["db"]);
     experimentalRaw = asRecord(effectiveDoc?.["experimental"]);
     pgDeltaRaw = asRecord(experimentalRaw?.["pgdelta"]);
@@ -933,19 +979,29 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
 
   // `[db.seed]` — Go defaults enabled true, sql_paths ["seed.sql"]; relative
   // patterns are supabase-prefixed (`config.go:801-806`). `db.seed.enabled` is
-  // overridable by `SUPABASE_DB_SEED_ENABLED` via viper AutomaticEnv.
+  // overridable by `SUPABASE_DB_SEED_ENABLED` via viper AutomaticEnv — EXCEPT when a
+  // remote block forced it false at the override tier (then the forced false wins).
   const seedRaw = asRecord(db?.["seed"]);
   const seedEnabled = yield* resolveBoolOrFail(
     "db.seed.enabled",
     seedRaw?.["enabled"],
     true,
     lookup,
-    envOverride("SUPABASE_DB_SEED_ENABLED"),
+    remoteForcedSeedDisabled ? undefined : envOverride("SUPABASE_DB_SEED_ENABLED"),
   );
+  // Go's viper AutomaticEnv also feeds `SUPABASE_DB_SEED_SQL_PATHS` into
+  // `db.seed.sql_paths`, decoding a string via `StringToSliceHookFunc(",")` — a bare
+  // comma split with NO whitespace trimming (`config.go:494-498,691`). The env value
+  // takes precedence over the TOML array; an empty env value falls back (envOverride
+  // already drops empties, matching `AllowEmptyEnv=false`).
   const rawSqlPaths = seedRaw?.["sql_paths"];
-  const sqlPathPatterns = Array.isArray(rawSqlPaths)
-    ? rawSqlPaths.filter((pattern): pattern is string => typeof pattern === "string")
-    : ["seed.sql"];
+  const sqlPathsOverride = envOverride("SUPABASE_DB_SEED_SQL_PATHS");
+  const sqlPathPatterns =
+    sqlPathsOverride !== undefined
+      ? sqlPathsOverride.split(",")
+      : Array.isArray(rawSqlPaths)
+        ? rawSqlPaths.filter((pattern): pattern is string => typeof pattern === "string")
+        : ["seed.sql"];
   const seedSqlPaths = sqlPathPatterns.map((rawPattern) => {
     // Go's `LoadEnvHook` (`pkg/config/decode_hooks.go`) expands `env(VAR)` on every
     // string element of `db.seed.sql_paths` during unmarshal, BEFORE `resolve()`
@@ -953,10 +1009,8 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     // otherwise `["env(SEED_SQL)"]` would glob the literal `supabase/env(SEED_SQL)`.
     const pattern = legacyExpandEnv(rawPattern, lookup);
     if (pattern.length === 0 || path.isAbsolute(pattern)) return pattern;
-    // Mirror Go's `path.Join("supabase", pattern)` (forward-slash, "./"-cleaned)
-    // so the glob — split on "/" — stays portable.
-    const segments = pattern.split("/").filter((segment) => segment !== "" && segment !== ".");
-    return ["supabase", ...segments].join("/");
+    // Mirror Go's `path.Join("supabase", pattern)` → `path.Clean` (collapses `.`/`..`).
+    return legacyJoinSupabaseSeedPath(pattern);
   });
 
   // `[db.vault]` secrets: env-expand each value, then decrypt dotenvx `encrypted:`
