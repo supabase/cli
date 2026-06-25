@@ -13,4 +13,5 @@
 
 # Generated code. These ownerless rules override the catch-all above so
 # CI-green sync PRs (e.g. Management API OpenAPI spec) can be auto-merged.
+/apps/cli-go/pkg/api/*.gen.go
 /packages/api/src/generated/
