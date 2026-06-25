@@ -132,6 +132,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       let targetUrl: string;
       let overwrite: boolean;
       if (hasExplicitTarget) {
+        const seam = yield* LegacyDeclarativeSeam;
         if (Option.isSome(flags.local)) {
           // Target selection keys off flag presence (Go's `Changed`), but the
           // auto-start gates on the boolean VALUE: Go passes `declarativeLocal` to
@@ -139,7 +140,8 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           // short-circuits `if !local { return nil }` (`:127-128`). So `--local=false`
           // selects the local target but must NOT start a stopped stack.
           if (Option.getOrElse(flags.local, () => false)) {
-            yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
+            yield* seam.ensureLocalPostgresImageCurrent();
+            yield* seam.ensureLocalDatabaseStarted();
           }
           targetUrl = legacyLocalUrl(local);
         } else {
@@ -206,6 +208,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           path,
           cliConfig.workdir,
           linkedRef,
+          (yield* LegacyDeclarativeSeam).ensureLocalPostgresImageCurrent(),
         );
         overwrite = true;
       }

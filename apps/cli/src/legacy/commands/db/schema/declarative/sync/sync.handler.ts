@@ -130,12 +130,20 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         schema: flags.schema,
         noCache: flags.noCache,
       };
+      let localPostgresImageChecked = false;
+      const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent().pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            localPostgresImageChecked = true;
+          }),
+        ),
+      );
       const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
       if (
         declarativeFilesExist &&
         shouldEnsureLocalPostgresImageCurrent(flags.noCache, flags.noApply)
       ) {
-        yield* seam.ensureLocalPostgresImageCurrent();
+        yield* ensureLocalPostgresImageCurrent;
       }
 
       // Go's `saveApplyDebugBundle`: warn (rather than masking the apply error) and
@@ -213,7 +221,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           path,
           cliConfig.workdir,
           linkedRef,
-          seam.ensureLocalPostgresImageCurrent(),
+          ensureLocalPostgresImageCurrent,
         );
         const generated = yield* legacyGenerateDeclarativeOutput(run, targetUrl);
         yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, generated);
@@ -314,6 +322,9 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       if (!shouldApply) return;
 
       // Step 8: apply the migration to the local database (native).
+      if (!localPostgresImageChecked) {
+        yield* ensureLocalPostgresImageCurrent;
+      }
       const applyExit = yield* applyMigrationToLocal(
         { port: toml.port, password: toml.password, dnsResolver },
         migrationPath,

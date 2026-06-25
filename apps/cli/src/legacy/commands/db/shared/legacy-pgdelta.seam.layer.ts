@@ -292,16 +292,12 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               cliConfig.workdir,
             );
             const containerId = localDbContainerId(projectId);
-            const child = yield* spawnContainerCli(
-              spawner,
-              ["container", "inspect", containerId, "--format", "{{.Config.Image}}"],
-              {
-                stdin: "ignore",
-                stdout: "pipe",
-                stderr: "pipe",
-                extendEnv: true,
-              },
-            ).pipe(
+            const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {
+              stdin: "ignore",
+              stdout: "pipe",
+              stderr: "pipe",
+              extendEnv: true,
+            }).pipe(
               Effect.mapError(
                 () =>
                   new LegacyDeclarativeShadowDbError({
@@ -355,6 +351,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               return new TextDecoder().decode(bytes).trim();
             };
             const stderr = decodeChunks(stderrChunks);
+            const stdout = decodeChunks(stdoutChunks);
             if (inspectExit !== 0) {
               if (legacyIsMissingContainerInspectError(stderr)) return;
               return yield* Effect.fail(
@@ -366,7 +363,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                 }),
               );
             }
-            const actual = decodeChunks(stdoutChunks);
+            const actual = legacyResolveContainerInspectImageName(stdout);
             const expected = legacyGetRegistryImageUrl(image).trim();
             const actualTag = dockerImageTag(actual);
             const expectedTag = dockerImageTag(expected);
@@ -523,4 +520,29 @@ function dockerImageTag(image: string): string {
 
 export function legacyIsMissingContainerInspectError(stderr: string): boolean {
   return stderr.toLowerCase().includes("no such container");
+}
+
+export function legacyResolveContainerInspectImageName(stdout: string): string {
+  const trimmed = stdout.trim();
+  if (trimmed.length === 0) return "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return trimmed;
+  }
+  const inspect = Array.isArray(parsed) ? parsed[0] : parsed;
+  if (!isJsonRecord(inspect)) return "";
+  const imageName = inspect["ImageName"];
+  if (typeof imageName === "string" && imageName.trim().length > 0) {
+    return imageName.trim();
+  }
+  const config = inspect["Config"];
+  if (!isJsonRecord(config)) return "";
+  const configImage = config["Image"];
+  return typeof configImage === "string" && configImage.trim().length > 0 ? configImage.trim() : "";
+}
+
+function isJsonRecord(value: unknown): value is { readonly [key: string]: unknown } {
+  return typeof value === "object" && value !== null;
 }

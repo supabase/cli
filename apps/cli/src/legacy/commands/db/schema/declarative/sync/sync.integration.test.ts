@@ -29,6 +29,19 @@ import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.servi
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { legacyDbSchemaDeclarativeSync } from "./sync.handler.ts";
 
+const EXPORT_JSON = JSON.stringify({
+  version: 1,
+  mode: "declarative",
+  files: [
+    {
+      path: "schemas/public/tables/players.sql",
+      order: 0,
+      statements: 1,
+      sql: "create table players ();",
+    },
+  ],
+});
+
 interface SetupOpts {
   experimental?: boolean;
   yes?: boolean;
@@ -42,6 +55,7 @@ interface SetupOpts {
   networkId?: string;
   projectId?: Option.Option<string>;
   staleLocalImage?: boolean;
+  exportJson?: string;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -80,8 +94,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     removeShadowContainer: () => Effect.void,
   });
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (_opts: LegacyEdgeRuntimeRunOpts) =>
-      Effect.succeed({ stdout: opts.diffSql ?? "", stderr: "" }),
+    run: (runOpts: LegacyEdgeRuntimeRunOpts) =>
+      Effect.succeed({
+        stdout:
+          opts.exportJson !== undefined &&
+          runOpts.errPrefix === "error exporting declarative schema"
+            ? opts.exportJson
+            : (opts.diffSql ?? ""),
+        stderr: "",
+      }),
   });
   const dbExec: string[] = [];
   const dbConn = Layer.succeed(LegacyDbConnection, {
@@ -311,6 +332,39 @@ describe("legacy db schema declarative sync integration", () => {
         "linked",
         "custom",
       ]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("bootstrap linked target checks the local Postgres image before apply", () => {
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      staleLocalImage: true,
+      projectId: Option.some("abcdefghijklmnopqrst"),
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+      exportJson: EXPORT_JSON,
+      promptConfirmResponses: [true], // generate a new one? yes
+      promptSelectResponses: ["linked"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(
+          flags({
+            noCache: true,
+            apply: Option.some(true),
+            name: Option.some("bootstrap_apply"),
+          }),
+        ),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeShadowDbError",
+        message: "local Postgres container image is stale",
+      });
+      expect(s.localPostgresImageChecks).toHaveLength(1);
+      expect(s.dbExec).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
