@@ -17,6 +17,7 @@ import (
 	"github.com/supabase/cli/internal/db/reset"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/new"
+	"github.com/supabase/cli/internal/pgdelta"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/config"
@@ -103,6 +104,14 @@ var (
 		Use:   "sync",
 		Short: "Generate a new migration from declarative schema",
 		RunE:  runDeclarativeSync,
+	}
+
+	// dbDeclarativeApplyCmd applies declarative files directly to the local database
+	// without creating a timestamped migration.
+	dbDeclarativeApplyCmd = &cobra.Command{
+		Use:   "apply",
+		Short: "Apply declarative schema to the local database",
+		RunE:  runDeclarativeApply,
 	}
 
 	// dbDeclarativeGenerateCmd generates declarative files directly from a live
@@ -199,6 +208,22 @@ func configureLocalDbConfig() {
 		Password: utils.Config.Db.Password,
 		Database: "postgres",
 	}
+}
+
+func runDeclarativeApply(cmd *cobra.Command, args []string) error {
+	ctx := cmd.Context()
+	fsys := afero.NewOsFs()
+
+	if !hasDeclarativeFiles(fsys) {
+		return fmt.Errorf("no declarative schema found. Run %s first", utils.Aqua("supabase db schema declarative generate"))
+	}
+	if err := ensureLocalDatabaseStarted(ctx, true, utils.AssertSupabaseDbIsRunning, func(ctx context.Context) error {
+		return start.Run(ctx, "", fsys)
+	}); err != nil {
+		return err
+	}
+	configureLocalDbConfig()
+	return pgdelta.ApplyDeclarative(ctx, flags.DbConfig, fsys)
 }
 
 // runDeclarativeGenerate implements the smart interactive generate flow.
@@ -521,6 +546,7 @@ func init() {
 	generateFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", generateFlags.Lookup("password")))
 
+	dbDeclarativeCmd.AddCommand(dbDeclarativeApplyCmd)
 	dbDeclarativeCmd.AddCommand(dbDeclarativeSyncCmd)
 	dbDeclarativeCmd.AddCommand(dbDeclarativeGenerateCmd)
 	dbSchemaCmd.AddCommand(dbDeclarativeCmd)

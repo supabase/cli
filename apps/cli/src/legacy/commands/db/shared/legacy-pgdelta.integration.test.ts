@@ -14,6 +14,7 @@ import {
   LEGACY_PG_DELTA_NPM_VERSION_PLACEHOLDER,
 } from "./legacy-pgdelta.deno-templates.ts";
 import {
+  legacyApplyDeclarativePgDelta,
   legacyDeclarativeExportPgDelta,
   legacyDiffPgDelta,
   legacyExportCatalogPgDelta,
@@ -48,6 +49,63 @@ function fakeEdgeRuntime(outcome: { stdout?: string; stderr?: string; fail?: str
 // "not required" — matching the no-SSL-env passthrough these tests assert.
 const probe = Layer.succeed(LegacyPgDeltaSslProbe, {
   requireSsl: () => Effect.succeed(false),
+});
+
+describe("legacyApplyDeclarativePgDelta", () => {
+  it.effect("parses apply output and mounts the declarative directory read-only", () => {
+    const edge = fakeEdgeRuntime({
+      stdout: JSON.stringify({
+        status: "success",
+        totalStatements: 3,
+        totalRounds: 2,
+        totalApplied: 3,
+        totalSkipped: 0,
+        errors: [],
+        stuckStatements: [],
+        validationErrors: [],
+        diagnostics: [],
+      }),
+    });
+    return legacyApplyDeclarativePgDelta(CTX, {
+      declarativeDir: "/proj/supabase/database",
+      targetRef: "postgresql://t",
+    }).pipe(
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(result.status).toBe("success");
+          expect(result.totalApplied).toBe(3);
+          const opts = edge.calls[0]!;
+          expect(opts.errPrefix).toBe("error running pg-delta script");
+          expect(opts.env["SCHEMA_PATH"]).toBe("/declarative");
+          expect(opts.env["TARGET"]).toBe("postgresql://t");
+          expect(opts.binds).toEqual([
+            "supabase_edge_runtime_ref:/root/.cache/deno:rw",
+            "/proj/supabase/database:/declarative:ro",
+          ]);
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+    );
+  });
+
+  it.effect("fails with parse error on invalid apply JSON", () => {
+    const edge = fakeEdgeRuntime({ stdout: "not json" });
+    return legacyApplyDeclarativePgDelta(CTX, {
+      declarativeDir: "/proj/supabase/database",
+      targetRef: "postgresql://t",
+    }).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeParseOutputError");
+          expect((failError(exit) as { message: string }).message).toContain(
+            "failed to parse pg-delta apply output:",
+          );
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+    );
+  });
 });
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>

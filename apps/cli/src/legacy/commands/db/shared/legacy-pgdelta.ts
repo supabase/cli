@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
 
 import {
   type LegacyEdgeRuntimeFile,
@@ -12,6 +12,7 @@ import {
 import {
   legacyInterpolatePgDeltaScript,
   legacyPgDeltaCatalogExportScript,
+  legacyPgDeltaDeclarativeApplyScript,
   legacyPgDeltaDeclarativeExportScript,
   legacyPgDeltaDiffScript,
 } from "./legacy-pgdelta.deno-templates.ts";
@@ -36,6 +37,18 @@ export interface LegacyDeclarativeOutput {
   readonly version: number;
   readonly mode: string;
   readonly files: ReadonlyArray<LegacyDeclarativeFile>;
+}
+
+interface LegacyDeclarativeApplyResult {
+  readonly status: string;
+  readonly totalStatements: number;
+  readonly totalRounds: number;
+  readonly totalApplied: number;
+  readonly totalSkipped: number;
+  readonly errors: ReadonlyArray<unknown>;
+  readonly stuckStatements: ReadonlyArray<unknown>;
+  readonly validationErrors: ReadonlyArray<unknown>;
+  readonly diagnostics: ReadonlyArray<unknown>;
 }
 
 /** Result of a pg-delta diff: the SQL statements plus edge-runtime stderr. */
@@ -157,6 +170,20 @@ const buildDiffEnv = Effect.fnUntraced(function* (
 
 const toDeclarativeEdgeRuntimeError = (error: { readonly message: string }) =>
   new LegacyDeclarativeEdgeRuntimeError({ message: error.message });
+
+const LegacyDeclarativeApplyResultSchema = Schema.Struct({
+  status: Schema.String,
+  totalStatements: Schema.optionalKey(Schema.Number),
+  totalRounds: Schema.optionalKey(Schema.Number),
+  totalApplied: Schema.optionalKey(Schema.Number),
+  totalSkipped: Schema.optionalKey(Schema.Number),
+  errors: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+  stuckStatements: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+  validationErrors: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+  diagnostics: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+});
+
+const decodeApplyResult = Schema.decodeUnknownEffect(LegacyDeclarativeApplyResultSchema);
 
 /**
  * Diffs SOURCE → TARGET via the pg-delta diff script. Mirrors Go's
@@ -280,4 +307,66 @@ export const legacyExportCatalogPgDelta = Effect.fnUntraced(function* (
     );
   }
   return snapshot;
+});
+
+export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
+  ctx: LegacyPgDeltaContext,
+  params: { readonly declarativeDir: string; readonly targetRef: string },
+) {
+  const edgeRuntime = yield* LegacyEdgeRuntimeScript;
+  const path = yield* Path.Path;
+  const schemaPath = "/declarative";
+  const npm = legacyPgDeltaNpmRegistryOption();
+  const result = yield* edgeRuntime
+    .run({
+      script: legacyInterpolatePgDeltaScript(legacyPgDeltaDeclarativeApplyScript, ctx.npmVersion),
+      env: {
+        SCHEMA_PATH: schemaPath,
+        TARGET: params.targetRef,
+      },
+      binds: [
+        `${legacyEdgeRuntimeId(ctx.projectId)}:/root/.cache/deno:rw`,
+        `${path.resolve(params.declarativeDir)}:${schemaPath}:ro`,
+      ],
+      errPrefix: "error running pg-delta script",
+      extraFiles: npm.extraFiles,
+      extraEnv: npm.extraEnv,
+      denoVersion: ctx.denoVersion,
+    })
+    .pipe(Effect.mapError(toDeclarativeEdgeRuntimeError));
+
+  return yield* Effect.try({
+    try: () => JSON.parse(result.stdout),
+    catch: (cause) =>
+      new LegacyDeclarativeParseOutputError({
+        message: `failed to parse pg-delta apply output: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+      }),
+  }).pipe(
+    Effect.flatMap((parsed) =>
+      decodeApplyResult(parsed).pipe(
+        Effect.map((decoded) => {
+          const normalized: LegacyDeclarativeApplyResult = {
+            status: decoded.status,
+            totalStatements: decoded.totalStatements ?? 0,
+            totalRounds: decoded.totalRounds ?? 0,
+            totalApplied: decoded.totalApplied ?? 0,
+            totalSkipped: decoded.totalSkipped ?? 0,
+            errors: decoded.errors ?? [],
+            stuckStatements: decoded.stuckStatements ?? [],
+            validationErrors: decoded.validationErrors ?? [],
+            diagnostics: decoded.diagnostics ?? [],
+          };
+          return normalized;
+        }),
+        Effect.mapError(
+          (cause) =>
+            new LegacyDeclarativeParseOutputError({
+              message: `failed to parse pg-delta apply output: ${cause.message}`,
+            }),
+        ),
+      ),
+    ),
+  );
 });

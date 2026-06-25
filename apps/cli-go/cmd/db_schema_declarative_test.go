@@ -222,6 +222,14 @@ func TestHasMigrationFiles(t *testing.T) {
 	})
 }
 
+func TestDeclarativeApplyCommandRegistered(t *testing.T) {
+	cmd, _, err := dbDeclarativeCmd.Find([]string{"apply"})
+
+	require.NoError(t, err)
+	require.NotNil(t, cmd)
+	assert.Equal(t, "apply", cmd.Name())
+}
+
 func TestSaveApplyDebugBundle(t *testing.T) {
 	t.Run("saves debug artifacts with expected content", func(t *testing.T) {
 		fsys := afero.NewMemMapFs()
