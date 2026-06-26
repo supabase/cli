@@ -6671,7 +6671,101 @@
     },
     "/v1/projects/{ref}/analytics/endpoints/logs.all": {
       "get": {
-        "description": "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer:~:text=logs%20from%20the-,Sources,-drop%2Ddown%3A) for all available sources. \n",
+        "deprecated": true,
+        "description": "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer:~:text=logs%20from%20the-,Sources,-drop%2Ddown%3A) for all available sources.\n",
+        "operationId": "v1-get-project-logs-all",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          },
+          {
+            "name": "sql",
+            "required": false,
+            "in": "query",
+            "description": "Custom SQL query to execute on the logs. See [querying logs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer) for more details.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "iso_timestamp_start",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "example": "2025-03-01T00:00:00Z",
+              "type": "string"
+            }
+          },
+          {
+            "name": "iso_timestamp_end",
+            "required": false,
+            "in": "query",
+            "schema": {
+              "format": "date-time",
+              "example": "2025-03-01T23:59:59Z",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalyticsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "402": {
+            "description": "Usage exceeded. Enable additional usage to continue querying"
+          },
+          "403": {
+            "description": "Forbidden action"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "fga_permissions": ["analytics_logs_read"]
+          }
+        ],
+        "summary": "Gets project's logs",
+        "tags": ["Analytics"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: analytics:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["analytics"],
+        "x-oauth-scope": "analytics:read"
+      }
+    },
+    "/v1/projects/{ref}/analytics/endpoints/logs": {
+      "get": {
+        "deprecated": false,
+        "description": "Executes an SQL or LQL query on the project's unified logs stream.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nFilter by the `source` column to specify specific log sources, such as edge_logs, postgres_logs, etc.\n\nNote: SQL must be written in **ClickHouse SQL dialect**.\n",
         "operationId": "v1-get-project-logs",
         "parameters": [
           {
@@ -6731,6 +6825,9 @@
           "401": {
             "description": "Unauthorized"
           },
+          "402": {
+            "description": "Usage exceeded. Enable additional usage to continue querying"
+          },
           "403": {
             "description": "Forbidden action"
           },
@@ -6746,7 +6843,7 @@
             "fga_permissions": ["analytics_logs_read"]
           }
         ],
-        "summary": "Gets project's logs",
+        "summary": "Gets all project's logs in a single log stream",
         "tags": ["Analytics"],
         "x-badges": [
           {
@@ -12921,11 +13018,7 @@
               },
               "unavailableReason": {
                 "type": "string",
-                "enum": [
-                  "manual_migration_required",
-                  "postgres_upgrade_required",
-                  "temporarily_unavailable"
-                ]
+                "enum": ["postgres_upgrade_required", "temporarily_unavailable"]
               }
             },
             "required": ["state", "unavailableReason"]
