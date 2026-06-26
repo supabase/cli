@@ -193,16 +193,37 @@ interface LegacyRemoteOverride {
 }
 
 /**
- * The effective `project_id` of a `[remotes.<name>]` block. Viper's `AutomaticEnv` binds
- * the config key `remotes.<name>.project_id` to `SUPABASE_REMOTES_<NAME>_PROJECT_ID`
- * (`SetEnvPrefix("SUPABASE")` + `EnvKeyReplacer(".","_")`, `config.go:494-498`), and the
- * remote loop reads it via `v.GetString("remotes.<name>.project_id")` (`config.go:510`),
- * so a non-empty env value wins OUTRIGHT over the TOML literal — even an `env(...)` form —
- * and participates in both block-matching and duplicate detection. An empty env value is
- * dropped (`AllowEmptyEnv=false`; godotenv never overrides an empty shell var), falling
- * back to the env-expanded TOML literal.
+ * The `project_id` of a `[remotes.<name>]` block as Go's in-load matching/dedup loop sees
+ * it: `v.GetString("remotes.<name>.project_id")` (`config.go:510`). Viper's `AutomaticEnv`
+ * binds that key to `SUPABASE_REMOTES_<NAME>_PROJECT_ID` (`SetEnvPrefix("SUPABASE")` +
+ * `EnvKeyReplacer(".","_")`, `config.go:494-498`), so a non-empty env value wins OUTRIGHT;
+ * an empty env value is dropped (`AllowEmptyEnv=false`; godotenv never overrides an empty
+ * shell var), falling back to the RAW TOML literal. `GetString` does NOT run mapstructure's
+ * `LoadEnvHook`, so a TOML `env(...)` form is NOT expanded for block selection or duplicate
+ * detection — that hook only fires during `UnmarshalExact` (`config.go:661-666`), after this
+ * loop. Validation reads the decoded (expanded) field instead — see
+ * `legacyResolveValidatedRemoteProjectId`.
  */
 function legacyResolveRemoteProjectId(
+  name: string,
+  block: RawDoc | undefined,
+  lookup: EnvLookup,
+): string | undefined {
+  const fromEnv = lookup(`SUPABASE_REMOTES_${name.toUpperCase()}_PROJECT_ID`);
+  if (fromEnv !== undefined && fromEnv.length > 0) return fromEnv;
+  const literal = block?.["project_id"];
+  return typeof literal === "string" ? literal : undefined;
+}
+
+/**
+ * The `project_id` of a `[remotes.<name>]` block as Go's `config.Validate` sees it: the
+ * DECODED struct field `remote.ProjectId` (`config.go:909-913`), which has already passed
+ * through `LoadEnvHook` — so a TOML `env(...)` literal IS expanded here (an unset `env(...)`
+ * stays literal and fails the ref pattern). The `SUPABASE_REMOTES_<NAME>_PROJECT_ID` env
+ * override still wins when non-empty, matching viper precedence in both `GetString` and
+ * `UnmarshalExact`.
+ */
+function legacyResolveValidatedRemoteProjectId(
   name: string,
   block: RawDoc | undefined,
   lookup: EnvLookup,
@@ -223,8 +244,10 @@ function applyRemoteOverride(
   for (const name of Object.keys(remotes)) {
     const block = asRecord(remotes[name]);
     if (block === undefined) continue;
-    // Match on the effective project_id (env override > expanded TOML literal), so a
-    // block whose id comes from `SUPABASE_REMOTES_<NAME>_PROJECT_ID` still merges.
+    // Match on the project_id Go's `v.GetString` returns (env override > RAW TOML literal,
+    // no `env(...)` expansion — `config.go:510`), so a block whose id comes from
+    // `SUPABASE_REMOTES_<NAME>_PROJECT_ID` still merges while a TOML `env(...)` literal does
+    // not (Go selects blocks before the decode hook expands it).
     if (legacyResolveRemoteProjectId(name, block, lookup) === ref) {
       const merged = deepMergeDoc(doc, block);
       const blockDb = asRecord(block["db"]);
@@ -267,8 +290,8 @@ function findDuplicateRemoteProjectId(
   const seen = new Map<string, string>();
   for (const name of Object.keys(remotes)) {
     const block = asRecord(remotes[name]);
-    // Dedupe on the effective project_id (env override > expanded TOML literal), matching
-    // Go's `v.GetString` duplicate check (`config.go:506-511`).
+    // Dedupe on the project_id Go's `v.GetString` returns (env override > RAW TOML literal,
+    // no `env(...)` expansion), matching Go's duplicate check (`config.go:506-511`).
     const projectId = legacyResolveRemoteProjectId(name, block, lookup);
     if (projectId === undefined) continue;
     const prior = seen.get(projectId);
@@ -309,10 +332,11 @@ function findInvalidRemoteProjectId(
   if (remotes === undefined) return undefined;
   for (const name of Object.keys(remotes)) {
     const block = asRecord(remotes[name]);
-    // Validate the effective project_id (env override > expanded TOML literal), matching
-    // Go's `Validate` over the env-resolved value (`config.go:832-836`). An unset/empty
-    // value still fails (Go's `refPattern` rejects an `env(...)` literal / empty string).
-    const projectId = legacyResolveRemoteProjectId(name, block, lookup);
+    // Validate the DECODED project_id (env override > env-expanded TOML literal), matching
+    // Go's `Validate` over the decoded `remote.ProjectId` field (`config.go:909-913`), which
+    // passed through `LoadEnvHook`. An unset `env(...)` stays literal and still fails Go's
+    // ref pattern. (Block matching/dedup above use the RAW literal — Go's `v.GetString`.)
+    const projectId = legacyResolveValidatedRemoteProjectId(name, block, lookup);
     if (typeof projectId !== "string" || !LEGACY_PROJECT_REF_PATTERN.test(projectId)) {
       return name;
     }

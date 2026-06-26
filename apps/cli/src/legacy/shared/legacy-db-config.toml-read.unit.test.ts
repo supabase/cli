@@ -1039,10 +1039,12 @@ describe("legacyReadDbToml", () => {
     },
   );
 
-  it.effect("accepts an env-backed remote project_id that expands to a valid ref", () => {
-    // Go expands env(VAR) via LoadEnvHook before Validate checks the ref pattern
-    // (config.go:832-836), so an env-backed remote project_id is validated and
-    // merged by its resolved value.
+  it.effect("does not merge a remote block whose project_id is a TOML env() literal", () => {
+    // Go's in-load matching reads remotes.<name>.project_id via v.GetString (config.go:510),
+    // which returns the RAW literal `env(LEGACY_STAGING_REF)` — LoadEnvHook only expands it
+    // during the later UnmarshalExact. So the block is NOT selected by its expanded ref and
+    // does not merge (major_version stays the base 15), while Validate over the decoded,
+    // expanded field (config.go:909-913) still passes the load.
     process.env["LEGACY_STAGING_REF"] = "stagingrefstagingref";
     const dir = withConfig(
       [
@@ -1059,7 +1061,7 @@ describe("legacyReadDbToml", () => {
     return readRef(dir, "stagingrefstagingref").pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.majorVersion).toBe(17); // remote block merged via the expanded ref
+          expect(v.majorVersion).toBe(15); // block not merged: matched on the raw env() literal
           delete process.env["LEGACY_STAGING_REF"];
           rmSync(dir, { recursive: true, force: true });
         }),
