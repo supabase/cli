@@ -4,7 +4,7 @@ import path from "node:path";
 import { expect, test } from "vitest";
 
 import {
-  describeLiveProject,
+  describeLiveDataPlane,
   requireLiveProjectRef,
   runSupabaseLive,
 } from "../../../../../tests/helpers/live.ts";
@@ -15,9 +15,10 @@ const LIVE_TIMEOUT_MS = 120_000;
 // match this so a later `migration list`/`up` can read them back.
 const MIGRATION_FILE = /^(\d+)_.*\.sql$/u;
 
-// Project-scoped data-plane scenario (Postgres over the pooler) — see the note
-// in `../list/list.live.test.ts`. Requires the Linux CI runner where the project
-// is ACTIVE_HEALTHY and `*.supabase.red` is routable (cli-e2e-ci / CLI-1834).
+// Data-plane scenario (Postgres over the pooler) — see the note in
+// `../list/list.live.test.ts`. `describeLiveDataPlane` runs this only when the
+// project instance is ACTIVE_HEALTHY (the full stack with supabase-postgres-17);
+// it SKIPS on the control-plane-only CI that omits it (CLI-1825).
 //
 // Round-trip: `migration fetch` reads the remote `schema_migrations` history and
 // writes each row to `supabase/migrations/<version>_<name>.sql`; `migration list`
@@ -25,7 +26,7 @@ const MIGRATION_FILE = /^(\d+)_.*\.sql$/u;
 // project dir so the fetch writes nowhere near the repo, and the ref is supplied
 // via SUPABASE_PROJECT_ID. A freshly provisioned project has no history yet, so
 // the round-trip is exercised whether the remote has zero or many migrations.
-describeLiveProject("supabase migration fetch (live)", () => {
+describeLiveDataPlane("supabase migration fetch (live)", () => {
   test(
     "fetches remote history and lists it back (round-trip)",
     { timeout: LIVE_TIMEOUT_MS },
@@ -38,7 +39,7 @@ describeLiveProject("supabase migration fetch (live)", () => {
           env: { SUPABASE_PROJECT_ID: ref },
         });
         expect(`${fetched.stdout}${fetched.stderr}`).not.toContain("Unauthorized");
-        expect(fetched.exitCode).toBe(0);
+        expect(fetched.exitCode, `stdout:\n${fetched.stdout}\nstderr:\n${fetched.stderr}`).toBe(0);
 
         // fetch always creates supabase/migrations; every file it writes is a
         // well-formed migration filename.
@@ -56,7 +57,7 @@ describeLiveProject("supabase migration fetch (live)", () => {
           env: { SUPABASE_PROJECT_ID: ref },
         });
         expect(`${listed.stdout}${listed.stderr}`).not.toContain("Unauthorized");
-        expect(listed.exitCode).toBe(0);
+        expect(listed.exitCode, `stdout:\n${listed.stdout}\nstderr:\n${listed.stderr}`).toBe(0);
         for (const version of versions) {
           expect(listed.stdout).toContain(version);
         }
