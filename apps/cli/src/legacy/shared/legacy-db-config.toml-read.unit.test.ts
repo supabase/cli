@@ -856,6 +856,38 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("expands an env() indirection in the PGDELTA_DECLARATIVE_SCHEMA_PATH override", () => {
+    // Go decodes the AutomaticEnv override through LoadEnvHook (decode_hooks.go:15-26), so an
+    // env(VAR) indirection resolves before the supabase/ join — not stored literally.
+    const dir = withConfig(undefined);
+    const savedEnabled = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+    const savedPath = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"];
+    const savedDir = process.env["SCHEMA_DIR"];
+    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "true";
+    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"] = "env(SCHEMA_DIR)";
+    process.env["SCHEMA_DIR"] = "schemas";
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.pgDelta.declarativeSchemaPath)).toBe("supabase/schemas");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (savedEnabled === undefined)
+            delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = savedEnabled;
+          if (savedPath === undefined)
+            delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"];
+          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"] = savedPath;
+          if (savedDir === undefined) delete process.env["SCHEMA_DIR"];
+          else process.env["SCHEMA_DIR"] = savedDir;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("treats SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=1 as true (Go strconv.ParseBool)", () => {
     const dir = withConfig(undefined);
     const saved = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];

@@ -998,13 +998,17 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   }
 
   const declarativeSchemaPathRaw = pgDeltaRaw?.["declarative_schema_path"];
-  const declarativeSchemaPathValue =
+  // The AutomaticEnv override and the TOML literal both flow through Go's `LoadEnvHook`
+  // (`decode_hooks.go:15-26`) under `UnmarshalExact`, so an `env(VAR)` indirection is expanded
+  // before the path is used — whichever source wins. Expand once over the resolved value
+  // (`legacyExpandEnv` is a no-op on a non-`env()` string).
+  const declarativeSchemaPathValue = legacyExpandEnv(
     (remoteOverrideKeys.has("experimental.pgdelta.declarative_schema_path")
       ? undefined
       : envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH")) ??
-    (typeof declarativeSchemaPathRaw === "string"
-      ? legacyExpandEnv(declarativeSchemaPathRaw, lookup)
-      : "");
+      (typeof declarativeSchemaPathRaw === "string" ? declarativeSchemaPathRaw : ""),
+    lookup,
+  );
   let declarativeSchemaPath = Option.none<string>();
   if (declarativeSchemaPathValue.length > 0) {
     declarativeSchemaPath = Option.some(
@@ -1015,11 +1019,15 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   }
 
   const formatOptionsRaw = pgDeltaRaw?.["format_options"];
-  const formatOptionsExpanded =
+  // Same `LoadEnvHook` path: expand the resolved value (env override or TOML literal) before
+  // the JSON validation below runs.
+  const formatOptionsExpanded = legacyExpandEnv(
     (remoteOverrideKeys.has("experimental.pgdelta.format_options")
       ? undefined
       : envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS")) ??
-    (typeof formatOptionsRaw === "string" ? legacyExpandEnv(formatOptionsRaw, lookup) : "");
+      (typeof formatOptionsRaw === "string" ? formatOptionsRaw : ""),
+    lookup,
+  );
   // Go's config.Validate aborts config load when a non-empty format_options is not
   // valid JSON (`apps/cli-go/pkg/config/config.go:1685-1686`), before any shadow /
   // catalog container runs. Fail here with Go's exact message so the user gets the
