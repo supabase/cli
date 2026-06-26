@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/containerd/errdefs"
+	"github.com/docker/docker/api/types/container"
 	"github.com/spf13/afero"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -191,6 +193,74 @@ func TestEnsureLocalDatabaseStarted(t *testing.T) {
 		})
 
 		assert.ErrorIs(t, err, expected)
+	})
+}
+
+func TestDockerImageTag(t *testing.T) {
+	testCases := map[string]string{
+		"public.ecr.aws/supabase/postgres:17.6.1.138": "17.6.1.138",
+		"localhost:5000/supabase/postgres:17.6.1.138": "17.6.1.138",
+		"supabase/postgres":                           "",
+	}
+	for image, expected := range testCases {
+		t.Run(image, func(t *testing.T) {
+			assert.Equal(t, expected, dockerImageTag(image))
+		})
+	}
+}
+
+func TestEnsureLocalPostgresImageCurrent(t *testing.T) {
+	originalImage := utils.Config.Db.Image
+	originalSuggestion := utils.CmdSuggestion
+	t.Cleanup(func() {
+		utils.Config.Db.Image = originalImage
+		utils.CmdSuggestion = originalSuggestion
+	})
+	utils.Config.Db.Image = "supabase/postgres:17.6.1.138"
+	expectedImage := utils.GetRegistryImageUrl(utils.Config.Db.Image)
+
+	t.Run("passes when no local container exists", func(t *testing.T) {
+		utils.CmdSuggestion = ""
+		err := ensureLocalPostgresImageCurrent(context.Background(), func(context.Context, string) (container.InspectResponse, error) {
+			return container.InspectResponse{}, errdefs.ErrNotFound
+		})
+
+		assert.NoError(t, err)
+		assert.Empty(t, utils.CmdSuggestion)
+	})
+
+	t.Run("passes when local container image matches expected postgres image", func(t *testing.T) {
+		utils.CmdSuggestion = ""
+		err := ensureLocalPostgresImageCurrent(context.Background(), func(_ context.Context, containerID string) (container.InspectResponse, error) {
+			assert.Equal(t, utils.DbId, containerID)
+			return container.InspectResponse{Config: &container.Config{Image: expectedImage}}, nil
+		})
+
+		assert.NoError(t, err)
+		assert.Empty(t, utils.CmdSuggestion)
+	})
+
+	t.Run("passes when registry differs but postgres tag matches", func(t *testing.T) {
+		utils.CmdSuggestion = ""
+		err := ensureLocalPostgresImageCurrent(context.Background(), func(context.Context, string) (container.InspectResponse, error) {
+			return container.InspectResponse{Config: &container.Config{Image: "docker.io/supabase/postgres:17.6.1.138"}}, nil
+		})
+
+		assert.NoError(t, err)
+		assert.Empty(t, utils.CmdSuggestion)
+	})
+
+	t.Run("fails when local container image is stale", func(t *testing.T) {
+		utils.CmdSuggestion = ""
+		err := ensureLocalPostgresImageCurrent(context.Background(), func(context.Context, string) (container.InspectResponse, error) {
+			return container.InspectResponse{Config: &container.Config{Image: "public.ecr.aws/supabase/postgres:17.6.1.106"}}, nil
+		})
+
+		assert.ErrorContains(t, err, "local Postgres container image is stale")
+		assert.ErrorContains(t, err, "17.6.1.106")
+		assert.ErrorContains(t, err, "17.6.1.138")
+		assert.Contains(t, utils.CmdSuggestion, "supabase stop --all --no-backup")
+		assert.Contains(t, utils.CmdSuggestion, "supabase start")
 	})
 }
 

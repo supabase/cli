@@ -218,6 +218,9 @@ type ClientInterface interface {
 	// V1GetProjectLogs request
 	V1GetProjectLogs(ctx context.Context, ref string, params *V1GetProjectLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// V1GetProjectLogsAll request
+	V1GetProjectLogsAll(ctx context.Context, ref string, params *V1GetProjectLogsAllParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// V1GetProjectUsageApiCount request
 	V1GetProjectUsageApiCount(ctx context.Context, ref string, params *V1GetProjectUsageApiCountParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1257,6 +1260,18 @@ func (c *Client) V1GetProjectFunctionCombinedStats(ctx context.Context, ref stri
 
 func (c *Client) V1GetProjectLogs(ctx context.Context, ref string, params *V1GetProjectLogsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewV1GetProjectLogsRequest(c.Server, ref, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) V1GetProjectLogsAll(ctx context.Context, ref string, params *V1GetProjectLogsAllParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewV1GetProjectLogsAllRequest(c.Server, ref, params)
 	if err != nil {
 		return nil, err
 	}
@@ -5302,6 +5317,94 @@ func NewV1GetProjectFunctionCombinedStatsRequest(server string, ref string, para
 
 // NewV1GetProjectLogsRequest generates requests for V1GetProjectLogs
 func NewV1GetProjectLogsRequest(server string, ref string, params *V1GetProjectLogsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "ref", runtime.ParamLocationPath, ref)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/projects/%s/analytics/endpoints/logs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Sql != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "sql", runtime.ParamLocationQuery, *params.Sql); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.IsoTimestampStart != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "iso_timestamp_start", runtime.ParamLocationQuery, *params.IsoTimestampStart); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.IsoTimestampEnd != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "iso_timestamp_end", runtime.ParamLocationQuery, *params.IsoTimestampEnd); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewV1GetProjectLogsAllRequest generates requests for V1GetProjectLogsAll
+func NewV1GetProjectLogsAllRequest(server string, ref string, params *V1GetProjectLogsAllParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -11562,6 +11665,9 @@ type ClientWithResponsesInterface interface {
 	// V1GetProjectLogsWithResponse request
 	V1GetProjectLogsWithResponse(ctx context.Context, ref string, params *V1GetProjectLogsParams, reqEditors ...RequestEditorFn) (*V1GetProjectLogsResponse, error)
 
+	// V1GetProjectLogsAllWithResponse request
+	V1GetProjectLogsAllWithResponse(ctx context.Context, ref string, params *V1GetProjectLogsAllParams, reqEditors ...RequestEditorFn) (*V1GetProjectLogsAllResponse, error)
+
 	// V1GetProjectUsageApiCountWithResponse request
 	V1GetProjectUsageApiCountWithResponse(ctx context.Context, ref string, params *V1GetProjectUsageApiCountParams, reqEditors ...RequestEditorFn) (*V1GetProjectUsageApiCountResponse, error)
 
@@ -12838,6 +12944,28 @@ func (r V1GetProjectLogsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r V1GetProjectLogsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type V1GetProjectLogsAllResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *AnalyticsResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r V1GetProjectLogsAllResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r V1GetProjectLogsAllResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -16119,6 +16247,15 @@ func (c *ClientWithResponses) V1GetProjectLogsWithResponse(ctx context.Context, 
 	return ParseV1GetProjectLogsResponse(rsp)
 }
 
+// V1GetProjectLogsAllWithResponse request returning *V1GetProjectLogsAllResponse
+func (c *ClientWithResponses) V1GetProjectLogsAllWithResponse(ctx context.Context, ref string, params *V1GetProjectLogsAllParams, reqEditors ...RequestEditorFn) (*V1GetProjectLogsAllResponse, error) {
+	rsp, err := c.V1GetProjectLogsAll(ctx, ref, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseV1GetProjectLogsAllResponse(rsp)
+}
+
 // V1GetProjectUsageApiCountWithResponse request returning *V1GetProjectUsageApiCountResponse
 func (c *ClientWithResponses) V1GetProjectUsageApiCountWithResponse(ctx context.Context, ref string, params *V1GetProjectUsageApiCountParams, reqEditors ...RequestEditorFn) (*V1GetProjectUsageApiCountResponse, error) {
 	rsp, err := c.V1GetProjectUsageApiCount(ctx, ref, params, reqEditors...)
@@ -18550,6 +18687,32 @@ func ParseV1GetProjectLogsResponse(rsp *http.Response) (*V1GetProjectLogsRespons
 	}
 
 	response := &V1GetProjectLogsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AnalyticsResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseV1GetProjectLogsAllResponse parses an HTTP response from a V1GetProjectLogsAllWithResponse call
+func ParseV1GetProjectLogsAllResponse(rsp *http.Response) (*V1GetProjectLogsAllResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &V1GetProjectLogsAllResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
