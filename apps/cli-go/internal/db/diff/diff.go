@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
+	configpkg "github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
 )
@@ -70,7 +71,11 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 		}
 	}
 	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
-		return loadSchemaPaths(afero.NewIOFS(fsys), schemas)
+		return schemas.Files(
+			afero.NewIOFS(fsys),
+			configpkg.WithSkipEmptyGlobs(),
+			configpkg.WithErrorOnAllSkippedGlobs(),
+		)
 	}
 	if exists, err := afero.DirExists(fsys, utils.SchemasDir); err != nil {
 		return nil, errors.Errorf("failed to check schemas: %w", err)
@@ -93,44 +98,6 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 	// filesystems and operating systems. This is only if no schema paths in config are set.
 	sort.Strings(declared)
 	return declared, nil
-}
-
-func loadSchemaPaths(fsys fs.FS, schemas []string) ([]string, error) {
-	var declared []string
-	var skipped []string
-	set := make(map[string]struct{})
-	for _, pattern := range schemas {
-		matches, err := fs.Glob(fsys, filepath.ToSlash(pattern))
-		if err != nil {
-			return nil, errors.Errorf("failed to glob files: %w", err)
-		} else if len(matches) == 0 && !hasWildcardStar(pattern) {
-			return nil, errors.Errorf("no files matched pattern: %s", pattern)
-		} else if len(matches) == 0 {
-			skipped = append(skipped, pattern)
-			continue
-		}
-		sort.Strings(matches)
-		for _, item := range matches {
-			fp := filepath.ToSlash(item)
-			if _, exists := set[fp]; exists {
-				continue
-			}
-			set[fp] = struct{}{}
-			declared = append(declared, fp)
-		}
-	}
-	if len(declared) == 0 && len(skipped) > 0 {
-		var errs []error
-		for _, pattern := range skipped {
-			errs = append(errs, errors.Errorf("no files matched pattern: %s", pattern))
-		}
-		return nil, errors.Join(errs...)
-	}
-	return declared, nil
-}
-
-func hasWildcardStar(pattern string) bool {
-	return strings.Contains(pattern, "*")
 }
 
 // https://github.com/djrobstep/migra/blob/master/migra/statements.py#L6
