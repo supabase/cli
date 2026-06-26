@@ -43,7 +43,30 @@ func TestStatusCommand(t *testing.T) {
 			Reply(http.StatusOK).
 			JSON(running)
 		// Run test
-		assert.NoError(t, Run(context.Background(), CustomName{}, utils.OutputPretty, fsys))
+		assert.NoError(t, Run(context.Background(), CustomName{}, utils.OutputPretty, fsys, false))
+		// Check error
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("skips database health check when ignored", func(t *testing.T) {
+		var running []container.Summary
+		for _, name := range utils.GetDockerIds() {
+			running = append(running, container.Summary{
+				Names: []string{name + "_test"},
+			})
+		}
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.InitConfig(utils.InitParams{ProjectId: "test"}, fsys))
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
+			Reply(http.StatusOK).
+			JSON(running)
+		// Run test
+		assert.NoError(t, Run(context.Background(), CustomName{}, utils.OutputPretty, fsys, true))
 		// Check error
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
@@ -53,7 +76,7 @@ func TestStatusCommand(t *testing.T) {
 		fsys := afero.NewMemMapFs()
 		require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("malformed"), 0644))
 		// Run test
-		err := Run(context.Background(), CustomName{}, utils.OutputPretty, fsys)
+		err := Run(context.Background(), CustomName{}, utils.OutputPretty, fsys, false)
 		// Check error
 		assert.ErrorContains(t, err, "toml: expected = after a key, but the document ends there")
 	})
@@ -69,7 +92,7 @@ func TestStatusCommand(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_").
 			ReplyError(errors.New("network error"))
 		// Run test
-		err := Run(context.Background(), CustomName{}, utils.OutputPretty, fsys)
+		err := Run(context.Background(), CustomName{}, utils.OutputPretty, fsys, false)
 		// Check error
 		assert.ErrorContains(t, err, "network error")
 		assert.Empty(t, apitest.ListUnmatchedRequests())
@@ -156,6 +179,19 @@ func TestPrintStatus(t *testing.T) {
 		// Run test
 		var stdout bytes.Buffer
 		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL"}, utils.OutputJson, &stdout))
+		// Check error
+		assert.Equal(t, "{\n  \"DB_URL\": \"postgresql://postgres:postgres@127.0.0.1:0/postgres\"\n}\n", stdout.String())
+	})
+
+	t.Run("omits excluded services from json object", func(t *testing.T) {
+		utils.Config.Studio.Enabled = true
+		utils.Config.Studio.Port = 54323
+		t.Cleanup(func() {
+			utils.Config.Studio.Enabled = false
+		})
+		// Run test
+		var stdout bytes.Buffer
+		assert.NoError(t, printStatus(CustomName{DbURL: "DB_URL", StudioURL: "STUDIO_URL"}, utils.OutputJson, &stdout, utils.StudioId))
 		// Check error
 		assert.Equal(t, "{\n  \"DB_URL\": \"postgresql://postgres:postgres@127.0.0.1:0/postgres\"\n}\n", stdout.String())
 	})

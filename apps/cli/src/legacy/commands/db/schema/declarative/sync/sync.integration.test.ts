@@ -24,9 +24,23 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import { LegacyDeclarativeShadowDbError } from "../../../shared/legacy-pgdelta.errors.ts";
 import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 import { legacyDbSchemaDeclarativeSync } from "./sync.handler.ts";
+
+const EXPORT_JSON = JSON.stringify({
+  version: 1,
+  mode: "declarative",
+  files: [
+    {
+      path: "schemas/public/tables/players.sql",
+      order: 0,
+      statements: 1,
+      sql: "create table players ();",
+    },
+  ],
+});
 
 interface SetupOpts {
   experimental?: boolean;
@@ -40,6 +54,8 @@ interface SetupOpts {
   promptTextResponses?: ReadonlyArray<string>;
   networkId?: string;
   projectId?: Option.Option<string>;
+  staleLocalImage?: boolean;
+  exportJson?: string;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -51,6 +67,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const execInheritCalls: ReadonlyArray<string>[] = [];
+  const localPostgresImageChecks: Array<true> = [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode }) => Effect.succeed(`supabase/.temp/pgdelta/${mode}.json`),
     execInherit: (args) =>
@@ -59,12 +76,33 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         return opts.resetExitCode ?? 0;
       }),
     ensureLocalDatabaseStarted: () => Effect.void,
+    ensureLocalPostgresImageCurrent: () =>
+      Effect.sync(() => {
+        localPostgresImageChecks.push(true);
+      }).pipe(
+        Effect.flatMap(() =>
+          opts.staleLocalImage === true
+            ? Effect.fail(
+                new LegacyDeclarativeShadowDbError({
+                  message: "local Postgres container image is stale",
+                }),
+              )
+            : Effect.void,
+        ),
+      ),
     provisionShadow: () => Effect.die("provisionShadow not used in declarative tests"),
     removeShadowContainer: () => Effect.void,
   });
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (_opts: LegacyEdgeRuntimeRunOpts) =>
-      Effect.succeed({ stdout: opts.diffSql ?? "", stderr: "" }),
+    run: (runOpts: LegacyEdgeRuntimeRunOpts) =>
+      Effect.succeed({
+        stdout:
+          opts.exportJson !== undefined &&
+          runOpts.errPrefix === "error exporting declarative schema"
+            ? opts.exportJson
+            : (opts.diffSql ?? ""),
+        stderr: "",
+      }),
   });
   const dbExec: string[] = [];
   const dbConn = Layer.succeed(LegacyDbConnection, {
@@ -123,7 +161,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
     BunServices.layer,
   );
-  return { layer, out, execInheritCalls, dbExec, cache };
+  return { layer, out, execInheritCalls, dbExec, cache, localPostgresImageChecks };
 }
 
 const flags = (
@@ -205,6 +243,59 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("non-interactive default dry-run does not check the local Postgres image", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      staleLocalImage: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags());
+      const migrations = readdirSync(join(tmp.current, "supabase", "migrations"));
+      expect(migrations).toHaveLength(1);
+      expect(s.localPostgresImageChecks).toEqual([]);
+      expect(s.dbExec).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--apply checks the local Postgres image before applying", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      staleLocalImage: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(flags({ apply: Option.some(true) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeShadowDbError",
+        message: "local Postgres container image is stale",
+      });
+      expect(s.localPostgresImageChecks).toHaveLength(1);
+      expect(s.dbExec).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--no-apply skips the local Postgres image check", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      staleLocalImage: true,
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      const migrations = readdirSync(join(tmp.current, "supabase", "migrations"));
+      expect(migrations).toHaveLength(1);
+      expect(s.localPostgresImageChecks).toEqual([]);
+      expect(s.dbExec).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("--yes bypasses the bootstrap prompt when no declarative files exist", () => {
     // Without --yes + non-TTY this fails at the "no declarative schema found" gate
     // (prior test). With --yes, Go's PromptYesNo auto-confirms, so the bootstrap is
@@ -236,6 +327,90 @@ describe("legacy db schema declarative sync integration", () => {
       yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })));
       const options = s.out.promptSelectCalls[0]?.options ?? [];
       expect(options.map((o) => o.value)).toEqual(["local", "custom"]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("bootstrap linked target does not run the local Postgres image check", () => {
+    // The stale-image guard only matters once bootstrap chooses a local source. A
+    // linked/custom bootstrap can build fresh catalogs and skip local apply, so it
+    // must reach the target prompt before any local-container inspection.
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      staleLocalImage: true,
+      projectId: Option.some("abcdefghijklmnopqrst"),
+      promptConfirmResponses: [true], // generate a new one? yes
+      promptSelectResponses: ["linked"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
+      );
+      expect(s.localPostgresImageChecks).toEqual([]);
+      expect(JSON.stringify(exit)).not.toContain("local Postgres container image is stale");
+      expect((s.out.promptSelectCalls[0]?.options ?? []).map((o) => o.value)).toEqual([
+        "local",
+        "linked",
+        "custom",
+      ]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("bootstrap linked target checks the local Postgres image before apply", () => {
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      staleLocalImage: true,
+      projectId: Option.some("abcdefghijklmnopqrst"),
+      diffSql: "ALTER TABLE a ADD COLUMN b int;\n",
+      exportJson: EXPORT_JSON,
+      promptConfirmResponses: [true], // generate a new one? yes
+      promptSelectResponses: ["linked"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(
+          flags({
+            noCache: true,
+            apply: Option.some(true),
+            name: Option.some("bootstrap_apply"),
+          }),
+        ),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeShadowDbError",
+        message: "local Postgres container image is stale",
+      });
+      expect(s.localPostgresImageChecks).toHaveLength(1);
+      expect(s.dbExec).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("bootstrap local target checks the local Postgres image", () => {
+    mkdirSync(join(tmp.current, "supabase", "migrations"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations", "0001_init.sql"), "select 1;");
+    const s = setup(tmp.current, {
+      experimental: true,
+      stdinIsTty: true,
+      staleLocalImage: true,
+      promptConfirmResponses: [true], // generate a new one? yes
+      promptSelectResponses: ["local"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeShadowDbError",
+        message: "local Postgres container image is stale",
+      });
+      expect(s.localPostgresImageChecks).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 

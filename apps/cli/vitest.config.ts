@@ -31,6 +31,7 @@ export default defineConfig({
         "**/*.unit.test.ts",
         "**/*.integration.test.ts",
         "**/*.e2e.test.ts",
+        "**/*.live.test.ts",
         "**/*.command.ts",
         "src/app.ts",
         "src/bin.ts",
@@ -64,6 +65,21 @@ export default defineConfig({
           setupFiles: ["tests/e2e-setup.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
+        },
+      },
+      {
+        plugins: [dockerfileTextPlugin()],
+        test: {
+          // Live tests run against a real platform (a supabox stack in CI) and
+          // are gated by `describeLive`, so they are inert unless the live env
+          // is configured. Never part of the default unit/integration/e2e loop.
+          name: "live",
+          include: ["**/*.live.test.ts"],
+          fileParallelism: false,
+          maxWorkers: 1,
+          globalSetup: ["tests/live-global-setup.ts"],
+          testTimeout: 300_000,
+          hookTimeout: 300_000,
         },
       },
     ],

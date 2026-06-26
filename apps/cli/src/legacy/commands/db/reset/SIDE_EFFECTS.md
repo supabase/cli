@@ -2,11 +2,11 @@
 
 ## Files Read
 
-| Path                             | Format     | When                                              |
-| -------------------------------- | ---------- | ------------------------------------------------- |
-| `~/.supabase/access-token`       | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` |
-| `<workdir>/supabase/migrations/` | directory  | always, to load migration files                   |
-| seed files from config           | SQL        | unless `--no-seed` is set                         |
+| Path                                    | Format     | When                                              |
+| --------------------------------------- | ---------- | ------------------------------------------------- |
+| `~/.supabase/access-token`              | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` |
+| `<workdir>/supabase/migrations/`        | directory  | always, to load migration files                   |
+| seed files from config or `--sql-paths` | SQL        | unless `--no-seed` is set                         |
 
 ## Files Written
 
@@ -52,6 +52,9 @@ Not applicable.
 ## Notes
 
 - `--no-seed` skips running the seed script after reset.
+- `--sql-paths` overrides `[db.seed].sql_paths` for one reset; repeat it to seed multiple files or glob patterns.
+- `--sql-paths` force-enables seeding for that reset even when `[db.seed].enabled = false`.
+- With `--linked` or `--db-url`, `--sql-paths` seeds the selected remote database after migrations.
 - `--version` resets up to the specified migration version.
 - `--last` resets up to the last n migration versions; mutually exclusive with `--version`.
 - `--db-url`, `--linked`, and `--local` (default true) are mutually exclusive.

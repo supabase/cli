@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/spf13/afero"
@@ -24,6 +26,7 @@ import (
 	"github.com/supabase/cli/legacy/branch/delete"
 	"github.com/supabase/cli/legacy/branch/list"
 	"github.com/supabase/cli/legacy/branch/switch_"
+	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -300,15 +303,23 @@ var (
 		},
 	}
 
-	noSeed      bool
-	lastVersion uint
+	noSeed       bool
+	lastVersion  uint
+	seedSqlPaths []string
 
 	dbResetCmd = &cobra.Command{
 		Use:   "reset",
 		Short: "Resets the local database to current migrations",
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateDbResetSeedFlags(noSeed, seedSqlPaths); err != nil {
+				return err
+			}
+			warnRemoteResetSeedOverride(cmd, seedSqlPaths)
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if noSeed {
-				utils.Config.Db.Seed.Enabled = false
+			if err := applyDbResetSeedFlags(noSeed, seedSqlPaths); err != nil {
+				return err
 			}
 			return reset.Run(cmd.Context(), migrationVersion, lastVersion, flags.DbConfig, afero.NewOsFs())
 		},
@@ -470,6 +481,62 @@ func resolvePullDiffEngine(engineFlagChanged bool, engine string, pgDeltaDefault
 	return pgDeltaDefault
 }
 
+func validateDbResetSeedFlags(noSeed bool, patterns []string) error {
+	if noSeed && len(patterns) > 0 {
+		utils.CmdSuggestion = fmt.Sprintf("Use either %s to skip seeding or %s to override seed files, not both.", utils.Aqua("--no-seed"), utils.Aqua("--sql-paths"))
+		return errors.New("--no-seed cannot be used with --sql-paths")
+	}
+	for _, pattern := range patterns {
+		if len(pattern) == 0 {
+			utils.CmdSuggestion = fmt.Sprintf("Pass a non-empty file path or glob pattern to %s.", utils.Aqua("--sql-paths"))
+			return errors.New("--sql-paths requires a non-empty path or glob pattern")
+		}
+	}
+	return nil
+}
+
+func warnRemoteResetSeedOverride(cmd *cobra.Command, patterns []string) {
+	if len(patterns) == 0 {
+		return
+	}
+	if cmd.Flags().Changed("linked") || cmd.Flags().Changed("db-url") {
+		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), "--sql-paths overrides [db.seed].sql_paths and seeds the remote database selected by --linked or --db-url.")
+	}
+}
+
+func applyDbResetSeedFlags(noSeed bool, patterns []string) error {
+	if noSeed {
+		utils.Config.Db.Seed.Enabled = false
+		return nil
+	}
+	if len(patterns) == 0 {
+		return nil
+	}
+	resolved, err := resolveSeedSqlPaths(patterns)
+	if err != nil {
+		return err
+	}
+	utils.Config.Db.Seed.Enabled = true
+	utils.Config.Db.Seed.SqlPaths = resolved
+	return nil
+}
+
+func resolveSeedSqlPaths(patterns []string) ([]string, error) {
+	resolved := make([]string, len(patterns))
+	base := config.NewPathBuilder("").SupabaseDirPath
+	for i, pattern := range patterns {
+		if len(pattern) == 0 {
+			return nil, errors.New("--sql-paths requires a non-empty path or glob pattern")
+		}
+		if !filepath.IsAbs(pattern) {
+			resolved[i] = path.Join(base, pattern)
+		} else {
+			resolved[i] = pattern
+		}
+	}
+	return resolved, nil
+}
+
 func init() {
 	// Build branch command
 	dbBranchCmd.AddCommand(dbBranchCreateCmd)
@@ -570,6 +637,7 @@ func init() {
 	resetFlags.Bool("linked", false, "Resets the linked project with local migrations.")
 	resetFlags.Bool("local", true, "Resets the local database with local migrations.")
 	resetFlags.BoolVar(&noSeed, "no-seed", false, "Skip running the seed script after reset.")
+	resetFlags.StringArrayVar(&seedSqlPaths, "sql-paths", nil, "Override [db.seed].sql_paths for this reset. May be repeated; each value accepts a SQL file path or glob pattern relative to the supabase directory and force-enables seeding.")
 	dbResetCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")
 	resetFlags.StringVar(&migrationVersion, "version", "", "Reset up to the specified version.")
 	resetFlags.UintVar(&lastVersion, "last", 0, "Reset up to the last n migration versions.")

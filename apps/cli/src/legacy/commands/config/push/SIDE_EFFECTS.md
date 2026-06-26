@@ -11,6 +11,7 @@ local → if changed, print the unified diff and confirm → PATCH/PUT/POST.
 | ------------------------------------------------ | ------------------------- | --------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml`                 | TOML                      | always, before any network call (parse error aborts, exit 1)    |
 | `<workdir>/supabase/.env`, `.env.local`          | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`   |
+| Auth email template HTML (`content_path`)        | HTML                      | when `auth.enabled`; paths resolved per Go rules (see below)    |
 | `~/.supabase/<workdir-hash>/linked-project.json` | JSON                      | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file) |
 | `~/.supabase/access-token`                       | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable      |
 
@@ -60,13 +61,14 @@ when its local gate is off.
 
 ## Exit Codes
 
-| Code | Condition                                                                             |
-| ---- | ------------------------------------------------------------------------------------- |
-| `0`  | success, **including** declining a confirmation prompt (Go returns nil and continues) |
-| `1`  | malformed `config.toml`                                                               |
-| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref              |
-| `1`  | list-addons failure (network or non-200)                                              |
-| `1`  | any per-service read/update failure (network or unexpected status)                    |
+| Code | Condition                                                                                  |
+| ---- | ------------------------------------------------------------------------------------------ |
+| `0`  | success, **including** declining a confirmation prompt (Go returns nil and continues)      |
+| `1`  | malformed `config.toml`                                                                    |
+| `1`  | invalid `auth.email.*.content_path` (missing/unreadable template file when `auth.enabled`) |
+| `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref                   |
+| `1`  | list-addons failure (network or non-200)                                                   |
+| `1`  | any per-service read/update failure (network or unexpected status)                         |
 
 ## Output
 
@@ -109,6 +111,7 @@ keys mirror `config.toml` paths.
 ## Notes
 
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.
+- Auth email `content_path` resolution (Go parity): `[auth.email.template.*]` paths are relative to the discovered project root; `[auth.email.notification.*]` paths are relative to `supabase/`. Notification HTML is read only when `enabled = true`.
 - Diff bytes are byte-for-byte identical to the Go CLI (BurntSushi TOML encoder + anchored diff ports).
 - Optional `*pointer` sections (`db.ssl_enforcement`, `storage.image_transformation`, `storage.s3_protocol`) are decoded as defaulted-present by `@supabase/config`; their true presence is recovered from the raw (merged) config document so they are skipped when absent, matching Go's nil-pointer behaviour.
 - **`[remotes.*]` overrides are merged before push.** When a `[remotes.<name>]` block declares `project_id == <ref>`, `@supabase/config` merges that block's subtree over the base config at the raw (pre-decode) level — Go's `mergeRemoteConfig` (`apps/cli-go/pkg/config/config.go:550`) — so only the keys the block declares override the base. `Loading config override: [remotes.<name>]` prints to stderr. Two remotes sharing the target `project_id` abort with Go's `duplicate project_id for [remotes.<b>] and [remotes.<a>]` message.

@@ -2421,11 +2421,7 @@ export const V1GetJitAccessConfigOutput = Schema.Union(
     }),
     Schema.Struct({
       state: Schema.Literal("unavailable"),
-      unavailableReason: Schema.Literals([
-        "manual_migration_required",
-        "postgres_upgrade_required",
-        "temporarily_unavailable",
-      ]),
+      unavailableReason: Schema.Literals(["postgres_upgrade_required", "temporarily_unavailable"]),
     }),
   ],
   { mode: "oneOf" },
@@ -3088,6 +3084,39 @@ export const V1GetProjectLogsInput = Schema.Struct({
   iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
 });
 export const V1GetProjectLogsOutput = Schema.Struct({
+  result: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+  error: Schema.optionalKey(
+    Schema.Union(
+      [
+        Schema.String,
+        Schema.Struct({
+          code: Schema.Number.check(Schema.isFinite()),
+          errors: Schema.Array(
+            Schema.Struct({
+              domain: Schema.String,
+              location: Schema.String,
+              locationType: Schema.String,
+              message: Schema.String,
+              reason: Schema.String,
+            }),
+          ),
+          message: Schema.String,
+          status: Schema.String,
+        }),
+      ],
+      { mode: "oneOf" },
+    ),
+  ),
+});
+export const V1GetProjectLogsAllInput = Schema.Struct({
+  ref: Schema.String.check(Schema.isMinLength(20))
+    .check(Schema.isMaxLength(20))
+    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+  sql: Schema.optionalKey(Schema.String),
+  iso_timestamp_start: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+  iso_timestamp_end: Schema.optionalKey(Schema.String.annotate({ format: "date-time" })),
+});
+export const V1GetProjectLogsAllOutput = Schema.Struct({
   result: Schema.optionalKey(Schema.Array(Schema.Unknown)),
   error: Schema.optionalKey(
     Schema.Union(
@@ -5510,11 +5539,7 @@ export const V1UpdateJitAccessConfigOutput = Schema.Union(
     }),
     Schema.Struct({
       state: Schema.Literal("unavailable"),
-      unavailableReason: Schema.Literals([
-        "manual_migration_required",
-        "postgres_upgrade_required",
-        "temporarily_unavailable",
-      ]),
+      unavailableReason: Schema.Literals(["postgres_upgrade_required", "temporarily_unavailable"]),
     }),
   ],
   { mode: "oneOf" },
@@ -6151,6 +6176,7 @@ export const openApiOperationIdMap = {
   "v1-get-project-function-combined-stats": "v1GetProjectFunctionCombinedStats",
   "v1-get-project-legacy-api-keys": "v1GetProjectLegacyApiKeys",
   "v1-get-project-logs": "v1GetProjectLogs",
+  "v1-get-project-logs-all": "v1GetProjectLogsAll",
   "v1-get-project-pgbouncer-config": "v1GetProjectPgbouncerConfig",
   "v1-get-project-signing-key": "v1GetProjectSigningKey",
   "v1-get-project-signing-keys": "v1GetProjectSigningKeys",
@@ -7456,6 +7482,20 @@ export const operationDefinitions = {
   v1GetProjectLogs: {
     id: "v1GetProjectLogs",
     description:
+      "Executes an SQL or LQL query on the project's unified logs stream.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nFilter by the `source` column to specify specific log sources, such as edge_logs, postgres_logs, etc.\n\nNote: SQL must be written in **ClickHouse SQL dialect**.",
+    method: "GET",
+    path: "/v1/projects/{ref}/analytics/endpoints/logs",
+    pathParams: ["ref"],
+    queryParams: ["sql", "iso_timestamp_start", "iso_timestamp_end"],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "json" },
+    inputSchema: V1GetProjectLogsInput,
+    outputSchema: V1GetProjectLogsOutput,
+  },
+  v1GetProjectLogsAll: {
+    id: "v1GetProjectLogsAll",
+    description:
       "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer:~:text=logs%20from%20the-,Sources,-drop%2Ddown%3A) for all available sources.",
     method: "GET",
     path: "/v1/projects/{ref}/analytics/endpoints/logs.all",
@@ -7464,8 +7504,8 @@ export const operationDefinitions = {
     headerParams: [],
     requestBody: { kind: "none" },
     response: { kind: "json" },
-    inputSchema: V1GetProjectLogsInput,
-    outputSchema: V1GetProjectLogsOutput,
+    inputSchema: V1GetProjectLogsAllInput,
+    outputSchema: V1GetProjectLogsAllOutput,
   },
   v1GetProjectPgbouncerConfig: {
     id: "v1GetProjectPgbouncerConfig",

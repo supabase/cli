@@ -70,6 +70,7 @@ jobs:
           - macos-latest
           - ubuntu-latest
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
     env:
       VERSION: ${{ inputs.version }}
       BREW_NAME: ${{ inputs.brew_name }}
@@ -173,6 +174,7 @@ jobs:
   scoop:
     name: Scoop (${{ inputs.scoop_name }})
     runs-on: windows-latest
+    timeout-minutes: 10
     env:
       VERSION: ${{ inputs.version }}
       SCOOP_NAME: ${{ inputs.scoop_name }}
@@ -234,6 +236,7 @@ jobs:
           - ubuntu-latest
           - macos-latest
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
     env:
       VERSION: ${{ inputs.version }}
     steps:

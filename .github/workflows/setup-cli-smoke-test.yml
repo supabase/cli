@@ -43,6 +43,7 @@ jobs:
           - v1
           - v2
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
     env:
       VERSION: ${{ inputs.version }}
     steps:
@@ -88,6 +89,7 @@ jobs:
           - v1
           - v2
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # `node:20-alpine` ships a musl-linked Node, which is required for
     # JavaScript-based actions (setup-cli included) to launch inside an
     # Alpine container — the runner's mounted glibc Node won't execute here.

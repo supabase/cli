@@ -9,8 +9,10 @@ import (
 )
 
 var (
-	override []string
-	names    status.CustomName
+	override                 []string
+	excludedStatusContainers []string
+	ignoreStatusHealthCheck  bool
+	names                    status.CustomName
 
 	statusCmd = &cobra.Command{
 		GroupID: groupLocalDev,
@@ -24,7 +26,7 @@ var (
 			return env.Unmarshal(es, &names)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return status.Run(cmd.Context(), names, utils.OutputFormat.Value, afero.NewOsFs())
+			return status.Run(cmd.Context(), names, utils.OutputFormat.Value, afero.NewOsFs(), ignoreStatusHealthCheck, excludedStatusContainers...)
 		},
 		Example: `  supabase status -o env --override-name api.url=NEXT_PUBLIC_SUPABASE_URL
   supabase status -o json`,
@@ -34,5 +36,9 @@ var (
 func init() {
 	flags := statusCmd.Flags()
 	flags.StringSliceVar(&override, "override-name", []string{}, "Override specific variable names.")
+	flags.StringSliceVar(&excludedStatusContainers, "exclude", []string{}, "Names of containers to omit from output.")
+	cobra.CheckErr(flags.MarkHidden("exclude"))
+	flags.BoolVar(&ignoreStatusHealthCheck, "ignore-health-check", false, "Ignore unhealthy services and exit 0")
+	cobra.CheckErr(flags.MarkHidden("ignore-health-check"))
 	rootCmd.AddCommand(statusCmd)
 }

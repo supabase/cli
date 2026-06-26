@@ -96,13 +96,15 @@ func (c *CustomName) toValues(exclude ...string) map[string]string {
 	return values
 }
 
-func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) error {
+func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs, ignoreHealthCheck bool, exclude ...string) error {
 	// Sanity checks.
 	if err := flags.LoadConfig(fsys); err != nil {
 		return err
 	}
-	if err := assertContainerHealthy(ctx, utils.DbId); err != nil {
-		return err
+	if !ignoreHealthCheck {
+		if err := assertContainerHealthy(ctx, utils.DbId); err != nil {
+			return err
+		}
 	}
 	stopped, err := checkServiceHealth(ctx)
 	if err != nil {
@@ -111,12 +113,13 @@ func Run(ctx context.Context, names CustomName, format string, fsys afero.Fs) er
 	if len(stopped) > 0 {
 		fmt.Fprintln(os.Stderr, "Stopped services:", stopped)
 	}
+	excluded := append(stopped, exclude...)
 	if format == utils.OutputPretty {
 		fmt.Fprintf(os.Stderr, "%s local development setup is running.\n\n", utils.Aqua("supabase"))
-		PrettyPrint(os.Stdout, stopped...)
+		PrettyPrint(os.Stdout, excluded...)
 		return nil
 	}
-	return printStatus(names, format, os.Stdout, stopped...)
+	return printStatus(names, format, os.Stdout, excluded...)
 }
 
 func checkServiceHealth(ctx context.Context) ([]string, error) {
