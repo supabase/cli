@@ -22,10 +22,14 @@ export interface LegacySeedConfig {
   readonly sqlPaths: ReadonlyArray<string>;
 }
 
+// Only metadata is kept during the pending scan — the decoded statements are NOT
+// retained. Go's `SeedFile` (`pkg/migration/file.go:178-182`) holds just
+// `{Path, Hash, Dirty}` and re-parses each file individually inside the apply loop
+// ("Parse each file individually to reduce memory usage", `file.go:198-203`), so a
+// large/many-file seed set never has every file's statements in memory at once.
 interface LegacyPendingSeed {
   readonly path: string;
   readonly hash: string;
-  readonly statements: ReadonlyArray<string>;
   readonly dirty: boolean;
 }
 
@@ -162,10 +166,12 @@ export const legacyApplySeedFiles = (
       const hash = createHash("sha256").update(content).digest("hex");
       const previous = applied.get(relativePath);
       if (previous === hash) continue; // unchanged → skip entirely
+      // Keep only metadata; the statements are read + split per-file in the apply loop
+      // below (Go hashes each file up front via io.Copy in `NewSeedFile` but does not
+      // retain its contents, `file.go:184-196`).
       pending.push({
         path: relativePath,
         hash,
-        statements: legacySplitAndTrim(new TextDecoder().decode(content)),
         dirty: previous !== undefined, // recorded but changed → only update the hash
       });
     }
@@ -187,10 +193,28 @@ export const legacyApplySeedFiles = (
           : `Seeding data from ${seed.path}...\n`,
         "stderr",
       );
+      // Read + split this seed's statements here (not up front) so only one file's
+      // statements are in memory at a time, matching Go's `ExecBatchWithCache` →
+      // `parseFile` inside the apply loop (`file.go:198-203`). A dirty seed only
+      // updates its recorded hash, so Go never re-reads it — skip the read.
+      const statements = seed.dirty
+        ? []
+        : legacySplitAndTrim(
+            new TextDecoder().decode(
+              yield* fs.readFile(resolveUnderWorkdir(path, workdir, seed.path)).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new LegacyMigrationSeedError({
+                      message: `failed to open seed file: ${cause.message}`,
+                    }),
+                ),
+              ),
+            ),
+          );
       const txn = Effect.gen(function* () {
         yield* session.exec("BEGIN");
         if (!seed.dirty) {
-          for (const statement of seed.statements) yield* session.exec(statement);
+          for (const statement of statements) yield* session.exec(statement);
         }
         yield* session.query(UPSERT_SEED_FILE, [seed.path, seed.hash]);
         yield* session.exec("COMMIT");
