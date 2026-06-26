@@ -1199,6 +1199,20 @@ export const versionedEffectOperations = {
           input,
         );
       }),
+    getProjectLogsAll: (
+      input: typeof operationDefinitions.v1GetProjectLogsAll.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1GetProjectLogsAll.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1GetProjectLogsAll">(
+          operationDefinitions.v1GetProjectLogsAll,
+          input,
+        );
+      }),
     getProjectPgbouncerConfig: (
       input: typeof operationDefinitions.v1GetProjectPgbouncerConfig.inputSchema.Type,
     ): Effect.Effect<
@@ -2671,6 +2685,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v1GetProjectLogs.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v1.getProjectLogs(decoded)));
+    case "v1GetProjectLogsAll":
+      return Schema.decodeUnknownEffect(operationDefinitions.v1GetProjectLogsAll.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v1.getProjectLogsAll(decoded)));
     case "v1GetProjectPgbouncerConfig":
       return Schema.decodeUnknownEffect(
         operationDefinitions.v1GetProjectPgbouncerConfig.inputSchema,

@@ -112,7 +112,8 @@
     "entry": [
       "src/shared/cli/bin.ts",
       "src/**/*.test.ts",
-      "src/**/*.e2e.test.ts"
+      "src/**/*.e2e.test.ts",
+      "src/**/*.live.test.ts"
     ],
     "ignore": [
       "scripts/*.ts",

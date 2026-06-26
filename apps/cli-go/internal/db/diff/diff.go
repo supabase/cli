@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
+	configpkg "github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
 )
@@ -70,7 +71,11 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 		}
 	}
 	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
-		return schemas.Files(afero.NewIOFS(fsys))
+		return schemas.Files(
+			afero.NewIOFS(fsys),
+			configpkg.WithSkipEmptyGlobs(),
+			configpkg.WithErrorOnAllSkippedGlobs(),
+		)
 	}
 	if exists, err := afero.DirExists(fsys, utils.SchemasDir); err != nil {
 		return nil, errors.Errorf("failed to check schemas: %w", err)
