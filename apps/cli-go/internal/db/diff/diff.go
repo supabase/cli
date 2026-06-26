@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
+	pkgconfig "github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
 )
@@ -49,6 +50,9 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 }
 
 func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
+	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
+		return loadSchemaPathFiles(schemas, fsys)
+	}
 	// When pg-delta is enabled, declarative path is the source of truth (config or default).
 	if utils.IsPgDeltaEnabled() {
 		declDir := utils.GetDeclarativeDir()
@@ -68,9 +72,6 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 			sort.Strings(declared)
 			return declared, nil
 		}
-	}
-	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
-		return schemas.Files(afero.NewIOFS(fsys))
 	}
 	if exists, err := afero.DirExists(fsys, utils.SchemasDir); err != nil {
 		return nil, errors.Errorf("failed to check schemas: %w", err)
@@ -93,6 +94,64 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 	// filesystems and operating systems. This is only if no schema paths in config are set.
 	sort.Strings(declared)
 	return declared, nil
+}
+
+func loadSchemaPathFiles(schemas pkgconfig.Glob, fsys afero.Fs) ([]string, error) {
+	declared, err := schemas.Files(afero.NewIOFS(fsys))
+	if err != nil {
+		return nil, err
+	}
+	var result []string
+	set := make(map[string]struct{})
+	for _, item := range declared {
+		if isDir, err := afero.IsDir(fsys, item); err != nil {
+			return nil, err
+		} else if isDir {
+			var files []string
+			if err := afero.Walk(fsys, item, func(path string, info fs.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if info.Mode().IsRegular() && filepath.Ext(info.Name()) == ".sql" {
+					files = append(files, path)
+				}
+				return nil
+			}); err != nil {
+				return nil, errors.Errorf("failed to walk declarative dir: %w", err)
+			}
+			sort.Strings(files)
+			for _, file := range files {
+				if _, exists := set[file]; !exists {
+					set[file] = struct{}{}
+					result = append(result, file)
+				}
+			}
+			continue
+		}
+		if _, exists := set[item]; !exists {
+			set[item] = struct{}{}
+			result = append(result, item)
+		}
+	}
+	return result, nil
+}
+
+func shouldApplyDeclarativeWithPgDelta(usePgDelta bool) bool {
+	if !usePgDelta {
+		return false
+	}
+	schemas := utils.Config.Db.Migrations.SchemaPaths
+	if len(schemas) == 0 {
+		return true
+	}
+	if len(schemas) != 1 {
+		return false
+	}
+	return cleanSchemaPath(schemas[0]) == cleanSchemaPath(utils.GetDeclarativeDir())
+}
+
+func cleanSchemaPath(path string) string {
+	return filepath.ToSlash(filepath.Clean(path))
 }
 
 // https://github.com/djrobstep/migra/blob/master/migra/statements.py#L6

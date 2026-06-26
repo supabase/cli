@@ -24,6 +24,7 @@ import (
 	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
+	pkgconfig "github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
 )
@@ -34,6 +35,80 @@ var dbConfig = pgconn.Config{
 	User:     "admin",
 	Password: "password",
 	Database: "postgres",
+}
+
+func TestLoadDeclaredSchemas(t *testing.T) {
+	t.Run("respects schema_paths order when pg-delta declarative dir exists", func(t *testing.T) {
+		originalConfig := utils.Config
+		t.Cleanup(func() { utils.Config = originalConfig })
+		utils.Config.Db.Migrations.SchemaPaths = pkgconfig.Glob{
+			"supabase/schemas/z_function.sql",
+			"supabase/schemas/a_table.sql",
+		}
+		utils.Config.Experimental.PgDelta = &pkgconfig.PgDeltaConfig{
+			Enabled:               true,
+			DeclarativeSchemaPath: utils.SchemasDir,
+		}
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, fsys.MkdirAll(utils.SchemasDir, 0755))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/schemas/a_table.sql", []byte("create table a();"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/schemas/z_function.sql", []byte("create function z() returns void language sql as $$ select 1 $$;"), 0644))
+
+		declared, err := loadDeclaredSchemas(fsys)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			"supabase/schemas/z_function.sql",
+			"supabase/schemas/a_table.sql",
+		}, declared)
+	})
+
+	t.Run("expands schema_paths directory entries deterministically", func(t *testing.T) {
+		originalConfig := utils.Config
+		t.Cleanup(func() { utils.Config = originalConfig })
+		utils.Config.Db.Migrations.SchemaPaths = pkgconfig.Glob{utils.DeclarativeDir}
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, fsys.MkdirAll(filepath.Join(utils.DeclarativeDir, "nested"), 0755))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.DeclarativeDir, "nested", "b.sql"), []byte("select 2;"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.DeclarativeDir, "a.sql"), []byte("select 1;"), 0644))
+
+		declared, err := loadDeclaredSchemas(fsys)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			filepath.Join(utils.DeclarativeDir, "a.sql"),
+			filepath.Join(utils.DeclarativeDir, "nested", "b.sql"),
+		}, declared)
+	})
+}
+
+func TestShouldApplyDeclarativeWithPgDelta(t *testing.T) {
+	t.Run("uses pg-delta declarative apply when no schema_paths override is configured", func(t *testing.T) {
+		originalConfig := utils.Config
+		t.Cleanup(func() { utils.Config = originalConfig })
+		utils.Config.Db.Migrations.SchemaPaths = nil
+
+		assert.True(t, shouldApplyDeclarativeWithPgDelta(true))
+	})
+
+	t.Run("uses pg-delta declarative apply when schema_paths points at the declarative dir", func(t *testing.T) {
+		originalConfig := utils.Config
+		t.Cleanup(func() { utils.Config = originalConfig })
+		utils.Config.Db.Migrations.SchemaPaths = pkgconfig.Glob{utils.DeclarativeDir + "/"}
+
+		assert.True(t, shouldApplyDeclarativeWithPgDelta(true))
+	})
+
+	t.Run("uses ordered migration apply for explicit schema_paths files", func(t *testing.T) {
+		originalConfig := utils.Config
+		t.Cleanup(func() { utils.Config = originalConfig })
+		utils.Config.Db.Migrations.SchemaPaths = pkgconfig.Glob{
+			"supabase/schemas/z_function.sql",
+			"supabase/schemas/a_table.sql",
+		}
+
+		assert.False(t, shouldApplyDeclarativeWithPgDelta(true))
+	})
 }
 
 func TestRun(t *testing.T) {
