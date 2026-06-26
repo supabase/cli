@@ -2,7 +2,8 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Stream } from "effect";
+import { badArgument } from "effect/PlatformError";
 
 import {
   mockLegacyCliConfig,
@@ -10,6 +11,7 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockStdin } from "../../../../../tests/helpers/mocks.ts";
+import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyMigrationNewWriteError } from "./new.errors.ts";
 import { legacyMigrationNew } from "./new.handler.ts";
@@ -153,4 +155,43 @@ describe("legacy migration new", () => {
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "fails the command when piped stdin errors mid-copy (Go: failed to copy from stdin)",
+    () => {
+      // Go's io.Copy returns "failed to copy from stdin" and exits non-zero on a stdin read
+      // error (new.go:42); the streaming copy must surface that, not leave a truncated file.
+      const failingStdin = Layer.succeed(Stdin, {
+        isTTY: false,
+        readPipedBytes: Effect.succeed(Option.none()),
+        pipedBytesStream: Stream.fail(badArgument({ module: "Stdin", method: "read" })),
+        readPipedText: Effect.succeed(Option.none()),
+        readLine: () => Effect.succeed(Option.none()),
+      });
+      const out = mockOutput();
+      const telemetry = mockLegacyTelemetryStateTracked();
+      const layer = Layer.mergeAll(
+        out.layer,
+        telemetry.layer,
+        failingStdin,
+        mockLegacyCliConfig({ workdir: tmp.current }),
+        BunServices.layer,
+      );
+      return Effect.gen(function* () {
+        const exit = yield* legacyMigrationNew({ migrationName: "stdin_boom" }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(failure)).toBe(true);
+          if (Option.isSome(failure)) {
+            expect(failure.value).toBeInstanceOf(LegacyMigrationNewWriteError);
+            if (failure.value instanceof LegacyMigrationNewWriteError) {
+              expect(failure.value.message).toContain("failed to copy from stdin");
+            }
+          }
+        }
+        expect(telemetry.flushed).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

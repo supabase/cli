@@ -1,5 +1,6 @@
 import type { Effect, Option, Stream } from "effect";
 import { Context } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 
 interface StdinShape {
   readonly isTTY: boolean;
@@ -7,11 +8,13 @@ interface StdinShape {
   /**
    * Piped stdin as a byte stream, for consumers that must avoid buffering the whole
    * pipe (e.g. `migration new` seeding a file from a large `pg_dump`, matching Go's
-   * `io.Copy` streaming). Read errors collapse to an empty stream, like
-   * {@link readPipedBytes}. Emits nothing for an empty pipe; callers gate on
-   * {@link isTTY} themselves (a TTY should not be drained).
+   * `io.Copy` streaming). Unlike {@link readPipedBytes}, read errors PROPAGATE on the
+   * error channel — Go's `io.Copy` returns `failed to copy from stdin` and exits
+   * non-zero rather than writing a truncated file, so the caller must map the failure.
+   * Emits nothing for an empty pipe; callers gate on {@link isTTY} themselves (a TTY
+   * should not be drained).
    */
-  readonly pipedBytesStream: Stream.Stream<Uint8Array>;
+  readonly pipedBytesStream: Stream.Stream<Uint8Array, PlatformError>;
   readonly readPipedText: Effect.Effect<Option.Option<string>>;
   /**
    * Reads a single line from stdin (up to the first newline), trimmed, bounded by

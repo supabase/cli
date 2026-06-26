@@ -46,9 +46,11 @@ const makeStdin = Effect.gen(function* () {
       Effect.orElseSucceed(() => Option.none<string>()),
     );
 
-  // Stream piped stdin without collecting it (constant memory). Read errors collapse to
-  // an empty stream, matching `readPipedBytes`'s `orElseSucceed(none)` swallow.
-  const pipedBytesStream = stdio.stdin.pipe(Stream.catchCause(() => Stream.empty));
+  // Stream piped stdin without collecting it (constant memory). Read errors PROPAGATE on
+  // the error channel (unlike `readPipedBytes`'s `orElseSucceed(none)` swallow): Go's
+  // `io.Copy` returns `failed to copy from stdin` and exits non-zero rather than writing a
+  // truncated migration file, so the streaming consumer must surface the failure.
+  const pipedBytesStream = stdio.stdin;
 
   return Stdin.of({
     isTTY: tty.stdinIsTty,

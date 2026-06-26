@@ -66,18 +66,29 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
     // file; an empty pipe streams nothing → empty file, both matching Go.
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const handle = yield* fs.open(migrationPath, { flag: "w", mode: 0o644 });
+        // Go fails with "failed to open migration file" if the open fails (`new.go:21`)...
+        const handle = yield* fs.open(migrationPath, { flag: "w", mode: 0o644 }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyMigrationNewWriteError({
+                message: `failed to open migration file: ${cause.message}`,
+              }),
+          ),
+        );
+        // ...and with "failed to copy from stdin" if the copy fails (`new.go:42`). A piped
+        // stdin read error must abort here, not silently leave a truncated/empty file.
         if (!stdin.isTTY) {
-          yield* stdin.pipedBytesStream.pipe(Stream.runForEach((chunk) => handle.writeAll(chunk)));
+          yield* stdin.pipedBytesStream.pipe(
+            Stream.runForEach((chunk) => handle.writeAll(chunk)),
+            Effect.mapError(
+              (cause) =>
+                new LegacyMigrationNewWriteError({
+                  message: `failed to copy from stdin: ${cause.message}`,
+                }),
+            ),
+          );
         }
       }),
-    ).pipe(
-      Effect.mapError(
-        (cause) =>
-          new LegacyMigrationNewWriteError({
-            message: `failed to open migration file: ${cause.message}`,
-          }),
-      ),
     );
 
     // Go prints the RELATIVE path: `utils.MigrationsDir` is `supabase/migrations`
