@@ -1,12 +1,18 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyDnsResolverFlag, legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDnsResolverFlag,
+  legacyResolveYesWithProjectEnv,
+} from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua, legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
-import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
+import {
+  legacyLoadProjectEnv,
+  legacyReadDbToml,
+} from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
@@ -43,7 +49,11 @@ const runDown = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
-  const yes = yield* legacyResolveYes; // --yes OR SUPABASE_YES (Go viper AutomaticEnv, root.go:318-334).
+  // Go evaluates viper.GetBool("YES") AFTER loadNestedEnv loads the project .env files
+  // (config.go:701), so a SUPABASE_YES set only in supabase/.env still auto-confirms. Resolve
+  // --yes against the project env too, not just process.env (root.go:318-334).
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   // Flag-group mutual-exclusion first: cobra's `MarkFlagsMutuallyExclusive` validates at
   // parse time, ahead of the root `PersistentPreRunE` (`cmd/migration.go:156`).

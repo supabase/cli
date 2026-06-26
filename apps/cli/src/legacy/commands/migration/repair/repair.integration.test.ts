@@ -339,6 +339,22 @@ describe("legacy migration repair", () => {
     );
   });
 
+  it.live(
+    "auto-confirms repair-all via SUPABASE_YES in the project .env (Go loadNestedEnv)",
+    () => {
+      // SUPABASE_YES set only in supabase/.env (not the shell) — Go's loadNestedEnv loads it
+      // before the repair-all prompt, so it auto-confirms with no --yes flag and no stdin answer.
+      seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
+      const { layer, execs, queries } = setup(tmp.current);
+      return Effect.gen(function* () {
+        yield* legacyMigrationRepair(input({ versions: [], status: "applied" }));
+        expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
+        expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("surfaces a DB-config error before prompting (repair-all, unlinked)", () => {
     const { layer, out } = setup(tmp.current, { failResolve: true });
     return Effect.gen(function* () {

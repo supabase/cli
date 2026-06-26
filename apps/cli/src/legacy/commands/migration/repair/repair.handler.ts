@@ -1,11 +1,15 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyDnsResolverFlag, legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDnsResolverFlag,
+  legacyResolveYesWithProjectEnv,
+} from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua } from "../../../shared/legacy-colors.ts";
+import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
   LegacyDbConnection,
@@ -116,7 +120,11 @@ const runRepair = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
-  const yes = yield* legacyResolveYes; // --yes OR SUPABASE_YES (Go viper AutomaticEnv, root.go:318-334).
+  // Go evaluates viper.GetBool("YES") AFTER loadNestedEnv loads the project .env files
+  // (config.go:701), so a SUPABASE_YES set only in supabase/.env still auto-confirms the
+  // repair-all prompt. Resolve --yes against the project env too, not just process.env.
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(

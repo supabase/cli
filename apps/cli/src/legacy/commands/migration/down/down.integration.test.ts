@@ -279,6 +279,27 @@ describe("legacy migration down", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
+    seed(tmp.current, "20240101000000_a.sql");
+    // SUPABASE_YES lives only in supabase/.env, not the shell — Go's loadNestedEnv loads it
+    // before the prompt, so the revert auto-confirms with no --yes flag and no stdin answer.
+    writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
+    const { layer, out } = setup(tmp.current, {
+      format: "json",
+      remote: ["20240101000000", "20240102000000"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyMigrationDown(flags({ last: 1 }));
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: "Migrations reverted",
+          data: { version: "20240101000000", last: 1 },
+        }),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("reports a drop-schema failure", () => {
     seed(tmp.current, "20240101000000_a.sql");
     const { layer } = setup(tmp.current, {
