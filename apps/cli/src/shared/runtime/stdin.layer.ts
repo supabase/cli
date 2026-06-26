@@ -46,9 +46,14 @@ const makeStdin = Effect.gen(function* () {
       Effect.orElseSucceed(() => Option.none<string>()),
     );
 
+  // Stream piped stdin without collecting it (constant memory). Read errors collapse to
+  // an empty stream, matching `readPipedBytes`'s `orElseSucceed(none)` swallow.
+  const pipedBytesStream = stdio.stdin.pipe(Stream.catchCause(() => Stream.empty));
+
   return Stdin.of({
     isTTY: tty.stdinIsTty,
     readPipedBytes,
+    pipedBytesStream,
     readPipedText: readPipedBytes.pipe(
       Effect.map((bytes) => {
         if (Option.isNone(bytes)) {

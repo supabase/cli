@@ -107,6 +107,9 @@ export function mockStdin(isTTY: boolean, pipedInput?: string | Uint8Array): Lay
   return Layer.succeed(Stdin, {
     isTTY,
     readPipedBytes: Effect.succeed(pipedBytes),
+    pipedBytesStream: Option.isSome(pipedBytes)
+      ? Stream.fromIterable([pipedBytes.value])
+      : Stream.empty,
     readPipedText: Effect.succeed(pipedText),
     // First line of the piped input (trimmed), or None — the timeout is irrelevant
     // to a fixed mock. Mirrors the production single-line read.

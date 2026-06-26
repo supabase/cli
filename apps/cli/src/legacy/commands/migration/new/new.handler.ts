@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { Clock, Effect, FileSystem, Path, Stream } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
@@ -52,18 +52,26 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
       );
     }
 
-    // Go's `CopyStdinIfExists` copies raw stdin bytes verbatim when stdin is NOT a
-    // char device (piped/redirected). A TTY writes nothing → empty file. An empty
-    // pipe (`readPipedBytes` → none) also yields an empty file, matching Go.
-    const piped = stdin.isTTY ? Option.none<Uint8Array>() : yield* stdin.readPipedBytes;
-    const content = Option.getOrElse(piped, () => new Uint8Array(0));
-
     yield* fs
       .makeDirectory(path.dirname(migrationPath), { recursive: true })
       .pipe(
         Effect.mapError((cause) => new LegacyMigrationNewWriteError({ message: cause.message })),
       );
-    yield* fs.writeFile(migrationPath, content, { mode: 0o644 }).pipe(
+
+    // Go's `CopyStdinIfExists` opens the migration file first, then streams stdin into it
+    // with `io.Copy` (`internal/migration/new/new.go:19,28,41`) — a fixed-size buffer, so a
+    // large `pg_dump | supabase migration new` runs in constant memory. Mirror that: create
+    // the file (mode 0644, like Go's O_CREATE|O_TRUNC), then stream piped stdin into the open
+    // handle rather than buffering the whole pipe. A TTY (char device) writes nothing → empty
+    // file; an empty pipe streams nothing → empty file, both matching Go.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const handle = yield* fs.open(migrationPath, { flag: "w", mode: 0o644 });
+        if (!stdin.isTTY) {
+          yield* stdin.pipedBytesStream.pipe(Stream.runForEach((chunk) => handle.writeAll(chunk)));
+        }
+      }),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new LegacyMigrationNewWriteError({
