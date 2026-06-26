@@ -1485,6 +1485,7 @@ const (
 	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageImageTransformations           V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.image_transformations"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageMaxFileSize                    V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.max_file_size"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageMaxFileSizeConfigurable        V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.max_file_size.configurable"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyStoragePurgeCache                     V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.purge_cache"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageVectorBuckets                  V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.vector_buckets"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyVanitySubdomain                       V1ListEntitlementsResponseEntitlementsFeatureKey = "vanity_subdomain"
 )
@@ -3961,6 +3962,9 @@ type StorageConfigResponse struct {
 		ImageTransformation struct {
 			Enabled bool `json:"enabled"`
 		} `json:"imageTransformation"`
+		PurgeCache struct {
+			Enabled bool `json:"enabled"`
+		} `json:"purgeCache"`
 		S3Protocol struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol"`
@@ -4563,6 +4567,9 @@ type UpdateStorageConfigBody struct {
 		ImageTransformation *struct {
 			Enabled bool `json:"enabled"`
 		} `json:"imageTransformation,omitempty"`
+		PurgeCache *struct {
+			Enabled bool `json:"enabled"`
+		} `json:"purgeCache,omitempty"`
 		S3Protocol *struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol,omitempty"`
