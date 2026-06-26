@@ -972,6 +972,25 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("expands an env() indirection in SUPABASE_DB_SEED_ENABLED (Go LoadEnvHook)", () => {
+    // Go decodes the AutomaticEnv override through LoadEnvHook before the bool parse
+    // (decode_hooks.go:15-26), so `env(SEED_ON)` resolves to SEED_ON's value rather
+    // than failing the load on a literal `env(...)` bool.
+    process.env["SUPABASE_DB_SEED_ENABLED"] = "env(SEED_ON)";
+    process.env["SEED_ON"] = "false";
+    const dir = withConfig(["[db.seed]", "enabled = true", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.enabled).toBe(false);
+          delete process.env["SUPABASE_DB_SEED_ENABLED"];
+          delete process.env["SEED_ON"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("honors SUPABASE_DB_MIGRATIONS_ENABLED over the default (Go AutomaticEnv)", () => {
     process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
     const dir = withConfig(undefined);

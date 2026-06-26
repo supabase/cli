@@ -537,6 +537,9 @@ function resolveBool(value: unknown, fallback: boolean, lookup: EnvLookup): bool
  * `envValue` is the `SUPABASE_*` AutomaticEnv override (`pkg/config/config.go:494-498`):
  * when set it wins over the TOML value/default, matching viper's env > config-file
  * precedence (`envOverride` already drops empty values, like `AllowEmptyEnv=false`).
+ * The override is still a string-kind value decoded through `LoadEnvHook`, so an
+ * `env(VAR)` indirection (`SUPABASE_DB_SEED_ENABLED=env(SEED_ON)`) is expanded before
+ * the bool parse (`decode_hooks.go:15-26` runs ahead of the weak `ParseBool` decode).
  */
 const resolveBoolOrFail = Effect.fnUntraced(function* (
   field: string,
@@ -546,7 +549,7 @@ const resolveBoolOrFail = Effect.fnUntraced(function* (
   envValue?: string,
 ) {
   if (envValue !== undefined) {
-    const parsed = legacyParseGoBool(envValue);
+    const parsed = legacyParseGoBool(legacyExpandEnv(envValue, lookup));
     if (parsed === undefined) {
       return yield* Effect.fail(
         new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
@@ -579,7 +582,7 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
   lookup: EnvLookup,
 ) {
   if (envValue !== undefined) {
-    const parsed = legacyParseGoBool(envValue);
+    const parsed = legacyParseGoBool(legacyExpandEnv(envValue, lookup));
     if (parsed === undefined) {
       return yield* Effect.fail(
         new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
@@ -898,11 +901,14 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // an `env(VAR)` string, defaulting to false when absent.
   let enabled: boolean;
   if (enabledEnv !== undefined) {
-    const parsed = legacyParseGoBool(enabledEnv);
+    // The AutomaticEnv override is decoded through `LoadEnvHook`, so an `env(VAR)`
+    // indirection is expanded before the weak `ParseBool` decode (`decode_hooks.go:15-26`).
+    const expandedEnabledEnv = legacyExpandEnv(enabledEnv, lookup);
+    const parsed = legacyParseGoBool(expandedEnabledEnv);
     if (parsed === undefined) {
       return yield* Effect.fail(
         new LegacyDbConfigLoadError({
-          message: `failed to parse config: invalid experimental.pgdelta.enabled: ${enabledEnv}.`,
+          message: `failed to parse config: invalid experimental.pgdelta.enabled: ${expandedEnabledEnv}.`,
         }),
       );
     }
