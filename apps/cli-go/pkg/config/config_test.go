@@ -676,6 +676,53 @@ func TestGlobFiles(t *testing.T) {
 		// Validate files
 		assert.Empty(t, files)
 	})
+
+	t.Run("skips empty wildcard globs with SkipEmptyGlobs", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := fs.MapFS{
+			"supabase/schemas/tables/players.sql": &fs.MapFile{Data: []byte("")},
+		}
+		// Mock config patterns
+		g := Glob{
+			"supabase/schemas/tables/*.sql",
+			"supabase/schemas/materialized_views/*.sql",
+		}
+		// Run test
+		files, err := g.Files(fsys, SkipEmptyGlobs())
+		// Check error
+		assert.NoError(t, err)
+		// Validate files
+		assert.Equal(t, []string{"supabase/schemas/tables/players.sql"}, files)
+	})
+
+	t.Run("errors on missing literal path even with SkipEmptyGlobs", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := fs.MapFS{}
+		// Mock config patterns
+		g := Glob{"supabase/schemas/tables/players.sql"}
+		// Run test
+		files, err := g.Files(fsys, SkipEmptyGlobs())
+		// Check error
+		assert.ErrorContains(t, err, "no files matched")
+		// Validate files
+		assert.Empty(t, files)
+	})
+
+	t.Run("errors when every wildcard glob is empty with SkipEmptyGlobs", func(t *testing.T) {
+		// Setup in-memory fs
+		fsys := fs.MapFS{}
+		// Mock config patterns
+		g := Glob{
+			"supabase/schemas/tables/*.sql",
+			"supabase/schemas/views/*.sql",
+		}
+		// Run test
+		files, err := g.Files(fsys, SkipEmptyGlobs())
+		// Check error
+		assert.ErrorContains(t, err, "no files matched")
+		// Validate files
+		assert.Empty(t, files)
+	})
 }
 
 func TestLoadFunctionImportMap(t *testing.T) {

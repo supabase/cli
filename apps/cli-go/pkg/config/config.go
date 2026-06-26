@@ -97,11 +97,37 @@ func (p *RequestPolicy) UnmarshalText(text []byte) error {
 
 type Glob []string
 
+type globOptions struct {
+	skipEmptyGlobs bool
+}
+
+// GlobOption customises how Glob.Files resolves its patterns.
+type GlobOption func(*globOptions)
+
+// SkipEmptyGlobs ignores wildcard patterns that match no files instead of
+// returning an error, which supports incremental adoption of declarative
+// schema directories. Literal patterns (without a wildcard) that match no
+// files still error, as does a config where every pattern is empty.
+func SkipEmptyGlobs() GlobOption {
+	return func(o *globOptions) {
+		o.skipEmptyGlobs = true
+	}
+}
+
+func hasWildcardStar(pattern string) bool {
+	return strings.Contains(pattern, "*")
+}
+
 // Match the glob patterns in the given FS to get a deduplicated
 // array of all migrations files to apply in the declared order.
-func (g Glob) Files(fsys fs.FS) ([]string, error) {
+func (g Glob) Files(fsys fs.FS, opts ...GlobOption) ([]string, error) {
+	var options globOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 	var result []string
 	var allErrors []error
+	var skipped []string
 	set := make(map[string]struct{})
 	for _, pattern := range g {
 		// Glob expects / as path separator on windows
@@ -109,6 +135,12 @@ func (g Glob) Files(fsys fs.FS) ([]string, error) {
 		if err != nil {
 			allErrors = append(allErrors, errors.Errorf("failed to glob files: %w", err))
 		} else if len(matches) == 0 {
+			// Skip empty wildcard globs, but keep surfacing missing literal
+			// paths since those point to a broken declarative config.
+			if options.skipEmptyGlobs && hasWildcardStar(pattern) {
+				skipped = append(skipped, pattern)
+				continue
+			}
 			allErrors = append(allErrors, errors.Errorf("no files matched pattern: %s", pattern))
 		}
 		sort.Strings(matches)
@@ -119,6 +151,13 @@ func (g Glob) Files(fsys fs.FS) ([]string, error) {
 				set[fp] = struct{}{}
 				result = append(result, fp)
 			}
+		}
+	}
+	// When every pattern is an empty wildcard glob, surface the misconfiguration
+	// instead of returning an indistinguishable empty success.
+	if len(result) == 0 {
+		for _, pattern := range skipped {
+			allErrors = append(allErrors, errors.Errorf("no files matched pattern: %s", pattern))
 		}
 	}
 	return result, errors.Join(allErrors...)
