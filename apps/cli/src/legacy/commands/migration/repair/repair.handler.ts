@@ -120,11 +120,6 @@ const runRepair = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
-  // Go evaluates viper.GetBool("YES") AFTER loadNestedEnv loads the project .env files
-  // (config.go:701), so a SUPABASE_YES set only in supabase/.env still auto-confirms the
-  // repair-all prompt. Resolve --yes against the project env too, not just process.env.
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
-  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
@@ -158,6 +153,13 @@ const runRepair = Effect.fnUntraced(function* (
     dnsResolver,
     password: input.password,
   });
+
+  // Go loads the project .env via loadNestedEnv INSIDE ParseDatabaseConfig (config.go:701),
+  // after the parse-time flag-group validation above — so a SUPABASE_YES set only in
+  // supabase/.env auto-confirms the repair-all prompt, but a flag conflict still surfaces
+  // before any .env read. Resolve --yes against the project env here, not just process.env.
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   // Linked repair caches the project ref + identifies project groups — Go's
   // `ensureProjectGroupsCached`, called from `Execute()` (`apps/cli-go/cmd/root.go:174`)

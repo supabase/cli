@@ -49,11 +49,6 @@ const runDown = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
-  // Go evaluates viper.GetBool("YES") AFTER loadNestedEnv loads the project .env files
-  // (config.go:701), so a SUPABASE_YES set only in supabase/.env still auto-confirms. Resolve
-  // --yes against the project env too, not just process.env (root.go:318-334).
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
-  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   // Flag-group mutual-exclusion first: cobra's `MarkFlagsMutuallyExclusive` validates at
   // parse time, ahead of the root `PersistentPreRunE` (`cmd/migration.go:156`).
@@ -76,6 +71,13 @@ const runDown = Effect.fnUntraced(function* (
     connType,
     dnsResolver,
   });
+
+  // Go loads the project .env via loadNestedEnv INSIDE ParseDatabaseConfig (config.go:701),
+  // i.e. after the parse-time flag-group validation above — so a SUPABASE_YES set only in
+  // supabase/.env auto-confirms, but a flag conflict still surfaces before any .env read.
+  // Resolve --yes against the project env here, not just process.env (root.go:318-334).
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   // Linked down caches the project ref (Go's `ensureProjectGroupsCached` from `Execute()`,
   // gated on the ref loaded in pre-run, NOT on the RunE error). Load it now and attach the
