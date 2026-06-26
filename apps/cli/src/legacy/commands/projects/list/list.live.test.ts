@@ -1,6 +1,10 @@
 import { expect, test } from "vitest";
 
-import { describeLive, runSupabaseLive } from "../../../../../tests/helpers/live.ts";
+import {
+  describeLive,
+  liveProjectRef,
+  runSupabaseLive,
+} from "../../../../../tests/helpers/live.ts";
 
 const LIVE_TIMEOUT_MS = 60_000;
 
@@ -16,7 +20,7 @@ describeLive("supabase projects list (live)", () => {
   });
 
   test(
-    "emits machine-readable JSON with --output-format json",
+    "emits projects as machine-readable JSON, including the provisioned project",
     { timeout: LIVE_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout } = await runSupabaseLive([
@@ -26,8 +30,17 @@ describeLive("supabase projects list (live)", () => {
         "json",
       ]);
       expect(exitCode).toBe(0);
-      // stdout must be payload-only valid JSON in json mode (no spinner/log noise).
-      expect(() => JSON.parse(stdout)).not.toThrow();
+      // Payload-only JSON shaped like { projects: [{ id, ref, name, status, … }], message }.
+      const parsed = JSON.parse(stdout) as {
+        projects: Array<{ id: string; ref: string; name: string }>;
+      };
+      expect(Array.isArray(parsed.projects)).toBe(true);
+      const ref = liveProjectRef();
+      if (ref) {
+        // When the runner provisioned a project, it must appear in the listing —
+        // proves the JSON reflects real platform state, not just valid syntax.
+        expect(parsed.projects.map((project) => project.ref)).toContain(ref);
+      }
     },
   );
 });

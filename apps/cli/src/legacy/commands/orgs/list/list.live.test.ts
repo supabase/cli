@@ -22,21 +22,26 @@ describeLive("supabase orgs list (live)", () => {
     },
   );
 
-  test(
-    "emits machine-readable JSON with --output-format json",
-    { timeout: LIVE_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout } = await runSupabaseLive([
-        "orgs",
-        "list",
-        "--output-format",
-        "json",
-      ]);
-      expect(exitCode).toBe(0);
-      // stdout must be payload-only valid JSON in json mode (no spinner/log noise).
-      expect(() => JSON.parse(stdout)).not.toThrow();
-    },
-  );
+  test("emits organizations as machine-readable JSON", { timeout: LIVE_TIMEOUT_MS }, async () => {
+    const { exitCode, stdout } = await runSupabaseLive(["orgs", "list", "--output-format", "json"]);
+    expect(exitCode).toBe(0);
+    // Payload-only JSON (no spinner/log noise) shaped like the Go CLI's
+    // { organizations: [{ id, slug, name }], message }. The live token always
+    // belongs to at least one org (supabox seeds one), so assert a real row —
+    // not merely that the output parses.
+    const parsed = JSON.parse(stdout) as {
+      organizations: Array<{ id: string; slug: string; name: string }>;
+    };
+    expect(Array.isArray(parsed.organizations)).toBe(true);
+    expect(parsed.organizations.length).toBeGreaterThan(0);
+    expect(parsed.organizations[0]).toEqual(
+      expect.objectContaining({
+        id: expect.any(String),
+        slug: expect.any(String),
+        name: expect.any(String),
+      }),
+    );
+  });
 
   // Negative path: a bad token must round-trip to the real Management API, come
   // back 401, and surface as a non-zero exit with the upstream "Unauthorized"
