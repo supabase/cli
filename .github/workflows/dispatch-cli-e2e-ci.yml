@@ -1,0 +1,57 @@
+name: Dispatch cli-e2e-ci
+
+# Asks the supabase/cli-e2e-ci harness to run the cli `test:live` suite against
+# a full supabox stack, built from THIS PR's head commit (CLI-1825 / CLI-1831).
+#
+# This is distinct from `live-e2e.yml`, which runs the cli-e2e package against
+# real staging (api.supabase.green). Here the suite runs against a local supabox
+# stack stood up inside the private cli-e2e-ci repo; we only fire the trigger and
+# pass our head SHA — cli-e2e-ci checks that SHA out into its `cli` submodule.
+#
+# Opt-in by label to keep the expensive full-stack run off every PR: add the
+# `run-live-e2e-ci` label (re-dispatches on each subsequent push while labeled).
+# cli-e2e-ci reports a `cli-e2e-ci / live` commit status back onto the head SHA.
+#
+# Fork PRs cannot dispatch (no access to the App secret); run cli-e2e-ci's own
+# workflow_dispatch with `cli_ref` for those.
+on:
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    # Same-repo PRs only: fork PRs don't receive secrets (GH_APP_PRIVATE_KEY), so
+    # the App-token step would fail and leave a red check. Skip them cleanly —
+    # fork PRs use cli-e2e-ci's workflow_dispatch with `cli_ref` instead.
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'run-live-e2e-ci')
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      # App token scoped to cli-e2e-ci with contents:write — the
+      # repository_dispatch REST endpoint requires write on the target repo.
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: supabase
+          repositories: cli-e2e-ci
+          permission-contents: write
+
+      - name: Dispatch live run to cli-e2e-ci
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          CLI_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          echo "Dispatching cli-e2e-ci live run for PR #${PR_NUMBER} @ ${CLI_SHA}"
+          # Build the nested client_payload with jq — `gh api -f` sends a flat
+          # body and would not nest `client_payload.*` correctly.
+          jq -n --arg sha "$CLI_SHA" --argjson pr "$PR_NUMBER" \
+            '{event_type: "cli-pr", client_payload: {cli_sha: $sha, pr_number: $pr}}' \
+            | gh api -X POST repos/supabase/cli-e2e-ci/dispatches --input -

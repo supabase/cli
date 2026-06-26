@@ -68,3 +68,12 @@ export class LegacyDbResetApplyError extends Data.TaggedError("LegacyDbResetAppl
 export class LegacyDbResetNotRunningError extends Data.TaggedError("LegacyDbResetNotRunningError")<{
   readonly message: string;
 }> {}
+
+/**
+ * Invalid `--sql-paths` usage. Byte-matches Go's `validateDbResetSeedFlags`
+ * (`cmd/db.go`): `"--no-seed cannot be used with --sql-paths"` and
+ * `"--sql-paths requires a non-empty path or glob pattern"`.
+ */
+export class LegacyDbResetSeedFlagsError extends Data.TaggedError("LegacyDbResetSeedFlagsError")<{
+  readonly message: string;
+}> {}

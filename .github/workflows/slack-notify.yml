@@ -23,6 +23,7 @@ on:
 jobs:
   notify:
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Send Slack notification
         # Values flow in through env so the payload heredoc never interpolates

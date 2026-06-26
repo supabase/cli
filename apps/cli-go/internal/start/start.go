@@ -54,7 +54,7 @@ func Run(ctx context.Context, fsys afero.Fs, excludedContainers []string, ignore
 		if err := utils.AssertSupabaseDbIsRunning(); err == nil {
 			fmt.Fprintln(os.Stderr, utils.Aqua("supabase start")+" is already running.")
 			names := status.CustomName{}
-			return status.Run(ctx, names, utils.OutputPretty, fsys)
+			return status.Run(ctx, names, utils.OutputPretty, fsys, ignoreHealthCheck, excludedContainers...)
 		} else if !errors.Is(err, utils.ErrNotRunning) {
 			return err
 		}

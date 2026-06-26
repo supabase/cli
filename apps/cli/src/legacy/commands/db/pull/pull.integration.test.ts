@@ -81,6 +81,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     exportCatalog: () => Effect.succeed("supabase/.temp/pgdelta/x.json"),
     execInherit: () => Effect.succeed(0),
     ensureLocalDatabaseStarted: () => Effect.void,
+    ensureLocalPostgresImageCurrent: () => Effect.void,
     provisionShadow: ({ mode, usePgDelta, targetLocal, projectRef }) => {
       provisionCalls.push({ mode, usePgDelta, targetLocal, projectRef });
       return Effect.succeed({

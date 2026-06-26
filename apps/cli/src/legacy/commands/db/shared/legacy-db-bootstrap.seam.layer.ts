@@ -166,13 +166,14 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
           ["--mode", "start", ...(fromBackup !== undefined ? ["--from-backup", fromBackup] : [])],
           false,
         ).pipe(Effect.asVoid),
-      recreateDatabase: ({ version, noSeed }) =>
+      recreateDatabase: ({ version, noSeed, sqlPaths }) =>
         runBootstrap(
           [
             "--mode",
             "recreate",
             ...(version !== "" ? ["--version", version] : []),
             ...(noSeed ? ["--no-seed"] : []),
+            ...sqlPaths.flatMap((p) => ["--sql-paths", p]),
           ],
           false,
         ).pipe(Effect.asVoid),

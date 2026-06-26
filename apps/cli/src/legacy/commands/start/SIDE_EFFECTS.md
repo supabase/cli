@@ -39,13 +39,18 @@
 
 Streams Docker pull and container start progress to stdout. Prints service URLs on success.
 
-### `--output-format json`
+### `--output-format json` / `--output json`
 
-Not applicable — start is a local-dev workflow command.
+Starts the local stack while capturing Go's start progress output, then emits the same JSON
+object as `supabase status --output json`.
+
+Legacy `--output env|toml|yaml` follows the same path and emits the corresponding
+`supabase status --output <format>` payload after a successful start.
 
 ### `--output-format stream-json`
 
-Not applicable — start is a local-dev workflow command.
+Starts the local stack while capturing Go's start progress output, then emits the same JSON
+object as `supabase status --output json`.
 
 ## Notes
 

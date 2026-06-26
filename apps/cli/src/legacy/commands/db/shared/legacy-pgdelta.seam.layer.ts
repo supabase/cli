@@ -6,7 +6,9 @@ import { LegacyNetworkIdFlag, LegacyProfileFlag } from "../../../../shared/legac
 import { resolveBinary } from "../../../../shared/legacy/go-proxy.layer.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { containerCliExitCode, spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
+import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
+import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
 import {
   legacyResolveLocalProjectId,
   localDbContainerId,
@@ -265,6 +267,116 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             }
           }),
         ),
+      ensureLocalPostgresImageCurrent: () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir).pipe(
+              Effect.mapError(
+                (error) =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: `failed to read config for local Postgres image check: ${error.message}`,
+                  }),
+              ),
+            );
+            const image = yield* legacyResolveDbImage(
+              fs,
+              path,
+              cliConfig.workdir,
+              toml.majorVersion,
+              Option.getOrUndefined(toml.orioledbVersion),
+            );
+            const tomlProjectId = toml.projectId;
+            const projectId = legacyResolveLocalProjectId(
+              Option.getOrUndefined(cliConfig.projectId),
+              Option.getOrUndefined(tomlProjectId),
+              cliConfig.workdir,
+            );
+            const containerId = localDbContainerId(projectId);
+            const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {
+              stdin: "ignore",
+              stdout: "pipe",
+              stderr: "pipe",
+              extendEnv: true,
+            }).pipe(
+              Effect.mapError(
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: "failed to inspect local Postgres container.",
+                  }),
+              ),
+            );
+            const stdoutChunks: Array<Uint8Array> = [];
+            const stderrChunks: Array<Uint8Array> = [];
+            yield* Stream.runForEach(child.stdout, (chunk) =>
+              Effect.sync(() => {
+                stdoutChunks.push(chunk);
+              }),
+            ).pipe(
+              Effect.mapError(
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: "failed to inspect local Postgres container.",
+                  }),
+              ),
+            );
+            yield* Stream.runForEach(child.stderr, (chunk) =>
+              Effect.sync(() => {
+                stderrChunks.push(chunk);
+              }),
+            ).pipe(
+              Effect.mapError(
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: "failed to inspect local Postgres container.",
+                  }),
+              ),
+            );
+            const inspectExit = yield* child.exitCode.pipe(
+              Effect.map(Number),
+              Effect.mapError(
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: "failed to inspect local Postgres container.",
+                  }),
+              ),
+            );
+            const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
+              const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
+              const bytes = new Uint8Array(total);
+              let offset = 0;
+              for (const chunk of chunks) {
+                bytes.set(chunk, offset);
+                offset += chunk.length;
+              }
+              return new TextDecoder().decode(bytes).trim();
+            };
+            const stderr = decodeChunks(stderrChunks);
+            const stdout = decodeChunks(stdoutChunks);
+            if (inspectExit !== 0) {
+              if (legacyIsMissingContainerInspectError(stderr)) return;
+              return yield* Effect.fail(
+                new LegacyDeclarativeShadowDbError({
+                  message:
+                    stderr.length > 0
+                      ? `failed to inspect local Postgres container: ${stderr}`
+                      : "failed to inspect local Postgres container.",
+                }),
+              );
+            }
+            const actual = legacyResolveContainerInspectImageName(stdout);
+            const expected = legacyGetRegistryImageUrl(image).trim();
+            const actualTag = dockerImageTag(actual);
+            const expectedTag = dockerImageTag(expected);
+            if (actualTag.length === 0 || expectedTag.length === 0 || actualTag === expectedTag) {
+              return;
+            }
+            return yield* Effect.fail(
+              new LegacyDeclarativeShadowDbError({
+                message: `local Postgres container image is stale: running ${actual} but expected ${expected}. Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas.`,
+              }),
+            );
+          }),
+        ),
       provisionShadow: ({ mode, targetLocal, usePgDelta, schema, projectRef }) =>
         Effect.scoped(
           Effect.gen(function* () {
@@ -398,3 +510,39 @@ const failure = (exitCode?: number) =>
         ? "failed to provision the shadow database."
         : `failed to provision the shadow database: exit ${exitCode}`,
   });
+
+function dockerImageTag(image: string): string {
+  const trimmed = image.trim();
+  const index = trimmed.lastIndexOf(":");
+  if (index < 0 || index === trimmed.length - 1) return "";
+  return trimmed.slice(index + 1);
+}
+
+export function legacyIsMissingContainerInspectError(stderr: string): boolean {
+  return stderr.toLowerCase().includes("no such container");
+}
+
+export function legacyResolveContainerInspectImageName(stdout: string): string {
+  const trimmed = stdout.trim();
+  if (trimmed.length === 0) return "";
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return trimmed;
+  }
+  const inspect = Array.isArray(parsed) ? parsed[0] : parsed;
+  if (!isJsonRecord(inspect)) return "";
+  const imageName = inspect["ImageName"];
+  if (typeof imageName === "string" && imageName.trim().length > 0) {
+    return imageName.trim();
+  }
+  const config = inspect["Config"];
+  if (!isJsonRecord(config)) return "";
+  const configImage = config["Image"];
+  return typeof configImage === "string" && configImage.trim().length > 0 ? configImage.trim() : "";
+}
+
+function isJsonRecord(value: unknown): value is { readonly [key: string]: unknown } {
+  return typeof value === "object" && value !== null;
+}

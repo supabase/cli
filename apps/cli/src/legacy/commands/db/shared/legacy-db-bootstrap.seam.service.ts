@@ -43,12 +43,14 @@ interface LegacyDbBootstrapSeamShape {
    * caller has already printed `Resetting local database…`; the seam tees the
    * remaining progress (`Recreating database...`, `Restarting containers...`) to
    * stderr. `version` is the resolved migration version ("" for all migrations);
-   * `noSeed` disables the seed inside the recreate's MigrateAndSeed, mirroring the
-   * `db reset --no-seed` handling (`cmd/db.go` `dbResetCmd`).
+   * `noSeed` disables the seed and `sqlPaths` overrides `[db.seed].sql_paths`
+   * inside the recreate's MigrateAndSeed, mirroring the `db reset`
+   * `--no-seed` / `--sql-paths` handling (`cmd/db.go` `dbResetCmd`).
    */
   readonly recreateDatabase: (opts: {
     readonly version: string;
     readonly noSeed: boolean;
+    readonly sqlPaths: ReadonlyArray<string>;
   }) => Effect.Effect<void, LegacyDbBootstrapError>;
   /**
    * The storage health gate local `db reset` runs before seeding buckets

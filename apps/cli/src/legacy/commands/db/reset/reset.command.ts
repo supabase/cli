@@ -6,6 +6,8 @@ import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-comm
 import { legacyDbReset } from "./reset.handler.ts";
 import { legacyDbResetRuntimeLayer } from "./reset.layers.ts";
 
+const noSqlPaths: ReadonlyArray<string> = [];
+
 const config = {
   dbUrl: Flag.string("db-url").pipe(
     Flag.withDescription(
@@ -21,6 +23,13 @@ const config = {
   ),
   noSeed: Flag.boolean("no-seed").pipe(
     Flag.withDescription("Skip running the seed script after reset."),
+  ),
+  sqlPaths: Flag.string("sql-paths").pipe(
+    Flag.atLeast(0),
+    Flag.withDescription(
+      "Override [db.seed].sql_paths for this reset. May be repeated; each value accepts a SQL file path or glob pattern relative to the supabase directory and force-enables seeding.",
+    ),
+    Flag.withDefault(noSqlPaths),
   ),
   version: Flag.string("version").pipe(
     Flag.withDescription("Reset up to the specified version."),

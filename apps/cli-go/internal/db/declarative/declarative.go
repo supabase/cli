@@ -363,8 +363,8 @@ func getGenerateBaselineCatalogRef(ctx context.Context, noCache bool, fsys afero
 // getMigrationsCatalogRef returns a catalog reference representing local
 // migrations applied to a shadow database.
 //
-// A migration-content hash keys the cache so it is reused only when local
-// migration state is unchanged.
+// A migration-content hash plus setup-input token keys the cache so it is reused
+// only when both local migration state and platform baseline inputs are unchanged.
 func getMigrationsCatalogRef(ctx context.Context, noCache bool, fsys afero.Fs, prefix string, options ...func(*pgx.ConnConfig)) (string, error) {
 	migrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
@@ -390,7 +390,7 @@ func getMigrationsCatalogRef(ctx context.Context, noCache bool, fsys afero.Fs, p
 			}
 		}
 	}
-	hash, err := pgcache.HashMigrations(fsys)
+	hash, err := migrationsCatalogCacheKey(fsys)
 	if err != nil {
 		return "", err
 	}
@@ -760,6 +760,18 @@ func declarativeCatalogCacheKey(fsys afero.Fs) (string, error) {
 		return "", err
 	}
 	return setup + "-" + schemaHash, nil
+}
+
+func migrationsCatalogCacheKey(fsys afero.Fs) (string, error) {
+	migrationsHash, err := hashMigrations(fsys)
+	if err != nil {
+		return "", err
+	}
+	setup, err := setupInputsToken(fsys)
+	if err != nil {
+		return "", err
+	}
+	return setup + "-" + migrationsHash, nil
 }
 
 func sanitizedCatalogPrefix(prefix string) string {

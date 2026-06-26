@@ -14,7 +14,7 @@ import {
 import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { legacyAqua } from "../../../shared/legacy-colors.ts";
+import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
@@ -37,6 +37,7 @@ import {
   LegacyDbResetInvalidVersionError,
   LegacyDbResetMigrationFileError,
   LegacyDbResetNotRunningError,
+  LegacyDbResetSeedFlagsError,
   LegacyDbResetTargetFlagsError,
   LegacyDbResetVersionFlagsError,
 } from "./reset.errors.ts";
@@ -65,6 +66,7 @@ const buildResetArgs = (flags: LegacyDbResetFlags): Array<string> => {
   if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
   if (flags.linked) args.push("--linked");
   if (flags.noSeed) args.push("--no-seed");
+  for (const p of flags.sqlPaths) args.push("--sql-paths", p);
   return args;
 };
 
@@ -113,6 +115,33 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
           message:
             "if any flags in the group [last version] are set none of the others can be; [last version] were all set",
         }),
+      );
+    }
+
+    // Go's validateDbResetSeedFlags (PreRunE): `--no-seed` conflicts with
+    // `--sql-paths`, and each `--sql-paths` value must be non-empty.
+    if (flags.noSeed && flags.sqlPaths.length > 0) {
+      return yield* Effect.fail(
+        new LegacyDbResetSeedFlagsError({
+          message: "--no-seed cannot be used with --sql-paths",
+        }),
+      );
+    }
+    if (flags.sqlPaths.some((p) => p.length === 0)) {
+      return yield* Effect.fail(
+        new LegacyDbResetSeedFlagsError({
+          message: "--sql-paths requires a non-empty path or glob pattern",
+        }),
+      );
+    }
+    // Go's warnRemoteResetSeedOverride (PreRunE): a remote target flag + --sql-paths.
+    if (
+      flags.sqlPaths.length > 0 &&
+      (target.setFlags.includes("linked") || target.setFlags.includes("db-url"))
+    ) {
+      yield* output.raw(
+        `${legacyYellow("WARNING:")} --sql-paths overrides [db.seed].sql_paths and seeds the remote database selected by --linked or --db-url.\n`,
+        "stderr",
       );
     }
 
@@ -167,7 +196,11 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       }
       // resetDatabase: "Resetting local database…" then recreate + migrate + seed.
       yield* output.raw(`Resetting local database${toLogMessage(resolvedVersion)}\n`, "stderr");
-      yield* seam.recreateDatabase({ version: resolvedVersion, noSeed: flags.noSeed });
+      yield* seam.recreateDatabase({
+        version: resolvedVersion,
+        noSeed: flags.noSeed,
+        sqlPaths: flags.sqlPaths,
+      });
 
       // Seed objects from supabase/buckets when storage is up (Go gates buckets on
       // an existing, healthy storage container). Reuses the ported seed-buckets
@@ -250,15 +283,15 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
           yield* legacyApplyMigrations(session, fs, path, pending, applyError);
         }
 
-        // `--no-seed` forces seed disabled (Go sets Config.Db.Seed.Enabled=false).
-        if (config.db.seed.enabled && !flags.noSeed) {
-          const seeds = yield* legacyGetPendingSeeds(
-            session,
-            fs,
-            path,
-            config.db.seed.sql_paths,
-            workdir,
-          );
+        // `--no-seed` disables seeding; `--sql-paths` overrides [db.seed].sql_paths
+        // and force-enables it (Go's applyDbResetSeedFlags). The two are mutually
+        // exclusive (validated above). `--sql-paths` values are supabase-relative,
+        // the same convention `legacyGetPendingSeeds` resolves.
+        const overrideSeed = flags.sqlPaths.length > 0;
+        const seedEnabled = overrideSeed || (config.db.seed.enabled && !flags.noSeed);
+        if (seedEnabled) {
+          const seedPaths = overrideSeed ? flags.sqlPaths : config.db.seed.sql_paths;
+          const seeds = yield* legacyGetPendingSeeds(session, fs, path, seedPaths, workdir);
           yield* legacySeedData(session, fs, workdir, path, seeds, applyError);
         }
         // Go's best-effort pgcache catalog warning is not ported (no output impact).

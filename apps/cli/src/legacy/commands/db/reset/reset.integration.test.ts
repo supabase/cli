@@ -57,6 +57,7 @@ const DEFAULT_FLAGS: LegacyDbResetFlags = {
   linked: false,
   local: false,
   noSeed: false,
+  sqlPaths: [],
   version: Option.none(),
   last: Option.none(),
 };
@@ -125,12 +126,20 @@ function mockConnection(opts: { remoteSeeds?: Readonly<Record<string, string>> }
  * the recreate args so tests can assert version / `--no-seed` propagation.
  */
 function mockBootstrapSeam(opts: { running?: boolean; storageReady?: boolean }) {
-  const recreateCalls: Array<{ version: string; noSeed: boolean }> = [];
+  const recreateCalls: Array<{
+    version: string;
+    noSeed: boolean;
+    sqlPaths: ReadonlyArray<string>;
+  }> = [];
   let storageChecked = false;
   const layer = Layer.succeed(LegacyDbBootstrapSeam, {
     isDbRunning: () => Effect.succeed(opts.running ?? true),
     startDatabase: () => Effect.void,
-    recreateDatabase: (args: { version: string; noSeed: boolean }) =>
+    recreateDatabase: (args: {
+      version: string;
+      noSeed: boolean;
+      sqlPaths: ReadonlyArray<string>;
+    }) =>
       Effect.sync(() => {
         recreateCalls.push(args);
       }),
@@ -262,7 +271,7 @@ describe("legacy db reset", () => {
       // Native path — no Go delegation.
       expect(proxy.calls).toHaveLength(0);
       expect(out.stderrText).toContain("Resetting local database...");
-      expect(seam.recreateCalls).toEqual([{ version: "", noSeed: false }]);
+      expect(seam.recreateCalls).toEqual([{ version: "", noSeed: false, sqlPaths: [] }]);
       // Storage gate checked; with no buckets configured nothing is seeded.
       expect(seam.storageChecked).toBe(true);
       expect(out.stderrText).toContain("Finished ");
@@ -564,7 +573,9 @@ describe("legacy db reset", () => {
         noSeed: true,
         last: Option.some(1),
       }).pipe(Effect.provide(layer));
-      expect(seam.recreateCalls).toEqual([{ version: "20240101000000", noSeed: true }]);
+      expect(seam.recreateCalls).toEqual([
+        { version: "20240101000000", noSeed: true, sqlPaths: [] },
+      ]);
     });
   });
 
@@ -583,7 +594,9 @@ describe("legacy db reset", () => {
         version: Option.some("20240101000000"),
       }).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Resetting local database to version: 20240101000000");
-      expect(seam.recreateCalls).toEqual([{ version: "20240101000000", noSeed: false }]);
+      expect(seam.recreateCalls).toEqual([
+        { version: "20240101000000", noSeed: false, sqlPaths: [] },
+      ]);
     });
   });
 
@@ -665,6 +678,100 @@ describe("legacy db reset", () => {
       // default-false prompt in non-text mode declines → context canceled.
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out).toBeDefined();
+    });
+  });
+
+  it.live("rejects --no-seed together with --sql-paths", () => {
+    const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset({
+        ...DEFAULT_FLAGS,
+        linked: true,
+        noSeed: true,
+        sqlPaths: ["seed.sql"],
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
+      }
+    });
+  });
+
+  it.live("rejects an empty --sql-paths value", () => {
+    const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset({
+        ...DEFAULT_FLAGS,
+        linked: true,
+        sqlPaths: [""],
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "--sql-paths requires a non-empty path or glob pattern",
+        );
+      }
+    });
+  });
+
+  it.live("warns and seeds from --sql-paths overriding config on a remote reset", () => {
+    const { layer, out } = setup(tmp.current, {
+      // Seed disabled in config — --sql-paths must force-enable it.
+      toml: 'project_id = "test"\n\n[db.seed]\nenabled = false\n',
+      files: {
+        ...migrationFile("20240101000000"),
+        "supabase/custom-seed.sql": "insert into t values (2);",
+      },
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({
+        ...DEFAULT_FLAGS,
+        linked: true,
+        sqlPaths: ["custom-seed.sql"],
+      }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("--sql-paths overrides [db.seed].sql_paths");
+      expect(out.stderrText).toContain("Seeding data from supabase/custom-seed.sql...");
+    });
+  });
+
+  it.live("forwards --sql-paths to the recreate seam on a local reset", () => {
+    const { layer, seam } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      args: ["db", "reset", "--local"],
+      isLocal: true,
+      running: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({
+        ...DEFAULT_FLAGS,
+        local: true,
+        sqlPaths: ["custom-seed.sql", "demo/*.sql"],
+      }).pipe(Effect.provide(layer));
+      expect(seam.recreateCalls).toEqual([
+        { version: "", noSeed: false, sqlPaths: ["custom-seed.sql", "demo/*.sql"] },
+      ]);
+    });
+  });
+
+  it.live("forwards --sql-paths to the Go binary on an experimental remote reset", () => {
+    const { layer, proxy } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      experimental: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({
+        ...DEFAULT_FLAGS,
+        linked: true,
+        sqlPaths: ["custom-seed.sql"],
+      }).pipe(Effect.provide(layer));
+      expect(proxy.calls[0]!.args).toEqual([
+        "db",
+        "reset",
+        "--linked",
+        "--sql-paths",
+        "custom-seed.sql",
+      ]);
     });
   });
 });

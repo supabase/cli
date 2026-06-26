@@ -120,6 +120,46 @@ func TestStartCommand(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+
+	t.Run("show status without health check if database is already running and ignored", func(t *testing.T) {
+		var running []container.Summary
+		for _, name := range utils.GetDockerIds() {
+			running = append(running, container.Summary{
+				Names: []string{name + "_test"},
+			})
+		}
+		// Setup in-memory fs
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{})
+
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/supabase_db_start/json").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
+					Running: true,
+					Health: &container.Health{
+						Status: types.Unhealthy,
+					},
+				},
+			}})
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/json").
+			Reply(http.StatusOK).
+			JSON(running)
+		// Run test
+		err := Run(context.Background(), fsys, []string{}, true)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
 }
 
 func TestDatabaseStart(t *testing.T) {

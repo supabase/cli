@@ -11,15 +11,15 @@ primitives run behind the hidden Go `db __db-bootstrap` seam. Only the niche
 
 ## Files Read
 
-| Path                                  | Format     | When                                                                     |
-| ------------------------------------- | ---------- | ------------------------------------------------------------------------ |
-| `<workdir>/supabase/migrations/`      | directory  | to validate `--version` / resolve `--last`, and to load migrations       |
-| `<workdir>/supabase/config.toml`      | TOML       | remote path + local bucket seeding (embedded defaults when absent)       |
-| `<workdir>/.git/HEAD` (walked upward) | plain text | local path, for the `Finished … on branch <branch>.` line                |
-| `~/.supabase/<hash>/project-ref`      | plain text | `--linked`, to resolve the ref                                           |
-| `~/.supabase/access-token`            | plain text | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted |
-| seed files from `[db.seed].sql_paths` | SQL        | remote path, when `[db.seed].enabled` and not `--no-seed`                |
-| `<workdir>/supabase/buckets/`         | files      | local path, when storage is up and `[storage.buckets]` configure objects |
+| Path                                                   | Format     | When                                                                      |
+| ------------------------------------------------------ | ---------- | ------------------------------------------------------------------------- |
+| `<workdir>/supabase/migrations/`                       | directory  | to validate `--version` / resolve `--last`, and to load migrations        |
+| `<workdir>/supabase/config.toml`                       | TOML       | remote path + local bucket seeding (embedded defaults when absent)        |
+| `<workdir>/.git/HEAD` (walked upward)                  | plain text | local path, for the `Finished … on branch <branch>.` line                 |
+| `~/.supabase/<hash>/project-ref`                       | plain text | `--linked`, to resolve the ref                                            |
+| `~/.supabase/access-token`                             | plain text | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted  |
+| seed files from `--sql-paths` or `[db.seed].sql_paths` | SQL        | when seeding is enabled (not `--no-seed`); `--sql-paths` overrides config |
+| `<workdir>/supabase/buckets/`                          | files      | local path, when storage is up and `[storage.buckets]` configure objects  |
 
 ## Files Written
 
@@ -130,8 +130,14 @@ path has no confirmation prompt.
   flag name: a `--db-url` pointing at the local stack is treated as a local reset.
 - `--no-seed` forces seeding off (Go sets `Config.Db.Seed.Enabled = false`); on the
   local path it is forwarded to the recreate seam so `MigrateAndSeed` skips the seed.
+- `--sql-paths` overrides `[db.seed].sql_paths` for one reset and force-enables seeding
+  even when `[db.seed].enabled = false`; repeat it to seed multiple files or glob
+  patterns (supabase-relative). Mutually exclusive with `--no-seed`. On the local path
+  it is forwarded to the recreate seam; on the remote path it seeds the selected
+  database after migrations (Go warns when paired with `--linked` / `--db-url`).
 - `--last n` reverts the most recent `n` migrations; if `n ≥ total`, the reset target
-  version becomes `-` (revert everything).
+  version becomes `-` (revert everything). Mutually exclusive with `--version`.
+- `--db-url`, `--linked`, and `--local` (default true) are mutually exclusive.
 - **Known interim**: only `--experimental` remote resets run via the Go binary; the
   best-effort pg-delta catalog cache (inside the seam) is not surfaced (no output
   impact). `encrypted:` vault secrets are skipped on the remote path.
