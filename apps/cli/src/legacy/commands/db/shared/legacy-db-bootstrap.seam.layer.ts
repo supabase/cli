@@ -2,7 +2,11 @@ import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import { LegacyNetworkIdFlag, LegacyProfileFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyNetworkIdFlag,
+  LegacyProfileFlag,
+  legacyResolveExperimental,
+} from "../../../../shared/legacy/global-flags.ts";
 import { resolveBinary } from "../../../../shared/legacy/go-proxy.layer.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
@@ -43,6 +47,11 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
     const profile = yield* LegacyProfileFlag;
     const profileArgs = profile !== "supabase" ? ["--profile", profile] : [];
     const networkArgs = Option.isSome(networkId) ? ["--network-id", networkId.value] : [];
+    // Forward `--experimental` (env-aware) so the seam's `SetupLocalDatabase` /
+    // `apply.MigrateAndSeed` takes Go's experimental schema-file path on a
+    // versionless reset/start, matching `viper.GetBool("EXPERIMENTAL")`.
+    const experimental = yield* legacyResolveExperimental;
+    const experimentalArgs = experimental ? ["--experimental"] : [];
     const spawner = yield* ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -63,7 +72,14 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
               ),
             );
           }
-          const args = ["db", "__db-bootstrap", ...modeArgs, ...networkArgs, ...profileArgs];
+          const args = [
+            "db",
+            "__db-bootstrap",
+            ...modeArgs,
+            ...networkArgs,
+            ...profileArgs,
+            ...experimentalArgs,
+          ];
           const command = ChildProcess.make(resolved.found, args, {
             cwd: cliConfig.workdir,
             stdin: "inherit",

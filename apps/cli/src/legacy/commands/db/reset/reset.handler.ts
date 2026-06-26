@@ -7,11 +7,11 @@ import { Effect, FileSystem, Option, Path, Schema } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
+import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
-  LegacyDnsResolverFlag,
-  LegacyExperimentalFlag,
+  legacyResolveExperimental,
+  legacyResolveYes,
 } from "../../../../shared/legacy/global-flags.ts";
-import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
@@ -35,6 +35,7 @@ import {
   LegacyDbResetCancelledError,
   LegacyDbResetConfigLoadError,
   LegacyDbResetInvalidVersionError,
+  LegacyDbResetLastFlagError,
   LegacyDbResetMigrationFileError,
   LegacyDbResetNotRunningError,
   LegacyDbResetSeedFlagsError,
@@ -91,7 +92,9 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
   const path = yield* Path.Path;
   const cliArgs = yield* CliArgs;
   const dnsResolver = yield* LegacyDnsResolverFlag;
-  const experimental = yield* LegacyExperimentalFlag;
+  // Env-aware (honors `SUPABASE_EXPERIMENTAL`, not just `--experimental`), matching
+  // Go's `viper.GetBool("EXPERIMENTAL")`.
+  const experimental = yield* legacyResolveExperimental;
   const yes = yield* legacyResolveYes;
 
   const workdir = cliConfig.workdir;
@@ -105,6 +108,16 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       return yield* Effect.fail(
         new LegacyDbResetTargetFlagsError({
           message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+        }),
+      );
+    }
+    // Go declares `--last` as `UintVar`, so cobra rejects a negative at parse time
+    // (`Flag.integer` here accepts it). Reject it the same way rather than silently
+    // treating it as "no --last" and resetting the full history.
+    if (Option.isSome(flags.last) && flags.last.value < 0) {
+      return yield* Effect.fail(
+        new LegacyDbResetLastFlagError({
+          message: `invalid argument "${flags.last.value}" for "--last" flag: strconv.ParseUint: parsing "${flags.last.value}": invalid syntax`,
         }),
       );
     }
@@ -207,7 +220,9 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       // local path; its summary is suppressed (reset emits its own result).
       const storageReady = yield* seam.awaitStorageReady();
       if (storageReady) {
-        yield* legacySeedBucketsRun({ projectRef: "", emitSummary: false });
+        // Go's `buckets.Run(ctx, "", false, fsys)` — non-interactive: overwrite/prune
+        // confirmations take their defaults instead of blocking on input.
+        yield* legacySeedBucketsRun({ projectRef: "", emitSummary: false, interactive: false });
       }
 
       // "Finished supabase db reset on branch <branch>." (both Aqua).
@@ -225,15 +240,19 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       return;
     }
 
+    // Resolve the linked ref before any return so the post-run cache (Go's
+    // `PersistentPostRun` `ensureProjectGroupsCached`) is written even on the
+    // delegated `--experimental` path below — the Go child runs with telemetry
+    // disabled and skips that cache, so the TS finalizer must own it.
+    const linkedRef = Option.getOrUndefined(cfg.ref ?? Option.none());
+    if (connType === "linked" && linkedRef !== undefined) linkedRefForCache = linkedRef;
+
     // Remote path. The niche `--experimental` schema-files apply path
     // (`apply.MigrateAndSeed`) is not ported; delegate it too.
     if (experimental && resolvedVersion === "") {
       yield* proxy.exec(buildResetArgs(flags), { env: { SUPABASE_TELEMETRY_DISABLED: "1" } });
       return;
     }
-
-    const linkedRef = Option.getOrUndefined(cfg.ref ?? Option.none());
-    if (connType === "linked" && linkedRef !== undefined) linkedRefForCache = linkedRef;
 
     const loadOptions: LoadProjectConfigOptions | undefined =
       connType === "linked" && linkedRef !== undefined ? { projectRef: linkedRef } : undefined;

@@ -136,6 +136,13 @@ const legacyDecodeDefaultProjectConfig = Schema.decodeUnknownSync(ProjectConfigS
 export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   readonly projectRef: string;
   readonly emitSummary: boolean;
+  /**
+   * Whether overwrite/prune confirmations may prompt. `db reset` reuses this core
+   * with `interactive: false` so it never blocks on input — Go forces it via
+   * `buckets.Run(ctx, "", false, fsys)` (`internal/db/reset/reset.go:71`).
+   * Defaults to `true` for the `seed buckets` command.
+   */
+  readonly interactive?: boolean;
 }) {
   const output = yield* Output;
   const cliConfig = yield* LegacyCliConfig;
@@ -144,6 +151,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
   const yes = yield* legacyResolveYes;
   const { projectRef, emitSummary } = opts;
+  const interactive = opts.interactive ?? true;
 
   {
     // 2. Load config.toml, passing projectRef so `[remotes.*]` overrides are
@@ -226,7 +234,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
       const summary = emptySummary();
 
       // 5. Upsert configured buckets.
-      yield* upsertBuckets(output, yes, gateway, bucketPropsByName, summary);
+      yield* upsertBuckets(output, yes, interactive, gateway, bucketPropsByName, summary);
 
       // 6. Upsert analytics buckets (remote --linked only).
       if (config.storage.analytics.enabled && projectRef !== "") {
@@ -234,6 +242,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
         yield* upsertAnalyticsBuckets(
           output,
           yes,
+          interactive,
           gateway,
           Object.keys(config.storage.analytics.buckets),
           summary,
@@ -243,9 +252,14 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
       // 7. Upsert vector buckets (local), with graceful skip on unavailability.
       if (vectorEnabled && hasVectorBuckets) {
         yield* output.raw("Updating vector buckets...\n", "stderr");
-        yield* upsertVectorBuckets(output, yes, gateway, vectorBucketNames, summary).pipe(
-          Effect.catch((error) => handleVectorError(output, error, summary)),
-        );
+        yield* upsertVectorBuckets(
+          output,
+          yes,
+          interactive,
+          gateway,
+          vectorBucketNames,
+          summary,
+        ).pipe(Effect.catch((error) => handleVectorError(output, error, summary)));
       }
 
       // 8. Upload objects for each bucket with a configured objects_path.
@@ -348,6 +362,7 @@ const computeBucketProps = (
 const upsertBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
   yes: boolean,
+  interactive: boolean,
   gateway: LegacyStorageGateway,
   propsByName: ReadonlyMap<string, LegacyUpsertBucketProps>,
   summary: SeedSummary,
@@ -363,6 +378,7 @@ const upsertBuckets = Effect.fnUntraced(function* (
         yes,
         `Bucket ${legacyBold(bucketId)} already exists. Do you want to overwrite its properties?`,
         true,
+        interactive,
       );
       if (!overwrite) {
         summary.buckets_skipped.push(bucketId);
@@ -383,6 +399,7 @@ const upsertBuckets = Effect.fnUntraced(function* (
 const upsertVectorBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
   yes: boolean,
+  interactive: boolean,
   gateway: LegacyStorageGateway,
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
@@ -408,6 +425,7 @@ const upsertVectorBuckets = Effect.fnUntraced(function* (
       yes,
       `Bucket ${legacyBold(name)} not found in ${legacyBold(CONFIG_PATH)}. Do you want to prune it?`,
       false,
+      interactive,
     );
     if (!prune) {
       continue;
@@ -422,6 +440,7 @@ const upsertVectorBuckets = Effect.fnUntraced(function* (
 const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
   output: typeof Output.Service,
   yes: boolean,
+  interactive: boolean,
   gateway: LegacyStorageGateway,
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
@@ -447,6 +466,7 @@ const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
       yes,
       `Bucket ${legacyBold(name)} not found in ${legacyBold(CONFIG_PATH)}. Do you want to prune it?`,
       false,
+      interactive,
     );
     if (!prune) {
       continue;

@@ -54,6 +54,7 @@ export const legacyDbResetCommand = Command.make("reset", config).pipe(
           linked: flags.linked,
           local: flags.local,
           "no-seed": flags.noSeed,
+          "sql-paths": flags.sqlPaths,
           version: flags.version,
           last: flags.last,
         },

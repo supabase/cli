@@ -70,6 +70,15 @@ export class LegacyDbResetNotRunningError extends Data.TaggedError("LegacyDbRese
 }> {}
 
 /**
+ * `--last` was given a negative value. Go declares `--last` as an unsigned flag
+ * (`UintVar`, `cmd/db.go`), so cobra rejects a negative at parse time. Byte-matches
+ * cobra's parse error for `strconv.ParseUint`.
+ */
+export class LegacyDbResetLastFlagError extends Data.TaggedError("LegacyDbResetLastFlagError")<{
+  readonly message: string;
+}> {}
+
+/**
  * Invalid `--sql-paths` usage. Byte-matches Go's `validateDbResetSeedFlags`
  * (`cmd/db.go`): `"--no-seed cannot be used with --sql-paths"` and
  * `"--sql-paths requires a non-empty path or glob pattern"`.

@@ -48,6 +48,7 @@ export interface LegacyDbTargetSelection {
 export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   // db-family command flags
   "db-url",
+  "sql-paths",
   "schema",
   "level",
   "fail-on",

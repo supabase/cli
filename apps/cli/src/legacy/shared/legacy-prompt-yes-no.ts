@@ -8,6 +8,9 @@ import { Output } from "../../shared/output/output.service.ts";
  * `storage rm`:
  *  - when `yes` is set, echoes `<label> [Y/n|y/N] y` and returns true even on a
  *    TTY (Go auto-confirms with the affirmative echo);
+ *  - when `interactive` is false, uses the default silently — mirrors Go callers
+ *    that force `console.IsTTY = false` (e.g. `buckets.Run(ctx, "", false, fsys)`
+ *    during `db reset`), so no prompt blocks a non-interactive flow;
  *  - a real TTY in text mode otherwise prompts with the given default;
  *  - everything else (non-interactive, json/stream-json) uses the default
  *    silently.
@@ -20,11 +23,16 @@ export const legacyPromptYesNo = Effect.fnUntraced(function* (
   yes: boolean,
   label: string,
   defaultValue: boolean,
+  interactive = true,
 ) {
   if (yes) {
     const choices = defaultValue ? "Y/n" : "y/N";
     yield* output.raw(`${label} [${choices}] y\n`, "stderr");
     return true;
+  }
+  // Go's `console.IsTTY = false` path: never prompt, take the default.
+  if (!interactive) {
+    return defaultValue;
   }
   if (output.format !== "text") {
     return defaultValue;

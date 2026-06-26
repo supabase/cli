@@ -714,6 +714,42 @@ describe("legacy db reset", () => {
     });
   });
 
+  it.live("rejects a negative --last value", () => {
+    const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset({
+        ...DEFAULT_FLAGS,
+        linked: true,
+        last: Option.some(-1),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const cause = JSON.stringify(exit.cause);
+        expect(cause).toContain("invalid argument");
+        expect(cause).toContain("strconv.ParseUint");
+      }
+    });
+  });
+
+  it.live("seeds an absolute --sql-paths file on a remote reset", () => {
+    const absSeed = join(tmp.current, "external-seed.sql");
+    writeFileSync(absSeed, "insert into t values (3);");
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({
+        ...DEFAULT_FLAGS,
+        linked: true,
+        sqlPaths: [absSeed],
+      }).pipe(Effect.provide(layer));
+      // Absolute paths are preserved (not prefixed with supabase/) and seeded.
+      expect(out.stderrText).toContain(`Seeding data from ${absSeed}...`);
+    });
+  });
+
   it.live("warns and seeds from --sql-paths overriding config on a remote reset", () => {
     const { layer, out } = setup(tmp.current, {
       // Seed disabled in config — --sql-paths must force-enable it.

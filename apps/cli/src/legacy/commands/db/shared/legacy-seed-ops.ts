@@ -9,6 +9,7 @@ import { legacySplitAndTrim } from "../../../shared/legacy-sql-split.ts";
 /**
  * Seed-history DDL/DML, verbatim from Go's `pkg/migration/history.go`.
  */
+const CREATE_VERSION_SCHEMA = "CREATE SCHEMA IF NOT EXISTS supabase_migrations";
 const CREATE_SEED_TABLE =
   "CREATE TABLE IF NOT EXISTS supabase_migrations.seed_files (path text NOT NULL PRIMARY KEY, hash text NOT NULL)";
 const UPSERT_SEED_FILE =
@@ -122,8 +123,11 @@ const legacyGlobSeedFiles = Effect.fnUntraced(function* (
   const errors: Array<string> = [];
 
   for (const rawPattern of patterns) {
-    // Go joins each configured pattern under SupabaseDirPath before globbing.
-    const pattern = toSlash(path.join("supabase", rawPattern));
+    // Go joins each *relative* pattern under SupabaseDirPath before globbing but
+    // preserves absolute paths as-is (config.go / resolveSeedSqlPaths).
+    const pattern = path.isAbsolute(rawPattern)
+      ? toSlash(rawPattern)
+      : toSlash(path.join("supabase", rawPattern));
     const matches = yield* globOne(fs, path, workdir, pattern);
     if (matches.length === 0) {
       errors.push(`no files matched pattern: ${pattern}`);
@@ -160,11 +164,12 @@ const globOne = (
   pattern: string,
 ): Effect.Effect<ReadonlyArray<string>, never> =>
   Effect.gen(function* () {
+    // Absolute patterns resolve against the filesystem root (Go preserves absolute
+    // seed paths); relative ones are rooted at the workdir.
+    const resolve = (p: string): string => (path.isAbsolute(p) ? p : path.join(workdir, p));
     // No metacharacters: a direct existence check (Go's `fs.Glob` fast path).
     if (!META_CHARS.test(pattern)) {
-      const exists = yield* fs
-        .exists(path.join(workdir, pattern))
-        .pipe(Effect.orElseSucceed(() => false));
+      const exists = yield* fs.exists(resolve(pattern)).pipe(Effect.orElseSucceed(() => false));
       return exists ? [pattern] : [];
     }
     const { dir, file } = splitPath(pattern);
@@ -173,7 +178,7 @@ const globOne = (
       dir === "" || !META_CHARS.test(dir) ? [dir] : yield* globOne(fs, path, workdir, dir);
     const result: Array<string> = [];
     for (const d of dirs) {
-      const absDir = d === "" ? workdir : path.join(workdir, d);
+      const absDir = d === "" ? workdir : resolve(d);
       const names = yield* fs
         .readDirectory(absDir)
         .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
@@ -229,7 +234,9 @@ export const legacyGetPendingSeeds = Effect.fnUntraced(function* (
   const applied = yield* readRemoteSeeds(session);
   const pending: Array<LegacySeedFile> = [];
   for (const file of files) {
-    const content = yield* fs.readFileString(path.join(workdir, file));
+    const content = yield* fs.readFileString(
+      path.isAbsolute(file) ? file : path.join(workdir, file),
+    );
     const hash = createHash("sha256").update(content).digest("hex");
     const appliedHash = applied.get(file);
     if (appliedHash !== undefined) {
@@ -260,6 +267,9 @@ export const legacySeedData = <E>(
   Effect.gen(function* () {
     const output = yield* Output;
     if (seeds.length === 0) return;
+    // Go's `CreateSeedTable` (history.go:54-60) creates the schema first, so a
+    // seed-only run (no prior migrations) doesn't fail on a missing schema.
+    yield* session.exec(CREATE_VERSION_SCHEMA);
     yield* session.exec(CREATE_SEED_TABLE);
     for (const seed of seeds) {
       yield* output.raw(
@@ -270,7 +280,11 @@ export const legacySeedData = <E>(
       );
       const statements = seed.dirty
         ? []
-        : legacySplitAndTrim(yield* fs.readFileString(path.join(workdir, seed.path)));
+        : legacySplitAndTrim(
+            yield* fs.readFileString(
+              path.isAbsolute(seed.path) ? seed.path : path.join(workdir, seed.path),
+            ),
+          );
       yield* session.exec("BEGIN");
       const body = Effect.gen(function* () {
         for (const statement of statements) yield* session.exec(statement);
