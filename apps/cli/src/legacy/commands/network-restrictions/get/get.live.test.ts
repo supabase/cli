@@ -49,18 +49,20 @@ describeLiveProject("supabase network-restrictions get (live)", () => {
   );
 });
 
-// Error path needing NO provisioned project: unknown --project-ref → 404.
+// Error path needing NO provisioned project: a valid token with an unknown
+// --project-ref must reach the live Management API and exit non-zero. The
+// handler formats non-200s as "failed to retrieve network restrictions;
+// received: <body>" without the HTTP status code, so we assert behavior rather
+// than a literal "404".
 describeLive("supabase network-restrictions get — unknown project (live)", () => {
-  test("fails with a 404 for an unknown project ref", { timeout: LIVE_TIMEOUT_MS }, async () => {
+  test("fails cleanly for an unknown project ref", { timeout: LIVE_TIMEOUT_MS }, async () => {
     const { exitCode, stdout, stderr } = await runSupabaseLive([
       "network-restrictions",
       "get",
       "--project-ref",
       "a".repeat(20),
     ]);
-    const out = `${stdout}${stderr}`;
     expect(exitCode).not.toBe(0);
-    expect(out).not.toContain("Unauthorized");
-    expect(out).toContain("404");
+    expect(`${stdout}${stderr}`).not.toContain("Unauthorized");
   });
 });
