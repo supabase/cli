@@ -186,8 +186,8 @@ interface LegacyRemoteOverride {
    * (`config.go:635-640`), and `v.Set` sits ABOVE `AutomaticEnv` (`viper.go:1167-1174` vs
    * `:1226-1237`), so each explicitly-set remote key — plus the forced `db.seed.enabled`
    * default Go injects when the block omits it — must outrank the matching `SUPABASE_*`
-   * env override (a plain TOML value elsewhere is still env-overridable). Holds the dotted
-   * keys we env-override: `db.migrations.enabled`, `db.seed.enabled`, `db.seed.sql_paths`.
+   * env override (a plain TOML value elsewhere is still env-overridable). Holds every key in
+   * `LEGACY_ENV_OVERRIDABLE_KEYS` the matched block supplies, plus `db.seed.enabled` (always).
    */
   readonly remoteOverrideKeys: ReadonlySet<string>;
 }
@@ -234,6 +234,37 @@ function legacyResolveValidatedRemoteProjectId(
   return typeof literal === "string" ? legacyExpandEnv(literal, lookup) : undefined;
 }
 
+/**
+ * Every dotted config key this reader resolves with a `SUPABASE_*` AutomaticEnv override.
+ * When a matched `[remotes.*]` block supplies any of these, Go's `mergeRemoteConfig` flattens
+ * the whole block via `u.AllKeys()` and applies each leaf with `v.Set` (override tier, above
+ * `AutomaticEnv` — `config.go:635-637`), so the block value must beat the env override.
+ */
+const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
+  "db.port",
+  "db.shadow_port",
+  "db.major_version",
+  "db.migrations.enabled",
+  "db.seed.enabled",
+  "db.seed.sql_paths",
+  "edge_runtime.deno_version",
+  "experimental.pgdelta.enabled",
+  "experimental.pgdelta.declarative_schema_path",
+  "experimental.pgdelta.format_options",
+  "api.auto_expose_new_tables",
+];
+
+/** Whether `block` provides a value at the dotted `key` path (scalar, array, or sub-table). */
+function legacyBlockProvidesKey(block: RawDoc, key: string): boolean {
+  let current: unknown = block;
+  for (const segment of key.split(".")) {
+    const record = asRecord(current);
+    if (record === undefined) return false;
+    current = record[segment];
+  }
+  return current !== undefined;
+}
+
 function applyRemoteOverride(
   doc: RawDoc | undefined,
   ref: string,
@@ -250,16 +281,15 @@ function applyRemoteOverride(
     // not (Go selects blocks before the decode hook expands it).
     if (legacyResolveRemoteProjectId(name, block, lookup) === ref) {
       const merged = deepMergeDoc(doc, block);
-      const blockDb = asRecord(block["db"]);
-      const blockMigrations = asRecord(blockDb?.["migrations"]);
-      const blockSeed = asRecord(blockDb?.["seed"]);
-      // Every key the matched block sets is applied via `v.Set` (override tier), beating
-      // its `SUPABASE_*` env var (`config.go:635-637`). Record the env-overridable keys
-      // the block explicitly provided so the resolution below suppresses their env value.
+      const blockSeed = asRecord(asRecord(block["db"])?.["seed"]);
+      // Go's `mergeRemoteConfig` flattens the WHOLE matched block via `u.AllKeys()` and applies
+      // every leaf with `v.Set` (override tier, above `AutomaticEnv` — `config.go:635-637`).
+      // Record every env-overridable key the block supplies — not just migrations/seed — so the
+      // resolution below suppresses their `SUPABASE_*` value.
       const remoteOverrideKeys = new Set<string>();
-      if (blockMigrations?.["enabled"] !== undefined)
-        remoteOverrideKeys.add("db.migrations.enabled");
-      if (blockSeed?.["sql_paths"] !== undefined) remoteOverrideKeys.add("db.seed.sql_paths");
+      for (const key of LEGACY_ENV_OVERRIDABLE_KEYS) {
+        if (legacyBlockProvidesKey(block, key)) remoteOverrideKeys.add(key);
+      }
       // `db.seed.enabled` is ALWAYS override-tier for a matched block: either the block set
       // it, or Go's `mergeRemoteConfig` forces it `false` when omitted (`config.go:638-640`)
       // — so env never overrides it on a matched-remote linked run.
@@ -781,9 +811,16 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // A present-but-unmarshalable port aborts in Go rather than defaulting; mirror
   // that so `test db --local` never silently targets the default local database
   // while hiding a broken `[db]` config.
-  const port = resolvePort(envOverride("SUPABASE_DB_PORT") ?? db?.["port"], DEFAULT_PORT, lookup);
+  const port = resolvePort(
+    (remoteOverrideKeys.has("db.port") ? undefined : envOverride("SUPABASE_DB_PORT")) ??
+      db?.["port"],
+    DEFAULT_PORT,
+    lookup,
+  );
   const shadowPort = resolvePort(
-    envOverride("SUPABASE_DB_SHADOW_PORT") ?? db?.["shadow_port"],
+    (remoteOverrideKeys.has("db.shadow_port")
+      ? undefined
+      : envOverride("SUPABASE_DB_SHADOW_PORT")) ?? db?.["shadow_port"],
     DEFAULT_SHADOW_PORT,
     lookup,
   );
@@ -807,7 +844,10 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // truncated to 17) and resolving `env(PG_MAJOR)` before validation
   // (`apps/cli-go/pkg/config/config.go` viper + mapstructure). `resolveConfigInt`
   // mirrors that; `SUPABASE_DB_MAJOR_VERSION` overrides the TOML via AutomaticEnv.
-  const majorVersionRaw = envOverride("SUPABASE_DB_MAJOR_VERSION") ?? db?.["major_version"];
+  const majorVersionRaw =
+    (remoteOverrideKeys.has("db.major_version")
+      ? undefined
+      : envOverride("SUPABASE_DB_MAJOR_VERSION")) ?? db?.["major_version"];
   const majorVersionResolved = resolveConfigInt(majorVersionRaw, lookup);
   if (majorVersionResolved === "invalid") {
     // Present but not a whole integer (`17foo`, or an `env(VAR)` that does not
@@ -871,7 +911,9 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // validation (same generic prefix+replacer binding as the pg-delta env vars below),
   // so a CI env override decides which edge-runtime image pg-delta runs under.
   const denoVersionRaw =
-    envOverride("SUPABASE_EDGE_RUNTIME_DENO_VERSION") ?? edgeRuntimeRaw?.["deno_version"];
+    (remoteOverrideKeys.has("edge_runtime.deno_version")
+      ? undefined
+      : envOverride("SUPABASE_EDGE_RUNTIME_DENO_VERSION")) ?? edgeRuntimeRaw?.["deno_version"];
   // Go decodes `deno_version` into a `uint` before validation, so a present non-integer
   // string (`2foo`) or an unresolved `env(MISSING)` aborts the load rather than falling
   // through to the default Deno 2 image. `resolveConfigInt` expands `env()` then requires
@@ -918,7 +960,9 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // CI env override decides the gate / paths. `envOverride` is the shell→project-.env
   // lookup that ignores empty values, matching viper.
   const enabledRaw = pgDeltaRaw?.["enabled"];
-  const enabledEnv = envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED");
+  const enabledEnv = remoteOverrideKeys.has("experimental.pgdelta.enabled")
+    ? undefined
+    : envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED");
   // Go decodes this bool via `strconv.ParseBool` (mapstructure weakly typed), so `"1"`
   // counts as true and a malformed value (`SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=maybe`)
   // aborts the load. The env override wins (viper AutomaticEnv), then the TOML bool, then
@@ -955,7 +999,9 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
 
   const declarativeSchemaPathRaw = pgDeltaRaw?.["declarative_schema_path"];
   const declarativeSchemaPathValue =
-    envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH") ??
+    (remoteOverrideKeys.has("experimental.pgdelta.declarative_schema_path")
+      ? undefined
+      : envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH")) ??
     (typeof declarativeSchemaPathRaw === "string"
       ? legacyExpandEnv(declarativeSchemaPathRaw, lookup)
       : "");
@@ -970,7 +1016,9 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
 
   const formatOptionsRaw = pgDeltaRaw?.["format_options"];
   const formatOptionsExpanded =
-    envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS") ??
+    (remoteOverrideKeys.has("experimental.pgdelta.format_options")
+      ? undefined
+      : envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS")) ??
     (typeof formatOptionsRaw === "string" ? legacyExpandEnv(formatOptionsRaw, lookup) : "");
   // Go's config.Validate aborts config load when a non-empty format_options is not
   // valid JSON (`apps/cli-go/pkg/config/config.go:1685-1686`), before any shadow /
@@ -1127,7 +1175,9 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // `env(...)` parse correctly and `maybe` aborts rather than silently coercing to false.
   const apiAutoExposeNewTables = yield* resolveOptionalBoolOrFail(
     "api.auto_expose_new_tables",
-    envOverride("SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"),
+    remoteOverrideKeys.has("api.auto_expose_new_tables")
+      ? undefined
+      : envOverride("SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"),
     apiRaw?.["auto_expose_new_tables"],
     lookup,
   );
