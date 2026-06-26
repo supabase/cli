@@ -85,6 +85,7 @@ const dockerLogDiagnosticTailLength = 4_096;
 const remoteJwksTimeoutMs = 10_000;
 const legacyDefaultEdgeRuntimeVersion = "v1.74.1";
 const defaultSupabaseEnv = "development";
+const serveMainContainerPath = "/root/index.ts";
 const clerkDomainPattern = /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/;
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 let cachedLegacyFunctionsServeMainTemplate: string | undefined;
@@ -1229,28 +1230,24 @@ const writeStoppedServingMessage = Effect.fnUntraced(function* () {
   yield* output.raw(`Stopped serving ${styleText("bold", functionsDirName)}\n`, "stdout");
 });
 
-// The Go CLI writes the runtime template to /root/index.ts via a quoted `<<'EOF'`
-// heredoc; we keep the same terminator for byte-parity with its entrypoint. A line
-// equal to the terminator inside the template would close the heredoc early and
-// silently corrupt the script, so fail loudly instead. `serve.main.ts` (the only
-// template) is asserted to contain no such line by a unit test.
-const serveEntrypointHeredocTerminator = "EOF";
-
-export function buildServeEntrypointScript(
-  template: string,
+export function buildServeEntrypointCommand(
   command: ReadonlyArray<string>,
   multilineEnvScriptPath?: string,
 ) {
-  if (template.split("\n").includes(serveEntrypointHeredocTerminator)) {
-    throw new Error(
-      `functions serve runtime template contains a line equal to the heredoc terminator "${serveEntrypointHeredocTerminator}"`,
-    );
-  }
-  return `cat <<'${serveEntrypointHeredocTerminator}' > /root/index.ts
-${template}
-${serveEntrypointHeredocTerminator}
-${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}${command.join(" ")}
+  return `${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}${command.join(" ")}
 `;
+}
+
+async function writeServeMainTemplateFile(template: string) {
+  // Mount the bundled runtime template instead of embedding it in `sh -c` so
+  // Windows does not hit `uv_spawn` ENAMETOOLONG on path-heavy projects.
+  const dir = await mkdtemp(join(tmpdir(), "supabase-functions-serve-main-"));
+  const pathname = join(dir, "index.ts");
+  await writeFile(pathname, template);
+  return {
+    bind: `${pathname}:${serveMainContainerPath}:ro`,
+    cleanup: () => rm(dir, { recursive: true, force: true }),
+  } as const;
 }
 
 function edgeRuntimeImageTag(version: string) {
@@ -1420,6 +1417,9 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       ...(input.debug ? ["--verbose"] : []),
     ];
     const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());
+    const serveMainTemplateFile = yield* Effect.tryPromise(() =>
+      writeServeMainTemplateFile(serveMainTemplate),
+    ).pipe(Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))));
     const command = [
       "run",
       "-d",
@@ -1437,6 +1437,8 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       `com.supabase.cli.project=${labels["com.supabase.cli.project"]}`,
       "--label",
       `com.docker.compose.project=${labels["com.docker.compose.project"]}`,
+      "-v",
+      serveMainTemplateFile.bind,
       ...([...binds] as ReadonlyArray<string>).flatMap((bind) => ["-v", bind]),
       ...(dockerMultilineEnvScript === undefined ? [] : ["-v", dockerMultilineEnvScript.bind]),
       ...(dockerEnvFile === undefined ? [] : ["--env-file", dockerEnvFile.path]),
@@ -1450,26 +1452,18 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       "sh",
       legacyGetRegistryImageUrl(`supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`),
       "-c",
-      buildServeEntrypointScript(
-        serveMainTemplate,
-        runtimeCommand,
-        dockerMultilineEnvScript?.scriptPath,
-      ),
+      buildServeEntrypointCommand(runtimeCommand, dockerMultilineEnvScript?.scriptPath),
     ];
 
-    const cleanupRuntimeArtifacts =
+    const cleanupRuntimeArtifacts = Effect.all([
+      Effect.tryPromise(() => serveMainTemplateFile.cleanup()).pipe(Effect.orDie),
       dockerEnvFile === undefined
-        ? dockerMultilineEnvScript === undefined
-          ? Effect.void
-          : Effect.tryPromise(() => dockerMultilineEnvScript.cleanup()).pipe(Effect.orDie)
-        : Effect.tryPromise(() => dockerEnvFile.cleanup()).pipe(
-            Effect.andThen(
-              dockerMultilineEnvScript === undefined
-                ? Effect.void
-                : Effect.tryPromise(() => dockerMultilineEnvScript.cleanup()).pipe(Effect.orDie),
-            ),
-            Effect.orDie,
-          );
+        ? Effect.void
+        : Effect.tryPromise(() => dockerEnvFile.cleanup()).pipe(Effect.orDie),
+      dockerMultilineEnvScript === undefined
+        ? Effect.void
+        : Effect.tryPromise(() => dockerMultilineEnvScript.cleanup()).pipe(Effect.orDie),
+    ]).pipe(Effect.asVoid);
 
     return yield* Effect.gen(function* () {
       yield* output.raw("Setting up Edge Functions runtime...\n", "stderr");
