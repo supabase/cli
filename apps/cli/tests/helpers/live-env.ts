@@ -16,6 +16,10 @@
  *   `http://localhost:8080`.
  * - `SUPABASE_LIVE_PROJECT_REF` — a provisioned project; gates project-scoped
  *   suites (functions, branches, db, storage).
+ * - `SUPABASE_LIVE_DB_URL` — a percent-encoded Postgres connection string for the
+ *   provisioned project (e.g. the pooler URL). Gates the data-plane suites
+ *   (`db dump`, `db advisors`, `migration list`) which connect to the project DB
+ *   via `--db-url` rather than the Management API. Absent → those suites skip.
  * - `NODE_EXTRA_CA_CERTS` — trusts the supabox CA for `*.supabase.red` TLS;
  *   inherited by the subprocess via the parent environment.
  */
@@ -70,4 +74,31 @@ export function requireLiveProjectRef(): string {
     );
   }
   return ref;
+}
+
+/**
+ * Percent-encoded Postgres connection string for the provisioned project, used
+ * by the data-plane commands (`db dump`, `db advisors`, `migration list`) that
+ * connect to the database directly via `--db-url` instead of the Management API.
+ * The cli-e2e-ci runner sets this once it can resolve the project's pooler URL;
+ * absent → those suites skip. Returns `undefined` when unset.
+ */
+export function liveDbUrl(): string | undefined {
+  return process.env["SUPABASE_LIVE_DB_URL"];
+}
+
+/**
+ * The live project DB URL, or a thrown error if unset. Safe to call inside a
+ * `describeLiveDb` block (the gate guarantees it is present) and gives a typed
+ * `string` without a non-null assertion.
+ */
+export function requireLiveDbUrl(): string {
+  const url = liveDbUrl();
+  if (!url) {
+    throw new Error(
+      "SUPABASE_LIVE_DB_URL must be set for data-plane live tests " +
+        "(the cli-e2e-ci runner sets it once the project's pooler URL is resolvable).",
+    );
+  }
+  return url;
 }

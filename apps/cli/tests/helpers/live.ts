@@ -5,6 +5,7 @@ import {
   isLiveConfigured,
   LIVE_DEFAULT_PROFILE,
   LIVE_EXIT_TIMEOUT_MS,
+  liveDbUrl,
   liveProjectRef,
 } from "./live-env.ts";
 
@@ -26,7 +27,9 @@ export {
   LIVE_DEFAULT_PROFILE,
   LIVE_EXIT_TIMEOUT_MS,
   liveApiBaseUrl,
+  liveDbUrl,
   liveProjectRef,
+  requireLiveDbUrl,
   requireLiveProjectRef,
 } from "./live-env.ts";
 
@@ -44,6 +47,16 @@ export const describeLive = describe.skipIf(!isLiveConfigured());
  * than fail. See `requireLiveProjectRef`.
  */
 export const describeLiveProject = describe.skipIf(!isLiveConfigured() || !liveProjectRef());
+
+/**
+ * `describe` for data-plane live suites (`db dump`, `db advisors`,
+ * `migration list`): runs only when the live env is configured AND a project DB
+ * URL is available. These connect to the project Postgres directly via
+ * `--db-url`, so they need more than the Management API token — on a stack
+ * without a resolvable pooler URL they skip rather than fail. See
+ * `requireLiveDbUrl`.
+ */
+export const describeLiveDb = describe.skipIf(!isLiveConfigured() || !liveDbUrl());
 
 /**
  * Spawn the built CLI against the live platform, injecting the profile so the
