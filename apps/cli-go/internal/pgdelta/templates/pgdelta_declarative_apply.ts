@@ -52,3 +52,10 @@ try {
 } catch (e) {
   throw e instanceof Error ? e : new Error(String(e));
 }
+// Force close the event loop on the success path. applyDeclarativeSchema opens a
+// connection to TARGET whose keepalive handles can keep the Edge Runtime worker
+// alive after the result JSON has been written, so the container never exits and
+// the CLI — which follows this container's logs — hangs indefinitely at 0% CPU
+// (supabase/pg-toolbelt#312). The catch above re-throws the real error, so this
+// only runs once a successful apply has been reported on stdout.
+throw new Error("");
