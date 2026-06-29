@@ -477,6 +477,14 @@ describe("legacy functions serve integration", () => {
         expect(dockerRun.args).toContain("--add-host");
         expect(dockerRun.args).toContain("host.docker.internal:host-gateway");
         expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.73.13");
+        expect(
+          extractFlagValues(dockerRun.args, "-v").some((value) =>
+            value.endsWith(":/root/index.ts:ro"),
+          ),
+        ).toBe(true);
+        expect(dockerRun.args[dockerRun.args.length - 1]).toBe(
+          "edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
+        );
 
         const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
         expect(envs).toContain("HELLO=WORLD");
@@ -1147,7 +1155,14 @@ describe("legacy functions serve integration", () => {
       }
 
       const commandScript = dockerRun.args[dockerRun.args.length - 1] ?? "";
-      expect(commandScript).toContain("cat <<'EOF' > /root/index.ts");
+      expect(commandScript).toBe(
+        "edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
+      );
+      expect(
+        extractFlagValues(dockerRun.args, "-v").some((value) =>
+          value.endsWith(":/root/index.ts:ro"),
+        ),
+      ).toBe(true);
       expect(commandScript).not.toContain("@ts-nocheck");
       expect(commandScript).not.toContain("declare const Deno");
       expect(commandScript).not.toContain("declare const EdgeRuntime");
