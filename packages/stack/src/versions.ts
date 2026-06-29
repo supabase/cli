@@ -50,7 +50,7 @@ export const DEFAULT_VERSIONS: VersionManifest = {
   postgrest: "14.5",
   auth: "2.188.0-rc.15",
   "edge-runtime": "1.73.13",
-  realtime: "2.78.10",
+  realtime: "2.111.8",
   storage: "1.41.8",
   imgproxy: "v3.8.0",
   mailpit: "v1.30.2",

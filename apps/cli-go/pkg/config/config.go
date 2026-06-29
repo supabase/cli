@@ -97,11 +97,35 @@ func (p *RequestPolicy) UnmarshalText(text []byte) error {
 
 type Glob []string
 
+type globOptions struct {
+	skipEmptyGlobs    bool
+	errorOnAllSkipped bool
+}
+
+type GlobOption func(*globOptions)
+
+func WithSkipEmptyGlobs() GlobOption {
+	return func(o *globOptions) {
+		o.skipEmptyGlobs = true
+	}
+}
+
+func WithErrorOnAllSkippedGlobs() GlobOption {
+	return func(o *globOptions) {
+		o.errorOnAllSkipped = true
+	}
+}
+
 // Match the glob patterns in the given FS to get a deduplicated
 // array of all migrations files to apply in the declared order.
-func (g Glob) Files(fsys fs.FS) ([]string, error) {
+func (g Glob) Files(fsys fs.FS, options ...GlobOption) ([]string, error) {
+	opts := globOptions{}
+	for _, apply := range options {
+		apply(&opts)
+	}
 	var result []string
 	var allErrors []error
+	var skipped []string
 	set := make(map[string]struct{})
 	for _, pattern := range g {
 		// Glob expects / as path separator on windows
@@ -109,6 +133,10 @@ func (g Glob) Files(fsys fs.FS) ([]string, error) {
 		if err != nil {
 			allErrors = append(allErrors, errors.Errorf("failed to glob files: %w", err))
 		} else if len(matches) == 0 {
+			if opts.skipEmptyGlobs && hasGlobMeta(pattern) {
+				skipped = append(skipped, pattern)
+				continue
+			}
 			allErrors = append(allErrors, errors.Errorf("no files matched pattern: %s", pattern))
 		}
 		sort.Strings(matches)
@@ -121,7 +149,16 @@ func (g Glob) Files(fsys fs.FS) ([]string, error) {
 			}
 		}
 	}
+	if opts.errorOnAllSkipped && len(result) == 0 && len(skipped) > 0 {
+		for _, pattern := range skipped {
+			allErrors = append(allErrors, errors.Errorf("no files matched pattern: %s", pattern))
+		}
+	}
 	return result, errors.Join(allErrors...)
+}
+
+func hasGlobMeta(pattern string) bool {
+	return strings.ContainsAny(pattern, `*?[`)
 }
 
 // We follow these rules when adding new config:

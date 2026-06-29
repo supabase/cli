@@ -676,6 +676,34 @@ func TestGlobFiles(t *testing.T) {
 		// Validate files
 		assert.Empty(t, files)
 	})
+
+	t.Run("skips empty globs when configured", func(t *testing.T) {
+		fsys := fs.MapFS{
+			"supabase/schemas/tables/players.sql": &fs.MapFile{},
+		}
+		g := Glob{
+			"supabase/schemas/tables/*.sql",
+			"supabase/schemas/materialized_views/*.sql",
+		}
+
+		files, err := g.Files(fsys, WithSkipEmptyGlobs())
+
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"supabase/schemas/tables/players.sql"}, files)
+	})
+
+	t.Run("errors when all skipped globs are empty and configured to fail", func(t *testing.T) {
+		fsys := fs.MapFS{}
+		g := Glob{
+			"supabase/schemas/tables/*.sql",
+			"supabase/schemas/materialized_views/*.sql",
+		}
+
+		files, err := g.Files(fsys, WithSkipEmptyGlobs(), WithErrorOnAllSkippedGlobs())
+
+		assert.ErrorContains(t, err, "no files matched pattern")
+		assert.Empty(t, files)
+	})
 }
 
 func TestLoadFunctionImportMap(t *testing.T) {

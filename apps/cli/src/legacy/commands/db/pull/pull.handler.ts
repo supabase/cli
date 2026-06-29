@@ -21,6 +21,7 @@ import {
   legacyResolveDeclarativeDir,
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
+import { legacyMakeDir } from "../../../shared/legacy-make-dir.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -540,9 +541,9 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             new LegacyDbPullInSyncError({ message: "No schema changes found" }),
           );
         }
-        yield* fs
-          .makeDirectory(path.dirname(migrationPath), { recursive: true })
-          .pipe(Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })));
+        yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
+          Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
+        );
         yield* fs.writeFileString(migrationPath, out).pipe(
           Effect.mapError(
             (cause) =>
