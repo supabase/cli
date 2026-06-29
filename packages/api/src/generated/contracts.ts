@@ -3527,7 +3527,7 @@ export const V1GetStorageConfigOutput = Schema.Struct({
   capabilities: Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
   external: Schema.Struct({ upstreamTarget: Schema.Literals(["main", "canary"]) }),
   migrationVersion: Schema.String,
-  databasePoolMode: Schema.String,
+  databasePoolMode: Schema.optionalKey(Schema.String),
 });
 export const V1GetVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
