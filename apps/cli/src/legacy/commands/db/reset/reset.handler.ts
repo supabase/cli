@@ -28,7 +28,7 @@ import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.servic
 import { legacyListLocalMigrations } from "../shared/legacy-pgdelta.cache.ts";
 import { legacyGetPendingSeeds, legacySeedData } from "../shared/legacy-seed-ops.ts";
 import { legacyReadVaultDocument, legacyUpsertVaultSecrets } from "../shared/legacy-vault.ts";
-import { legacySeedBucketsRun } from "../../seed/buckets/buckets.handler.ts";
+import { legacySeedBucketsRun } from "../../../shared/legacy-seed-buckets.ts";
 import type { LegacyDbResetFlags } from "./reset.command.ts";
 import {
   LegacyDbResetApplyError,
