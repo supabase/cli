@@ -314,17 +314,29 @@ describe("legacy db reset", () => {
   it.live("uses the detected git branch in the Finished line", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
-      files: { ".git/HEAD": "ref: refs/heads/feature-x\n" },
       args: ["db", "reset"],
       isLocal: true,
       running: true,
     });
+    // `detectGitBranch` checks `$GITHUB_HEAD_REF` first (matching Go's
+    // `GetGitBranchOrDefault`). Set it explicitly so the test is deterministic in
+    // both a plain checkout and a GitHub Actions PR run (where it is preset to the
+    // PR branch); restore it afterwards.
+    const previous = process.env["GITHUB_HEAD_REF"];
+    process.env["GITHUB_HEAD_REF"] = "feature-x";
     return Effect.gen(function* () {
       yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       // The branch name is wrapped in ANSI (legacyAqua), so assert on the token.
       expect(out.stderrText).toContain("on branch ");
       expect(out.stderrText).toContain("feature-x");
-    });
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["GITHUB_HEAD_REF"];
+          else process.env["GITHUB_HEAD_REF"] = previous;
+        }),
+      ),
+    );
   });
 
   it.live("fails a remote reset on a malformed config.toml", () => {
