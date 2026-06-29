@@ -18613,6 +18613,15 @@
                 },
                 "required": ["enabled"]
               },
+              "purgeCache": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["enabled"]
+              },
               "icebergCatalog": {
                 "type": "object",
                 "properties": {
@@ -18652,7 +18661,13 @@
                 "required": ["enabled", "maxBuckets", "maxIndexes"]
               }
             },
-            "required": ["imageTransformation", "s3Protocol", "icebergCatalog", "vectorBuckets"]
+            "required": [
+              "imageTransformation",
+              "s3Protocol",
+              "purgeCache",
+              "icebergCatalog",
+              "vectorBuckets"
+            ]
           },
           "capabilities": {
             "type": "object",
@@ -18714,6 +18729,15 @@
                 "required": ["enabled"]
               },
               "s3Protocol": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": ["enabled"]
+              },
+              "purgeCache": {
                 "type": "object",
                 "properties": {
                   "enabled": {
@@ -20229,6 +20253,7 @@
                         "storage.image_transformations",
                         "storage.vector_buckets",
                         "storage.iceberg_catalog",
+                        "storage.purge_cache",
                         "security.audit_logs_days",
                         "security.questionnaire",
                         "security.soc2_report",
@@ -20277,7 +20302,8 @@
                         "assistant.advance_model",
                         "integrations.github_connections",
                         "dedicated_pooler",
-                        "observability.dashboard_advanced_metrics"
+                        "observability.dashboard_advanced_metrics",
+                        "api.members.roles"
                       ]
                     },
                     "type": {
