@@ -12,7 +12,7 @@ import {
   mockTelemetryRuntime,
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
-import { mockLegacyCliConfig } from "../../../tests/helpers/legacy-mocks.ts";
+import { LEGACY_VALID_TOKEN, mockLegacyCliConfig } from "../../../tests/helpers/legacy-mocks.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
@@ -391,6 +391,7 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
       `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
     );
 
+    const previousAccessToken = process.env["SUPABASE_ACCESS_TOKEN"];
     const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
     const previousFetch = globalThis.fetch;
     const requests: Array<{ readonly method: string; readonly path: string }> = [];
@@ -463,6 +464,7 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
       { preconnect: previousFetch.preconnect },
     );
 
+    process.env["SUPABASE_ACCESS_TOKEN"] = LEGACY_VALID_TOKEN;
     process.env["SUPABASE_DB_PASSWORD"] = "ambient-linked-password";
     globalThis.fetch = fetchMock;
 
@@ -513,6 +515,8 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
       Effect.ensuring(
         Effect.sync(() => {
           globalThis.fetch = previousFetch;
+          if (previousAccessToken === undefined) delete process.env["SUPABASE_ACCESS_TOKEN"];
+          else process.env["SUPABASE_ACCESS_TOKEN"] = previousAccessToken;
           if (previousPassword === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
           else process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
           rmSync(dir, { recursive: true, force: true });
