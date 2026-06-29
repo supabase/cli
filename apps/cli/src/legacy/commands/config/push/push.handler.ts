@@ -8,6 +8,7 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { apiSubsetFromConfig, apiToUpdateBody, diffApiWithRemote } from "./config-sync/api.sync.ts";
 import {
@@ -87,6 +88,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
+  const tty = yield* Tty;
   // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
   const yes = yield* legacyResolveYes;
 
@@ -169,6 +171,10 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
           yield* output.raw(`${title} [Y/n] y\n`, "stderr");
           return true;
         }
+        // Go's `PromptYesNo` returns the default (`true`) on a non-terminal stdin
+        // without blocking (`console.go:64-82`); clack's `confirm` would hang on a
+        // non-TTY. Take Go's default on a non-interactive stdin before prompting.
+        if (!tty.stdinIsTty) return true;
         return yield* output
           .promptConfirm(title, { defaultValue: true })
           .pipe(Effect.orElseSucceed(() => true));

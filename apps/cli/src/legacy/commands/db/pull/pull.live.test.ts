@@ -1,0 +1,59 @@
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { expect, test } from "vitest";
+
+import {
+  describeLiveProject,
+  requireLiveProjectRef,
+  runSupabaseLive,
+} from "../../../../../tests/helpers/live.ts";
+
+const LIVE_TIMEOUT_MS = 300_000;
+
+// A fresh, isolated temp workdir so the CLI writes migrations there and never
+// touches the repo tree. The provisioned project ref is supplied to `--linked` via
+// the `SUPABASE_PROJECT_ID` env var — that is the `--linked` resolver chain in both
+// Go and the legacy port (flag → `SUPABASE_PROJECT_ID` → `supabase/.temp/project-ref`);
+// `config.toml`'s `project_id` is NOT consulted for `--linked`.
+function tempWorkdir(): string {
+  return mkdtempSync(join(tmpdir(), "sb-db-pull-live-"));
+}
+
+// Project-scoped + data-plane: needs a provisioned project whose database is
+// routable (the cli-e2e-ci Linux runner). Skipped on a control-plane-only stack
+// (`SUPABASE_LIVE_PROJECT_REF` unset), e.g. local macOS.
+describeLiveProject("supabase db pull (live)", () => {
+  test(
+    "initial pull from the linked project (native pg_dump seed + migra diff)",
+    { timeout: LIVE_TIMEOUT_MS },
+    async () => {
+      const ref = requireLiveProjectRef();
+      const dir = tempWorkdir();
+      try {
+        const { stdout, stderr } = await runSupabaseLive(["db", "pull", "--linked"], {
+          cwd: dir,
+          env: { SUPABASE_PROJECT_ID: ref },
+          exitTimeoutMs: LIVE_TIMEOUT_MS - 20_000,
+        });
+        const combined = `${stdout}${stderr}`;
+        expect(combined).not.toContain("Unauthorized");
+        // No local migrations → the native initial-migra path runs: pg_dump the remote
+        // schema, then append the migra diff. The non-interactive `--linked` pull must
+        // run to completion (Go's `PromptYesNo` takes the default on a non-TTY rather
+        // than blocking on the "Update remote migration history table?" prompt — if it
+        // hangs, this test times out). Assert on the durable side effect regardless of
+        // exit code: a provisioned project with schema writes a
+        // `<timestamp>_remote_schema.sql` migration; a fresh empty schema reports
+        // "No schema changes found". Either proves the path ran end to end against the
+        // real database without hanging.
+        const migDir = join(dir, "supabase", "migrations");
+        const wroteMigration =
+          existsSync(migDir) && readdirSync(migDir).some((f) => f.endsWith("_remote_schema.sql"));
+        expect(wroteMigration || combined.includes("No schema changes found")).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});

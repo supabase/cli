@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCredentialsTracked,
   mockLegacyTelemetryStateTracked,
@@ -15,6 +15,8 @@ interface SetupOpts {
   readonly yes?: boolean;
   readonly deleteOutcome?: "ok" | "notLoggedIn" | "deleteError";
   readonly promptConfirmFail?: boolean;
+  /** stdin interactivity; defaults to a TTY so prompt-driven tests reach the confirm. */
+  readonly stdinIsTty?: boolean;
 }
 
 function setupLegacyLogout(opts: SetupOpts = {}) {
@@ -30,6 +32,7 @@ function setupLegacyLogout(opts: SetupOpts = {}) {
     credentials.layer,
     telemetry.layer,
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
   );
   return { layer, out, telemetry, credentials };
 }
@@ -59,6 +62,21 @@ describe("legacy logout integration", () => {
 
   it.live("declining the prompt cancels with a failure and does not sweep credentials", () => {
     const { layer, credentials } = setupLegacyLogout({ confirm: false });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyLogout());
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyLogoutCancelledError");
+      }
+      expect(credentials.deletedAll).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("non-interactive stdin takes Go's default (false) and cancels without hanging", () => {
+    // Go's `PromptYesNo(..., false)` returns the default on a non-terminal
+    // (`logout.go:16`); the handler must not render/block the clack confirm. No
+    // `confirm` response is scripted, so reaching the prompt would be a bug.
+    const { layer, credentials } = setupLegacyLogout({ stdinIsTty: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyLogout());
       expect(Exit.isFailure(exit)).toBe(true);

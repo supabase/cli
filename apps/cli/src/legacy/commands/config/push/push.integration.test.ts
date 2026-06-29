@@ -17,7 +17,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
+import { mockRuntimeInfo, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { legacyConfigPush } from "./push.handler.ts";
 
@@ -55,6 +55,8 @@ function setup(opts: {
   readonly yes?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
   readonly promptFail?: boolean;
+  /** stdin interactivity; defaults to a TTY so prompt-driven tests reach the confirm. */
+  readonly stdinIsTty?: boolean;
 }) {
   writeConfig(opts.toml);
   const routes = opts.routes ?? {};
@@ -104,6 +106,7 @@ function setup(opts: {
       runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
+      tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
     }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
   );
@@ -273,9 +276,13 @@ project_id = "abcdefghijklmnopqrst"
   });
 
   it.live("defaults to yes in non-TTY text without --yes", () => {
+    // Go's `PromptYesNo(..., true)` returns the default on a non-terminal
+    // (`push.go:36`); the handler gates on `Tty` and pushes without prompting (a
+    // clack confirm would otherwise hang). No `confirm` is scripted, so reaching the
+    // prompt would be a bug.
     const { layer, api } = setup({
       toml: API_ONLY_TOML,
-      promptFail: true,
+      stdinIsTty: false,
       routes: {
         postgrestGet: { status: 200, body: POSTGREST_DISABLED },
         postgresGet: { status: 200, body: {} },

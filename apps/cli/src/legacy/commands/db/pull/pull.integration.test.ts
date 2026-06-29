@@ -56,6 +56,13 @@ interface SetupOpts {
   readonly poolerAvailable?: boolean;
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
   readonly catalogStdout?: string; // stdout returned by pg-delta catalog-export runs
+  // Initial-migra pull: the bytes the native pg_dump container streams to its sink,
+  // its exit code / stderr, and (when set) an IPv6 stderr that fails the FIRST dump
+  // attempt so the pooler retry runs (the second attempt then streams `dumpStdout`).
+  readonly dumpStdout?: string;
+  readonly dumpExitCode?: number;
+  readonly dumpStderr?: string;
+  readonly dumpFailFirstWith?: string;
   // Raw argv seen by the handler (CliArgs). Only consulted when both
   // `--declarative` and `--use-pg-delta` are present, to replay pflag's
   // last-occurrence-wins ordering; defaults to empty.
@@ -112,10 +119,26 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
 
+  // The initial-migra pull seeds the migration file with a native pg_dump via
+  // `runStream`; deliver the configured bytes to `onStdout` (as Go's StdCopy would),
+  // then report the exit code + stderr. `dumpFailFirstWith` fails the first attempt
+  // so the pooler retry runs.
+  const dumpCalls: Array<{ env: Readonly<Record<string, string>>; image: string }> = [];
+  let dumpRunCount = 0;
   const docker = Layer.succeed(LegacyDockerRun, {
     run: () => Effect.die("run unused"),
     runCapture: () => Effect.die("runCapture unused"),
-    runStream: () => Effect.die("runStream unused"),
+    runStream: (runOpts, streamOpts) =>
+      Effect.gen(function* () {
+        dumpRunCount += 1;
+        dumpCalls.push({ env: runOpts.env, image: runOpts.image });
+        if (opts.dumpFailFirstWith !== undefined && dumpRunCount === 1) {
+          return { exitCode: 1, stderr: opts.dumpFailFirstWith };
+        }
+        const bytes = new TextEncoder().encode(opts.dumpStdout ?? "");
+        if (bytes.length > 0) yield* streamOpts.onStdout(bytes);
+        return { exitCode: opts.dumpExitCode ?? 0, stderr: opts.dumpStderr ?? "" };
+      }),
   });
 
   const execLog: string[] = [];
@@ -216,6 +239,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     historyUpserts,
     execLog,
     poolerFallbackCalls,
+    dumpCalls,
     get edgeRunCount() {
       return edgeRunCount;
     },
@@ -422,42 +446,150 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("an initial pull with no local migrations delegates the dump to Go (migra)", () => {
-    const s = setup(tmp.current, { remoteVersions: [] });
-    return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
-      expect(s.proxyCalls).toHaveLength(1);
-      expect(s.proxyCalls[0]?.args[0]).toBe("db");
-      expect(s.proxyCalls[0]?.args[1]).toBe("pull");
-      expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
-    }).pipe(Effect.provide(s.layer));
-  });
+  it.effect(
+    "an initial pull (no local migrations, migra) dumps the schema natively then appends the diff",
+    () => {
+      // Go's `run` → `dumpRemoteSchema` (pg_dump, now native) + `diffRemoteSchema(nil)`
+      // appended (`pull.go:117-141`). No Go delegation.
+      const s = setup(tmp.current, {
+        remoteVersions: [],
+        dumpStdout: "create table dumped ();\n",
+        edgeStdout: "create table diffed ();\n", // the migra second pass
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags());
+        expect(s.proxyCalls).toHaveLength(0);
+        expect(s.proxyCaptureCalls).toHaveLength(0);
+        // pg_dump ran with the schema-dump env (internal-schema exclude + comment strip).
+        expect(s.dumpCalls).toHaveLength(1);
+        expect(s.dumpCalls[0]?.env["EXTRA_SED"]).toBe("/^--/d");
+        expect(s.dumpCalls[0]?.env["EXCLUDED_SCHEMAS"]).toContain("auth");
+        // The diff ran against the shadow with the migra engine (no schema filter).
+        expect(s.provisionCalls[0]?.usePgDelta).toBe(false);
+        // The migration file holds the dump output followed by the appended diff.
+        const dir = join(tmp.current, "supabase", "migrations");
+        const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
+        expect(file).toBeDefined();
+        const content = readFileSync(join(dir, file ?? ""), "utf8");
+        expect(content).toContain("create table dumped ();");
+        expect(content).toContain("create table diffed ();");
+        expect(content.indexOf("dumped")).toBeLessThan(content.indexOf("diffed"));
+        // stderr order: dump → shadow → diff → written.
+        const err = streamText(s.out, "stderr");
+        expect(err).toContain("Dumping schema from remote database...");
+        expect(err).toContain("Creating shadow database...");
+        expect(err).toContain("Schema written to");
+        expect(err.indexOf("Dumping schema")).toBeLessThan(err.indexOf("Creating shadow"));
+        expect(s.historyUpserts.length).toBe(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
-  it.effect("an initial pull in json mode emits a structured envelope (delegated output)", () => {
-    // Regression: the initial-migra delegate inherited stdout and returned without
-    // output.success, so machine-mode callers got the Go child's human output
-    // instead of a JSON envelope (CLI-1546). Now the child's stdout is captured and
-    // a structured payload is emitted instead.
+  it.effect("an initial pull in json mode emits a native structured envelope", () => {
     const s = setup(tmp.current, {
       format: "json",
       remoteVersions: [],
-      delegateStdout: "Schema written to supabase/migrations/x.sql\n",
+      dumpStdout: "create table dumped ();\n",
+      edgeStdout: "create table diffed ();\n",
     });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags());
       expect(s.proxyCalls).toHaveLength(0);
-      expect(s.proxyCaptureCalls).toHaveLength(1);
-      // The delegated child runs with a non-TTY stdin so its history-update prompt
-      // takes Go's default (true) without blocking the JSON caller; the child then
-      // updates the history, so the envelope reports remoteHistoryUpdated: true.
-      expect(s.proxyCaptureCalls[0]?.stdin).toBe("ignore");
+      expect(s.proxyCaptureCalls).toHaveLength(0);
       const success = s.out.messages.find((m) => m.type === "success");
+      // Machine mode never prompts, so history is updated on Go's default (true);
+      // `schemaWritten` is the real native migration path (not null as when delegated).
       expect(success?.data).toMatchObject({
         declarative: false,
-        schemaWritten: null,
         remoteHistoryUpdated: true,
         engine: "migra",
       });
+      const data = success?.data as { schemaWritten?: string } | undefined;
+      expect(data?.schemaWritten).toMatch(/_remote_schema\.sql$/u);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("an initial pull swallows an empty migra diff once the dump wrote content", () => {
+    // Go's `swallowInitialInSync` (`pull.go:256-261`): after the pg_dump seed, an
+    // empty second pass is success, not "in sync".
+    const s = setup(tmp.current, {
+      remoteVersions: [],
+      dumpStdout: "create table dumped ();\n",
+      edgeStdout: "", // empty migra diff
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPull(flags()).pipe(Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const dir = join(tmp.current, "supabase", "migrations");
+      const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
+      expect(file).toBeDefined();
+      expect(readFileSync(join(dir, file ?? ""), "utf8")).toContain("create table dumped ();");
+      expect(streamText(s.out, "stderr")).toContain("Schema written to");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("an initial pull with an empty schema reports 'No schema changes found'", () => {
+    // Go's `ensureMigrationWritten` (`pull.go:68,263-268`): an empty dump + empty diff
+    // leaves the file empty → in sync.
+    const s = setup(tmp.current, { remoteVersions: [], dumpStdout: "", edgeStdout: "" });
+    return Effect.gen(function* () {
+      const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+      expect(error.message).toBe("No schema changes found");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("an initial pull fails when the pg_dump container exits non-zero", () => {
+    const s = setup(tmp.current, {
+      remoteVersions: [],
+      dumpExitCode: 1,
+      dumpStderr: "connection refused",
+    });
+    return Effect.gen(function* () {
+      const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+      expect(error.message).toContain("error running container: exit 1");
+      // The diff pass never ran — the dump failure aborts before provisioning a shadow.
+      expect(s.provisionCalls).toHaveLength(0);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("an initial-pull dump retries via the IPv4 pooler on an IPv6 failure", () => {
+    // Go's `dump.RunWithPoolerFallback`: a `--linked` direct-host dump that fails over
+    // IPv6 retries once through the transaction pooler (`pull.go:155`).
+    const s = setup(tmp.current, {
+      remoteVersions: [],
+      dumpFailFirstWith: "could not translate host name: network is unreachable",
+      dumpStdout: "create table dumped ();\n",
+      edgeStdout: "create table diffed ();\n",
+      poolerAvailable: true,
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      expect(s.dumpCalls).toHaveLength(2); // direct attempt + pooler retry
+      expect(s.poolerFallbackCalls).toHaveLength(1);
+      const err = streamText(s.out, "stderr");
+      expect(err).toContain("does not support IPv6");
+      expect(err).toContain("Retrying via the IPv4 connection pooler");
+      // The "Dumping schema…" line is printed once (before the fallback), not re-printed
+      // on the pooler retry (Go's `PoolerFallbackConfig` only emits the warning).
+      expect(err.match(/Dumping schema from remote database/gu)).toHaveLength(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("an initial-pull IPv6 dump failure with no pooler surfaces the dump error", () => {
+    const s = setup(tmp.current, {
+      remoteVersions: [],
+      dumpExitCode: 1,
+      dumpStderr: "could not translate host name: network is unreachable",
+      poolerAvailable: false,
+    });
+    return Effect.gen(function* () {
+      const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+      expect(error.message).toContain("error running container: exit 1");
+      expect(s.poolerFallbackCalls).toHaveLength(1); // gate checked, no pooler resolved
+      expect(streamText(s.out, "stderr")).not.toContain("Retrying via the IPv4 connection pooler");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -553,6 +685,25 @@ describe("legacy db pull", () => {
     return Effect.gen(function* () {
       yield* legacyDbPull(flags());
       expect(s.historyUpserts.length).toBe(0);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("updates history on a non-interactive stdin without prompting (Go default)", () => {
+    // Go's `PromptYesNo` returns the default (true) on a non-terminal stdin without
+    // blocking (`console.go:64-82`). The handler gates on `Tty.stdinIsTty` before the
+    // clack confirm, so a non-interactive `db pull` proceeds to update the remote
+    // history rather than prompting. (The production clack prompt would hang on a
+    // non-TTY — that no-hang behavior is proven end-to-end in `pull.live.test.ts`;
+    // here the gate just keeps history-update on the non-interactive default.)
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "create table remote ();\n",
+      stdinIsTty: false,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      expect(s.historyUpserts.length).toBe(1);
     }).pipe(Effect.provide(s.layer));
   });
 

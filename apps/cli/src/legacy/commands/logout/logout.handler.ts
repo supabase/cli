@@ -4,6 +4,7 @@ import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyYesFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { LegacyLogoutCancelledError, LEGACY_LOGOUT_CANCELLED_MESSAGE } from "./logout.errors.ts";
 
 const LOGGED_OUT_MSG = "Access token deleted successfully. You are now logged out.";
@@ -13,15 +14,24 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
   const credentials = yield* LegacyCredentials;
   const telemetryState = yield* LegacyTelemetryState;
   const yes = yield* LegacyYesFlag;
+  const tty = yield* Tty;
 
   const body = Effect.gen(function* () {
-    // Confirm prompt, honoring the global `--yes` (`logout.go:15`).
-    const confirmed = yes
-      ? true
-      : yield* output.promptConfirm(
-          "Do you want to log out? This will remove the access token from your system.",
-          { defaultValue: false },
-        );
+    // Confirm prompt, honoring the global `--yes` (`logout.go:15-16`).
+    const confirmed = yield* Effect.gen(function* () {
+      if (yes) return true;
+      // Go's `PromptYesNo` returns the default (`false`) on a non-terminal stdin
+      // without blocking (`console.go:64-82`); clack's `confirm` would instead hang
+      // on a non-TTY. So in text mode take Go's default on a non-interactive stdin.
+      // Machine (json/stream-json) mode has no Go equivalent — the non-interactive
+      // output layer fails the prompt rather than silently defaulting, preserving the
+      // existing contract.
+      if (output.format === "text" && !tty.stdinIsTty) return false;
+      return yield* output.promptConfirm(
+        "Do you want to log out? This will remove the access token from your system.",
+        { defaultValue: false },
+      );
+    });
     if (!confirmed) {
       return yield* Effect.fail(
         new LegacyLogoutCancelledError({ message: LEGACY_LOGOUT_CANCELLED_MESSAGE }),
