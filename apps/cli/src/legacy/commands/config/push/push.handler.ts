@@ -5,7 +5,7 @@ import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts"
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
@@ -38,6 +38,10 @@ import {
   storageSubsetFromConfig,
   storageToUpdateBody,
 } from "./config-sync/storage.sync.ts";
+import {
+  loadAuthEmailContent,
+  projectDirsFromConfigPath,
+} from "./config-sync/config-sync.auth-email-content.ts";
 import { getCostMatrix } from "./push.cost-matrix.ts";
 import { legacyPresenceIn } from "./push.raw-presence.ts";
 import {
@@ -83,7 +87,8 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
-  const yes = yield* LegacyYesFlag;
+  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
+  const yes = yield* legacyResolveYes;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -130,6 +135,19 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // to restore Go's nil-pointer skip semantics — including sections a matching
     // `[remotes.*]` block introduces.
     const presence = legacyPresenceIn(loaded.document);
+
+    const { projectRoot, supabaseDir } = projectDirsFromConfigPath(loaded.path);
+
+    // Go's `email.validate` runs during `LoadConfig` before any network call.
+    const authEmailContent = authEnabled(config)
+      ? yield* Effect.try({
+          try: () => loadAuthEmailContent(projectRoot, supabaseDir, config.auth.email),
+          catch: (cause) =>
+            new LegacyConfigPushLoadConfigError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        })
+      : { template: {}, notification: {} };
 
     // 2. Cost matrix (drives cost-aware prompts).
     const cost = yield* getCostMatrix(ref);
@@ -337,7 +355,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
             }),
           ),
         );
-        let local = authSubsetFromConfig(config, projectId, presence.auth);
+        let local = authSubsetFromConfig(config, projectId, presence.auth, authEmailContent);
         const projected = applyRemoteAuthConfig(local, remote);
         // MFA phone/webauthn are paid addons: confirm cost before enabling.
         if (mfaPhoneNewlyEnabled(local, projected) && !(yield* keep("auth_mfa_phone"))) {

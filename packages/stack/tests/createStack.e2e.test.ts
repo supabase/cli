@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { createStack, type StackHandle } from "../src/node.ts";
-import { setupTestTable } from "./helpers/e2e.ts";
+import { fetchFunctionWhenReady, setupTestTable } from "./helpers/e2e.ts";
 
 const STACK_E2E_TEST_TIMEOUT_MS = 5_000;
 
@@ -67,11 +67,14 @@ describe("createStack e2e", () => {
 
   test(
     "serves detected Edge Functions through the local gateway",
-    { timeout: STACK_E2E_TEST_TIMEOUT_MS },
+    { timeout: 30_000 },
     async () => {
+      // "Healthy" only means the edge-runtime control plane answered its health
+      // probe; the first request to a function still lazily cold-boots a user
+      // worker, so wait for the function to actually become servable.
       const [states, functionsRes] = await Promise.all([
         stack.getStatus(),
-        fetch(`${stack.url}/functions/v1/hello`),
+        fetchFunctionWhenReady(`${stack.url}/functions/v1/hello`),
       ]);
 
       expect(states).toEqual(
@@ -84,11 +87,11 @@ describe("createStack e2e", () => {
     },
   );
 
-  test("reloadFunctions picks up newly added Edge Functions", { timeout: 15_000 }, async () => {
+  test("reloadFunctions picks up newly added Edge Functions", { timeout: 30_000 }, async () => {
     writeFunction(projectDir, "later", "later");
     await stack.reloadFunctions({ noVerifyJwt: true });
 
-    const res = await fetch(`${stack.url}/functions/v1/later`);
+    const res = await fetchFunctionWhenReady(`${stack.url}/functions/v1/later`);
 
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("later");

@@ -241,22 +241,27 @@ func TestGetMigrationsCatalogRefUsesCache(t *testing.T) {
 	fsys := afero.NewMemMapFs()
 	p := filepath.Join(utils.MigrationsDir, "20240101000000_first.sql")
 	require.NoError(t, afero.WriteFile(fsys, p, []byte("create table a();"), 0644))
-	hash, err := hashMigrations(fsys)
+	legacyHash, err := hashMigrations(fsys)
 	require.NoError(t, err)
+	stalePath := filepath.Join(utils.TempDir, "pgdelta", "catalog-local-migrations-"+legacyHash+"-1000.json")
+	require.NoError(t, afero.WriteFile(fsys, stalePath, []byte(`{"version":"stale"}`), 0644))
 
+	hash, err := migrationsCatalogCacheKey(fsys)
+	require.NoError(t, err)
 	cachePath := filepath.Join(utils.TempDir, "pgdelta", "catalog-local-migrations-"+hash+"-1000.json")
 	require.NoError(t, afero.WriteFile(fsys, cachePath, []byte(`{"version":1}`), 0644))
 
 	ref, err := getMigrationsCatalogRef(t.Context(), false, fsys, "local")
 	require.NoError(t, err)
 	assert.Equal(t, cachePath, ref)
+	assert.NotEqual(t, stalePath, ref)
 }
 
 func TestGetMigrationsCatalogRefUsesProjectPrefix(t *testing.T) {
 	fsys := afero.NewMemMapFs()
 	p := filepath.Join(utils.MigrationsDir, "20240101000000_first.sql")
 	require.NoError(t, afero.WriteFile(fsys, p, []byte("create table a();"), 0644))
-	hash, err := hashMigrations(fsys)
+	hash, err := migrationsCatalogCacheKey(fsys)
 	require.NoError(t, err)
 
 	cachePath := filepath.Join(utils.TempDir, "pgdelta", "catalog-testproject-migrations-"+hash+"-1000.json")

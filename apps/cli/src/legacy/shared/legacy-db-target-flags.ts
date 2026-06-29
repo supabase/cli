@@ -38,10 +38,12 @@ export interface LegacyDbTargetSelection {
  * cause the immediately following token to be skipped during the target-selector
  * scan.
  *
- * Sources: all legacy command files that call `resolveLegacyDbTargetFlags`
- * (`db lint`, `db advisors`, `test db`) plus the shared global flags
+ * Sources: every legacy command that calls `resolveLegacyDbTargetFlags`
+ * (`db lint`, `db advisors`, `test db`) or `legacyChangedLinkedLocalFlags`
+ * (`seed buckets`, `storage cp/ls/mv/rm`), plus the shared global flags
  * (`src/shared/legacy/global-flags.ts`, `src/shared/cli/global-flags.ts`).
- * `Flag.string` / `Flag.choice` → value-consuming; `Flag.boolean` → not.
+ * `Flag.string` / `Flag.choice` / `Flag.integer` → value-consuming;
+ * `Flag.boolean` → not.
  */
 export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   // db-family command flags
@@ -52,6 +54,10 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "type",
   // inspect report flag (StringVar, no short alias)
   "output-dir",
+  // storage cp command flags (Flag.string / Flag.integer)
+  "cache-control",
+  "content-type",
+  "jobs",
   // legacy global flags (Flag.string / Flag.choice)
   "output",
   "output-format",
@@ -69,7 +75,63 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
 export const VALUE_CONSUMING_SHORT_FLAGS = new Set([
   "s", // --schema / -s
   "o", // --output / -o
+  "j", // --jobs / -j (storage cp)
 ]);
+
+/**
+ * Detects which of `--linked` / `--local` were explicitly set on the command
+ * line, reproducing cobra's `pflag.Changed` for the `MarkFlagsMutuallyExclusive`
+ * groups on `seedCmd` (`apps/cli-go/cmd/seed.go:32`) and `storageCmd`
+ * (`apps/cli-go/cmd/storage.go:99`). Shared by `seed buckets` and
+ * `storage ls/cp/mv/rm`.
+ *
+ * Effect CLI's parsed flags carry no `Changed` bit, so this re-derives it from
+ * raw argv, skipping value tokens of space-separated value-consuming flags
+ * (`--workdir <path>`, `-o <fmt>`, …) to avoid false positives. The negation
+ * form (`--no-linked`/`--no-local`) counts as changed. Returned in cobra's
+ * alphabetically-sorted order `["linked", "local"]` so the rendered conflict
+ * string matches Go exactly.
+ */
+export function legacyChangedLinkedLocalFlags(args: ReadonlyArray<string>): ReadonlyArray<string> {
+  let linked = false;
+  let local = false;
+  let skipNext = false;
+
+  for (const token of args) {
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+    if (token === "--") break;
+
+    if (token.startsWith("--")) {
+      const eqIdx = token.indexOf("=");
+      const name = eqIdx === -1 ? token.slice(2) : token.slice(2, eqIdx);
+      const isBare = eqIdx === -1;
+      if (name === "linked" || name === "no-linked") {
+        linked = true;
+        continue;
+      }
+      if (name === "local" || name === "no-local") {
+        local = true;
+        continue;
+      }
+      if (isBare && VALUE_CONSUMING_LONG_FLAGS.has(name)) skipNext = true;
+      continue;
+    }
+
+    if (token.startsWith("-") && token.length >= 2 && token.charAt(1) !== "-") {
+      if (token.length === 2 && VALUE_CONSUMING_SHORT_FLAGS.has(token.charAt(1))) {
+        skipNext = true;
+      }
+    }
+  }
+
+  const setFlags: Array<string> = [];
+  if (linked) setFlags.push("linked");
+  if (local) setFlags.push("local");
+  return setFlags;
+}
 
 /**
  * Resolves the DB target selection from raw CLI args.

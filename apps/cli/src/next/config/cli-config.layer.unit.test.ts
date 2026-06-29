@@ -189,6 +189,37 @@ describe("cliConfigLayer", () => {
     );
   });
 
+  it.live("uses SUPABASE_HOME (trimmed) when configured", () => {
+    const tempDir = makeTempDir();
+    const supabaseHome = join(tempDir, "custom-supabase-home");
+    return Effect.gen(function* () {
+      const cliConfig = yield* CliConfig;
+
+      expect(cliConfig.supabaseHome).toBe(supabaseHome);
+    }).pipe(
+      Effect.provide(buildLayer({ cwd: tempDir, env: { SUPABASE_HOME: `  ${supabaseHome}  ` } })),
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  for (const value of ["", "   "]) {
+    it.live(
+      `falls back to <homeDir>/.supabase when SUPABASE_HOME is ${JSON.stringify(value)}`,
+      () => {
+        const tempDir = makeTempDir();
+        const homeDir = join(tempDir, "home");
+        return Effect.gen(function* () {
+          const cliConfig = yield* CliConfig;
+
+          expect(cliConfig.supabaseHome).toBe(join(homeDir, ".supabase"));
+        }).pipe(
+          Effect.provide(buildLayer({ cwd: tempDir, homeDir, env: { SUPABASE_HOME: value } })),
+          Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+        );
+      },
+    );
+  }
+
   it.live("uses the build-injected PostHog key and host when no runtime override is set", () => {
     const tempDir = makeTempDir();
     return Effect.gen(function* () {

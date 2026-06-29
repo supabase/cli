@@ -4,10 +4,10 @@ import {
   type LegacyPgDeltaContext,
   legacyDeclarativeExportPgDelta,
   legacyDiffPgDelta,
-} from "./declarative.pgdelta.ts";
+} from "../../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeDiffError } from "./declarative.errors.ts";
-import { LegacyDeclarativeSeam } from "./declarative.seam.service.ts";
-import { legacyFindDropStatements } from "./declarative.write.ts";
+import { LegacyDeclarativeSeam } from "../../shared/legacy-pgdelta.seam.service.ts";
+import { legacyFindDropStatements } from "../../../../shared/legacy-sql-split.ts";
 
 /** Ambient inputs shared by the orchestration steps. */
 export interface LegacyDeclarativeRunContext {

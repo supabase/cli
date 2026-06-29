@@ -15,18 +15,18 @@ import {
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyListLocalMigrations } from "../declarative.cache.ts";
+import { legacyListLocalMigrations } from "../../../shared/legacy-pgdelta.cache.ts";
 import {
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNonInteractiveError,
 } from "../declarative.errors.ts";
-import { LegacyDeclarativeSeam } from "../declarative.seam.service.ts";
+import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
 import { legacyRequirePgDelta } from "../declarative.gate.ts";
 import {
   type LegacyDeclarativeRunContext,
   legacyGenerateDeclarativeOutput,
 } from "../declarative.orchestrate.ts";
-import { legacyWriteDeclarativeSchemas } from "../declarative.write.ts";
+import { legacyWriteDeclarativeSchemas } from "../../../shared/legacy-pgdelta.write.ts";
 import type { LegacyDbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import {
   type LegacyLocalConn,
@@ -132,14 +132,16 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       let targetUrl: string;
       let overwrite: boolean;
       if (hasExplicitTarget) {
+        const seam = yield* LegacyDeclarativeSeam;
         if (Option.isSome(flags.local)) {
           // Target selection keys off flag presence (Go's `Changed`), but the
           // auto-start gates on the boolean VALUE: Go passes `declarativeLocal` to
           // `ensureLocalDatabaseStarted` (`db_schema_declarative.go:190`), which
           // short-circuits `if !local { return nil }` (`:127-128`). So `--local=false`
           // selects the local target but must NOT start a stopped stack.
+          yield* seam.ensureLocalPostgresImageCurrent();
           if (Option.getOrElse(flags.local, () => false)) {
-            yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
+            yield* seam.ensureLocalDatabaseStarted();
           }
           targetUrl = legacyLocalUrl(local);
         } else {
@@ -206,6 +208,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           path,
           cliConfig.workdir,
           linkedRef,
+          (yield* LegacyDeclarativeSeam).ensureLocalPostgresImageCurrent(),
         );
         overwrite = true;
       }

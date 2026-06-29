@@ -4,6 +4,7 @@ import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { normalizeKeyringToken } from "../../shared/auth/keyring-token.ts";
 import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { legacySupabaseHome } from "../config/legacy-profile-file.ts";
 import { LEGACY_ACCESS_TOKEN_PATTERN, validateLegacyAccessToken } from "./legacy-access-token.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
 import {
@@ -318,8 +319,8 @@ const makeLegacyCredentials = Effect.gen(function* () {
   const debugLogger = yield* LegacyDebugLogger;
   const profileAccount = cliConfig.profile;
 
-  // ~/.supabase/access-token — fallback file path
-  const fallbackDir = path.join(runtimeInfo.homeDir, ".supabase");
+  // <SUPABASE_HOME or ~/.supabase>/access-token — fallback file path
+  const fallbackDir = legacySupabaseHome(runtimeInfo.homeDir);
   const fallbackPath = path.join(fallbackDir, "access-token");
 
   // `SUPABASE_NO_KEYRING=1` disables the OS keyring entirely (matches `next/`'s
@@ -379,7 +380,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
         return Option.some(Redacted.make(keyringValue.value));
       }
 
-      // Filesystem fallback at ~/.supabase/access-token.
+      // Filesystem fallback in the Supabase home directory.
       const fileValue = yield* readFile;
       if (Option.isSome(fileValue)) {
         yield* debugLogger.debug(`Using access token from file: ${fallbackPath}`);

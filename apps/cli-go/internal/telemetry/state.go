@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/go-errors/errors"
@@ -43,14 +42,11 @@ type rawState struct {
 }
 
 func telemetryPath() (string, error) {
-	if home := strings.TrimSpace(os.Getenv("SUPABASE_HOME")); home != "" {
-		return filepath.Join(home, "telemetry.json"), nil
-	}
-	home, err := os.UserHomeDir()
+	home, err := utils.SupabaseHomeDir()
 	if err != nil {
-		return "", errors.Errorf("failed to get $HOME directory: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".supabase", "telemetry.json"), nil
+	return filepath.Join(home, "telemetry.json"), nil
 }
 
 func parseConsent(raw rawState) (bool, bool, error) {

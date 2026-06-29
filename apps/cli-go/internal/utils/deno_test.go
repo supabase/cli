@@ -64,6 +64,19 @@ func TestGetDenoPath(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, expected, path)
 	})
+
+	t.Run("returns SUPABASE_HOME path when configured", func(t *testing.T) {
+		t.Setenv("SUPABASE_HOME", "/custom/supabase")
+		expected := filepath.Join("/custom/supabase", "deno")
+		if runtime.GOOS == "windows" {
+			expected += ".exe"
+		}
+
+		path, err := GetDenoPath()
+
+		assert.NoError(t, err)
+		assert.Equal(t, expected, path)
+	})
 }
 
 func TestIsScriptModified(t *testing.T) {

@@ -97,11 +97,35 @@ func (p *RequestPolicy) UnmarshalText(text []byte) error {
 
 type Glob []string
 
+type globOptions struct {
+	skipEmptyGlobs    bool
+	errorOnAllSkipped bool
+}
+
+type GlobOption func(*globOptions)
+
+func WithSkipEmptyGlobs() GlobOption {
+	return func(o *globOptions) {
+		o.skipEmptyGlobs = true
+	}
+}
+
+func WithErrorOnAllSkippedGlobs() GlobOption {
+	return func(o *globOptions) {
+		o.errorOnAllSkipped = true
+	}
+}
+
 // Match the glob patterns in the given FS to get a deduplicated
 // array of all migrations files to apply in the declared order.
-func (g Glob) Files(fsys fs.FS) ([]string, error) {
+func (g Glob) Files(fsys fs.FS, options ...GlobOption) ([]string, error) {
+	opts := globOptions{}
+	for _, apply := range options {
+		apply(&opts)
+	}
 	var result []string
 	var allErrors []error
+	var skipped []string
 	set := make(map[string]struct{})
 	for _, pattern := range g {
 		// Glob expects / as path separator on windows
@@ -109,6 +133,10 @@ func (g Glob) Files(fsys fs.FS) ([]string, error) {
 		if err != nil {
 			allErrors = append(allErrors, errors.Errorf("failed to glob files: %w", err))
 		} else if len(matches) == 0 {
+			if opts.skipEmptyGlobs && hasGlobMeta(pattern) {
+				skipped = append(skipped, pattern)
+				continue
+			}
 			allErrors = append(allErrors, errors.Errorf("no files matched pattern: %s", pattern))
 		}
 		sort.Strings(matches)
@@ -121,7 +149,16 @@ func (g Glob) Files(fsys fs.FS) ([]string, error) {
 			}
 		}
 	}
+	if opts.errorOnAllSkipped && len(result) == 0 && len(skipped) > 0 {
+		for _, pattern := range skipped {
+			allErrors = append(allErrors, errors.Errorf("no files matched pattern: %s", pattern))
+		}
+	}
 	return result, errors.Join(allErrors...)
+}
+
+func hasGlobMeta(pattern string) bool {
+	return strings.ContainsAny(pattern, `*?[`)
 }
 
 // We follow these rules when adding new config:
@@ -144,7 +181,7 @@ type (
 		Db           db             `toml:"db" json:"db"`
 		Realtime     realtime       `toml:"realtime" json:"realtime"`
 		Studio       studio         `toml:"studio" json:"studio"`
-		Inbucket     inbucket       `toml:"inbucket" json:"inbucket"`
+		Inbucket     inbucket       `toml:"local_smtp" json:"local_smtp"`
 		Storage      storage        `toml:"storage" json:"storage"`
 		Auth         auth           `toml:"auth" json:"auth"`
 		EdgeRuntime  edgeRuntime    `toml:"edge_runtime" json:"edge_runtime"`
@@ -201,7 +238,7 @@ type (
 
 	function struct {
 		Enabled     bool   `toml:"enabled" json:"enabled"`
-		VerifyJWT   bool   `toml:"verify_jwt" json:"verify_jwt"`
+		VerifyJWT   *bool  `toml:"verify_jwt" json:"verify_jwt"`
 		ImportMap   string `toml:"import_map" json:"import_map"`
 		Entrypoint  string `toml:"entrypoint" json:"entrypoint"`
 		StaticFiles Glob   `toml:"static_files" json:"static_files"`
@@ -493,13 +530,17 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 		viper.ExperimentalBindStruct(),
 		viper.EnvKeyReplacer(strings.NewReplacer(".", "_")),
 	)
+	fileConfig := viper.New()
 	v.SetEnvPrefix("SUPABASE")
 	v.AutomaticEnv()
 	if err := c.mergeDefaultValues(v); err != nil {
 		return err
 	} else if err := mergeFileConfig(v, filename, fsys); err != nil {
 		return err
+	} else if err := mergeFileConfig(fileConfig, filename, fsys); err != nil {
+		return err
 	}
+	v = normalizeDeprecatedSMTPConfig(v, fileConfig)
 	// Find [remotes.*] block to override base config
 	idToName := map[string]string{}
 	for name, remote := range v.GetStringMap("remotes") {
@@ -517,6 +558,82 @@ func (c *config) loadFromFile(filename string, fsys fs.FS) error {
 		}
 	}
 	return c.load(v)
+}
+
+func normalizeDeprecatedSMTPConfig(v, fileConfig *viper.Viper) *viper.Viper {
+	settings := v.AllSettings()
+	changed := false
+	if fileConfig.IsSet("inbucket") {
+		fmt.Fprintln(os.Stderr, `WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.`)
+		renameDeprecatedSMTP(settings, !fileConfig.IsSet("local_smtp"))
+		changed = true
+	}
+	if remotes, ok := settings["remotes"].(map[string]any); ok {
+		for name, raw := range remotes {
+			remote, ok := raw.(map[string]any)
+			if !ok || !fileConfig.IsSet(fmt.Sprintf("remotes.%s.inbucket", name)) {
+				continue
+			}
+			fmt.Fprintf(
+				os.Stderr,
+				"WARN: config section [remotes.%s.inbucket] is deprecated. Please use [remotes.%s.local_smtp] instead.\n",
+				name,
+				name,
+			)
+			renameDeprecatedSMTP(remote, !fileConfig.IsSet(fmt.Sprintf("remotes.%s.local_smtp", name)))
+			changed = true
+		}
+	}
+	if !changed {
+		return v
+	}
+	// Rebuild the viper from the rewritten settings so the now-removed
+	// `inbucket` key does not trip UnmarshalExact. Preserve the env-binding
+	// options from the original instance, otherwise SUPABASE_-prefixed env
+	// overrides bound via ExperimentalBindStruct would be silently dropped.
+	u := viper.NewWithOptions(
+		viper.ExperimentalBindStruct(),
+		viper.EnvKeyReplacer(strings.NewReplacer(".", "_")),
+	)
+	u.SetEnvPrefix("SUPABASE")
+	u.AutomaticEnv()
+	if err := u.MergeConfigMap(settings); err != nil {
+		return v
+	}
+	return u
+}
+
+// renameDeprecatedSMTP removes the deprecated `inbucket` key from settings. When
+// promote is true (no explicit `local_smtp` is present), the inbucket values are
+// deep-merged over any existing `local_smtp` defaults so a partial `[inbucket]`
+// section keeps the template defaults it omits (e.g. `enabled = true`).
+func renameDeprecatedSMTP(settings map[string]any, promote bool) {
+	inbucket, ok := settings["inbucket"]
+	delete(settings, "inbucket")
+	if !ok || !promote {
+		return
+	}
+	if existing, ok := settings["local_smtp"].(map[string]any); ok {
+		if override, ok := inbucket.(map[string]any); ok {
+			mergeConfigMaps(existing, override)
+			return
+		}
+	}
+	settings["local_smtp"] = inbucket
+}
+
+// mergeConfigMaps deep-merges src into dst, overwriting leaf values while
+// recursing into nested maps, mirroring viper's own config merge semantics.
+func mergeConfigMaps(dst, src map[string]any) {
+	for k, val := range src {
+		if srcMap, ok := val.(map[string]any); ok {
+			if dstMap, ok := dst[k].(map[string]any); ok {
+				mergeConfigMaps(dstMap, srcMap)
+				continue
+			}
+		}
+		dst[k] = val
+	}
 }
 
 func (c *config) mergeDefaultValues(v *viper.Viper) error {
@@ -569,9 +686,6 @@ func (c *config) load(v *viper.Viper) error {
 			continue
 		}
 		if k := fmt.Sprintf("functions.%s.enabled", key); !v.IsSet(k) {
-			v.Set(k, true)
-		}
-		if k := fmt.Sprintf("functions.%s.verify_jwt", key); !v.IsSet(k) {
 			v.Set(k, true)
 		}
 	}
@@ -915,7 +1029,7 @@ func (c *config) Validate(fsys fs.FS) error {
 	// Validate smtp config
 	if c.Inbucket.Enabled {
 		if c.Inbucket.Port == 0 {
-			return errors.New("Missing required field in config: inbucket.port")
+			return errors.New("Missing required field in config: local_smtp.port")
 		}
 	}
 	// Validate auth config

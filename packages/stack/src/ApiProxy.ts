@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Context } from "effect";
+import { Effect, Layer, Option, Context, Schedule, Result } from "effect";
 import {
   Headers,
   HttpBody,
@@ -105,6 +105,13 @@ function addCorsHeaders(
   );
 }
 
+// Edge Functions cold-boot lazily: the first request to a function makes the
+// edge-runtime spin up a user worker, and it can drop the connection while it
+// does so. Its `/_internal/health` probe answers immediately, so "Healthy"
+// status does not mean a function is servable yet. Briefly retry transport
+// failures on that route so a user's first call doesn't surface as a 502.
+const COLD_START_RETRY_SCHEDULE = Schedule.spaced("250 millis").pipe(Schedule.take(8));
+
 interface ProxyHandlerOptions {
   readonly backendPort: number;
   readonly stripPrefix?: string;
@@ -112,6 +119,10 @@ interface ProxyHandlerOptions {
   readonly transformAuth?: boolean;
   readonly transformAuthCustomHeader?: boolean;
   readonly extraHeaders?: Record<string, string>;
+  // Retry transient transport failures, for backends (edge-runtime) that may
+  // refuse/reset connections while cold-starting. Buffers the request body so
+  // it can be re-sent across attempts.
+  readonly retryColdStart?: boolean;
 }
 
 function makeProxyHandler(
@@ -145,16 +156,35 @@ function makeProxyHandler(
       const backendUrl = `http://127.0.0.1:${opts.backendPort}${backendPath}`;
       const noBodyMethods = new Set(["GET", "HEAD", "OPTIONS", "TRACE"]);
       const contentType = Option.getOrUndefined(Headers.get(req.headers, "content-type"));
-      const body = noBodyMethods.has(req.method)
-        ? HttpBody.empty
-        : HttpBody.stream(req.stream, contentType);
+
+      let body: HttpBody.HttpBody;
+      if (noBodyMethods.has(req.method)) {
+        body = HttpBody.empty;
+      } else if (opts.retryColdStart === true) {
+        // Buffer the body so the request can be safely re-sent if we retry.
+        const buffered = yield* Effect.result(req.arrayBuffer);
+        if (Result.isFailure(buffered)) {
+          return HttpServerResponse.text("Bad gateway: unable to read request body", {
+            status: 502,
+          });
+        }
+        body = HttpBody.uint8Array(new Uint8Array(buffered.success), contentType);
+      } else {
+        body = HttpBody.stream(req.stream, contentType);
+      }
 
       const outReq = HttpClientRequest.make(req.method)(backendUrl, {
         headers: outHeaders,
         body,
       });
 
-      const outRes = yield* client.execute(outReq);
+      const request = client.execute(outReq);
+      const outRes = yield* opts.retryColdStart === true
+        ? Effect.retry(request, {
+            while: (error) => error.reason._tag === "TransportError",
+            schedule: COLD_START_RETRY_SCHEDULE,
+          })
+        : request;
       const responseHeaders = sanitizeProxyResponseHeaders(outRes.headers);
       return HttpServerResponse.stream(outRes.stream, {
         status: outRes.status,
@@ -263,6 +293,7 @@ export class ApiProxy extends Context.Service<
               stripPrefix: "/functions/v1",
               transformAuth: true,
               transformAuthCustomHeader: true,
+              retryColdStart: true,
             }),
           ),
           HttpRouter.route(

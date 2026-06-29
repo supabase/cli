@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import { CLI_VERSION } from "../cli/version.ts";
@@ -214,6 +214,47 @@ export function makeGoProxyLayer(opts?: {
               if (exitCode !== 0) {
                 yield* processControl.exit(exitCode);
               }
+            }),
+          ),
+        execCapture: (args, execOpts) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              if (!("found" in resolved)) {
+                yield* Effect.sync(() => {
+                  process.stderr.write(`${formatGoBinaryNotFoundError(resolved.notFound)}\n`);
+                });
+                return yield* processControl.exit(1);
+              }
+              const binary = resolved.found;
+              yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
+              const env =
+                opts?.env || execOpts?.env ? { ...opts?.env, ...execOpts?.env } : undefined;
+              // Capture stdout (pipe) while keeping stderr inherited, so the child's
+              // progress still reaches the user but its stdout is collected for
+              // wrapping rather than written to our stdout. stdin defaults to
+              // inherited (interactive); callers pass `"ignore"` to give the child a
+              // non-TTY stdin so it can't block on a prompt before the wrapper emits
+              // its machine-output envelope.
+              const command = ChildProcess.make(binary, [...globalArgs, ...args], {
+                cwd: execOpts?.cwd ?? opts?.cwd,
+                env,
+                extendEnv: true,
+                stdin: execOpts?.stdin ?? "inherit",
+                stdout: "pipe",
+                stderr: "inherit",
+                detached: false,
+              });
+              const handle = yield* spawner.spawn(command).pipe(Effect.orDie);
+              // Drain stdout fully before awaiting exit so a full pipe buffer can't
+              // deadlock the child.
+              const captured = yield* Stream.mkString(Stream.decodeText(handle.stdout)).pipe(
+                Effect.orDie,
+              );
+              const exitCode = yield* handle.exitCode.pipe(Effect.orDie);
+              if (exitCode !== 0) {
+                return yield* processControl.exit(exitCode);
+              }
+              return captured;
             }),
           ),
       });

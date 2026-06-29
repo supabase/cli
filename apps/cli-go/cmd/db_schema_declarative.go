@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/containerd/errdefs"
+	"github.com/docker/docker/api/types/container"
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
@@ -47,6 +49,27 @@ var (
 		Use:   "declarative",
 		Short: "Manage declarative database schemas",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// The hidden __catalog seam forwards the resolved linked ref via
+			// --project-ref so the catalog is built from the remote-merged config.
+			// Seed flags.ProjectRef before LoadConfig (which keys the [remotes.<ref>]
+			// merge off Config.ProjectId = flags.ProjectRef); this command never runs
+			// LoadProjectRef, so SUPABASE_PROJECT_ID env alone would not merge.
+			if len(pgdeltaCatalogProjectRef) > 0 {
+				flags.ProjectRef = pgdeltaCatalogProjectRef
+			}
+			// LoadConfig applies profile-specific overrides keyed off
+			// utils.CurrentProfile (internal/utils/flags/config_path.go), which is
+			// only populated by LoadProfile. The root pre-run (cmd/root.go:101) runs
+			// AFTER this block — it is chained at the bottom of this function — so
+			// CurrentProfile would still be its zero value when LoadConfig runs here.
+			// Load the profile first to match the real in-process path, where
+			// LoadConfig is only ever reached from a RunE after the root pre-run has
+			// already set the profile (e.g. internal/db/diff/explicit.go). Without
+			// this, a --profile forwarded to the hidden __catalog seam is ignored
+			// when the catalog config is built.
+			if err := utils.LoadProfile(cmd.Context(), afero.NewOsFs()); err != nil {
+				return err
+			}
 			if err := flags.LoadConfig(afero.NewOsFs()); err != nil {
 				return err
 			}
@@ -136,6 +159,39 @@ func ensureLocalDatabaseStarted(ctx context.Context, local bool, isRunning func(
 	return nil
 }
 
+type inspectContainerFunc func(context.Context, string) (container.InspectResponse, error)
+
+func dockerImageTag(image string) string {
+	image = strings.TrimSpace(image)
+	index := strings.LastIndexByte(image, ':')
+	if index < 0 || index == len(image)-1 {
+		return ""
+	}
+	return image[index+1:]
+}
+
+func ensureLocalPostgresImageCurrent(ctx context.Context, inspect inspectContainerFunc) error {
+	resp, err := inspect(ctx, utils.DbId)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to inspect local Postgres container: %w", err)
+	}
+	if resp.Config == nil || len(strings.TrimSpace(resp.Config.Image)) == 0 {
+		return nil
+	}
+	actual := strings.TrimSpace(resp.Config.Image)
+	expected := strings.TrimSpace(utils.GetRegistryImageUrl(utils.Config.Db.Image))
+	actualTag := dockerImageTag(actual)
+	expectedTag := dockerImageTag(expected)
+	if len(actualTag) == 0 || len(expectedTag) == 0 || actualTag == expectedTag {
+		return nil
+	}
+	utils.CmdSuggestion = fmt.Sprintf("Run %s, then %s before syncing declarative schemas.", utils.Aqua("supabase stop --all --no-backup"), utils.Aqua("supabase start"))
+	return fmt.Errorf("local Postgres container image is stale: running %s but expected %s", actual, expected)
+}
+
 // hasExplicitTargetFlag returns true if the user explicitly set --local, --linked, or --db-url.
 func hasExplicitTargetFlag(cmd *cobra.Command) bool {
 	return cmd.Flags().Changed("local") || cmd.Flags().Changed("linked") || cmd.Flags().Changed("db-url")
@@ -187,6 +243,11 @@ func runDeclarativeGenerate(cmd *cobra.Command, args []string) error {
 
 	// When an explicit target flag is provided, use the direct path.
 	if hasExplicitTargetFlag(cmd) {
+		if cmd.Flags().Changed("local") {
+			if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
+				return err
+			}
+		}
 		if err := ensureLocalDatabaseStarted(ctx, declarativeLocal, utils.AssertSupabaseDbIsRunning, func(ctx context.Context) error {
 			return start.Run(ctx, "", fsys)
 		}); err != nil {
@@ -246,6 +307,9 @@ func runDeclarativeGenerate(cmd *cobra.Command, args []string) error {
 
 		switch choice.Index {
 		case 0: // Local database
+			if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
+				return err
+			}
 			if err := ensureLocalDatabaseStarted(ctx, true, utils.AssertSupabaseDbIsRunning, func(ctx context.Context) error {
 				return start.Run(ctx, "", fsys)
 			}); err != nil {
@@ -288,6 +352,9 @@ func runDeclarativeGenerate(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		// No migrations — generate from local DB
+		if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
+			return err
+		}
 		if err := ensureLocalDatabaseStarted(ctx, true, utils.AssertSupabaseDbIsRunning, func(ctx context.Context) error {
 			return start.Run(ctx, "", fsys)
 		}); err != nil {
@@ -304,9 +371,10 @@ func runDeclarativeSync(cmd *cobra.Command, args []string) error {
 	ctx := cmd.Context()
 	fsys := afero.NewOsFs()
 	console := utils.NewConsole()
+	declarativeFilesExist := hasDeclarativeFiles(fsys)
 
 	// Step 1: Check if declarative dir has files
-	if !hasDeclarativeFiles(fsys) {
+	if !declarativeFilesExist {
 		if !isTTY() && !viper.GetBool("YES") {
 			return fmt.Errorf("no declarative schema found. Run %s first", utils.Aqua("supabase db schema declarative generate"))
 		}
@@ -395,6 +463,9 @@ func runDeclarativeSync(cmd *cobra.Command, args []string) error {
 	}
 
 	if shouldApply {
+		if err := ensureLocalPostgresImageCurrent(ctx, utils.Docker.ContainerInspect); err != nil {
+			return err
+		}
 		if applyErr := applyMigrationToLocal(ctx, path, fsys); applyErr != nil {
 			fmt.Fprintln(os.Stderr, utils.Red("Migration failed to apply: "+applyErr.Error()))
 

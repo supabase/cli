@@ -45,6 +45,7 @@ jobs:
     # allow any tag so reviewers can opt in for beta/alpha from the Actions tab.
     if: ${{ github.event_name == 'workflow_dispatch' || (!contains(inputs.tag, '-beta.') && !contains(inputs.tag, '-alpha.')) }}
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     continue-on-error: ${{ inputs.non_blocking || false }}
     permissions:
       contents: write

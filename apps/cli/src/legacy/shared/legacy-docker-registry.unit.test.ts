@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyGetRegistryImageUrl } from "./legacy-docker-registry.ts";
+import {
+  legacyGetRegistryImageUrl,
+  legacyGetRegistryImageUrlCandidates,
+} from "./legacy-docker-registry.ts";
 
 describe("legacyGetRegistryImageUrl", () => {
   const withRegistry = <T>(value: string | undefined, fn: () => T): T => {
@@ -34,5 +37,42 @@ describe("legacyGetRegistryImageUrl", () => {
     expect(
       withRegistry("my.mirror.example", () => legacyGetRegistryImageUrl("supabase/pg_prove:3.36")),
     ).toBe("my.mirror.example/supabase/pg_prove:3.36");
+  });
+
+  it("returns fallback candidates when the registry is unset", () => {
+    expect(
+      withRegistry(undefined, () =>
+        legacyGetRegistryImageUrlCandidates("supabase/postgres:17.6.1.138"),
+      ),
+    ).toEqual([
+      "public.ecr.aws/supabase/postgres:17.6.1.138",
+      "ghcr.io/supabase/postgres:17.6.1.138",
+      "supabase/postgres:17.6.1.138",
+    ]);
+  });
+
+  it("dedupes an already-defaulted image in the fallback candidates", () => {
+    expect(
+      withRegistry(undefined, () =>
+        legacyGetRegistryImageUrlCandidates("public.ecr.aws/supabase/postgres:17.6.1.138"),
+      ),
+    ).toEqual([
+      "public.ecr.aws/supabase/postgres:17.6.1.138",
+      "ghcr.io/supabase/postgres:17.6.1.138",
+      "supabase/postgres:17.6.1.138",
+    ]);
+  });
+
+  it("uses a single candidate when the registry is explicitly configured", () => {
+    expect(
+      withRegistry("public.ecr.aws", () =>
+        legacyGetRegistryImageUrlCandidates("supabase/postgres:17.6.1.138"),
+      ),
+    ).toEqual(["public.ecr.aws/supabase/postgres:17.6.1.138"]);
+    expect(
+      withRegistry("docker.io", () =>
+        legacyGetRegistryImageUrlCandidates("supabase/postgres:17.6.1.138"),
+      ),
+    ).toEqual(["supabase/postgres:17.6.1.138"]);
   });
 });

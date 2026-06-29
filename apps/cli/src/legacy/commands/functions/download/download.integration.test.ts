@@ -60,6 +60,7 @@ function mockProxy() {
         Effect.sync(() => {
           calls.push([...args]);
         }),
+      execCapture: () => Effect.succeed(""),
     }),
   };
 }

@@ -74,8 +74,10 @@ jobs:
     with:
       version: ${{ inputs.version }}
       shell: ${{ inputs.shell }}
-      runner: ubuntu-latest
+      runner: large-linux-x86
       cache_key_suffix: -github
+      timeout_minutes: 45
+      build_timeout_minutes: 20
     secrets:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
       POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
@@ -92,12 +94,13 @@ jobs:
           - blacksmith-8vcpu-ubuntu-2404
           - blacksmith-8vcpu-windows-2025
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     env:
       NPM_TAG: ${{ inputs.npm_tag }}
       VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -227,12 +230,13 @@ jobs:
     needs:
       - build-github
     runs-on: macos-latest
+    timeout-minutes: 25
     env:
       NPM_TAG: ${{ inputs.npm_tag }}
       VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -271,6 +275,7 @@ jobs:
     # publish job must stay on a github-hosted runner. The job is short
     # and not compute-bound, so the wall-clock cost is negligible.
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     env:
       CHANNEL: ${{ inputs.channel }}
       NPM_TAG: ${{ inputs.npm_tag }}
@@ -289,7 +294,7 @@ jobs:
           permission-workflows: write
 
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: true
           token: ${{ steps.app-token.outputs.token }}
@@ -377,7 +382,7 @@ jobs:
           done
 
       - name: Create draft GitHub Release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           tag_name: v${{ inputs.version }}
           name: v${{ inputs.version }}
@@ -448,12 +453,13 @@ jobs:
     # github-hosted to share a cache store with build-github/publish, whose
     # -github-v1 artifacts this job's checksums must match.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       BREW_NAME: ${{ inputs.brew_name }}
       VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -510,12 +516,13 @@ jobs:
     # github-hosted to share a cache store with build-github/publish, whose
     # -github-v1 artifacts this job's checksums must match.
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       SCOOP_NAME: ${{ inputs.scoop_name }}
       VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 

@@ -456,8 +456,8 @@ describe("StackBuilder", () => {
       });
 
       const realtimeDef = graph.startOrder.find((service) => service.name === "realtime");
-      expect(realtimeDef?.args).toContain("supabase/realtime:v2.78.10");
-      expect(realtimeDef?.args).not.toContain("public.ecr.aws/supabase/realtime:v2.78.10");
+      expect(realtimeDef?.args).toContain("supabase/realtime:v2.111.8");
+      expect(realtimeDef?.args).not.toContain("public.ecr.aws/supabase/realtime:v2.111.8");
     }).pipe(Effect.provide(layer));
   });
 });

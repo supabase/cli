@@ -47,9 +47,9 @@ function sanitizeErrorBody(input: string): string {
   return out;
 }
 
-type NetworkErrorFactory<E> = new (args: { readonly message: string }) => E;
+export type NetworkErrorFactory<E> = new (args: { readonly message: string }) => E;
 
-type StatusErrorFactory<E> = new (args: {
+export type StatusErrorFactory<E> = new (args: {
   readonly status: number;
   readonly body: string;
   readonly message: string;

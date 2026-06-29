@@ -1,5 +1,5 @@
 import { loadProjectConfig } from "@supabase/config";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import {
   LegacyDebugFlag,
@@ -13,6 +13,7 @@ import {
   LegacyProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
+import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
@@ -391,13 +392,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           "node",
           "dist/server/server.js",
         ];
-        const child = yield* spawner.spawn(
-          ChildProcess.make("docker", args, {
-            stdin: "ignore",
-            stdout: "pipe",
-            stderr: "pipe",
-          }),
-        );
+        const child = yield* spawnContainerCli(spawner, args, {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        });
 
         const [exitCode] = yield* Effect.all(
           [
@@ -420,12 +419,14 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         // We only need the exit code and stderr (Go uses Docker's ContainerInspect API,
         // which reads no stdout). Discard stdout so the inspect JSON can never fill the
         // pipe buffer and deadlock the unconsumed stream.
-        const child = yield* spawner.spawn(
-          ChildProcess.make("docker", ["container", "inspect", localDbContainerId(projectId)], {
+        const child = yield* spawnContainerCli(
+          spawner,
+          ["container", "inspect", localDbContainerId(projectId)],
+          {
             stdin: "ignore",
             stdout: "ignore",
             stderr: "pipe",
-          }),
+          },
         );
         const [exitCode, stderr] = yield* Effect.all([
           child.exitCode.pipe(Effect.map(Number)),
@@ -433,7 +434,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         ]);
         if (exitCode !== 0) {
           const message = stderr.trim();
-          if (message.includes("No such container")) {
+          if (message.toLowerCase().includes("no such container")) {
             return yield* Effect.fail(new Error("supabase start is not running."));
           }
           return yield* Effect.fail(

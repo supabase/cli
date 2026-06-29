@@ -1,10 +1,10 @@
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Console, Effect, FileSystem, Path, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
 import { DuplicateRemoteProjectIdError, ProjectConfigParseError } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { findProjectPaths } from "./paths.ts";
-import { loadProjectEnvironment } from "./project.ts";
+import { loadProjectEnvironment, type ProjectEnvironment } from "./project.ts";
 
 const projectConfigSchemaKey = "$schema";
 
@@ -42,6 +42,15 @@ export interface LoadedProjectConfig {
  */
 export interface LoadProjectConfigOptions {
   readonly projectRef?: string;
+  /**
+   * Pre-resolved project environment used to interpolate `env()` references.
+   * When omitted, the environment is resolved internally from `.env`/`.env.local`
+   * layered over `process.env` (the default for most callers). Callers that need
+   * Go-accurate, environment-specific resolution (e.g. `functions serve`, which
+   * also reads `.env.<SUPABASE_ENV>` files) resolve it themselves and pass it in
+   * so loading does not re-read those files or depend on `process.env` mutation.
+   */
+  readonly projectEnv?: ProjectEnvironment;
 }
 
 export interface SaveProjectConfigOptions {
@@ -263,6 +272,51 @@ function parseProjectConfigDocument(content: string, format: ConfigFormat): unkn
   return format === "json" ? JSON.parse(content) : SmolToml.parse(content);
 }
 
+interface NormalizedSMTPDocument {
+  readonly document: unknown;
+  /** Section paths that used the deprecated `inbucket` key, e.g. `inbucket`, `remotes.staging.inbucket`. */
+  readonly deprecatedSections: ReadonlyArray<string>;
+}
+
+/**
+ * Rewrites the deprecated `[inbucket]` config section (top-level and per
+ * `[remotes.*]`) to its preferred `[local_smtp]` name, mirroring Go's
+ * `normalizeDeprecatedSMTPConfig`. When both keys are present the explicit
+ * `local_smtp` wins and `inbucket` is dropped. The returned `deprecatedSections`
+ * drive the user-facing deprecation warnings emitted by the caller.
+ */
+function normalizeDeprecatedSMTPSections(document: unknown): NormalizedSMTPDocument {
+  if (!isObject(document)) {
+    return { document, deprecatedSections: [] };
+  }
+  const deprecatedSections: Array<string> = [];
+  const normalized = { ...document };
+  if ("inbucket" in normalized) {
+    deprecatedSections.push("inbucket");
+    if (!("local_smtp" in normalized)) {
+      normalized.local_smtp = normalized.inbucket;
+    }
+    delete normalized.inbucket;
+  }
+  if (isObject(normalized.remotes)) {
+    normalized.remotes = Object.fromEntries(
+      Object.entries(normalized.remotes).map(([name, remote]) => {
+        if (!isObject(remote) || !("inbucket" in remote)) {
+          return [name, remote];
+        }
+        deprecatedSections.push(`remotes.${name}.inbucket`);
+        const normalizedRemote = { ...remote };
+        if (!("local_smtp" in normalizedRemote)) {
+          normalizedRemote.local_smtp = normalizedRemote.inbucket;
+        }
+        delete normalizedRemote.inbucket;
+        return [name, normalizedRemote];
+      }),
+    );
+  }
+  return { document: normalized, deprecatedSections };
+}
+
 function getSchemaRef(document: unknown): string | undefined {
   if (!isObject(document)) {
     return undefined;
@@ -329,6 +383,15 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     try: () => parseProjectConfigDocument(content, format),
     catch: (cause) => new ProjectConfigParseError({ path: filePath, format, cause }),
   });
+  const { document: normalized, deprecatedSections } = normalizeDeprecatedSMTPSections(document);
+  // Warn on stderr (matching Go's normalizeDeprecatedSMTPConfig) so the notice
+  // never pollutes machine-readable stdout payloads.
+  for (const section of deprecatedSections) {
+    const replacement = section.replace(/inbucket$/, "local_smtp");
+    yield* Console.error(
+      `WARN: config section [${section}] is deprecated. Please use [${replacement}] instead.`,
+    );
+  }
 
   // Substitute `env(VAR)` references against `.env`/`.env.local`/ambient env
   // before schema decode. Required for numeric/boolean fields, which would
@@ -337,12 +400,14 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   // walking two directories up gives us the project root that
   // `loadProjectEnvironment` expects.
   const projectRoot = path.dirname(path.dirname(filePath));
-  const projectEnv = yield* loadProjectEnvironment({
-    cwd: projectRoot,
-    baseEnv: process.env,
-  });
+  const projectEnv =
+    options?.projectEnv ??
+    (yield* loadProjectEnvironment({
+      cwd: projectRoot,
+      baseEnv: process.env,
+    }));
   const interpolated = interpolateEnvReferencesAgainstSchema(
-    document,
+    normalized,
     projectEnv?.values ?? {},
     ProjectConfigSchema,
   );

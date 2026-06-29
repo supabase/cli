@@ -13,7 +13,7 @@ import { Effect, type FileSystem, type Path } from "effect";
  */
 
 // `FROM supabase/edge-runtime:v1.74.1 AS edgeruntime` (embedded Dockerfile).
-const LEGACY_EDGE_RUNTIME_IMAGE = "supabase/edge-runtime:v1.74.1";
+export const LEGACY_EDGE_RUNTIME_IMAGE = "supabase/edge-runtime:v1.74.1";
 // `deno1` (`pkg/config/constants.go:15`) — used when `deno_version = 1`.
 const LEGACY_EDGE_RUNTIME_DENO1_IMAGE = "supabase/edge-runtime:v1.68.4";
 

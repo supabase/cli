@@ -16,7 +16,7 @@
 | —    | —      | —    |
 
 No files are written. Container env (including the DB URL and TLS CA bundle) is
-passed via `docker run --env KEY=VALUE` arguments, mirroring Go's
+passed via container CLI `run --env KEY=VALUE` arguments, mirroring Go's
 `container.Config.Env`; no temporary env-file is created.
 
 ## API Routes
@@ -43,10 +43,10 @@ ref may differ from the linked workdir).
 
 ## Subprocesses
 
-| Command                                                                       | When                                                                  | Purpose                                            |
-| ----------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------- |
-| `docker container inspect supabase_db_<project_id>`                           | `--local`                                                             | assert `supabase start` is running                 |
-| `docker run --rm --network <net> --env … <pgmeta> node dist/server/server.js` | `--local`, `--db-url`, project-ref paths with non-TypeScript `--lang` | run pg-meta to generate types from a live database |
+| Command                                                                                | When                                                                  | Purpose                                            |
+| -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------- |
+| `docker`/`podman container inspect supabase_db_<project_id>`                           | `--local`                                                             | assert `supabase start` is running                 |
+| `docker`/`podman run --rm --network <net> --env … <pgmeta> node dist/server/server.js` | `--local`, `--db-url`, project-ref paths with non-TypeScript `--lang` | run pg-meta to generate types from a live database |
 
 A raw TCP `SSLRequest` probe is also opened to the target database host/port to
 detect TLS support before launching pg-meta (mirrors Go's `isRequireSSL`).
@@ -69,7 +69,7 @@ detect TLS support before launching pg-meta (mirrors Go's `isRequireSSL`).
 | `0`  | success — types printed to stdout                                |
 | `1`  | no target specified (must use one flag)                          |
 | `1`  | mutually exclusive flags combined                                |
-| `1`  | `--postgrest-v9-compat` used without `--db-url`                  |
+| `1`  | pg-meta-only flags used with remote TypeScript generation        |
 | `1`  | invalid `--query-timeout` duration or invalid `--db-url`         |
 | `1`  | `supabase start` not running (`--local`) or db inspection failed |
 | `1`  | API error, TLS probe failure, or pg-meta container non-zero exit |
@@ -97,8 +97,9 @@ Not applicable.
   temporary login role + pg-meta for other languages.
 - `--schema` / `-s` accepts a comma-separated list of schemas to include.
 - `--swift-access-control` accepts `internal` (default) or `public`.
-- `--postgrest-v9-compat` generates types compatible with PostgREST v9 and below (requires `--db-url`).
-- `--query-timeout` sets the maximum timeout for the database query (default 15s, direct connection only).
+- `--postgrest-v9-compat` generates types compatible with PostgREST v9 and below for pg-meta
+  generation (`--local`, `--db-url`, or non-TypeScript project-ref paths).
+- `--query-timeout` sets the maximum timeout for pg-meta database queries (default 15s).
 - The legacy positional language argument (`supabase gen types typescript`) is still accepted;
   any other positional language requires an explicit `--lang` flag.
 - The linked-project telemetry cache is written only when a project ref is resolved

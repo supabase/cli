@@ -11,7 +11,7 @@ import { legacyIdentityStitchLayer } from "../../../../../shared/legacy-identity
 import { legacyLinkedDbResolverRuntimeLayer } from "../../../../../shared/legacy-management-api-runtime.layer.ts";
 import { legacyPgDeltaSslProbeLayer } from "../../../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../../../telemetry/legacy-telemetry-state.layer.ts";
-import { legacyDeclarativeSeamLayer } from "../declarative.seam.layer.ts";
+import { legacyDeclarativeSeamLayer } from "../../../shared/legacy-pgdelta.seam.layer.ts";
 
 /**
  * Runtime layer for `supabase db schema declarative generate`.

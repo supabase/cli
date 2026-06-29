@@ -22,8 +22,8 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
-	"github.com/supabase/cli/internal/pgdelta"
 	"github.com/supabase/cli/internal/utils"
+	configpkg "github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
 )
@@ -71,7 +71,11 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 		}
 	}
 	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
-		return schemas.Files(afero.NewIOFS(fsys))
+		return schemas.Files(
+			afero.NewIOFS(fsys),
+			configpkg.WithSkipEmptyGlobs(),
+			configpkg.WithErrorOnAllSkippedGlobs(),
+		)
 	}
 	if exists, err := afero.DirExists(fsys, utils.SchemasDir); err != nil {
 		return nil, errors.Errorf("failed to check schemas: %w", err)
@@ -188,47 +192,14 @@ func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 
 func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, usePgDelta bool, options ...func(*pgx.ConnConfig)) (DatabaseDiff, error) {
 	fmt.Fprintln(w, "Creating shadow database...")
-	shadow, err := CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
+	shadowSource, err := PrepareShadowSource(ctx, schema, utils.IsLocalDatabase(config), usePgDelta, fsys, options...)
 	if err != nil {
 		return DatabaseDiff{}, err
 	}
-	defer utils.DockerRemove(shadow)
-	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, shadow); err != nil {
-		return DatabaseDiff{}, err
-	}
-	if err := MigrateShadowDatabase(ctx, shadow, fsys, options...); err != nil {
-		return DatabaseDiff{}, err
-	}
-	shadowConfig := pgconn.Config{
-		Host:     utils.Config.Hostname,
-		Port:     utils.Config.Db.ShadowPort,
-		User:     "postgres",
-		Password: utils.Config.Db.Password,
-		Database: "postgres",
-	}
-	if utils.IsLocalDatabase(config) {
-		if declared, err := loadDeclaredSchemas(fsys); len(declared) > 0 {
-			config = shadowConfig
-			config.Database = "contrib_regression"
-			if usePgDelta {
-				declDir := utils.GetDeclarativeDir()
-				if exists, _ := afero.DirExists(fsys, declDir); exists {
-					if err := pgdelta.ApplyDeclarative(ctx, config, fsys); err != nil {
-						return DatabaseDiff{}, err
-					}
-				} else {
-					if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
-						return DatabaseDiff{}, err
-					}
-				}
-			} else {
-				if err := migrateBaseDatabase(ctx, config, declared, fsys, options...); err != nil {
-					return DatabaseDiff{}, err
-				}
-			}
-		} else if err != nil {
-			return DatabaseDiff{}, err
-		}
+	defer utils.DockerRemove(shadowSource.Container)
+	shadowConfig := shadowSource.Source
+	if shadowSource.TargetOverride != nil {
+		config = *shadowSource.TargetOverride
 	}
 	// Load all user defined schemas
 	if len(schema) > 0 {

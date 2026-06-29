@@ -20,7 +20,6 @@ import (
 	"github.com/supabase/cli/internal/db/declarative"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/dump"
-	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/migration/format"
 	"github.com/supabase/cli/internal/migration/list"
 	"github.com/supabase/cli/internal/migration/new"
@@ -86,21 +85,12 @@ func Run(ctx context.Context, schema []string, config pgconn.Config, name string
 // timestamped migration files.
 func pullDeclarativePgDelta(ctx context.Context, schema []string, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	fmt.Fprintln(os.Stderr, "Preparing declarative schema export using pg-delta...")
-	shadow, err := diff.CreateShadowDatabase(ctx, utils.Config.Db.ShadowPort)
+	shadowSource, err := diff.PrepareRawShadow(ctx)
 	if err != nil {
 		return err
 	}
-	defer utils.DockerRemove(shadow)
-	if err := start.WaitForHealthyService(ctx, utils.Config.Db.HealthTimeout, shadow); err != nil {
-		return err
-	}
-	shadowConfig := pgconn.Config{
-		Host:     utils.Config.Hostname,
-		Port:     utils.Config.Db.ShadowPort,
-		User:     "postgres",
-		Password: utils.Config.Db.Password,
-		Database: "postgres",
-	}
+	defer utils.DockerRemove(shadowSource.Container)
+	shadowConfig := shadowSource.Source
 	formatOptions := ""
 	if utils.Config.Experimental.PgDelta != nil {
 		formatOptions = strings.TrimSpace(utils.Config.Experimental.PgDelta.FormatOptions)

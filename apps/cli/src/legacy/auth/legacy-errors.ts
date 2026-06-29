@@ -37,7 +37,7 @@ export class LegacyNotLoggedInError extends Data.TaggedError("LegacyNotLoggedInE
 
 /**
  * Raised by `deleteAccessToken` when removing the token fails for a real reason
- * — a non-`ENOENT` failure removing `~/.supabase/access-token`, or a non
+ * — a non-`ENOENT` failure removing `<SUPABASE_HOME or ~/.supabase>/access-token`, or a non
  * not-found error deleting the profile keyring entry. Mirrors Go's
  * `failed to remove access token file: …` / `failed to delete access token from
  * keyring: …` errors (`access_token.go:100-119`), which exit 1.

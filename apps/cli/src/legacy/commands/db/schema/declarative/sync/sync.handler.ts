@@ -16,18 +16,23 @@ import {
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
+import { legacyMakeDir } from "../../../../../shared/legacy-make-dir.ts";
 import { legacyApplyMigrationFile } from "../../../../../shared/legacy-migration-apply.ts";
 import { legacyReadProjectRefFile } from "../../../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyListLocalMigrations, legacyPgDeltaTempPath } from "../declarative.cache.ts";
+import {
+  legacyListLocalMigrations,
+  legacyPgDeltaTempPath,
+} from "../../../shared/legacy-pgdelta.cache.ts";
 import { legacyResolveSmartTargetUrl } from "../declarative.smart-target.ts";
 import {
-  type LegacyDeclarativeDebugBundle,
+  type LegacyDebugBundle,
   legacyCollectMigrationsList,
   legacyDebugBundleMessage,
+  legacyFormatDebugId,
   legacySaveDebugBundle,
-} from "../declarative.debug-bundle.ts";
+} from "../../../shared/legacy-debug-bundle.ts";
 import {
   LegacyDeclarativeApplyError,
   LegacyDeclarativeMutuallyExclusiveFlagsError,
@@ -45,8 +50,8 @@ import {
   legacyDiffDeclarativeToMigrations,
   legacyGenerateDeclarativeOutput,
 } from "../declarative.orchestrate.ts";
-import { LegacyDeclarativeSeam } from "../declarative.seam.service.ts";
-import { legacyWriteDeclarativeSchemas } from "../declarative.write.ts";
+import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
+import { legacyWriteDeclarativeSchemas } from "../../../shared/legacy-pgdelta.write.ts";
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
 
 const DEFAULT_SYNC_NAME = "declarative_sync";
@@ -55,11 +60,9 @@ const DEFAULT_SYNC_NAME = "declarative_sync";
 const formatTimestamp = (millis: number): string =>
   new Date(millis).toISOString().replace(/\D/g, "").slice(0, 14);
 
-/** Go's debug-bundle id layout `20060102-150405` (UTC). */
-const formatDebugId = (millis: number): string => {
-  const digits = new Date(millis).toISOString().replace(/\D/g, "").slice(0, 14);
-  return `${digits.slice(0, 8)}-${digits.slice(8)}`;
-};
+// Go's debug-bundle id layout `20060102-150405` (UTC) — hoisted to
+// `legacy-debug-bundle.ts` and reused by the `db pull` empty-diff bundle.
+const formatDebugId = legacyFormatDebugId;
 
 export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declarative.sync")(
   function* (flags: LegacyDbSchemaDeclarativeSyncFlags) {
@@ -107,7 +110,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         pgDeltaEnabled: toml.pgDelta.enabled,
         configPath: path.join("supabase", "config.toml"),
       });
-
       // `path.resolve` (not `path.join`) so an absolute `declarative_schema_path` is
       // used as-is, matching Go's `config.resolve` (which only prefixes the workdir onto
       // a relative path). `path.join(workdir, abs)` would mangle the absolute path.
@@ -129,12 +131,14 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         schema: flags.schema,
         noCache: flags.noCache,
       };
+      const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent();
+      const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
 
       // Go's `saveApplyDebugBundle`: warn (rather than masking the apply error) and
       // treat the bundle path as empty when the debug directory cannot be created, so
       // an apply failure still surfaces without claiming a bundle was saved
       // (`apps/cli-go/cmd/db_schema_declarative.go:447-461`).
-      const saveApplyDebugBundle = (bundle: LegacyDeclarativeDebugBundle) =>
+      const saveApplyDebugBundle = (bundle: LegacyDebugBundle) =>
         legacySaveDebugBundle(fs, path, cliConfig.workdir, tempDir, migrationsDir, bundle).pipe(
           Effect.matchEffect({
             onFailure: (error) =>
@@ -146,7 +150,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         );
 
       // Step 1: declarative files must exist; in a TTY, offer to generate them.
-      if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
+      if (!declarativeFilesExist) {
         const noFiles = new LegacyDeclarativeNonInteractiveError({
           message: "no declarative schema found. Run supabase db schema declarative generate first",
         });
@@ -205,6 +209,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           path,
           cliConfig.workdir,
           linkedRef,
+          ensureLocalPostgresImageCurrent,
         );
         const generated = yield* legacyGenerateDeclarativeOutput(run, targetUrl);
         yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, generated);
@@ -272,7 +277,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // Step 5: write the timestamped migration file.
       const timestamp = formatTimestamp(yield* Clock.currentTimeMillis);
       const migrationPath = path.join(migrationsDir, `${timestamp}_${migrationName}.sql`);
-      yield* fs.makeDirectory(migrationsDir, { recursive: true });
+      yield* legacyMakeDir(fs, migrationsDir);
       yield* fs.writeFileString(migrationPath, result.diffSQL);
       yield* output.raw(`Created new migration at ${legacyBold(migrationPath)}\n`, "stderr");
 
@@ -305,6 +310,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       if (!shouldApply) return;
 
       // Step 8: apply the migration to the local database (native).
+      yield* ensureLocalPostgresImageCurrent;
       const applyExit = yield* applyMigrationToLocal(
         { port: toml.port, password: toml.password, dnsResolver },
         migrationPath,

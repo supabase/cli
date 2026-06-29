@@ -1,4 +1,7 @@
+import { Effect } from "effect";
 import { Flag, GlobalFlag } from "effect/unstable/cli";
+
+import { legacyViperEnvBool } from "./legacy-viper-env.ts";
 
 // The Effect CLI hoists global flags out of the token stream before the leaf
 // parse and builds ONE tree-wide registry, so a command cannot redeclare an
@@ -90,3 +93,27 @@ export const LEGACY_GLOBAL_FLAGS = [
   LegacyCreateTicketFlag,
   LegacyAgentFlag,
 ] as const;
+
+/**
+ * `--yes` resolved with Go's viper `AutomaticEnv` fallback: when the flag is not
+ * passed, `SUPABASE_YES` is honored (`apps/cli-go/cmd/root.go:318-320` binds
+ * every persistent flag, so `console.PromptYesNo` reading `viper.GetBool("YES")`
+ * picks up the env var). A passed `--yes` wins over the env, matching viper
+ * precedence. Prefer this over reading {@link LegacyYesFlag} directly anywhere a
+ * command auto-confirms a prompt.
+ */
+export const legacyResolveYes = Effect.gen(function* () {
+  const flag = yield* LegacyYesFlag;
+  return flag || legacyViperEnvBool("SUPABASE_YES");
+});
+
+/**
+ * `--experimental` resolved with Go's viper `AutomaticEnv` fallback: the gate in
+ * `rootCmd.PersistentPreRunE` reads `viper.GetBool("EXPERIMENTAL")`
+ * (`apps/cli-go/cmd/root.go:94`), so `SUPABASE_EXPERIMENTAL` enables experimental
+ * commands just like the flag. A passed `--experimental` wins over the env.
+ */
+export const legacyResolveExperimental = Effect.gen(function* () {
+  const flag = yield* LegacyExperimentalFlag;
+  return flag || legacyViperEnvBool("SUPABASE_EXPERIMENTAL");
+});

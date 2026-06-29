@@ -1,4 +1,16 @@
+import { Effect } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
+
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { legacyRequireExperimental } from "../../../shared/legacy-experimental-gate.ts";
+import { legacyStorageGatewayRuntimeLayer } from "../../../shared/legacy-storage-runtime.layer.ts";
+import {
+  LegacyStorageLinkedFlagDef,
+  LegacyStorageLocalFlagDef,
+  legacyAssertStorageTargetsExclusive,
+} from "../storage.flags.ts";
 import { legacyStorageRm } from "./rm.handler.ts";
 
 const config = {
@@ -10,12 +22,8 @@ const config = {
     Flag.withAlias("r"),
     Flag.withDescription("Recursively remove a directory."),
   ),
-  local: Flag.boolean("local").pipe(
-    Flag.withDescription("Connects to Storage API of the local database."),
-  ),
-  linked: Flag.boolean("linked").pipe(
-    Flag.withDescription("Connects to Storage API of the linked project."),
-  ),
+  linked: LegacyStorageLinkedFlagDef,
+  local: LegacyStorageLocalFlagDef,
 } as const;
 
 export const legacyStorageRmCommand = Command.make("rm", config).pipe(
@@ -32,11 +40,24 @@ export const legacyStorageRmCommand = Command.make("rm", config).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    legacyStorageRm({
-      files: flags.files.map(String),
-      recursive: flags.recursive,
-      local: flags.local,
-      linked: flags.linked,
-    }),
+    Effect.gen(function* () {
+      const cliArgs = yield* CliArgs;
+      yield* legacyAssertStorageTargetsExclusive(cliArgs.args);
+      // Go gates `storageCmd` behind `--experimental` in PersistentPreRunE
+      // (root.go:91-96), after flag-group validation and before RunE/PostRun.
+      yield* legacyRequireExperimental;
+      const telemetryFlags = {
+        recursive: flags.recursive,
+        linked: flags.linked,
+        local: flags.local,
+      };
+      return yield* legacyStorageRm({
+        files: flags.files.map(String),
+        recursive: flags.recursive,
+        linked: flags.linked,
+        local: flags.local,
+      }).pipe(withLegacyCommandInstrumentation({ flags: telemetryFlags }));
+    }).pipe(withJsonErrorHandling),
   ),
+  Command.provide(legacyStorageGatewayRuntimeLayer(["storage", "rm"])),
 );

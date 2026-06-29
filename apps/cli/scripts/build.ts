@@ -4,6 +4,8 @@ import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
+import { darwinBinariesForShell, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
 const MUSL_TARGETS = [
   {
@@ -27,18 +29,25 @@ const { values } = parseArgs({
   },
 });
 
-const version = values.version;
-if (!version) {
-  console.error(
-    "Usage: pnpm exec bun apps/cli/scripts/build.ts --version <npm-version> --shell <legacy|next>",
-  );
-  process.exit(1);
-}
-
 const shell = values.shell;
 if (shell !== "legacy" && shell !== "next") {
   console.error(`Invalid --shell value: ${String(shell)}. Expected "legacy" or "next".`);
   process.exit(1);
+}
+const root = path.resolve(import.meta.dir, "../../..");
+const packageJsonPath = path.join(root, "apps/cli/package.json");
+const packageVersion = JSON.parse(await readFile(packageJsonPath, "utf8")) as { version?: string };
+const version = values.version ?? packageVersion.version;
+if (!version) {
+  console.error(
+    "Usage: pnpm exec bun apps/cli/scripts/build.ts [--version <npm-version>] --shell <legacy|next>",
+  );
+  process.exit(1);
+}
+if (values.version === undefined) {
+  console.warn(
+    `[build] --version not provided; falling back to package.json version "${version}". Pass --version explicitly in release builds.`,
+  );
 }
 
 const TARGETS = [
@@ -82,10 +91,12 @@ const TARGETS = [
   },
 ] as const;
 
-const root = path.resolve(import.meta.dir, "../../..");
 const entrypoint = path.join(root, "apps/cli/src", shell, "main.ts");
 const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
+const serveMainTemplateDefine = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
+  await bundleServeMainTemplate(),
+)}`;
 const posthogBuildDefines = [
   `--define=process.env.SUPABASE_CLI_POSTHOG_KEY=${JSON.stringify(process.env.POSTHOG_API_KEY ?? "")}`,
   `--define=process.env.SUPABASE_CLI_POSTHOG_HOST=${JSON.stringify(process.env.POSTHOG_ENDPOINT ?? "")}`,
@@ -102,11 +113,25 @@ const GO_TARGETS: Record<BunTarget, { goos: string; goarch: string }> = {
   "bun-windows-arm64": { goos: "windows", goarch: "arm64" },
 };
 
+type SignMode = "adhoc" | "off";
+
 function libcForBunTarget(target: string): "glibc" | "musl" | "" {
   if (!target.startsWith("bun-linux-")) {
     return "";
   }
   return target.includes("-musl") ? "musl" : "glibc";
+}
+
+async function runBunBuild(args: ReadonlyArray<string>) {
+  const child = Bun.spawn({
+    cmd: ["bun", ...args],
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  const exitCode = await child.exited;
+  if (exitCode !== 0) {
+    throw new Error(`bun build failed with exit code ${exitCode}`);
+  }
 }
 
 async function buildTarget(target: (typeof TARGETS)[number]) {
@@ -117,7 +142,18 @@ async function buildTarget(target: (typeof TARGETS)[number]) {
   const libc = libcForBunTarget(target.bunTarget);
 
   console.log(`[${target.pkg}] Compiling Bun CLI...`);
-  await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} ${posthogBuildDefines} --outfile=${outfile}`;
+  await runBunBuild([
+    "build",
+    entrypoint,
+    "--compile",
+    "--minify",
+    `--target=${target.bunTarget}`,
+    `--define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)}`,
+    `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
+    serveMainTemplateDefine,
+    ...posthogBuildDefines,
+    `--outfile=${outfile}`,
+  ]);
   console.log(`[${target.pkg}] Done.`);
 }
 
@@ -150,6 +186,73 @@ async function buildGoTarget(target: (typeof TARGETS)[number]) {
     CGO_ENABLED: "0",
   });
   console.log(`[${target.pkg}] Go binary done.`);
+}
+
+/**
+ * Decide how to sign the macOS binaries.
+ *
+ * `rcodesign` (the apple-codesign project) signs Mach-O binaries from Linux,
+ * so signing happens inline on the existing build runner. Release CI installs
+ * it and sets SUPABASE_CLI_REQUIRE_SIGNING=1 so a missing tool fails the build;
+ * local builds without rcodesign degrade to "off" with a warning so
+ * contributors can still produce (unsigned) binaries.
+ */
+function resolveSignMode(): SignMode {
+  if (Bun.which("rcodesign")) {
+    return "adhoc";
+  }
+  if (process.env.SUPABASE_CLI_REQUIRE_SIGNING === "1") {
+    console.error(
+      "rcodesign not found but SUPABASE_CLI_REQUIRE_SIGNING=1 is set. Release builds " +
+        "must sign the macOS binaries. Install rcodesign (https://github.com/indygreg/apple-platform-rs).",
+    );
+    process.exit(1);
+  }
+  console.warn(
+    "WARNING: rcodesign not found — macOS binaries will keep Bun's linker-signed ad-hoc " +
+      "signature, which macOS 26+ SIGKILLs at launch (CLI-1621). Install rcodesign to " +
+      "produce runnable macOS binaries locally.",
+  );
+  return "off";
+}
+
+async function signDarwinBinaries(mode: SignMode, shell: "legacy" | "next") {
+  if (mode === "off") {
+    return;
+  }
+
+  const darwinTargets = TARGETS.filter((target) => target.bunTarget.startsWith("bun-darwin"));
+  const binaries = darwinBinariesForShell(shell);
+
+  for (const target of darwinTargets) {
+    const binDir = path.join(root, "packages", target.pkg, "bin");
+
+    for (const binary of binaries) {
+      const binPath = path.join(binDir, binary);
+      const identifier = MACOS_IDENTIFIERS[binary];
+
+      console.log(`[${target.pkg}] Ad-hoc signing ${binary} (${identifier})...`);
+      // No key material => rcodesign emits a complete ad-hoc signature
+      // (CodeDirectory + RequirementSet + empty CMS), equivalent to
+      // `codesign --sign -`, replacing Bun/Go's linker-signed signature.
+      await $`rcodesign sign --binary-identifier ${identifier} ${binPath}`;
+
+      // Linux-side verification that runs on every build: the signature must
+      // carry exactly our identifier (matched on the whole value, so the SFE's
+      // `com.supabase.cli` can't satisfy the sidecar's `com.supabase.cli-go`)
+      // and must no longer be linker-signed.
+      const info = await $`rcodesign print-signature-info ${binPath}`.text();
+      const signedIdentifier = info.match(/^\s*identifier:\s*(\S+)\s*$/m)?.[1];
+      if (signedIdentifier !== identifier) {
+        throw new Error(
+          `Signing ${binPath} failed: expected identifier ${identifier}, got ${signedIdentifier ?? "none"}`,
+        );
+      }
+      if (info.includes("LINKER_SIGNED")) {
+        throw new Error(`Signing ${binPath} failed: signature is still linker-signed`);
+      }
+    }
+  }
 }
 
 async function archiveTarget(target: (typeof TARGETS)[number]) {
@@ -188,7 +291,18 @@ async function buildMuslBinaries() {
       const outfile = path.join(binDir, "supabase");
       const libc = libcForBunTarget(target.bunTarget);
       console.log(`[${target.pkg}] Compiling Bun CLI (musl)...`);
-      await $`bun build ${entrypoint} --compile --minify --target=${target.bunTarget} --define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)} --define=SUPABASE_LIBC=${JSON.stringify(libc)} ${posthogBuildDefines} --outfile=${outfile}`;
+      await runBunBuild([
+        "build",
+        entrypoint,
+        "--compile",
+        "--minify",
+        `--target=${target.bunTarget}`,
+        `--define=process.env.SUPABASE_CLI_VERSION=${JSON.stringify(version)}`,
+        `--define=SUPABASE_LIBC=${JSON.stringify(libc)}`,
+        serveMainTemplateDefine,
+        ...posthogBuildDefines,
+        `--outfile=${outfile}`,
+      ]);
 
       if (shell === "legacy") {
         // Go binary is CGO_ENABLED=0 (fully static), so the glibc Linux build works on
@@ -310,6 +424,13 @@ if (shell === "legacy") {
   console.log("\nCompiling Go CLI for all targets...");
   await Promise.all(TARGETS.map(buildGoTarget));
 }
+
+// Sign macOS binaries before archiving so every channel (npm platform
+// packages, Homebrew, GitHub Release archives, checksums) ships the signed
+// bytes. Must run before archiveTarget / buildLinuxPackages / generateChecksums.
+const signMode = resolveSignMode();
+console.log(`\nSigning macOS binaries (mode: ${signMode})...`);
+await signDarwinBinaries(signMode, shell);
 
 await mkdir(distDir, { recursive: true });
 await Promise.all(TARGETS.map(archiveTarget));

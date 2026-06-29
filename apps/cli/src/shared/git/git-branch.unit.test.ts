@@ -30,7 +30,7 @@ describe("detectGitBranch", () => {
     original = process.env["GITHUB_HEAD_REF"];
     process.env["GITHUB_HEAD_REF"] = "ci-branch";
     return Effect.gen(function* () {
-      const got = yield* detectGitBranch;
+      const got = yield* detectGitBranch();
       try {
         expect(Option.isSome(got)).toBe(true);
         if (Option.isSome(got)) expect(got.value).toBe("ci-branch");
@@ -48,7 +48,7 @@ describe("detectGitBranch", () => {
     mkdirSync(join(root, ".git"));
     writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/feature-x\n");
     return Effect.gen(function* () {
-      const got = yield* detectGitBranch;
+      const got = yield* detectGitBranch();
       try {
         expect(Option.isSome(got)).toBe(true);
         if (Option.isSome(got)) expect(got.value).toBe("feature-x");
@@ -68,7 +68,7 @@ describe("detectGitBranch", () => {
     mkdirSync(join(root, ".git"));
     writeFileSync(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
     return Effect.gen(function* () {
-      const got = yield* detectGitBranch;
+      const got = yield* detectGitBranch();
       try {
         expect(Option.isSome(got)).toBe(true);
         if (Option.isSome(got)) expect(got.value).toBe("main");
@@ -84,7 +84,7 @@ describe("detectGitBranch", () => {
     delete process.env["GITHUB_HEAD_REF"];
     const root = mkdtempSync(join(tmpdir(), "git-branch-empty-"));
     return Effect.gen(function* () {
-      const got = yield* detectGitBranch;
+      const got = yield* detectGitBranch();
       try {
         expect(Option.isNone(got)).toBe(true);
       } finally {
@@ -101,7 +101,7 @@ describe("detectGitBranch", () => {
     mkdirSync(join(root, ".git"));
     writeFileSync(join(root, ".git", "HEAD"), "deadbeef\n");
     return Effect.gen(function* () {
-      const got = yield* detectGitBranch;
+      const got = yield* detectGitBranch();
       try {
         expect(Option.isNone(got)).toBe(true);
       } finally {
@@ -109,5 +109,28 @@ describe("detectGitBranch", () => {
         if (original5 !== undefined) process.env["GITHUB_HEAD_REF"] = original5;
       }
     }).pipe(Effect.provide(withCwd(root)));
+  });
+
+  it.live("walks from an explicit startDir instead of the runtime CWD", () => {
+    const original6 = process.env["GITHUB_HEAD_REF"];
+    delete process.env["GITHUB_HEAD_REF"];
+    // The project repo (with .git/HEAD) is the startDir; the runtime CWD is an
+    // unrelated dir with no repo, mirroring `supabase --workdir <project>` run
+    // from elsewhere.
+    const project = mkdtempSync(join(tmpdir(), "git-branch-workdir-"));
+    mkdirSync(join(project, ".git"));
+    writeFileSync(join(project, ".git", "HEAD"), "ref: refs/heads/project-branch\n");
+    const elsewhere = mkdtempSync(join(tmpdir(), "git-branch-cwd-"));
+    return Effect.gen(function* () {
+      const got = yield* detectGitBranch(project);
+      try {
+        expect(Option.isSome(got)).toBe(true);
+        if (Option.isSome(got)) expect(got.value).toBe("project-branch");
+      } finally {
+        rmSync(project, { recursive: true, force: true });
+        rmSync(elsewhere, { recursive: true, force: true });
+        if (original6 !== undefined) process.env["GITHUB_HEAD_REF"] = original6;
+      }
+    }).pipe(Effect.provide(withCwd(elsewhere)));
   });
 });

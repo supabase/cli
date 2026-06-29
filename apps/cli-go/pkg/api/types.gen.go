@@ -510,7 +510,6 @@ const (
 
 // Defines values for JitStateResponse1UnavailableReason.
 const (
-	ManualMigrationRequired JitStateResponse1UnavailableReason = "manual_migration_required"
 	PostgresUpgradeRequired JitStateResponse1UnavailableReason = "postgres_upgrade_required"
 	TemporarilyUnavailable  JitStateResponse1UnavailableReason = "temporarily_unavailable"
 )
@@ -4857,11 +4856,12 @@ type V1ListMigrationsResponse = []struct {
 
 // V1OrganizationMemberResponse defines model for V1OrganizationMemberResponse.
 type V1OrganizationMemberResponse struct {
-	Email      *string `json:"email,omitempty"`
-	MfaEnabled bool    `json:"mfa_enabled"`
-	RoleName   string  `json:"role_name"`
-	UserId     string  `json:"user_id"`
-	UserName   string  `json:"user_name"`
+	AvatarUrl  nullable.Nullable[string] `json:"avatar_url"`
+	Email      *string                   `json:"email,omitempty"`
+	MfaEnabled bool                      `json:"mfa_enabled"`
+	RoleName   string                    `json:"role_name"`
+	UserId     string                    `json:"user_id"`
+	UserName   string                    `json:"user_name"`
 }
 
 // V1OrganizationSlugResponse defines model for V1OrganizationSlugResponse.
@@ -5322,6 +5322,14 @@ type V1GetProjectFunctionCombinedStatsParamsInterval string
 
 // V1GetProjectLogsParams defines parameters for V1GetProjectLogs.
 type V1GetProjectLogsParams struct {
+	// Sql Custom SQL query to execute on the logs. See [querying logs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer) for more details.
+	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
+	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
+	IsoTimestampEnd   *time.Time `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
+}
+
+// V1GetProjectLogsAllParams defines parameters for V1GetProjectLogsAll.
+type V1GetProjectLogsAllParams struct {
 	// Sql Custom SQL query to execute on the logs. See [querying logs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer) for more details.
 	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
 	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`

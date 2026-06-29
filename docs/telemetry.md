@@ -27,7 +27,7 @@ ADR 0001 Pillar 5 and ADR 0002 share infrastructure. No separate metrics SDK and
      ┌─────────────┼─────────────┐
      ▼             ▼             ▼
 Local file      --debug       Remote
-~/.supabase/        output        export
+state root/     output        export
 traces/         (always)      (opt-in)
 (always)           │               │
      │             │         ┌─────┴─────┐
@@ -38,6 +38,8 @@ Observability  Observability Sentry    Grafana
 ```
 
 Sentry receives every command span via its native OpenTelemetry integration and powers error diagnostics, performance monitoring, and product analytics dashboards for all 5 metric categories from ADR 0002. In Phase 2, spans will also be exported to a company-owned Grafana instance via OTLP for long-term retention and custom analytics. The CLI code does not change between phases — only the exporter configuration.
+
+In the diagram, "state root" means `<SUPABASE_HOME or ~/.supabase>`.
 
 ## Collection Architecture
 
@@ -112,7 +114,7 @@ command({
 
 **Anonymous phase** — before login:
 
-`device_id`: random UUID generated on first run, persisted in `~/.supabase/telemetry.json`. Never changes unless the file is deleted. This is the only identity before the user runs `supabase login`. It is attached to every span as the `cli.device_id` resource attribute.
+`device_id`: random UUID generated on first run, persisted in `<SUPABASE_HOME or ~/.supabase>/telemetry.json`. Never changes unless the file is deleted. This is the only identity before the user runs `supabase login`. It is attached to every span as the `cli.device_id` resource attribute.
 
 `session_id`: random UUID that rotates after 30 minutes of inactivity (no CLI commands). This defines "session" for the Engagement metrics.
 
@@ -156,7 +158,7 @@ Privacy guarantees:
 
 ## Local Storage
 
-NDJSON files in `~/.supabase/traces/`:
+NDJSON files in `<SUPABASE_HOME or ~/.supabase>/traces/`:
 
 - One file per day: `2025-01-15.ndjson`
 - 7-day automatic retention (older files deleted on CLI startup)
@@ -246,7 +248,7 @@ span.setStatus({ code: SpanStatusCode.OK });
 span.end();
 
 // 5. Always: append to local trace file
-// ~/.supabase/traces/2025-01-15.ndjson += JSON.stringify(spanData) + "\n"
+// <SUPABASE_HOME or ~/.supabase>/traces/2025-01-15.ndjson += JSON.stringify(spanData) + "\n"
 
 // 6. If consent === "granted": Sentry SDK exports the span
 // Non-blocking — SDK batches internally
@@ -334,7 +336,7 @@ rootSpan.end();
 
 ## Consent Implementation
 
-Three-state model stored in `~/.supabase/telemetry.json`:
+Three-state model stored in `<SUPABASE_HOME or ~/.supabase>/telemetry.json`:
 
 ```typescript
 type ConsentState = "pending" | "granted" | "denied";

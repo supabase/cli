@@ -75,6 +75,17 @@
         "{projectRoot}/dist/**/*"
       ]
     },
+    "test:live": {
+      "parallelism": false,
+      "cache": false,
+      "dependsOn": [
+        "build"
+      ],
+      "inputs": [
+        "default",
+        "{projectRoot}/dist/**/*"
+      ]
+    },
     "dev": {
       "cache": false
     }

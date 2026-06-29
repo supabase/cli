@@ -7,6 +7,20 @@ import { operationDefinitions } from "./contracts.ts";
 
 export const versionedEffectOperations = {
   v1: {
+    acceptInviteExternalJitAccess: (
+      input: typeof operationDefinitions.v1AcceptInviteExternalJitAccess.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1AcceptInviteExternalJitAccess.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1AcceptInviteExternalJitAccess">(
+          operationDefinitions.v1AcceptInviteExternalJitAccess,
+          input,
+        );
+      }),
     activateCustomHostname: (
       input: typeof operationDefinitions.v1ActivateCustomHostname.inputSchema.Type,
     ): Effect.Effect<
@@ -438,6 +452,20 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v1DeleteASsoProvider">(
           operationDefinitions.v1DeleteASsoProvider,
+          input,
+        );
+      }),
+    deleteInviteExternalJitAccess: (
+      input: typeof operationDefinitions.v1DeleteInviteExternalJitAccess.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1DeleteInviteExternalJitAccess.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1DeleteInviteExternalJitAccess">(
+          operationDefinitions.v1DeleteInviteExternalJitAccess,
           input,
         );
       }),
@@ -1171,6 +1199,20 @@ export const versionedEffectOperations = {
           input,
         );
       }),
+    getProjectLogsAll: (
+      input: typeof operationDefinitions.v1GetProjectLogsAll.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1GetProjectLogsAll.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1GetProjectLogsAll">(
+          operationDefinitions.v1GetProjectLogsAll,
+          input,
+        );
+      }),
     getProjectPgbouncerConfig: (
       input: typeof operationDefinitions.v1GetProjectPgbouncerConfig.inputSchema.Type,
     ): Effect.Effect<
@@ -1364,6 +1406,20 @@ export const versionedEffectOperations = {
         const client = yield* SupabaseApiClient;
         return yield* client.execute<"v1GetVanitySubdomainConfig">(
           operationDefinitions.v1GetVanitySubdomainConfig,
+          input,
+        );
+      }),
+    inviteExternalJitAccess: (
+      input: typeof operationDefinitions.v1InviteExternalJitAccess.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v1InviteExternalJitAccess.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v1InviteExternalJitAccess">(
+          operationDefinitions.v1InviteExternalJitAccess,
           input,
         );
       }),
@@ -2281,6 +2337,10 @@ export function executeApiClientOperation(
   input: unknown,
 ) {
   switch (operationId) {
+    case "v1AcceptInviteExternalJitAccess":
+      return Schema.decodeUnknownEffect(
+        operationDefinitions.v1AcceptInviteExternalJitAccess.inputSchema,
+      )(input).pipe(Effect.flatMap((decoded) => api.v1.acceptInviteExternalJitAccess(decoded)));
     case "v1ActivateCustomHostname":
       return Schema.decodeUnknownEffect(operationDefinitions.v1ActivateCustomHostname.inputSchema)(
         input,
@@ -2405,6 +2465,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v1DeleteASsoProvider.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v1.deleteASsoProvider(decoded)));
+    case "v1DeleteInviteExternalJitAccess":
+      return Schema.decodeUnknownEffect(
+        operationDefinitions.v1DeleteInviteExternalJitAccess.inputSchema,
+      )(input).pipe(Effect.flatMap((decoded) => api.v1.deleteInviteExternalJitAccess(decoded)));
     case "v1DeleteJitAccess":
       return Schema.decodeUnknownEffect(operationDefinitions.v1DeleteJitAccess.inputSchema)(
         input,
@@ -2621,6 +2685,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v1GetProjectLogs.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v1.getProjectLogs(decoded)));
+    case "v1GetProjectLogsAll":
+      return Schema.decodeUnknownEffect(operationDefinitions.v1GetProjectLogsAll.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v1.getProjectLogsAll(decoded)));
     case "v1GetProjectPgbouncerConfig":
       return Schema.decodeUnknownEffect(
         operationDefinitions.v1GetProjectPgbouncerConfig.inputSchema,
@@ -2677,6 +2745,10 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(
         operationDefinitions.v1GetVanitySubdomainConfig.inputSchema,
       )(input).pipe(Effect.flatMap((decoded) => api.v1.getVanitySubdomainConfig(decoded)));
+    case "v1InviteExternalJitAccess":
+      return Schema.decodeUnknownEffect(operationDefinitions.v1InviteExternalJitAccess.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v1.inviteExternalJitAccess(decoded)));
     case "v1ListActionRuns":
       return Schema.decodeUnknownEffect(operationDefinitions.v1ListActionRuns.inputSchema)(
         input,
