@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@supabase/supabase-js": "^2.108.1",
+    "@supabase/supabase-js": "^2.108.2",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@typescript/native-preview": "catalog:",
