@@ -332,7 +332,7 @@ project_id = "abcdefghijklmnopqrst"
   });
 
   it.live("pushes storage when the remote response omits databasePoolMode", () => {
-    const { layer, out } = setup({
+    const { layer, api } = setup({
       toml: `project_id = "test"
 [auth]
 enabled = false
@@ -349,7 +349,9 @@ file_size_limit = "50MiB"
     });
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });
-      expect(out.stderrText).toContain("Remote Storage config is up to date.");
+      expect(
+        api.requests.some((r) => r.method === "GET" && r.url.includes("/config/storage")),
+      ).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
