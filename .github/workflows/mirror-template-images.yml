@@ -39,13 +39,15 @@ jobs:
     outputs:
       missing: ${{ steps.detect.outputs.missing }}
     steps:
-      - name: Checkout Dockerfile
+      - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
-          sparse-checkout: |
-            apps/cli-go/pkg/config/templates/Dockerfile
-          sparse-checkout-cone-mode: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Log in to ghcr.io
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
@@ -54,41 +56,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Parses the Dockerfile, checks each image against the mirror, and writes
+      # `missing=<json>` to $GITHUB_OUTPUT. Idempotent: already-mirrored images
+      # are skipped, so a re-run produces an empty list.
       - name: Detect images missing from the mirror
         id: detect
-        env:
-          DOCKERFILE: apps/cli-go/pkg/config/templates/Dockerfile
-        run: |
-          set -euo pipefail
-          missing=()
-          # Mirror destinations live under the supabase/ namespace, matching
-          # utils.GetRegistryImageUrl (registry + "/supabase/" + basename).
-          while read -r _from image _as _name; do
-            [ "${_as,,}" = "as" ] || continue
-            org="${image%%/*}"
-            # supabase/* images are already published to ghcr.io/ECR by the
-            # release pipeline, so they need no mirroring — except logflare,
-            # which is only published to Docker Hub. This mirrors the filter in
-            # apps/cli-go/tools/listdep/main.go.
-            if [ "$org" = "supabase" ] && [[ "$image" != supabase/logflare:* ]]; then
-              continue
-            fi
-            dest="ghcr.io/supabase/${image##*/}"
-            if docker buildx imagetools inspect "$dest" >/dev/null 2>&1; then
-              echo "already mirrored: $dest"
-            else
-              echo "needs mirror: $image -> $dest"
-              missing+=("$image")
-            fi
-          done < <(grep -iE '^[[:space:]]*FROM[[:space:]]' "$DOCKERFILE")
-
-          if [ "${#missing[@]}" -eq 0 ]; then
-            echo "All template images are already mirrored."
-            echo 'missing=[]' >> "$GITHUB_OUTPUT"
-          else
-            json="$(printf '%s\n' "${missing[@]}" | jq -Rc . | jq -cs .)"
-            echo "missing=$json" >> "$GITHUB_OUTPUT"
-          fi
+        run: pnpm exec bun apps/cli/scripts/detect-unmirrored-images.ts
 
   mirror:
     name: Mirror image
