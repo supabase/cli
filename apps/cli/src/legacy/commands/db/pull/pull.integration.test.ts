@@ -797,6 +797,37 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("honors SUPABASE_YES for the initial-pull history update", () => {
+    // Go's `PromptYesNo` reads `viper.GetBool("YES")`, which includes the
+    // `SUPABASE_YES` env var (AutomaticEnv), so it auto-confirms even on a TTY with
+    // no piped answer. The native path resolves `yes` via `legacyResolveYes`, not the
+    // raw `--yes` flag, so the env var is honored here too.
+    const prev = process.env["SUPABASE_YES"];
+    process.env["SUPABASE_YES"] = "1";
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "create table remote ();\n",
+      // A TTY with no scripted prompt response: only SUPABASE_YES makes this pass.
+      stdinIsTty: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      expect(s.historyUpserts.length).toBe(1);
+      expect(streamText(s.out, "stderr")).toContain(
+        "Update remote migration history table? [Y/n] y",
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_YES"];
+          else process.env["SUPABASE_YES"] = prev;
+        }),
+      ),
+      Effect.provide(s.layer),
+    );
+  });
+
   it.effect("SUPABASE_EXPERIMENTAL delegates the structured-dump pull to Go", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {

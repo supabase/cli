@@ -3,7 +3,7 @@ import { Clock, Effect, FileSystem, Option, Path } from "effect";
 import {
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
-  LegacyYesFlag,
+  legacyResolveYes,
 } from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
@@ -42,7 +42,7 @@ import {
   legacyShouldUsePgDelta,
 } from "../shared/legacy-diff-engine.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
-import { legacyBuildSchemaDumpEnv } from "../shared/legacy-pg-dump.env.ts";
+import { type LegacyDumpOptions, legacyBuildSchemaDumpEnv } from "../shared/legacy-pg-dump.env.ts";
 import { legacyStreamPgDump } from "../shared/legacy-pg-dump.run.ts";
 import { legacyDumpSchemaScript } from "../shared/legacy-pg-dump.scripts.ts";
 import {
@@ -147,7 +147,9 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
   const cliConfig = yield* LegacyCliConfig;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  const yes = yield* LegacyYesFlag;
+  // `--yes` OR `SUPABASE_YES` (Go's `viper.GetBool("YES")`, root.go:318-320): the
+  // native initial-migra history prompt must honor the env var like Go's path did.
+  const yes = yield* legacyResolveYes;
   const experimental = yield* LegacyExperimentalFlag;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -457,10 +459,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           );
           // Go's `migration.DumpSchema` default options: no schema filter (so the
           // internal-schema exclude list applies) and comments stripped (`EXTRA_SED`).
-          const dumpEnvOpt = {
-            schema: [] as ReadonlyArray<string>,
+          const dumpEnvOpt: LegacyDumpOptions = {
+            schema: [],
             keepComments: false,
-            excludeTable: [] as ReadonlyArray<string>,
+            excludeTable: [],
             columnInsert: false,
           };
           const toDumpOpenError = (cause: { readonly message: string }) =>
