@@ -1395,6 +1395,9 @@
           "s3Protocol": {
             "enabled": true
           },
+          "purgeCache": {
+            "enabled": true
+          },
           "icebergCatalog": {
             "enabled": true,
             "maxNamespaces": 10,

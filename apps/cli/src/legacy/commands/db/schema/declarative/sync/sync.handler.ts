@@ -16,6 +16,7 @@ import {
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
+import { legacyMakeDir } from "../../../../../shared/legacy-make-dir.ts";
 import { legacyApplyMigrationFile } from "../../../../../shared/legacy-migration-apply.ts";
 import { legacyReadProjectRefFile } from "../../../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -276,7 +277,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // Step 5: write the timestamped migration file.
       const timestamp = formatTimestamp(yield* Clock.currentTimeMillis);
       const migrationPath = path.join(migrationsDir, `${timestamp}_${migrationName}.sql`);
-      yield* fs.makeDirectory(migrationsDir, { recursive: true });
+      yield* legacyMakeDir(fs, migrationsDir);
       yield* fs.writeFileString(migrationPath, result.diffSQL);
       yield* output.raw(`Created new migration at ${legacyBold(migrationPath)}\n`, "stderr");
 

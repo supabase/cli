@@ -11,6 +11,7 @@ import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
+import { legacyMakeDir } from "../../../shared/legacy-make-dir.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
 import { legacyFindDropStatements } from "../../../shared/legacy-sql-split.ts";
@@ -277,9 +278,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         // Create parent dirs first, matching Go's `writeOutput` → `utils.WriteFile`
         // (`internal/db/diff/explicit.go`, `internal/utils/misc.go`), so a nested
         // `--output tmp/diff.sql` doesn't fail when `tmp/` doesn't exist yet.
-        yield* fs
-          .makeDirectory(path.dirname(target), { recursive: true })
-          .pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
+        yield* legacyMakeDir(fs, path.dirname(target)).pipe(
+          Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })),
+        );
         yield* fs
           .writeFileString(target, result.sql)
           .pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
@@ -457,9 +458,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         timestamp,
         flags.file.value,
       );
-      yield* fs
-        .makeDirectory(path.dirname(migrationPath), { recursive: true })
-        .pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
+      yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
+        Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })),
+      );
       yield* fs
         .writeFileString(migrationPath, out)
         .pipe(Effect.mapError((cause) => new LegacyDbDiffWriteError({ message: cause.message })));
