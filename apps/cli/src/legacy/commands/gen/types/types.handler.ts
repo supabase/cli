@@ -14,12 +14,16 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
 import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
+import { legacyIsIPv6ConnectivityError } from "../../../shared/legacy-connect-errors.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import type { LegacyDbConfigFlags } from "../../../shared/legacy-db-config.types.ts";
+import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacyTempPaths } from "../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { legacyYellow } from "../../../shared/legacy-colors.ts";
 import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
@@ -274,13 +278,14 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         );
         if (projectResult === "branch") return;
 
-        const resolved = yield* dbConfig.resolve({
+        const resolveFlags: LegacyDbConfigFlags = {
           dbUrl: Option.none(),
           connType: "linked",
           dnsResolver,
           linkedProjectRef: Option.some(projectRef),
           adHocProjectRef,
-        });
+        };
+        const resolved = yield* dbConfig.resolve(resolveFlags);
         const conn = resolved.conn;
         yield* runPgMeta({
           url: legacyToPostgresURL(conn),
@@ -291,6 +296,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           networkMode: "host",
           includedSchemas: includedSchemas.join(","),
           postgrestV9Compat: flags.postgrestV9Compat,
+          poolerFallback: { directHost: conn.host, flags: resolveFlags },
         });
         return;
       }
@@ -344,71 +350,120 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     readonly includedSchemas: string;
     readonly postgrestV9Compat: boolean;
     readonly pgmetaVersionOverride?: string;
+    readonly poolerFallback?: {
+      readonly directHost: string;
+      readonly flags: LegacyDbConfigFlags;
+    };
   }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        yield* output.raw(`Connecting to ${input.host} ${input.port}\n`, "stderr");
+        const buildRun = (target: {
+          readonly url: string;
+          readonly host: string;
+          readonly port: number;
+          readonly probeHost: string;
+          readonly probePort: number;
+        }) =>
+          Effect.gen(function* () {
+            yield* output.raw(`Connecting to ${target.host} ${target.port}\n`, "stderr");
 
-        // Mirrors Go's container.Config.Env ([]string of "KEY=VALUE"). We pass each
-        // entry as a `--env KEY=VALUE` argument rather than a `--env-file`: env-files
-        // split on newlines, so they cannot carry the multi-line PEM CA bundle, and a
-        // value containing a newline could inject an extra variable. Passing argv
-        // elements keeps each entry as exactly one variable regardless of its contents.
-        const env = [
-          `PG_META_DB_URL=${input.url}`,
-          `PG_CONN_TIMEOUT_SECS=${queryTimeoutSeconds}`,
-          `PG_QUERY_TIMEOUT_SECS=${queryTimeoutSeconds}`,
-          `PG_META_GENERATE_TYPES=${lang}`,
-          `PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=${input.includedSchemas}`,
-          `PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=${swiftAccessControl}`,
-          `PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=${String(!input.postgrestV9Compat)}`,
-        ];
+            // Mirrors Go's container.Config.Env ([]string of "KEY=VALUE"). We pass each
+            // entry as a `--env KEY=VALUE` argument rather than a `--env-file`: env-files
+            // split on newlines, so they cannot carry the multi-line PEM CA bundle, and a
+            // value containing a newline could inject an extra variable. Passing argv
+            // elements keeps each entry as exactly one variable regardless of its contents.
+            const env = [
+              `PG_META_DB_URL=${target.url}`,
+              `PG_CONN_TIMEOUT_SECS=${queryTimeoutSeconds}`,
+              `PG_QUERY_TIMEOUT_SECS=${queryTimeoutSeconds}`,
+              `PG_META_GENERATE_TYPES=${lang}`,
+              `PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=${input.includedSchemas}`,
+              `PG_META_GENERATE_TYPES_SWIFT_ACCESS_CONTROL=${swiftAccessControl}`,
+              `PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=${String(!input.postgrestV9Compat)}`,
+            ];
 
-        // Go's isRequireSSL emits this warning to stderr when the probe runs with
-        // certificate verification disabled. Our wire-level SSLRequest probe never
-        // verifies certificates, so honour the same env var for stderr parity.
-        if (process.env["SUPABASE_CA_SKIP_VERIFY"] === "true") {
-          yield* output.raw(
-            "WARNING: TLS certificate verification disabled for SSL probe (SUPABASE_CA_SKIP_VERIFY=true)\n",
-            "stderr",
-          );
+            // Go's isRequireSSL emits this warning to stderr when the probe runs with
+            // certificate verification disabled. Our wire-level SSLRequest probe never
+            // verifies certificates, so honour the same env var for stderr parity.
+            if (process.env["SUPABASE_CA_SKIP_VERIFY"] === "true") {
+              yield* output.raw(
+                "WARNING: TLS certificate verification disabled for SSL probe (SUPABASE_CA_SKIP_VERIFY=true)\n",
+                "stderr",
+              );
+            }
+
+            const useTls = yield* probeTlsSupport(target.probeHost, target.probePort);
+            if (useTls && !debug) {
+              env.push(`PG_META_DB_SSL_ROOT_CERT=${legacyRootCaBundle()}`);
+            }
+
+            // Go's DockerStart applies `--network-id` over any base network mode (even the
+            // "host" mode used for --db-url), so honour the override here too.
+            const networkMode = Option.isSome(networkId) ? networkId.value : input.networkMode;
+            const args = [
+              "run",
+              "--rm",
+              "--network",
+              networkMode,
+              ...env.flatMap((entry) => ["--env", entry]),
+              resolvePgmetaImage(input.pgmetaVersionOverride),
+              "node",
+              "dist/server/server.js",
+            ];
+            const child = yield* spawnContainerCli(spawner, args, {
+              stdin: "ignore",
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+
+            let stderrText = "";
+            const [exitCode] = yield* Effect.all(
+              [
+                child.exitCode.pipe(Effect.map(Number)),
+                forwardByteStream(child.stdout, (text) => output.raw(text, "stdout")),
+                forwardByteStream(child.stderr, (text) =>
+                  Effect.sync(() => {
+                    stderrText += text;
+                  }).pipe(Effect.andThen(output.raw(text, "stderr"))),
+                ),
+              ],
+              { concurrency: "unbounded" },
+            );
+            return { exitCode, stderrText };
+          });
+
+        const runTarget = (conn: LegacyPgConnInput) =>
+          buildRun({
+            url: legacyToPostgresURL(conn),
+            host: conn.host,
+            port: conn.port,
+            probeHost: conn.host,
+            probePort: conn.port,
+          });
+
+        let result = yield* buildRun(input);
+
+        if (
+          result.exitCode !== 0 &&
+          input.poolerFallback !== undefined &&
+          legacyIsIPv6ConnectivityError(result.stderrText)
+        ) {
+          const pooler = yield* dbConfig
+            .resolvePoolerFallback(input.poolerFallback.flags)
+            .pipe(Effect.orElseSucceed(() => Option.none<LegacyPgConnInput>()));
+          if (Option.isSome(pooler)) {
+            yield* output.raw(
+              `${legacyYellow(
+                `Warning: Direct connection to ${input.poolerFallback.directHost} is unavailable because this environment does not support IPv6.\nRetrying via the IPv4 connection pooler.`,
+              )}\n`,
+              "stderr",
+            );
+            result = yield* runTarget(pooler.value);
+          }
         }
 
-        const useTls = yield* probeTlsSupport(input.probeHost, input.probePort);
-        if (useTls && !debug) {
-          env.push(`PG_META_DB_SSL_ROOT_CERT=${legacyRootCaBundle()}`);
-        }
-
-        // Go's DockerStart applies `--network-id` over any base network mode (even the
-        // "host" mode used for --db-url), so honour the override here too.
-        const networkMode = Option.isSome(networkId) ? networkId.value : input.networkMode;
-        const args = [
-          "run",
-          "--rm",
-          "--network",
-          networkMode,
-          ...env.flatMap((entry) => ["--env", entry]),
-          resolvePgmetaImage(input.pgmetaVersionOverride),
-          "node",
-          "dist/server/server.js",
-        ];
-        const child = yield* spawnContainerCli(spawner, args, {
-          stdin: "ignore",
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-
-        const [exitCode] = yield* Effect.all(
-          [
-            child.exitCode.pipe(Effect.map(Number)),
-            forwardByteStream(child.stdout, (text) => output.raw(text, "stdout")),
-            forwardByteStream(child.stderr, (text) => output.raw(text, "stderr")),
-          ],
-          { concurrency: "unbounded" },
-        );
-
-        if (exitCode !== 0) {
-          return yield* Effect.fail(new Error(`error running container: exit ${exitCode}`));
+        if (result.exitCode !== 0) {
+          return yield* Effect.fail(new Error(`error running container: exit ${result.exitCode}`));
         }
       }),
     );

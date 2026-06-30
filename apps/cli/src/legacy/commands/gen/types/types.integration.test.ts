@@ -48,6 +48,7 @@ import { makeTelemetryIdentity } from "../../../../shared/telemetry/identity.ts"
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
 import type { LegacyDbConfigError } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
 import type {
   LegacyDbConfigFlags,
   LegacyResolvedDbConfig,
@@ -154,6 +155,8 @@ function mockDbConfigResolver(
     readonly resolve?: (
       flags: LegacyDbConfigFlags,
     ) => Effect.Effect<LegacyResolvedDbConfig, LegacyDbConfigError>;
+    readonly poolerFallback?: Option.Option<LegacyPgConnInput>;
+    readonly poolerFallbackFails?: boolean;
   } = {},
 ) {
   const resolves: Array<LegacyDbConfigFlags> = [];
@@ -176,10 +179,12 @@ function mockDbConfigResolver(
         );
       }),
     resolvePoolerFallback: (flags) =>
-      Effect.sync(() => {
-        poolerFallbacks.push(flags);
-        return Option.none<LegacyPgConnInput>();
-      }),
+      opts.poolerFallbackFails === true
+        ? Effect.fail(new LegacyDbConfigLoadError({ message: "pooler fallback failed" }))
+        : Effect.sync(() => {
+            poolerFallbacks.push(flags);
+            return opts.poolerFallback ?? Option.none<LegacyPgConnInput>();
+          }),
   });
   return { layer, resolves, poolerFallbacks };
 }
@@ -222,6 +227,8 @@ function setup(
     readonly dbConfigResolve?: (
       flags: LegacyDbConfigFlags,
     ) => Effect.Effect<LegacyResolvedDbConfig, LegacyDbConfigError>;
+    readonly poolerFallback?: Option.Option<LegacyPgConnInput>;
+    readonly poolerFallbackFails?: boolean;
   } = {},
 ) {
   const workdir = opts.workdir ?? mkdtempSync(join(tmpdir(), "supabase-gen-types-"));
@@ -234,7 +241,11 @@ function setup(
   });
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
-  const dbConfig = mockDbConfigResolver({ resolve: opts.dbConfigResolve });
+  const dbConfig = mockDbConfigResolver({
+    resolve: opts.dbConfigResolve,
+    poolerFallback: opts.poolerFallback,
+    poolerFallbackFails: opts.poolerFallbackFails,
+  });
   const processControl = mockProcessControl();
   const child = mockChildProcessSpawner({
     stdout: [...(opts.childStdout ?? [])],
@@ -1012,6 +1023,167 @@ describe("legacy gen types", () => {
               `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:pooler-password@127.0.0.1:${port}/postgres?connect_timeout=10&options=reference%3D${LEGACY_VALID_REF}`,
             ),
           ).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("retries remote pg-meta through the IPv4 pooler on a container IPv6 failure", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const child = mockSequentialChildProcessSpawner([
+            {
+              exitCode: 1,
+              stderr: [
+                'could not translate host name "db.abcdefghijklmnopqrst.supabase.co" to address: No address associated with hostname',
+              ],
+            },
+            { exitCode: 0, stdout: ["type RetriedViaPooler struct {}"] },
+          ]);
+          const poolerConn: LegacyPgConnInput = {
+            host: "127.0.0.1",
+            port,
+            user: `postgres.${LEGACY_VALID_REF}`,
+            password: "pooler-password",
+            database: "postgres",
+          };
+          const { layer, out, dbConfig } = setup({
+            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+            childLayer: child.layer,
+            dbConfigResolve: () =>
+              Effect.succeed(
+                remoteResolvedConfig({
+                  host: "127.0.0.1",
+                  port,
+                  user: "postgres",
+                  password: "direct-password",
+                  database: "postgres",
+                }),
+              ),
+            poolerFallback: Option.some(poolerConn),
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                projectId: Option.some(LEGACY_VALID_REF),
+                lang: "go",
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(out.stdoutText).toContain("type RetriedViaPooler struct {}");
+          expect(out.stderrText).toContain("does not support IPv6");
+          expect(out.stderrText).toContain("Retrying via the IPv4 connection pooler.");
+          expect(child.spawned).toHaveLength(2);
+          expect(
+            dockerEnv(child.spawned[0]?.args ?? []).has(
+              `PG_META_DB_URL=postgresql://postgres:direct-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
+            ),
+          ).toBe(true);
+          expect(
+            dockerEnv(child.spawned[1]?.args ?? []).has(
+              `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:pooler-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
+            ),
+          ).toBe(true);
+          expect(dbConfig.poolerFallbacks).toHaveLength(1);
+          expect(dbConfig.poolerFallbacks[0]?.connType).toBe("linked");
+          expect(dbConfig.poolerFallbacks[0]?.adHocProjectRef).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("does not retry remote pg-meta when the container failure is not IPv6", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const child = mockSequentialChildProcessSpawner([
+            { exitCode: 1, stderr: ["permission denied for schema public"] },
+          ]);
+          const { layer, dbConfig } = setup({
+            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+            childLayer: child.layer,
+            dbConfigResolve: () =>
+              Effect.succeed(
+                remoteResolvedConfig({
+                  host: "127.0.0.1",
+                  port,
+                  user: "postgres",
+                  password: "direct-password",
+                  database: "postgres",
+                }),
+              ),
+            poolerFallback: Option.some({
+              host: "127.0.0.1",
+              port,
+              user: `postgres.${LEGACY_VALID_REF}`,
+              password: "pooler-password",
+              database: "postgres",
+            }),
+          });
+
+          const exit = await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                projectId: Option.some(LEGACY_VALID_REF),
+                lang: "go",
+              }),
+            ).pipe(Effect.provide(layer), Effect.exit),
+          );
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(child.spawned).toHaveLength(1);
+          expect(dbConfig.poolerFallbacks).toHaveLength(0);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("preserves the original remote pg-meta error when pooler fallback resolution fails", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const child = mockSequentialChildProcessSpawner([
+            {
+              exitCode: 1,
+              stderr: [
+                'could not translate host name "db.abcdefghijklmnopqrst.supabase.co" to address: No address associated with hostname',
+              ],
+            },
+          ]);
+          const { layer } = setup({
+            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+            childLayer: child.layer,
+            dbConfigResolve: () =>
+              Effect.succeed(
+                remoteResolvedConfig({
+                  host: "127.0.0.1",
+                  port,
+                  user: "postgres",
+                  password: "direct-password",
+                  database: "postgres",
+                }),
+              ),
+            poolerFallbackFails: true,
+          });
+
+          const exit = await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                projectId: Option.some(LEGACY_VALID_REF),
+                lang: "go",
+              }),
+            ).pipe(Effect.provide(layer), Effect.exit),
+          );
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(String(exit.cause)).toContain("error running container: exit 1");
+            expect(String(exit.cause)).not.toContain("pooler fallback failed");
+          }
+          expect(child.spawned).toHaveLength(1);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
