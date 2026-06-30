@@ -110,7 +110,7 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Restore build artifacts cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             packages/cli-*/bin/
@@ -175,7 +175,7 @@ jobs:
       - name: Cache smoke-test docker images
         if: runner.os == 'Linux'
         id: smoke-docker-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/smoke-docker-images.tar
           key: smoke-docker-images-debian-bookworm-slim-amazonlinux-2023-alpine-3.21-v1
@@ -246,7 +246,7 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Restore build artifacts cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             packages/cli-*/bin/
@@ -305,7 +305,7 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Restore build artifacts cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             packages/cli-*/bin/
@@ -475,7 +475,7 @@ jobs:
       # tarballs. Reading it here produced a formula whose sha256 rejected the
       # downloaded archive ("Formula reports different checksum").
       - name: Restore build artifacts cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             packages/cli-*/bin/
@@ -538,7 +538,7 @@ jobs:
       # tarballs. Reading it here would produce a manifest whose hash rejects the
       # downloaded archive.
       - name: Restore build artifacts cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             packages/cli-*/bin/
