@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -147,11 +147,21 @@ function mockStdin(opts: { isTTY?: boolean; piped?: string }) {
     readPipedBytes: Effect.succeed(
       opts.piped === undefined ? Option.none() : Option.some(new TextEncoder().encode(opts.piped)),
     ),
+    pipedBytesStream:
+      opts.piped === undefined
+        ? Stream.empty
+        : Stream.fromIterable([new TextEncoder().encode(opts.piped)]),
     readPipedText: Effect.succeed(
       opts.piped === undefined || opts.piped.trim() === ""
         ? Option.none()
         : Option.some(opts.piped.trim()),
     ),
+    readLine: () =>
+      Effect.succeed(
+        opts.piped === undefined || opts.piped.split(/\r?\n/u)[0]!.trim() === ""
+          ? Option.none()
+          : Option.some(opts.piped.split(/\r?\n/u)[0]!.trim()),
+      ),
   });
 }
 

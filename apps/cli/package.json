@@ -39,6 +39,7 @@
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
   },
   "dependencies": {
+    "eciesjs": "^0.5.0",
     "jose": "^6.2.3"
   },
   "devDependencies": {

@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Path } from "effect";
+import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 
+import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { legacyCollectMigrationsList, legacySaveDebugBundle } from "./legacy-debug-bundle.ts";
 
 const save = (workdir: string, tempDir: string, migrationsDir: string, id: string) =>
@@ -16,7 +17,7 @@ const save = (workdir: string, tempDir: string, migrationsDir: string, id: strin
       error: "boom",
       migrationSql: "create table t();",
     });
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)));
 
 describe("legacySaveDebugBundle", () => {
   it.effect("writes artifacts and returns the debug directory", () => {
@@ -58,7 +59,7 @@ const collect = (migrationsDir: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* legacyCollectMigrationsList(fs, path, migrationsDir);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)));
 
 describe("legacyCollectMigrationsList", () => {
   it.effect("returns migration filenames when the dir is readable", () => {
