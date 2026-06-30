@@ -11,10 +11,12 @@ import { appendFileSync } from "node:fs";
 import process from "node:process";
 import { dockerfileServiceImages } from "../src/shared/services/dockerfile-images.ts";
 import {
-  mirrorImageTarget,
+  mirrorImageTargets,
   partitionUnmirroredImages,
 } from "../src/shared/services/mirror-images.ts";
 
+// An image counts as mirrored only when this returns true for every registry
+// target (public ECR and ghcr.io); both are queried per image by the partition.
 function imageExistsOnMirror(target: string): Promise<boolean> {
   const result = spawnSync("docker", ["buildx", "imagetools", "inspect", target], {
     stdio: "ignore",
@@ -26,10 +28,10 @@ const images = dockerfileServiceImages.map((spec) => spec.image);
 const { mirrored, missing } = await partitionUnmirroredImages(images, imageExistsOnMirror);
 
 for (const image of mirrored) {
-  console.error(`already mirrored: ${mirrorImageTarget(image)}`);
+  console.error(`already mirrored: ${image}`);
 }
 for (const image of missing) {
-  console.error(`needs mirror: ${image} -> ${mirrorImageTarget(image)}`);
+  console.error(`needs mirror: ${image} -> ${mirrorImageTargets(image).join(", ")}`);
 }
 
 const json = JSON.stringify(missing);

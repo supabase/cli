@@ -1,22 +1,31 @@
 import { describe, expect, test } from "vitest";
 import serviceImagesDockerfile from "../../../../cli-go/pkg/config/templates/Dockerfile" with { type: "text" };
-import { dockerfileImages, mirrorImageTarget, partitionUnmirroredImages } from "./mirror-images.ts";
+import {
+  dockerfileImages,
+  MIRROR_REGISTRIES,
+  mirrorImageTarget,
+  mirrorImageTargets,
+  partitionUnmirroredImages,
+} from "./mirror-images.ts";
 
 describe("mirror images", () => {
-  test("mirrors every upstream image under the supabase namespace", () => {
+  test("mirrors an upstream image under the supabase namespace of a registry", () => {
     // Third-party orgs are dropped; only the basename is kept, matching Go's
     // utils.GetRegistryImageUrl.
-    expect(mirrorImageTarget("postgrest/postgrest:v14.14")).toBe(
+    expect(mirrorImageTarget("postgrest/postgrest:v14.14", "ghcr.io")).toBe(
       "ghcr.io/supabase/postgrest:v14.14",
     );
-    expect(mirrorImageTarget("library/kong:2.8.1")).toBe("ghcr.io/supabase/kong:2.8.1");
-    expect(mirrorImageTarget("supabase/logflare:1.45.6")).toBe("ghcr.io/supabase/logflare:1.45.6");
+    expect(mirrorImageTarget("library/kong:2.8.1", "public.ecr.aws")).toBe(
+      "public.ecr.aws/supabase/kong:2.8.1",
+    );
   });
 
-  test("supports an alternate mirror registry", () => {
-    expect(mirrorImageTarget("postgrest/postgrest:v14.14", "public.ecr.aws")).toBe(
+  test("targets cover every mirror registry (ECR and ghcr.io)", () => {
+    expect(MIRROR_REGISTRIES).toEqual(["public.ecr.aws", "ghcr.io"]);
+    expect(mirrorImageTargets("postgrest/postgrest:v14.14")).toEqual([
       "public.ecr.aws/supabase/postgrest:v14.14",
-    );
+      "ghcr.io/supabase/postgrest:v14.14",
+    ]);
   });
 
   test("lists every FROM image pinned in the Dockerfile", () => {
@@ -36,12 +45,18 @@ describe("mirror images", () => {
     expect(images.some((image) => image.startsWith("supabase/"))).toBe(true);
   });
 
-  test("partitions images by mirror presence and queries each only once", async () => {
-    const onMirror = new Set(["ghcr.io/supabase/kong:2.8.1"]);
+  test("an image is mirrored only when present on ALL registries", async () => {
+    const present = new Set([
+      // kong is on both registries -> mirrored.
+      "public.ecr.aws/supabase/kong:2.8.1",
+      "ghcr.io/supabase/kong:2.8.1",
+      // postgrest is only on ghcr.io -> partial mirror, must be re-pushed.
+      "ghcr.io/supabase/postgrest:v14.14",
+    ]);
     const queried: string[] = [];
     const isMirrored = (target: string) => {
       queried.push(target);
-      return Promise.resolve(onMirror.has(target));
+      return Promise.resolve(present.has(target));
     };
 
     const { mirrored, missing } = await partitionUnmirroredImages(
@@ -52,10 +67,11 @@ describe("mirror images", () => {
 
     expect(mirrored).toEqual(["library/kong:2.8.1"]);
     expect(missing).toEqual(["postgrest/postgrest:v14.14"]);
-    expect(queried).toHaveLength(2);
+    // Two unique images x two registries = four checks.
+    expect(queried).toHaveLength(4);
   });
 
-  test("is a no-op once everything is mirrored (idempotent re-run)", async () => {
+  test("is a no-op once everything is on every registry (idempotent re-run)", async () => {
     const allMirrored = () => Promise.resolve(true);
     const { mirrored, missing } = await partitionUnmirroredImages(
       ["postgrest/postgrest:v14.14", "supabase/logflare:1.45.6"],
