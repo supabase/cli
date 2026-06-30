@@ -34,10 +34,19 @@ describe("legacy config bool env overrides", () => {
       process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = truthy;
       expect(legacyMigrationsEnabled(false)).toBe(true);
     }
-    for (const falsy of ["0", "false", "False", "FALSE", "no", "", "garbage"]) {
+    for (const falsy of ["0", "false", "False", "FALSE", "no", "garbage"]) {
       process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = falsy;
       expect(legacyMigrationsEnabled(true)).toBe(false);
     }
+  });
+
+  it("treats an empty SUPABASE_* override as unset (Go AutomaticEnv has no AllowEmptyEnv)", () => {
+    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "";
+    expect(legacyMigrationsEnabled(true)).toBe(true);
+    expect(legacyMigrationsEnabled(false)).toBe(false);
+    process.env["SUPABASE_DB_SEED_ENABLED"] = "";
+    expect(legacySeedEnabled(true)).toBe(true);
+    expect(legacySeedEnabled(false)).toBe(false);
   });
 
   it("lets SUPABASE_DB_SEED_ENABLED override the config value (Go viper AutomaticEnv)", () => {

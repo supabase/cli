@@ -4,15 +4,13 @@ import { Effect, type FileSystem, Option, type Path } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import type { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
+import { legacyCreateSeedTable } from "../../../shared/legacy-migration-history.ts";
 import { legacySplitAndTrim } from "../../../shared/legacy-sql-split.ts";
 
 /**
- * Seed-history DDL/DML, verbatim from Go's `pkg/migration/history.go`.
+ * Seed-history DML, verbatim from Go's `pkg/migration/history.go`. The schema/table
+ * DDL (with a transaction-scoped lock timeout) lives in `legacyCreateSeedTable`.
  */
-const SET_LOCK_TIMEOUT = "SET lock_timeout = '4s'";
-const CREATE_VERSION_SCHEMA = "CREATE SCHEMA IF NOT EXISTS supabase_migrations";
-const CREATE_SEED_TABLE =
-  "CREATE TABLE IF NOT EXISTS supabase_migrations.seed_files (path text NOT NULL PRIMARY KEY, hash text NOT NULL)";
 const UPSERT_SEED_FILE =
   "INSERT INTO supabase_migrations.seed_files(path, hash) VALUES($1, $2) ON CONFLICT (path) DO UPDATE SET hash = EXCLUDED.hash";
 const SELECT_SEED_TABLE = "SELECT path, hash FROM supabase_migrations.seed_files";
@@ -268,13 +266,12 @@ export const legacySeedData = <E>(
   Effect.gen(function* () {
     const output = yield* Output;
     if (seeds.length === 0) return;
-    // Go's `CreateSeedTable` (history.go:54-64) runs `SET lock_timeout = '4s'`
-    // before the schema/table DDL so a conflicting schema/table lock fails promptly
-    // instead of waiting indefinitely; the schema is created first so a seed-only run
-    // (no prior migrations) doesn't fail on a missing schema.
-    yield* session.exec(SET_LOCK_TIMEOUT);
-    yield* session.exec(CREATE_VERSION_SCHEMA);
-    yield* session.exec(CREATE_SEED_TABLE);
+    // Go's `CreateSeedTable` (history.go:54-64) runs `SET lock_timeout = '4s'` +
+    // schema/table DDL in one implicit transaction, so a conflicting schema/table lock
+    // fails promptly but the timeout reverts on COMMIT and never leaks into the seed
+    // SQL run below. `legacyCreateSeedTable` reproduces that with BEGIN + SET LOCAL +
+    // DDL + COMMIT (creating the schema first so a seed-only run doesn't fail).
+    yield* legacyCreateSeedTable(session);
     for (const seed of seeds) {
       yield* output.raw(
         seed.dirty

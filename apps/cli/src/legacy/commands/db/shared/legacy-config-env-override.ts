@@ -9,15 +9,20 @@
  * this implicit AutomaticEnv override, so apply it here for the db push / db reset
  * migration + seed gates to match Go.
  *
- * Mirrors viper's `GetBool` → `cast.ToBool` (`strconv.ParseBool`): only
- * `1/t/T/TRUE/true/True` are truthy; any other value — including an explicitly-set
- * empty string or an unparseable token — is false (cast swallows the parse error).
+ * An UNSET or EMPTY env var leaves the config/default value in force: viper's
+ * `AutomaticEnv` is configured without `AllowEmptyEnv` (config.go:529-535), so it
+ * ignores an env var whose value is `""` and falls back to the loaded config.
+ *
+ * For a non-empty value, mirrors viper's `GetBool` → `cast.ToBool`
+ * (`strconv.ParseBool`): only `1/t/T/TRUE/true/True` are truthy; any other
+ * (unparseable) token is false (cast swallows the parse error).
  */
 const VIPER_TRUE_VALUES = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
 function legacyConfigBoolEnvOverride(envKey: string, configValue: boolean): boolean {
   const override = process.env[envKey];
-  if (override === undefined) return configValue;
+  // Unset or empty → no override (Go's AutomaticEnv without AllowEmptyEnv).
+  if (override === undefined || override === "") return configValue;
   return VIPER_TRUE_VALUES.has(override);
 }
 
