@@ -12,9 +12,13 @@ const READ_VAULT_KV = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
 const CREATE_VAULT_KV = "SELECT vault.create_secret($1, $2)";
 const UPDATE_VAULT_KV = "SELECT vault.update_secret($1, $2)";
 
-// Go's secret env-reference form (`pkg/config` envPattern); env() references are
-// never synced to the vault — Go leaves them verbatim with an empty SHA256.
-const ENV_REFERENCE_PATTERN = /^env\([A-Z_][A-Z0-9_]*\)$/u;
+// Go's secret env-reference form (`pkg/config/decode_hooks.go:11` —
+// `envPattern = ^env\((.*)\)$`); env() references are never synced to the vault —
+// Go's decode hook leaves any `env(...)` value verbatim with an empty SHA256,
+// regardless of the inner name's casing. Mirror Go's broad pattern exactly (`.`
+// excludes newline in both RE2 and JS without the `s` flag) so a lowercase/oddly
+// named reference such as `env(foo)` is skipped, not synced as a literal.
+const ENV_REFERENCE_PATTERN = /^env\(.*\)$/u;
 // dotenvx-encrypted secrets (Go decrypts before hashing). Decryption is not yet
 // ported, so encrypted entries are skipped rather than sent as ciphertext.
 const ENCRYPTED_PREFIX = "encrypted:";

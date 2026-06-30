@@ -67,6 +67,7 @@ function setup(
           apiUrl: "https://api.supabase.com",
           projectHost: "supabase.co",
           poolerHost: "supabase.com",
+          dashboardUrl: "https://supabase.com/dashboard",
           accessToken: Option.none(),
           projectId: Option.none(),
           workdir: process.cwd(),

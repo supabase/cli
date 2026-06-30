@@ -248,9 +248,22 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     if (connType === "linked" && linkedRef !== undefined) linkedRefForCache = linkedRef;
 
     // Remote path. The niche `--experimental` schema-files apply path
-    // (`apply.MigrateAndSeed`) is not ported; delegate it too.
+    // (`apply.MigrateAndSeed`) is not ported; delegate it to the Go child. In text
+    // mode inherit its stdio. Under a machine-output mode (`--output-format
+    // json|stream-json`) the Go child emits no TS envelope, so suppress its stdout
+    // (capture + discard) and emit the same structured success the native local and
+    // remote paths do, keeping the JSON contract consistent across all reset paths.
     if (experimental && resolvedVersion === "") {
-      yield* proxy.exec(buildResetArgs(flags), { env: { SUPABASE_TELEMETRY_DISABLED: "1" } });
+      const delegateEnv = { env: { SUPABASE_TELEMETRY_DISABLED: "1" } };
+      if (output.format === "text") {
+        yield* proxy.exec(buildResetArgs(flags), delegateEnv);
+      } else {
+        yield* proxy.execCapture(buildResetArgs(flags), delegateEnv);
+        yield* output.success("Reset remote database.", {
+          target: "remote",
+          version: resolvedVersion,
+        });
+      }
       return;
     }
 

@@ -157,7 +157,10 @@ export const legacyDropUserSchemas = <E>(
   mapError: (message: string) => E,
 ): Effect.Effect<void, E> =>
   Effect.gen(function* () {
-    yield* session.exec("RESET ALL");
+    // Go's `DropUserSchemas` runs only `drop.sql` via `ExecBatch` (drop.go:34-38) —
+    // no `RESET ALL`. Resetting here would clear caller-supplied DB URL runtime
+    // params (e.g. `options=-c statement_timeout=…`) before the destructive drop, so
+    // the remote `db reset --db-url` path must NOT reset (matches Go's ExecBatch).
     yield* session.exec("BEGIN");
     yield* session
       .exec(DROP_OBJECTS)

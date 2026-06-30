@@ -8,6 +8,7 @@ import {
   legacyResolveExperimental,
 } from "../../../../shared/legacy/global-flags.ts";
 import { resolveBinary } from "../../../../shared/legacy/go-proxy.layer.ts";
+import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -53,6 +54,7 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
     const experimental = yield* legacyResolveExperimental;
     const experimentalArgs = experimental ? ["--experimental"] : [];
     const spawner = yield* ChildProcessSpawner;
+    const processControl = yield* ProcessControl;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const resolved = resolveBinary();
@@ -72,6 +74,15 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
               ),
             );
           }
+          // `runCli` treats `db start`/`db reset` as self-managed and installs no
+          // global signal handler, and this direct child spawn (unlike
+          // `LegacyGoProxy.exec`) inherits the foreground process group. Hold
+          // SIGINT/SIGTERM/SIGHUP with no-op listeners so an interactive Ctrl-C
+          // during container startup/restore does not default-terminate the TS
+          // parent out from under the Go child's docker-cleanup path — the parent
+          // stays blocked on the child's exit and propagates its real status.
+          // Scoped, so the listeners are removed on completion/failure/interrupt.
+          yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
           const args = [
             "db",
             "__db-bootstrap",
@@ -163,9 +174,12 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
             if (inspectExit === 0) return true; // container exists ⇒ running
 
             const stderr = decodeChunks(stderrChunks).trim();
-            // Only a missing container means "not running". Any other inspect
-            // failure (e.g. the Docker daemon is down) propagates, matching Go.
-            if (!stderr.includes("No such container")) {
+            // Only a missing container means "not running". Docker reports this as
+            // either "No such container" or "No such object" depending on daemon
+            // version/CLI path (the same pair handled in `shared/functions/serve.ts`).
+            // Any other inspect failure (e.g. the Docker daemon is down) propagates,
+            // matching Go's `AssertSupabaseDbIsRunning`.
+            if (!stderr.includes("No such container") && !stderr.includes("No such object")) {
               return yield* Effect.fail(
                 seamFailure(
                   stderr.length > 0

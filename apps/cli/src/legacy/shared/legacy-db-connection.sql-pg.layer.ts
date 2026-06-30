@@ -10,6 +10,7 @@ import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 // resolves, so the COPY path and the pooled path use the same driver.
 import * as Pg from "pg";
 import { to as pgCopyTo } from "pg-copy-streams";
+import { legacyConnectSuggestion } from "./legacy-connect-errors.ts";
 import {
   LegacyDbConnectError,
   LegacyDbCopyError,
@@ -407,8 +408,20 @@ const connect = (
       connectionTimeoutMillis: connectTimeoutSeconds * 1000,
     });
 
-    const toConnectError = (error: unknown) =>
-      new LegacyDbConnectError({ message: `failed to connect to postgres: ${error}` });
+    // Go's `ConnectByUrl` calls `SetConnectSuggestion(err)` on every connect failure
+    // (`connect.go:187`), mapping the driver error to an actionable hint that replaces
+    // the generic "--debug" suggestion. The resolver attaches the profile context to
+    // `cfg.suggestionContext`; map it here so the suggestion travels on the error.
+    const toConnectError = (error: unknown) => {
+      const suggestion =
+        cfg.suggestionContext === undefined
+          ? undefined
+          : legacyConnectSuggestion(error, cfg.suggestionContext);
+      return new LegacyDbConnectError({
+        message: `failed to connect to postgres: ${error}`,
+        ...(suggestion === undefined ? {} : { suggestion }),
+      });
+    };
 
     // Load the `sslrootcert` CA bundle (pgconn reads it into `RootCAs` at parse
     // time; a missing/unreadable file aborts). Skipped for local connections, which
@@ -548,8 +561,7 @@ const connect = (
       const fresh = new Pg.Client(winningRawConfig);
       yield* Effect.tryPromise({
         try: () => fresh.connect(),
-        catch: (error) =>
-          new LegacyDbConnectError({ message: `failed to connect to postgres: ${error}` }),
+        catch: toConnectError,
       });
       if (!isLocal && needsRoleStepDown(cfg.user)) {
         yield* Effect.tryPromise({

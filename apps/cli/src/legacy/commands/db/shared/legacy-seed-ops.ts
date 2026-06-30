@@ -278,13 +278,16 @@ export const legacySeedData = <E>(
           : `Seeding data from ${seed.path}...\n`,
         "stderr",
       );
-      const statements = seed.dirty
-        ? []
-        : legacySplitAndTrim(
-            yield* fs.readFileString(
-              path.isAbsolute(seed.path) ? seed.path : path.join(workdir, seed.path),
-            ),
-          );
+      // Go's `ExecBatchWithCache` parses the file (read + `SplitAndTrim`)
+      // UNCONDITIONALLY before the dirty check (`file.go:198-211`), so a dirty seed
+      // that is unreadable or contains malformed SQL still fails and leaves the
+      // previous hash — only the queueing of statements is gated on `Dirty`.
+      const lines = legacySplitAndTrim(
+        yield* fs.readFileString(
+          path.isAbsolute(seed.path) ? seed.path : path.join(workdir, seed.path),
+        ),
+      );
+      const statements = seed.dirty ? [] : lines;
       yield* session.exec("BEGIN");
       const body = Effect.gen(function* () {
         for (const statement of statements) yield* session.exec(statement);

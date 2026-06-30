@@ -128,6 +128,13 @@ describe("legacyDbConfigResolver (local + db-url)", () => {
             user: "postgres",
             password: "hunter2",
             database: "postgres",
+            // The resolver attaches the connect-failure suggestion context (Go's
+            // ambient CurrentProfile) to every resolved connection.
+            suggestionContext: {
+              dashboardUrl: "https://supabase.com/dashboard",
+              profileName: "supabase",
+              debug: false,
+            },
           });
           expect(r.isLocal).toBe(true);
           rmSync(dir, { recursive: true, force: true });
@@ -176,6 +183,11 @@ describe("legacyDbConfigResolver (local + db-url)", () => {
             user: "alice",
             password: "p@ss",
             database: "appdb",
+            suggestionContext: {
+              dashboardUrl: "https://supabase.com/dashboard",
+              profileName: "supabase",
+              debug: false,
+            },
           });
           expect(r.isLocal).toBe(false);
           rmSync(dir, { recursive: true, force: true });

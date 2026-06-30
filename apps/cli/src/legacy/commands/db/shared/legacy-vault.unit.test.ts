@@ -32,4 +32,17 @@ describe("legacySyncableVaultSecrets", () => {
     });
     expect(result).toEqual([{ key: "literal", value: "plain-value" }]);
   });
+
+  it("skips any env(...) reference regardless of inner casing (Go's broad envPattern)", () => {
+    // Go's `^env\((.*)\)$` matches any inner name, so a lowercase/odd reference is
+    // left verbatim and never synced — it must NOT be treated as a literal value.
+    const result = legacySyncableVaultSecrets({
+      lower: "env(foo)",
+      mixed: "env(My_Secret)",
+      empty: "env()",
+      dotted: "env(foo.bar)",
+      literal: "plain-value",
+    });
+    expect(result).toEqual([{ key: "literal", value: "plain-value" }]);
+  });
 });
