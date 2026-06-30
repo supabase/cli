@@ -63,6 +63,10 @@ interface SetupOpts {
   readonly dumpExitCode?: number;
   readonly dumpStderr?: string;
   readonly dumpFailFirstWith?: string;
+  // Bytes the FIRST dump attempt streams to its sink before it fails with
+  // `dumpFailFirstWith`, reproducing a direct attempt that emits preamble then
+  // exits non-zero on an IPv6 drop.
+  readonly dumpFailFirstPartialBytes?: string;
   // Raw argv seen by the handler (CliArgs). Only consulted when both
   // `--declarative` and `--use-pg-delta` are present, to replay pflag's
   // last-occurrence-wins ordering; defaults to empty.
@@ -133,6 +137,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         dumpRunCount += 1;
         dumpCalls.push({ env: runOpts.env, image: runOpts.image });
         if (opts.dumpFailFirstWith !== undefined && dumpRunCount === 1) {
+          if (opts.dumpFailFirstPartialBytes !== undefined) {
+            const partial = new TextEncoder().encode(opts.dumpFailFirstPartialBytes);
+            if (partial.length > 0) yield* streamOpts.onStdout(partial);
+          }
           return { exitCode: 1, stderr: opts.dumpFailFirstWith };
         }
         const bytes = new TextEncoder().encode(opts.dumpStdout ?? "");
@@ -539,6 +547,33 @@ describe("legacy db pull", () => {
       expect(error.message).toBe("No schema changes found");
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "an initial-pull direct write that IPv6-fails then an empty pooler retry reports 'No schema changes found'",
+    () => {
+      // Regression: the direct attempt streams preamble bytes then drops over IPv6;
+      // the pooler retry succeeds empty. Go truncates the file before the retry
+      // (`resetOutput`, pooler_fallback.go:98-113) and decides in-sync from the file
+      // on disk (`hasMigrationContent`, pull.go:251-268), so an empty pooler retry +
+      // empty diff is in sync — not a schema write + migration-history upsert. The
+      // sticky `seedWroteBytes` flag must therefore reset per attempt.
+      const s = setup(tmp.current, {
+        remoteVersions: [],
+        dumpFailFirstWith: "could not translate host name: network is unreachable",
+        dumpFailFirstPartialBytes: "-- partial preamble\n",
+        dumpStdout: "", // pooler retry streams nothing
+        edgeStdout: "", // empty migra diff
+        poolerAvailable: true,
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+        expect(error.message).toBe("No schema changes found");
+        expect(s.dumpCalls).toHaveLength(2); // direct attempt + pooler retry
+        expect(s.historyUpserts).toHaveLength(0); // no migration-history row written
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("an initial pull fails when the pg_dump container exits non-zero", () => {
     const s = setup(tmp.current, {

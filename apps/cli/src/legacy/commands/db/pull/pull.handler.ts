@@ -468,8 +468,15 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             new LegacyDbPullDumpError({ message: `failed to open dump file: ${cause.message}` });
           // Stream pg_dump → migration file, (re)truncating per attempt so a pooler
           // retry leaves only the successful attempt's bytes (Go's `resetOutput`).
-          const runSchemaDump = (target: LegacyPgConnInput) =>
-            fs
+          const runSchemaDump = (target: LegacyPgConnInput) => {
+            // Reset per attempt alongside the truncate, mirroring Go's `resetOutput`
+            // (`pooler_fallback.go:98-113`) which zeroes the file before the pooler
+            // retry. Go decides in-sync from the file on disk (`hasMigrationContent`,
+            // `pull.go:251-268`), so only the final successful attempt's bytes count: a
+            // partial direct write that then IPv6-fails must not leave this flag stuck
+            // true, or an empty pooler retry would be mis-reported as a schema write.
+            seedWroteBytes = false;
+            return fs
               .writeFile(migrationPath, new Uint8Array(0), { mode: MIGRATION_FILE_MODE })
               .pipe(Effect.mapError(toDumpOpenError))
               .pipe(
@@ -499,6 +506,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                   ),
                 ),
               );
+          };
           // Go's `dumpRemoteSchema` prints this once, before `RunWithPoolerFallback`.
           yield* output.raw("Dumping schema from remote database...\n", "stderr");
           let dumpResult = yield* runSchemaDump(resolved.conn);
