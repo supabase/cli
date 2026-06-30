@@ -112,6 +112,8 @@ describe("legacySeedData (dirty parse)", () => {
     return runSeed(session, dir, [{ path: "data.sql", hash: "newhash", dirty: true }]).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
+          // Go's CreateSeedTable runs `SET lock_timeout = '4s'` before the DDL.
+          expect(calls.some((c) => c.sql === "SET lock_timeout = '4s'")).toBe(true);
           // Statements are NOT executed for a dirty seed, but the hash IS upserted.
           expect(calls.some((c) => c.sql.includes("insert into t"))).toBe(false);
           expect(calls.some((c) => c.kind === "query" && c.sql.includes("seed_files"))).toBe(true);

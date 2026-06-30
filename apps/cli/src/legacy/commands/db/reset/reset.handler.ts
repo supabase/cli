@@ -25,6 +25,7 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyDropUserSchemas } from "../shared/legacy-drop-schemas.ts";
 import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
+import { legacyMigrationsEnabled } from "../shared/legacy-migrations-enabled.ts";
 import { legacyListLocalMigrations } from "../shared/legacy-pgdelta.cache.ts";
 import { legacyGetPendingSeeds, legacySeedData } from "../shared/legacy-seed-ops.ts";
 import { legacyReadVaultDocument, legacyUpsertVaultSecrets } from "../shared/legacy-vault.ts";
@@ -304,7 +305,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         yield* legacyDropUserSchemas(session, applyError);
         yield* legacyUpsertVaultSecrets(session, legacyReadVaultDocument(document), applyError);
 
-        if (config.db.migrations.enabled) {
+        if (legacyMigrationsEnabled(config.db.migrations.enabled)) {
           const locals = yield* legacyListLocalMigrations(fs, path, migrationsDir);
           // LoadPartialMigrations filter: version === "" || v <= version.
           const pending = locals.filter((p) => {

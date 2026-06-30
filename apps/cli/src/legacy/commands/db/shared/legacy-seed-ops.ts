@@ -9,6 +9,7 @@ import { legacySplitAndTrim } from "../../../shared/legacy-sql-split.ts";
 /**
  * Seed-history DDL/DML, verbatim from Go's `pkg/migration/history.go`.
  */
+const SET_LOCK_TIMEOUT = "SET lock_timeout = '4s'";
 const CREATE_VERSION_SCHEMA = "CREATE SCHEMA IF NOT EXISTS supabase_migrations";
 const CREATE_SEED_TABLE =
   "CREATE TABLE IF NOT EXISTS supabase_migrations.seed_files (path text NOT NULL PRIMARY KEY, hash text NOT NULL)";
@@ -267,8 +268,11 @@ export const legacySeedData = <E>(
   Effect.gen(function* () {
     const output = yield* Output;
     if (seeds.length === 0) return;
-    // Go's `CreateSeedTable` (history.go:54-60) creates the schema first, so a
-    // seed-only run (no prior migrations) doesn't fail on a missing schema.
+    // Go's `CreateSeedTable` (history.go:54-64) runs `SET lock_timeout = '4s'`
+    // before the schema/table DDL so a conflicting schema/table lock fails promptly
+    // instead of waiting indefinitely; the schema is created first so a seed-only run
+    // (no prior migrations) doesn't fail on a missing schema.
+    yield* session.exec(SET_LOCK_TIMEOUT);
     yield* session.exec(CREATE_VERSION_SCHEMA);
     yield* session.exec(CREATE_SEED_TABLE);
     for (const seed of seeds) {

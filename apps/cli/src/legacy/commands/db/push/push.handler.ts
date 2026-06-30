@@ -31,6 +31,7 @@ import {
   legacySuggestIgnoreFlag,
   legacySuggestRevertHistory,
 } from "../shared/legacy-migration-pending.ts";
+import { legacyMigrationsEnabled } from "../shared/legacy-migrations-enabled.ts";
 import {
   type LegacySeedFile,
   legacyGetPendingSeeds,
@@ -156,7 +157,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
 
         // --- Collect pending migrations ---
         let pending: ReadonlyArray<string> = [];
-        if (!config.db.migrations.enabled) {
+        if (!legacyMigrationsEnabled(config.db.migrations.enabled)) {
           yield* output.raw(
             `Skipping migrations because it is disabled in config.toml for project: ${projectRef}\n`,
             "stderr",

@@ -84,15 +84,25 @@ export const legacyUpsertVaultSecrets = <E>(
     yield* output.raw("Updating vault secrets...\n", "stderr");
 
     const existing = yield* session.query(READ_VAULT_KV, [secrets.map((s) => s.key)]);
-    for (const row of existing) {
-      const name = String(row["name"]);
-      const id = String(row["id"]);
-      const value = toInsert.get(name);
-      if (value === undefined) continue;
-      yield* session.query(UPDATE_VAULT_KV, [id, value]);
-      toInsert.delete(name);
-    }
-    for (const [key, value] of toInsert) {
-      yield* session.query(CREATE_VAULT_KV, [value, key]);
-    }
+
+    // Go queues every update/create in a single `pgx.Batch` and `SendBatch().Close()`
+    // runs it as one implicit transaction (`pkg/vault/batch.go:46-58`), so a later
+    // failure leaves Vault entirely unchanged. Mirror that atomicity with an explicit
+    // transaction around the write phase (the read above stays outside, as in Go).
+    yield* session.exec("BEGIN");
+    const writes = Effect.gen(function* () {
+      for (const row of existing) {
+        const name = String(row["name"]);
+        const id = String(row["id"]);
+        const value = toInsert.get(name);
+        if (value === undefined) continue;
+        yield* session.query(UPDATE_VAULT_KV, [id, value]);
+        toInsert.delete(name);
+      }
+      for (const [key, value] of toInsert) {
+        yield* session.query(CREATE_VAULT_KV, [value, key]);
+      }
+      yield* session.exec("COMMIT");
+    });
+    yield* writes.pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
   }).pipe(Effect.mapError((error: LegacyDbExecError) => mapError(error.message)));
