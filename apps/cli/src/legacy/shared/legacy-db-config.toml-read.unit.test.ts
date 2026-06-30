@@ -2103,3 +2103,153 @@ describe("legacyReadDbToml encrypted secret decryption (Go DecryptSecretHookFunc
     expectLoads(["[db]", 'root_key = "env(SOME_UNSET_ROOT_KEY)"']),
   );
 });
+
+describe("legacyReadDbToml [analytics] validation (Go config.Validate parity)", () => {
+  const failsWith = (lines: ReadonlyArray<string>, message: string) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      const exit = yield* read(dir).pipe(Effect.exit);
+      expect(Exit.isFailure(exit), `expected failure containing: ${message}`).toBe(true);
+      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain(message);
+      rmSync(dir, { recursive: true, force: true });
+    });
+  const succeeds = (lines: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      const v = yield* read(dir);
+      expect(v.baseline).toBeDefined();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+  // `LogflareBackend.UnmarshalText` is a decode-time enum (`config.go:60-66`): it fires whenever
+  // `backend` is set, even when analytics is disabled.
+  it.effect("rejects an unknown analytics.backend regardless of enabled", () =>
+    failsWith(
+      ["[analytics]", "enabled = false", 'backend = "clickhouse"'],
+      "'analytics.backend' must be one of [postgres bigquery]",
+    ),
+  );
+  it.effect("rejects bigquery analytics missing gcp_project_id", () =>
+    failsWith(
+      ["[analytics]", "enabled = true", 'backend = "bigquery"'],
+      "Missing required field in config: analytics.gcp_project_id",
+    ),
+  );
+  it.effect("rejects bigquery analytics missing gcp_project_number", () =>
+    failsWith(
+      ["[analytics]", "enabled = true", 'backend = "bigquery"', 'gcp_project_id = "p"'],
+      "Missing required field in config: analytics.gcp_project_number",
+    ),
+  );
+  it.effect("rejects bigquery analytics missing gcp_jwt_path", () =>
+    failsWith(
+      [
+        "[analytics]",
+        "enabled = true",
+        'backend = "bigquery"',
+        'gcp_project_id = "p"',
+        'gcp_project_number = "123"',
+      ],
+      "Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path",
+    ),
+  );
+  it.effect("accepts bigquery analytics with all three gcp fields", () =>
+    succeeds([
+      "[analytics]",
+      "enabled = true",
+      'backend = "bigquery"',
+      'gcp_project_id = "p"',
+      'gcp_project_number = "123"',
+      'gcp_jwt_path = "creds.json"',
+    ]),
+  );
+  it.effect("accepts the postgres backend without gcp fields", () =>
+    succeeds(["[analytics]", "enabled = true", 'backend = "postgres"']),
+  );
+  it.effect("accepts an absent [analytics] section (template default enabled+postgres)", () =>
+    succeeds(["[db]", "major_version = 17"]),
+  );
+  it.effect("skips the bigquery gcp checks when analytics is disabled", () =>
+    succeeds(["[analytics]", "enabled = false", 'backend = "bigquery"']),
+  );
+  it.effect("honors SUPABASE_ANALYTICS_BACKEND when validating the bigquery gcp fields", () => {
+    const previous = process.env["SUPABASE_ANALYTICS_BACKEND"];
+    process.env["SUPABASE_ANALYTICS_BACKEND"] = "bigquery";
+    return failsWith(
+      ["[analytics]", "enabled = true"],
+      "Missing required field in config: analytics.gcp_project_id",
+    ).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_ANALYTICS_BACKEND"];
+          else process.env["SUPABASE_ANALYTICS_BACKEND"] = previous;
+        }),
+      ),
+    );
+  });
+});
+
+describe("legacyReadDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)", () => {
+  const restore = (previous: string | undefined) =>
+    Effect.sync(() => {
+      if (previous === undefined) delete process.env["SUPABASE_PROJECT_ID"];
+      else process.env["SUPABASE_PROJECT_ID"] = previous;
+    });
+
+  it.effect("overrides the TOML project_id with SUPABASE_PROJECT_ID", () => {
+    const previous = process.env["SUPABASE_PROJECT_ID"];
+    process.env["SUPABASE_PROJECT_ID"] = "env-project";
+    const dir = withConfig(['project_id = "toml-project"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.ensuring(restore(previous)),
+    );
+  });
+
+  it.effect("applies SUPABASE_PROJECT_ID even when config.toml is absent", () => {
+    const previous = process.env["SUPABASE_PROJECT_ID"];
+    process.env["SUPABASE_PROJECT_ID"] = "env-project";
+    const dir = withConfig(undefined);
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.ensuring(restore(previous)),
+    );
+  });
+
+  it.effect("ignores an empty SUPABASE_PROJECT_ID (viper AllowEmptyEnv=false)", () => {
+    const previous = process.env["SUPABASE_PROJECT_ID"];
+    process.env["SUPABASE_PROJECT_ID"] = "";
+    const dir = withConfig(['project_id = "toml-project"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.projectId)).toBe("toml-project");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.ensuring(restore(previous)),
+    );
+  });
+});

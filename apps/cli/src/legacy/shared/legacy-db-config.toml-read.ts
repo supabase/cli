@@ -252,6 +252,11 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "experimental.pgdelta.declarative_schema_path",
   "experimental.pgdelta.format_options",
   "api.auto_expose_new_tables",
+  "analytics.enabled",
+  "analytics.backend",
+  "analytics.gcp_project_id",
+  "analytics.gcp_project_number",
+  "analytics.gcp_jwt_path",
 ];
 
 /** Whether `block` provides a value at the dotted `key` path (scalar, array, or sub-table). */
@@ -1165,6 +1170,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   let edgeRuntimeRaw: RawDoc | undefined;
   let experimentalRaw: RawDoc | undefined;
   let functionsRaw: RawDoc | undefined;
+  let analyticsRaw: RawDoc | undefined;
   let projectId = Option.none<string>();
   // Config keys a matched remote block contributed at viper's override tier (Go's
   // `v.Set`), so they must beat the matching `SUPABASE_*` env overrides below.
@@ -1218,6 +1224,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     apiRaw = asRecord(effectiveDoc?.["api"]);
     edgeRuntimeRaw = asRecord(effectiveDoc?.["edge_runtime"]);
     functionsRaw = asRecord(effectiveDoc?.["functions"]);
+    analyticsRaw = asRecord(effectiveDoc?.["analytics"]);
     // Go expands `env(VAR)` for the top-level `project_id` during `config.Load`
     // (`config.go:584-588`) before `UpdateDockerIds` derives container names from
     // it, so expand here too — otherwise a `project_id = "env(PROJECT_ID)"` would
@@ -1266,6 +1273,20 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     const fromFile = projectEnv[name];
     return fromFile !== undefined && fromFile.length > 0 ? fromFile : undefined;
   };
+
+  // Go's viper AutomaticEnv binds the top-level `project_id` to `SUPABASE_PROJECT_ID`
+  // (`config.go:529-535`), so the env value overrides the TOML `project_id` before
+  // `UpdateDockerIds` derives the local-stack container/network names from it
+  // (`internal/utils/config.go:57-63` — `NetId = supabase_network_<project_id>`). The
+  // reader's `projectId` is exactly that Docker-naming id, so apply the override here
+  // (env-expanded like the TOML value, then sanitized at the consumer) — otherwise
+  // `test db --local` joins `supabase_network_<toml-or-basename>` while Go honors the
+  // env id. This is independent of the linked-ref resolver, which reads the env var on
+  // its own chain; the env value is bound regardless of whether a config file exists.
+  const projectIdEnv = envOverride("SUPABASE_PROJECT_ID");
+  if (projectIdEnv !== undefined) {
+    projectId = nonEmptyString(legacyExpandEnv(projectIdEnv, lookup));
+  }
 
   // A present-but-unmarshalable port aborts in Go rather than defaulting; mirror
   // that so `test db --local` never silently targets the default local database
@@ -1563,6 +1584,75 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   );
   if (authEnabled) {
     yield* legacyValidateAuthConfig(authRaw ?? {}, fs, path, workdir, lookup);
+  }
+
+  // Go's config.Validate validates `[analytics]` after the auth block (`config.go:1123-1135`).
+  // Two fatal checks run on the db/migration path:
+  //   1. `LogflareBackend.UnmarshalText` (`config.go:60-66`) is a decode-time enum that rejects
+  //      any `backend` other than `postgres`/`bigquery` — regardless of `enabled` (it fires
+  //      during UnmarshalExact, like the captcha provider enum), so it gates here too.
+  //   2. When analytics is enabled with the BigQuery backend, the three GCP fields are required
+  //      (`config.go:1124-1134`), in order, with byte-exact messages.
+  // Go merges the template defaults `enabled = true`, `backend = "postgres"` before Validate
+  // (`templates/config.toml:388-392`), so an absent `[analytics]` section is enabled+postgres and
+  // passes (an empty backend never equals `bigquery`, so the GCP block is skipped). viper
+  // AutomaticEnv binds `SUPABASE_ANALYTICS_*`; a matched remote block makes those keys env-immune,
+  // same as every other `LEGACY_ENV_OVERRIDABLE_KEYS` field above.
+  const analyticsString = (key: string, envName: string): string => {
+    const fromEnv = remoteOverrideKeys.has(`analytics.${key}`) ? undefined : envOverride(envName);
+    const raw = fromEnv ?? analyticsRaw?.[key];
+    return typeof raw === "string" ? legacyExpandEnv(raw, lookup) : "";
+  };
+  const analyticsBackend = analyticsString("backend", "SUPABASE_ANALYTICS_BACKEND");
+  if (
+    analyticsBackend.length > 0 &&
+    analyticsBackend !== "postgres" &&
+    analyticsBackend !== "bigquery"
+  ) {
+    // Mirror the captcha enum's mapstructure envelope (`%v` of the allowed `[]LogflareBackend`).
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({
+        message:
+          "failed to parse config: decoding failed due to the following error(s):\n\n'analytics.backend' must be one of [postgres bigquery]",
+      }),
+    );
+  }
+  const analyticsEnabled = yield* resolveBoolOrFail(
+    "analytics.enabled",
+    analyticsRaw?.["enabled"],
+    true,
+    lookup,
+    remoteOverrideKeys.has("analytics.enabled")
+      ? undefined
+      : envOverride("SUPABASE_ANALYTICS_ENABLED"),
+  );
+  if (analyticsEnabled && analyticsBackend === "bigquery") {
+    // Each GCP value is env-expanded (Go's LoadEnvHook), so an unresolved `env(VAR)` stays
+    // non-empty and passes the `len(...) == 0` check, exactly like Go.
+    if (analyticsString("gcp_project_id", "SUPABASE_ANALYTICS_GCP_PROJECT_ID").length === 0) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: "Missing required field in config: analytics.gcp_project_id",
+        }),
+      );
+    }
+    if (
+      analyticsString("gcp_project_number", "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER").length === 0
+    ) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message: "Missing required field in config: analytics.gcp_project_number",
+        }),
+      );
+    }
+    if (analyticsString("gcp_jwt_path", "SUPABASE_ANALYTICS_GCP_JWT_PATH").length === 0) {
+      return yield* Effect.fail(
+        new LegacyDbConfigLoadError({
+          message:
+            "Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path",
+        }),
+      );
+    }
   }
 
   // `[db.vault]` secret names, sorted (Go's `setupInputsToken` sorts before hashing).
