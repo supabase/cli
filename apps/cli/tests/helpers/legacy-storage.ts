@@ -12,7 +12,8 @@ import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-proj
 import { LegacyProjectRefResolver } from "../../src/legacy/config/legacy-project-ref.service.ts";
 import { LegacyYesFlag } from "../../src/shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
-import { mockOutput, mockRuntimeInfo } from "./mocks.ts";
+import { mockOutput, mockRuntimeInfo, mockTty } from "./mocks.ts";
+import { mockLegacyPromptInput } from "./legacy-prompt-input.ts";
 import {
   LEGACY_VALID_REF,
   legacyJsonResponse,
@@ -66,6 +67,10 @@ export interface SetupLegacyStorageOptions {
   readonly yes?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
   readonly promptConfirmFail?: boolean;
+  /** stdin interactivity; defaults to a TTY so `confirm`-driven tests reach clack. */
+  readonly stdinIsTty?: boolean;
+  /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
+  readonly pipedAnswers?: ReadonlyArray<string>;
   /** Project ref returned by the resolver for the linked path. */
   readonly projectRef?: string;
   /** api-keys list returned by the Management API mock (linked path). */
@@ -200,6 +205,10 @@ export function setupLegacyStorage(workdir: string, opts: SetupLegacyStorageOpti
       make: LegacyPlatformApi.pipe(Effect.provide(managementApi.layer)),
     }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    // `storage rm` confirms deletions via `legacyPromptYesNo`; model an
+    // interactive user answering via `confirm` (other storage commands ignore it).
+    mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
+    mockLegacyPromptInput({ pipedLines: opts.pipedAnswers }),
     // `cp` resolves relative local paths against the original cwd (Go's
     // `utils.CurrentDirAbs`); point it at the temp workdir for tests.
     mockRuntimeInfo({ cwd: workdir }),

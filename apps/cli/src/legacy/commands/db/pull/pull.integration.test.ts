@@ -10,6 +10,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { mockLegacyPromptInput } from "../../../../../tests/helpers/legacy-prompt-input.ts";
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   LegacyDnsResolverFlag,
@@ -44,6 +45,8 @@ interface SetupOpts {
   readonly remoteVersions?: ReadonlyArray<string>;
   readonly edgeStdout?: string; // diff SQL or declarative export JSON
   readonly stdinIsTty?: boolean;
+  // Piped (non-TTY) stdin answers, one consumed per confirmation prompt.
+  readonly pipedAnswers?: ReadonlyArray<string>;
   readonly yes?: boolean;
   readonly experimental?: boolean;
   readonly shadowTargetOverride?: string;
@@ -227,6 +230,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     proxy,
     mockLegacyCliConfig({ workdir, projectId: Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
+    mockLegacyPromptInput({ pipedLines: opts.pipedAnswers }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
@@ -723,13 +727,12 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("updates history on a non-interactive stdin without prompting (Go default)", () => {
-    // Go's `PromptYesNo` returns the default (true) on a non-terminal stdin without
-    // blocking (`console.go:64-82`). The handler gates on `Tty.stdinIsTty` before the
-    // clack confirm, so a non-interactive `db pull` proceeds to update the remote
-    // history rather than prompting. (The production clack prompt would hang on a
-    // non-TTY — that no-hang behavior is proven end-to-end in `pull.live.test.ts`;
-    // here the gate just keeps history-update on the non-interactive default.)
+  it.effect("updates history on an empty non-interactive stdin (Go default)", () => {
+    // Go's `PromptYesNo` scans stdin and only falls back to the default (`true`) when
+    // the scan is empty/exhausted (`console.go:64-82`). With no piped input a
+    // non-interactive `db pull` therefore proceeds to update the remote history.
+    // (The production clack prompt would hang on a non-TTY — that no-hang behavior is
+    // proven end-to-end in `pull.live.test.ts`; here the empty piped scan defaults.)
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
@@ -739,6 +742,27 @@ describe("legacy db pull", () => {
     return Effect.gen(function* () {
       yield* legacyDbPull(flags());
       expect(s.historyUpserts.length).toBe(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("declines the history update on a piped 'n' (non-tty)", () => {
+    // Regression: Go scans piped stdin before defaulting (`console.go:74-82`), so a
+    // piped `n` cancels the history update even on a non-terminal — `schema_migrations`
+    // must not be touched against the user's explicit decline.
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "create table remote ();\n",
+      stdinIsTty: false,
+      pipedAnswers: ["n"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      expect(s.historyUpserts.length).toBe(0);
+      // Go prints the label then echoes the consumed answer (`console.go:96-102`).
+      expect(streamText(s.out, "stderr")).toContain(
+        "Update remote migration history table? [Y/n] n",
+      );
     }).pipe(Effect.provide(s.layer));
   });
 

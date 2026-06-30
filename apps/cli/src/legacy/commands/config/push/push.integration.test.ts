@@ -18,6 +18,7 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockRuntimeInfo, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { mockLegacyPromptInput } from "../../../../../tests/helpers/legacy-prompt-input.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { legacyConfigPush } from "./push.handler.ts";
 
@@ -57,6 +58,8 @@ function setup(opts: {
   readonly promptFail?: boolean;
   /** stdin interactivity; defaults to a TTY so prompt-driven tests reach the confirm. */
   readonly stdinIsTty?: boolean;
+  /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
+  readonly pipedAnswers?: ReadonlyArray<string>;
 }) {
   writeConfig(opts.toml);
   const routes = opts.routes ?? {};
@@ -108,6 +111,7 @@ function setup(opts: {
       linkedProjectCache: linkedProjectCache.layer,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
     }),
+    mockLegacyPromptInput({ pipedLines: opts.pipedAnswers }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
   );
   return { layer, out, api, telemetry, linkedProjectCache };
@@ -275,12 +279,11 @@ project_id = "abcdefghijklmnopqrst"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("defaults to yes in non-TTY text without --yes", () => {
-    // Go's `PromptYesNo(..., true)` returns the default on a non-terminal
-    // (`push.go:36`); the handler gates on `Tty` and pushes without prompting (a
-    // clack confirm would otherwise hang). No `confirm` is scripted, so reaching the
-    // prompt would be a bug.
-    const { layer, api } = setup({
+  it.live("defaults to yes on empty non-TTY stdin, echoing the prompt", () => {
+    // Go's `PromptYesNo(..., true)` (`push.go:36`) prints the label and scans
+    // stdin even on a non-terminal (`console.go:96-102`); with no piped input the
+    // scan is empty and it falls back to the default (`true`), so the push proceeds.
+    const { layer, api, out } = setup({
       toml: API_ONLY_TOML,
       stdinIsTty: false,
       routes: {
@@ -293,6 +296,30 @@ project_id = "abcdefghijklmnopqrst"
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
         true,
       );
+      // Label printed + empty answer echoed (Go's non-TTY `PromptText`).
+      expect(out.stderrText).toContain("Do you want to push api config to remote? [Y/n] \n");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("honors a piped 'n' decline on non-TTY stdin (no update)", () => {
+    // Regression: Go scans piped stdin before defaulting (`console.go:74-82`), so a
+    // piped `n` cancels the push even on a non-terminal — it must not silently apply.
+    const { layer, api, out } = setup({
+      toml: API_ONLY_TOML,
+      stdinIsTty: false,
+      pipedAnswers: ["n"],
+      routes: {
+        postgrestGet: { status: 200, body: POSTGREST_DISABLED },
+        postgresGet: { status: 200, body: {} },
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        false,
+      );
+      // The consumed answer is echoed to stderr (Go's non-TTY `PromptText`).
+      expect(out.stderrText).toContain("Do you want to push api config to remote? [Y/n] n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -353,6 +380,7 @@ project_id = "abcdefghijklmnopqrst"
         cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
+      mockLegacyPromptInput(),
       Layer.succeed(LegacyYesFlag, true),
     );
     return Effect.gen(function* () {
@@ -421,7 +449,10 @@ function setupService(opts: {
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
+      // Gated-service prompts model an interactive user answering via `confirm`.
+      tty: mockTty({ stdinIsTty: true, stdoutIsTty: false }),
     }),
+    mockLegacyPromptInput(),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
   );
   return { layer, out, apiMock };

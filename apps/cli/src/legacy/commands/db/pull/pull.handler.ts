@@ -8,9 +8,9 @@ import {
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyAqua, legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
+import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
 import {
   legacyIpv6Suggestion,
   legacyIsIPv6ConnectivityError,
@@ -148,7 +148,6 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const yes = yield* LegacyYesFlag;
-  const tty = yield* Tty;
   const experimental = yield* LegacyExperimentalFlag;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -730,25 +729,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // (`internal/utils/console.go:74-82`) — it never fails the command.
         let remoteHistoryUpdated = false;
         const updateHistoryTitle = "Update remote migration history table?";
-        const shouldUpdate = yield* Effect.gen(function* () {
-          // Machine output (json/stream-json) never prompts — the non-text layers
-          // report non-interactive and fail every prompt — so take Go's default.
-          if (output.format !== "text") return true;
-          if (yes) {
-            yield* output.raw(`${updateHistoryTitle} [Y/n] y\n`, "stderr");
-            return true;
-          }
-          // Go's `PromptYesNo` returns the default (`true`) on a non-terminal stdin
-          // without blocking (`console.go:64-82`). clack's `confirm` would instead
-          // render and block forever on a non-TTY (its promise never settles, so the
-          // `orElseSucceed` below never fires), so gate on `Tty` first — mirroring the
-          // canonical legacy confirm pattern (`secrets/unset`, `projects/delete`).
-          if (!tty.stdinIsTty) return true;
-          // Real TTY: a prompt error / cancel still falls back to Go's default.
-          return yield* output
-            .promptConfirm(updateHistoryTitle, { defaultValue: true })
-            .pipe(Effect.orElseSucceed(() => true));
-        });
+        // Go's `PromptYesNo(ctx, title, true)` (`internal/db/pull/pull.go:73`): honors
+        // `--yes`, scans piped stdin on a non-TTY before falling back to the default
+        // (`console.go:64-82`), and otherwise prompts on a real TTY.
+        const shouldUpdate = yield* legacyPromptYesNo(output, yes, updateHistoryTitle, true);
         if (shouldUpdate) {
           yield* legacyUpdateMigrationHistory(session, fs, path, migrationPath, timestamp);
           remoteHistoryUpdated = true;
