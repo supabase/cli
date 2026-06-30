@@ -5,7 +5,7 @@ import {
   isLiveConfigured,
   LIVE_DEFAULT_PROFILE,
   LIVE_EXIT_TIMEOUT_MS,
-  liveDbUrl,
+  liveProjectDataPlaneReady,
   liveProjectRef,
 } from "./live-env.ts";
 
@@ -27,9 +27,8 @@ export {
   LIVE_DEFAULT_PROFILE,
   LIVE_EXIT_TIMEOUT_MS,
   liveApiBaseUrl,
-  liveDbUrl,
+  liveProjectDataPlaneReady,
   liveProjectRef,
-  requireLiveDbUrl,
   requireLiveProjectRef,
 } from "./live-env.ts";
 
@@ -49,14 +48,15 @@ export const describeLive = describe.skipIf(!isLiveConfigured());
 export const describeLiveProject = describe.skipIf(!isLiveConfigured() || !liveProjectRef());
 
 /**
- * `describe` for data-plane live suites (`db dump`, `db advisors`,
- * `migration list`): runs only when the live env is configured AND a project DB
- * URL is available. These connect to the project Postgres directly via
- * `--db-url`, so they need more than the Management API token — on a stack
- * without a resolvable pooler URL they skip rather than fail. See
- * `requireLiveDbUrl`.
+ * `describe` for data-plane live suites (migration / db / storage): runs only
+ * when the live env is configured AND the project's own Postgres instance is
+ * `ACTIVE_HEALTHY`. On a control-plane-only stack — including the current
+ * cli-e2e-ci CI, which omits `supabase-postgres-17` (CLI-1825) — the project DB
+ * is unreachable, so these SKIP rather than fail. They activate automatically
+ * once the full data-plane is provisioned. The readiness probe runs once at
+ * collection time (top-level await); see `liveProjectDataPlaneReady`.
  */
-export const describeLiveDb = describe.skipIf(!isLiveConfigured() || !liveDbUrl());
+export const describeLiveDataPlane = describe.skipIf(!(await liveProjectDataPlaneReady()));
 
 /**
  * Spawn the built CLI against the live platform, injecting the profile so the

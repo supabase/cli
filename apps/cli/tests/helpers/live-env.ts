@@ -16,10 +16,6 @@
  *   `http://localhost:8080`.
  * - `SUPABASE_LIVE_PROJECT_REF` — a provisioned project; gates project-scoped
  *   suites (functions, branches, db, storage).
- * - `SUPABASE_LIVE_DB_URL` — a percent-encoded Postgres connection string for the
- *   provisioned project (e.g. the pooler URL). Gates the data-plane suites
- *   (`db dump`, `db advisors`, `migration list`) which connect to the project DB
- *   via `--db-url` rather than the Management API. Absent → those suites skip.
  * - `NODE_EXTRA_CA_CERTS` — trusts the supabox CA for `*.supabase.red` TLS;
  *   inherited by the subprocess via the parent environment.
  */
@@ -77,28 +73,53 @@ export function requireLiveProjectRef(): string {
 }
 
 /**
- * Percent-encoded Postgres connection string for the provisioned project, used
- * by the data-plane commands (`db dump`, `db advisors`, `migration list`) that
- * connect to the database directly via `--db-url` instead of the Management API.
- * The cli-e2e-ci runner sets this once it can resolve the project's pooler URL;
- * absent → those suites skip. Returns `undefined` when unset.
+ * Whether the live project's *data-plane* — its own Postgres instance — is up
+ * and healthy. This is a stronger gate than `liveProjectRef()`: cli-e2e-ci
+ * currently builds the stack WITHOUT `supabase-postgres-17` (CLI-1825), so a
+ * provisioned project's *record* exists — Management-API reads (orgs / projects
+ * / functions / branches list) work — but the instance never reaches
+ * `ACTIVE_HEALTHY` and its database is unreachable. Commands that talk to the
+ * project Postgres (migration, db, storage) gate on this and SKIP until the full
+ * stack lands, then activate automatically.
+ *
+ * Probes `GET /v1/projects` (already proven reachable by `projects list`) and
+ * matches the live ref. Any failure or missing prerequisite returns `false` —
+ * "not ready" is the safe default, so a probe error skips rather than fails the
+ * suite.
  */
-export function liveDbUrl(): string | undefined {
-  return process.env["SUPABASE_LIVE_DB_URL"];
-}
-
-/**
- * The live project DB URL, or a thrown error if unset. Safe to call inside a
- * `describeLiveDb` block (the gate guarantees it is present) and gives a typed
- * `string` without a non-null assertion.
- */
-export function requireLiveDbUrl(): string {
-  const url = liveDbUrl();
-  if (!url) {
-    throw new Error(
-      "SUPABASE_LIVE_DB_URL must be set for data-plane live tests " +
-        "(the cli-e2e-ci runner sets it once the project's pooler URL is resolvable).",
-    );
+export async function liveProjectDataPlaneReady(): Promise<boolean> {
+  const token = process.env["SUPABASE_ACCESS_TOKEN"];
+  const ref = liveProjectRef();
+  if (token === undefined || token.length === 0 || ref === undefined) {
+    return false;
   }
-  return url;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(`${liveApiBaseUrl()}/v1/projects`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return false;
+    }
+    const projects: unknown = await response.json();
+    if (!Array.isArray(projects)) {
+      return false;
+    }
+    return projects.some(
+      (candidate) =>
+        candidate !== null &&
+        typeof candidate === "object" &&
+        "ref" in candidate &&
+        candidate.ref === ref &&
+        "status" in candidate &&
+        candidate.status === "ACTIVE_HEALTHY",
+    );
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
 }

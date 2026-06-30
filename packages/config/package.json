@@ -21,7 +21,7 @@
     "@effect/platform-node": "catalog:",
     "dedent": "^1.7.2",
     "effect": "catalog:",
-    "smol-toml": "^1.6.1"
+    "smol-toml": "^1.7.0"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",

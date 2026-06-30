@@ -49,17 +49,6 @@ export class LegacyDeclarativeParseOutputError extends Data.TaggedError(
 }> {}
 
 /**
- * Listing local migrations failed for a reason other than the directory being
- * absent. Byte-matches Go's `migration.ListLocalMigrations`
- * (`apps/cli-go/pkg/migration/list.go:34-37`), which returns
- * `"failed to read directory: " + err` for anything but `os.ErrNotExist` rather
- * than treating an unreadable `supabase/migrations` as "no migrations".
- */
-export class LegacyMigrationsReadError extends Data.TaggedError("LegacyMigrationsReadError")<{
-  readonly message: string;
-}> {}
-
-/**
  * Materializing the declarative export on disk failed. Byte-matches Go's
  * `WriteDeclarativeSchemas` errors (`declarative.go:239`):
  * `"failed to clean declarative schema directory: " + err` and

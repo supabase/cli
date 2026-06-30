@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { Effect, type FileSystem, Option, type Path } from "effect";
 
-import { LegacyMigrationsReadError } from "./legacy-pgdelta.errors.ts";
+import { Output } from "../../../../shared/output/output.service.ts";
+import { LegacyMigrationsReadError } from "../../../shared/legacy-migration.errors.ts";
 
 /**
  * Declarative catalog-cache key builders + on-disk catalog resolution, ported
@@ -106,12 +107,19 @@ export function legacyPgDeltaTempPath(path: Path.Path, workdir: string): string 
  * `migration.ListLocalMigrations` (`pkg/migration/list.go:33`): entries are
  * sorted by name, directories skipped, a deprecated `<14-digit>_init.sql` first
  * migration (pre-2021-12-09) is skipped, and names must match `<digits>_*.sql`.
+ *
+ * Each skipped file emits a byte-exact stderr warning matching Go's
+ * `fmt.Fprintf(os.Stderr, …)` (`list.go:45-53`) — same wording for both the
+ * deprecated-init and misnamed-file cases. Because this is the shared lister,
+ * the warning fires for the `db diff/pull/schema declarative` and pgcache paths
+ * too, not only the `migration` commands, exactly as in Go.
  */
 export const legacyListLocalMigrations = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   migrationsDir: string,
 ) {
+  const output = yield* Output;
   // Mirror Go's single `fs.ReadDir` (`pkg/migration/list.go:34-37`): only a
   // not-exist directory is "no migrations"; every other read error (the path is a
   // file → `ENOTDIR`, permission denied, …) aborts rather than silently letting
@@ -137,9 +145,21 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
     if (Option.isSome(stat) && stat.value.type === "Directory") continue;
     if (index === 0) {
       const init = INIT_SCHEMA_PATTERN.exec(name);
-      if (init !== null && Number(init[1]) < INIT_SCHEMA_CUTOFF) continue;
+      if (init !== null && Number(init[1]) < INIT_SCHEMA_CUTOFF) {
+        yield* output.raw(
+          `Skipping migration ${name}... (replace "init" with a different file name to apply this migration)\n`,
+          "stderr",
+        );
+        continue;
+      }
     }
-    if (!MIGRATE_FILE_PATTERN.test(name)) continue;
+    if (!MIGRATE_FILE_PATTERN.test(name)) {
+      yield* output.raw(
+        `Skipping migration ${name}... (file name must match pattern "<timestamp>_name.sql")\n`,
+        "stderr",
+      );
+      continue;
+    }
     result.push(path.join(migrationsDir, name));
   }
   return result as ReadonlyArray<string>;

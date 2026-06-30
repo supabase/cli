@@ -100,14 +100,26 @@ export function mockStdin(isTTY: boolean, pipedInput?: string | Uint8Array): Lay
           typeof pipedInput === "string" ? new TextEncoder().encode(pipedInput) : pipedInput,
         );
 
+  const pipedText = Option.isSome(pipedBytes)
+    ? Option.some(new TextDecoder().decode(pipedBytes.value))
+    : Option.none<string>();
+
   return Layer.succeed(Stdin, {
     isTTY,
     readPipedBytes: Effect.succeed(pipedBytes),
-    readPipedText: Effect.succeed(
-      Option.isSome(pipedBytes)
-        ? Option.some(new TextDecoder().decode(pipedBytes.value))
-        : Option.none<string>(),
-    ),
+    pipedBytesStream: Option.isSome(pipedBytes)
+      ? Stream.fromIterable([pipedBytes.value])
+      : Stream.empty,
+    readPipedText: Effect.succeed(pipedText),
+    // First line of the piped input (trimmed), or None — the timeout is irrelevant
+    // to a fixed mock. Mirrors the production single-line read.
+    readLine: () =>
+      Effect.succeed(
+        Option.flatMap(pipedText, (text) => {
+          const line = text.split(/\r?\n/u)[0]!.trim();
+          return line.length > 0 ? Option.some(line) : Option.none<string>();
+        }),
+      ),
   });
 }
 
