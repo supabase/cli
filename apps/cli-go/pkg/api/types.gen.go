@@ -1427,6 +1427,7 @@ const (
 
 // Defines values for V1ListEntitlementsResponseEntitlementsFeatureKey.
 const (
+	V1ListEntitlementsResponseEntitlementsFeatureKeyApiMembersRoles                       V1ListEntitlementsResponseEntitlementsFeatureKey = "api.members.roles"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAssistantAdvanceModel                 V1ListEntitlementsResponseEntitlementsFeatureKey = "assistant.advance_model"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuditLogDrains                        V1ListEntitlementsResponseEntitlementsFeatureKey = "audit_log_drains"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuthAdvancedAuthSettings              V1ListEntitlementsResponseEntitlementsFeatureKey = "auth.advanced_auth_settings"
@@ -1485,6 +1486,7 @@ const (
 	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageImageTransformations           V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.image_transformations"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageMaxFileSize                    V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.max_file_size"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageMaxFileSizeConfigurable        V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.max_file_size.configurable"
+	V1ListEntitlementsResponseEntitlementsFeatureKeyStoragePurgeCache                     V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.purge_cache"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyStorageVectorBuckets                  V1ListEntitlementsResponseEntitlementsFeatureKey = "storage.vector_buckets"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyVanitySubdomain                       V1ListEntitlementsResponseEntitlementsFeatureKey = "vanity_subdomain"
 )
@@ -3488,10 +3490,13 @@ type PostgrestConfigWithJWTSecretResponse struct {
 	DbExtraSearchPath string `json:"db_extra_search_path"`
 
 	// DbPool If `null`, the value is automatically configured based on compute size.
-	DbPool    nullable.Nullable[int] `json:"db_pool"`
-	DbSchema  string                 `json:"db_schema"`
-	JwtSecret *string                `json:"jwt_secret,omitempty"`
-	MaxRows   int                    `json:"max_rows"`
+	DbPool nullable.Nullable[int] `json:"db_pool"`
+
+	// DbPoolAcquisitionTimeout If `null`, the value is automatically configured to 10.
+	DbPoolAcquisitionTimeout nullable.Nullable[int] `json:"db_pool_acquisition_timeout"`
+	DbSchema                 string                 `json:"db_schema"`
+	JwtSecret                *string                `json:"jwt_secret,omitempty"`
+	MaxRows                  int                    `json:"max_rows"`
 }
 
 // ProjectClaimTokenResponse defines model for ProjectClaimTokenResponse.
@@ -3961,6 +3966,9 @@ type StorageConfigResponse struct {
 		ImageTransformation struct {
 			Enabled bool `json:"enabled"`
 		} `json:"imageTransformation"`
+		PurgeCache struct {
+			Enabled bool `json:"enabled"`
+		} `json:"purgeCache"`
 		S3Protocol struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol"`
@@ -4563,6 +4571,9 @@ type UpdateStorageConfigBody struct {
 		ImageTransformation *struct {
 			Enabled bool `json:"enabled"`
 		} `json:"imageTransformation,omitempty"`
+		PurgeCache *struct {
+			Enabled bool `json:"enabled"`
+		} `json:"purgeCache,omitempty"`
 		S3Protocol *struct {
 			Enabled bool `json:"enabled"`
 		} `json:"s3Protocol,omitempty"`
@@ -4909,9 +4920,12 @@ type V1PostgrestConfigResponse struct {
 	DbExtraSearchPath string `json:"db_extra_search_path"`
 
 	// DbPool If `null`, the value is automatically configured based on compute size.
-	DbPool   nullable.Nullable[int] `json:"db_pool"`
-	DbSchema string                 `json:"db_schema"`
-	MaxRows  int                    `json:"max_rows"`
+	DbPool nullable.Nullable[int] `json:"db_pool"`
+
+	// DbPoolAcquisitionTimeout If `null`, the value is automatically configured to 10.
+	DbPoolAcquisitionTimeout nullable.Nullable[int] `json:"db_pool_acquisition_timeout"`
+	DbSchema                 string                 `json:"db_schema"`
+	MaxRows                  int                    `json:"max_rows"`
 }
 
 // V1ProfileResponse defines model for V1ProfileResponse.
@@ -5166,10 +5180,11 @@ type V1UpdatePasswordResponse struct {
 
 // V1UpdatePostgrestConfigBody defines model for V1UpdatePostgrestConfigBody.
 type V1UpdatePostgrestConfigBody struct {
-	DbExtraSearchPath *string `json:"db_extra_search_path,omitempty"`
-	DbPool            *int    `json:"db_pool,omitempty"`
-	DbSchema          *string `json:"db_schema,omitempty"`
-	MaxRows           *int    `json:"max_rows,omitempty"`
+	DbExtraSearchPath        *string `json:"db_extra_search_path,omitempty"`
+	DbPool                   *int    `json:"db_pool,omitempty"`
+	DbPoolAcquisitionTimeout *int    `json:"db_pool_acquisition_timeout,omitempty"`
+	DbSchema                 *string `json:"db_schema,omitempty"`
+	MaxRows                  *int    `json:"max_rows,omitempty"`
 }
 
 // V1UpdateProjectBody defines model for V1UpdateProjectBody.
