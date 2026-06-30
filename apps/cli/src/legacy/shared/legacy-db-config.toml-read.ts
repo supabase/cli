@@ -831,6 +831,15 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
       }),
     );
   }
+  // Go's `config.Validate` rejects an explicit `db.port = 0` (`config.go:980-981`); an
+  // absent port is defaulted before Validate, so only a present 0 fails. `resolvePort`
+  // accepts 0 as a syntactically valid uint16, so the zero check lives here. No equivalent
+  // for `shadow_port` — Go has no `ShadowPort == 0` validation (`pkg/config/db.go:85`).
+  if (port === 0) {
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({ message: "Missing required field in config: db.port" }),
+    );
+  }
 
   // Go's `db.Password` is tagged `json:"-"` (`apps/cli-go/pkg/config/db.go:88`), so
   // it is NOT bound from `SUPABASE_DB_PASSWORD` — the local password is the fixed
@@ -983,6 +992,10 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     enabled = parsed;
   } else if (typeof enabledRaw === "boolean") {
     enabled = enabledRaw;
+  } else if (typeof enabledRaw === "number") {
+    // Go decodes the whole config under mapstructure's weak typing, so a numeric
+    // `enabled = 1` is true (`value != 0`) — same rule as the generic `resolveBool`.
+    enabled = enabledRaw !== 0;
   } else if (typeof enabledRaw === "string") {
     const parsed = legacyParseGoBool(legacyExpandEnv(enabledRaw, lookup));
     if (parsed === undefined) {

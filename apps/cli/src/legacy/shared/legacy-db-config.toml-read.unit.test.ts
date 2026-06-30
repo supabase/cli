@@ -252,6 +252,39 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect(
+    "decodes a numeric experimental.pgdelta.enabled = 1 as true (Go weak-bool decode)",
+    () => {
+      const dir = withConfig(["[experimental.pgdelta]", "enabled = 1", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.pgDelta.enabled).toBe(true);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("rejects an explicit db.port = 0 (Go's Missing required field)", () => {
+    const dir = withConfig(["[db]", "port = 0", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Missing required field in config: db.port",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("an explicit remote db.migrations.enabled beats SUPABASE_DB_MIGRATIONS_ENABLED", () => {
     // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv
     // (config.go:635-637), so an explicit remote value wins over the env var.
