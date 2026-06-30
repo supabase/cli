@@ -2010,7 +2010,52 @@ describe("legacyReadDbToml auth.Enabled validation (Go config.Validate parity)",
     failsWith(
       ["[auth]", 'signing_keys_path = "./keys.json"'],
       "failed to decode signing keys",
-      (dir) => writeFileSync(join(dir, "keys.json"), "{ not json"),
+      // A relative signing_keys_path resolves under supabase/ (Go's config.go:877-878).
+      (dir) => writeFileSync(join(dir, "supabase", "keys.json"), "{ not json"),
+    ),
+  );
+
+  // --- Follow-up parity fixes (Codex re-review) ---
+
+  it.effect("defaults [auth.email.smtp] enabled=true when the table omits enabled (Go merge)", () =>
+    failsWith(
+      ["[auth.email.smtp]", 'user = "u"'],
+      "Missing required field in config: auth.email.smtp.host",
+    ),
+  );
+  it.effect("respects an explicit [auth.email.smtp] enabled=false (no validation)", () =>
+    succeeds(["[auth.email.smtp]", "enabled = false", 'user = "u"']),
+  );
+
+  it.effect("skips auth validation when SUPABASE_AUTH_ENABLED=false (env override)", () => {
+    const previous = process.env["SUPABASE_AUTH_ENABLED"];
+    process.env["SUPABASE_AUTH_ENABLED"] = "false";
+    const dir = withConfig(
+      ["[auth]", 'site_url = ""', "[auth.passkey]", "enabled = true"].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) => Effect.sync(() => expect(v.baseline).toBeDefined())),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_AUTH_ENABLED"];
+          else process.env["SUPABASE_AUTH_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("fails on a malformed auth boolean string instead of coercing to false", () =>
+    failsWith(
+      ["[auth.passkey]", 'enabled = "maybe"'],
+      "failed to parse config: invalid auth.passkey.enabled.",
+    ),
+  );
+
+  it.effect("rejects an unknown captcha provider (Go enum, regardless of enabled)", () =>
+    failsWith(
+      ["[auth.captcha]", "enabled = false", 'provider = "cloudflare"'],
+      "'auth.captcha.provider' must be one of [hcaptcha turnstile]",
     ),
   );
 });
