@@ -5,7 +5,7 @@ go 1.25.5
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/Netflix/go-env v0.1.2
-	github.com/andybalholm/brotli v1.2.1
+	github.com/andybalholm/brotli v1.2.2
 	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
@@ -40,7 +40,7 @@ require (
 	github.com/mithrandie/csvq-driver v1.7.0
 	github.com/muesli/reflow v0.3.0
 	github.com/multigres/multigres v0.0.0-20260126223308-f5a52171bbc4
-	github.com/oapi-codegen/nullable v1.1.0
+	github.com/oapi-codegen/nullable v1.2.0
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/posthog/posthog-go v1.16.1
 	github.com/spf13/afero v1.15.0
