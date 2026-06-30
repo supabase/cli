@@ -8,11 +8,11 @@ name: Mirror Dependencies
 
 on:
   # This workflow is the manual/bulk entry point for re-mirroring everything.
-  # Per-PR mirroring of template image bumps is handled automatically by
-  # mirror-template-images.yml, which backfills any unmirrored tag whenever the
-  # templates Dockerfile changes. The `Start` check no longer pins ghcr.io, so a
-  # freshly bumped image stays green via the upstream Docker Hub fallback while
-  # the mirror catches up — resolving the old mirror-vs-test catch-22.
+  # Template image bumps are mirrored automatically by mirror-template-images.yml
+  # on push to develop, which backfills any unmirrored tag when the templates
+  # Dockerfile changes. The `Start` check no longer pins ghcr.io, so a freshly
+  # bumped image stays green via the upstream Docker Hub fallback while the mirror
+  # catches up — resolving the old mirror-vs-test catch-22.
   workflow_dispatch:
 permissions:
   contents: read

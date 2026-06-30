@@ -2,25 +2,18 @@ name: Mirror template images
 
 # Keeps the ghcr.io/ECR mirror in sync with the image versions pinned in
 # apps/cli-go/pkg/config/templates/Dockerfile (the single source of truth for
-# `config.Images`). Whenever the Dockerfile changes — most often via a
-# dependabot `docker` bump — this workflow detects any tag that is not yet
-# mirrored and backfills it the same way `cli-go-mirror-image.yml` does, so the
-# image is available on the registries the CLI prefers before the PR merges.
+# `config.Images`). When the Dockerfile changes on develop — most often via a
+# merged dependabot `docker` bump — this workflow detects any tag that is not
+# yet mirrored and backfills it the same way `cli-go-mirror-image.yml` does.
 #
-# We use `pull_request_target` so the privileged mirror step has access to the
-# AWS role and packages:write token even on dependabot PRs (dependabot-triggered
-# `pull_request` runs get a read-only token and no secrets). To stay safe under
-# `pull_request_target`:
-#   - the detect job only runs for branches on this repo (not external forks),
-#   - it parses the Dockerfile statically and never executes checked-out code,
-#   - the privileged mirror job never checks out PR content; it only consumes
-#     the list of image references produced by detect, and
-#   - we only mirror tags that are missing, never overwriting existing ones.
+# It runs on `push` to develop (not on the PR) on purpose: mirroring needs the
+# AWS role + packages:write, which a dependabot-triggered `pull_request` run
+# cannot be granted, and we deliberately avoid `pull_request_target`. The PR
+# itself stays green without the mirror because the `Start` check no longer
+# pins ghcr.io and falls back to the upstream Docker Hub image, so develop is
+# never broken in the short window before this backfill runs.
 
 on:
-  pull_request_target:
-    paths:
-      - apps/cli-go/pkg/config/templates/Dockerfile
   push:
     branches:
       - develop
@@ -32,17 +25,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: mirror-template-images-${{ github.event.pull_request.number || github.ref }}
+  group: mirror-template-images-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   detect:
     name: Detect unmirrored images
-    # Only same-repo branches (maintainers and dependabot) reach the privileged
-    # mirror job. External fork PRs are skipped — a maintainer mirrors those.
-    if: >-
-      github.event_name != 'pull_request_target' ||
-      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -53,9 +41,7 @@ jobs:
       - name: Checkout Dockerfile
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.ref }}
           persist-credentials: false
-          # Fetch only the Dockerfile; we read it as data and never run it.
           sparse-checkout: |
             apps/cli-go/pkg/config/templates/Dockerfile
           sparse-checkout-cone-mode: false
