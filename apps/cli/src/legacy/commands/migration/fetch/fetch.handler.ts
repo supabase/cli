@@ -124,15 +124,15 @@ const runFetch = Effect.fnUntraced(function* (
     const written: Array<string> = [];
     for (const file of migrations) {
       // The version/name come from the remote `schema_migrations` table. A
-      // tampered/hostile remote could supply path separators or `..` to escape the
-      // migrations dir on write (CWE-22). Real migrations never contain these
-      // (version is digits, name is the sanitized file stem), so rejecting them is
-      // parity-neutral for legitimate data while closing the arbitrary-write vector.
-      if (
-        !/^\d+$/u.test(file.version) ||
-        /[/\\]/u.test(file.name) ||
-        file.name.split(/[/\\]/u).includes("..")
-      ) {
+      // tampered/hostile remote could supply path separators or `..` in EITHER field to
+      // escape the migrations dir on write (CWE-22). Go writes the raw column values
+      // verbatim (`fmt.Sprintf("%s_%s.sql", r.Version, r.Name)`,
+      // `internal/migration/fetch/fetch.go:36`) with no digit check, so reject only the
+      // actual traversal vectors — separators and `..` segments — in both fields. This
+      // keeps a Go-valid signed version like `-1` writable while closing the vector.
+      const escapes = (segment: string) =>
+        /[/\\]/u.test(segment) || segment.split(/[/\\]/u).includes("..");
+      if (escapes(file.version) || escapes(file.name)) {
         return yield* Effect.fail(
           new LegacyMigrationFetchWriteError({
             message: `failed to write migration: invalid version/name in history table: ${file.version}_${file.name}`,

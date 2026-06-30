@@ -301,6 +301,36 @@ describe("legacy migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("writes a Go-valid signed version verbatim (no all-digits requirement)", () => {
+    // Go writes the raw `version` column into `<version>_<name>.sql` with no digit check
+    // (`internal/migration/fetch/fetch.go:36`), so a malformed-but-safe value like `-1`
+    // (listable/repairable in Go) must fetch, not abort the whole run.
+    const { layer } = setup(tmp.current, {
+      rows: [{ version: "-1", name: "legacy", statements: ["select 1"] }],
+    });
+    return Effect.gen(function* () {
+      yield* legacyMigrationFetch(flags());
+      expect(readdirSync(migrationsDir(tmp.current))).toEqual(["-1_legacy.sql"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a hostile version from the history table (traversal guard on version)", () => {
+    // The traversal hardening covers the `version` field too: a separator/`..` there is
+    // rejected even though it is no longer required to be all-digits.
+    const { layer } = setup(tmp.current, {
+      rows: [{ version: "../../etc", name: "x", statements: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyMigrationFetchWriteError");
+      }
+      expect(readdirSync(migrationsDir(tmp.current))).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("reports a write failure", () => {
     // A file at <workdir>/supabase makes `makeDirectory(supabase/migrations)` fail.
     writeFileSync(join(tmp.current, "supabase"), "not a directory");
