@@ -105,9 +105,13 @@ jobs:
       - run: go build main.go
       - run: ./main init
       - run: sed -i '/\[db.pooler\]/{n;s/.*/enabled = true/}' supabase/config.toml
+      # No SUPABASE_INTERNAL_IMAGE_REGISTRY override: let `start` use the default
+      # registry fallback chain (public.ecr.aws -> ghcr.io -> upstream Docker Hub).
+      # A freshly bumped dependency (e.g. a dependabot version bump) may not be
+      # mirrored to ghcr.io/ECR yet, but the upstream image already exists, so the
+      # fallback keeps this check green instead of failing on `manifest unknown`.
+      # The mirror-template-images workflow backfills ghcr.io/ECR in parallel.
       - run: ./main start --workdir tests
-        env:
-          SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
       - name: Install websocat
         run: |
           sudo wget -qO /usr/local/bin/websocat https://github.com/vi/websocat/releases/latest/download/websocat.x86_64-unknown-linux-musl

@@ -1,0 +1,123 @@
+name: Mirror template images
+
+# Keeps the ghcr.io/ECR mirror in sync with the image versions pinned in
+# apps/cli-go/pkg/config/templates/Dockerfile (the single source of truth for
+# `config.Images`). Whenever the Dockerfile changes — most often via a
+# dependabot `docker` bump — this workflow detects any tag that is not yet
+# mirrored and backfills it the same way `cli-go-mirror-image.yml` does, so the
+# image is available on the registries the CLI prefers before the PR merges.
+#
+# We use `pull_request_target` so the privileged mirror step has access to the
+# AWS role and packages:write token even on dependabot PRs (dependabot-triggered
+# `pull_request` runs get a read-only token and no secrets). To stay safe under
+# `pull_request_target`:
+#   - the detect job only runs for branches on this repo (not external forks),
+#   - it parses the Dockerfile statically and never executes checked-out code,
+#   - the privileged mirror job never checks out PR content; it only consumes
+#     the list of image references produced by detect, and
+#   - we only mirror tags that are missing, never overwriting existing ones.
+
+on:
+  pull_request_target:
+    paths:
+      - apps/cli-go/pkg/config/templates/Dockerfile
+  push:
+    branches:
+      - develop
+    paths:
+      - apps/cli-go/pkg/config/templates/Dockerfile
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-template-images-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect unmirrored images
+    # Only same-repo branches (maintainers and dependabot) reach the privileged
+    # mirror job. External fork PRs are skipped — a maintainer mirrors those.
+    if: >-
+      github.event_name != 'pull_request_target' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      missing: ${{ steps.detect.outputs.missing }}
+    steps:
+      - name: Checkout Dockerfile
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.ref }}
+          persist-credentials: false
+          # Fetch only the Dockerfile; we read it as data and never run it.
+          sparse-checkout: |
+            apps/cli-go/pkg/config/templates/Dockerfile
+          sparse-checkout-cone-mode: false
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect images missing from the mirror
+        id: detect
+        env:
+          DOCKERFILE: apps/cli-go/pkg/config/templates/Dockerfile
+        run: |
+          set -euo pipefail
+          missing=()
+          # Mirror destinations live under the supabase/ namespace, matching
+          # utils.GetRegistryImageUrl (registry + "/supabase/" + basename).
+          while read -r _from image _as _name; do
+            [ "${_as,,}" = "as" ] || continue
+            org="${image%%/*}"
+            # supabase/* images are already published to ghcr.io/ECR by the
+            # release pipeline, so they need no mirroring — except logflare,
+            # which is only published to Docker Hub. This mirrors the filter in
+            # apps/cli-go/tools/listdep/main.go.
+            if [ "$org" = "supabase" ] && [[ "$image" != supabase/logflare:* ]]; then
+              continue
+            fi
+            dest="ghcr.io/supabase/${image##*/}"
+            if docker buildx imagetools inspect "$dest" >/dev/null 2>&1; then
+              echo "already mirrored: $dest"
+            else
+              echo "needs mirror: $image -> $dest"
+              missing+=("$image")
+            fi
+          done < <(grep -iE '^[[:space:]]*FROM[[:space:]]' "$DOCKERFILE")
+
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "All template images are already mirrored."
+            echo 'missing=[]' >> "$GITHUB_OUTPUT"
+          else
+            json="$(printf '%s\n' "${missing[@]}" | jq -Rc . | jq -cs .)"
+            echo "missing=$json" >> "$GITHUB_OUTPUT"
+          fi
+
+  mirror:
+    name: Mirror image
+    needs: detect
+    if: needs.detect.outputs.missing != '' && needs.detect.outputs.missing != '[]'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJson(needs.detect.outputs.missing) }}
+    # Reuse the existing mirror logic (docker.io -> public.ecr.aws + ghcr.io).
+    uses: ./.github/workflows/cli-go-mirror-image.yml
+    with:
+      image: ${{ matrix.image }}
+    secrets:
+      PROD_AWS_ROLE: ${{ secrets.PROD_AWS_ROLE }}

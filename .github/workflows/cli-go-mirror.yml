@@ -7,13 +7,12 @@ name: Mirror Dependencies
 # ghcr.io, and AWS ECR.
 
 on:
-  # We can't trigger the mirror job on PR merge because certain tests would fail
-  # until we mirror some images. E.g. a PR to update the imgproxy image version
-  # would fail, because there is a test that creates a container from the
-  # updated image version, which would fail because the image hasn't been
-  # mirrored yet. It's a catch-22!
-  #
-  # TODO: Make the cli start test run *after* we mirror images (if needed).
+  # This workflow is the manual/bulk entry point for re-mirroring everything.
+  # Per-PR mirroring of template image bumps is handled automatically by
+  # mirror-template-images.yml, which backfills any unmirrored tag whenever the
+  # templates Dockerfile changes. The `Start` check no longer pins ghcr.io, so a
+  # freshly bumped image stays green via the upstream Docker Hub fallback while
+  # the mirror catches up — resolving the old mirror-vs-test catch-22.
   workflow_dispatch:
 permissions:
   contents: read
