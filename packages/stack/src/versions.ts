@@ -47,7 +47,7 @@ export interface VersionManifest {
 
 export const DEFAULT_VERSIONS: VersionManifest = {
   postgres: "17.6.1.140",
-  postgrest: "14.14",
+  postgrest: "14.13",
   auth: "2.192.0",
   "edge-runtime": "1.74.2",
   realtime: "2.112.1",
