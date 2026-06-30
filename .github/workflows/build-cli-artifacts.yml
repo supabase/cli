@@ -21,8 +21,8 @@ on:
         required: false
         type: string
         default: blacksmith-32vcpu-ubuntu-2404
-      cache_key_suffix:
-        description: Suffix to distinguish build artifact cache producers
+      artifact_name_suffix:
+        description: Suffix to distinguish build artifact producers (e.g. -github)
         required: false
         type: string
         default: ""
@@ -124,23 +124,25 @@ jobs:
           ls -la dist/
 
 
-      - name: Check existing build artifacts cache
-        id: build-artifacts-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Hand the build off to the smoke/publish/brew/scoop jobs via a run-scoped
+      # artifact rather than a cache. Caches share a 10 GB per-repo budget and
+      # are evicted LRU, so a large build cache could vanish mid-run between the
+      # producer and a later consumer (e.g. publish), failing the restore.
+      # Artifacts have their own deterministic retention and survive job re-runs
+      # within the run, which is exactly what this handoff needs.
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}${{ inputs.artifact_name_suffix }}
           path: |
             packages/cli-*/bin/
             dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}${{ inputs.cache_key_suffix }}-v1
-          enableCrossOsArchive: true
-          lookup-only: true
-
-      - name: Save build artifacts cache
-        if: steps.build-artifacts-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            packages/cli-*/bin/
-            dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}${{ inputs.cache_key_suffix }}-v1
-          enableCrossOsArchive: true
+          # Intra-run handoff, not a kept deliverable — expire it the next day.
+          retention-days: 1
+          # A full re-run of this job replaces its own artifact instead of
+          # failing on the duplicate name from the previous attempt.
+          overwrite: true
+          # dist/* is already compressed (tar.gz/zip/deb/rpm/apk); a light level
+          # trims the raw bin/ binaries without burning CPU re-packing the rest.
+          compression-level: 1
+          if-no-files-found: error
