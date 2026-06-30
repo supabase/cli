@@ -25,9 +25,16 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyDropUserSchemas } from "../shared/legacy-drop-schemas.ts";
 import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
-import { legacyMigrationsEnabled } from "../shared/legacy-migrations-enabled.ts";
+import {
+  legacyMigrationsEnabled,
+  legacySeedEnabled,
+} from "../shared/legacy-config-env-override.ts";
 import { legacyListLocalMigrations } from "../shared/legacy-pgdelta.cache.ts";
-import { legacyGetPendingSeeds, legacySeedData } from "../shared/legacy-seed-ops.ts";
+import {
+  legacyGetPendingSeeds,
+  legacyMatchPattern,
+  legacySeedData,
+} from "../shared/legacy-seed-ops.ts";
 import { legacyReadVaultDocument, legacyUpsertVaultSecrets } from "../shared/legacy-vault.ts";
 import { legacySeedBucketsRun } from "../../../shared/legacy-seed-buckets.ts";
 import type { LegacyDbResetFlags } from "./reset.command.ts";
@@ -170,8 +177,15 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
           }),
         );
       }
-      const locals = yield* legacyListLocalMigrations(fs, path, migrationsDir);
-      const found = locals.some((p) => path.basename(p).startsWith(`${v}_`));
+      // Go validates the version with `repair.GetMigrationFile` (repair.go:90-100),
+      // which globs `supabase/migrations/<version>_*.sql` DIRECTLY with no filtering —
+      // so a deprecated first migration (e.g. `20200101000000_init.sql`) that
+      // `legacyListLocalMigrations` excludes is still accepted. Mirror that with a raw
+      // directory read + Go-glob match instead of the filtered migration listing.
+      const entries = yield* fs
+        .readDirectory(migrationsDir)
+        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+      const found = entries.some((name) => legacyMatchPattern(`${v}_*.sql`, path.basename(name)));
       if (!found) {
         return yield* Effect.fail(
           new LegacyDbResetMigrationFileError({
@@ -255,11 +269,15 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     // (capture + discard) and emit the same structured success the native local and
     // remote paths do, keeping the JSON contract consistent across all reset paths.
     if (experimental && resolvedVersion === "") {
-      const delegateEnv = { env: { SUPABASE_TELEMETRY_DISABLED: "1" } };
+      const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
       if (output.format === "text") {
-        yield* proxy.exec(buildResetArgs(flags), delegateEnv);
+        yield* proxy.exec(buildResetArgs(flags), { env });
       } else {
-        yield* proxy.execCapture(buildResetArgs(flags), delegateEnv);
+        // Machine-output mode is non-interactive: give the Go child a non-TTY stdin
+        // (`stdin: "ignore"`) so it can't block on (or be answered at) Go's
+        // destructive reset prompt — it takes the default `false`, matching the
+        // native reset path which suppresses prompts under json/stream-json.
+        yield* proxy.execCapture(buildResetArgs(flags), { env, stdin: "ignore" });
         yield* output.success("Reset remote database.", {
           target: "remote",
           version: resolvedVersion,
@@ -321,7 +339,10 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         // exclusive (validated above). `--sql-paths` values are supabase-relative,
         // the same convention `legacyGetPendingSeeds` resolves.
         const overrideSeed = flags.sqlPaths.length > 0;
-        const seedEnabled = overrideSeed || (config.db.seed.enabled && !flags.noSeed);
+        // `--sql-paths` force-enables seeding (Go's applyDbResetSeedFlags); otherwise
+        // honor `db.seed.enabled` WITH Go's `SUPABASE_DB_SEED_ENABLED` viper override.
+        const seedEnabled =
+          overrideSeed || (legacySeedEnabled(config.db.seed.enabled) && !flags.noSeed);
         if (seedEnabled) {
           const seedPaths = overrideSeed ? flags.sqlPaths : config.db.seed.sql_paths;
           const seeds = yield* legacyGetPendingSeeds(session, fs, path, seedPaths, workdir);

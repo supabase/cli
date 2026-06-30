@@ -31,7 +31,10 @@ import {
   legacySuggestIgnoreFlag,
   legacySuggestRevertHistory,
 } from "../shared/legacy-migration-pending.ts";
-import { legacyMigrationsEnabled } from "../shared/legacy-migrations-enabled.ts";
+import {
+  legacyMigrationsEnabled,
+  legacySeedEnabled,
+} from "../shared/legacy-config-env-override.ts";
 import {
   type LegacySeedFile,
   legacyGetPendingSeeds,
@@ -195,7 +198,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
         // --- Collect pending seeds ---
         let seeds: ReadonlyArray<LegacySeedFile> = [];
         if (flags.includeSeed) {
-          if (!config.db.seed.enabled) {
+          if (!legacySeedEnabled(config.db.seed.enabled)) {
             yield* output.raw(
               `Skipping seed because it is disabled in config.toml for project: ${projectRef}\n`,
               "stderr",

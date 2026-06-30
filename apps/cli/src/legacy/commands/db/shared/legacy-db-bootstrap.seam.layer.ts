@@ -108,9 +108,12 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
               .exitCode(command)
               .pipe(Effect.mapError(() => seamFailure("failed to run supabase-go.")));
             if (exitCode !== 0) {
-              return yield* Effect.fail(
-                seamFailure(`failed to bootstrap the local database: exit ${exitCode}`),
-              );
+              // Propagate the child's real exit code (like `LegacyGoProxy.exec`) instead
+              // of mapping it to a handler error. The Go child already wrote the
+              // actionable failure to the inherited stderr; exiting with its code (e.g.
+              // 130 after a Ctrl-C cleanup) avoids the parent printing a duplicate
+              // generic wrapper error and losing the child's status.
+              return yield* processControl.exit(exitCode);
             }
             return "";
           }
