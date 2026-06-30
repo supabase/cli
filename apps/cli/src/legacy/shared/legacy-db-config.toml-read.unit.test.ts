@@ -1817,3 +1817,200 @@ describe("legacyResolveDeclarativeDir", () => {
     }).pipe(Effect.provide(BunServices.layer)),
   );
 });
+
+describe("legacyReadDbToml auth.Enabled validation (Go config.Validate parity)", () => {
+  // Fails the config load with `message` contained in the surfaced error.
+  const failsWith = (
+    lines: ReadonlyArray<string>,
+    message: string,
+    extra?: (dir: string) => void,
+  ) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      if (extra) extra(dir);
+      const exit = yield* read(dir).pipe(Effect.exit);
+      expect(Exit.isFailure(exit), `expected failure containing: ${message}`).toBe(true);
+      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain(message);
+      rmSync(dir, { recursive: true, force: true });
+    });
+  // Loads cleanly — no validation error (the read resolves to a value).
+  const succeeds = (lines: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      const v = yield* read(dir);
+      expect(v.baseline).toBeDefined();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+  it.effect("rejects an explicit empty auth.site_url", () =>
+    failsWith(["[auth]", 'site_url = ""'], "Missing required field in config: auth.site_url"),
+  );
+  it.effect("defaults an absent auth.site_url (Go template default) — no error", () =>
+    succeeds(["[auth]", "enabled = true"]),
+  );
+  it.effect("skips all auth validation when auth.enabled = false", () =>
+    succeeds(["[auth]", "enabled = false", 'site_url = ""', "[auth.passkey]", "enabled = true"]),
+  );
+
+  it.effect("rejects an enabled captcha without a provider", () =>
+    failsWith(
+      ["[auth.captcha]", "enabled = true", 'secret = "x"'],
+      "Missing required field in config: auth.captcha.provider",
+    ),
+  );
+
+  // The reviewer's case: passkey enabled requires a valid [auth.webauthn].
+  it.effect("rejects passkey enabled without [auth.webauthn]", () =>
+    failsWith(
+      ["[auth.passkey]", "enabled = true"],
+      "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
+    ),
+  );
+  it.effect("rejects passkey enabled with webauthn missing rp_id", () =>
+    failsWith(
+      ["[auth.passkey]", "enabled = true", "[auth.webauthn]", 'rp_origins = ["http://x"]'],
+      "Missing required field in config: auth.webauthn.rp_id",
+    ),
+  );
+  it.effect("rejects passkey enabled with webauthn missing rp_origins", () =>
+    failsWith(
+      ["[auth.passkey]", "enabled = true", "[auth.webauthn]", 'rp_id = "localhost"'],
+      "Missing required field in config: auth.webauthn.rp_origins",
+    ),
+  );
+  it.effect("accepts passkey enabled with a complete [auth.webauthn]", () =>
+    succeeds([
+      "[auth.passkey]",
+      "enabled = true",
+      "[auth.webauthn]",
+      'rp_id = "localhost"',
+      'rp_origins = ["http://localhost:3000"]',
+    ]),
+  );
+
+  it.effect("rejects an http hook missing secrets", () =>
+    failsWith(
+      ["[auth.hook.send_email]", "enabled = true", 'uri = "https://example.com/hook"'],
+      "Missing required field in config: auth.hook.send_email.secrets",
+    ),
+  );
+  it.effect("rejects an http hook with a badly-formatted secret", () =>
+    failsWith(
+      [
+        "[auth.hook.send_email]",
+        "enabled = true",
+        'uri = "https://example.com/hook"',
+        'secrets = "not-a-valid-secret"',
+      ],
+      "auth.hook.send_email.secrets must be formatted as",
+    ),
+  );
+  it.effect("rejects a pg-functions hook that sets secrets", () =>
+    failsWith(
+      [
+        "[auth.hook.custom_access_token]",
+        "enabled = true",
+        'uri = "pg-functions://postgres/public/f"',
+        'secrets = "x"',
+      ],
+      "auth.hook.custom_access_token.secrets is unsupported for pg-functions URI",
+    ),
+  );
+  it.effect("rejects a hook with an unsupported URI scheme", () =>
+    failsWith(
+      ["[auth.hook.send_sms]", "enabled = true", 'uri = "ftp://example.com"'],
+      "auth.hook.send_sms.uri should be a HTTP, HTTPS, or pg-functions URI",
+    ),
+  );
+  it.effect("accepts an http hook with a valid v1,whsec_ secret", () =>
+    succeeds([
+      "[auth.hook.send_email]",
+      "enabled = true",
+      'uri = "https://example.com/hook"',
+      `secrets = "v1,whsec_${"a".repeat(40)}"`,
+    ]),
+  );
+
+  it.effect("rejects mfa totp enroll_enabled without verify_enabled", () =>
+    failsWith(
+      ["[auth.mfa.totp]", "enroll_enabled = true", "verify_enabled = false"],
+      "Invalid MFA config: auth.mfa.totp.enroll_enabled requires verify_enabled",
+    ),
+  );
+
+  it.effect("rejects an enabled smtp without a host", () =>
+    failsWith(
+      ["[auth.email.smtp]", "enabled = true", "port = 587", 'user = "u"'],
+      "Missing required field in config: auth.email.smtp.host",
+    ),
+  );
+  it.effect("rejects an email template with content but no content_path", () =>
+    failsWith(
+      ["[auth.email.template.invite]", 'content = "<h1>hi</h1>"'],
+      "Invalid config for auth.email.template.invite.content: please use content_path instead",
+    ),
+  );
+  it.effect("rejects an email template whose content_path file is missing", () =>
+    failsWith(
+      ["[auth.email.template.invite]", 'content_path = "./missing.html"'],
+      "Invalid config for auth.email.template.invite.content_path",
+    ),
+  );
+
+  it.effect("rejects an enabled twilio sms provider without account_sid", () =>
+    failsWith(
+      ["[auth.sms.twilio]", "enabled = true"],
+      "Missing required field in config: auth.sms.twilio.account_sid",
+    ),
+  );
+
+  it.effect("rejects an enabled external provider without a client_id", () =>
+    failsWith(
+      ["[auth.external.github]", "enabled = true"],
+      "Missing required field in config: auth.external.github.client_id",
+    ),
+  );
+  it.effect("exempts apple/google from the external secret requirement", () =>
+    succeeds(["[auth.external.apple]", "enabled = true", 'client_id = "a"']),
+  );
+  it.effect("never validates the deprecated linkedin/slack providers", () =>
+    succeeds(["[auth.external.linkedin]", "enabled = true"]),
+  );
+
+  it.effect("rejects an enabled firebase third_party without project_id", () =>
+    failsWith(
+      ["[auth.third_party.firebase]", "enabled = true"],
+      "auth.third_party.firebase is enabled but without a project_id.",
+    ),
+  );
+  it.effect("rejects a clerk third_party with an invalid domain", () =>
+    failsWith(
+      ["[auth.third_party.clerk]", "enabled = true", 'domain = "not-a-clerk-domain"'],
+      "auth.third_party.clerk has invalid domain",
+    ),
+  );
+  it.effect("rejects two enabled third_party providers (mutual exclusivity)", () =>
+    failsWith(
+      [
+        "[auth.third_party.firebase]",
+        "enabled = true",
+        'project_id = "p"',
+        "[auth.third_party.auth0]",
+        "enabled = true",
+        'tenant = "t"',
+      ],
+      "Only one third_party provider allowed to be enabled at a time.",
+    ),
+  );
+
+  it.effect("rejects a signing_keys_path that cannot be read", () =>
+    failsWith(["[auth]", 'signing_keys_path = "./missing.json"'], "failed to read signing keys"),
+  );
+  it.effect("rejects a signing keys file that is not valid JSON", () =>
+    failsWith(
+      ["[auth]", 'signing_keys_path = "./keys.json"'],
+      "failed to decode signing keys",
+      (dir) => writeFileSync(join(dir, "keys.json"), "{ not json"),
+    ),
+  );
+});
