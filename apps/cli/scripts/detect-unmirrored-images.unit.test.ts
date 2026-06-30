@@ -1,14 +1,12 @@
 import { describe, expect, test } from "vitest";
-import serviceImagesDockerfile from "../../../../cli-go/pkg/config/templates/Dockerfile" with { type: "text" };
 import {
-  dockerfileImages,
   MIRROR_REGISTRIES,
   mirrorImageTarget,
   mirrorImageTargets,
   partitionUnmirroredImages,
-} from "./mirror-images.ts";
+} from "./detect-unmirrored-images.ts";
 
-describe("mirror images", () => {
+describe("detect unmirrored images", () => {
   test("mirrors an upstream image under the supabase namespace of a registry", () => {
     // Third-party orgs are dropped; only the basename is kept, matching Go's
     // utils.GetRegistryImageUrl.
@@ -26,23 +24,6 @@ describe("mirror images", () => {
       "public.ecr.aws/supabase/postgrest:v14.14",
       "ghcr.io/supabase/postgrest:v14.14",
     ]);
-  });
-
-  test("lists every FROM image pinned in the Dockerfile", () => {
-    expect(
-      dockerfileImages(`
-        FROM postgrest/postgrest:v14.14 AS postgrest
-        RUN echo ignored
-        FROM supabase/logflare:1.45.6 AS logflare
-      `),
-    ).toEqual(["postgrest/postgrest:v14.14", "supabase/logflare:1.45.6"]);
-  });
-
-  test("includes every image in the real Dockerfile, supabase/* ones too", () => {
-    const images = dockerfileImages(serviceImagesDockerfile);
-    expect(images).toContain("postgrest/postgrest:v14.14");
-    // No image is filtered out by org — supabase/* images are checked as well.
-    expect(images.some((image) => image.startsWith("supabase/"))).toBe(true);
   });
 
   test("an image is mirrored only when present on ALL registries", async () => {
