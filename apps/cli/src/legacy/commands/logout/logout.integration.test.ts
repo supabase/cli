@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
 
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { mockLegacyPromptInput } from "../../../../tests/helpers/legacy-prompt-input.ts";
 import {
   mockLegacyCredentialsTracked,
   mockLegacyTelemetryStateTracked,
@@ -17,6 +18,8 @@ interface SetupOpts {
   readonly promptConfirmFail?: boolean;
   /** stdin interactivity; defaults to a TTY so prompt-driven tests reach the confirm. */
   readonly stdinIsTty?: boolean;
+  /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
+  readonly pipedAnswers?: ReadonlyArray<string>;
 }
 
 function setupLegacyLogout(opts: SetupOpts = {}) {
@@ -33,6 +36,7 @@ function setupLegacyLogout(opts: SetupOpts = {}) {
     telemetry.layer,
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
+    mockLegacyPromptInput({ pipedLines: opts.pipedAnswers }),
   );
   return { layer, out, telemetry, credentials };
 }
@@ -72,10 +76,10 @@ describe("legacy logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("non-interactive stdin takes Go's default (false) and cancels without hanging", () => {
-    // Go's `PromptYesNo(..., false)` returns the default on a non-terminal
-    // (`logout.go:16`); the handler must not render/block the clack confirm. No
-    // `confirm` response is scripted, so reaching the prompt would be a bug.
+  it.live("empty non-interactive stdin takes Go's default (false) and cancels", () => {
+    // Go's `PromptYesNo(..., false)` scans stdin and falls back to the default when
+    // the scan is empty (`logout.go:16`, `console.go:64-82`). With no piped input
+    // logout cancels — without hanging on the clack confirm.
     const { layer, credentials } = setupLegacyLogout({ stdinIsTty: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyLogout());
@@ -84,6 +88,16 @@ describe("legacy logout integration", () => {
         expect(JSON.stringify(exit.cause)).toContain("LegacyLogoutCancelledError");
       }
       expect(credentials.deletedAll).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("honors a piped 'y' on non-interactive stdin and logs out", () => {
+    // Regression: Go scans piped stdin before defaulting (`console.go:74-82`), so
+    // `printf 'y\n' | supabase logout` deletes the token even on a non-terminal.
+    const { layer, credentials } = setupLegacyLogout({ stdinIsTty: false, pipedAnswers: ["y"] });
+    return Effect.gen(function* () {
+      yield* legacyLogout();
+      expect(credentials.deletedAll).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 

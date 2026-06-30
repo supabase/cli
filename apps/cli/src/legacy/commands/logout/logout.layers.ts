@@ -4,6 +4,7 @@ import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
+import { legacyPromptInputRuntimeLayer } from "../../shared/legacy-prompt-input.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 
 /**
@@ -28,4 +29,5 @@ export const legacyLogoutRuntimeLayer = Layer.mergeAll(
   cliConfig,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["logout"]),
+  legacyPromptInputRuntimeLayer,
 );
