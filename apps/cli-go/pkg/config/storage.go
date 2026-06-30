@@ -73,6 +73,9 @@ func (s *storage) ToUpdateStorageConfigBody() v1API.UpdateStorageConfigBody {
 			ImageTransformation *struct {
 				Enabled bool `json:"enabled"`
 			} `json:"imageTransformation,omitempty"`
+			PurgeCache *struct {
+				Enabled bool `json:"enabled"`
+			} `json:"purgeCache,omitempty"`
 			S3Protocol *struct {
 				Enabled bool `json:"enabled"`
 			} `json:"s3Protocol,omitempty"`
