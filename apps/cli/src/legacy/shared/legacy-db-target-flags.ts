@@ -39,7 +39,8 @@ export interface LegacyDbTargetSelection {
  * scan.
  *
  * Sources: every legacy command that calls `resolveLegacyDbTargetFlags`
- * (`db lint`, `db advisors`, `test db`) or `legacyChangedLinkedLocalFlags`
+ * (`db lint`, `db advisors`, `test db`, and the `migration` commands `list`/
+ * `repair`/`fetch`/`up`/`down`) or `legacyChangedLinkedLocalFlags`
  * (`seed buckets`, `storage cp/ls/mv/rm`), plus the shared global flags
  * (`src/shared/legacy/global-flags.ts`, `src/shared/cli/global-flags.ts`).
  * `Flag.string` / `Flag.choice` / `Flag.integer` → value-consuming;
@@ -52,6 +53,9 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "level",
   "fail-on",
   "type",
+  // migration/db credential flag — Go's `StringVarP(&dbPassword, "password", "p", …)`
+  // consumes the next token as the value (`apps/cli-go/cmd/migration.go:115,127`).
+  "password",
   // inspect report flag (StringVar, no short alias)
   "output-dir",
   // storage cp command flags (Flag.string / Flag.integer)
@@ -75,6 +79,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
 export const VALUE_CONSUMING_SHORT_FLAGS = new Set([
   "s", // --schema / -s
   "o", // --output / -o
+  "p", // --password / -p
   "j", // --jobs / -j (storage cp)
 ]);
 

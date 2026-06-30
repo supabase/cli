@@ -48,7 +48,7 @@ import { legacyDumpSchemaScript } from "../shared/legacy-pg-dump.scripts.ts";
 import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
-} from "../shared/legacy-migration-file.ts";
+} from "../../../shared/legacy-migration-file.ts";
 import { legacyFormatDebugId } from "../shared/legacy-debug-bundle.ts";
 import {
   type LegacyPgDeltaContext,
@@ -72,8 +72,8 @@ import {
   legacyListRemoteMigrations,
   legacyLoadLocalVersions,
   legacyReconcileMigrations,
-  legacyUpdateMigrationHistory,
-} from "./pull.sync.ts";
+} from "../../../shared/legacy-migration-history.ts";
+import { legacyUpdateMigrationHistory } from "./pull.sync.ts";
 
 // pflag's `MarkDeprecated` emits `"Flag --%s has been deprecated, %s\n"` with the
 // registration message verbatim (`apps/cli-go/cmd/db.go:466`), which ends with a `.`.

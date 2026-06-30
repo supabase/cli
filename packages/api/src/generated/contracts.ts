@@ -2489,6 +2489,7 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
           "storage.image_transformations",
           "storage.vector_buckets",
           "storage.iceberg_catalog",
+          "storage.purge_cache",
           "security.audit_logs_days",
           "security.questionnaire",
           "security.soc2_report",
@@ -2538,6 +2539,7 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
           "integrations.github_connections",
           "dedicated_pooler",
           "observability.dashboard_advanced_metrics",
+          "api.members.roles",
         ]),
         type: Schema.Literals(["boolean", "numeric", "set"]),
       }),
@@ -3509,6 +3511,7 @@ export const V1GetStorageConfigOutput = Schema.Struct({
   features: Schema.Struct({
     imageTransformation: Schema.Struct({ enabled: Schema.Boolean }),
     s3Protocol: Schema.Struct({ enabled: Schema.Boolean }),
+    purgeCache: Schema.Struct({ enabled: Schema.Boolean }),
     icebergCatalog: Schema.Struct({
       enabled: Schema.Boolean,
       maxNamespaces: Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(0)),
@@ -3524,7 +3527,7 @@ export const V1GetStorageConfigOutput = Schema.Struct({
   capabilities: Schema.Struct({ list_v2: Schema.Boolean, iceberg_catalog: Schema.Boolean }),
   external: Schema.Struct({ upstreamTarget: Schema.Literals(["main", "canary"]) }),
   migrationVersion: Schema.String,
-  databasePoolMode: Schema.String,
+  databasePoolMode: Schema.optionalKey(Schema.String),
 });
 export const V1GetVanitySubdomainConfigInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -5966,6 +5969,7 @@ export const V1UpdateStorageConfigInput = Schema.Struct({
     Schema.Struct({
       imageTransformation: Schema.optionalKey(Schema.Struct({ enabled: Schema.Boolean })),
       s3Protocol: Schema.optionalKey(Schema.Struct({ enabled: Schema.Boolean })),
+      purgeCache: Schema.optionalKey(Schema.Struct({ enabled: Schema.Boolean })),
       icebergCatalog: Schema.optionalKey(
         Schema.Struct({
           enabled: Schema.Boolean,

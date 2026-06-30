@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { Flag, GlobalFlag } from "effect/unstable/cli";
 
-import { legacyViperEnvBool } from "./legacy-viper-env.ts";
+import { legacyViperBool, legacyViperEnvBool } from "./legacy-viper-env.ts";
 
 // The Effect CLI hoists global flags out of the token stream before the leaf
 // parse and builds ONE tree-wide registry, so a command cannot redeclare an
@@ -106,6 +106,23 @@ export const legacyResolveYes = Effect.gen(function* () {
   const flag = yield* LegacyYesFlag;
   return flag || legacyViperEnvBool("SUPABASE_YES");
 });
+
+/**
+ * `--yes` resolved with the project `.env` consulted too, for commands that load the nested
+ * project env before prompting (`migration down`, `migration repair --all`). Go runs
+ * `loadNestedEnv` — which `os.Setenv`s each project-.env key — inside `ParseDatabaseConfig`
+ * before `PromptYesNo` reads `viper.GetBool("YES")` (`pkg/config/config.go:701`,
+ * `internal/utils/console.go:71`), so a `SUPABASE_YES` set only in `supabase/.env`
+ * auto-confirms. The shell env still wins over the file value. `projectEnv` is the loaded map
+ * from `legacyLoadProjectEnv`.
+ */
+export const legacyResolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
+  Effect.gen(function* () {
+    const flag = yield* LegacyYesFlag;
+    return (
+      flag || legacyViperEnvBool("SUPABASE_YES") || legacyViperBool(projectEnv["SUPABASE_YES"])
+    );
+  });
 
 /**
  * `--experimental` resolved with Go's viper `AutomaticEnv` fallback: the gate in

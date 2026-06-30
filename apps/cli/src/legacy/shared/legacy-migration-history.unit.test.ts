@@ -1,13 +1,16 @@
 import { Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
-import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
+import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
+  legacyFindPendingMigrations,
   legacyListRemoteMigrations,
   legacyReconcileMigrations,
   legacySuggestMigrationRepair,
-} from "./pull.sync.ts";
+} from "./legacy-migration-history.ts";
+
+const mig = (version: string) => `supabase/migrations/${version}_test.sql`;
 
 /** Minimal session whose `query` fails with the given error. */
 const failingSession = (error: LegacyDbExecError): LegacyDbSession => ({
@@ -119,6 +122,44 @@ describe("legacyListRemoteMigrations (suppress only undefined_table, like Go)", 
   it("does not swallow a column-not-exist message when no SQLSTATE is surfaced", async () => {
     const exit = await run(new LegacyDbExecError({ message: 'column "version" does not exist' }));
     expect(Exit.isFailure(exit)).toBe(true);
+  });
+});
+
+describe("legacyFindPendingMigrations (Go TestPendingMigrations / TestIgnoreVersionMismatch)", () => {
+  it("returns the local paths after the remote count when in sync", () => {
+    const local = ["0", "1", "2"].map(mig);
+    const result = legacyFindPendingMigrations(local, ["0"]);
+    expect(result).toEqual({ kind: "pending", paths: [mig("1"), mig("2")] });
+  });
+
+  it("flags out-of-order local migrations as missing-remote", () => {
+    // local [0,1,2,3], remote [0,2] → unapplied [1] (1 sits before applied 2).
+    const local = ["20221201000000", "20221201000001", "20221201000002", "20221201000003"].map(mig);
+    const result = legacyFindPendingMigrations(local, ["20221201000000", "20221201000002"]);
+    expect(result).toEqual({ kind: "missing-remote", paths: [mig("20221201000001")] });
+  });
+
+  it("flags a remote version absent from local as missing-local", () => {
+    // local [0,2], remote [0,1,2,3,4] → missing [1,3,4].
+    const local = ["20221201000000", "20221201000002"].map(mig);
+    const result = legacyFindPendingMigrations(local, [
+      "20221201000000",
+      "20221201000001",
+      "20221201000002",
+      "20221201000003",
+      "20221201000004",
+    ]);
+    expect(result).toEqual({
+      kind: "missing-local",
+      versions: ["20221201000001", "20221201000003", "20221201000004"],
+    });
+  });
+
+  it("prefers missing-local when both missing-local and missing-remote occur", () => {
+    // local [0,1,2,3], remote [2,4] → unapplied [0,1,3] but remote 4 missing → missing-local [4].
+    const local = ["20221201000000", "20221201000001", "20221201000002", "20221201000003"].map(mig);
+    const result = legacyFindPendingMigrations(local, ["20221201000002", "20221201000004"]);
+    expect(result).toEqual({ kind: "missing-local", versions: ["20221201000004"] });
   });
 });
 

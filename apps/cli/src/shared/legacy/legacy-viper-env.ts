@@ -25,8 +25,12 @@
 
 const LEGACY_VIPER_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
-/** `viper.GetBool` for a single `SUPABASE_*` env var (see module doc). */
-export function legacyViperEnvBool(name: string): boolean {
-  const raw = process.env[name];
+/** `viper.GetBool` truthiness for an already-resolved env value (see module doc). */
+export function legacyViperBool(raw: string | undefined): boolean {
   return raw !== undefined && LEGACY_VIPER_TRUE.has(raw);
+}
+
+/** `viper.GetBool` for a single `SUPABASE_*` env var read from `process.env` (see module doc). */
+export function legacyViperEnvBool(name: string): boolean {
+  return legacyViperBool(process.env[name]);
 }
