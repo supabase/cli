@@ -65,10 +65,13 @@ describe("legacyApplyMigrationFile", () => {
             // The history-table setup scopes lock_timeout to its own transaction
             // (SET LOCAL), so it reverts on COMMIT and never leaks into the migration's
             // statements — matching Go's implicit ExecBatch transaction.
+            // RESET ALL runs FIRST — before the history-table setup transaction — so a
+            // session default leaked by a prior migration is cleared before this DDL.
+            expect(execs[0]).toBe("RESET ALL");
             const firstBegin = execs.indexOf("BEGIN");
             const setupCommit = execs.indexOf("COMMIT");
             const setLocal = execs.indexOf("SET LOCAL lock_timeout = '4s'");
-            expect(firstBegin).toBe(0);
+            expect(firstBegin).toBe(1);
             expect(setLocal).toBeGreaterThan(firstBegin);
             expect(setLocal).toBeLessThan(setupCommit);
             // The migration's own statements run in a later, separate transaction.

@@ -82,9 +82,9 @@ type LegacyBatchItem =
 /**
  * Applies a single migration file to the connected database and records it in
  * `supabase_migrations.schema_migrations`. Mirrors Go's `migration.ApplyMigrations`
- * for one file (`pkg/migration/apply.go` + `(*MigrationFile).ExecBatch`): create
- * the history table, `RESET ALL`, then run the file's statements + the history
- * insert.
+ * for one file (`pkg/migration/apply.go` + `(*MigrationFile).ExecBatch`): `RESET ALL`
+ * first to clear any session state leaked by a prior file, then create the history
+ * table, then run the file's statements + the history insert.
  *
  * Statements run inside a `BEGIN`/`COMMIT` batch, except pipeline-incompatible ones
  * (`legacyIsPipelineIncompatible` — `CREATE INDEX CONCURRENTLY`, `VACUUM`, …) which
@@ -111,8 +111,13 @@ export const legacyApplyMigrationFile = <E>(
     const version = matches?.[1] ?? "";
     const name = matches?.[2] ?? "";
 
-    yield* legacyCreateMigrationTable(session);
+    // `RESET ALL` runs FIRST, before the history-table DDL: an earlier migration applied
+    // on this same connection may have left a session default (e.g.
+    // `SET default_transaction_read_only = on`) that would otherwise make this DDL fail
+    // before it is cleared. Go resets connection state at the top of each file's apply,
+    // ahead of any work (`apps/cli-go/pkg/migration/apply.go:65-69`).
     yield* session.exec("RESET ALL");
+    yield* legacyCreateMigrationTable(session);
 
     // Mirror Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go`):
     // on a failed statement, append `At statement: <index>` and the statement text so the
