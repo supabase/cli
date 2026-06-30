@@ -41,10 +41,9 @@ import {
   legacySeedData,
 } from "../shared/legacy-seed-ops.ts";
 import { legacyReadVaultDocument, legacyUpsertVaultSecrets } from "../shared/legacy-vault.ts";
-// Listing the remote `schema_migrations` history (with the 42P01 → empty rule) is
-// already implemented for `db pull`; reused here. A future hoist of this single
-// helper into `db/shared/` would let `db reset` share it too.
-import { legacyListRemoteMigrations } from "../pull/pull.sync.ts";
+// Listing the remote `schema_migrations` history (with the 42P01 → empty rule)
+// lives in the shared migration-history module (Go's `migration.ListRemoteMigrations`).
+import { legacyListRemoteMigrations } from "../../../shared/legacy-migration-history.ts";
 import type { LegacyDbPushFlags } from "./push.command.ts";
 import {
   LegacyDbPushApplyError,

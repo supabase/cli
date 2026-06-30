@@ -25,7 +25,7 @@ import {
 import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
-} from "../shared/legacy-migration-file.ts";
+} from "../../../shared/legacy-migration-file.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
 import { type LegacyPgDeltaContext, legacyDiffPgDelta } from "../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
