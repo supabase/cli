@@ -44,6 +44,11 @@ const errMessage = (e: unknown): string =>
  * caller decides whether to (Go's `ApplyMigrations` creates it once up front,
  * `SeedGlobals` never does). When `forceNoVersion` is set the history insert is
  * skipped regardless of filename (Go's `SeedGlobals` clears `Version`).
+ *
+ * Mirrors Go's `(*MigrationFile).ExecBatch`, which does NOT `RESET ALL` — that is
+ * the migration-apply path's responsibility (`ApplyMigrations`, apply.go:65-69),
+ * not `SeedGlobals`. So the `RESET ALL` is done by the apply callers below, never
+ * here, keeping role/globals files (`legacySeedGlobals`) reset-free like Go.
  */
 const execMigrationBatch = <E>(
   session: LegacyDbSession,
@@ -61,7 +66,6 @@ const execMigrationBatch = <E>(
     const version = forceNoVersion ? "" : (matches?.[1] ?? "");
     const name = matches?.[2] ?? "";
 
-    yield* session.exec("RESET ALL");
     yield* session.exec("BEGIN");
     // Mirror Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go:88-113`):
     // on a failed statement, append `At statement: <index>` and the statement text.
@@ -89,6 +93,21 @@ const execMigrationBatch = <E>(
   }).pipe(Effect.mapError((error) => mapError(errMessage(error))));
 
 /**
+ * Go's per-migration connection reset (`apply.go:65-69`): `RESET ALL` clears any
+ * connection settings a prior statement on the same session may have changed
+ * (e.g. `set_config('search_path', …)`), run before each migration's `ExecBatch`.
+ * Only the migration-apply path does this — `SeedGlobals` (role/globals files)
+ * must NOT, so this is a caller responsibility, never inside `execMigrationBatch`.
+ */
+const resetConnectionState = <E>(
+  session: LegacyDbSession,
+  mapError: (message: string) => E,
+): Effect.Effect<void, E> =>
+  session
+    .exec("RESET ALL")
+    .pipe(Effect.mapError((e) => mapError(`failed to reset connection state: ${errMessage(e)}`)));
+
+/**
  * Applies a single migration file to the connected database and records it in
  * `supabase_migrations.schema_migrations`. Mirrors Go's `migration.ApplyMigrations`
  * for one file (`pkg/migration/apply.go` + `(*MigrationFile).ExecBatch`): create
@@ -108,6 +127,7 @@ export const legacyApplyMigrationFile = <E>(
     yield* legacyCreateMigrationTable(session).pipe(
       Effect.mapError((e) => mapError(errMessage(e))),
     );
+    yield* resetConnectionState(session, mapError);
     yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
   });
 
@@ -132,6 +152,8 @@ export const legacyApplyMigrations = <E>(
     );
     for (const migrationPath of pending) {
       yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
+      // Go resets connection state per migration (apply.go:65-69) before ExecBatch.
+      yield* resetConnectionState(session, mapError);
       yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
     }
   });

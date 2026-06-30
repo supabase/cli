@@ -48,6 +48,7 @@ export interface LegacyDbTargetSelection {
 export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   // db-family command flags
   "db-url",
+  "password", // db push/pull/dump/remote (StringVarP, short -p)
   "sql-paths",
   "schema",
   "level",
@@ -77,6 +78,7 @@ export const VALUE_CONSUMING_SHORT_FLAGS = new Set([
   "s", // --schema / -s
   "o", // --output / -o
   "j", // --jobs / -j (storage cp)
+  "p", // --password / -p (db push/pull/dump/remote)
 ]);
 
 /**

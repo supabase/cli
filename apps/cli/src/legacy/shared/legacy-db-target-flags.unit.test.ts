@@ -157,4 +157,19 @@ describe("resolveLegacyDbTargetFlags", () => {
     expect(result.connType).toBe("linked");
     expect(result.setFlags).toEqual(["linked"]);
   });
+
+  it("--password <value> does NOT mark --local as changed (value consumed)", () => {
+    // db push/pull/dump register --password (StringVarP, short -p). A missing
+    // password value makes cobra consume the next token (`--local`) as the value,
+    // leaving the target at the linked default — so --local must NOT be detected.
+    const result = resolveLegacyDbTargetFlags(["db", "push", "--password", "--local"]);
+    expect(result.connType).toBeUndefined();
+    expect(result.setFlags).toEqual([]);
+  });
+
+  it("-p <value> (short) does NOT mark --local as changed (value consumed)", () => {
+    const result = resolveLegacyDbTargetFlags(["db", "push", "-p", "--local"]);
+    expect(result.connType).toBeUndefined();
+    expect(result.setFlags).toEqual([]);
+  });
 });
