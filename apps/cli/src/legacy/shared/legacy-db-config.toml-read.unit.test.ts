@@ -2014,3 +2014,47 @@ describe("legacyReadDbToml auth.Enabled validation (Go config.Validate parity)",
     ),
   );
 });
+
+describe("legacyReadDbToml encrypted secret decryption (Go DecryptSecretHookFunc parity)", () => {
+  // Go decrypts every config.Secret during decode; an undecryptable `encrypted:` value
+  // anywhere in config.toml aborts `config.Load` with `failed to parse config: <error>`.
+  const expectFails = (lines: ReadonlyArray<string>, message: string) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      const exit = yield* read(dir).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain(message);
+      rmSync(dir, { recursive: true, force: true });
+    });
+  const expectLoads = (lines: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      const v = yield* read(dir);
+      expect(v.baseline).toBeDefined();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+  it.effect("fails on an undecryptable encrypted db.root_key (no private key)", () =>
+    expectFails(
+      ["[db]", 'root_key = "encrypted:anything"'],
+      "failed to parse config: missing private key",
+    ),
+  );
+  it.effect("fails on an undecryptable encrypted secret outside db.vault (auth.external)", () =>
+    expectFails(
+      [
+        "[auth.external.github]",
+        "enabled = true",
+        'client_id = "x"',
+        'secret = "encrypted:anything"',
+      ],
+      "failed to parse config: missing private key",
+    ),
+  );
+  it.effect("accepts a plain (non-encrypted) secret value", () =>
+    expectLoads(["[db]", 'root_key = "plaintext-not-encrypted"']),
+  );
+  it.effect("treats an unset env() secret as a no-op (verbatim, like Go's hook)", () =>
+    expectLoads(["[db]", 'root_key = "env(SOME_UNSET_ROOT_KEY)"']),
+  );
+});

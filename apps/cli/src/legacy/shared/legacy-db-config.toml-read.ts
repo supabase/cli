@@ -659,6 +659,48 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
   return Option.none<boolean>();
 });
 
+/**
+ * Recursively asserts every `encrypted:` secret in the (merged) config can be decrypted,
+ * mirroring Go's global `DecryptSecretHookFunc` (`pkg/config/secret.go:77-109`,
+ * `config.go:730`), which decrypts every `config.Secret` field during `UnmarshalExact` and
+ * aborts the load with `failed to parse config: <error>` when one cannot be decrypted (e.g.
+ * no `DOTENV_PRIVATE_KEY`). The reader's `[db.vault]` walk only covered vault secrets, so
+ * non-vault `Secret` fields (`db.root_key`, `auth.external.<p>.secret`, smtp `pass`, …) were
+ * silently passed through. A recursive string scan tracks Go's "decode the entire config"
+ * behaviour and stays robust as new `Secret` fields are added. The unset-`env(...)` and
+ * plain-string forms are returned verbatim by Go's hook (no error), so they are no-ops here.
+ * Returns the failure (or `undefined`); the caller surfaces it via `Effect.fail`.
+ */
+const legacyAssertDecryptableSecrets = (
+  value: unknown,
+  lookup: EnvLookup,
+  dotenvPrivateKeys: ReadonlyArray<string>,
+): LegacyDbConfigLoadError | undefined => {
+  if (typeof value === "string") {
+    const expanded = legacyExpandEnv(value, lookup);
+    if (ENV_PATTERN.test(expanded) || !legacyIsEncryptedSecret(expanded)) return undefined;
+    const decrypted = legacyDecryptSecret(expanded, dotenvPrivateKeys);
+    return decrypted.ok
+      ? undefined
+      : new LegacyDbConfigLoadError({ message: `failed to parse config: ${decrypted.error}` });
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const error = legacyAssertDecryptableSecrets(item, lookup, dotenvPrivateKeys);
+      if (error !== undefined) return error;
+    }
+    return undefined;
+  }
+  const record = asRecord(value);
+  if (record !== undefined) {
+    for (const key of Object.keys(record)) {
+      const error = legacyAssertDecryptableSecrets(record[key], lookup, dotenvPrivateKeys);
+      if (error !== undefined) return error;
+    }
+  }
+  return undefined;
+};
+
 // Go merges the template default before Validate (`templates/config.toml`), so an absent
 // `auth.site_url` is non-empty; only an explicit empty string fails A1 (`config.go:1037`).
 const DEFAULT_AUTH_SITE_URL = "http://127.0.0.1:3000";
@@ -1045,6 +1087,10 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // used to derive Docker IDs, matching Go's decode-then-validate ordering.
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
   const lookup: EnvLookup = (name) => process.env[name] ?? projectEnv[name];
+  // dotenvx private keys for decrypting `encrypted:` secrets (Go's DecryptSecretHookFunc),
+  // from the shell + project env. Used by the global secret-decryptability assertion below
+  // and the `[db.vault]` resolution.
+  const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...process.env });
 
   let db: RawDoc | undefined;
   let pgDeltaRaw: RawDoc | undefined;
@@ -1116,6 +1162,16 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     projectId = nonEmptyString(
       typeof rawProjectId === "string" ? legacyExpandEnv(rawProjectId, lookup) : rawProjectId,
     );
+
+    // Go's `DecryptSecretHookFunc` is a global decode hook (config.go:730) that decrypts
+    // EVERY `config.Secret` field during `UnmarshalExact`, so an `encrypted:` secret anywhere
+    // in the merged config that cannot be decrypted (e.g. no DOTENV_PRIVATE_KEY) aborts the
+    // load with `failed to parse config: <error>` (secret.go:34,103; config.go:704) — before
+    // Validate and before connecting. The reader otherwise only decrypts `[db.vault]`, so
+    // assert decryptability across the whole document to match Go (a recursive scan tracks
+    // Go's "decode the entire config" better than a hand-listed set of Secret paths).
+    const secretError = legacyAssertDecryptableSecrets(effectiveDoc, lookup, dotenvPrivateKeys);
+    if (secretError !== undefined) return yield* Effect.fail(secretError);
   }
 
   // Go: `config.go:626` — read the linked pooler URL from `.temp/pooler-url` and
@@ -1511,7 +1567,6 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // `encrypted:` value that cannot be decrypted aborts the command with
   // `failed to parse config: <error>` (`secret.go:30-73`, `config.go:661-667`) — it
   // is never silently skipped, which an earlier port did and which diverged from Go.
-  const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...process.env });
   const vault: Array<LegacyDbVaultSecretToml> = [];
   if (vaultRaw !== undefined) {
     for (const name of Object.keys(vaultRaw).sort()) {
