@@ -56,7 +56,7 @@ export const DEFAULT_VERSIONS: VersionManifest = {
   mailpit: "v1.30.2",
   pgmeta: "0.96.6",
   studio: "2026.06.29-sha-20290c7",
-  analytics: "1.45.6",
+  analytics: "1.45.4",
   vector: "0.53.0-alpine",
   pooler: "2.9.7",
 } as const;
