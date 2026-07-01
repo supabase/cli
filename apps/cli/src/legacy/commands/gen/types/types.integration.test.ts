@@ -506,7 +506,10 @@ function mockDockerMissingChildProcessSpawner(
 async function withSslProbeServer<T>(
   run: (port: number) => Promise<T>,
   response: "N" | "S" = "N",
+  options: { readonly host?: string; readonly port?: number } = {},
 ): Promise<T> {
+  const host = options.host ?? "127.0.0.1";
+  const port = options.port ?? 0;
   const server = createServer((socket) => {
     socket.once("data", () => {
       socket.write(Buffer.from(response));
@@ -516,7 +519,7 @@ async function withSslProbeServer<T>(
 
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
+    server.listen(port, host, () => resolve());
   });
 
   const address = server.address();
@@ -1453,72 +1456,79 @@ describe("legacy gen types", () => {
   it.live("retries preview branch pg-meta through the branch IPv4 pooler", () =>
     Effect.tryPromise({
       try: () =>
-        withSslProbeServer(async (port) => {
-          const child = mockSequentialChildProcessSpawner([
-            {
-              exitCode: 1,
-              stderr: [
-                'could not translate host name "db.branch-ref.supabase.co" to address: No address associated with hostname',
-              ],
-            },
-            { exitCode: 0, stdout: ["class RetriedViaBranchPooler(BaseModel):"] },
-          ]);
-          const { layer, api } = setup({
-            args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
-            childLayer: child.layer,
-            getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
-            getABranchConfig: ({ branch_id_or_ref }) =>
-              Effect.succeed({
-                ref: branch_id_or_ref,
-                postgres_version: "15.1",
-                postgres_engine: "15",
-                release_channel: "ga",
-                status: "ACTIVE_HEALTHY",
-                db_host: "127.0.0.1",
-                db_port: port,
-                db_user: "branch_user",
-                db_pass: "branch-password",
-                jwt_secret: "secret",
-              }),
-            getPoolerConfig: ({ ref }) =>
-              Effect.succeed([
+        withSslProbeServer(async (directPort) =>
+          withSslProbeServer(
+            async () => {
+              const poolerHost = "127.0.0.1";
+              const child = mockSequentialChildProcessSpawner([
                 {
-                  identifier: "primary",
-                  database_type: "PRIMARY",
-                  is_using_scram_auth: true,
-                  db_user: "postgres",
-                  db_host: "db.example",
-                  db_port: 5432,
-                  db_name: "postgres",
-                  connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@127.0.0.1:${port}/postgres`,
-                  connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@127.0.0.1:${port}/postgres`,
-                  default_pool_size: null,
-                  max_client_conn: null,
-                  pool_mode: "transaction",
+                  exitCode: 1,
+                  stderr: [
+                    'could not translate host name "db.branch-ref.supabase.co" to address: No address associated with hostname',
+                  ],
                 },
-              ]),
-          });
+                { exitCode: 0, stdout: ["class RetriedViaBranchPooler(BaseModel):"] },
+              ]);
+              const { layer, api } = setup({
+                args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
+                childLayer: child.layer,
+                getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
+                getABranchConfig: ({ branch_id_or_ref }) =>
+                  Effect.succeed({
+                    ref: branch_id_or_ref,
+                    postgres_version: "15.1",
+                    postgres_engine: "15",
+                    release_channel: "ga",
+                    status: "ACTIVE_HEALTHY",
+                    db_host: "127.0.0.1",
+                    db_port: directPort,
+                    db_user: "branch_user",
+                    db_pass: "branch-password",
+                    jwt_secret: "secret",
+                  }),
+                getPoolerConfig: ({ ref }) =>
+                  Effect.succeed([
+                    {
+                      identifier: "primary",
+                      database_type: "PRIMARY",
+                      is_using_scram_auth: true,
+                      db_user: "postgres",
+                      db_host: "db.example",
+                      db_port: 5432,
+                      db_name: "postgres",
+                      connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`,
+                      connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@${poolerHost}:6543/postgres`,
+                      default_pool_size: null,
+                      max_client_conn: null,
+                      pool_mode: "transaction",
+                    },
+                  ]),
+              });
 
-          await Effect.runPromise(
-            legacyGenTypes(
-              defaultFlags({
-                projectId: Option.some(LEGACY_VALID_REF),
-                lang: "python",
-              }),
-            ).pipe(Effect.provide(layer)),
-          );
+              await Effect.runPromise(
+                legacyGenTypes(
+                  defaultFlags({
+                    projectId: Option.some(LEGACY_VALID_REF),
+                    lang: "python",
+                  }),
+                ).pipe(Effect.provide(layer)),
+              );
 
-          expect(api.requests).toContainEqual({
-            method: "getPoolerConfig",
-            input: { ref: LEGACY_VALID_REF },
-          });
-          expect(child.spawned).toHaveLength(2);
-          expect(
-            dockerEnv(child.spawned[1]?.args ?? []).has(
-              `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:branch-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
-            ),
-          ).toBe(true);
-        }),
+              expect(api.requests).toContainEqual({
+                method: "getPoolerConfig",
+                input: { ref: LEGACY_VALID_REF },
+              });
+              expect(child.spawned).toHaveLength(2);
+              expect(
+                dockerEnv(child.spawned[1]?.args ?? []).has(
+                  `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:branch-password@${poolerHost}:5432/postgres?connect_timeout=10`,
+                ),
+              ).toBe(true);
+            },
+            "N",
+            { port: 5432 },
+          ),
+        ),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
   );

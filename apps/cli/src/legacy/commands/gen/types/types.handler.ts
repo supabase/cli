@@ -87,7 +87,8 @@ function parsePoolerConnectionString(
     const options = url.searchParams.get("options") ?? undefined;
     return Option.some({
       host: url.hostname,
-      port: url.port.length > 0 ? Number.parseInt(url.port, 10) : 5432,
+      // Supavisor transaction mode does not support prepared statements; use port 5432.
+      port: 5432,
       user: decodeURIComponent(url.username),
       password,
       database: decodeURIComponent(url.pathname.replace(/^\//, "")) || "postgres",
