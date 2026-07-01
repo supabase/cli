@@ -895,6 +895,35 @@ describe("legacy db pull", () => {
     },
   );
 
+  it.effect("an explicit --yes=false overrides SUPABASE_YES and honors the piped answer", () => {
+    // Go binds `--yes` to viper, so an explicit `--yes=false` wins over the
+    // SUPABASE_YES env (AutomaticEnv). `printf 'n\n' | SUPABASE_YES=1 supabase
+    // --yes=false db pull` must let the piped `n` decline the history update rather
+    // than auto-confirming — schema_migrations stays untouched.
+    const prev = process.env["SUPABASE_YES"];
+    process.env["SUPABASE_YES"] = "1";
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "create table remote ();\n",
+      stdinIsTty: false,
+      pipedAnswers: ["n"],
+      args: ["db", "pull", "--yes=false"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      expect(s.historyUpserts.length).toBe(0);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_YES"];
+          else process.env["SUPABASE_YES"] = prev;
+        }),
+      ),
+      Effect.provide(s.layer),
+    );
+  });
+
   it.effect("SUPABASE_EXPERIMENTAL delegates the structured-dump pull to Go", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {

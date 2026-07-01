@@ -3,6 +3,7 @@ import { Effect, Exit, Layer } from "effect";
 
 import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { mockLegacyPromptInput } from "../../../../tests/helpers/legacy-prompt-input.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   mockLegacyCredentialsTracked,
   mockLegacyTelemetryStateTracked,
@@ -37,6 +38,7 @@ function setupLegacyLogout(opts: SetupOpts = {}) {
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
     mockLegacyPromptInput({ pipedLines: opts.pipedAnswers }),
+    Layer.succeed(CliArgs, { args: [] }),
   );
   return { layer, out, telemetry, credentials };
 }

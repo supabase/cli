@@ -6,6 +6,7 @@ import { Effect, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
 import { LegacyPlatformApiFactory } from "../../src/legacy/auth/legacy-platform-api-factory.service.ts";
 import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-project-ref.errors.ts";
@@ -71,6 +72,8 @@ export interface SetupLegacyStorageOptions {
   readonly stdinIsTty?: boolean;
   /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
   readonly pipedAnswers?: ReadonlyArray<string>;
+  /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
+  readonly cliArgs?: ReadonlyArray<string>;
   /** Project ref returned by the resolver for the linked path. */
   readonly projectRef?: string;
   /** api-keys list returned by the Management API mock (linked path). */
@@ -212,6 +215,8 @@ export function setupLegacyStorage(workdir: string, opts: SetupLegacyStorageOpti
     // `cp` resolves relative local paths against the original cwd (Go's
     // `utils.CurrentDirAbs`); point it at the temp workdir for tests.
     mockRuntimeInfo({ cwd: workdir }),
+    // `legacyResolveYes` scans the raw argv for an explicit `--yes=false`.
+    Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
   );
 
   return { layer, out, requests, telemetry, linkedCache };
