@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 
 import {
-  describeLiveProject,
+  describeLiveDataPlane,
   requireLiveProjectRef,
   runSupabaseLive,
 } from "../../../../../tests/helpers/live.ts";
@@ -20,10 +20,12 @@ function tempWorkdir(): string {
   return mkdtempSync(join(tmpdir(), "sb-db-dump-live-"));
 }
 
-// Project-scoped + data-plane: needs a provisioned project whose database is
-// routable (the cli-e2e-ci Linux runner). Skipped on a control-plane-only stack
-// (`SUPABASE_LIVE_PROJECT_REF` unset), e.g. local macOS.
-describeLiveProject("supabase db dump (live)", () => {
+// Data-plane: needs a provisioned project whose database is routable (the
+// cli-e2e-ci Linux runner). `describeLiveDataPlane` runs this only when the project
+// instance is ACTIVE_HEALTHY, so a control-plane-only stack (ref set but the DB
+// unreachable, e.g. local macOS or the current cli-e2e-ci control-plane case) is
+// skipped rather than timing out on pg_dump.
+describeLiveDataPlane("supabase db dump (live)", () => {
   test("dumps the linked project's schema to a file", { timeout: LIVE_TIMEOUT_MS }, async () => {
     const ref = requireLiveProjectRef();
     const dir = tempWorkdir();
