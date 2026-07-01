@@ -30,23 +30,6 @@ describe("capability probes (live)", () => {
     },
   );
 
-  // C3 — external tool, no docker/internet. `db dump` normally runs `pg_dump` in a
-  // supabase/postgres CONTAINER; `SUPABASE_DB_USE_LOCAL_TOOLS=1` switches it to the
-  // native pg_dump/psql on PATH, so this exercises the external-tool path (no
-  // Docker socket) rather than the container path. Fails if the tool is absent.
-  testLiveRequires(["external-tool"])(
-    "[C3] external tool: db dump exports the remote schema via native pg_dump",
-    async ({ run, dbUrl, workspace }) => {
-      const file = join(workspace.path, "dump.sql");
-      const res = await run(["db", "dump", "--db-url", dbUrl, "-f", file], {
-        env: { SUPABASE_DB_USE_LOCAL_TOOLS: "1" },
-      });
-      expect(res.exitCode, res.stderr).toBe(0);
-      expect(existsSync(file)).toBe(true);
-      expect(readFileSync(file, "utf8")).toMatch(/CREATE|PostgreSQL database dump|SCHEMA/i);
-    },
-  );
-
   // C2 — docker control, no runtime internet. `db pull`'s schema diff starts a
   // shadow postgres *server* (DockerStart) and runs the diff engine in a
   // container; both use pre-built images (no 3rd-party network). Push first so
@@ -76,6 +59,23 @@ describe("capability probes (live)", () => {
       expect(pulled.exitCode === 0 || /No schema changes found/i.test(output), pulled.stderr).toBe(
         true,
       );
+    },
+  );
+
+  // C3 — external tool, no docker/internet. `db dump` normally runs `pg_dump` in a
+  // supabase/postgres CONTAINER; `SUPABASE_DB_USE_LOCAL_TOOLS=1` switches it to the
+  // native pg_dump/psql on PATH, so this exercises the external-tool path (no
+  // Docker socket) rather than the container path. Fails if the tool is absent.
+  testLiveRequires(["external-tool"])(
+    "[C3] external tool: db dump exports the remote schema via native pg_dump",
+    async ({ run, dbUrl, workspace }) => {
+      const file = join(workspace.path, "dump.sql");
+      const res = await run(["db", "dump", "--db-url", dbUrl, "-f", file], {
+        env: { SUPABASE_DB_USE_LOCAL_TOOLS: "1" },
+      });
+      expect(res.exitCode, res.stderr).toBe(0);
+      expect(existsSync(file)).toBe(true);
+      expect(readFileSync(file, "utf8")).toMatch(/CREATE|PostgreSQL database dump|SCHEMA/i);
     },
   );
 
