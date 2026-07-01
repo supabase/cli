@@ -13,7 +13,7 @@ export function jsonCliOutputFormatter(context?: CliErrorSuggestionContext): Cli
     formatErrors: (errors) =>
       JSON.stringify({
         _tag: "Errors",
-        errors: formatCliErrorsForDisplay(errors, context).map((e) => ({
+        errors: formatCliErrorsForDisplay(errors, context).errors.map((e) => ({
           code: e._tag,
           message: e.message,
         })),

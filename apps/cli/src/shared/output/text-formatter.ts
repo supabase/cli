@@ -11,14 +11,15 @@ export function textCliOutputFormatter(context?: CliErrorSuggestionContext): Cli
     ...base,
     formatErrors: (errors) => {
       const formatted = formatCliErrorsForDisplay(errors, context);
-      if (formatted.length === 0) return "";
-      if (formatted.length === 1) {
-        return `\nERROR\n  ${formatted[0]?.message}`;
+      if (!formatted.changed) return base.formatErrors(errors);
+      if (formatted.errors.length === 0) return "";
+      if (formatted.errors.length === 1) {
+        return `\nERROR\n  ${formatted.errors[0]?.message}`;
       }
 
       const sections = ["\nERRORS"];
       const grouped = new Map<string, Array<FormattedCliError>>();
-      for (const error of formatted) {
+      for (const error of formatted.errors) {
         const group = grouped.get(error._tag) ?? [];
         group.push(error);
         grouped.set(error._tag, group);

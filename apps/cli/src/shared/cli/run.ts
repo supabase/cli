@@ -93,9 +93,13 @@ function isErrorRecord(error: unknown): error is Record<string, unknown> {
   return typeof error === "object" && error !== null;
 }
 
-function isShowHelpCause(cause: Cause.Cause<unknown>): boolean {
+function isExplicitHelpCause(cause: Cause.Cause<unknown>): boolean {
   const error = Cause.findErrorOption(cause);
-  return error._tag === "Some" && isErrorRecord(error.value) && error.value["_tag"] === "ShowHelp";
+  if (error._tag !== "Some" || !isErrorRecord(error.value)) return false;
+  if (error.value["_tag"] !== "ShowHelp") return false;
+
+  const errors = error.value["errors"];
+  return !Array.isArray(errors) || errors.length === 0;
 }
 
 function projectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
@@ -225,7 +229,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       const exit = yield* program.pipe(Effect.exit);
       if (Exit.isFailure(exit)) {
         const interrupted = Cause.hasInterruptsOnly(exit.cause);
-        if (!interrupted && !isShowHelpCause(exit.cause)) {
+        if (!interrupted && !isExplicitHelpCause(exit.cause)) {
           yield* output.fail(normalizeCause(exit.cause));
         }
         return yield* processControl.exit(interrupted ? 130 : 1);

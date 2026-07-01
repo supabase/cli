@@ -34,15 +34,18 @@ describe("subcommand flag placement suggestions", () => {
       },
     );
 
-    expect(errors).toHaveLength(1);
-    expect(errors[0]?.message).toContain(
+    expect(errors.changed).toBe(true);
+    expect(errors.errors).toHaveLength(1);
+    expect(errors.errors[0]?.message).toContain(
       "Unrecognized flag: --project-ref in command supabase network-restrictions",
     );
-    expect(errors[0]?.message).toContain(
+    expect(errors.errors[0]?.message).toContain(
       "Hint: --project-ref is available on `supabase network-restrictions get` and `supabase network-restrictions update`.",
     );
-    expect(errors[0]?.message).toContain("supabase network-restrictions get --project-ref <value>");
-    expect(errors[0]?.message).not.toContain("Unknown subcommand");
+    expect(errors.errors[0]?.message).toContain(
+      "supabase network-restrictions get --project-ref <value>",
+    );
+    expect(errors.errors[0]?.message).not.toContain("Unknown subcommand");
   });
 
   it("leaves unrelated unrecognized flags unchanged", () => {
@@ -60,12 +63,15 @@ describe("subcommand flag placement suggestions", () => {
       },
     );
 
-    expect(errors).toEqual([
-      {
-        _tag: "UnrecognizedOption",
-        message:
-          "Unrecognized flag: --definitely-not-a-child-flag in command supabase network-restrictions",
-      },
-    ]);
+    expect(errors).toEqual({
+      changed: false,
+      errors: [
+        {
+          _tag: "UnrecognizedOption",
+          message:
+            "Unrecognized flag: --definitely-not-a-child-flag in command supabase network-restrictions",
+        },
+      ],
+    });
   });
 });

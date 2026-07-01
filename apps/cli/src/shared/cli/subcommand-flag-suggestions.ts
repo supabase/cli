@@ -10,6 +10,11 @@ export interface FormattedCliError {
   readonly message: string;
 }
 
+export interface FormattedCliErrors {
+  readonly errors: ReadonlyArray<FormattedCliError>;
+  readonly changed: boolean;
+}
+
 interface CommandWithHelpDoc extends Command.Command.Any {
   readonly buildHelpDoc: (path: ReadonlyArray<string>) => HelpDoc.HelpDoc;
 }
@@ -183,15 +188,17 @@ function buildSubcommandFlagHint(
 export function formatCliErrorsForDisplay(
   errors: ReadonlyArray<CliError.CliError>,
   context?: CliErrorSuggestionContext,
-): ReadonlyArray<FormattedCliError> {
+): FormattedCliErrors {
   const suppressedUnknownSubcommands = new Set<string>();
   const formatted: Array<FormattedCliError> = [];
+  let changed = false;
 
   for (const error of errors) {
     if (error._tag === "UnrecognizedOption" && context) {
       const hint = buildSubcommandFlagHint(error, context);
       if (hint) {
         if (hint.consumedValue) suppressedUnknownSubcommands.add(hint.consumedValue);
+        changed = true;
         formatted.push({
           _tag: error._tag,
           message: `${error.message}\n\n  Hint: ${hint.hint}`,
@@ -201,11 +208,12 @@ export function formatCliErrorsForDisplay(
     }
 
     if (error._tag === "UnknownSubcommand" && suppressedUnknownSubcommands.has(error.subcommand)) {
+      changed = true;
       continue;
     }
 
     formatted.push({ _tag: error._tag, message: error.message });
   }
 
-  return formatted;
+  return { errors: formatted, changed };
 }
