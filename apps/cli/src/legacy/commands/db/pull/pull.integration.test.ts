@@ -800,8 +800,8 @@ describe("legacy db pull", () => {
   it.effect("honors SUPABASE_YES for the initial-pull history update", () => {
     // Go's `PromptYesNo` reads `viper.GetBool("YES")`, which includes the
     // `SUPABASE_YES` env var (AutomaticEnv), so it auto-confirms even on a TTY with
-    // no piped answer. The native path resolves `yes` via `legacyResolveYes`, not the
-    // raw `--yes` flag, so the env var is honored here too.
+    // no piped answer. The native path resolves `yes` via `legacyResolveYesWithProjectEnv`,
+    // not the raw `--yes` flag, so the shell env var is honored here too.
     const prev = process.env["SUPABASE_YES"];
     process.env["SUPABASE_YES"] = "1";
     seedMigration(tmp.current, "20240101000000");
@@ -817,6 +817,37 @@ describe("legacy db pull", () => {
       expect(streamText(s.out, "stderr")).toContain(
         "Update remote migration history table? [Y/n] y",
       );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_YES"];
+          else process.env["SUPABASE_YES"] = prev;
+        }),
+      ),
+      Effect.provide(s.layer),
+    );
+  });
+
+  it.effect("honors SUPABASE_YES from supabase/.env for the initial-pull history update", () => {
+    // Go loads the project `.env` (loadNestedEnv) inside ParseDatabaseConfig before
+    // PromptYesNo (config.go:701), so `SUPABASE_YES` set only in `supabase/.env`
+    // auto-confirms — with no shell env or `--yes`. The native path resolves via
+    // `legacyResolveYesWithProjectEnv`, reading the loaded project env map.
+    const prev = process.env["SUPABASE_YES"];
+    delete process.env["SUPABASE_YES"]; // only the project .env value must apply
+    seedMigration(tmp.current, "20240101000000");
+    writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: "create table remote ();\n",
+      // Pipe `n` on a non-TTY: only honoring the .env SUPABASE_YES (which is read
+      // before stdin, so it wins over the piped decline) still updates history.
+      stdinIsTty: false,
+      pipedAnswers: ["n"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      expect(s.historyUpserts.length).toBe(1);
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {

@@ -37,15 +37,18 @@ describeLiveDataPlane("supabase db pull (live)", () => {
           cwd: dir,
           env: { SUPABASE_PROJECT_ID: ref },
           exitTimeoutMs: LIVE_TIMEOUT_MS - 20_000,
+          // Decline the "Update remote migration history table?" prompt with a piped
+          // `n`: this project ref is shared across live runs, and writing a
+          // `schema_migrations` row here would make a later run see it as an extra
+          // remote migration and fail with a history conflict before pulling. The
+          // piped answer also exercises the native prompt's stdin scanning end to end.
+          stdin: "n\n",
         });
         const combined = `${stdout}${stderr}`;
         expect(combined).not.toContain("Unauthorized");
         // No local migrations → the native initial-migra path runs: pg_dump the remote
-        // schema, then append the migra diff. The non-interactive `--linked` pull must
-        // run to completion (Go's `PromptYesNo` takes the default on a non-TTY rather
-        // than blocking on the "Update remote migration history table?" prompt — if it
-        // hangs, this test times out). Assert on the durable side effect regardless of
-        // exit code: a provisioned project with schema writes a
+        // schema, then append the migra diff. Assert on the durable side effect
+        // regardless of exit code: a provisioned project with schema writes a
         // `<timestamp>_remote_schema.sql` migration; a fresh empty schema reports
         // "No schema changes found". Either proves the path ran end to end against the
         // real database without hanging.
