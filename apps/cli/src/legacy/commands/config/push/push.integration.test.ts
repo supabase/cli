@@ -62,6 +62,8 @@ function setup(opts: {
   readonly stdinIsTty?: boolean;
   /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
   readonly pipedAnswers?: ReadonlyArray<string>;
+  /** Working directory the handler runs from; defaults to the temp project root. */
+  readonly runtimeCwd?: string;
 }) {
   writeConfig(opts.toml);
   const routes = opts.routes ?? {};
@@ -116,7 +118,7 @@ function setup(opts: {
       out,
       api,
       cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
-      runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
@@ -363,6 +365,42 @@ project_id = "abcdefghijklmnopqrst"
       },
     });
     // Written after setup()'s writeConfig created supabase/.
+    writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n");
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        true,
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_YES"];
+          else process.env["SUPABASE_YES"] = prev;
+        }),
+      ),
+      Effect.provide(layer),
+    );
+  });
+
+  it.live("loads config-push env from the project root when run from a subdirectory", () => {
+    // Go's ChangeWorkDir moves to the project root before flags.LoadConfig, so a
+    // SUPABASE_YES in <root>/supabase/.env auto-confirms even when invoked from a
+    // subdir. The env load must walk up like loadProjectConfig, not use the raw cwd.
+    const prev = process.env["SUPABASE_YES"];
+    delete process.env["SUPABASE_YES"];
+    const sub = join(tempRoot.current, "nested", "dir");
+    mkdirSync(sub, { recursive: true });
+    const { layer, api } = setup({
+      toml: API_ONLY_TOML,
+      stdinIsTty: false,
+      pipedAnswers: ["n"],
+      runtimeCwd: sub,
+      routes: {
+        postgrestGet: { status: 200, body: POSTGREST_DISABLED },
+        postgresGet: { status: 200, body: {} },
+      },
+    });
+    // `.env` lives at the project ROOT (setup's writeConfig wrote config.toml there).
     writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n");
     return Effect.gen(function* () {
       yield* legacyConfigPush({ projectRef: Option.none() });

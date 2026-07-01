@@ -1,4 +1,4 @@
-import { loadProjectConfig } from "@supabase/config";
+import { findProjectRoot, loadProjectConfig } from "@supabase/config";
 import { Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
@@ -95,8 +95,11 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   // `config push` runs `flags.LoadConfig`, which imports `supabase/.env` before
   // `PromptYesNo` reads `viper.GetBool("YES")`, so a `SUPABASE_YES` set only in
   // `supabase/.env` auto-confirms. Resolve against the project env, not just the
-  // flag + shell env.
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, runtimeInfo.cwd);
+  // flag + shell env. Load it from the resolved project root (walking up, same as
+  // `loadProjectConfig` below and Go's `ChangeWorkDir` before `LoadConfig`), so a
+  // push from a subdirectory still reads the project root's `supabase/.env`.
+  const projectRoot = (yield* findProjectRoot(runtimeInfo.cwd)) ?? runtimeInfo.cwd;
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, projectRoot);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   const ref = yield* resolver.resolve(flags.projectRef);
