@@ -3,10 +3,12 @@
 // by running an OpenCode agent against tools/release/release-notes-prompt.md
 // with the raw semantic-release block substituted in.
 //
-// Provider-agnostic: OpenCode selects the model via a `provider/model` pair
-// (see scripts/release-notes/select-model.ts), so swapping Claude ↔ OpenAI (or
-// any other supported provider) is a `--provider`/`--model` change with no code
-// edits. The agent's tools and the prompt stay identical across providers.
+// Provider-agnostic: OpenCode selects the model via a single `provider/model`
+// id (see scripts/release-notes/select-model.ts), so swapping Claude ↔ OpenAI
+// (or any other supported provider) is just a `--model` change with no code
+// edits. OpenCode resolves the provider and its credential from the environment
+// (ANTHROPIC_API_KEY / OPENAI_API_KEY / …); the agent's tools and the prompt
+// stay identical across providers.
 //
 // Pipeline shape:
 //   1. `backfill-release-notes.ts --tag <tag>` produces the raw semantic-release
@@ -31,7 +33,7 @@
 // Usage:
 //   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --dry-run
 //   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --apply
-//   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --provider openai --dry-run
+//   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --model openai/gpt-5-mini --dry-run
 //
 //   --tag       Required. Release tag (e.g. v2.101.0 or v2.99.0-beta.1).
 //   --dry-run   Print the proposed notes to stdout. Does not write any files,
@@ -42,11 +44,9 @@
 //   --render-only  Print the rendered prompt (template + raw notes block)
 //               and exit before any LLM call. Useful for prompt iteration
 //               and for verifying the pipeline shape without spending tokens.
-//   --provider  Optional. Provider shorthand for a default model
-//               (`claude`/`anthropic`, `openai`/`codex`).
-//   --model     Optional. Exact `provider/model` id (e.g. `openai/gpt-5-mini`,
-//               `anthropic/claude-haiku-4-5`). Overrides --provider.
-//               Falls back to the RELEASE_NOTES_MODEL env var, then to
+//   --model     Optional. OpenCode-valid `provider/model` id (e.g.
+//               `openai/gpt-5-mini`, `anthropic/claude-haiku-4-5`). Falls back
+//               to the RELEASE_NOTES_MODEL env var, then to
 //               `anthropic/claude-haiku-4-5`.
 import { $ } from "bun";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -54,7 +54,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
-import { resolveModel, type ModelRef } from "./release-notes/select-model.ts";
+import { resolveModel } from "./release-notes/select-model.ts";
 import { generateNotes } from "./release-notes/opencode-agent.ts";
 
 const { values } = parseArgs({
@@ -63,7 +63,6 @@ const { values } = parseArgs({
     "dry-run": { type: "boolean", default: false },
     apply: { type: "boolean", default: false },
     "render-only": { type: "boolean", default: false },
-    provider: { type: "string" },
     model: { type: "string" },
   },
   strict: true,
@@ -77,11 +76,11 @@ if (!tag) {
 const version = tag.replace(/^v/, "");
 const apply = values.apply === true && values["dry-run"] !== true;
 
-// Resolve the model up front so a bad --provider/--model fails before the
-// (comparatively expensive) backfill + render work.
-let model: ModelRef;
+// Resolve the model up front so a bad --model fails before the (comparatively
+// expensive) backfill + render work.
+let model: string;
 try {
-  model = resolveModel({ model: values.model, provider: values.provider }, process.env);
+  model = resolveModel({ model: values.model }, process.env);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(2);
@@ -113,7 +112,7 @@ if (values["render-only"]) {
   process.exit(0);
 }
 
-console.error(`==> Running OpenCode (provider=${model.providerID} model=${model.modelID})`);
+console.error(`==> Running OpenCode (model=${model})`);
 let finalText = "";
 let cost: number | undefined;
 try {

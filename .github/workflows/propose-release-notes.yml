@@ -22,13 +22,8 @@ on:
         required: false
         type: boolean
         default: false
-      provider:
-        description: Model provider shorthand (claude|anthropic|openai|codex). Blank uses the default.
-        required: false
-        type: string
-        default: ""
       model:
-        description: Exact provider/model id (e.g. openai/gpt-5-mini). Overrides provider. Blank uses the default.
+        description: OpenCode provider/model id (e.g. openai/gpt-5-mini). Blank uses the default.
         required: false
         type: string
         default: ""
@@ -47,13 +42,8 @@ on:
         description: Release tag to propose notes for (e.g. v2.101.0 or v2.99.0-beta.1)
         required: true
         type: string
-      provider:
-        description: Model provider shorthand (claude|anthropic|openai|codex). Blank uses the default.
-        required: false
-        type: string
-        default: ""
       model:
-        description: Exact provider/model id (e.g. openai/gpt-5-mini). Overrides provider. Blank uses the default.
+        description: OpenCode provider/model id (e.g. openai/gpt-5-mini). Blank uses the default.
         required: false
         type: string
         default: ""
@@ -106,7 +96,6 @@ jobs:
       - name: Propose release notes
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          # Blank values fall through to the script's default model.
-          PROVIDER: ${{ inputs.provider }}
+          # Blank value falls through to the script's default model.
           MODEL: ${{ inputs.model }}
-        run: pnpm exec bun apps/cli/scripts/propose-release-notes.ts --tag "${TAG}" --provider "${PROVIDER}" --model "${MODEL}" --apply
+        run: pnpm exec bun apps/cli/scripts/propose-release-notes.ts --tag "${TAG}" --model "${MODEL}" --apply

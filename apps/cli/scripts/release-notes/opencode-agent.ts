@@ -12,7 +12,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
-import type { ModelRef } from "./select-model.ts";
 
 // The SDK spawns the `opencode` binary by name via cross-spawn, so it must be
 // resolvable on PATH. `pnpm exec` adds node_modules/.bin automatically, but a
@@ -63,7 +62,8 @@ const TOOLS: Record<string, boolean> = {
 
 export async function generateNotes(args: {
   prompt: string;
-  model: ModelRef;
+  /** OpenCode-valid model id in `provider/model` form, e.g. `openai/gpt-5-mini`. */
+  model: string;
   log: (line: string) => void;
 }): Promise<GenerateNotesResult> {
   const { prompt, model, log } = args;
@@ -76,19 +76,22 @@ export async function generateNotes(args: {
 
   ensureOpencodeOnPath();
   log(`==> Starting OpenCode server`);
-  const { client, server } = await createOpencode({ timeout: 30_000 });
+  // `config.model` sets the session's default model, so the prompt below omits
+  // `body.model`. OpenCode resolves the provider and its credential (e.g.
+  // ANTHROPIC_API_KEY / OPENAI_API_KEY) from the environment via ai-sdk +
+  // models.dev — no provider wiring needed on our side.
+  const { client, server } = await createOpencode({ config: { model }, timeout: 30_000 });
   try {
     const session = await client.session.create({ query: { directory } });
     if (session.error || !session.data) {
       throw new Error(`Failed to create OpenCode session: ${JSON.stringify(session.error)}`);
     }
 
-    log(`==> Prompting ${model.providerID}/${model.modelID}`);
+    log(`==> Prompting ${model}`);
     const result = await client.session.prompt({
       path: { id: session.data.id },
       query: { directory },
       body: {
-        model,
         tools: TOOLS,
         parts: [{ type: "text", text: prompt }],
       },
