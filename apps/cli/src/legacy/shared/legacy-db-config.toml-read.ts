@@ -480,17 +480,23 @@ function legacyJoinSupabaseSeedPath(pattern: string): string {
 const DEFAULT_SUPABASE_ENV = "development";
 
 /**
- * Project-ref identity keys that must not be applied to `process.env` from the
- * project `.env`. Go resolves the linked ref (`LoadProjectRef`) before
- * `loadNestedEnv`, so a `.env`-sourced value here must not retroactively retarget
- * the project via the lazily-built ref / pooler-fallback resolvers.
+ * Keys applied to `process.env` from the project `.env`. Kept to an allowlist of
+ * values that are read *only* via `process.env` (no project-env map path) and must
+ * reflect `supabase/.env` — currently just `SUPABASE_INTERNAL_IMAGE_REGISTRY`
+ * (`legacyGetRegistryImageUrl`). Everything else is read from the returned map
+ * (`envLookup`, `legacyResolveYesWithProjectEnv`, `resolveDbPassword`) or resolved
+ * eagerly from the shell before any `.env` load — Go's root globals (workdir /
+ * profile / `SUPABASE_ENV` / project-ref) are frozen before `loadNestedEnv`, so
+ * writing them here would let our lazily-built resolvers diverge from Go (retarget
+ * the project, switch the env-file set, or leak into the Go `--experimental` proxy).
  */
-const LEGACY_REF_IDENTITY_ENV_KEYS = new Set(["SUPABASE_PROJECT_ID"]);
+const LEGACY_PROCESS_ENV_APPLY_KEYS = new Set(["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
 
 /**
- * Load the project's nested `.env` files into a lookup map **and apply them to
- * `process.env`** (godotenv `os.Setenv`, never overriding an existing value),
- * mirroring Go's `loadNestedEnv` + `loadDefaultEnv` (`pkg/config/config.go:1047-1085`). Go walks
+ * Load the project's nested `.env` files into a lookup map **and apply an
+ * allowlisted subset to `process.env`** (see {@link LEGACY_PROCESS_ENV_APPLY_KEYS};
+ * never overriding an existing value), partially mirroring Go's `loadNestedEnv` +
+ * `loadDefaultEnv` (`pkg/config/config.go:1047-1085`). Go walks
  * from the `supabase/` directory up to the repo root and, in each directory,
  * loads `.env.<env>.local`, `.env.local` (skipped when `SUPABASE_ENV=test`),
  * `.env.<env>`, then `.env` via `godotenv.Load`, which never overrides a value
@@ -545,23 +551,20 @@ export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
       }
     }
   }
-  // Mirror Go's `godotenv.Load` (`loadNestedEnv`): the loaded values are written
-  // into the process environment so downstream `process.env` readers see project
-  // `.env` values — matching Go's `viper.AutomaticEnv`. This is why, e.g.,
-  // `SUPABASE_INTERNAL_IMAGE_REGISTRY` set only in `supabase/.env` reaches
-  // `legacyGetRegistryImageUrl` (which reads `process.env`) for native Docker
-  // pulls. `loaded` already excludes keys present in `process.env`, so an existing
-  // shell value is never overridden.
-  //
-  // Project-ref identity keys are deliberately NOT applied: Go resolves the linked
-  // ref via `LoadProjectRef` (`viper.GetString("PROJECT_ID")` = the shell env)
-  // BEFORE `LoadConfig`/`loadNestedEnv`, so a `SUPABASE_PROJECT_ID` in
-  // `supabase/.env` must never reach the (lazily-built) project-ref resolver or the
-  // pooler-fallback resolver and retarget the project. They stay in the returned
-  // map for config `env(...)` resolution, matching Go's later `viper` reads.
-  for (const [key, value] of Object.entries(loaded)) {
-    if (LEGACY_REF_IDENTITY_ENV_KEYS.has(key)) continue;
-    process.env[key] = value;
+  // Partially mirror Go's `godotenv.Load` (`loadNestedEnv`), which writes the
+  // project `.env` into the process environment so `viper.AutomaticEnv` readers see
+  // it. Go can apply everything because its root globals (workdir / profile /
+  // `SUPABASE_ENV` / project-ref) are resolved from the shell *before* this load;
+  // our resolvers read `process.env` lazily, so a broad apply would let them
+  // diverge. Apply only the allowlisted keys that have no project-env map path —
+  // today just the image registry, so `SUPABASE_INTERNAL_IMAGE_REGISTRY` set in
+  // `supabase/.env` reaches `legacyGetRegistryImageUrl`. `loaded` already excludes
+  // keys present in `process.env`, so an existing shell value is never overridden.
+  for (const key of LEGACY_PROCESS_ENV_APPLY_KEYS) {
+    const value = loaded[key];
+    if (value !== undefined && process.env[key] === undefined) {
+      process.env[key] = value;
+    }
   }
   return loaded;
 });

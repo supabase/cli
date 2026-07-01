@@ -1669,44 +1669,45 @@ describe("legacyReadDbToml", () => {
     },
   );
 
-  it.effect(
-    "legacyLoadProjectEnv applies .env to process.env but keeps SUPABASE_PROJECT_ID out",
-    () => {
-      // Go's loadNestedEnv os.Setenv's the project .env so process.env readers (e.g.
-      // the image registry) see it — but the linked ref is resolved (LoadProjectRef)
-      // BEFORE loadNestedEnv, so a .env SUPABASE_PROJECT_ID must not reach the lazy
-      // ref / pooler-fallback resolvers via process.env. It still appears in the
-      // returned map for config `env(...)` resolution.
-      const prevRegistry = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-      const prevProjectId = process.env["SUPABASE_PROJECT_ID"];
-      delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-      delete process.env["SUPABASE_PROJECT_ID"];
-      const dir = mkdtempSync(join(tmpdir(), "legacy-db-toml-"));
-      mkdirSync(join(dir, "supabase"), { recursive: true });
-      writeFileSync(
-        join(dir, "supabase", ".env"),
-        "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\nSUPABASE_PROJECT_ID=envonlyref\n",
-      );
-      return loadEnv(dir).pipe(
-        Effect.tap((env) =>
-          Effect.sync(() => {
-            // The returned map carries both (config env() resolution still works).
-            expect(env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
-            expect(env["SUPABASE_PROJECT_ID"]).toBe("envonlyref");
-            // process.env gets the ambient registry, but NOT the project-ref identity.
-            expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
-            expect(process.env["SUPABASE_PROJECT_ID"]).toBeUndefined();
-            delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-            if (prevRegistry !== undefined) {
-              process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prevRegistry;
-            }
-            if (prevProjectId !== undefined) process.env["SUPABASE_PROJECT_ID"] = prevProjectId;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
-  );
+  it.effect("legacyLoadProjectEnv applies only the allowlisted registry key to process.env", () => {
+    // Go's loadNestedEnv os.Setenv's the project .env, but its root globals
+    // (project-ref, SUPABASE_ENV, workdir/profile) are resolved from the shell
+    // BEFORE loadNestedEnv. Our resolvers read process.env lazily, so we apply only
+    // the allowlisted `SUPABASE_INTERNAL_IMAGE_REGISTRY` (the one process.env-only
+    // reader): a .env project-ref must not retarget the lazy ref/pooler resolvers,
+    // and a .env SUPABASE_ENV must not switch the env-file set. All keys still
+    // appear in the returned map for config `env(...)` resolution.
+    const saved: Record<string, string | undefined> = {};
+    for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    const dir = mkdtempSync(join(tmpdir(), "legacy-db-toml-"));
+    mkdirSync(join(dir, "supabase"), { recursive: true });
+    writeFileSync(
+      join(dir, "supabase", ".env"),
+      "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\nSUPABASE_PROJECT_ID=envonlyref\nSUPABASE_ENV=staging\n",
+    );
+    return loadEnv(dir).pipe(
+      Effect.tap((env) =>
+        Effect.sync(() => {
+          // The returned map carries all keys (config env() resolution still works).
+          expect(env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
+          expect(env["SUPABASE_PROJECT_ID"]).toBe("envonlyref");
+          expect(env["SUPABASE_ENV"]).toBe("staging");
+          // process.env gets only the ambient registry — not the ref or env selector.
+          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
+          expect(process.env["SUPABASE_PROJECT_ID"]).toBeUndefined();
+          expect(process.env["SUPABASE_ENV"]).toBeUndefined();
+          for (const [k, v] of Object.entries(saved)) {
+            if (v === undefined) delete process.env[k];
+            else process.env[k] = v;
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 
   it.effect("ignores a [db.pooler] connection_string in config.toml (Go reads .temp only)", () => {
     // The Go config field is tagged `toml:"-"`, so a connection_string in config.toml
