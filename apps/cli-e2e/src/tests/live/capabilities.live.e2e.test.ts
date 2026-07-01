@@ -30,15 +30,17 @@ describe("capability probes (live)", () => {
     },
   );
 
-  // C3 — external tool, no docker/internet. `db dump` of the remote schema over
-  // the IPv4 pooler using the native pg_dump/psql on PATH
-  // (SUPABASE_DB_USE_LOCAL_TOOLS), i.e. without spawning a supabase/postgres
-  // container. Fails if the external tool is absent.
+  // C3 — external tool, no docker/internet. `db dump` normally runs `pg_dump` in a
+  // supabase/postgres CONTAINER; `SUPABASE_DB_USE_LOCAL_TOOLS=1` switches it to the
+  // native pg_dump/psql on PATH, so this exercises the external-tool path (no
+  // Docker socket) rather than the container path. Fails if the tool is absent.
   testLiveRequires(["external-tool"])(
-    "[C3] external tool: db dump exports the remote schema",
+    "[C3] external tool: db dump exports the remote schema via native pg_dump",
     async ({ run, dbUrl, workspace }) => {
       const file = join(workspace.path, "dump.sql");
-      const res = await run(["db", "dump", "--db-url", dbUrl, "-f", file]);
+      const res = await run(["db", "dump", "--db-url", dbUrl, "-f", file], {
+        env: { SUPABASE_DB_USE_LOCAL_TOOLS: "1" },
+      });
       expect(res.exitCode, res.stderr).toBe(0);
       expect(existsSync(file)).toBe(true);
       expect(readFileSync(file, "utf8")).toMatch(/CREATE|PostgreSQL database dump|SCHEMA/i);
@@ -55,8 +57,10 @@ describe("capability probes (live)", () => {
     async ({ run, dbUrl, workspace }) => {
       const migrations = join(workspace.path, "supabase", "migrations");
       mkdirSync(migrations, { recursive: true });
+      // Unique timestamp so this never collides with db-sync.live.e2e.test.ts's
+      // migration on the shared per-run project (history compares timestamps).
       writeFileSync(
-        join(migrations, "20240101000000_probe_push.sql"),
+        join(migrations, "20240202020202_capability_probe_push.sql"),
         "create table if not exists capability_probe (id int);\n",
       );
 
@@ -90,15 +94,17 @@ describe("capability probes (live)", () => {
     },
   );
 
-  // C5 — docker AND runtime internet. Same jsr-importing function, but bundled
-  // locally in a Docker container (`--use-docker`): needs a Docker socket AND the
-  // in-container bundler needs internet to fetch the jsr import. Fails if either
-  // is missing.
+  // C5 — docker AND runtime internet. Bundle an npm-importing function locally in
+  // a Docker container (`--use-docker`): needs a Docker socket AND the in-container
+  // bundler needs internet to fetch the npm import. A DISTINCT slug from C4 so the
+  // invoke proves THIS (--use-docker) deploy produced the running function, not
+  // C4's earlier server-bundled one on the shared project. Fails if either is
+  // missing.
   testLiveRequires(["docker", "internet"])(
-    "[C5] docker + internet: --use-docker deploy of a jsr function",
+    "[C5] docker + internet: --use-docker deploy of an npm-importing function",
     async ({ run, invoke, workspace, projectRef }) => {
       seedFunctions(workspace.path);
-      const slug = "deploy-e2e-jsr";
+      const slug = "deploy-e2e-npm";
       const deployed = await run([
         "functions",
         "deploy",

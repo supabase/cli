@@ -2,7 +2,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { expectFunctionOk } from "./invoke.ts";
-import { seedFunctions, testLive } from "./live-context.ts";
+import { seedFunctions, testLiveRequires } from "./live-context.ts";
 
 // Pilot (ADR-0013): deploy with the real CLI across the three bundler paths,
 // then invoke the deployed function over HTTP and assert the body it returns.
@@ -10,35 +10,47 @@ import { seedFunctions, testLive } from "./live-context.ts";
 // produced a running function — the shared project means a single slug could
 // otherwise be served by an earlier mode's deploy. Negative/arg-validation
 // cases live in apps/cli integration tests.
+// `requires` per mode: `--use-docker` bundles locally in a container (needs a
+// Docker socket); default/`--use-api` bundle server-side (no local docker). The
+// fixtures here are import-free, so no runtime internet is required.
 const MODES = [
-  { name: "default", slug: "deploy-e2e-mode-default", flags: [] as string[] },
-  { name: "use-api", slug: "deploy-e2e-mode-api", flags: ["--use-api"] },
-  { name: "use-docker", slug: "deploy-e2e-mode-docker", flags: ["--use-docker"] },
+  { name: "default", slug: "deploy-e2e-mode-default", flags: [] as string[], requires: [] },
+  { name: "use-api", slug: "deploy-e2e-mode-api", flags: ["--use-api"], requires: [] },
+  {
+    name: "use-docker",
+    slug: "deploy-e2e-mode-docker",
+    flags: ["--use-docker"],
+    requires: ["docker"],
+  },
 ] as const;
 
-describe.each(MODES)("functions deploy ($name)", ({ slug, flags }) => {
-  testLive("deploys and the function responds", async ({ run, invoke, workspace, projectRef }) => {
-    seedFunctions(workspace.path);
-    const deployed = await run([
-      "functions",
-      "deploy",
-      slug,
-      "--project-ref",
-      projectRef,
-      ...flags,
-    ]);
-    expect(deployed.exitCode, deployed.stderr).toBe(0);
-    expect(deployed.stdout).toContain("Deployed Functions");
+describe.each(MODES)("functions deploy ($name)", ({ slug, flags, requires }) => {
+  testLiveRequires(requires)(
+    "deploys and the function responds",
+    async ({ run, invoke, workspace, projectRef }) => {
+      seedFunctions(workspace.path);
+      const deployed = await run([
+        "functions",
+        "deploy",
+        slug,
+        "--project-ref",
+        projectRef,
+        ...flags,
+      ]);
+      expect(deployed.exitCode, deployed.stderr).toBe(0);
+      expect(deployed.stdout).toContain("Deployed Functions");
 
-    const res = await invoke(slug);
-    expectFunctionOk(res, slug);
-  });
+      const res = await invoke(slug);
+      expectFunctionOk(res, slug);
+    },
+  );
 });
 
 // No slug → the CLI walks every function declared under supabase/functions and
 // deploys them all. Assert each declared function appears in the deploy output,
-// then smoke-invoke a representative one.
-testLive(
+// then smoke-invoke a representative one. Requires `internet`: the fixture set
+// includes functions that import from jsr.io / npm, resolved at bundle time.
+testLiveRequires(["internet"])(
   "deploys every declared function when no slug is given",
   async ({ run, invoke, workspace, projectRef }) => {
     seedFunctions(workspace.path);

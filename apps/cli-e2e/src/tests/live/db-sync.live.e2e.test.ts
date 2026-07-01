@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
-import { testLive } from "./live-context.ts";
+import { testLiveRequires } from "./live-context.ts";
 
 // Local↔remote schema sync (workflows 1-2) over the IPv4 session pooler. Done as
 // one round-trip in a single workspace: pushing first makes the local migration
@@ -9,8 +9,11 @@ import { testLive } from "./live-context.ts";
 // (a separate fresh-workspace pull would see a history mismatch on the shared
 // per-run project). db push/pull confirm via a prompt that only auto-accepts
 // with --yes. Mutates the throwaway project's schema — deleted on teardown.
+//
+// Requires `docker`: `db pull`'s schema diff starts a shadow postgres server
+// (DockerStart) + diff container, so it skips on targets without a Docker socket.
 describe("db push + pull (live, session pooler)", () => {
-  testLive(
+  testLiveRequires(["docker"])(
     "pushes a local migration and pulls the remote schema back",
     async ({ run, dbUrl, workspace }) => {
       const migrations = join(workspace.path, "supabase", "migrations");

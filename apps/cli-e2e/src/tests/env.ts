@@ -74,15 +74,30 @@ function isCapability(value: string): value is Capability {
   return (ALL_CAPABILITIES as readonly string[]).includes(value);
 }
 
+// Parse the comma list, rejecting unknown tokens: silently dropping a typo (e.g.
+// `external_tools`) would skip every test for that capability and still leave the
+// run green, hiding coverage the environment thought it had enabled.
+function parseCapabilities(raw: string): Capability[] {
+  const tokens = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  const unknown = tokens.filter((token) => !isCapability(token));
+  if (unknown.length > 0) {
+    throw new Error(
+      `Unknown CLI_E2E_CAPABILITIES: ${unknown.join(", ")}. Valid: ${ALL_CAPABILITIES.join(", ")}.`,
+    );
+  }
+  return tokens.filter(isCapability);
+}
+
 // Override the per-target defaults with an explicit comma list, e.g.
 // CLI_E2E_CAPABILITIES=docker,external-tool (an Antithesis run never sets `internet`).
 const CAPABILITIES_OVERRIDE = process.env["CLI_E2E_CAPABILITIES"];
 export const PROVIDED_CAPABILITIES: ReadonlySet<Capability> = new Set(
   CAPABILITIES_OVERRIDE === undefined
     ? DEFAULT_CAPABILITIES[TARGET_ENV]
-    : CAPABILITIES_OVERRIDE.split(",")
-        .map((entry) => entry.trim())
-        .filter(isCapability),
+    : parseCapabilities(CAPABILITIES_OVERRIDE),
 );
 
 // In replay mode the token never reaches a real API, but the Go CLI validates
