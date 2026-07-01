@@ -71,3 +71,55 @@ export function requireLiveProjectRef(): string {
   }
   return ref;
 }
+
+/**
+ * Whether the live project's *data-plane* — its own Postgres instance — is up
+ * and healthy. This is a stronger gate than `liveProjectRef()`: cli-e2e-ci
+ * currently builds the stack WITHOUT `supabase-postgres-17` (CLI-1825), so a
+ * provisioned project's *record* exists — Management-API reads (orgs / projects
+ * / functions / branches list) work — but the instance never reaches
+ * `ACTIVE_HEALTHY` and its database is unreachable. Commands that talk to the
+ * project Postgres (migration, db, storage) gate on this and SKIP until the full
+ * stack lands, then activate automatically.
+ *
+ * Probes `GET /v1/projects` (already proven reachable by `projects list`) and
+ * matches the live ref. Any failure or missing prerequisite returns `false` —
+ * "not ready" is the safe default, so a probe error skips rather than fails the
+ * suite.
+ */
+export async function liveProjectDataPlaneReady(): Promise<boolean> {
+  const token = process.env["SUPABASE_ACCESS_TOKEN"];
+  const ref = liveProjectRef();
+  if (token === undefined || token.length === 0 || ref === undefined) {
+    return false;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15_000);
+  try {
+    const response = await fetch(`${liveApiBaseUrl()}/v1/projects`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      return false;
+    }
+    const projects: unknown = await response.json();
+    if (!Array.isArray(projects)) {
+      return false;
+    }
+    return projects.some(
+      (candidate) =>
+        candidate !== null &&
+        typeof candidate === "object" &&
+        "ref" in candidate &&
+        candidate.ref === ref &&
+        "status" in candidate &&
+        candidate.status === "ACTIVE_HEALTHY",
+    );
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}

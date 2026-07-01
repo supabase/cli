@@ -157,4 +157,31 @@ describe("resolveLegacyDbTargetFlags", () => {
     expect(result.connType).toBe("linked");
     expect(result.setFlags).toEqual(["linked"]);
   });
+
+  it("skips value token after bare -p so --local is the password value, not a target", () => {
+    // Go: `StringVarP(&dbPassword, "password", "p", …)` — `-p --local` means the
+    // password is `--local`, so `local` is not Changed (linked default applies).
+    const result = resolveLegacyDbTargetFlags(["migration", "list", "-p", "--local"]);
+    expect(result.connType).toBeUndefined();
+    expect(result.setFlags).toEqual([]);
+  });
+
+  it("skips value token after bare --password so --linked is its value, not a flag", () => {
+    const result = resolveLegacyDbTargetFlags(["--password", "--linked"]);
+    expect(result.connType).toBeUndefined();
+    expect(result.setFlags).toEqual([]);
+  });
+
+  it("-ppwd (attached short password) does NOT consume the next token", () => {
+    // Attached value: `--local` is a real selector.
+    const result = resolveLegacyDbTargetFlags(["-ppwd", "--local"]);
+    expect(result.connType).toBe("local");
+    expect(result.setFlags).toEqual(["local"]);
+  });
+
+  it("--password=pwd (attached long form) does NOT consume the next token", () => {
+    const result = resolveLegacyDbTargetFlags(["--password=pwd", "--local"]);
+    expect(result.connType).toBe("local");
+    expect(result.setFlags).toEqual(["local"]);
+  });
 });

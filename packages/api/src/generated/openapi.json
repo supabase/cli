@@ -18698,14 +18698,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "fileSizeLimit",
-          "features",
-          "capabilities",
-          "external",
-          "migrationVersion",
-          "databasePoolMode"
-        ]
+        "required": ["fileSizeLimit", "features", "capabilities", "external", "migrationVersion"]
       },
       "UpdateStorageConfigBody": {
         "type": "object",

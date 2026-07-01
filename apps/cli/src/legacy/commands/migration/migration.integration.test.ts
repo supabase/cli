@@ -25,15 +25,15 @@ const legacyTestRoot = Command.make("supabase").pipe(
 
 describe("legacy migration command integration", () => {
   it.live("accepts the Go-compatible plural migrations alias", () => {
+    // Routes through `squash`, which stays a deliberate Go-proxy delegate (a
+    // native pg-delta squash would diverge from Go's pg_dump output — see the
+    // porting-status doc), so this also asserts the proxy path still works while
+    // the other six subcommands are now native.
     const proxy = mockLegacyGoProxy();
     const run = Effect.gen(function* () {
-      yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-        "migrations",
-        "new",
-        "create_widgets",
-      ]);
+      yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["migrations", "squash"]);
 
-      expect(proxy.calls).toEqual([["migration", "new", "create_widgets"]]);
+      expect(proxy.calls).toEqual([["migration", "squash"]]);
     }).pipe(Effect.provide(Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()))));
 
     // Command.runWith's Environment type is retained even though this path only needs CliOutput

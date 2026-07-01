@@ -46,6 +46,8 @@ interface RouteOpts {
   readonly postgrestPatch?: { status: number; body: unknown } | "fail";
   readonly postgresGet?: { status: number; body: unknown };
   readonly postgresPut?: { status: number; body: unknown };
+  readonly storageGet?: { status: number; body: unknown };
+  readonly storagePatch?: { status: number; body: unknown };
 }
 
 function setup(opts: {
@@ -89,6 +91,14 @@ function setup(opts: {
         const p = routes.postgresPut ?? { status: 200, body: {} };
         return Effect.succeed(legacyJsonResponse(request, p.status, p.body));
       }
+      if (url.includes("/config/storage")) {
+        if (request.method === "GET") {
+          const g = routes.storageGet ?? { status: 200, body: {} };
+          return Effect.succeed(legacyJsonResponse(request, g.status, g.body));
+        }
+        const p = routes.storagePatch ?? { status: 200, body: {} };
+        return Effect.succeed(legacyJsonResponse(request, p.status, p.body));
+      }
       // Anything else (auth/storage/etc.) — succeed with empty so unconfigured
       // gated services don't hang if a test enables them.
       return Effect.succeed(legacyJsonResponse(request, 200, {}));
@@ -118,6 +128,20 @@ enabled = false
 [storage]
 enabled = false
 `;
+
+const STORAGE_CONFIG_WITHOUT_POOL_MODE = {
+  fileSizeLimit: 52428800,
+  features: {
+    imageTransformation: { enabled: false },
+    s3Protocol: { enabled: false },
+    purgeCache: { enabled: false },
+    icebergCatalog: { enabled: false, maxNamespaces: 0, maxTables: 0, maxCatalogs: 0 },
+    vectorBuckets: { enabled: false, maxBuckets: 0, maxIndexes: 0 },
+  },
+  capabilities: { list_v2: true, iceberg_catalog: false },
+  external: { upstreamTarget: "main" },
+  migrationVersion: "20240701",
+};
 
 describe("legacy config push integration", () => {
   it.live("pushes local config (text, Go parity) and surfaces a PATCH failure", () => {
@@ -304,6 +328,30 @@ project_id = "abcdefghijklmnopqrst"
       expect(success).toBeDefined();
       expect(success?.data?.project_ref).toBe("abcdefghijklmnopqrst");
       expect(Array.isArray(success?.data?.services)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("pushes storage when the remote response omits databasePoolMode", () => {
+    const { layer, api } = setup({
+      toml: `project_id = "test"
+[auth]
+enabled = false
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+`,
+      yes: true,
+      routes: {
+        postgrestGet: { status: 200, body: POSTGREST_DISABLED },
+        postgresGet: { status: 200, body: {} },
+        storageGet: { status: 200, body: STORAGE_CONFIG_WITHOUT_POOL_MODE },
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(
+        api.requests.some((r) => r.method === "GET" && r.url.includes("/config/storage")),
+      ).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 

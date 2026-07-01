@@ -63,6 +63,423 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  // Go's test vector (`apps/cli-go/pkg/config/secret_test.go`): this ciphertext
+  // decrypts to "value" under the keypair below.
+  const VAULT_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+  const VAULT_ENCRYPTED =
+    "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+
+  it.effect("decrypts an encrypted: [db.vault] secret when DOTENV_PRIVATE_KEY is set", () => {
+    const previous = process.env["DOTENV_PRIVATE_KEY"];
+    process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+    const dir = withConfig(["[db.vault]", `my_secret = "${VAULT_ENCRYPTED}"`, ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.vault).toEqual([{ name: "my_secret", value: "value", resolved: true }]);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
+          else process.env["DOTENV_PRIVATE_KEY"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("fails the load for an encrypted: [db.vault] secret with no private key", () => {
+    // Go aborts the whole command (`failed to parse config: missing private key`)
+    // rather than silently skipping the secret (`secret.go`, `config.go:661-667`).
+    const previous = process.env["DOTENV_PRIVATE_KEY"];
+    delete process.env["DOTENV_PRIVATE_KEY"];
+    const dir = withConfig(["[db.vault]", `my_secret = "${VAULT_ENCRYPTED}"`, ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "failed to parse config: missing private key",
+            );
+          }
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous !== undefined) process.env["DOTENV_PRIVATE_KEY"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("collapses . and .. in relative seed sql_paths like Go's path.Join", () => {
+    // Go prefixes each relative pattern with `path.Join("supabase", pattern)`, which
+    // runs `path.Clean` (`config.go:881-886`). The cleaned path is the seed_files key.
+    const dir = withConfig(
+      ["[db.seed]", 'sql_paths = ["../seed.sql", "sub/../other.sql", "./plain.sql"]', ""].join(
+        "\n",
+      ),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.sqlPaths).toEqual(["seed.sql", "supabase/other.sql", "supabase/plain.sql"]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("honors SUPABASE_DB_SEED_SQL_PATHS over the TOML array (comma split, no trim)", () => {
+    // Go's StringToSliceHookFunc(",") splits without trimming, so " b.sql" keeps its space.
+    const previous = process.env["SUPABASE_DB_SEED_SQL_PATHS"];
+    process.env["SUPABASE_DB_SEED_SQL_PATHS"] = "a.sql, b.sql";
+    const dir = withConfig(["[db.seed]", 'sql_paths = ["ignored.sql"]', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.sqlPaths).toEqual(["supabase/a.sql", "supabase/ b.sql"]);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_DB_SEED_SQL_PATHS"];
+          else process.env["SUPABASE_DB_SEED_SQL_PATHS"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("decodes a STRING db.seed.sql_paths via StringToSliceHookFunc (comma, no trim)", () => {
+    // Go decodes a non-array sql_paths string into a slice (config.go:691), not just the
+    // env override; `"a.sql,b.sql"` → two supabase-prefixed paths, no trimming.
+    const dir = withConfig(["[db.seed]", 'sql_paths = "a.sql,b.sql"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.sqlPaths).toEqual(["supabase/a.sql", "supabase/b.sql"]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("treats an empty-string db.seed.sql_paths as no patterns (Go []string{})", () => {
+    const dir = withConfig(["[db.seed]", 'sql_paths = ""', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.sqlPaths).toEqual([]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "expands env() before splitting a string sql_paths (LoadEnv before StringToSlice)",
+    () => {
+      // Go runs LoadEnvHook before StringToSliceHookFunc(","), so env(SEEDS)=a.sql,b.sql
+      // expands first and then splits into two patterns.
+      const previous = process.env["SEEDS"];
+      process.env["SEEDS"] = "a.sql,b.sql";
+      const dir = withConfig(["[db.seed]", 'sql_paths = "env(SEEDS)"', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.seed.sqlPaths).toEqual(["supabase/a.sql", "supabase/b.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SEEDS"];
+            else process.env["SEEDS"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("expands an env() array element but does NOT split it (Go array asymmetry)", () => {
+    // A TOML array element is decoded string→string: LoadEnvHook expands it, but
+    // StringToSliceHookFunc does not fire, so it stays one (comma-containing) pattern.
+    const previous = process.env["SEEDS"];
+    process.env["SEEDS"] = "a.sql,b.sql";
+    const dir = withConfig(["[db.seed]", 'sql_paths = ["env(SEEDS)"]', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.sqlPaths).toEqual(["supabase/a.sql,b.sql"]);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SEEDS"];
+          else process.env["SEEDS"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("decodes a numeric db.seed.enabled = 0 as false (Go weak-bool decode)", () => {
+    const dir = withConfig(["[db.seed]", "enabled = 0", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.enabled).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("decodes a numeric db.migrations.enabled = 0 as false", () => {
+    const dir = withConfig(["[db.migrations]", "enabled = 0", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.migrationsEnabled).toBe(false);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "decodes a numeric experimental.pgdelta.enabled = 1 as true (Go weak-bool decode)",
+    () => {
+      const dir = withConfig(["[experimental.pgdelta]", "enabled = 1", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.pgDelta.enabled).toBe(true);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("rejects an explicit db.port = 0 (Go's Missing required field)", () => {
+    const dir = withConfig(["[db]", "port = 0", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Missing required field in config: db.port",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("an explicit remote db.migrations.enabled beats SUPABASE_DB_MIGRATIONS_ENABLED", () => {
+    // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv
+    // (config.go:635-637), so an explicit remote value wins over the env var.
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
+    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
+    const dir = withConfig(
+      ["[remotes.prod]", `project_id = "${ref}"`, "db.migrations.enabled = true", ""].join("\n"),
+    );
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.migrationsEnabled).toBe(true);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
+          else process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("SUPABASE_DB_MIGRATIONS_ENABLED still wins when the remote block omits it", () => {
+    // Control: the env override is suppressed only for keys the matched block explicitly
+    // set; a block that omits db.migrations.enabled leaves the env override in force.
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
+    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
+    const dir = withConfig(["[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"));
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.migrationsEnabled).toBe(false);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
+          else process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("an explicit remote experimental.pgdelta.enabled beats its SUPABASE_* env var", () => {
+    // Go's mergeRemoteConfig applies EVERY matched-block key via v.Set (above AutomaticEnv,
+    // config.go:635-637), not just db/seed — so a remote experimental.pgdelta.enabled wins
+    // over SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED.
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "false";
+    const dir = withConfig(
+      [
+        "[remotes.prod]",
+        `project_id = "${ref}"`,
+        "[remotes.prod.experimental.pgdelta]",
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.pgDelta.enabled).toBe(true);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED still wins when the block omits pgdelta", () => {
+    // Control: the env override is suppressed only for keys the matched block explicitly set;
+    // a block that omits experimental.pgdelta.enabled leaves the env override in force.
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "true";
+    const dir = withConfig(["[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"));
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.pgDelta.enabled).toBe(true);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("matches a remote block by a SUPABASE_REMOTES_<NAME>_PROJECT_ID env override", () => {
+    // Viper AutomaticEnv supplies/overrides remotes.prod.project_id, so the block merges
+    // even with no TOML project_id (here it lifts major_version 15 over the base default).
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
+    process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = ref;
+    const dir = withConfig(["[remotes.prod]", "db.major_version = 15", ""].join("\n"));
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.majorVersion).toBe(15);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
+          else process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("validates a remote project_id supplied only via env (no TOML literal)", () => {
+    // Without the env value the block (no TOML project_id) would fail Validate; the env
+    // override supplies a valid ref, so the load succeeds.
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
+    process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = ref;
+    const dir = withConfig(["[remotes.prod]", "db.major_version = 15", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          // Load succeeded (no invalid-remote error); read() without a ref leaves the base
+          // major_version default (17) since the block is not merged.
+          expect(v.majorVersion).toBe(17);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
+          else process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("a remote block forcing db.seed.enabled=false beats SUPABASE_DB_SEED_ENABLED", () => {
+    // Go's mergeRemoteConfig v.Set(false) is an override-tier value above AutomaticEnv,
+    // so a remote that omits db.seed.enabled stays unseeded even with the env var set.
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_DB_SEED_ENABLED"];
+    process.env["SUPABASE_DB_SEED_ENABLED"] = "true";
+    const dir = withConfig(["[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"));
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.enabled).toBe(false);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_DB_SEED_ENABLED"];
+          else process.env["SUPABASE_DB_SEED_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("SUPABASE_DB_SEED_ENABLED still wins on the local path (no remote force)", () => {
+    // Negative control: with no matched remote block, the env override applies normally.
+    const previous = process.env["SUPABASE_DB_SEED_ENABLED"];
+    process.env["SUPABASE_DB_SEED_ENABLED"] = "false";
+    const dir = withConfig(["[db.seed]", "enabled = true", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.enabled).toBe(false);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_DB_SEED_ENABLED"];
+          else process.env["SUPABASE_DB_SEED_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("reads [edge_runtime] deno_version = 1 (selects the deno1 image)", () => {
     const dir = withConfig(["[edge_runtime]", "deno_version = 1", ""].join("\n"));
     return read(dir).pipe(
@@ -150,6 +567,54 @@ describe("legacyReadDbToml", () => {
         Effect.tap((v) =>
           Effect.sync(() => {
             expect(v.majorVersion).toBe(15);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    });
+
+    it.effect("forces db.seed.enabled false when the matched remote block omits it", () => {
+      // Go's mergeRemoteConfig (config.go:638-640) forces db.seed.enabled=false when the
+      // matched remote block itself doesn't set it — even if the base config enables it.
+      const dir = withConfig(
+        [
+          'project_id = "base"',
+          "[db.seed]",
+          "enabled = true",
+          "[remotes.production]",
+          'project_id = "prodprodprodprodprod"',
+          "[remotes.production.db]",
+          "major_version = 17",
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, "prodprodprodprodprod").pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.seed.enabled).toBe(false);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    });
+
+    it.effect("keeps db.seed.enabled true when the matched remote block sets it explicitly", () => {
+      const dir = withConfig(
+        [
+          'project_id = "base"',
+          "[db.seed]",
+          "enabled = false",
+          "[remotes.production]",
+          'project_id = "prodprodprodprodprod"',
+          "[remotes.production.db.seed]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, "prodprodprodprodprod").pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.seed.enabled).toBe(true);
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
@@ -424,6 +889,38 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("expands an env() indirection in the PGDELTA_DECLARATIVE_SCHEMA_PATH override", () => {
+    // Go decodes the AutomaticEnv override through LoadEnvHook (decode_hooks.go:15-26), so an
+    // env(VAR) indirection resolves before the supabase/ join — not stored literally.
+    const dir = withConfig(undefined);
+    const savedEnabled = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+    const savedPath = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"];
+    const savedDir = process.env["SCHEMA_DIR"];
+    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "true";
+    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"] = "env(SCHEMA_DIR)";
+    process.env["SCHEMA_DIR"] = "schemas";
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.pgDelta.declarativeSchemaPath)).toBe("supabase/schemas");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (savedEnabled === undefined)
+            delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
+          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = savedEnabled;
+          if (savedPath === undefined)
+            delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"];
+          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"] = savedPath;
+          if (savedDir === undefined) delete process.env["SCHEMA_DIR"];
+          else process.env["SCHEMA_DIR"] = savedDir;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("treats SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=1 as true (Go strconv.ParseBool)", () => {
     const dir = withConfig(undefined);
     const saved = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
@@ -564,6 +1061,85 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("expands env(VAR) in db.seed.sql_paths entries before supabase-prefixing", () => {
+    // Go's LoadEnvHook expands env(VAR) on every string element of db.seed.sql_paths
+    // during unmarshal, before resolve() prefixes relative patterns — so the glob is
+    // the expanded value, not the literal `supabase/env(...)`.
+    process.env["LEGACY_SEED_SQL"] = "custom/data.sql";
+    const dir = withConfig(["[db.seed]", 'sql_paths = ["env(LEGACY_SEED_SQL)"]', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.sqlPaths).toEqual(["supabase/custom/data.sql"]);
+          delete process.env["LEGACY_SEED_SQL"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("honors SUPABASE_DB_SEED_ENABLED over the TOML value (Go AutomaticEnv)", () => {
+    process.env["SUPABASE_DB_SEED_ENABLED"] = "false";
+    const dir = withConfig(["[db.seed]", "enabled = true", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.enabled).toBe(false);
+          delete process.env["SUPABASE_DB_SEED_ENABLED"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("expands an env() indirection in SUPABASE_DB_SEED_ENABLED (Go LoadEnvHook)", () => {
+    // Go decodes the AutomaticEnv override through LoadEnvHook before the bool parse
+    // (decode_hooks.go:15-26), so `env(SEED_ON)` resolves to SEED_ON's value rather
+    // than failing the load on a literal `env(...)` bool.
+    process.env["SUPABASE_DB_SEED_ENABLED"] = "env(SEED_ON)";
+    process.env["SEED_ON"] = "false";
+    const dir = withConfig(["[db.seed]", "enabled = true", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.seed.enabled).toBe(false);
+          delete process.env["SUPABASE_DB_SEED_ENABLED"];
+          delete process.env["SEED_ON"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("honors SUPABASE_DB_MIGRATIONS_ENABLED over the default (Go AutomaticEnv)", () => {
+    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
+    const dir = withConfig(undefined);
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.migrationsEnabled).toBe(false);
+          delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("fails the load on a malformed SUPABASE_DB_SEED_ENABLED override", () => {
+    process.env["SUPABASE_DB_SEED_ENABLED"] = "notabool";
+    const dir = withConfig(undefined);
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          delete process.env["SUPABASE_DB_SEED_ENABLED"];
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect(
     "expands env(VAR) for the top-level project_id (Go config.Load before Docker IDs)",
     () => {
@@ -583,10 +1159,12 @@ describe("legacyReadDbToml", () => {
     },
   );
 
-  it.effect("accepts an env-backed remote project_id that expands to a valid ref", () => {
-    // Go expands env(VAR) via LoadEnvHook before Validate checks the ref pattern
-    // (config.go:832-836), so an env-backed remote project_id is validated and
-    // merged by its resolved value.
+  it.effect("does not merge a remote block whose project_id is a TOML env() literal", () => {
+    // Go's in-load matching reads remotes.<name>.project_id via v.GetString (config.go:510),
+    // which returns the RAW literal `env(LEGACY_STAGING_REF)` — LoadEnvHook only expands it
+    // during the later UnmarshalExact. So the block is NOT selected by its expanded ref and
+    // does not merge (major_version stays the base 15), while Validate over the decoded,
+    // expanded field (config.go:909-913) still passes the load.
     process.env["LEGACY_STAGING_REF"] = "stagingrefstagingref";
     const dir = withConfig(
       [
@@ -603,7 +1181,7 @@ describe("legacyReadDbToml", () => {
     return readRef(dir, "stagingrefstagingref").pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.majorVersion).toBe(17); // remote block merged via the expanded ref
+          expect(v.majorVersion).toBe(15); // block not merged: matched on the raw env() literal
           delete process.env["LEGACY_STAGING_REF"];
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -1238,4 +1816,440 @@ describe("legacyResolveDeclarativeDir", () => {
       ).toBe(join("supabase", "db", "decl"));
     }).pipe(Effect.provide(BunServices.layer)),
   );
+});
+
+describe("legacyReadDbToml auth.Enabled validation (Go config.Validate parity)", () => {
+  // Fails the config load with `message` contained in the surfaced error.
+  const failsWith = (
+    lines: ReadonlyArray<string>,
+    message: string,
+    extra?: (dir: string) => void,
+  ) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      if (extra) extra(dir);
+      const exit = yield* read(dir).pipe(Effect.exit);
+      expect(Exit.isFailure(exit), `expected failure containing: ${message}`).toBe(true);
+      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain(message);
+      rmSync(dir, { recursive: true, force: true });
+    });
+  // Loads cleanly — no validation error (the read resolves to a value).
+  const succeeds = (lines: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      const v = yield* read(dir);
+      expect(v.baseline).toBeDefined();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+  it.effect("rejects an explicit empty auth.site_url", () =>
+    failsWith(["[auth]", 'site_url = ""'], "Missing required field in config: auth.site_url"),
+  );
+  it.effect("defaults an absent auth.site_url (Go template default) — no error", () =>
+    succeeds(["[auth]", "enabled = true"]),
+  );
+  it.effect("skips all auth validation when auth.enabled = false", () =>
+    succeeds(["[auth]", "enabled = false", 'site_url = ""', "[auth.passkey]", "enabled = true"]),
+  );
+
+  it.effect("rejects an enabled captcha without a provider", () =>
+    failsWith(
+      ["[auth.captcha]", "enabled = true", 'secret = "x"'],
+      "Missing required field in config: auth.captcha.provider",
+    ),
+  );
+
+  // The reviewer's case: passkey enabled requires a valid [auth.webauthn].
+  it.effect("rejects passkey enabled without [auth.webauthn]", () =>
+    failsWith(
+      ["[auth.passkey]", "enabled = true"],
+      "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
+    ),
+  );
+  it.effect("rejects passkey enabled with webauthn missing rp_id", () =>
+    failsWith(
+      ["[auth.passkey]", "enabled = true", "[auth.webauthn]", 'rp_origins = ["http://x"]'],
+      "Missing required field in config: auth.webauthn.rp_id",
+    ),
+  );
+  it.effect("rejects passkey enabled with webauthn missing rp_origins", () =>
+    failsWith(
+      ["[auth.passkey]", "enabled = true", "[auth.webauthn]", 'rp_id = "localhost"'],
+      "Missing required field in config: auth.webauthn.rp_origins",
+    ),
+  );
+  it.effect("accepts passkey enabled with a complete [auth.webauthn]", () =>
+    succeeds([
+      "[auth.passkey]",
+      "enabled = true",
+      "[auth.webauthn]",
+      'rp_id = "localhost"',
+      'rp_origins = ["http://localhost:3000"]',
+    ]),
+  );
+
+  it.effect("rejects an http hook missing secrets", () =>
+    failsWith(
+      ["[auth.hook.send_email]", "enabled = true", 'uri = "https://example.com/hook"'],
+      "Missing required field in config: auth.hook.send_email.secrets",
+    ),
+  );
+  it.effect("rejects an http hook with a badly-formatted secret", () =>
+    failsWith(
+      [
+        "[auth.hook.send_email]",
+        "enabled = true",
+        'uri = "https://example.com/hook"',
+        'secrets = "not-a-valid-secret"',
+      ],
+      "auth.hook.send_email.secrets must be formatted as",
+    ),
+  );
+  it.effect("rejects a pg-functions hook that sets secrets", () =>
+    failsWith(
+      [
+        "[auth.hook.custom_access_token]",
+        "enabled = true",
+        'uri = "pg-functions://postgres/public/f"',
+        'secrets = "x"',
+      ],
+      "auth.hook.custom_access_token.secrets is unsupported for pg-functions URI",
+    ),
+  );
+  it.effect("rejects a hook with an unsupported URI scheme", () =>
+    failsWith(
+      ["[auth.hook.send_sms]", "enabled = true", 'uri = "ftp://example.com"'],
+      "auth.hook.send_sms.uri should be a HTTP, HTTPS, or pg-functions URI",
+    ),
+  );
+  it.effect("accepts an http hook with a valid v1,whsec_ secret", () =>
+    succeeds([
+      "[auth.hook.send_email]",
+      "enabled = true",
+      'uri = "https://example.com/hook"',
+      `secrets = "v1,whsec_${"a".repeat(40)}"`,
+    ]),
+  );
+
+  it.effect("rejects mfa totp enroll_enabled without verify_enabled", () =>
+    failsWith(
+      ["[auth.mfa.totp]", "enroll_enabled = true", "verify_enabled = false"],
+      "Invalid MFA config: auth.mfa.totp.enroll_enabled requires verify_enabled",
+    ),
+  );
+
+  it.effect("rejects an enabled smtp without a host", () =>
+    failsWith(
+      ["[auth.email.smtp]", "enabled = true", "port = 587", 'user = "u"'],
+      "Missing required field in config: auth.email.smtp.host",
+    ),
+  );
+  it.effect("rejects an email template with content but no content_path", () =>
+    failsWith(
+      ["[auth.email.template.invite]", 'content = "<h1>hi</h1>"'],
+      "Invalid config for auth.email.template.invite.content: please use content_path instead",
+    ),
+  );
+  it.effect("rejects an email template whose content_path file is missing", () =>
+    failsWith(
+      ["[auth.email.template.invite]", 'content_path = "./missing.html"'],
+      "Invalid config for auth.email.template.invite.content_path",
+    ),
+  );
+
+  it.effect("rejects an enabled twilio sms provider without account_sid", () =>
+    failsWith(
+      ["[auth.sms.twilio]", "enabled = true"],
+      "Missing required field in config: auth.sms.twilio.account_sid",
+    ),
+  );
+
+  it.effect("rejects an enabled external provider without a client_id", () =>
+    failsWith(
+      ["[auth.external.github]", "enabled = true"],
+      "Missing required field in config: auth.external.github.client_id",
+    ),
+  );
+  it.effect("exempts apple/google from the external secret requirement", () =>
+    succeeds(["[auth.external.apple]", "enabled = true", 'client_id = "a"']),
+  );
+  it.effect("never validates the deprecated linkedin/slack providers", () =>
+    succeeds(["[auth.external.linkedin]", "enabled = true"]),
+  );
+
+  it.effect("rejects an enabled firebase third_party without project_id", () =>
+    failsWith(
+      ["[auth.third_party.firebase]", "enabled = true"],
+      "auth.third_party.firebase is enabled but without a project_id.",
+    ),
+  );
+  it.effect("rejects a clerk third_party with an invalid domain", () =>
+    failsWith(
+      ["[auth.third_party.clerk]", "enabled = true", 'domain = "not-a-clerk-domain"'],
+      "auth.third_party.clerk has invalid domain",
+    ),
+  );
+  it.effect("rejects two enabled third_party providers (mutual exclusivity)", () =>
+    failsWith(
+      [
+        "[auth.third_party.firebase]",
+        "enabled = true",
+        'project_id = "p"',
+        "[auth.third_party.auth0]",
+        "enabled = true",
+        'tenant = "t"',
+      ],
+      "Only one third_party provider allowed to be enabled at a time.",
+    ),
+  );
+
+  it.effect("rejects a signing_keys_path that cannot be read", () =>
+    failsWith(["[auth]", 'signing_keys_path = "./missing.json"'], "failed to read signing keys"),
+  );
+  it.effect("rejects a signing keys file that is not valid JSON", () =>
+    failsWith(
+      ["[auth]", 'signing_keys_path = "./keys.json"'],
+      "failed to decode signing keys",
+      // A relative signing_keys_path resolves under supabase/ (Go's config.go:877-878).
+      (dir) => writeFileSync(join(dir, "supabase", "keys.json"), "{ not json"),
+    ),
+  );
+
+  // --- Follow-up parity fixes (Codex re-review) ---
+
+  it.effect("defaults [auth.email.smtp] enabled=true when the table omits enabled (Go merge)", () =>
+    failsWith(
+      ["[auth.email.smtp]", 'user = "u"'],
+      "Missing required field in config: auth.email.smtp.host",
+    ),
+  );
+  it.effect("respects an explicit [auth.email.smtp] enabled=false (no validation)", () =>
+    succeeds(["[auth.email.smtp]", "enabled = false", 'user = "u"']),
+  );
+
+  it.effect("skips auth validation when SUPABASE_AUTH_ENABLED=false (env override)", () => {
+    const previous = process.env["SUPABASE_AUTH_ENABLED"];
+    process.env["SUPABASE_AUTH_ENABLED"] = "false";
+    const dir = withConfig(
+      ["[auth]", 'site_url = ""', "[auth.passkey]", "enabled = true"].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) => Effect.sync(() => expect(v.baseline).toBeDefined())),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_AUTH_ENABLED"];
+          else process.env["SUPABASE_AUTH_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("fails on a malformed auth boolean string instead of coercing to false", () =>
+    failsWith(
+      ["[auth.passkey]", 'enabled = "maybe"'],
+      "failed to parse config: invalid auth.passkey.enabled.",
+    ),
+  );
+
+  it.effect("rejects an unknown captcha provider (Go enum, regardless of enabled)", () =>
+    failsWith(
+      ["[auth.captcha]", "enabled = false", 'provider = "cloudflare"'],
+      "'auth.captcha.provider' must be one of [hcaptcha turnstile]",
+    ),
+  );
+});
+
+describe("legacyReadDbToml encrypted secret decryption (Go DecryptSecretHookFunc parity)", () => {
+  // Go decrypts every config.Secret during decode; an undecryptable `encrypted:` value
+  // anywhere in config.toml aborts `config.Load` with `failed to parse config: <error>`.
+  const expectFails = (lines: ReadonlyArray<string>, message: string) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      const exit = yield* read(dir).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain(message);
+      rmSync(dir, { recursive: true, force: true });
+    });
+  const expectLoads = (lines: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      const v = yield* read(dir);
+      expect(v.baseline).toBeDefined();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+  it.effect("fails on an undecryptable encrypted db.root_key (no private key)", () =>
+    expectFails(
+      ["[db]", 'root_key = "encrypted:anything"'],
+      "failed to parse config: missing private key",
+    ),
+  );
+  it.effect("fails on an undecryptable encrypted secret outside db.vault (auth.external)", () =>
+    expectFails(
+      [
+        "[auth.external.github]",
+        "enabled = true",
+        'client_id = "x"',
+        'secret = "encrypted:anything"',
+      ],
+      "failed to parse config: missing private key",
+    ),
+  );
+  it.effect("accepts a plain (non-encrypted) secret value", () =>
+    expectLoads(["[db]", 'root_key = "plaintext-not-encrypted"']),
+  );
+  it.effect("treats an unset env() secret as a no-op (verbatim, like Go's hook)", () =>
+    expectLoads(["[db]", 'root_key = "env(SOME_UNSET_ROOT_KEY)"']),
+  );
+});
+
+describe("legacyReadDbToml [analytics] validation (Go config.Validate parity)", () => {
+  const failsWith = (lines: ReadonlyArray<string>, message: string) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      const exit = yield* read(dir).pipe(Effect.exit);
+      expect(Exit.isFailure(exit), `expected failure containing: ${message}`).toBe(true);
+      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain(message);
+      rmSync(dir, { recursive: true, force: true });
+    });
+  const succeeds = (lines: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      const v = yield* read(dir);
+      expect(v.baseline).toBeDefined();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+  // `LogflareBackend.UnmarshalText` is a decode-time enum (`config.go:60-66`): it fires whenever
+  // `backend` is set, even when analytics is disabled.
+  it.effect("rejects an unknown analytics.backend regardless of enabled", () =>
+    failsWith(
+      ["[analytics]", "enabled = false", 'backend = "clickhouse"'],
+      "'analytics.backend' must be one of [postgres bigquery]",
+    ),
+  );
+  it.effect("rejects bigquery analytics missing gcp_project_id", () =>
+    failsWith(
+      ["[analytics]", "enabled = true", 'backend = "bigquery"'],
+      "Missing required field in config: analytics.gcp_project_id",
+    ),
+  );
+  it.effect("rejects bigquery analytics missing gcp_project_number", () =>
+    failsWith(
+      ["[analytics]", "enabled = true", 'backend = "bigquery"', 'gcp_project_id = "p"'],
+      "Missing required field in config: analytics.gcp_project_number",
+    ),
+  );
+  it.effect("rejects bigquery analytics missing gcp_jwt_path", () =>
+    failsWith(
+      [
+        "[analytics]",
+        "enabled = true",
+        'backend = "bigquery"',
+        'gcp_project_id = "p"',
+        'gcp_project_number = "123"',
+      ],
+      "Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path",
+    ),
+  );
+  it.effect("accepts bigquery analytics with all three gcp fields", () =>
+    succeeds([
+      "[analytics]",
+      "enabled = true",
+      'backend = "bigquery"',
+      'gcp_project_id = "p"',
+      'gcp_project_number = "123"',
+      'gcp_jwt_path = "creds.json"',
+    ]),
+  );
+  it.effect("accepts the postgres backend without gcp fields", () =>
+    succeeds(["[analytics]", "enabled = true", 'backend = "postgres"']),
+  );
+  it.effect("accepts an absent [analytics] section (template default enabled+postgres)", () =>
+    succeeds(["[db]", "major_version = 17"]),
+  );
+  it.effect("skips the bigquery gcp checks when analytics is disabled", () =>
+    succeeds(["[analytics]", "enabled = false", 'backend = "bigquery"']),
+  );
+  it.effect("honors SUPABASE_ANALYTICS_BACKEND when validating the bigquery gcp fields", () => {
+    const previous = process.env["SUPABASE_ANALYTICS_BACKEND"];
+    process.env["SUPABASE_ANALYTICS_BACKEND"] = "bigquery";
+    return failsWith(
+      ["[analytics]", "enabled = true"],
+      "Missing required field in config: analytics.gcp_project_id",
+    ).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_ANALYTICS_BACKEND"];
+          else process.env["SUPABASE_ANALYTICS_BACKEND"] = previous;
+        }),
+      ),
+    );
+  });
+});
+
+describe("legacyReadDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)", () => {
+  const restore = (previous: string | undefined) =>
+    Effect.sync(() => {
+      if (previous === undefined) delete process.env["SUPABASE_PROJECT_ID"];
+      else process.env["SUPABASE_PROJECT_ID"] = previous;
+    });
+
+  it.effect("overrides the TOML project_id with SUPABASE_PROJECT_ID", () => {
+    const previous = process.env["SUPABASE_PROJECT_ID"];
+    process.env["SUPABASE_PROJECT_ID"] = "env-project";
+    const dir = withConfig(['project_id = "toml-project"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.ensuring(restore(previous)),
+    );
+  });
+
+  it.effect("applies SUPABASE_PROJECT_ID even when config.toml is absent", () => {
+    const previous = process.env["SUPABASE_PROJECT_ID"];
+    process.env["SUPABASE_PROJECT_ID"] = "env-project";
+    const dir = withConfig(undefined);
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.ensuring(restore(previous)),
+    );
+  });
+
+  it.effect("ignores an empty SUPABASE_PROJECT_ID (viper AllowEmptyEnv=false)", () => {
+    const previous = process.env["SUPABASE_PROJECT_ID"];
+    process.env["SUPABASE_PROJECT_ID"] = "";
+    const dir = withConfig(['project_id = "toml-project"', ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(Option.getOrNull(v.projectId)).toBe("toml-project");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.ensuring(restore(previous)),
+    );
+  });
 });

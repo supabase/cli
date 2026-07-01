@@ -21,9 +21,10 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                        | Required?                                               |
-| ----------------------- | ------------------------------ | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` mode | no (falls back to keyring → `~/.supabase/access-token`) |
+| Variable                 | Purpose                                                                           | Required?                                               |
+| ------------------------ | --------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`  | auth token for `--linked` mode                                                    | no (falls back to keyring → `~/.supabase/access-token`) |
+| `DOTENV_PRIVATE_KEY[_*]` | dotenvx private key(s) to decrypt `encrypted:` `[db.vault]` secrets before upsert | no (required only if a `[db.vault]` value is encrypted) |
 
 ## Exit Codes
 
@@ -37,15 +38,18 @@
 
 ### `--output-format text` (Go CLI compatible)
 
-Prints "Local database is up to date." on success (no pending migrations) or the applied migration filenames.
+Prints `Applying migration <file>...` to stderr per pending migration, then
+`Local database is up to date.` to stdout. Connects, lists remote + local
+migrations, computes the pending set, upserts `[db.vault]` secrets, and applies
+each pending migration transactionally. Does **not** seed (matches Go `up`).
 
 ### `--output-format json`
 
-Not applicable.
+Emits `output.success("Migrations applied", { applied: [<path>] })`.
 
 ### `--output-format stream-json`
 
-Not applicable.
+Same structured `applied` result delivered as an NDJSON `result` event.
 
 ## Notes
 
