@@ -480,6 +480,14 @@ function legacyJoinSupabaseSeedPath(pattern: string): string {
 const DEFAULT_SUPABASE_ENV = "development";
 
 /**
+ * Project-ref identity keys that must not be applied to `process.env` from the
+ * project `.env`. Go resolves the linked ref (`LoadProjectRef`) before
+ * `loadNestedEnv`, so a `.env`-sourced value here must not retroactively retarget
+ * the project via the lazily-built ref / pooler-fallback resolvers.
+ */
+const LEGACY_REF_IDENTITY_ENV_KEYS = new Set(["SUPABASE_PROJECT_ID"]);
+
+/**
  * Load the project's nested `.env` files into a lookup map **and apply them to
  * `process.env`** (godotenv `os.Setenv`, never overriding an existing value),
  * mirroring Go's `loadNestedEnv` + `loadDefaultEnv` (`pkg/config/config.go:1047-1085`). Go walks
@@ -544,7 +552,15 @@ export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
   // `legacyGetRegistryImageUrl` (which reads `process.env`) for native Docker
   // pulls. `loaded` already excludes keys present in `process.env`, so an existing
   // shell value is never overridden.
+  //
+  // Project-ref identity keys are deliberately NOT applied: Go resolves the linked
+  // ref via `LoadProjectRef` (`viper.GetString("PROJECT_ID")` = the shell env)
+  // BEFORE `LoadConfig`/`loadNestedEnv`, so a `SUPABASE_PROJECT_ID` in
+  // `supabase/.env` must never reach the (lazily-built) project-ref resolver or the
+  // pooler-fallback resolver and retarget the project. They stay in the returned
+  // map for config `env(...)` resolution, matching Go's later `viper` reads.
   for (const [key, value] of Object.entries(loaded)) {
+    if (LEGACY_REF_IDENTITY_ENV_KEYS.has(key)) continue;
     process.env[key] = value;
   }
   return loaded;
