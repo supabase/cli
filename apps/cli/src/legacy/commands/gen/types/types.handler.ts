@@ -87,8 +87,7 @@ function parsePoolerConnectionString(
     const options = url.searchParams.get("options") ?? undefined;
     return Option.some({
       host: url.hostname,
-      // Supavisor transaction mode does not support prepared statements; use port 5432.
-      port: 5432,
+      port: url.port.length > 0 ? Number.parseInt(url.port, 10) : 5432,
       user: decodeURIComponent(url.username),
       password,
       database: decodeURIComponent(url.pathname.replace(/^\//, "")) || "postgres",
@@ -408,6 +407,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   }) =>
     Effect.scoped(
       Effect.gen(function* () {
+        type PgMetaRunResult = {
+          readonly exitCode: number;
+          readonly stderrText: string;
+        };
+
         const buildRun = (target: {
           readonly url: string;
           readonly host: string;
@@ -492,24 +496,44 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             probePort: conn.port,
           });
 
-        let result = yield* buildRun(input);
-
-        if (
-          result.exitCode !== 0 &&
-          input.poolerFallback !== undefined &&
-          legacyIsIPv6ConnectivityError(result.stderrText)
-        ) {
-          const pooler = yield* input.poolerFallback.resolve.pipe(
-            Effect.orElseSucceed(() => Option.none<LegacyPgConnInput>()),
-          );
-          if (Option.isSome(pooler)) {
+        const runPoolerFallback = () =>
+          Effect.gen(function* () {
+            if (input.poolerFallback === undefined) return Option.none<PgMetaRunResult>();
+            const pooler = yield* input.poolerFallback.resolve.pipe(
+              Effect.orElseSucceed(() => Option.none<LegacyPgConnInput>()),
+            );
+            if (Option.isNone(pooler)) return Option.none<PgMetaRunResult>();
             yield* output.raw(
               `${legacyYellow(
                 `Warning: Direct connection to ${input.poolerFallback.directHost} is unavailable because this environment does not support IPv6.\nRetrying via the IPv4 connection pooler.`,
               )}\n`,
               "stderr",
             );
-            result = yield* runTarget(pooler.value);
+            return Option.some(yield* runTarget(pooler.value));
+          });
+
+        let result = yield* buildRun(input).pipe(
+          Effect.catch((error) => {
+            if (
+              input.poolerFallback === undefined ||
+              !legacyIsIPv6ConnectivityError(error instanceof Error ? error.message : String(error))
+            ) {
+              return Effect.fail(error);
+            }
+            return runPoolerFallback().pipe(
+              Effect.flatMap((fallbackResult) =>
+                Option.isSome(fallbackResult)
+                  ? Effect.succeed(fallbackResult.value)
+                  : Effect.fail(error),
+              ),
+            );
+          }),
+        );
+
+        if (result.exitCode !== 0 && legacyIsIPv6ConnectivityError(result.stderrText)) {
+          const fallbackResult = yield* runPoolerFallback();
+          if (Option.isSome(fallbackResult)) {
+            result = fallbackResult.value;
           }
         }
 

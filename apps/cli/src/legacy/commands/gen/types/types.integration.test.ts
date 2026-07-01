@@ -1490,8 +1490,8 @@ describe("legacy gen types", () => {
                   db_host: "db.example",
                   db_port: 5432,
                   db_name: "postgres",
-                  connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@127.0.0.1:6543/postgres`,
-                  connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@127.0.0.1:6543/postgres`,
+                  connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@127.0.0.1:${port}/postgres`,
+                  connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@127.0.0.1:${port}/postgres`,
                   default_pool_size: null,
                   max_client_conn: null,
                   pool_mode: "transaction",
@@ -1515,7 +1515,7 @@ describe("legacy gen types", () => {
           expect(child.spawned).toHaveLength(2);
           expect(
             dockerEnv(child.spawned[1]?.args ?? []).has(
-              `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:branch-password@127.0.0.1:5432/postgres?connect_timeout=10`,
+              `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:branch-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
             ),
           ).toBe(true);
         }),
