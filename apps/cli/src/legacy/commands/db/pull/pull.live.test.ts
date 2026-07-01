@@ -33,7 +33,7 @@ describeLiveDataPlane("supabase db pull (live)", () => {
       const ref = requireLiveProjectRef();
       const dir = tempWorkdir();
       try {
-        const { stdout, stderr } = await runSupabaseLive(["db", "pull", "--linked"], {
+        const { stdout, stderr, exitCode } = await runSupabaseLive(["db", "pull", "--linked"], {
           cwd: dir,
           env: { SUPABASE_PROJECT_ID: ref },
           exitTimeoutMs: LIVE_TIMEOUT_MS - 20_000,
@@ -47,15 +47,20 @@ describeLiveDataPlane("supabase db pull (live)", () => {
         const combined = `${stdout}${stderr}`;
         expect(combined).not.toContain("Unauthorized");
         // No local migrations → the native initial-migra path runs: pg_dump the remote
-        // schema, then append the migra diff. Assert on the durable side effect
-        // regardless of exit code: a provisioned project with schema writes a
-        // `<timestamp>_remote_schema.sql` migration; a fresh empty schema reports
-        // "No schema changes found". Either proves the path ran end to end against the
-        // real database without hanging.
+        // schema, then append the migra diff. Assert on the durable side effect: a
+        // provisioned project with schema writes a `<timestamp>_remote_schema.sql`
+        // migration; a fresh empty schema reports "No schema changes found". Either
+        // proves the path ran end to end against the real database without hanging.
         const migDir = join(dir, "supabase", "migrations");
         const wroteMigration =
           existsSync(migDir) && readdirSync(migDir).some((f) => f.endsWith("_remote_schema.sql"));
         expect(wroteMigration || combined.includes("No schema changes found")).toBe(true);
+        // The native path creates the migration file BEFORE pg_dump runs, so a failed
+        // dump/diff could leave a stray file behind — a written migration is only
+        // meaningful if the command actually succeeded.
+        if (wroteMigration) {
+          expect(exitCode).toBe(0);
+        }
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
