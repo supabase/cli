@@ -1,13 +1,14 @@
 import { loadProjectConfig } from "@supabase/config";
-import { Effect } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
+import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
 import { apiSubsetFromConfig, apiToUpdateBody, diffApiWithRemote } from "./config-sync/api.sync.ts";
@@ -88,8 +89,15 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
-  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
-  const yes = yield* legacyResolveYes;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320). Go's
+  // `config push` runs `flags.LoadConfig`, which imports `supabase/.env` before
+  // `PromptYesNo` reads `viper.GetBool("YES")`, so a `SUPABASE_YES` set only in
+  // `supabase/.env` auto-confirms. Resolve against the project env, not just the
+  // flag + shell env.
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, runtimeInfo.cwd);
+  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   const ref = yield* resolver.resolve(flags.projectRef);
 

@@ -347,6 +347,39 @@ project_id = "abcdefghijklmnopqrst"
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("honors SUPABASE_YES from supabase/.env even against a piped 'n'", () => {
+    // Go's config push runs `flags.LoadConfig`, importing `supabase/.env` before
+    // `PromptYesNo`, so a project-local `SUPABASE_YES=true` auto-confirms before
+    // stdin is read — the push proceeds despite the piped `n`.
+    const prev = process.env["SUPABASE_YES"];
+    delete process.env["SUPABASE_YES"];
+    const { layer, api } = setup({
+      toml: API_ONLY_TOML,
+      stdinIsTty: false,
+      pipedAnswers: ["n"],
+      routes: {
+        postgrestGet: { status: 200, body: POSTGREST_DISABLED },
+        postgresGet: { status: 200, body: {} },
+      },
+    });
+    // Written after setup()'s writeConfig created supabase/.
+    writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n");
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
+        true,
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_YES"];
+          else process.env["SUPABASE_YES"] = prev;
+        }),
+      ),
+      Effect.provide(layer),
+    );
+  });
+
   it.live("emits a structured summary in json mode without prompts", () => {
     const { layer, out } = setup({
       toml: API_ONLY_TOML,
