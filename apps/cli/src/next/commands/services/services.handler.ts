@@ -1,4 +1,4 @@
-import { planStackVersions } from "@supabase/stack/effect";
+import { planStackVersions, StateManager } from "@supabase/stack/effect";
 import { Effect, Exit, Option } from "effect";
 import { Credentials } from "../../auth/credentials.service.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
@@ -24,14 +24,20 @@ export const services = Effect.fnUntraced(function* () {
   const credentials = yield* Credentials;
   const projectLocalServiceVersions = yield* ProjectLocalServiceVersions;
   const projectLinkState = yield* ProjectLinkState;
+  const stateManager = yield* StateManager;
   const commandRuntime = yield* CommandRuntime;
 
   const linkedStateExit = yield* projectLinkState.load.pipe(Effect.exit);
   const linkedState = Exit.isSuccess(linkedStateExit) ? linkedStateExit.value : Option.none();
   const accessToken = yield* credentials.getAccessToken;
   const localServiceVersions = yield* projectLocalServiceVersions.load;
+  const existingMetadata = yield* stateManager.readMetadata("default").pipe(
+    Effect.map(Option.some),
+    Effect.catchTag("StackMetadataNotFoundError", () => Effect.succeed(Option.none())),
+  );
   const serviceVersionContext = planStackVersions({
     ...(Option.isSome(linkedState) ? { candidateBaseline: linkedState.value.versions } : {}),
+    ...(Option.isSome(existingMetadata) ? { pinnedBaseline: existingMetadata.value.services } : {}),
     ...(Option.isSome(localServiceVersions)
       ? { localOverrides: localServiceVersions.value.versions }
       : {}),

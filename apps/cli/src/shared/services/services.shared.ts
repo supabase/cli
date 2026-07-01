@@ -31,6 +31,7 @@ export type LocalServiceImageOverrides = Partial<Record<LocalServiceVersionName,
 
 export interface LocalServiceImageOptions {
   readonly imageOverrides?: LocalServiceImageOverrides;
+  readonly normalizeVersionTags?: boolean;
   readonly serviceVersions?: LocalServiceVersionOverrides;
 }
 
@@ -134,6 +135,7 @@ function tagForServiceVersion(service: LocalServiceVersionName, version: string)
 function localServiceImagesForOptions(
   options: LocalServiceImageOptions = {},
 ): ReadonlyArray<ServiceImageSpec> {
+  const normalizeVersionTags = options.normalizeVersionTags ?? true;
   return LOCAL_SERVICE_IMAGES.map((service) => {
     const baseImage = options.imageOverrides?.[service.localService] ?? service.image;
     const version = options.serviceVersions?.[service.localService];
@@ -142,7 +144,10 @@ function localServiceImagesForOptions(
     }
     return {
       ...service,
-      image: replaceImageTag(baseImage, tagForServiceVersion(service.localService, version)),
+      image: replaceImageTag(
+        baseImage,
+        normalizeVersionTags ? tagForServiceVersion(service.localService, version) : version,
+      ),
     };
   });
 }

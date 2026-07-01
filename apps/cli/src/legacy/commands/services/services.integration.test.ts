@@ -312,7 +312,7 @@ major_version = 15
   it.live("reports pinned legacy temp service versions", () => {
     const workdir = makeProjectWithDbMajorVersion(15);
     writeTempFile(workdir, "postgres-version", "15.1.0.117\n");
-    writeTempFile(workdir, "gotrue-version", "v2.74.2\n");
+    writeTempFile(workdir, "gotrue-version", "2.74.2\n");
     writeTempFile(workdir, "storage-version", "v1.28.0\n");
     const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
 
@@ -327,7 +327,7 @@ major_version = 15
       expect(rows).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ name: "supabase/postgres", local: "15.1.0.117" }),
-          expect.objectContaining({ name: "supabase/gotrue", local: "v2.74.2" }),
+          expect.objectContaining({ name: "supabase/gotrue", local: "2.74.2" }),
           expect.objectContaining({ name: "supabase/storage-api", local: "v1.28.0" }),
         ]),
       );
@@ -358,12 +358,14 @@ major_version = 15
 
   it.live("prints config load errors and falls back to the default matrix", () => {
     const workdir = makeProjectWithConfig("[db]\nmajor_version = ");
+    writeTempFile(workdir, "storage-version", "v9.9.9\n");
     const { layer, out } = setup({ workdir });
 
     return Effect.gen(function* () {
       yield* legacyServices({}).pipe(Effect.provide(layer));
 
       expect(out.stdoutText).toContain("supabase/postgres");
+      expect(out.stdoutText).not.toContain("v9.9.9");
       expect(out.stderrText).not.toBe("");
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
   });

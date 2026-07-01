@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
+import { DEFAULT_VERSIONS, stackMetadata, type VersionManifest } from "@supabase/stack/effect";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { CliConfig } from "../../config/cli-config.service.ts";
@@ -15,7 +15,11 @@ import {
 } from "../../config/project-link-state.service.ts";
 import { InvalidProjectLinkStateError } from "../../config/project-link-state.service.ts";
 import { Credentials } from "../../auth/credentials.service.ts";
-import { mockOutput, mockProjectLocalServiceVersions } from "../../../../tests/helpers/mocks.ts";
+import {
+  mockOutput,
+  mockProjectLocalServiceVersions,
+  mockStateManager,
+} from "../../../../tests/helpers/mocks.ts";
 import { CommandRuntime } from "../../../shared/runtime/command-runtime.service.ts";
 import { listLocalServiceVersions } from "../../../shared/services/services.shared.ts";
 import { services } from "./services.handler.ts";
@@ -54,6 +58,7 @@ function setup(
     apiUrl?: string;
     workdir?: string;
     localServiceVersions?: LocalServiceVersionsState;
+    pinnedStackVersions?: VersionManifest;
   } = {},
 ) {
   const out = mockOutput({
@@ -69,6 +74,40 @@ function setup(
     layer: Layer.mergeAll(
       BunServices.layer,
       out.layer,
+      mockStateManager({
+        metadata:
+          opts.pinnedStackVersions === undefined
+            ? []
+            : [
+                {
+                  name: "default",
+                  metadata: stackMetadata({
+                    ports: {
+                      apiPort: 54321,
+                      dbPort: 54322,
+                      authPort: 54323,
+                      postgrestPort: 54324,
+                      postgrestAdminPort: 54325,
+                      edgeRuntimePort: 54337,
+                      edgeRuntimeInspectorPort: 54338,
+                      realtimePort: 54326,
+                      storagePort: 54327,
+                      imgproxyPort: 54328,
+                      mailpitPort: 54329,
+                      mailpitSmtpPort: 54330,
+                      mailpitPop3Port: 54331,
+                      pgmetaPort: 54332,
+                      studioPort: 54333,
+                      analyticsPort: 54334,
+                      poolerPort: 54335,
+                      poolerApiPort: 54336,
+                    },
+                    services: opts.pinnedStackVersions,
+                    launch: { mode: "auto", excludedServices: [] },
+                  }),
+                },
+              ],
+      }),
       mockProjectLocalServiceVersions(opts.localServiceVersions),
       FetchHttpClient.layer,
       Layer.succeed(
@@ -261,6 +300,34 @@ major_version = 15
           expect.objectContaining({ name: "supabase/postgres", local: "15.1.0.117" }),
           expect.objectContaining({ name: "supabase/gotrue", local: "v2.74.2" }),
           expect.objectContaining({ name: "supabase/storage-api", local: "v1.28.0" }),
+        ]),
+      });
+    });
+  });
+
+  it.live("reports pinned stack metadata before newer linked baseline versions", () => {
+    const { layer, out } = setup({
+      format: "json",
+      linkedState: Option.some({
+        ...linkedStateFixture(),
+        versions: { postgres: "17.6.1.200" },
+      }),
+      pinnedStackVersions: {
+        ...DEFAULT_VERSIONS,
+        postgres: "17.6.1.100",
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* services().pipe(Effect.provide(layer));
+
+      const success = out.messages.find((message) => message.type === "success");
+      expect(success?.data).toMatchObject({
+        services: expect.arrayContaining([
+          expect.objectContaining({
+            name: "supabase/postgres",
+            local: "17.6.1.100",
+          }),
         ]),
       });
     });

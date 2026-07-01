@@ -68,6 +68,22 @@ describe("services shared", () => {
     ]);
   });
 
+  test("can preserve raw local service version overrides", () => {
+    expect(
+      listLocalServiceVersions({
+        normalizeVersionTags: false,
+        serviceVersions: {
+          auth: "2.151.0",
+        },
+      }),
+    ).toContainEqual(
+      expect.objectContaining({
+        name: "supabase/gotrue",
+        local: "2.151.0",
+      }),
+    );
+  });
+
   test("returns postgres only when no service-role key is available", async () => {
     const server = Bun.serve({
       port: 0,

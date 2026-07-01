@@ -72,12 +72,15 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
         output.raw(`${formatConfigLoadError(error)}\n`, "stderr").pipe(Effect.as(null)),
       ),
     );
-    const serviceVersions = yield* readLegacyServiceVersionOverrides(
-      fs,
-      path,
-      cliConfig.workdir,
-      tomlValues?.majorVersion,
-    );
+    const serviceVersions =
+      tomlValues === null
+        ? {}
+        : yield* readLegacyServiceVersionOverrides(
+            fs,
+            path,
+            cliConfig.workdir,
+            tomlValues.majorVersion,
+          );
     const postgresImage =
       tomlValues === null
         ? undefined
@@ -101,6 +104,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     }
     const localImageOptions = {
       imageOverrides,
+      normalizeVersionTags: false,
       serviceVersions,
     };
 
