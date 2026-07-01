@@ -50,6 +50,41 @@ export const TARGET_API_URL =
 export const PROJECT_HOST =
   process.env["CLI_E2E_PROJECT_HOST"] ?? (TARGET_ENV === "staging" ? "supabase.red" : "");
 
+// Runtime capabilities a live target can offer the cli. Live tests declare what
+// they need (see `testLiveRequires`) and are skipped when the target can't
+// provide it — so the same suite runs everywhere, skipping only what a given
+// environment genuinely can't do:
+//   - docker         control a container / has a Docker socket
+//   - internet       reach 3rd-party network at runtime (jsr.io, npm, image pulls)
+//   - external-tool  native pg_dump/psql, diff engine (SUPABASE_DB_USE_LOCAL_TOOLS)
+const ALL_CAPABILITIES = ["docker", "internet", "external-tool"] as const;
+export type Capability = (typeof ALL_CAPABILITIES)[number];
+
+// Per-target defaults for what the environment provides. `staging` provides
+// everything — it is the oracle: every probe must pass there, so a supabox
+// skip/red is a genuine gap. `supabox` starts empty (locked down) and is opened
+// up via CLI_E2E_CAPABILITIES as it gains real support; a probe only *runs* on
+// supabox once its capability is declared, and must then pass (vs staging).
+const DEFAULT_CAPABILITIES: Record<CliE2eTargetEnv, readonly Capability[]> = {
+  staging: ALL_CAPABILITIES,
+  supabox: [],
+};
+
+function isCapability(value: string): value is Capability {
+  return (ALL_CAPABILITIES as readonly string[]).includes(value);
+}
+
+// Override the per-target defaults with an explicit comma list, e.g.
+// CLI_E2E_CAPABILITIES=docker,external-tool (an Antithesis run never sets `internet`).
+const CAPABILITIES_OVERRIDE = process.env["CLI_E2E_CAPABILITIES"];
+export const PROVIDED_CAPABILITIES: ReadonlySet<Capability> = new Set(
+  CAPABILITIES_OVERRIDE === undefined
+    ? DEFAULT_CAPABILITIES[TARGET_ENV]
+    : CAPABILITIES_OVERRIDE.split(",")
+        .map((entry) => entry.trim())
+        .filter(isCapability),
+);
+
 // In replay mode the token never reaches a real API, but the Go CLI validates
 // the format before making any request (must match sbp_[a-f0-9]{40}).
 // In record/live mode it must be a valid token for the target env. Falls back to

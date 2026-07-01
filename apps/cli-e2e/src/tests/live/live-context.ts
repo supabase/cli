@@ -8,7 +8,15 @@ import {
   type CLIResult,
   type TempDir,
 } from "@supabase/cli-test-helpers";
-import { ACCESS_TOKEN, isLive, PROJECT_HOST, TARGET, TARGET_API_URL } from "../env.ts";
+import {
+  ACCESS_TOKEN,
+  type Capability,
+  isLive,
+  PROJECT_HOST,
+  PROVIDED_CAPABILITIES,
+  TARGET,
+  TARGET_API_URL,
+} from "../env.ts";
 import { invokeFunction, type InvokeResult } from "./invoke.ts";
 
 type ExecOptions = NonNullable<Parameters<typeof exec>[2]>;
@@ -120,3 +128,14 @@ const base = test.extend<LiveFixtures>({
 /** Live test API — skipped unless CLI_E2E_MODE=live, so files are inert on
  *  replay/PR runs (and globalSetup provisions nothing). */
 export const testLive = base.skipIf(!isLive);
+
+/** Live test API that additionally skips unless the target env provides every
+ *  required runtime capability (docker / internet / external-tool). Lets one
+ *  suite run against staging (all capabilities → runs everything, the oracle),
+ *  supabox (only what it currently supports), and Antithesis (offline subset),
+ *  each skipping only what it genuinely can't do. Put the requirement in the test
+ *  name (e.g. "[C5] … (docker+internet)") so a skip reads clearly in the report. */
+export function testLiveRequires(required: readonly Capability[]): typeof testLive {
+  const missing = required.filter((capability) => !PROVIDED_CAPABILITIES.has(capability));
+  return missing.length === 0 ? testLive : testLive.skip;
+}
