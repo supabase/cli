@@ -25,10 +25,20 @@ interface CommandResult {
   readonly exitCode: number;
 }
 
-function tokenlessEnv(profilePath: string) {
+function tokenlessEnv(profilePath: string, projectDir: string) {
   return {
     SUPABASE_ACCESS_TOKEN: "",
+    SUPABASE_DB_PASSWORD: "",
     SUPABASE_PROFILE: profilePath,
+    SUPABASE_WORKDIR: projectDir,
+  };
+}
+
+function remoteEnv(accessToken: string, projectDir: string) {
+  return {
+    SUPABASE_ACCESS_TOKEN: accessToken,
+    SUPABASE_DB_PASSWORD: "",
+    SUPABASE_WORKDIR: projectDir,
   };
 }
 
@@ -303,7 +313,7 @@ describe("legacy gen types e2e", () => {
       const project = await makeTempStackProject("supabase-typegen-local-e2e-");
       const projectId = `typegen${project.ports.dbPort}`;
       const profilePath = await writeOfflineProfile(project.dir);
-      const env = tokenlessEnv(profilePath);
+      const env = tokenlessEnv(profilePath, project.dir);
       const localPostgres = {
         containerName: localDbContainerId(projectId),
         networkName: localNetworkId(projectId),
@@ -348,6 +358,7 @@ describe("legacy gen types e2e", () => {
     { timeout: TYPEGEN_TIMEOUT_MS * TYPEGEN_LANGS.length },
     async () => {
       const home = makeTempHome();
+      const project = await makeTempStackProject("supabase-typegen-remote-e2e-");
       if (
         remoteProjectRef === undefined ||
         remoteProjectRef.length === 0 ||
@@ -363,8 +374,9 @@ describe("legacy gen types e2e", () => {
         const result = await runSupabase(
           ["gen", "types", "--project-id", remoteProjectRef, "--lang", lang, "--schema", "public"],
           {
+            cwd: project.dir,
             home: home.dir,
-            env: { SUPABASE_ACCESS_TOKEN: remoteAccessToken },
+            env: remoteEnv(remoteAccessToken, project.dir),
             entrypoint: "legacy",
             exitTimeoutMs: TYPEGEN_TIMEOUT_MS,
           },

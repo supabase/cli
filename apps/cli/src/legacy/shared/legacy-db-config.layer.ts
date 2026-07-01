@@ -565,10 +565,13 @@ export const legacyDbConfigLayer = Layer.effect(
           if (Option.isNone(refOpt)) return Option.none<LegacyPgConnInput>();
           const ref = refOpt.value;
           if (!PROJECT_REF_PATTERN.test(ref)) return Option.none<LegacyPgConnInput>();
-          const password = yield* resolveDbPassword(flags.password ?? Option.none());
+          const adHocProjectRef = flags.adHocProjectRef ?? false;
+          const password = adHocProjectRef
+            ? (Option.getOrUndefined(flags.password ?? Option.none()) ?? "")
+            : yield* resolveDbPassword(flags.password ?? Option.none());
           // Container-fallback: fetch the primary pooler config from the Management API
           // when no `.temp/pooler-url` is saved (Go's `ResolvePoolerConfigForFallback`).
-          return yield* resolvePoolerConn(ref, flags.dnsResolver, password, true);
+          return yield* resolvePoolerConn(ref, flags.dnsResolver, password, true, adHocProjectRef);
         }).pipe(
           Effect.provide(
             legacyLinkedDbResolverRuntimeLayer(["db", "dump"]).pipe(Layer.provide(ambientLayer)),
