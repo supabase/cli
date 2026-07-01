@@ -1466,6 +1466,34 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
+  it.live("fails with a contextual error when Docker bundling produces no eszip output", () => {
+    const tempDir = makeTempDir();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+      const { out, layer } = setup(tempDir, {
+        rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
+        childLayer: child.layer,
+      });
+
+      const error = yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+        useDocker: true,
+      }).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain("failed to open eszip:");
+        expect(error.message).toContain("output.eszip");
+      }
+      expect(out.stderrText).toContain("Bundling Function: hello-world\n");
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
   it.live(
     "accepts nullable optional fields when listing remote functions for Docker deploys",
     () => {

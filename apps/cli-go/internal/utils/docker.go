@@ -486,6 +486,74 @@ func DockerRunOnceWithConfig(ctx context.Context, config container.Config, hostC
 	return DockerStreamLogs(ctx, container, stdout, stderr)
 }
 
+// DockerRunOnceWaitWithConfig is like DockerRunOnceWithConfig but waits for the
+// container to exit and then reads its already-buffered logs WITHOUT following
+// the stream.
+//
+// DockerRunOnceWithConfig detects completion by reading a follow=true log stream
+// until EOF. That EOF never arrives under podman: its /containers/<id>/logs?follow
+// endpoint does not close the response when the container stops, so
+// stdcopy.StdCopy blocks on the chunked HTTP body forever and the caller hangs at
+// 0% CPU (supabase/pg-toolbelt#312). Waiting on /wait for the exit code and then
+// reading the log once is reliable on both Docker and podman.
+//
+// Use this only for short-lived containers with bounded output (e.g. the
+// edge-runtime pg-delta scripts): the full log is read after exit rather than
+// streamed, so it is not suitable for large streaming output such as db dump.
+func DockerRunOnceWaitWithConfig(ctx context.Context, config container.Config, hostConfig container.HostConfig, networkingConfig network.NetworkingConfig, containerName string, stdout, stderr io.Writer) error {
+	containerId, err := DockerStart(ctx, config, hostConfig, networkingConfig, containerName)
+	if err != nil {
+		return err
+	}
+	defer DockerRemove(containerId)
+	exitCode, err := dockerWaitExit(ctx, containerId)
+	if err != nil {
+		return err
+	}
+	if err := DockerStreamLogsOnce(ctx, containerId, stdout, stderr); err != nil {
+		return err
+	}
+	switch exitCode {
+	case 0:
+		return nil
+	case 137:
+		err = ErrContainerKilled
+	default:
+		err = errors.Errorf("exit %d", exitCode)
+	}
+	return errors.Errorf("error running container: %w", err)
+}
+
+// dockerWaitInterval is how often dockerWaitExit polls container state. Kept
+// short so bounded one-shot scripts return promptly; it is a package var so
+// tests can drop it to zero.
+var dockerWaitInterval = 200 * time.Millisecond
+
+// dockerWaitExit polls container state until it stops and returns its exit code.
+//
+// It deliberately uses ContainerInspect rather than a followed log stream (or
+// /wait) to detect completion: inspect is reliable under podman, whereas
+// podman's /logs?follow endpoint does not close when the container stops, which
+// is what hangs DockerStreamLogs (see DockerRunOnceWaitWithConfig). Reusing
+// inspect also keeps the request surface identical to DockerStreamLogs, so the
+// existing test mocks continue to apply.
+func dockerWaitExit(ctx context.Context, containerId string) (int64, error) {
+	for {
+		resp, err := Docker.ContainerInspect(ctx, containerId)
+		if err != nil {
+			return 0, errors.Errorf("failed to inspect docker container: %w", err)
+		}
+		if resp.State != nil && !resp.State.Running {
+			return int64(resp.State.ExitCode), nil
+		}
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-time.After(dockerWaitInterval):
+		}
+	}
+}
+
 var ErrContainerKilled = errors.New("exit 137")
 
 func DockerStreamLogs(ctx context.Context, containerId string, stdout, stderr io.Writer, opts ...func(*container.LogsOptions)) error {

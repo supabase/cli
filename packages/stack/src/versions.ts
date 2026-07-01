@@ -46,19 +46,19 @@ export interface VersionManifest {
 }
 
 export const DEFAULT_VERSIONS: VersionManifest = {
-  postgres: "17.6.1.107",
-  postgrest: "14.5",
-  auth: "2.188.0-rc.15",
-  "edge-runtime": "1.73.13",
-  realtime: "2.111.8",
-  storage: "1.41.8",
+  postgres: "17.6.1.141",
+  postgrest: "14.14",
+  auth: "2.192.0",
+  "edge-runtime": "1.74.2",
+  realtime: "2.112.2",
+  storage: "1.61.9",
   imgproxy: "v3.8.0",
   mailpit: "v1.30.2",
-  pgmeta: "0.96.1",
-  studio: "2026.03.04-sha-0043607",
-  analytics: "1.34.7",
-  vector: "0.28.1-alpine",
-  pooler: "2.7.4",
+  pgmeta: "0.96.6",
+  studio: "2026.06.29-sha-20290c7",
+  analytics: "1.45.6",
+  vector: "0.53.0-alpine",
+  pooler: "2.9.7",
 } as const;
 
 /** Default registry. Matches the Go CLI default (`public.ecr.aws`). */

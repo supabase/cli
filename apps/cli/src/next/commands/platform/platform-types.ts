@@ -68,7 +68,7 @@ export interface PlatformOperationDescriptor {
   readonly description: string;
   readonly successMessage: string;
   readonly confirmsMutation: boolean;
-  readonly inputSchema: Schema.Decoder<unknown, never>;
+  readonly inputSchema: Schema.ConstraintDecoder<unknown, never>;
   readonly definition: OperationDefinition;
   readonly execute: (input: unknown) => Effect.Effect<unknown, PlatformOperationError, PlatformApi>;
   readonly request: {

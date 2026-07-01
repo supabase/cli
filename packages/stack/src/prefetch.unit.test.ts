@@ -14,6 +14,9 @@ import { prepareAssetsWithDependencies } from "./StackPreparation.ts";
 import { DEFAULT_VERSIONS, SERVICE_NAMES } from "./versions.ts";
 
 const encoder = new TextEncoder();
+const defaultAuthEcrImage = `public.ecr.aws/supabase/gotrue:v${DEFAULT_VERSIONS.auth}`;
+const defaultAuthDockerHubImage = `supabase/gotrue:v${DEFAULT_VERSIONS.auth}`;
+const defaultAuthGhcrImage = `ghcr.io/supabase/gotrue:v${DEFAULT_VERSIONS.auth}`;
 
 interface SpawnResult {
   readonly exitCode: number;
@@ -112,15 +115,11 @@ describe("prefetch", () => {
 
     expect(result.auth).toEqual({
       type: "docker",
-      image: "supabase/gotrue:v2.188.0-rc.15",
+      image: defaultAuthDockerHubImage,
     });
     expect(
       spawner.spawned.filter((record) => record.args[0] === "pull").map((record) => record.args[1]),
-    ).toEqual([
-      "public.ecr.aws/supabase/gotrue:v2.188.0-rc.15",
-      "public.ecr.aws/supabase/gotrue:v2.188.0-rc.15",
-      "supabase/gotrue:v2.188.0-rc.15",
-    ]);
+    ).toEqual([defaultAuthEcrImage, defaultAuthEcrImage, defaultAuthDockerHubImage]);
   });
 
   test("falls back to GHCR after ECR and Docker Hub fail", async () => {
@@ -149,15 +148,15 @@ describe("prefetch", () => {
 
     expect(result.auth).toEqual({
       type: "docker",
-      image: "ghcr.io/supabase/gotrue:v2.188.0-rc.15",
+      image: defaultAuthGhcrImage,
     });
     expect(
       spawner.spawned.filter((record) => record.args[0] === "pull").map((record) => record.args[1]),
     ).toEqual([
-      "public.ecr.aws/supabase/gotrue:v2.188.0-rc.15",
-      "supabase/gotrue:v2.188.0-rc.15",
-      "supabase/gotrue:v2.188.0-rc.15",
-      "ghcr.io/supabase/gotrue:v2.188.0-rc.15",
+      defaultAuthEcrImage,
+      defaultAuthDockerHubImage,
+      defaultAuthDockerHubImage,
+      defaultAuthGhcrImage,
     ]);
   });
 
@@ -224,7 +223,7 @@ describe("prefetch", () => {
 
     expect(result.auth).toEqual({
       type: "docker",
-      image: "public.ecr.aws/supabase/gotrue:v2.188.0-rc.15",
+      image: defaultAuthEcrImage,
     });
     expect(events).toEqual([]);
   });

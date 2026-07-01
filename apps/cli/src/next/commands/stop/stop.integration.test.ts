@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Exit, Layer } from "effect";
@@ -75,6 +75,31 @@ describe("stop handler", () => {
         expect.objectContaining({
           type: "outro",
           message: "Local Supabase stack stopped and local data deleted.",
+        }),
+      );
+    }),
+  );
+
+  it.live("treats already-removed persistence as success after stopping with --no-backup", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.acquireRelease(
+        Effect.promise(() => makeRunningStackFixture()),
+        (resource) => Effect.promise(() => resource.dispose()),
+      );
+      const out = mockOutput();
+      const layer = Layer.mergeAll(fixture.baseLayer, out.layer);
+
+      rmSync(fixture.stackMetadataPath, { force: true });
+
+      yield* stop({ stack: fixture.stackName, noBackup: true }).pipe(Effect.provide(layer));
+
+      expect(fixture.stopped).toBe(true);
+      expect(existsSync(fixture.stackStatePath)).toBe(false);
+      expect(existsSync(fixture.stackMetadataPath)).toBe(false);
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: "Local Supabase stopped and persisted data deleted",
         }),
       );
     }),

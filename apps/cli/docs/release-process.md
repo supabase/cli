@@ -247,7 +247,7 @@ flowchart TD
 
 ### Trigger
 
-Most releases are automatic — merge a PR into `develop` (beta) or approve the weekly Prod-Deploy PR into `main` (stable). For an `alpha` cut or a one-off override, dispatch manually:
+Most releases are automatic — merge a PR into `develop` (beta) or approve the weekly Prod-Deploy PR into `main` (stable). Hotfixes use the same production gate: a reviewed `hotfix/*` PR targets `main`, and the resulting `main` push triggers the stable release path. For an `alpha` cut or a one-off override, dispatch manually:
 
 ```sh
 # Manual alpha cut (v3 / next shell):
@@ -264,6 +264,34 @@ gh workflow run release.yml \
 ```
 
 Auto-trigger paths leave `version` empty: semantic-release computes it from commits since the last tag.
+
+### Hotfix release flow
+
+Use a hotfix when an urgent stable fix must ship before the next scheduled `develop` -> `main` promotion. The hotfix path deliberately reuses the production PR gate instead of adding a second approval mechanism:
+
+1. Branch from the current `main` tip:
+
+   ```sh
+   git fetch origin main
+   git switch -c hotfix/<short-description> origin/main
+   ```
+
+2. Make the smallest safe fix and open a PR from `hotfix/<short-description>` into `main`.
+3. Before merging, run a release dry run against the hotfix branch and the next unique stable version:
+
+   ```sh
+   gh workflow run release.yml \
+       --ref hotfix/<short-description> \
+       --field channel=stable \
+       --field version=<next-patch-version> \
+       --field dry_run=true
+   ```
+
+4. After review and green checks, merge the hotfix PR into `main`. The `push: main` trigger runs the normal stable release pipeline and publishes the next semantic-release version.
+5. Watch the stable release workflow through publish, Homebrew/Scoop updates, and verification.
+6. Confirm that `Sync main to develop` succeeds. That workflow merges `main` back into `develop` after a successful `Release` run on `main`, keeping the hotfix reachable from the next beta and the next scheduled production deploy. If the sync conflicts, resolve it with a follow-up PR into `develop` before the next production promotion.
+
+Do not use `workflow_dispatch dry_run=false` as the normal hotfix path. Manual stable dispatch is reserved for re-cutting a unique version after an interrupted or stale-bytes release. Hotfixes should land through a PR to `main` so the production source of truth and release tag history stay aligned.
 
 ### What each job does
 

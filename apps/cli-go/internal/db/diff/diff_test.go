@@ -345,6 +345,16 @@ create schema public`)
 			Delete("/v" + utils.Docker.ClientVersion() + "/containers/test-shadow-db").
 			Reply(http.StatusOK)
 		apitest.MockDockerStart(utils.Docker, utils.GetRegistryImageUrl(utils.Config.EdgeRuntime.Image), "test-migra")
+		// The edge-runtime diff waits for the container to exit via inspect before
+		// reading its logs (it must not follow the log stream — that hangs under
+		// podman, supabase/pg-toolbelt#312), so the diff failure here surfaces from
+		// the log read rather than the followed stream.
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-migra/json").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{ExitCode: 0},
+			}})
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/test-migra/logs").
 			ReplyError(errors.New("network error"))

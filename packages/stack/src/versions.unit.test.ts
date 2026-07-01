@@ -1,4 +1,9 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import {
+  readVersionManifestFromDockerfile,
+  syncDefaultVersionsSource,
+} from "../scripts/sync-versions-from-dockerfile.ts";
 import {
   DEFAULT_VERSIONS,
   diffPinnedAndAvailableVersions,
@@ -8,6 +13,29 @@ import {
   normalizeServiceVersion,
   type VersionManifest,
 } from "./versions.ts";
+
+const dockerfile = readFileSync(
+  new URL("../../../apps/cli-go/pkg/config/templates/Dockerfile", import.meta.url),
+  "utf8",
+);
+
+const sampleDockerfile = `
+FROM supabase/postgres:17.0.0.1 AS pg
+FROM library/kong:2.8.1 AS kong
+FROM axllent/mailpit:v1.2.3 AS mailpit
+FROM postgrest/postgrest:v14.0 AS postgrest
+FROM supabase/postgres-meta:v0.90.0 AS pgmeta
+FROM supabase/studio:2026.01.01-sha-abcdef0 AS studio
+FROM darthsim/imgproxy:v3.8.0 AS imgproxy
+FROM supabase/edge-runtime:v1.70.0 AS edgeruntime
+FROM timberio/vector:0.50.0-alpine AS vector
+FROM supabase/supavisor:2.1.0 AS supavisor
+FROM supabase/gotrue:v2.100.0 AS gotrue
+FROM supabase/realtime:v2.100.0 AS realtime
+FROM supabase/storage-api:v1.50.0 AS storage
+FROM supabase/logflare:1.40.0 AS logflare
+FROM supabase/migra:3.0.1663481299 AS migra
+`;
 
 describe("DEFAULT_VERSIONS", () => {
   it("has all required services", () => {
@@ -26,6 +54,65 @@ describe("DEFAULT_VERSIONS", () => {
     expect(DEFAULT_VERSIONS.auth.length).toBeGreaterThan(0);
     expect(typeof DEFAULT_VERSIONS["edge-runtime"]).toBe("string");
     expect(DEFAULT_VERSIONS["edge-runtime"].length).toBeGreaterThan(0);
+  });
+
+  it("matches the Dockerfile manifest exposed to Dependabot", () => {
+    expect(readVersionManifestFromDockerfile(dockerfile)).toEqual(DEFAULT_VERSIONS);
+  });
+});
+
+describe("syncDefaultVersionsSource", () => {
+  it("rewrites the DEFAULT_VERSIONS block from Dockerfile versions", () => {
+    const source = `before
+export const DEFAULT_VERSIONS: VersionManifest = {
+  postgres: "old",
+  postgrest: "old",
+  auth: "old",
+  "edge-runtime": "old",
+  realtime: "old",
+  storage: "old",
+  imgproxy: "old",
+  mailpit: "old",
+  pgmeta: "old",
+  studio: "old",
+  analytics: "old",
+  vector: "old",
+  pooler: "old",
+} as const;
+after`;
+
+    expect(syncDefaultVersionsSource(source, readVersionManifestFromDockerfile(sampleDockerfile)))
+      .toMatchInlineSnapshot(`
+        "before
+        export const DEFAULT_VERSIONS: VersionManifest = {
+          postgres: "17.0.0.1",
+          postgrest: "14.0",
+          auth: "2.100.0",
+          "edge-runtime": "1.70.0",
+          realtime: "2.100.0",
+          storage: "1.50.0",
+          imgproxy: "v3.8.0",
+          mailpit: "v1.2.3",
+          pgmeta: "0.90.0",
+          studio: "2026.01.01-sha-abcdef0",
+          analytics: "1.40.0",
+          vector: "0.50.0-alpine",
+          pooler: "2.1.0",
+        } as const;
+        after"
+      `);
+  });
+
+  it("fails when a required Dockerfile image alias is missing", () => {
+    expect(() =>
+      readVersionManifestFromDockerfile("FROM supabase/postgres:17.6.1.139 AS pg\n"),
+    ).toThrow("Missing Dockerfile versions for:");
+  });
+
+  it("fails when the Dockerfile contains an unexpected image alias", () => {
+    expect(() =>
+      readVersionManifestFromDockerfile(`${dockerfile}\nFROM supabase/example:1.0.0 AS example\n`),
+    ).toThrow("Unknown Dockerfile image alias 'example'.");
   });
 });
 

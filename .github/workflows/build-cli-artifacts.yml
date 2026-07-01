@@ -123,7 +123,6 @@ jobs:
           echo "Checking dist/..."
           ls -la dist/
 
-
       - name: Check existing build artifacts cache
         id: build-artifacts-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

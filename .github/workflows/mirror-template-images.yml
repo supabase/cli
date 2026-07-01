@@ -1,0 +1,83 @@
+name: Mirror template images
+
+# Keeps the ghcr.io/ECR mirror in sync with the image versions pinned in
+# apps/cli-go/pkg/config/templates/Dockerfile (the single source of truth for
+# `config.Images`). When the Dockerfile changes on develop — most often via a
+# merged dependabot `docker` bump — this workflow detects any tag that is not
+# yet mirrored and backfills it the same way `cli-go-mirror-image.yml` does.
+#
+# It runs on `push` to develop (not on the PR) on purpose: mirroring needs the
+# AWS role + packages:write, which a dependabot-triggered `pull_request` run
+# cannot be granted, and we deliberately avoid `pull_request_target`. The CI
+# `Start` job pins SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io, so it only goes
+# green once a bumped tag is mirrored here; this backfill runs as soon as the
+# bump lands on develop, repopulating ghcr.io/ECR so develop and any PR rebased
+# on it pass `Start` instead of inheriting a `manifest unknown` failure.
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - apps/cli-go/pkg/config/templates/Dockerfile
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-template-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: Detect unmirrored images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      missing: ${{ steps.detect.outputs.missing }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Parses the Dockerfile, checks each image against the mirror, and writes
+      # `missing=<json>` to $GITHUB_OUTPUT. Idempotent: already-mirrored images
+      # are skipped, so a re-run produces an empty list.
+      - name: Detect images missing from the mirror
+        id: detect
+        run: pnpm exec bun apps/cli/scripts/detect-unmirrored-images.ts
+
+  mirror:
+    name: Mirror image
+    needs: detect
+    if: needs.detect.outputs.missing != '' && needs.detect.outputs.missing != '[]'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ${{ fromJson(needs.detect.outputs.missing) }}
+    # Reuse the existing mirror logic (docker.io -> public.ecr.aws + ghcr.io).
+    uses: ./.github/workflows/cli-go-mirror-image.yml
+    with:
+      image: ${{ matrix.image }}
+    secrets:
+      PROD_AWS_ROLE: ${{ secrets.PROD_AWS_ROLE }}
