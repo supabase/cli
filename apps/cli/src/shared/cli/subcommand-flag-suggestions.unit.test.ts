@@ -1,10 +1,11 @@
 import { CliError, Command } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
+import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
 import { legacyNetworkRestrictionsCommand } from "../../legacy/commands/network-restrictions/network-restrictions.command.ts";
 import { formatCliErrorsForDisplay } from "./subcommand-flag-suggestions.ts";
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyNetworkRestrictionsCommand]),
+  Command.withSubcommands([legacyBranchesCommand, legacyNetworkRestrictionsCommand]),
 );
 
 describe("subcommand flag placement suggestions", () => {
@@ -73,5 +74,31 @@ describe("subcommand flag placement suggestions", () => {
         },
       ],
     });
+  });
+
+  it("omits hidden subcommands from placement hints", () => {
+    const errors = formatCliErrorsForDisplay(
+      [
+        new CliError.UnrecognizedOption({
+          option: "--project-ref",
+          command: ["supabase", "branches"],
+          suggestions: [],
+        }),
+        new CliError.UnknownSubcommand({
+          subcommand: "abcdefghijklmnopqrst",
+          parent: ["supabase", "branches"],
+          suggestions: [],
+        }),
+      ],
+      {
+        rootCommand: testRoot,
+        args: ["branches", "--project-ref", "abcdefghijklmnopqrst", "get"],
+      },
+    );
+
+    expect(errors.changed).toBe(true);
+    expect(errors.errors).toHaveLength(1);
+    expect(errors.errors[0]?.message).toContain("`supabase branches get`");
+    expect(errors.errors[0]?.message).not.toContain("branches disable");
   });
 });

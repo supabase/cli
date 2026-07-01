@@ -63,6 +63,8 @@ function collectDescendants(
   const visit = (current: Command.Command.Any, path: ReadonlyArray<string>) => {
     for (const group of current.subcommands) {
       for (const child of group.commands) {
+        if (child.hidden) continue;
+
         const childPath = [...path, child.name];
         const helpDoc = helpDocFor(child, childPath);
         if (helpDoc) {
