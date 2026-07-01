@@ -69,3 +69,9 @@ try {
   // Force close event loop
   throw new Error("");
 }
+// Force close the event loop on the success path too. When SOURCE/TARGET are
+// live database URLs the plan opens connections whose keepalive handles can keep
+// the Edge Runtime worker alive after the diff has been written, so the container
+// never exits and the CLI — which follows this container's logs — hangs
+// indefinitely at 0% CPU (supabase/pg-toolbelt#312).
+throw new Error("");
