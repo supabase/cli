@@ -64,16 +64,12 @@ describe("subcommand flag placement suggestions", () => {
       },
     );
 
-    expect(errors).toEqual({
-      changed: false,
-      errors: [
-        {
-          _tag: "UnrecognizedOption",
-          message:
-            "Unrecognized flag: --definitely-not-a-child-flag in command supabase network-restrictions",
-        },
-      ],
-    });
+    expect(errors.changed).toBe(false);
+    expect(errors.errors).toHaveLength(1);
+    expect(errors.errors[0]?.changed).toBe(false);
+    expect(errors.errors[0]?.message).toBe(
+      "Unrecognized flag: --definitely-not-a-child-flag in command supabase network-restrictions",
+    );
   });
 
   it("omits hidden subcommands from placement hints", () => {
@@ -100,5 +96,30 @@ describe("subcommand flag placement suggestions", () => {
     expect(errors.errors).toHaveLength(1);
     expect(errors.errors[0]?.message).toContain("`supabase branches get`");
     expect(errors.errors[0]?.message).not.toContain("branches disable");
+  });
+
+  it("normalizes assigned flags in placement examples", () => {
+    const errors = formatCliErrorsForDisplay(
+      [
+        new CliError.UnrecognizedOption({
+          option: "--project-ref=jacraenyzrorgjhsdvvf",
+          command: ["supabase", "network-restrictions"],
+          suggestions: [],
+        }),
+      ],
+      {
+        rootCommand: testRoot,
+        args: ["network-restrictions", "--project-ref=jacraenyzrorgjhsdvvf", "get"],
+      },
+    );
+
+    expect(errors.changed).toBe(true);
+    expect(errors.errors[0]?.message).toContain(
+      "Hint: --project-ref is available on `supabase network-restrictions get` and `supabase network-restrictions update`.",
+    );
+    expect(errors.errors[0]?.message).toContain(
+      "supabase network-restrictions get --project-ref <value>",
+    );
+    expect(errors.errors[0]?.message).not.toContain("--project-ref=jacraenyzrorgjhsdvvf <value>");
   });
 });

@@ -8,6 +8,8 @@ export interface CliErrorSuggestionContext {
 export interface FormattedCliError {
   readonly _tag: string;
   readonly message: string;
+  readonly source: CliError.CliError;
+  readonly changed: boolean;
 }
 
 export interface FormattedCliErrors {
@@ -80,8 +82,13 @@ function collectDescendants(
   return matches;
 }
 
-function normalizeOption(option: string): string {
+function optionToken(option: string): string {
   const withoutValue = option.split("=", 1)[0] ?? option;
+  return withoutValue;
+}
+
+function normalizeOption(option: string): string {
+  const withoutValue = optionToken(option);
   if (withoutValue.startsWith("--")) return withoutValue.slice(2);
   if (withoutValue.startsWith("-")) return withoutValue.slice(1);
   return withoutValue;
@@ -138,18 +145,22 @@ function formatCommandList(matches: ReadonlyArray<MatchingCommand>): string {
 }
 
 function formatFlagUsage(option: string, flag: HelpDoc.FlagDoc): string {
-  return flag.type === "boolean" ? option : `${option} <value>`;
+  const flagToken = optionToken(option);
+  return flag.type === "boolean" ? flagToken : `${flagToken} <value>`;
 }
 
 function findValueAfterOption(args: ReadonlyArray<string>, option: string): string | undefined {
+  const flagToken = optionToken(option);
+  if (option !== flagToken) return undefined;
+
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
     if (!arg) continue;
-    if (arg === option) {
+    if (arg === flagToken) {
       const next = args[index + 1];
       return next && !next.startsWith("-") ? next : undefined;
     }
-    if (arg.startsWith(`${option}=`)) return undefined;
+    if (arg.startsWith(`${flagToken}=`)) return undefined;
   }
   return undefined;
 }
@@ -169,6 +180,7 @@ function buildSubcommandFlagHint(
   if (matches.length === 0) return undefined;
 
   const attempted = inferAttemptedCommand(context.args, error.command, matches);
+  const flagToken = optionToken(error.option);
   const availableOn =
     matches.length === 1
       ? `a flag for ${formatCommandList(matches)}`
@@ -182,7 +194,7 @@ function buildSubcommandFlagHint(
       : undefined;
 
   return {
-    hint: `${error.option} is ${availableOn}. Pass it after the subcommand${example}`,
+    hint: `${flagToken} is ${availableOn}. Pass it after the subcommand${example}`,
     ...(consumedValue ? { consumedValue } : {}),
   };
 }
@@ -204,6 +216,8 @@ export function formatCliErrorsForDisplay(
         formatted.push({
           _tag: error._tag,
           message: `${error.message}\n\n  Hint: ${hint.hint}`,
+          source: error,
+          changed: true,
         });
         continue;
       }
@@ -214,7 +228,7 @@ export function formatCliErrorsForDisplay(
       continue;
     }
 
-    formatted.push({ _tag: error._tag, message: error.message });
+    formatted.push({ _tag: error._tag, message: error.message, source: error, changed: false });
   }
 
   return { errors: formatted, changed };
