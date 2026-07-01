@@ -112,6 +112,12 @@ function makeProjectWithConfig(config: string): string {
   return workdir;
 }
 
+function makeProjectWithConfigFiles(opts: { toml: string; json: string }): string {
+  const workdir = makeProjectWithConfig(opts.toml);
+  writeFileSync(join(workdir, "supabase", "config.json"), opts.json);
+  return workdir;
+}
+
 function makeProjectWithDbMajorVersion(majorVersion: number): string {
   return makeProjectWithConfig(`[db]\nmajor_version = ${majorVersion}\n`);
 }
@@ -248,6 +254,30 @@ describe("legacy services", () => {
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
   });
 
+  it.live("ignores config.json and reads legacy config.toml for local image selection", () => {
+    const workdir = makeProjectWithConfigFiles({
+      toml: "[db]\nmajor_version = 15\n",
+      json: JSON.stringify({ db: { major_version: 14 } }),
+    });
+    const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      const rows = JSON.parse(out.stdoutText) as Array<{
+        name: string;
+        local: string;
+        remote: string;
+      }>;
+      expect(rows).toContainEqual(
+        expect.objectContaining({
+          name: "supabase/postgres",
+          local: postgresVersionForDbMajorVersion(15),
+        }),
+      );
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
   it.live("applies linked-project remote config overrides when choosing the local image", () => {
     const workdir = makeProjectWithConfig(`
 [db]
@@ -300,6 +330,28 @@ major_version = 15
           expect.objectContaining({ name: "supabase/gotrue", local: "v2.74.2" }),
           expect.objectContaining({ name: "supabase/storage-api", local: "v1.28.0" }),
         ]),
+      );
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
+  it.live("reports the Deno 1 edge-runtime image instead of the temp pin", () => {
+    const workdir = makeProjectWithConfig("[edge_runtime]\ndeno_version = 1\n");
+    writeTempFile(workdir, "edge-runtime-version", "v9.9.9\n");
+    const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      const rows = JSON.parse(out.stdoutText) as Array<{
+        name: string;
+        local: string;
+        remote: string;
+      }>;
+      expect(rows).toContainEqual(
+        expect.objectContaining({
+          name: "supabase/edge-runtime",
+          local: "v1.68.4",
+        }),
       );
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
   });

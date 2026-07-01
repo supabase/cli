@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
+import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { CliConfig } from "../../config/cli-config.service.ts";
@@ -16,10 +17,7 @@ import { InvalidProjectLinkStateError } from "../../config/project-link-state.se
 import { Credentials } from "../../auth/credentials.service.ts";
 import { mockOutput, mockProjectLocalServiceVersions } from "../../../../tests/helpers/mocks.ts";
 import { CommandRuntime } from "../../../shared/runtime/command-runtime.service.ts";
-import {
-  listLocalServiceVersions,
-  postgresImageForDbMajorVersion,
-} from "../../../shared/services/services.shared.ts";
+import { listLocalServiceVersions } from "../../../shared/services/services.shared.ts";
 import { services } from "./services.handler.ts";
 
 const LINKED_REF = "abcdefghijklmnopqrst";
@@ -158,14 +156,6 @@ function makeProjectWithDbMajorVersion(majorVersion: number): string {
   return makeProjectWithConfig(`[db]\nmajor_version = ${majorVersion}\n`);
 }
 
-function postgresVersionForDbMajorVersion(majorVersion: number): string {
-  const image = postgresImageForDbMajorVersion(majorVersion);
-  if (image === undefined) {
-    throw new Error(`Missing Postgres image for db major ${majorVersion}.`);
-  }
-  return image.slice(image.lastIndexOf(":") + 1);
-}
-
 describe("next services", () => {
   it.live("prints the services table in text mode", () => {
     const { layer, out } = setup();
@@ -198,7 +188,7 @@ describe("next services", () => {
     });
   });
 
-  it.live("reports the configured Postgres version for local projects", () => {
+  it.live("reports the stack runtime Postgres version instead of config db.major_version", () => {
     const workdir = makeProjectWithDbMajorVersion(15);
     const { layer, out } = setup({ format: "json", workdir });
 
@@ -210,14 +200,14 @@ describe("next services", () => {
         services: expect.arrayContaining([
           expect.objectContaining({
             name: "supabase/postgres",
-            local: postgresVersionForDbMajorVersion(15),
+            local: DEFAULT_VERSIONS.postgres,
           }),
         ]),
       });
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
   });
 
-  it.live("applies linked-project remote config overrides when choosing the local image", () => {
+  it.live("reports the stack runtime version instead of linked remote config db overrides", () => {
     const workdir = makeProjectWithConfig(`
 [db]
 major_version = 17
@@ -242,7 +232,7 @@ major_version = 15
         services: expect.arrayContaining([
           expect.objectContaining({
             name: "supabase/postgres",
-            local: postgresVersionForDbMajorVersion(15),
+            local: DEFAULT_VERSIONS.postgres,
           }),
         ]),
       });

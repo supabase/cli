@@ -1,6 +1,5 @@
 import { styleText } from "node:util";
 import { makeApiClient, type ApiClient } from "@supabase/api/effect";
-import type { ProjectConfig } from "@supabase/config";
 import { Data, Duration, Effect, Exit, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -28,10 +27,10 @@ export type LocalServiceVersionName =
   | "pooler";
 
 export type LocalServiceVersionOverrides = Partial<Record<LocalServiceVersionName, string>>;
+export type LocalServiceImageOverrides = Partial<Record<LocalServiceVersionName, string>>;
 
 export interface LocalServiceImageOptions {
-  readonly projectConfig?: ProjectConfig | null;
-  readonly postgresImage?: string;
+  readonly imageOverrides?: LocalServiceImageOverrides;
   readonly serviceVersions?: LocalServiceVersionOverrides;
 }
 
@@ -135,18 +134,8 @@ function tagForServiceVersion(service: LocalServiceVersionName, version: string)
 function localServiceImagesForOptions(
   options: LocalServiceImageOptions = {},
 ): ReadonlyArray<ServiceImageSpec> {
-  const projectConfig = options.projectConfig ?? null;
-  const postgresImage =
-    options.postgresImage ??
-    (projectConfig === null
-      ? undefined
-      : postgresImageForDbMajorVersion(projectConfig.db.major_version));
-
   return LOCAL_SERVICE_IMAGES.map((service) => {
-    const baseImage =
-      service.localService === "postgres" && postgresImage !== undefined
-        ? postgresImage
-        : service.image;
+    const baseImage = options.imageOverrides?.[service.localService] ?? service.image;
     const version = options.serviceVersions?.[service.localService];
     if (version === undefined || version.trim().length === 0) {
       return baseImage === service.image ? service : { ...service, image: baseImage };

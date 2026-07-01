@@ -1,10 +1,11 @@
-import { loadProjectConfig } from "@supabase/config";
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
+import { legacyReadDbToml } from "../../shared/legacy-db-config.toml-read.ts";
 import { legacyResolveDbImage } from "../../shared/legacy-db-image.ts";
+import { legacyResolveEdgeRuntimeImage } from "../../shared/legacy-edge-runtime-image.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -14,6 +15,7 @@ import {
   fetchLinkedServiceVersions,
   formatServicesWarning,
   listLocalServiceVersions,
+  type LocalServiceImageOverrides,
   type LocalServiceVersionName,
   type LocalServiceVersionOverrides,
   mergeRemoteServiceVersions,
@@ -60,31 +62,47 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
   yield* Effect.gen(function* () {
     const accessTokenExit = yield* credentials.getAccessToken.pipe(Effect.exit);
     const accessToken = Exit.isSuccess(accessTokenExit) ? accessTokenExit.value : Option.none();
-    const loadedProjectConfig = yield* loadProjectConfig(cliConfig.workdir, {
-      projectRef: Option.getOrUndefined(linkedProjectRef),
-    }).pipe(
+    const tomlValues = yield* legacyReadDbToml(
+      fs,
+      path,
+      cliConfig.workdir,
+      Option.getOrUndefined(linkedProjectRef),
+    ).pipe(
       Effect.catch((error) =>
         output.raw(`${formatConfigLoadError(error)}\n`, "stderr").pipe(Effect.as(null)),
       ),
     );
-    const projectConfig = loadedProjectConfig?.config ?? null;
     const serviceVersions = yield* readLegacyServiceVersionOverrides(
       fs,
       path,
       cliConfig.workdir,
-      projectConfig?.db.major_version,
+      tomlValues?.majorVersion,
     );
     const postgresImage =
-      projectConfig === null
+      tomlValues === null
         ? undefined
         : yield* legacyResolveDbImage(
             fs,
             path,
             cliConfig.workdir,
-            projectConfig.db.major_version,
-            projectConfig.experimental.orioledb_version,
+            tomlValues.majorVersion,
+            Option.getOrUndefined(tomlValues.orioledbVersion),
           );
-    const localImageOptions = { projectConfig, postgresImage, serviceVersions };
+    const edgeRuntimeImage =
+      tomlValues === null
+        ? undefined
+        : yield* legacyResolveEdgeRuntimeImage(fs, path, cliConfig.workdir, tomlValues.denoVersion);
+    const imageOverrides: LocalServiceImageOverrides = {};
+    if (postgresImage !== undefined) {
+      imageOverrides.postgres = postgresImage;
+    }
+    if (edgeRuntimeImage !== undefined) {
+      imageOverrides["edge-runtime"] = edgeRuntimeImage;
+    }
+    const localImageOptions = {
+      imageOverrides,
+      serviceVersions,
+    };
 
     let rows = listLocalServiceVersions(localImageOptions);
     if (Option.isSome(linkedProjectRef) && Option.isSome(accessToken)) {
@@ -149,7 +167,6 @@ const LEGACY_VERSION_FILES = [
   ["auth", "gotrue-version", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
   ["postgrest", "rest-version", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
   ["storage", "storage-version"],
-  ["edge-runtime", "edge-runtime-version"],
   ["realtime", "realtime-version"],
   ["studio", "studio-version"],
   ["pgmeta", "pgmeta-version"],
