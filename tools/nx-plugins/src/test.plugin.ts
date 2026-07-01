@@ -35,14 +35,24 @@ export const createNodesV2: CreateNodesV2<TestPluginOptions> = [
         const vitestProjects = vitestConfig.vitestConfig?.projects ?? [];
         if (vitestProjects.length > 0) {
           for (const vitestProject of vitestProjects) {
-            if (vitestProject.test) {
+            if (typeof vitestProject !== "string" && vitestProject.test) {
+              const testProject = vitestProject.test;
+              const targetName = testProject.name;
+              const extraInputs =
+                projectRoot === "packages/stack" && targetName === "unit"
+                  ? ["{workspaceRoot}/apps/cli-go/pkg/config/templates/Dockerfile"]
+                  : [];
               project.targets = {
                 ...project.targets,
-                ...createTestTarget(vitestProject.test?.name, [
-                  ...(vitestProject?.test?.include ?? []),
-                  ...(vitestProject?.test?.globalSetup ?? []),
-                  ...(vitestProject?.test?.setupFiles ?? []),
-                ]),
+                ...createTestTarget(
+                  targetName,
+                  [
+                    ...(testProject.include ?? []),
+                    ...(testProject.globalSetup ?? []),
+                    ...(testProject.setupFiles ?? []),
+                  ],
+                  extraInputs,
+                ),
               };
             }
           }
@@ -62,7 +72,7 @@ export const createNodesV2: CreateNodesV2<TestPluginOptions> = [
   },
 ];
 
-function createTestTarget(name: string = "", inputs: string[] = []) {
+function createTestTarget(name: string = "", inputs: string[] = [], extraInputs: string[] = []) {
   return {
     [name !== "" ? `test:${name}` : "test"]: {
       command: `bun --bun vitest run${name !== "" ? ` --project ${name} --coverage.reportsDirectory=coverage/${name}` : ``}`,
@@ -72,6 +82,7 @@ function createTestTarget(name: string = "", inputs: string[] = []) {
         "default",
         "sharedGlobals",
         ...inputs.map((input) => join(`{projectRoot}`, input)),
+        ...extraInputs,
         { externalDependencies: ["vitest"] },
       ],
     },
@@ -79,5 +90,5 @@ function createTestTarget(name: string = "", inputs: string[] = []) {
 }
 
 function loadVitestDynamicImport() {
-  return Function('return import("vitest/node")')() as Promise<typeof import("vitest/node")>;
+  return Function('return import("vitest/node")')();
 }

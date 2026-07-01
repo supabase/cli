@@ -55,6 +55,10 @@ on:
         required: false
       DF_FIREWALL_TOKEN:
         required: false
+      LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY:
+        required: false
+      LINEAR_CLI_BETA_RELEASE_ACCESS_KEY:
+        required: false
 jobs:
   build-blacksmith:
     name: Build CLI artifacts (Blacksmith)
@@ -75,7 +79,7 @@ jobs:
       version: ${{ inputs.version }}
       shell: ${{ inputs.shell }}
       runner: large-linux-x86
-      cache_key_suffix: -github
+      artifact_name_suffix: -github
       timeout_minutes: 45
       build_timeout_minutes: 20
     secrets:
@@ -109,15 +113,10 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      - name: Restore build artifacts cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: |
-            packages/cli-*/bin/
-            dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-v1
-          enableCrossOsArchive: true
-          fail-on-cache-miss: true
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}
 
       # Docker's classic image store keeps a single platform manifest per
       # tag, so pulling `alpine:3.21` for amd64 and again for arm64 leaves
@@ -245,15 +244,10 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      - name: Restore build artifacts cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: |
-            packages/cli-*/bin/
-            dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
-          enableCrossOsArchive: true
-          fail-on-cache-miss: true
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}-github
 
       - name: Fix binary permissions
         run: chmod +x packages/cli-*/bin/supabase || true
@@ -280,6 +274,8 @@ jobs:
       CHANNEL: ${{ inputs.channel }}
       NPM_TAG: ${{ inputs.npm_tag }}
       VERSION: ${{ inputs.version }}
+      LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY: ${{ secrets.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY }}
+      LINEAR_CLI_BETA_RELEASE_ACCESS_KEY: ${{ secrets.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY }}
     permissions:
       contents: write
       id-token: write
@@ -297,6 +293,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: true
+          fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup
@@ -304,15 +301,17 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      - name: Restore build artifacts cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: |
-            packages/cli-*/bin/
-            dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
-          enableCrossOsArchive: true
-          fail-on-cache-miss: true
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}-github
+
+      # Artifacts are zipped and do not carry Unix permissions, so the compiled
+      # binaries arrive without the executable bit. publish.ts ships
+      # packages/cli-*/bin/supabase to npm verbatim, so restore +x before
+      # publishing or the installed CLI would not be runnable.
+      - name: Fix binary permissions
+        run: chmod +x packages/cli-*/bin/supabase || true
 
       - name: Sync versions
         run: pnpm exec bun apps/cli/scripts/sync-versions.ts --version "${VERSION}"
@@ -417,6 +416,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "v${VERSION}" --draft=false
 
+      - name: Sync stable release to Linear
+        if: ${{ inputs.channel == 'stable' && env.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY != '' }}
+        uses: linear/linear-release-action@c0cb8354a362c24c6d3e0948f37fd66d07588e3f # v0
+        with:
+          access_key: ${{ env.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY }}
+          version: v${{ inputs.version }}
+          name: Supabase CLI v${{ inputs.version }}
+          links: |
+            GitHub Release=https://github.com/${{ github.repository }}/releases/tag/v${{ inputs.version }}
+            Release workflow=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Sync beta release to Linear
+        if: ${{ inputs.channel == 'beta' && env.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY != '' }}
+        uses: linear/linear-release-action@c0cb8354a362c24c6d3e0948f37fd66d07588e3f # v0
+        with:
+          access_key: ${{ env.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY }}
+          version: v${{ inputs.version }}
+          name: Supabase CLI v${{ inputs.version }}
+          links: |
+            GitHub Release=https://github.com/${{ github.repository }}/releases/tag/v${{ inputs.version }}
+            Release workflow=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
   # Changelog backfill only needs tag + published GH release (from publish).
   # Runs in parallel with brew/scoop/smoke; must not gate distribution.
   backfill-release-notes:
@@ -450,8 +471,6 @@ jobs:
   publish-homebrew:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    # github-hosted to share a cache store with build-github/publish, whose
-    # -github-v1 artifacts this job's checksums must match.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -468,21 +487,16 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      # Must restore the github-hosted build (-github-v1), the same artifacts
-      # the publish job uploads to the GitHub Release. The Bun-compiled binaries
-      # are not byte-for-byte reproducible across the blacksmith and github
-      # builds, so the blacksmith dist/checksums.txt does not match the released
+      # Must download the github-hosted build (-github), the same artifacts the
+      # publish job uploads to the GitHub Release. The Bun-compiled binaries are
+      # not byte-for-byte reproducible across the blacksmith and github builds,
+      # so the blacksmith dist/checksums.txt does not match the released
       # tarballs. Reading it here produced a formula whose sha256 rejected the
       # downloaded archive ("Formula reports different checksum").
-      - name: Restore build artifacts cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: |
-            packages/cli-*/bin/
-            dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
-          enableCrossOsArchive: true
-          fail-on-cache-miss: true
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}-github
 
       - name: Generate Homebrew tap token
         id: app-token
@@ -513,8 +527,6 @@ jobs:
   publish-scoop:
     needs: publish
     if: ${{ !inputs.dry_run && inputs.publish_brew_scoop }}
-    # github-hosted to share a cache store with build-github/publish, whose
-    # -github-v1 artifacts this job's checksums must match.
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -531,21 +543,16 @@ jobs:
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      # Must restore the github-hosted build (-github-v1), the same artifacts
-      # the publish job uploads to the GitHub Release. The Bun-compiled binaries
-      # are not byte-for-byte reproducible across the blacksmith and github
-      # builds, so the blacksmith dist/checksums.txt does not match the released
+      # Must download the github-hosted build (-github), the same artifacts the
+      # publish job uploads to the GitHub Release. The Bun-compiled binaries are
+      # not byte-for-byte reproducible across the blacksmith and github builds,
+      # so the blacksmith dist/checksums.txt does not match the released
       # tarballs. Reading it here would produce a manifest whose hash rejects the
       # downloaded archive.
-      - name: Restore build artifacts cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: |
-            packages/cli-*/bin/
-            dist/
-          key: cli-build-${{ github.run_id }}-${{ inputs.shell }}-${{ inputs.version }}-github-v1
-          enableCrossOsArchive: true
-          fail-on-cache-miss: true
+          name: cli-build-${{ inputs.shell }}-${{ inputs.version }}-github
 
       - name: Generate Scoop bucket token
         id: app-token
