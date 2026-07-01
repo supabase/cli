@@ -859,6 +859,42 @@ describe("legacy db pull", () => {
     );
   });
 
+  it.effect(
+    "resolves the pg_dump image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
+    () => {
+      // Go's LoadConfig applies the project `.env` (os.Setenv) before GetRegistryImageUrl,
+      // so a registry mirror set only in `supabase/.env` is used for the native pg_dump
+      // seed. `legacyLoadProjectEnv` now mirrors that by writing to process.env.
+      const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+      delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", ".env"),
+        "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
+      );
+      const s = setup(tmp.current, {
+        remoteVersions: [], // no remote history → initial-migra pg_dump path
+        dumpStdout: "create table dumped ();\n",
+        edgeStdout: "",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags());
+        expect(s.dumpCalls.length).toBeGreaterThanOrEqual(1);
+        // The pg_dump container image is rewritten to the configured mirror.
+        expect(s.dumpCalls[0]?.image).toMatch(/^my-mirror\.example\.com\/supabase\//u);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+            else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
+          }),
+        ),
+        Effect.provide(s.layer),
+      );
+    },
+  );
+
   it.effect("SUPABASE_EXPERIMENTAL delegates the structured-dump pull to Go", () => {
     const s = setup(tmp.current);
     return Effect.gen(function* () {

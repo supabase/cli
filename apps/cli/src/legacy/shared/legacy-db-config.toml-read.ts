@@ -480,8 +480,9 @@ function legacyJoinSupabaseSeedPath(pattern: string): string {
 const DEFAULT_SUPABASE_ENV = "development";
 
 /**
- * Load the project's nested `.env` files into a lookup map, mirroring Go's
- * `loadNestedEnv` + `loadDefaultEnv` (`pkg/config/config.go:1047-1085`). Go walks
+ * Load the project's nested `.env` files into a lookup map **and apply them to
+ * `process.env`** (godotenv `os.Setenv`, never overriding an existing value),
+ * mirroring Go's `loadNestedEnv` + `loadDefaultEnv` (`pkg/config/config.go:1047-1085`). Go walks
  * from the `supabase/` directory up to the repo root and, in each directory,
  * loads `.env.<env>.local`, `.env.local` (skipped when `SUPABASE_ENV=test`),
  * `.env.<env>`, then `.env` via `godotenv.Load`, which never overrides a value
@@ -535,6 +536,16 @@ export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
         if (process.env[key] === undefined && loaded[key] === undefined) loaded[key] = value;
       }
     }
+  }
+  // Mirror Go's `godotenv.Load` (`loadNestedEnv`): the loaded values are written
+  // into the process environment so downstream `process.env` readers see project
+  // `.env` values — matching Go's `viper.AutomaticEnv`. This is why, e.g.,
+  // `SUPABASE_INTERNAL_IMAGE_REGISTRY` set only in `supabase/.env` reaches
+  // `legacyGetRegistryImageUrl` (which reads `process.env`) for native Docker
+  // pulls. `loaded` already excludes keys present in `process.env`, so an existing
+  // shell value is never overridden.
+  for (const [key, value] of Object.entries(loaded)) {
+    process.env[key] = value;
   }
   return loaded;
 });
