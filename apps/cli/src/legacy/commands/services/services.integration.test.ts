@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
@@ -41,6 +41,7 @@ function setup(
   opts: {
     format?: "text" | "json" | "stream-json";
     goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
+    workdir?: string;
   } = {},
 ) {
   const out = mockOutput({
@@ -69,7 +70,7 @@ function setup(
           poolerHost: "supabase.com",
           accessToken: Option.none(),
           projectId: Option.none(),
-          workdir: process.cwd(),
+          workdir: opts.workdir ?? process.cwd(),
           userAgent: "SupabaseCLI/test",
         }),
       ),
@@ -99,6 +100,14 @@ const legacyTestRoot = Command.make("supabase").pipe(
   Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyServicesCommand]),
 );
+
+function makeProjectWithDbMajorVersion(majorVersion: number) {
+  const workdir = mkdtempSync(join(tmpdir(), "supabase-services-config-"));
+  const configDir = join(workdir, "supabase");
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(join(configDir, "config.toml"), `[db]\nmajor_version = ${majorVersion}\n`);
+  return workdir;
+}
 
 function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
   expect(Exit.isFailure(exit)).toBe(true);
@@ -195,6 +204,27 @@ describe("legacy services", () => {
         local: LOCAL_POSTGRES_VERSION,
       });
     });
+  });
+
+  it.live("reports the configured Postgres version for local projects", () => {
+    const workdir = makeProjectWithDbMajorVersion(15);
+    const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      const rows = JSON.parse(out.stdoutText) as Array<{
+        name: string;
+        local: string;
+        remote: string;
+      }>;
+      expect(rows).toContainEqual(
+        expect.objectContaining({
+          name: "supabase/postgres",
+          local: "15.8.1.085",
+        }),
+      );
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
   });
 
   it.live("emits structured JSON for --output pretty combined with --output-format json", () => {

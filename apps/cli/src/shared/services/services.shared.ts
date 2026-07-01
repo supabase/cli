@@ -1,5 +1,6 @@
 import { styleText } from "node:util";
 import { makeApiClient, type ApiClient } from "@supabase/api/effect";
+import type { ProjectConfig } from "@supabase/config";
 import { Data, Duration, Effect, Exit, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -68,6 +69,37 @@ export function localServiceImagesFromDockerfile(
 }
 
 const LOCAL_SERVICE_IMAGES = localServiceImagesFromSpecs(dockerfileServiceImages);
+
+// Mirrors Go's config image rewrite in `apps/cli-go/pkg/config/config.go`.
+// Major version 13 intentionally falls through to the pg15 image there.
+function postgresImageForDbMajorVersion(majorVersion: number): string | undefined {
+  switch (majorVersion) {
+    case 13:
+    case 15:
+      return "supabase/postgres:15.8.1.085";
+    case 14:
+      return "supabase/postgres:14.1.0.89";
+    default:
+      return undefined;
+  }
+}
+
+function localServiceImagesForConfig(
+  projectConfig: ProjectConfig | null = null,
+): ReadonlyArray<ServiceImageSpec> {
+  const postgresImage =
+    projectConfig === null
+      ? undefined
+      : postgresImageForDbMajorVersion(projectConfig.db.major_version);
+
+  if (postgresImage === undefined) {
+    return LOCAL_SERVICE_IMAGES;
+  }
+
+  return LOCAL_SERVICE_IMAGES.map((service) =>
+    service.remoteService === "postgres" ? { ...service, image: postgresImage } : service,
+  );
+}
 
 const TABLE_HEADERS = ["SERVICE IMAGE", "LOCAL", "LINKED"] as const;
 
@@ -288,14 +320,19 @@ const makeConfiguredApiClient = Effect.fnUntraced(function* (input: ServiceFetch
   );
 });
 
-export function listLocalServiceVersions(): ReadonlyArray<ServiceVersionRow> {
-  return LOCAL_SERVICE_IMAGES.map((service) => toServiceVersionRow(service));
+export function listLocalServiceVersions(
+  projectConfig: ProjectConfig | null = null,
+): ReadonlyArray<ServiceVersionRow> {
+  return localServiceImagesForConfig(projectConfig).map((service) => toServiceVersionRow(service));
 }
 
 export function mergeRemoteServiceVersions(
   remote: Partial<Record<RemoteServiceName, string>>,
+  projectConfig: ProjectConfig | null = null,
 ): ReadonlyArray<ServiceVersionRow> {
-  return LOCAL_SERVICE_IMAGES.map((service) => toServiceVersionRow(service, remote));
+  return localServiceImagesForConfig(projectConfig).map((service) =>
+    toServiceVersionRow(service, remote),
+  );
 }
 
 export function renderServicesTable(rows: ReadonlyArray<ServiceVersionRow>): string {

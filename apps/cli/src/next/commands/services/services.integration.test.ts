@@ -1,7 +1,12 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { CliConfig } from "../../config/cli-config.service.ts";
+import { ProjectHome } from "../../config/project-home.service.ts";
 import {
   ProjectLinkState,
   type ProjectLinkStateValue,
@@ -45,6 +50,7 @@ function setup(
     invalidLinkedState?: boolean;
     accessToken?: string;
     apiUrl?: string;
+    workdir?: string;
   } = {},
 ) {
   const out = mockOutput({
@@ -52,10 +58,13 @@ function setup(
     interactive: (opts.format ?? "text") === "text",
   });
   const linkedState = opts.linkedState ?? Option.none<ProjectLinkStateValue>();
+  const projectRoot = opts.workdir ?? process.cwd();
+  const supabaseDir = join(projectRoot, "supabase");
 
   return {
     out,
     layer: Layer.mergeAll(
+      BunServices.layer,
       out.layer,
       FetchHttpClient.layer,
       Layer.succeed(
@@ -88,6 +97,22 @@ function setup(
         }),
       ),
       Layer.succeed(
+        ProjectHome,
+        ProjectHome.of({
+          projectRoot,
+          supabaseDir,
+          projectHomeDir: join(supabaseDir, ".temp"),
+          projectLinkPath: join(supabaseDir, ".temp", "project-ref"),
+          projectLocalVersionsPath: join(supabaseDir, ".temp", "local-versions"),
+          ensureProjectHomeDir: Effect.void,
+          stackDir: (name) => join(supabaseDir, ".branches", name),
+          stackStatePath: (name) => join(supabaseDir, ".branches", name, "stack-state.json"),
+          stackMetadataPath: (name) => join(supabaseDir, ".branches", name, "stack.json"),
+          stackDataDir: (name) => join(supabaseDir, ".branches", name, "data"),
+          stackLogsDir: (name) => join(supabaseDir, ".branches", name, "logs"),
+        }),
+      ),
+      Layer.succeed(
         ProjectLinkState,
         ProjectLinkState.of({
           load: opts.invalidLinkedState
@@ -113,6 +138,14 @@ function setup(
       ),
     ),
   };
+}
+
+function makeProjectWithDbMajorVersion(majorVersion: number) {
+  const workdir = mkdtempSync(join(tmpdir(), "supabase-services-config-"));
+  const configDir = join(workdir, "supabase");
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(join(configDir, "config.toml"), `[db]\nmajor_version = ${majorVersion}\n`);
+  return workdir;
 }
 
 describe("next services", () => {
@@ -145,6 +178,25 @@ describe("next services", () => {
         ]),
       });
     });
+  });
+
+  it.live("reports the configured Postgres version for local projects", () => {
+    const workdir = makeProjectWithDbMajorVersion(15);
+    const { layer, out } = setup({ format: "json", workdir });
+
+    return Effect.gen(function* () {
+      yield* services().pipe(Effect.provide(layer));
+
+      const success = out.messages.find((message) => message.type === "success");
+      expect(success?.data).toMatchObject({
+        services: expect.arrayContaining([
+          expect.objectContaining({
+            name: "supabase/postgres",
+            local: "15.8.1.085",
+          }),
+        ]),
+      });
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
   });
 
   it.live("falls back to local output when linked state is invalid", () => {

@@ -1,3 +1,4 @@
+import { loadProjectConfig } from "@supabase/config";
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
@@ -55,8 +56,12 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
   yield* Effect.gen(function* () {
     const accessTokenExit = yield* credentials.getAccessToken.pipe(Effect.exit);
     const accessToken = Exit.isSuccess(accessTokenExit) ? accessTokenExit.value : Option.none();
+    const loadedProjectConfig = yield* loadProjectConfig(cliConfig.workdir).pipe(
+      Effect.catch(() => Effect.succeed(null)),
+    );
+    const projectConfig = loadedProjectConfig?.config ?? null;
 
-    let rows = listLocalServiceVersions();
+    let rows = listLocalServiceVersions(projectConfig);
     if (Option.isSome(linkedProjectRef) && Option.isSome(accessToken)) {
       const remote = yield* fetchLinkedServiceVersions({
         apiUrl: cliConfig.apiUrl,
@@ -65,7 +70,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
         accessToken: accessToken.value,
         userAgent: cliConfig.userAgent,
       });
-      rows = mergeRemoteServiceVersions(remote);
+      rows = mergeRemoteServiceVersions(remote, projectConfig);
     }
 
     const warning = renderServicesWarning(rows);
