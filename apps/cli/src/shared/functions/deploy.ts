@@ -325,6 +325,29 @@ async function realpathIfExists(pathname: string) {
   }
 }
 
+async function findGitRoot(startPath: string) {
+  let current = resolve(startPath);
+
+  for (;;) {
+    try {
+      await stat(join(current, ".git"));
+      return current;
+    } catch {
+      // Keep walking until we hit the filesystem root.
+    }
+
+    const parent = dirname(current);
+    if (parent === current) {
+      return undefined;
+    }
+    current = parent;
+  }
+}
+
+async function resolveFunctionsSourceRoot(projectRoot: string) {
+  return (await findGitRoot(projectRoot)) ?? resolve(projectRoot);
+}
+
 function humanSize(bytes: number) {
   if (bytes < 1000) {
     return `${bytes} B`;
@@ -887,16 +910,15 @@ async function resolveImportMapAllowedRoots(projectRoot: string, importMapPath: 
 }
 
 async function writeSourceDeployForm(
-  cwd: string,
-  projectRoot: string,
+  sourceRoot: string,
   config: ResolvedDeployFunctionConfig,
   metadata: SourceDeployMetadata,
   outputRaw: (text: string) => Effect.Effect<void, never>,
 ) {
   const form = new FormData();
   form.append("metadata", JSON.stringify(metadata));
-  const realProjectRoot = await realpath(projectRoot);
-  const importMapAllowedRoots = await resolveImportMapAllowedRoots(projectRoot, config.importMap);
+  const realSourceRoot = await realpath(sourceRoot);
+  const importMapAllowedRoots = await resolveImportMapAllowedRoots(sourceRoot, config.importMap);
   const uploadedAssets = new Set<string>();
 
   const appendAsset = async (pathname: string, contents: Uint8Array, realPathname: string) => {
@@ -904,14 +926,14 @@ async function writeSourceDeployForm(
       return;
     }
     uploadedAssets.add(realPathname);
-    const relativePath = toApiRelativePath(cwd, pathname);
+    const relativePath = toApiRelativePath(sourceRoot, pathname);
     await Effect.runPromise(outputRaw(`Uploading asset (${config.slug}): ${relativePath}\n`));
     form.append("file", new File([contents], relativePath));
   };
 
   const uploadAsset = async (pathname: string, contents: Uint8Array) => {
     const realPathname = await realpath(pathname);
-    if (!isContainedPath(realProjectRoot, realPathname)) {
+    if (!isContainedPath(realSourceRoot, realPathname)) {
       throw new Error(`refusing to upload asset outside project root: ${pathname}`);
     }
     await appendAsset(pathname, contents, realPathname);
@@ -951,7 +973,7 @@ async function writeSourceDeployForm(
         importMap,
         pathname,
         importMapAllowedRoots,
-        projectRoot,
+        sourceRoot,
         uploadImportMapTargetAsset,
         async (message) => {
           await Effect.runPromise(outputRaw(message));
@@ -1004,8 +1026,8 @@ async function writeSourceDeployForm(
   await walkImportPaths(
     importMap,
     config.entrypoint,
-    [realProjectRoot],
-    projectRoot,
+    [realSourceRoot],
+    sourceRoot,
     uploadAsset,
     async (message) => {
       await Effect.runPromise(outputRaw(message));
@@ -1017,7 +1039,7 @@ async function writeSourceDeployForm(
 }
 
 function createSourceMetadata(
-  cwd: string,
+  sourceRoot: string,
   config: ResolvedDeployFunctionConfig,
   remote?: RemoteFunction,
 ): SourceDeployMetadata {
@@ -1025,9 +1047,10 @@ function createSourceMetadata(
   return {
     name: config.slug,
     ...(verifyJwt === undefined ? {} : { verify_jwt: verifyJwt }),
-    entrypoint_path: toApiRelativePath(cwd, config.entrypoint),
-    import_map_path: config.importMap.length > 0 ? toApiRelativePath(cwd, config.importMap) : "",
-    static_patterns: config.staticFiles.map((pathname) => toApiRelativePath(cwd, pathname)),
+    entrypoint_path: toApiRelativePath(sourceRoot, config.entrypoint),
+    import_map_path:
+      config.importMap.length > 0 ? toApiRelativePath(sourceRoot, config.importMap) : "",
+    static_patterns: config.staticFiles.map((pathname) => toApiRelativePath(sourceRoot, pathname)),
   };
 }
 
@@ -1098,9 +1121,10 @@ export async function buildDockerBinds(
   const hostFunctionsDir = resolve(functionsDir);
   const hostOutputDir = resolve(outputDir);
   const projectRoot = resolve(functionsDir, "..", "..");
-  const realProjectRoot = await realpath(projectRoot);
+  const sourceRoot = await resolveFunctionsSourceRoot(projectRoot);
+  const realSourceRoot = await realpath(sourceRoot);
   const moduleRoots = [
-    realProjectRoot,
+    realSourceRoot,
     ...(
       await Promise.all(
         (options.additionalModuleRoots ?? []).map(async (root) => {
@@ -1113,7 +1137,7 @@ export async function buildDockerBinds(
       )
     ).flatMap((root) => (root === undefined ? [] : [root])),
   ];
-  const importMapAllowedRoots = await resolveImportMapAllowedRoots(projectRoot, config.importMap);
+  const importMapAllowedRoots = await resolveImportMapAllowedRoots(sourceRoot, config.importMap);
   const binds = [`${hostFunctionsDir}:${toDockerPath(hostFunctionsDir)}:ro`];
   if (process.env["BITBUCKET_CLONE_DIR"] === undefined) {
     binds.unshift(`${localDockerId("edge_runtime", projectId)}:/root/.cache/deno:rw`);
@@ -1132,7 +1156,7 @@ export async function buildDockerBinds(
     extraBinds.push(`${hostPath}:${toDockerPath(hostPath)}:ro`);
   };
   const appendProjectBind = async (pathname: string, _contents: Uint8Array) =>
-    appendBindWithinRoots([realProjectRoot], pathname);
+    appendBindWithinRoots([realSourceRoot], pathname);
   const appendModuleBind = async (pathname: string, _contents: Uint8Array) =>
     appendBindWithinRoots(moduleRoots, pathname);
   const appendImportMapBind = async (pathname: string, _contents: Uint8Array) =>
@@ -1145,7 +1169,7 @@ export async function buildDockerBinds(
     importMap,
     config.entrypoint,
     moduleRoots,
-    projectRoot,
+    sourceRoot,
     appendModuleBind,
     options.onWarning ?? (async () => {}),
   );
@@ -1159,7 +1183,7 @@ export async function buildDockerBinds(
         importMap,
         target,
         importMapAllowedRoots,
-        projectRoot,
+        sourceRoot,
         appendImportMapBind,
         async () => {},
       );
@@ -1539,8 +1563,7 @@ const rateLimitedRequest = Effect.fnUntraced(function* <A>(
 const uploadFunctionSource = Effect.fnUntraced(function* (
   api: ApiClient,
   projectRef: string,
-  cwd: string,
-  projectRoot: string,
+  sourceRoot: string,
   config: ResolvedDeployFunctionConfig,
   metadata: SourceDeployMetadata,
   bundleOnly: boolean,
@@ -1548,7 +1571,7 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
   const output = yield* Output;
   const files = yield* Effect.tryPromise({
     try: async () => {
-      const form = await writeSourceDeployForm(cwd, projectRoot, config, metadata, (text) =>
+      const form = await writeSourceDeployForm(sourceRoot, config, metadata, (text) =>
         output.raw(text, "stderr"),
       );
       return form.getAll("file").flatMap((part) => (part instanceof Blob ? [part] : []));
@@ -1929,13 +1952,16 @@ export const resolveFunctionConfigs = Effect.fnUntraced(function* (input: {
 
 const deployViaApi = Effect.fnUntraced(function* (
   projectRef: string,
-  cwd: string,
   projectRoot: string,
   configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
   api: ApiClient,
   jobs: number,
 ) {
   const output = yield* Output;
+  const sourceRoot = yield* Effect.tryPromise({
+    try: () => resolveFunctionsSourceRoot(projectRoot),
+    catch: (error) => (error instanceof Error ? error : new Error(String(error))),
+  });
   const enabled = configs.filter((config) => config.enabled);
   for (const skipped of configs.filter((config) => !config.enabled)) {
     yield* output.raw(`Skipping disabled Function: ${skipped.slug}\n`, "stderr");
@@ -1956,10 +1982,9 @@ const deployViaApi = Effect.fnUntraced(function* (
     yield* uploadFunctionSource(
       api,
       projectRef,
-      cwd,
-      projectRoot,
+      sourceRoot,
       config,
-      createSourceMetadata(cwd, config, remoteBySlug.get(config.slug)),
+      createSourceMetadata(sourceRoot, config, remoteBySlug.get(config.slug)),
       false,
     );
     return;
@@ -1974,10 +1999,9 @@ const deployViaApi = Effect.fnUntraced(function* (
           yield* uploadFunctionSource(
             api,
             projectRef,
-            cwd,
-            projectRoot,
+            sourceRoot,
             config,
-            createSourceMetadata(cwd, config, remoteBySlug.get(config.slug)),
+            createSourceMetadata(sourceRoot, config, remoteBySlug.get(config.slug)),
             true,
           ),
         );
@@ -2191,7 +2215,6 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
 
     const deployWithApi = deployViaApi(
       projectRef,
-      dependencies.cwd,
       dependencies.projectRoot,
       configs,
       dependencies.api,
