@@ -16,20 +16,31 @@ export const stop = Effect.fnUntraced(function* (flags: StopFlags) {
   yield* output.intro("Stop local Supabase stack");
 
   if (flags.noBackup) {
+    let stoppedRunningStack = true;
     yield* stopDaemon({
       cwd,
       cacheRoot: cliConfig.supabaseHome,
       projectDir: projectHome.projectRoot,
       projectStateRoot: projectHome.projectHomeDir,
       name: flags.stack,
-    }).pipe(Effect.catchTag("NoRunningStackError", () => Effect.void));
+    }).pipe(
+      Effect.catchTag("NoRunningStackError", () =>
+        Effect.sync(() => {
+          stoppedRunningStack = false;
+        }),
+      ),
+    );
     yield* deleteManagedStackPersistence({
       cwd,
       cacheRoot: cliConfig.supabaseHome,
       projectDir: projectHome.projectRoot,
       projectStateRoot: projectHome.projectHomeDir,
       name: flags.stack,
-    });
+    }).pipe(
+      Effect.catchTag("NoRunningStackError", (error) =>
+        stoppedRunningStack ? Effect.void : Effect.fail(error),
+      ),
+    );
 
     yield* output.success("Local Supabase stopped and persisted data deleted");
     yield* output.outro("Local Supabase stack stopped and local data deleted.");

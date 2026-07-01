@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Layer, Option, Path } from "effect";
 
+import { Output } from "../../../../shared/output/output.service.ts";
+import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   type LegacySetupInputs,
   legacyBaselineCatalogFileName,
@@ -110,11 +112,13 @@ describe("catalog keys + file names", () => {
 
 const withTemp = () => mkdtempSync(join(tmpdir(), "legacy-decl-cache-"));
 
-const run = <A>(effect: Effect.Effect<A, unknown, FileSystem.FileSystem | Path.Path>) =>
-  effect.pipe(Effect.provide(BunServices.layer)) as Effect.Effect<A>;
+const run = <A>(effect: Effect.Effect<A, unknown, FileSystem.FileSystem | Path.Path | Output>) =>
+  effect.pipe(
+    Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)),
+  ) as Effect.Effect<A>;
 
 const withServices = <A>(
-  body: (fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, unknown, never>,
+  body: (fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, unknown, Output>,
 ) =>
   run(
     Effect.gen(function* () {
@@ -141,6 +145,42 @@ describe("legacyListLocalMigrations", () => {
       ),
     );
   });
+
+  it.effect(
+    "warns (byte-exact, on stderr) when skipping a deprecated init and a misnamed file",
+    () => {
+      // Mirrors Go's `ListLocalMigrations` warnings (`pkg/migration/list.go:45-53`):
+      // a `fmt.Fprintf(os.Stderr, …)` for the deprecated `_init.sql` first file and
+      // for any name that does not match `<timestamp>_name.sql`.
+      const dir = withTemp();
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      writeFileSync(join(migrationsDir, "20200101000000_init.sql"), "-- old init");
+      writeFileSync(join(migrationsDir, "20240101120000_create.sql"), "create table x();");
+      writeFileSync(join(migrationsDir, "notes.txt"), "ignore me");
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* legacyListLocalMigrations(fs, path, migrationsDir);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(BunServices.layer, out.layer)),
+        Effect.tap((paths) =>
+          Effect.sync(() => {
+            expect(paths.map((p) => p.split("/").pop())).toEqual(["20240101120000_create.sql"]);
+            const stderr = out.rawChunks.filter((c) => c.stream === "stderr").map((c) => c.text);
+            expect(stderr).toContain(
+              'Skipping migration 20200101000000_init.sql... (replace "init" with a different file name to apply this migration)\n',
+            );
+            expect(stderr).toContain(
+              'Skipping migration notes.txt... (file name must match pattern "<timestamp>_name.sql")\n',
+            );
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      ) as Effect.Effect<unknown>;
+    },
+  );
 
   it.effect("returns [] when the migrations dir is absent", () => {
     const dir = withTemp();

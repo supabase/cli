@@ -21,7 +21,16 @@ try {
   console.log(stringifyCatalogSnapshot(serializeCatalog(catalog)));
 } catch (e) {
   console.error(e);
+  // Force close event loop
   throw new Error("");
 } finally {
   await close();
 }
+// Force close the event loop on the success path too. The connection pool can
+// leave keepalive handles registered even after close() resolves, which keeps
+// the Edge Runtime worker (and therefore the container) alive after the catalog
+// has already been written to stdout. The CLI streams this container's logs with
+// Follow:true, so a worker that never exits hangs the parent `__catalog`
+// subprocess — and the declarative-sync command that spawned it — indefinitely
+// at 0% CPU (supabase/pg-toolbelt#312).
+throw new Error("");

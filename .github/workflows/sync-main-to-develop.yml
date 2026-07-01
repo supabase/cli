@@ -1,0 +1,56 @@
+name: Sync main to develop
+
+# Keeps stable hotfix commits reachable from the integration branch after the
+# production source of truth publishes successfully.
+on:
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-main-to-develop
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge main into develop
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
+        with:
+          ref: develop
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Merge main into develop
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main develop
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "develop already contains main."
+          else
+            git merge origin/main --no-edit
+            git push origin develop
+          fi

@@ -94,7 +94,14 @@ func RunEdgeRuntimeScript(ctx context.Context, env []string, script string, bind
 	if len(state.extraEnv) > 0 {
 		combinedEnv = append(append([]string{}, env...), state.extraEnv...)
 	}
-	if err := DockerRunOnceWithConfig(
+	// Wait for the container to exit and then read its logs, rather than
+	// following the log stream to detect completion. The edge-runtime worker is
+	// forced to exit once the script flushes its output, but podman's
+	// /logs?follow endpoint does not close when the container stops, so a
+	// followed read (DockerRunOnceWithConfig) hangs the CLI forever
+	// (supabase/pg-toolbelt#312). pg-delta script output is bounded, so reading
+	// the log once after exit is safe.
+	if err := DockerRunOnceWaitWithConfig(
 		ctx,
 		container.Config{
 			Image:      Config.EdgeRuntime.Image,

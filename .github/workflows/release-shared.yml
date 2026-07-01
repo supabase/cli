@@ -55,6 +55,10 @@ on:
         required: false
       DF_FIREWALL_TOKEN:
         required: false
+      LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY:
+        required: false
+      LINEAR_CLI_BETA_RELEASE_ACCESS_KEY:
+        required: false
 jobs:
   build-blacksmith:
     name: Build CLI artifacts (Blacksmith)
@@ -110,7 +114,7 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Restore build artifacts cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             packages/cli-*/bin/
@@ -175,7 +179,7 @@ jobs:
       - name: Cache smoke-test docker images
         if: runner.os == 'Linux'
         id: smoke-docker-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/smoke-docker-images.tar
           key: smoke-docker-images-debian-bookworm-slim-amazonlinux-2023-alpine-3.21-v1
@@ -246,7 +250,7 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Restore build artifacts cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             packages/cli-*/bin/
@@ -280,6 +284,8 @@ jobs:
       CHANNEL: ${{ inputs.channel }}
       NPM_TAG: ${{ inputs.npm_tag }}
       VERSION: ${{ inputs.version }}
+      LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY: ${{ secrets.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY }}
+      LINEAR_CLI_BETA_RELEASE_ACCESS_KEY: ${{ secrets.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY }}
     permissions:
       contents: write
       id-token: write
@@ -297,6 +303,7 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: true
+          fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Setup
@@ -305,7 +312,7 @@ jobs:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Restore build artifacts cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             packages/cli-*/bin/
@@ -417,6 +424,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "v${VERSION}" --draft=false
 
+      - name: Sync stable release to Linear
+        if: ${{ inputs.channel == 'stable' && env.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY != '' }}
+        uses: linear/linear-release-action@c0cb8354a362c24c6d3e0948f37fd66d07588e3f # v0
+        with:
+          access_key: ${{ env.LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY }}
+          version: v${{ inputs.version }}
+          name: Supabase CLI v${{ inputs.version }}
+          links: |
+            GitHub Release=https://github.com/${{ github.repository }}/releases/tag/v${{ inputs.version }}
+            Release workflow=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Sync beta release to Linear
+        if: ${{ inputs.channel == 'beta' && env.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY != '' }}
+        uses: linear/linear-release-action@c0cb8354a362c24c6d3e0948f37fd66d07588e3f # v0
+        with:
+          access_key: ${{ env.LINEAR_CLI_BETA_RELEASE_ACCESS_KEY }}
+          version: v${{ inputs.version }}
+          name: Supabase CLI v${{ inputs.version }}
+          links: |
+            GitHub Release=https://github.com/${{ github.repository }}/releases/tag/v${{ inputs.version }}
+            Release workflow=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
   # Changelog backfill only needs tag + published GH release (from publish).
   # Runs in parallel with brew/scoop/smoke; must not gate distribution.
   backfill-release-notes:
@@ -475,7 +504,7 @@ jobs:
       # tarballs. Reading it here produced a formula whose sha256 rejected the
       # downloaded archive ("Formula reports different checksum").
       - name: Restore build artifacts cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             packages/cli-*/bin/
@@ -538,7 +567,7 @@ jobs:
       # tarballs. Reading it here would produce a manifest whose hash rejects the
       # downloaded archive.
       - name: Restore build artifacts cache
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             packages/cli-*/bin/

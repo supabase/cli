@@ -1,0 +1,61 @@
+name: Sync Stack Service Versions
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+    paths:
+      - apps/cli-go/pkg/config/templates/Dockerfile
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Sync stack service versions
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == github.event.pull_request.head.repo.full_name
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Sync stack service versions
+        run: pnpm sync:versions
+        working-directory: packages/stack
+
+      - name: Generate token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Commit synced stack service versions
+        env:
+          GH_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          if git diff --quiet -- packages/stack/src/versions.ts; then
+            echo "Stack service versions are already synced."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/stack/src/versions.ts
+          git commit -m "chore(stack): sync service version manifest"
+          git push "https://x-access-token:${GH_APP_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_HEAD_REF}"
