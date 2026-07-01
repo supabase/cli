@@ -72,6 +72,33 @@ function isProjectNotFound(cause: unknown) {
   return cause instanceof LegacyGenTypesUnexpectedStatusError && cause.status === 404;
 }
 
+function parsePoolerConnectionString(
+  connectionString: string,
+  password: string,
+): Option.Option<LegacyPgConnInput> {
+  try {
+    const url = new URL(connectionString.replace("[YOUR-PASSWORD]", encodeURIComponent(password)));
+    if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") {
+      return Option.none();
+    }
+    if (url.hostname.length === 0 || url.username.length === 0) {
+      return Option.none();
+    }
+    const options = url.searchParams.get("options") ?? undefined;
+    return Option.some({
+      host: url.hostname,
+      // Supavisor transaction mode does not support prepared statements; use port 5432.
+      port: 5432,
+      user: decodeURIComponent(url.username),
+      password,
+      database: decodeURIComponent(url.pathname.replace(/^\//, "")) || "postgres",
+      ...(options !== undefined && options.length > 0 ? { options } : {}),
+    });
+  } catch {
+    return Option.none();
+  }
+}
+
 function ensureMutuallyExclusive(
   group: ReadonlyArray<string>,
   present: ReadonlyArray<string>,
@@ -253,6 +280,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   }
 
   const loadConfig = () => loadProjectConfig(cliConfig.workdir);
+  const loadConfigForRef = (projectRef: string) =>
+    loadProjectConfig(cliConfig.workdir, { projectRef });
+
+  const schemasFromConfig = (apiSchemas: ReadonlyArray<string> | undefined) =>
+    defaultSchemas(apiSchemas);
 
   const runProjectTypes = (
     projectRef: string,
@@ -296,7 +328,10 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           networkMode: "host",
           includedSchemas: includedSchemas.join(","),
           postgrestV9Compat: flags.postgrestV9Compat,
-          poolerFallback: { directHost: conn.host, flags: resolveFlags },
+          poolerFallback: {
+            directHost: conn.host,
+            resolve: dbConfig.resolvePoolerFallback(resolveFlags),
+          },
         });
         return;
       }
@@ -321,13 +356,25 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       if (branch.db_user === undefined || branch.db_pass === undefined) {
         return yield* Effect.fail(new Error("Preview branch database credentials are unavailable"));
       }
+      const branchUser = branch.db_user;
+      const branchPassword = branch.db_pass;
+
+      const poolerFallback = api.v1.getPoolerConfig({ ref: branch.ref }).pipe(
+        Effect.map((configs) => {
+          const primary = configs.find((config) => config.database_type === "PRIMARY");
+          return primary === undefined
+            ? Option.none<LegacyPgConnInput>()
+            : parsePoolerConnectionString(primary.connection_string, branchPassword);
+        }),
+        Effect.orElseSucceed(() => Option.none<LegacyPgConnInput>()),
+      );
 
       yield* runPgMeta({
         url: legacyToPostgresURL({
           host: branch.db_host,
           port: branch.db_port,
-          user: branch.db_user,
-          password: branch.db_pass,
+          user: branchUser,
+          password: branchPassword,
           database: "postgres",
         }),
         host: branch.db_host,
@@ -337,6 +384,10 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         networkMode: "host",
         includedSchemas: includedSchemas.join(","),
         postgrestV9Compat: flags.postgrestV9Compat,
+        poolerFallback: {
+          directHost: branch.db_host,
+          resolve: poolerFallback,
+        },
       });
     });
 
@@ -352,7 +403,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     readonly pgmetaVersionOverride?: string;
     readonly poolerFallback?: {
       readonly directHost: string;
-      readonly flags: LegacyDbConfigFlags;
+      readonly resolve: Effect.Effect<Option.Option<LegacyPgConnInput>, unknown>;
     };
   }) =>
     Effect.scoped(
@@ -448,9 +499,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           input.poolerFallback !== undefined &&
           legacyIsIPv6ConnectivityError(result.stderrText)
         ) {
-          const pooler = yield* dbConfig
-            .resolvePoolerFallback(input.poolerFallback.flags)
-            .pipe(Effect.orElseSucceed(() => Option.none<LegacyPgConnInput>()));
+          const pooler = yield* input.poolerFallback.resolve.pipe(
+            Effect.orElseSucceed(() => Option.none<LegacyPgConnInput>()),
+          );
           if (Option.isSome(pooler)) {
             yield* output.raw(
               `${legacyYellow(
@@ -579,18 +630,18 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       const ref = yield* projectRef.resolve(Option.none());
       yield* runProjectTypes(
         ref,
-        schemas.length > 0 ? schemas : defaultSchemas(loaded?.config.api.schemas),
+        schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
         false,
       );
       return;
     }
 
     if (Option.isSome(flags.projectId)) {
-      const loaded = yield* loadConfig();
       const ref = yield* projectRef.resolve(flags.projectId);
+      const loaded = schemas.length > 0 ? null : yield* loadConfigForRef(ref);
       yield* runProjectTypes(
         ref,
-        schemas.length > 0 ? schemas : defaultSchemas(loaded?.config.api.schemas),
+        schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
         true,
       );
       return;
@@ -612,7 +663,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     const loaded = yield* loadConfig();
     yield* runProjectTypes(
       resolvedRef,
-      schemas.length > 0 ? schemas : defaultSchemas(loaded?.config.api.schemas),
+      schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
       false,
     );
   }).pipe(Effect.ensuring(telemetryState.flush));

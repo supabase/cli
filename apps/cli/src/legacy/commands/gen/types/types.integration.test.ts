@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { BunServices } from "@effect/platform-bun";
 import type {
   V1CreateLoginRoleOutput,
   V1GetABranchConfigOutput,
+  V1GetPoolerConfigOutput,
   V1GetProjectOutput,
 } from "@supabase/api/effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -191,6 +192,7 @@ function mockDbConfigResolver(
 
 type BranchConfig = typeof V1GetABranchConfigOutput.Type;
 type LoginRole = typeof V1CreateLoginRoleOutput.Type;
+type PoolerConfig = typeof V1GetPoolerConfigOutput.Type;
 type Project = typeof V1GetProjectOutput.Type;
 
 function setup(
@@ -219,6 +221,9 @@ function setup(
     readonly getABranchConfig?: (input: {
       readonly branch_id_or_ref: string;
     }) => Effect.Effect<BranchConfig, unknown>;
+    readonly getPoolerConfig?: (input: {
+      readonly ref: string;
+    }) => Effect.Effect<PoolerConfig, unknown>;
     readonly getProject?: (input: { readonly ref: string }) => Effect.Effect<Project, unknown>;
     readonly createLoginRole?: (input: {
       readonly ref: string;
@@ -289,6 +294,25 @@ function setup(
               release_channel: "ga",
             },
           })),
+      getPoolerConfig:
+        opts.getPoolerConfig ??
+        (() =>
+          Effect.succeed([
+            {
+              identifier: "primary",
+              database_type: "PRIMARY",
+              is_using_scram_auth: true,
+              db_user: "postgres",
+              db_host: "db.example",
+              db_port: 5432,
+              db_name: "postgres",
+              connection_string: "postgres://postgres:[YOUR-PASSWORD]@127.0.0.1:6543/postgres",
+              connectionString: "postgres://postgres:[YOUR-PASSWORD]@127.0.0.1:6543/postgres",
+              default_pool_size: null,
+              max_client_conn: null,
+              pool_mode: "transaction",
+            },
+          ])),
       createLoginRole:
         opts.createLoginRole ??
         (() =>
@@ -1189,6 +1213,67 @@ describe("legacy gen types", () => {
     }),
   );
 
+  it.live("uses remote config schemas for explicit project-ref pg-meta typegen", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-remote-config-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "base"',
+              "",
+              "[api]",
+              'schemas = ["public"]',
+              "",
+              "[remotes.staging]",
+              `project_id = "${LEGACY_VALID_REF}"`,
+              "",
+              "[remotes.staging.api]",
+              'schemas = ["private"]',
+              "",
+            ].join("\n"),
+          );
+          const docker = captureDockerRun();
+          const { layer } = setup({
+            workdir,
+            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+            childStdout: ["type PrivateMovies struct {}"],
+            dbConfigResolve: () =>
+              Effect.succeed(
+                remoteResolvedConfig({
+                  host: "127.0.0.1",
+                  port,
+                  user: "postgres",
+                  password: "direct-password",
+                  database: "postgres",
+                }),
+              ),
+            onSpawn: docker.onSpawn,
+          });
+
+          try {
+            await Effect.runPromise(
+              legacyGenTypes(
+                defaultFlags({
+                  projectId: Option.some(LEGACY_VALID_REF),
+                  lang: "go",
+                }),
+              ).pipe(Effect.provide(layer)),
+            );
+          } finally {
+            rmSync(workdir, { recursive: true, force: true });
+          }
+
+          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,private")).toBe(
+            true,
+          );
+          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(false);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
   it.live("allows pg-meta flags for remote non-TypeScript project refs", () =>
     Effect.tryPromise({
       try: () =>
@@ -1296,6 +1381,79 @@ describe("legacy gen types", () => {
           expect(
             docker.env.has(
               `PG_META_DB_URL=postgresql://branch_user:branch-password@127.0.0.1:${port}/postgres?connect_timeout=10`,
+            ),
+          ).toBe(true);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
+  it.live("retries preview branch pg-meta through the branch IPv4 pooler", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const child = mockSequentialChildProcessSpawner([
+            {
+              exitCode: 1,
+              stderr: [
+                'could not translate host name "db.branch-ref.supabase.co" to address: No address associated with hostname',
+              ],
+            },
+            { exitCode: 0, stdout: ["class RetriedViaBranchPooler(BaseModel):"] },
+          ]);
+          const { layer, api } = setup({
+            args: ["gen", "types", "--lang", "python", "--project-id", LEGACY_VALID_REF],
+            childLayer: child.layer,
+            getProject: () => Effect.fail(statusApiError(404, `{"message":"Not found"}`)),
+            getABranchConfig: ({ branch_id_or_ref }) =>
+              Effect.succeed({
+                ref: branch_id_or_ref,
+                postgres_version: "15.1",
+                postgres_engine: "15",
+                release_channel: "ga",
+                status: "ACTIVE_HEALTHY",
+                db_host: "127.0.0.1",
+                db_port: port,
+                db_user: "branch_user",
+                db_pass: "branch-password",
+                jwt_secret: "secret",
+              }),
+            getPoolerConfig: ({ ref }) =>
+              Effect.succeed([
+                {
+                  identifier: "primary",
+                  database_type: "PRIMARY",
+                  is_using_scram_auth: true,
+                  db_user: "postgres",
+                  db_host: "db.example",
+                  db_port: 5432,
+                  db_name: "postgres",
+                  connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@127.0.0.1:6543/postgres`,
+                  connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@127.0.0.1:6543/postgres`,
+                  default_pool_size: null,
+                  max_client_conn: null,
+                  pool_mode: "transaction",
+                },
+              ]),
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                projectId: Option.some(LEGACY_VALID_REF),
+                lang: "python",
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(api.requests).toContainEqual({
+            method: "getPoolerConfig",
+            input: { ref: LEGACY_VALID_REF },
+          });
+          expect(child.spawned).toHaveLength(2);
+          expect(
+            dockerEnv(child.spawned[1]?.args ?? []).has(
+              `PG_META_DB_URL=postgresql://postgres.${LEGACY_VALID_REF}:branch-password@127.0.0.1:5432/postgres?connect_timeout=10`,
             ),
           ).toBe(true);
         }),
