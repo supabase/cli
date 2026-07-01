@@ -1404,7 +1404,13 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       return yield* Effect.fail(new Error(`failed to bundle function: exit ${result.exitCode}`));
     }
 
-    const eszip = yield* Effect.tryPromise(() => readFile(outputPath));
+    const eszip = yield* Effect.tryPromise({
+      try: () => readFile(outputPath),
+      catch: (error) =>
+        new Error(
+          `failed to open eszip: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+    });
     const compressed = new Uint8Array(
       Buffer.concat([
         Buffer.from(COMPRESSED_ESZIP_MAGIC),

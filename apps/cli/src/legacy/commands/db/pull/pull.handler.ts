@@ -21,6 +21,7 @@ import {
   legacyResolveDeclarativeDir,
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
+import { legacyMakeDir } from "../../../shared/legacy-make-dir.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -39,7 +40,7 @@ import { legacyDiffMigra } from "../shared/legacy-migra.ts";
 import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
-} from "../shared/legacy-migration-file.ts";
+} from "../../../shared/legacy-migration-file.ts";
 import { legacyFormatDebugId } from "../shared/legacy-debug-bundle.ts";
 import {
   type LegacyPgDeltaContext,
@@ -62,8 +63,8 @@ import {
   legacyListRemoteMigrations,
   legacyLoadLocalVersions,
   legacyReconcileMigrations,
-  legacyUpdateMigrationHistory,
-} from "./pull.sync.ts";
+} from "../../../shared/legacy-migration-history.ts";
+import { legacyUpdateMigrationHistory } from "./pull.sync.ts";
 
 // pflag's `MarkDeprecated` emits `"Flag --%s has been deprecated, %s\n"` with the
 // registration message verbatim (`apps/cli-go/cmd/db.go:466`), which ends with a `.`.
@@ -540,9 +541,9 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             new LegacyDbPullInSyncError({ message: "No schema changes found" }),
           );
         }
-        yield* fs
-          .makeDirectory(path.dirname(migrationPath), { recursive: true })
-          .pipe(Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })));
+        yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(
+          Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
+        );
         yield* fs.writeFileString(migrationPath, out).pipe(
           Effect.mapError(
             (cause) =>

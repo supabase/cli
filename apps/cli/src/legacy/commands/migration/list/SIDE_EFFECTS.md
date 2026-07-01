@@ -38,15 +38,19 @@
 
 ### `--output-format text` (Go CLI compatible)
 
-Prints a table of local and remote migration versions with a status column.
+Prints a Glamour ASCII table `|Local|Remote|Time (UTC)|` to stdout (byte-matching
+Go's `glamour.RenderTable` with `AsciiStyle`; cells are backtick-wrapped inline
+code). Queries `SELECT version FROM supabase_migrations.schema_migrations ORDER BY
+version` (a missing table → empty Remote column).
 
 ### `--output-format json`
 
-Not applicable.
+Emits `output.success("Migrations listed", { migrations: [{ local, remote, time }] })`.
+`local`/`remote` are empty strings when a version exists only on the other side.
 
 ### `--output-format stream-json`
 
-Not applicable.
+Same structured `migrations` result delivered as an NDJSON `result` event.
 
 ## Notes
 

@@ -23,6 +23,7 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
+	configpkg "github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
 )
@@ -50,7 +51,11 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 
 func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
-		return schemas.SQLFiles(afero.NewIOFS(fsys))
+		return schemas.SQLFiles(
+			afero.NewIOFS(fsys),
+			configpkg.WithSkipEmptyGlobs(),
+			configpkg.WithErrorOnAllSkippedGlobs(),
+		)
 	}
 	// When pg-delta is enabled, declarative path is the source of truth (config or default).
 	if utils.IsPgDeltaEnabled() {

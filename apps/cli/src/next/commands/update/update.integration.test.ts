@@ -184,7 +184,7 @@ describe("update handler", () => {
                   postgrest: "14.4",
                   auth: "2.180.0",
                   "edge-runtime": DEFAULT_VERSIONS["edge-runtime"],
-                  realtime: "2.78.10",
+                  realtime: "2.111.8",
                   storage: "1.39.1",
                   imgproxy: "v3.8.0",
                   mailpit: "v1.30.2",

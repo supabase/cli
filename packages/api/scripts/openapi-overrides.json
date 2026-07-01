@@ -615,5 +615,22 @@
       "type": "string",
       "nullable": true
     }
+  },
+  {
+    "op": "test",
+    "path": "/components/schemas/StorageConfigResponse/required",
+    "value": [
+      "fileSizeLimit",
+      "features",
+      "capabilities",
+      "external",
+      "migrationVersion",
+      "databasePoolMode"
+    ]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/StorageConfigResponse/required",
+    "value": ["fileSizeLimit", "features", "capabilities", "external", "migrationVersion"]
   }
 ]

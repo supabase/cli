@@ -1,5 +1,7 @@
 import { Data, Effect, Layer, Schema, Context } from "effect";
 import { FileSystem, Path } from "effect";
+import { execFileSync } from "node:child_process";
+import { existsSync, rmSync } from "node:fs";
 import { AllocatedPortsSchema, type AllocatedPorts } from "./PortAllocator.ts";
 import {
   PartialVersionManifestSchema,
@@ -14,7 +16,7 @@ import {
   defaultManagedRuntimeRoot,
   socketPathForRuntimeRoot,
 } from "./paths.ts";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -460,9 +462,81 @@ function makeRemove(deps: StateManagerDeps) {
 function makeDeleteStack(deps: StateManagerDeps) {
   return (name: string): Effect.Effect<void> =>
     Effect.gen(function* () {
-      yield* deps.fs.remove(deps.stackDir(name), { recursive: true });
+      const stackDir = deps.stackDir(name);
+      yield* deps.fs
+        .remove(stackDir, { recursive: true })
+        .pipe(Effect.catch((error) => removeStackDirWithDocker(stackDir, error)));
       yield* deps.fs.remove(deps.runtimeDir(name), { recursive: true }).pipe(Effect.ignore);
-    }).pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
+    });
+}
+
+function localDockerImages(): ReadonlyArray<string> {
+  try {
+    return execFileSync("docker", ["image", "ls", "--format", "{{.Repository}}:{{.Tag}}"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5_000,
+    })
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.endsWith(":<none>"));
+  } catch {
+    return [];
+  }
+}
+
+function postgresCleanupImages(): ReadonlyArray<string> {
+  return localDockerImages().filter(
+    (image) =>
+      image.startsWith("public.ecr.aws/supabase/postgres:") ||
+      image.startsWith("supabase/postgres:") ||
+      image.startsWith("ghcr.io/supabase/postgres:"),
+  );
+}
+
+function dockerRemovePath(targetPath: string, image: string): void {
+  execFileSync(
+    "docker",
+    [
+      "run",
+      "--rm",
+      "--user",
+      "0:0",
+      "-v",
+      `${dirname(targetPath)}:/parent`,
+      "-e",
+      `TARGET_NAME=${basename(targetPath)}`,
+      "--entrypoint",
+      "sh",
+      image,
+      "-c",
+      'cd /parent && rm -rf -- "$TARGET_NAME"',
+    ],
+    { stdio: "ignore", timeout: 30_000 },
+  );
+}
+
+function removeStackDirWithDocker(targetPath: string, cause: unknown): Effect.Effect<void> {
+  return Effect.sync(() => {
+    try {
+      rmSync(targetPath, { recursive: true, force: true });
+    } catch {}
+
+    if (!existsSync(targetPath)) {
+      return;
+    }
+
+    for (const image of postgresCleanupImages()) {
+      try {
+        dockerRemovePath(targetPath, image);
+      } catch {}
+      if (!existsSync(targetPath)) {
+        return;
+      }
+    }
+
+    throw cause;
+  });
 }
 
 function makeResolve(

@@ -97,24 +97,48 @@ func (p *RequestPolicy) UnmarshalText(text []byte) error {
 
 type Glob []string
 
-// Match the glob patterns in the given FS to get a deduplicated
-// array of all migrations files to apply in the declared order.
-func (g Glob) Files(fsys fs.FS) ([]string, error) {
-	return g.files(fsys, nil)
+type globOptions struct {
+	skipEmptyGlobs    bool
+	errorOnAllSkipped bool
+}
+
+type GlobOption func(*globOptions)
+
+func WithSkipEmptyGlobs() GlobOption {
+	return func(o *globOptions) {
+		o.skipEmptyGlobs = true
+	}
+}
+
+func WithErrorOnAllSkippedGlobs() GlobOption {
+	return func(o *globOptions) {
+		o.errorOnAllSkipped = true
+	}
+}
+
+func (g Glob) Files(fsys fs.FS, options ...GlobOption) ([]string, error) {
+	return g.files(fsys, nil, options...)
 }
 
 // SQLFiles matches glob patterns and expands directory matches recursively to
 // SQL files. Pattern order is preserved, and directory contents are sorted for
 // deterministic application.
-func (g Glob) SQLFiles(fsys fs.FS) ([]string, error) {
+func (g Glob) SQLFiles(fsys fs.FS, options ...GlobOption) ([]string, error) {
 	return g.files(fsys, func(path string, entry fs.DirEntry) bool {
 		return entry.Type().IsRegular() && filepath.Ext(path) == ".sql"
-	})
+	}, options...)
 }
 
-func (g Glob) files(fsys fs.FS, expandDir func(string, fs.DirEntry) bool) ([]string, error) {
+// Match the glob patterns in the given FS to get a deduplicated
+// array of all migrations files to apply in the declared order.
+func (g Glob) files(fsys fs.FS, expandDir func(string, fs.DirEntry) bool, options ...GlobOption) ([]string, error) {
+	opts := globOptions{}
+	for _, apply := range options {
+		apply(&opts)
+	}
 	var result []string
 	var allErrors []error
+	var skipped []string
 	set := make(map[string]struct{})
 	for _, pattern := range g {
 		// Glob expects / as path separator on windows
@@ -122,6 +146,10 @@ func (g Glob) files(fsys fs.FS, expandDir func(string, fs.DirEntry) bool) ([]str
 		if err != nil {
 			allErrors = append(allErrors, errors.Errorf("failed to glob files: %w", err))
 		} else if len(matches) == 0 {
+			if opts.skipEmptyGlobs && hasGlobMeta(pattern) {
+				skipped = append(skipped, pattern)
+				continue
+			}
 			allErrors = append(allErrors, errors.Errorf("no files matched pattern: %s", pattern))
 		}
 		sort.Strings(matches)
@@ -155,6 +183,11 @@ func (g Glob) files(fsys fs.FS, expandDir func(string, fs.DirEntry) bool) ([]str
 			}
 		}
 	}
+	if opts.errorOnAllSkipped && len(result) == 0 && len(skipped) > 0 {
+		for _, pattern := range skipped {
+			allErrors = append(allErrors, errors.Errorf("no files matched pattern: %s", pattern))
+		}
+	}
 	return result, errors.Join(allErrors...)
 }
 
@@ -173,6 +206,10 @@ func walkMatchedDir(fsys fs.FS, dir string, include func(string, fs.DirEntry) bo
 	}
 	sort.Strings(files)
 	return files, nil
+}
+
+func hasGlobMeta(pattern string) bool {
+	return strings.ContainsAny(pattern, `*?[`)
 }
 
 // We follow these rules when adding new config:

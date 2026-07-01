@@ -5,6 +5,7 @@ import { DEFAULT_VERSIONS } from "./versions.ts";
 const postgresVersion = DEFAULT_VERSIONS.postgres;
 const postgrestVersion = DEFAULT_VERSIONS.postgrest;
 const authVersion = DEFAULT_VERSIONS.auth;
+const authRcVersion = "2.188.0-rc.15";
 const edgeRuntimeVersion = DEFAULT_VERSIONS["edge-runtime"];
 
 describe("BinaryResolver.downloadUrl", () => {
@@ -44,11 +45,11 @@ describe("BinaryResolver.downloadUrl", () => {
   it("constructs auth URL for rc releases", () => {
     const url = BinaryResolver.downloadUrl({
       service: "auth",
-      version: authVersion,
+      version: authRcVersion,
       assetName: "arm64",
     });
     expect(url).toBe(
-      `https://github.com/supabase/auth/releases/download/rc${authVersion}/auth-v${authVersion}-arm64.tar.gz`,
+      `https://github.com/supabase/auth/releases/download/rc${authRcVersion}/auth-v${authRcVersion}-arm64.tar.gz`,
     );
   });
 

@@ -1,4 +1,8 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { legacyMigrationDbRuntimeLayer } from "../migration.layers.ts";
 import { legacyMigrationRepair } from "./repair.handler.ts";
 
 const config = {
@@ -17,6 +21,8 @@ const config = {
   ),
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Repairs the migration history of the linked project."),
+    // Go: `repairFlags.Bool("linked", true, …)`.
+    Flag.withDefault(true),
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Repairs the migration history of the local database."),
@@ -39,6 +45,22 @@ export const legacyMigrationRepairCommand = Command.make("repair", config).pipe(
       linked: flags.linked,
       local: flags.local,
       password: flags.password,
-    }),
+    }).pipe(
+      withLegacyCommandInstrumentation({
+        flags: {
+          status: flags.status,
+          "db-url": flags.dbUrl,
+          linked: flags.linked,
+          local: flags.local,
+          // `password` is a credential — always reaches telemetry as `<redacted>`.
+          password: flags.password,
+        },
+        // Go records `utils.EnumFlag` values verbatim (`--status`); password stays redacted.
+        safeFlags: ["status"],
+        aliases: { p: "password" },
+      }),
+      withJsonErrorHandling,
+    ),
   ),
+  Command.provide(legacyMigrationDbRuntimeLayer(["migration", "repair"])),
 );
