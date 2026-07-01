@@ -206,20 +206,29 @@ export async function getServiceRoleKey(
 
 /** Create a private storage bucket via the project's Storage API (host derived
  *  from projectHost, IPv4-reachable). Idempotent — treats an existing bucket as
- *  success. */
+ *  success. Retries on `TenantNotFound`: storage tenant registration completes
+ *  asynchronously, *after* the project reports ACTIVE_HEALTHY, so the first
+ *  bucket call can race it (400 TenantNotFound). Other errors fail fast. */
 export async function createStorageBucket(
   projectHost: string,
   projectRef: string,
   serviceRoleKey: string,
   bucket: string,
+  attempts = 12,
 ): Promise<void> {
-  const res = await fetch(`https://${projectRef}.${projectHost}/storage/v1/bucket`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ id: bucket, name: bucket, public: false }),
-  });
-  if (!res.ok && res.status !== 409) {
-    throw new Error(`Failed to create bucket ${bucket}: ${res.status} ${await res.text()}`);
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const res = await fetch(`https://${projectRef}.${projectHost}/storage/v1/bucket`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${serviceRoleKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: bucket, name: bucket, public: false }),
+    });
+    if (res.ok || res.status === 409) return; // created, or already exists
+    const body = await res.text();
+    // TenantNotFound is the eventual-consistency window — retry; anything else is real.
+    if (res.status !== 400 || !body.includes("TenantNotFound") || attempt === attempts) {
+      throw new Error(`Failed to create bucket ${bucket}: ${res.status} ${body}`);
+    }
+    await new Promise((r) => setTimeout(r, 10_000));
   }
 }
 

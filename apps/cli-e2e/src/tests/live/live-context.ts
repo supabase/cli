@@ -99,7 +99,12 @@ const base = test.extend<LiveFixtures>({
   },
 
   workspace: async ({ task }, use) => {
-    const dir = makeTempDir(`cli-e2e-live-${task.name.slice(0, 30)}-`);
+    // Sanitize the task name: it becomes part of the temp-dir path, which the cli
+    // mounts as a Docker volume for docker-backed commands (functions bundling,
+    // db diff shadow). A `:` or space in the path breaks the `src:dst:mode`
+    // volume spec ("too many colons"), so collapse anything non-alphanumeric.
+    const safeName = task.name.replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 30);
+    const dir = makeTempDir(`cli-e2e-live-${safeName}-`);
     // Generate config.toml via `supabase init` so the golden paths run against a
     // freshly-generated config (functions tests add functions via seedFunctions).
     const init = await exec(liveHarness(dir.path), ["init"]);
