@@ -1274,6 +1274,68 @@ describe("legacy gen types", () => {
     }),
   );
 
+  it.live("uses remote config schemas for linked pg-meta typegen", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-linked-config-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "base"',
+              "",
+              "[api]",
+              'schemas = ["public"]',
+              "",
+              "[remotes.staging]",
+              `project_id = "${LEGACY_VALID_REF}"`,
+              "",
+              "[remotes.staging.api]",
+              'schemas = ["private"]',
+              "",
+            ].join("\n"),
+          );
+          const docker = captureDockerRun();
+          const { layer } = setup({
+            workdir,
+            projectId: Option.some(LEGACY_VALID_REF),
+            args: ["gen", "types", "--lang", "go", "--linked"],
+            childStdout: ["type PrivateMovies struct {}"],
+            dbConfigResolve: () =>
+              Effect.succeed(
+                remoteResolvedConfig({
+                  host: "127.0.0.1",
+                  port,
+                  user: "postgres",
+                  password: "direct-password",
+                  database: "postgres",
+                }),
+              ),
+            onSpawn: docker.onSpawn,
+          });
+
+          try {
+            await Effect.runPromise(
+              legacyGenTypes(
+                defaultFlags({
+                  linked: true,
+                  lang: "go",
+                }),
+              ).pipe(Effect.provide(layer)),
+            );
+          } finally {
+            rmSync(workdir, { recursive: true, force: true });
+          }
+
+          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,private")).toBe(
+            true,
+          );
+          expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public")).toBe(false);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
   it.live("allows pg-meta flags for remote non-TypeScript project refs", () =>
     Effect.tryPromise({
       try: () =>

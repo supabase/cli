@@ -626,8 +626,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     }
 
     if (flags.linked) {
-      const loaded = yield* loadConfig();
       const ref = yield* projectRef.resolve(Option.none());
+      const loaded = schemas.length > 0 ? null : yield* loadConfigForRef(ref);
       yield* runProjectTypes(
         ref,
         schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
@@ -660,7 +660,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         return Effect.fail(cause);
       }),
     );
-    const loaded = yield* loadConfig();
+    const loaded = schemas.length > 0 ? null : yield* loadConfigForRef(resolvedRef);
     yield* runProjectTypes(
       resolvedRef,
       schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),

@@ -28,7 +28,7 @@ interface CommandResult {
 function tokenlessEnv(profilePath: string, projectDir: string) {
   return {
     SUPABASE_ACCESS_TOKEN: "",
-    SUPABASE_DB_PASSWORD: "",
+    SUPABASE_DB_PASSWORD: "postgres",
     SUPABASE_PROFILE: profilePath,
     SUPABASE_WORKDIR: projectDir,
   };
