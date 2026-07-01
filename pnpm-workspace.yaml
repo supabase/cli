@@ -12,25 +12,25 @@ allowBuilds:
   sharp: true
 
 catalog:
-  "@effect/atom-react": "4.0.0-beta.85"
-  "@effect/platform-bun": "4.0.0-beta.85"
-  "@effect/platform-node": "4.0.0-beta.85"
-  "@effect/sql-pg": "4.0.0-beta.85"
+  "@effect/atom-react": "4.0.0-beta.87"
+  "@effect/platform-bun": "4.0.0-beta.87"
+  "@effect/platform-node": "4.0.0-beta.87"
+  "@effect/sql-pg": "4.0.0-beta.87"
   "@effect/vitest": "^4.0.0-beta.85"
   "@nx/devkit": "^23.0.0"
   "@swc-node/register": "^1.10.9"
   "@swc/core": "^1.15.43"
   "@tsconfig/bun": "^1.0.10"
   "@types/bun": "^1.3.14"
-  "@typescript/native-preview": "7.0.0-dev.20260622.1"
+  "@typescript/native-preview": "7.0.0-dev.20260623.1"
   "@vitest/coverage-istanbul": "^4.1.9"
-  "effect": "4.0.0-beta.85"
+  "effect": "4.0.0-beta.87"
   "knip": "^6.17.1"
   "nx": "^23.0.0"
   "oxfmt": "^0.56.0"
   "oxlint": "^1.70.0"
   "oxlint-tsgolint": "^0.23.0"
-  "tldts": "^7.4.3"
+  "tldts": "^7.4.4"
   "vitest": "^4.1.9"
 
 blockExoticSubdeps: true
