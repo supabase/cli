@@ -1,0 +1,71 @@
+import { CliError, Command } from "effect/unstable/cli";
+import { describe, expect, it } from "vitest";
+import { legacyNetworkRestrictionsCommand } from "../../legacy/commands/network-restrictions/network-restrictions.command.ts";
+import { formatCliErrorsForDisplay } from "./subcommand-flag-suggestions.ts";
+
+const testRoot = Command.make("supabase").pipe(
+  Command.withSubcommands([legacyNetworkRestrictionsCommand]),
+);
+
+describe("subcommand flag placement suggestions", () => {
+  it("suggests moving a subcommand flag after the attempted subcommand", () => {
+    const errors = formatCliErrorsForDisplay(
+      [
+        new CliError.UnrecognizedOption({
+          option: "--project-ref",
+          command: ["supabase", "network-restrictions"],
+          suggestions: [],
+        }),
+        new CliError.UnknownSubcommand({
+          subcommand: "jacraenyzrorgjhsdvvf",
+          parent: ["supabase", "network-restrictions"],
+          suggestions: [],
+        }),
+      ],
+      {
+        rootCommand: testRoot,
+        args: [
+          "network-restrictions",
+          "--project-ref",
+          "jacraenyzrorgjhsdvvf",
+          "get",
+          "--experimental",
+        ],
+      },
+    );
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.message).toContain(
+      "Unrecognized flag: --project-ref in command supabase network-restrictions",
+    );
+    expect(errors[0]?.message).toContain(
+      "Hint: --project-ref is available on `supabase network-restrictions get` and `supabase network-restrictions update`.",
+    );
+    expect(errors[0]?.message).toContain("supabase network-restrictions get --project-ref <value>");
+    expect(errors[0]?.message).not.toContain("Unknown subcommand");
+  });
+
+  it("leaves unrelated unrecognized flags unchanged", () => {
+    const errors = formatCliErrorsForDisplay(
+      [
+        new CliError.UnrecognizedOption({
+          option: "--definitely-not-a-child-flag",
+          command: ["supabase", "network-restrictions"],
+          suggestions: [],
+        }),
+      ],
+      {
+        rootCommand: testRoot,
+        args: ["network-restrictions", "--definitely-not-a-child-flag", "get"],
+      },
+    );
+
+    expect(errors).toEqual([
+      {
+        _tag: "UnrecognizedOption",
+        message:
+          "Unrecognized flag: --definitely-not-a-child-flag in command supabase network-restrictions",
+      },
+    ]);
+  });
+});
