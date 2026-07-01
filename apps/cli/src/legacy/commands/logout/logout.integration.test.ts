@@ -101,6 +101,28 @@ describe("legacy logout integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("honors SUPABASE_YES and logs out even when a piped 'n' is present", () => {
+    // Go reads `viper.GetBool("YES")` (incl. the SUPABASE_YES env var) BEFORE
+    // scanning stdin (`console.go:71`), so `SUPABASE_YES=1 printf 'n\n' | supabase
+    // logout` auto-confirms and deletes rather than consuming the piped `n`. The
+    // handler resolves `yes` via legacyResolveYes, not the raw --yes flag.
+    const prev = process.env["SUPABASE_YES"];
+    process.env["SUPABASE_YES"] = "1";
+    const { layer, credentials } = setupLegacyLogout({ stdinIsTty: false, pipedAnswers: ["n"] });
+    return Effect.gen(function* () {
+      yield* legacyLogout();
+      expect(credentials.deletedAll).toBe(true);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_YES"];
+          else process.env["SUPABASE_YES"] = prev;
+        }),
+      ),
+      Effect.provide(layer),
+    );
+  });
+
   it.live("not logged in: prints to stderr, exits 0, and does not sweep credentials", () => {
     const { layer, out, credentials } = setupLegacyLogout({
       yes: true,
