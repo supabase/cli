@@ -4,6 +4,8 @@ import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
+import { legacyResolveDbImage } from "../../shared/legacy-db-image.ts";
+import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { encodeGoJson, encodeToml, encodeYaml } from "../../shared/legacy-go-output.encoders.ts";
@@ -12,6 +14,8 @@ import {
   fetchLinkedServiceVersions,
   formatServicesWarning,
   listLocalServiceVersions,
+  type LocalServiceVersionName,
+  type LocalServiceVersionOverrides,
   mergeRemoteServiceVersions,
   renderServicesTable,
   renderServicesWarning,
@@ -56,12 +60,33 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
   yield* Effect.gen(function* () {
     const accessTokenExit = yield* credentials.getAccessToken.pipe(Effect.exit);
     const accessToken = Exit.isSuccess(accessTokenExit) ? accessTokenExit.value : Option.none();
-    const loadedProjectConfig = yield* loadProjectConfig(cliConfig.workdir).pipe(
-      Effect.catch(() => Effect.succeed(null)),
+    const loadedProjectConfig = yield* loadProjectConfig(cliConfig.workdir, {
+      projectRef: Option.getOrUndefined(linkedProjectRef),
+    }).pipe(
+      Effect.catch((error) =>
+        output.raw(`${formatConfigLoadError(error)}\n`, "stderr").pipe(Effect.as(null)),
+      ),
     );
     const projectConfig = loadedProjectConfig?.config ?? null;
+    const serviceVersions = yield* readLegacyServiceVersionOverrides(
+      fs,
+      path,
+      cliConfig.workdir,
+      projectConfig?.db.major_version,
+    );
+    const postgresImage =
+      projectConfig === null
+        ? undefined
+        : yield* legacyResolveDbImage(
+            fs,
+            path,
+            cliConfig.workdir,
+            projectConfig.db.major_version,
+            projectConfig.experimental.orioledb_version,
+          );
+    const localImageOptions = { projectConfig, postgresImage, serviceVersions };
 
-    let rows = listLocalServiceVersions(projectConfig);
+    let rows = listLocalServiceVersions(localImageOptions);
     if (Option.isSome(linkedProjectRef) && Option.isSome(accessToken)) {
       const remote = yield* fetchLinkedServiceVersions({
         apiUrl: cliConfig.apiUrl,
@@ -70,7 +95,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
         accessToken: accessToken.value,
         userAgent: cliConfig.userAgent,
       });
-      rows = mergeRemoteServiceVersions(remote, projectConfig);
+      rows = mergeRemoteServiceVersions(remote, localImageOptions);
     }
 
     const warning = renderServicesWarning(rows);
@@ -114,4 +139,48 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
 
     yield* output.raw(renderServicesTable(rows));
   }).pipe(Effect.ensuring(cacheLinkedProject), Effect.ensuring(telemetryState.flush));
+});
+
+function formatConfigLoadError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+const LEGACY_VERSION_FILES = [
+  ["auth", "gotrue-version", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
+  ["postgrest", "rest-version", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
+  ["storage", "storage-version"],
+  ["edge-runtime", "edge-runtime-version"],
+  ["realtime", "realtime-version"],
+  ["studio", "studio-version"],
+  ["pgmeta", "pgmeta-version"],
+  ["analytics", "logflare-version"],
+  ["pooler", "pooler-version"],
+] as const satisfies ReadonlyArray<
+  readonly [LocalServiceVersionName, string, ((majorVersion: number | undefined) => boolean)?]
+>;
+
+const readLegacyServiceVersionOverrides = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  majorVersion: number | undefined,
+) {
+  const paths = legacyTempPaths(path, workdir);
+  const versions: LocalServiceVersionOverrides = {};
+
+  for (const [service, fileName, shouldRead] of LEGACY_VERSION_FILES) {
+    if (shouldRead !== undefined && !shouldRead(majorVersion)) {
+      continue;
+    }
+
+    const version = yield* fs.readFileString(path.join(paths.tempDir, fileName)).pipe(
+      Effect.map((content) => content.trim()),
+      Effect.orElseSucceed(() => ""),
+    );
+    if (version.length > 0) {
+      versions[service] = version;
+    }
+  }
+
+  return versions;
 });

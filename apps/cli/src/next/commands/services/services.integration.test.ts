@@ -6,6 +6,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { CliConfig } from "../../config/cli-config.service.ts";
+import type { LocalServiceVersionsState } from "../../config/project-local-service-versions.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import {
   ProjectLinkState,
@@ -13,9 +14,12 @@ import {
 } from "../../config/project-link-state.service.ts";
 import { InvalidProjectLinkStateError } from "../../config/project-link-state.service.ts";
 import { Credentials } from "../../auth/credentials.service.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockProjectLocalServiceVersions } from "../../../../tests/helpers/mocks.ts";
 import { CommandRuntime } from "../../../shared/runtime/command-runtime.service.ts";
-import { listLocalServiceVersions } from "../../../shared/services/services.shared.ts";
+import {
+  listLocalServiceVersions,
+  postgresImageForDbMajorVersion,
+} from "../../../shared/services/services.shared.ts";
 import { services } from "./services.handler.ts";
 
 const LINKED_REF = "abcdefghijklmnopqrst";
@@ -51,6 +55,7 @@ function setup(
     accessToken?: string;
     apiUrl?: string;
     workdir?: string;
+    localServiceVersions?: LocalServiceVersionsState;
   } = {},
 ) {
   const out = mockOutput({
@@ -66,6 +71,7 @@ function setup(
     layer: Layer.mergeAll(
       BunServices.layer,
       out.layer,
+      mockProjectLocalServiceVersions(opts.localServiceVersions),
       FetchHttpClient.layer,
       Layer.succeed(
         CliConfig,
@@ -140,12 +146,24 @@ function setup(
   };
 }
 
-function makeProjectWithDbMajorVersion(majorVersion: number) {
+function makeProjectWithConfig(config: string): string {
   const workdir = mkdtempSync(join(tmpdir(), "supabase-services-config-"));
   const configDir = join(workdir, "supabase");
   mkdirSync(configDir, { recursive: true });
-  writeFileSync(join(configDir, "config.toml"), `[db]\nmajor_version = ${majorVersion}\n`);
+  writeFileSync(join(configDir, "config.toml"), config);
   return workdir;
+}
+
+function makeProjectWithDbMajorVersion(majorVersion: number): string {
+  return makeProjectWithConfig(`[db]\nmajor_version = ${majorVersion}\n`);
+}
+
+function postgresVersionForDbMajorVersion(majorVersion: number): string {
+  const image = postgresImageForDbMajorVersion(majorVersion);
+  if (image === undefined) {
+    throw new Error(`Missing Postgres image for db major ${majorVersion}.`);
+  }
+  return image.slice(image.lastIndexOf(":") + 1);
 }
 
 describe("next services", () => {
@@ -192,11 +210,70 @@ describe("next services", () => {
         services: expect.arrayContaining([
           expect.objectContaining({
             name: "supabase/postgres",
-            local: "15.8.1.085",
+            local: postgresVersionForDbMajorVersion(15),
           }),
         ]),
       });
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
+  it.live("applies linked-project remote config overrides when choosing the local image", () => {
+    const workdir = makeProjectWithConfig(`
+[db]
+major_version = 17
+
+[remotes.linked]
+project_id = "${LINKED_REF}"
+
+[remotes.linked.db]
+major_version = 15
+`);
+    const { layer, out } = setup({
+      format: "json",
+      linkedState: Option.some(linkedStateFixture()),
+      workdir,
+    });
+
+    return Effect.gen(function* () {
+      yield* services().pipe(Effect.provide(layer));
+
+      const success = out.messages.find((message) => message.type === "success");
+      expect(success?.data).toMatchObject({
+        services: expect.arrayContaining([
+          expect.objectContaining({
+            name: "supabase/postgres",
+            local: postgresVersionForDbMajorVersion(15),
+          }),
+        ]),
+      });
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
+  it.live("reports pinned local service versions", () => {
+    const { layer, out } = setup({
+      format: "json",
+      localServiceVersions: {
+        updatedAt: "2026-07-01T14:00:00.000Z",
+        versions: {
+          postgres: "15.1.0.117",
+          auth: "2.74.2",
+          storage: "1.28.0",
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* services().pipe(Effect.provide(layer));
+
+      const success = out.messages.find((message) => message.type === "success");
+      expect(success?.data).toMatchObject({
+        services: expect.arrayContaining([
+          expect.objectContaining({ name: "supabase/postgres", local: "15.1.0.117" }),
+          expect.objectContaining({ name: "supabase/gotrue", local: "v2.74.2" }),
+          expect.objectContaining({ name: "supabase/storage-api", local: "v1.28.0" }),
+        ]),
+      });
+    });
   });
 
   it.live("falls back to local output when linked state is invalid", () => {

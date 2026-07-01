@@ -2,6 +2,7 @@ import { Layer } from "effect";
 import { Command } from "effect/unstable/cli";
 import { FetchHttpClient } from "effect/unstable/http";
 import { credentialsLayer } from "../../auth/credentials.layer.ts";
+import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { provideProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -13,6 +14,7 @@ const servicesRuntimeLayer = provideProjectCommandRuntime(
   Layer.mergeAll(
     credentialsLayer,
     projectLinkStateLayer,
+    projectLocalServiceVersionsLayer,
     commandRuntimeLayer(["services"]),
     // `fetchLinkedServiceVersions` builds its management/tenant API clients from
     // the ambient HttpClient rather than self-provisioning one.
