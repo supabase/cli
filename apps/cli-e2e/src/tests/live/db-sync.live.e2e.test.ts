@@ -10,8 +10,9 @@ import { testLiveRequires } from "./live-context.ts";
 // per-run project). db push/pull confirm via a prompt that only auto-accepts
 // with --yes. Mutates the throwaway project's schema — deleted on teardown.
 //
-// Requires `docker`: `db pull`'s schema diff starts a shadow postgres server
-// (DockerStart) + diff container, so it skips on targets without a Docker socket.
+// Requires `docker`: `db push` is a plain pooler connection, but `db pull`'s
+// schema diff starts a shadow postgres server (PrepareRawShadow → DockerStart) +
+// diff container, so the round-trip skips on targets without a Docker socket.
 describe("db push + pull (live, session pooler)", () => {
   testLiveRequires(["docker"])(
     "pushes a local migration and pulls the remote schema back",

@@ -1,18 +1,17 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
-import { testLiveRequires } from "./live-context.ts";
+import { testLive } from "./live-context.ts";
 
 // Storage object round-trip against the project's real Storage API. `storage
 // --linked` opens a DB connection to resolve storage config; the direct host is
 // IPv6-only (unreachable from IPv4-only CI), so we `link` first (with the db
 // password) to persist the IPv4 pooler connection that storage then reuses.
 // The bucket is pre-seeded by live-setup; storage is gated behind --experimental.
-// Requires `database` (the pooler, to resolve storage config) + `storage` (the
-// Storage API endpoint).
+// No runtime capability needed (pooler + Storage API are baseline data plane).
 const STORAGE_FLAGS = ["--linked", "--experimental"];
 describe("storage (live --linked)", () => {
-  testLiveRequires(["database", "storage"])(
+  testLive(
     "uploads, lists, and removes an object",
     async ({ run, workspace, projectRef, storageBucket, dbPassword }) => {
       const linked = await run(["link", "--project-ref", projectRef], {

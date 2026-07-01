@@ -50,18 +50,17 @@ export const TARGET_API_URL =
 export const PROJECT_HOST =
   process.env["CLI_E2E_PROJECT_HOST"] ?? (TARGET_ENV === "staging" ? "supabase.red" : "");
 
-// Capabilities a live target can offer the cli. Live tests declare what they
-// need (see `testLiveRequires`) and are skipped when the target can't provide
-// it — so the same suite runs everywhere, skipping only what a given environment
-// genuinely can't do:
+// Runtime capabilities a live target can offer the cli. Live tests declare what
+// they need (see `testLiveRequires`) and are skipped when the target can't
+// provide it — so the same suite runs everywhere, skipping only what a given
+// environment genuinely can't do:
 //   - docker         control a container / has a Docker socket
 //   - internet       reach 3rd-party network at runtime (jsr.io, npm, image pulls)
 //   - external-tool  native pg_dump/psql, diff engine (SUPABASE_DB_USE_LOCAL_TOOLS)
-//   - database       the project's own Postgres is reachable (session pooler / dbUrl)
-//   - storage        the project's Storage API is reachable
-// The last two are the data plane: present on a full stack (staging, a complete
-// supabox), absent on a Management-API-only target.
-const ALL_CAPABILITIES = ["docker", "internet", "external-tool", "database", "storage"] as const;
+// The project data plane (its Postgres via the pooler, the Storage API) is NOT a
+// capability — any live target is assumed to provide a provisioned project, so
+// data-plane access is a baseline, not something a test opts into.
+const ALL_CAPABILITIES = ["docker", "internet", "external-tool"] as const;
 export type Capability = (typeof ALL_CAPABILITIES)[number];
 
 // Per-target defaults for what the environment provides. `staging` provides
