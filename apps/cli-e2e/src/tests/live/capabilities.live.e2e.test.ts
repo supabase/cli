@@ -34,7 +34,7 @@ describe("capability probes (live)", () => {
   // supabase/postgres CONTAINER; `SUPABASE_DB_USE_LOCAL_TOOLS=1` switches it to the
   // native pg_dump/psql on PATH, so this exercises the external-tool path (no
   // Docker socket) rather than the container path. Fails if the tool is absent.
-  testLiveRequires(["external-tool"])(
+  testLiveRequires(["database", "external-tool"])(
     "[C3] external tool: db dump exports the remote schema via native pg_dump",
     async ({ run, dbUrl, workspace }) => {
       const file = join(workspace.path, "dump.sql");
@@ -52,7 +52,7 @@ describe("capability probes (live)", () => {
   // container; both use pre-built images (no 3rd-party network). Push first so
   // local history matches the shared per-run project, then pull. A missing
   // Docker socket makes DockerStart fail — a genuine docker gate.
-  testLiveRequires(["docker"])(
+  testLiveRequires(["database", "docker"])(
     "[C2] docker (offline): db push then db pull round-trips",
     async ({ run, dbUrl, workspace }) => {
       const migrations = join(workspace.path, "supabase", "migrations");
