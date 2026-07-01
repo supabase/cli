@@ -9,6 +9,7 @@ allowBuilds:
   esbuild: true
   msgpackr-extract: true
   nx: true
+  opencode-ai: true
   sharp: true
 
 catalog:

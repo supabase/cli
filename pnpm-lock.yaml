@@ -96,12 +96,6 @@ importers:
         specifier: ^6.2.3
         version: 6.2.3
     devDependencies:
-      '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.3.187
-        version: 0.3.187(@anthropic-ai/sdk@0.105.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
-      '@anthropic-ai/sdk':
-        specifier: ^0.105.0
-        version: 0.105.0(zod@4.4.3)
       '@clack/prompts':
         specifier: ^1.6.0
         version: 1.6.0
@@ -123,6 +117,9 @@ importers:
       '@napi-rs/keyring':
         specifier: ^1.3.0
         version: 1.3.0
+      '@opencode-ai/sdk':
+        specifier: ^1.17.13
+        version: 1.17.13
       '@parcel/watcher':
         specifier: ^2.5.6
         version: 2.5.6
@@ -180,6 +177,9 @@ importers:
       knip:
         specifier: 'catalog:'
         version: 6.23.0
+      opencode-ai:
+        specifier: ^1.17.13
+        version: 1.17.13
       oxfmt:
         specifier: 'catalog:'
         version: 0.56.0
@@ -570,67 +570,6 @@ packages:
     resolution: {integrity: sha512-p+CMKJ93HFmLkjXKlXiVGlMQEuRb6H0MokBSwUsX+S6BRX8eV5naFZpQJFfJHjRZY0Hmnqy1/r6UWl3x+19zYA==}
     engines: {node: '>=18'}
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.187':
-    resolution: {integrity: sha512-0DNzATzaRmjS/Q1T4T9SLP/VT67gRX7J4reYPnEdcTm91lJwjqOPkHr17+sv+7DoerZ421ZG38dPsQd/V67qQw==}
-    cpu: [arm64]
-    os: [darwin]
-
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.187':
-    resolution: {integrity: sha512-Va3O8lTDa9IHq/DbSJwU63JJknNV3YCBh4PEznOHXJtyFoXHgRjrks4QQvN3baZm79avVq2sn+6tvpTz9CuY8A==}
-    cpu: [x64]
-    os: [darwin]
-
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.187':
-    resolution: {integrity: sha512-XQ7w2pX0mjPYUC7ayTKiHeAbePOny/ezBATxTWt5JVDZZPfljzvHA0jyXHsN8aLphbgRUfbUpdrtt5b57Bhx5g==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [musl]
-
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.187':
-    resolution: {integrity: sha512-VEvrs3MgwckdWRNa7+2rJdyOBbCWGoRaM6OnL+/n9qi4gKlZnXZlj/90Tw9o8ttcN260Opz120/SE1fYwzu/JA==}
-    cpu: [arm64]
-    os: [linux]
-    libc: [glibc]
-
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.187':
-    resolution: {integrity: sha512-yi2/L5oztFqTDnAZl4mWOINr+r7WBot70gYUxG2jOoqdYUl6j50vG/ME605X80v+l2qBmKjSGxb5trY/6DkRzQ==}
-    cpu: [x64]
-    os: [linux]
-    libc: [musl]
-
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.187':
-    resolution: {integrity: sha512-s/Fmg29tzMrbdeCbseTpL3DlzfWineSQ3bDPvhdKw4jcsgLC1YgQhIkAyE8WlceUyhQyw82NAUgYoPwfGny6hQ==}
-    cpu: [x64]
-    os: [linux]
-    libc: [glibc]
-
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.187':
-    resolution: {integrity: sha512-HjEl3cDRLAWKopdlrLI54fxTVWq4lZpWA4bTTBVc9UDdDj6AmJIRHKxaCCYLQRvnoswbAUF1sJmJ8EFJ+b6lfw==}
-    cpu: [arm64]
-    os: [win32]
-
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.187':
-    resolution: {integrity: sha512-FnrLhoZ8y/+gkZynL12UeQ8pWKCu6B/8myyRrYMNJRZqFw4DZlPvPCywAjFZf1e1hiXCoiSK0Orl5wzKfAeQsQ==}
-    cpu: [x64]
-    os: [win32]
-
-  '@anthropic-ai/claude-agent-sdk@0.3.187':
-    resolution: {integrity: sha512-HHkuC3he/Wi8fX/WjfS8mJr4TFPGoAd1QyxOuTwjnyOLboGkX1H+UhBYLxHX1ouFvHnYVJglB2wsuWemVQgahQ==}
-    engines: {node: '>=18.0.0'}
-    peerDependencies:
-      '@anthropic-ai/sdk': '>=0.93.0'
-      '@modelcontextprotocol/sdk': ^1.29.0
-      zod: ^4.0.0
-
-  '@anthropic-ai/sdk@0.105.0':
-    resolution: {integrity: sha512-sDyu+aM9cE6uZE+HgRjjHRb+qqb87GHZOx+8bE0YlWetdL1YcVLxn8h9ltxGOflyChTe6PMEo50kMQV4cw0hfg==}
-    hasBin: true
-    peerDependencies:
-      zod: ^3.25.0 || ^4.0.0
-    peerDependenciesMeta:
-      zod:
-        optional: true
-
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
     engines: {node: '>=6.9.0'}
@@ -685,10 +624,6 @@ packages:
     resolution: {integrity: sha512-hnORnjP/1P/zFEndoeX+n+t1RwWRJiJpM/jO7FW32Kn9r5+sJB2JWOdYo4L6k78j15eCwY3Gm/7364B1EMwtNg==}
     engines: {node: '>=6.0.0'}
     hasBin: true
-
-  '@babel/runtime@7.29.7':
-    resolution: {integrity: sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==}
-    engines: {node: '>=6.9.0'}
 
   '@babel/template@7.29.7':
     resolution: {integrity: sha512-puq+Gf35oI24FeN11LkoUQFqv9uwNeWpxXZi/Ji3rRIoKAzKnxRaZ+Gkj0vKS9ZCiTESfng1N9LyOyXvo+m+Gg==}
@@ -1489,6 +1424,9 @@ packages:
 
   '@octokit/types@16.0.0':
     resolution: {integrity: sha512-sKq+9r1Mm4efXW1FCk7hFSeJo4QKreL/tTbR0rz/qx/r1Oa2VV83LTA/H/MuCOX7uCIJmQVRKBcbmWoySjAnSg==}
+
+  '@opencode-ai/sdk@1.17.13':
+    resolution: {integrity: sha512-VItOGjMzRQx3zypwmeFLNhCiIx32kxS7FqzIJvVZLfyNGCifs3rfGC9qzNKWcxQo4SjNvAw++v4gWWU6Inv+JQ==}
 
   '@orama/orama@3.1.18':
     resolution: {integrity: sha512-a61ljmRVVyG5MC/698C8/FfFDw5a8LOIvyOLW5fztgUXqUpc1jOfQzOitSCbge657OgXXThmY3Tk8fpiDb4UcA==}
@@ -2640,9 +2578,6 @@ packages:
   '@sindresorhus/merge-streams@4.0.0':
     resolution: {integrity: sha512-tlqY9xq5ukxTUZBmoOp+m61cqwQD5pHJtFY3Mn8CA8ps6yghLH/Hw8UPdqg4OLmFW3IFlcXnQNmo/dh8HzXYIQ==}
     engines: {node: '>=18'}
-
-  '@stablelib/base64@1.0.1':
-    resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
@@ -3878,9 +3813,6 @@ packages:
     resolution: {integrity: sha512-7MptL8U0cqcFdzIzwOTHoilX9x5BrNqye7Z/LuC7kCMRio1EMSyqRK3BEAUD7sXRq4iT4AzTVuZdhgQ2TCvYLg==}
     engines: {node: '>=8.6.0'}
 
-  fast-sha256@1.3.0:
-    resolution: {integrity: sha512-n11RGP/lrWEFI/bWdygLxhI+pVeo1ZYIVwvvPkW7azl/rOy+F3HYRZ2K5zeE9mmkhQppyv9sQFx0JM9UabnpPQ==}
-
   fast-string-truncated-width@3.0.3:
     resolution: {integrity: sha512-0jjjIEL6+0jag3l2XWWizO64/aZVtpiGE3t0Zgqxv0DPuxiMjvB3M24fCyhZUO4KomJQPj3LTSUnDP3GpdwC0g==}
 
@@ -4574,10 +4506,6 @@ packages:
 
   json-parse-even-better-errors@2.3.1:
     resolution: {integrity: sha512-xyFwyhro/JEof6Ghe2iz2NcXoj2sloNsWr/XsERDK/oiPCfaNhl5ONfp+jQdAZRQQ0IJWNzH9zIZF7li91kh2w==}
-
-  json-schema-to-ts@3.1.1:
-    resolution: {integrity: sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g==}
-    engines: {node: '>=16'}
 
   json-schema-traverse@1.0.0:
     resolution: {integrity: sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==}
@@ -5357,6 +5285,75 @@ packages:
   open@8.4.2:
     resolution: {integrity: sha512-7x81NCL719oNbsq/3mh+hVrAWmFuEYUqrq/Iw3kUzH8ReypT9QQ0BLoJS7/G9k6N81XjW4qHWtjWwe/9eLy1EQ==}
     engines: {node: '>=12'}
+
+  opencode-ai@1.17.13:
+    resolution: {integrity: sha512-qUb9m6X6f9/imuDxc2tUcN+E1vx1XWjmQWJo2Pk/t+cNxqt5KGkaMF89CvJK6QQP7gx1E82gKpV7n1QiI5spxQ==}
+    cpu: [arm64, x64]
+    os: [darwin, linux, win32]
+    hasBin: true
+
+  opencode-darwin-arm64@1.17.13:
+    resolution: {integrity: sha512-JSIDA4DUMzg2rOyUvnb4YnI4FDvPuI4Hjmlg+OoAcUCZJUGLFabPZLDfMNzEmzmRa3LWR00GFcgxVctXQ25xzg==}
+    cpu: [arm64]
+    os: [darwin]
+
+  opencode-darwin-x64-baseline@1.17.13:
+    resolution: {integrity: sha512-pBBMZZCkTnvLCOcJtFSfAtsztwJA6PDDmsuYFD5df/3JO03MnpHRHAP4zr2Z8VjNofFpGtHifgl4+WmAvAxWAw==}
+    cpu: [x64]
+    os: [darwin]
+
+  opencode-darwin-x64@1.17.13:
+    resolution: {integrity: sha512-/t0bYlCA570IwUIucZrT1Oo7iXjQ/G1s/lzQuAJJ4mr9CjeJ8TpZnFC1pRvACfviwO9NxXz9qIKbSQatLJK6ZA==}
+    cpu: [x64]
+    os: [darwin]
+
+  opencode-linux-arm64-musl@1.17.13:
+    resolution: {integrity: sha512-OqBGh0gc2my1r/dtzylYNpRUWsc27G6FqtatzqJMxx5OVhm/Bdgm41E1jgYWuR8x2bGuiU4sLltfbVT6Eq6E+g==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  opencode-linux-arm64@1.17.13:
+    resolution: {integrity: sha512-NgBu9go6DTgi2OJ04Q54kgbQFWOmv70cdBUsGr74SdXWEpi/VNIWc/5e5eYJ123ogW25uB03H5jFQx5XKsKzUQ==}
+    cpu: [arm64]
+    os: [linux]
+
+  opencode-linux-x64-baseline-musl@1.17.13:
+    resolution: {integrity: sha512-eJKm0adea5eJxO16kBs9gtzaoLuOJ94/VZSEtsUrrLvd5GWoLaffMOjifIl55gjrjQk+T+aF1FeTex/a9Rw0IA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  opencode-linux-x64-baseline@1.17.13:
+    resolution: {integrity: sha512-a0wVqjvv9AsOhZ5PUVWr4vwYLO34Ex8dKqf8O2tiO2ucJ+afFySE/bQO98ZjFR1KpzAgaIvzVTTuw8rvFTjAcg==}
+    cpu: [x64]
+    os: [linux]
+
+  opencode-linux-x64-musl@1.17.13:
+    resolution: {integrity: sha512-dEfj9Q/RGnpN09e1TzpZHeEUEdvH1zqU+FlEOFHBs4cjRaH5K8eeqzqBU3/ux6i3g7Yc9UVPvb3l2kO9rH8Y9g==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  opencode-linux-x64@1.17.13:
+    resolution: {integrity: sha512-6naffcRwMLUM0kYuwJ3tRWt1/NXPybt9u8ZqTvSZwATM54+GhQmoiz8Qb9GYFTiwSJmB1rq8VoEmwh1VPzBcFw==}
+    cpu: [x64]
+    os: [linux]
+
+  opencode-windows-arm64@1.17.13:
+    resolution: {integrity: sha512-up2dXI0VcnDPpm2AQnaXZ0e0BajtAQpFj4RBvAxTnXK4ZgEh0OgLialTLIqQ5zBzmMPwvRQNUmRVqAFOq/UOHw==}
+    cpu: [arm64]
+    os: [win32]
+
+  opencode-windows-x64-baseline@1.17.13:
+    resolution: {integrity: sha512-oOhYb4pRDBJFTCDB1yNiyLacX0jTFQ+Bm8w1Kul1LZZCkzV/5TRGlhEyp7UqLrF3tiGhB0XA1qgvDTnnjZPKEA==}
+    cpu: [x64]
+    os: [win32]
+
+  opencode-windows-x64@1.17.13:
+    resolution: {integrity: sha512-WhRcfrVCwMsEpftrnmSIwNayCDBypDPaUjHAtl+uubRP0jILDq8Ra94Jfo3BAU/4JJDqZzKGbUXYrd62/6r6Jg==}
+    cpu: [x64]
+    os: [win32]
 
   ora@5.4.1:
     resolution: {integrity: sha512-5b6Y85tPxZZ7QytO+BQzysW31HJku27cRIlkbAXaNx+BdcVi+LlRFmVXzeF6a7JCwJpyw5c4b+YSVImQIrBpuQ==}
@@ -6157,9 +6154,6 @@ packages:
   standard-as-callback@2.1.0:
     resolution: {integrity: sha512-qoRRSyROncaz1z0mvYqIE4lCd9p2R90i6GxW3uZv5ucSu8tU7B5HXUP1gG8pVZsYNVaXjk8ClXHPttLyxAL48A==}
 
-  standardwebhooks@1.0.0:
-    resolution: {integrity: sha512-BbHGOQK9olHPMvQNHWul6MYlrRTAOKn03rOe4A8O3CLWhNf4YHBqq2HJKKC+sfqpxiBY52pNeesD6jIiLDz8jg==}
-
   statuses@2.0.2:
     resolution: {integrity: sha512-DvEy55V3DB7uknRo+4iOGT5fP1slR8wQohVdknigZPMpMstaKJQWhwiYBACJE3Ul2pTnATihhBYnRhZQHGBiRw==}
     engines: {node: '>= 0.8'}
@@ -6380,9 +6374,6 @@ packages:
 
   truncate-utf8-bytes@1.0.2:
     resolution: {integrity: sha512-95Pu1QXQvruGEhv62XCMO3Mm90GscOCClvrIUwCM0PYOXK3kaF3l3sIHxx71ThJfcbM2O5Au6SO3AWCSEfW4mQ==}
-
-  ts-algebra@2.0.0:
-    resolution: {integrity: sha512-FPAhNPFMrkwz76P7cdjdmiShwMynZYN6SgOujD1urY4oNm80Ou9oMdmbR45LotcKOXoy7wSmHkRFE6Mxbrhefw==}
 
   tsconfig-paths@4.2.0:
     resolution: {integrity: sha512-NoZ4roiN7LnbKn9QqE1amc9DJfzvZXxF4xDavcOWt1BPkdx+m+0gJuPM+S0vCe7zTJMYUP0R8pO2XMr+Y8oLIg==}
@@ -6849,52 +6840,6 @@ snapshots:
       ansi-styles: 6.2.3
       is-fullwidth-code-point: 5.1.0
 
-  '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.187':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.187':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.187':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.187':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.187':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.187':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.187':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.187':
-    optional: true
-
-  '@anthropic-ai/claude-agent-sdk@0.3.187(@anthropic-ai/sdk@0.105.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)':
-    dependencies:
-      '@anthropic-ai/sdk': 0.105.0(zod@4.4.3)
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
-      zod: 4.4.3
-    optionalDependencies:
-      '@anthropic-ai/claude-agent-sdk-darwin-arm64': 0.3.187
-      '@anthropic-ai/claude-agent-sdk-darwin-x64': 0.3.187
-      '@anthropic-ai/claude-agent-sdk-linux-arm64': 0.3.187
-      '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': 0.3.187
-      '@anthropic-ai/claude-agent-sdk-linux-x64': 0.3.187
-      '@anthropic-ai/claude-agent-sdk-linux-x64-musl': 0.3.187
-      '@anthropic-ai/claude-agent-sdk-win32-arm64': 0.3.187
-      '@anthropic-ai/claude-agent-sdk-win32-x64': 0.3.187
-
-  '@anthropic-ai/sdk@0.105.0(zod@4.4.3)':
-    dependencies:
-      json-schema-to-ts: 3.1.1
-      standardwebhooks: 1.0.0
-    optionalDependencies:
-      zod: 4.4.3
-
   '@babel/code-frame@7.29.7':
     dependencies:
       '@babel/helper-validator-identifier': 7.29.7
@@ -6971,8 +6916,6 @@ snapshots:
   '@babel/parser@7.29.7':
     dependencies:
       '@babel/types': 7.29.7
-
-  '@babel/runtime@7.29.7': {}
 
   '@babel/template@7.29.7':
     dependencies:
@@ -7664,6 +7607,10 @@ snapshots:
   '@octokit/types@16.0.0':
     dependencies:
       '@octokit/openapi-types': 27.0.0
+
+  '@opencode-ai/sdk@1.17.13':
+    dependencies:
+      cross-spawn: 7.0.6
 
   '@orama/orama@3.1.18': {}
 
@@ -8527,8 +8474,6 @@ snapshots:
   '@sindresorhus/is@4.6.0': {}
 
   '@sindresorhus/merge-streams@4.0.0': {}
-
-  '@stablelib/base64@1.0.1': {}
 
   '@standard-schema/spec@1.1.0': {}
 
@@ -9925,8 +9870,6 @@ snapshots:
       merge2: 1.4.1
       micromatch: 4.0.8
 
-  fast-sha256@1.3.0: {}
-
   fast-string-truncated-width@3.0.3: {}
 
   fast-string-width@3.0.2:
@@ -10671,11 +10614,6 @@ snapshots:
   json-parse-better-errors@1.0.2: {}
 
   json-parse-even-better-errors@2.3.1: {}
-
-  json-schema-to-ts@3.1.1:
-    dependencies:
-      '@babel/runtime': 7.29.7
-      ts-algebra: 2.0.0
 
   json-schema-traverse@1.0.0: {}
 
@@ -11708,6 +11646,57 @@ snapshots:
       is-docker: 2.2.1
       is-wsl: 2.2.0
 
+  opencode-ai@1.17.13:
+    optionalDependencies:
+      opencode-darwin-arm64: 1.17.13
+      opencode-darwin-x64: 1.17.13
+      opencode-darwin-x64-baseline: 1.17.13
+      opencode-linux-arm64: 1.17.13
+      opencode-linux-arm64-musl: 1.17.13
+      opencode-linux-x64: 1.17.13
+      opencode-linux-x64-baseline: 1.17.13
+      opencode-linux-x64-baseline-musl: 1.17.13
+      opencode-linux-x64-musl: 1.17.13
+      opencode-windows-arm64: 1.17.13
+      opencode-windows-x64: 1.17.13
+      opencode-windows-x64-baseline: 1.17.13
+
+  opencode-darwin-arm64@1.17.13:
+    optional: true
+
+  opencode-darwin-x64-baseline@1.17.13:
+    optional: true
+
+  opencode-darwin-x64@1.17.13:
+    optional: true
+
+  opencode-linux-arm64-musl@1.17.13:
+    optional: true
+
+  opencode-linux-arm64@1.17.13:
+    optional: true
+
+  opencode-linux-x64-baseline-musl@1.17.13:
+    optional: true
+
+  opencode-linux-x64-baseline@1.17.13:
+    optional: true
+
+  opencode-linux-x64-musl@1.17.13:
+    optional: true
+
+  opencode-linux-x64@1.17.13:
+    optional: true
+
+  opencode-windows-arm64@1.17.13:
+    optional: true
+
+  opencode-windows-x64-baseline@1.17.13:
+    optional: true
+
+  opencode-windows-x64@1.17.13:
+    optional: true
+
   ora@5.4.1:
     dependencies:
       bl: 4.1.0
@@ -12716,11 +12705,6 @@ snapshots:
 
   standard-as-callback@2.1.0: {}
 
-  standardwebhooks@1.0.0:
-    dependencies:
-      '@stablelib/base64': 1.0.1
-      fast-sha256: 1.3.0
-
   statuses@2.0.2: {}
 
   std-env@4.1.0: {}
@@ -12936,8 +12920,6 @@ snapshots:
   truncate-utf8-bytes@1.0.2:
     dependencies:
       utf8-byte-length: 1.0.5
-
-  ts-algebra@2.0.0: {}
 
   tsconfig-paths@4.2.0:
     dependencies:

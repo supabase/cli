@@ -22,9 +22,21 @@ on:
         required: false
         type: boolean
         default: false
+      provider:
+        description: Model provider shorthand (claude|anthropic|openai|codex). Blank uses the default.
+        required: false
+        type: string
+        default: ""
+      model:
+        description: Exact provider/model id (e.g. openai/gpt-5-mini). Overrides provider. Blank uses the default.
+        required: false
+        type: string
+        default: ""
     secrets:
       ANTHROPIC_API_KEY:
-        required: true
+        required: false
+      OPENAI_API_KEY:
+        required: false
       GH_APP_PRIVATE_KEY:
         required: true
       DF_FIREWALL_TOKEN:
@@ -35,6 +47,16 @@ on:
         description: Release tag to propose notes for (e.g. v2.101.0 or v2.99.0-beta.1)
         required: true
         type: string
+      provider:
+        description: Model provider shorthand (claude|anthropic|openai|codex). Blank uses the default.
+        required: false
+        type: string
+        default: ""
+      model:
+        description: Exact provider/model id (e.g. openai/gpt-5-mini). Overrides provider. Blank uses the default.
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -52,7 +74,9 @@ jobs:
       pull-requests: write
     env:
       TAG: ${{ inputs.tag }}
+      # OpenCode reads whichever provider credential matches the selected model.
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
     steps:
       # App token gets us push to a protected default branch *and* PR creation
       # under the App identity, matching the rest of release.yml.
@@ -82,4 +106,7 @@ jobs:
       - name: Propose release notes
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: pnpm exec bun apps/cli/scripts/propose-release-notes.ts --tag "${TAG}" --apply
+          # Blank values fall through to the script's default model.
+          PROVIDER: ${{ inputs.provider }}
+          MODEL: ${{ inputs.model }}
+        run: pnpm exec bun apps/cli/scripts/propose-release-notes.ts --tag "${TAG}" --provider "${PROVIDER}" --model "${MODEL}" --apply

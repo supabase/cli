@@ -1,7 +1,12 @@
 #!/usr/bin/env bun
 // Generate a user-centric GitHub Release body for a Supabase CLI tag
-// by running the Claude Agent SDK against tools/release/release-notes-prompt.md
+// by running an OpenCode agent against tools/release/release-notes-prompt.md
 // with the raw semantic-release block substituted in.
+//
+// Provider-agnostic: OpenCode selects the model via a `provider/model` pair
+// (see scripts/release-notes/select-model.ts), so swapping Claude ↔ OpenAI (or
+// any other supported provider) is a `--provider`/`--model` change with no code
+// edits. The agent's tools and the prompt stay identical across providers.
 //
 // Pipeline shape:
 //   1. `backfill-release-notes.ts --tag <tag>` produces the raw semantic-release
@@ -10,7 +15,7 @@
 //      sit in the release body at the moment.
 //   2. The raw block is inlined into tools/release/release-notes-prompt.md in
 //      place of the {{PASTE_SEMANTIC_RELEASE_BLOCK_HERE}} placeholder.
-//   3. The Claude Agent SDK runs the rendered prompt with WebFetch + Bash so
+//   3. The OpenCode agent runs the rendered prompt with `webfetch` + `bash` so
 //      it can investigate PR bodies, linked issues, and changed files (the
 //      prompt's investigation step is real work, not boilerplate).
 //   4. The agent's final assistant message is written to
@@ -26,24 +31,31 @@
 // Usage:
 //   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --dry-run
 //   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --apply
+//   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --provider openai --dry-run
 //
-//   --tag      Required. Release tag (e.g. v2.101.0 or v2.99.0-beta.1).
-//   --dry-run  Print the proposed notes to stdout. Does not write any files,
-//              does not touch git.
-//   --apply    Write release-notes/v<VERSION>.md, commit on a branch, push,
-//              and open a PR. Default behavior when neither flag is passed
-//              is `--dry-run`.
+//   --tag       Required. Release tag (e.g. v2.101.0 or v2.99.0-beta.1).
+//   --dry-run   Print the proposed notes to stdout. Does not write any files,
+//               does not touch git.
+//   --apply     Write release-notes/v<VERSION>.md, commit on a branch, push,
+//               and open a PR. Default behavior when neither flag is passed
+//               is `--dry-run`.
 //   --render-only  Print the rendered prompt (template + raw notes block)
-//              and exit before any LLM call. Useful for prompt iteration
-//              and for verifying the pipeline shape without spending tokens.
-//   --model    Optional. Override the Claude model (default: claude-haiku-4-5-20251001).
-import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
+//               and exit before any LLM call. Useful for prompt iteration
+//               and for verifying the pipeline shape without spending tokens.
+//   --provider  Optional. Provider shorthand for a default model
+//               (`claude`/`anthropic`, `openai`/`codex`).
+//   --model     Optional. Exact `provider/model` id (e.g. `openai/gpt-5-mini`,
+//               `anthropic/claude-haiku-4-5`). Overrides --provider.
+//               Falls back to the RELEASE_NOTES_MODEL env var, then to
+//               `anthropic/claude-haiku-4-5`.
 import { $ } from "bun";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { resolveModel, type ModelRef } from "./release-notes/select-model.ts";
+import { generateNotes } from "./release-notes/opencode-agent.ts";
 
 const { values } = parseArgs({
   options: {
@@ -51,7 +63,8 @@ const { values } = parseArgs({
     "dry-run": { type: "boolean", default: false },
     apply: { type: "boolean", default: false },
     "render-only": { type: "boolean", default: false },
-    model: { type: "string", default: "claude-haiku-4-5-20251001" },
+    provider: { type: "string" },
+    model: { type: "string" },
   },
   strict: true,
 });
@@ -63,6 +76,16 @@ if (!tag) {
 }
 const version = tag.replace(/^v/, "");
 const apply = values.apply === true && values["dry-run"] !== true;
+
+// Resolve the model up front so a bad --provider/--model fails before the
+// (comparatively expensive) backfill + render work.
+let model: ModelRef;
+try {
+  model = resolveModel({ model: values.model, provider: values.provider }, process.env);
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(2);
+}
 
 const repoRoot = (await $`git rev-parse --show-toplevel`.text()).trim();
 const promptPath = path.join(repoRoot, "tools/release/release-notes-prompt.md");
@@ -90,35 +113,20 @@ if (values["render-only"]) {
   process.exit(0);
 }
 
-console.error(`==> Running Claude Agent SDK (model=${values.model})`);
-const options: Options = {
-  model: values.model,
-  // The agent needs WebFetch / WebSearch to investigate PR bodies and linked
-  // issues per the prompt's step 3, and Bash so it can use `gh` for
-  // authenticated GitHub queries instead of HTML scraping. Edit/Write are
-  // intentionally excluded — the script owns the final file output.
-  allowedTools: ["WebFetch", "WebSearch", "Bash"],
-  // Don't load the repo's CLAUDE.md or settings.json — the prompt is
-  // self-contained and we don't want unrelated agent context bleeding in.
-  settingSources: [],
-  cwd: repoRoot,
-  effort: "low",
-};
-
+console.error(`==> Running OpenCode (provider=${model.providerID} model=${model.modelID})`);
 let finalText = "";
-let cost = 0;
-const stream = query({ prompt: rendered, options });
-for await (const msg of stream) {
-  if (msg.type === "result") {
-    if (msg.subtype === "success") {
-      finalText = msg.result;
-      cost = msg.total_cost_usd;
-    } else {
-      console.error(`Agent failed: ${msg.subtype}`);
-      if (msg.errors?.length) console.error(msg.errors.join("\n"));
-      process.exit(1);
-    }
-  }
+let cost: number | undefined;
+try {
+  const result = await generateNotes({
+    prompt: rendered,
+    model,
+    log: (line) => console.error(line),
+  });
+  finalText = result.text;
+  cost = result.costUsd;
+} catch (error) {
+  console.error(`Agent failed: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
 }
 
 if (!finalText.trim()) {
@@ -126,9 +134,9 @@ if (!finalText.trim()) {
   process.exit(1);
 }
 
-// Append the raw notes to the final text to ensure the output is complete.
 const normalized = finalText.endsWith("\n") ? finalText : `${finalText}\n`;
-console.error(`==> Agent finished (cost ~$${cost.toFixed(4)})`);
+const costSuffix = cost === undefined ? "" : ` (cost ~$${cost.toFixed(4)})`;
+console.error(`==> Agent finished${costSuffix}`);
 
 if (!apply) {
   process.stdout.write(normalized);

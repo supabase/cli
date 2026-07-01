@@ -43,8 +43,6 @@
     "jose": "^6.2.3"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.187",
-    "@anthropic-ai/sdk": "^0.105.0",
     "@clack/prompts": "^1.6.0",
     "@effect/atom-react": "catalog:",
     "@effect/platform-bun": "catalog:",
@@ -52,6 +50,7 @@
     "@effect/vitest": "catalog:",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@napi-rs/keyring": "^1.3.0",
+    "@opencode-ai/sdk": "^1.17.13",
     "@parcel/watcher": "^2.5.6",
     "@supabase/api": "workspace:*",
     "@supabase/config": "workspace:*",
@@ -71,6 +70,7 @@
     "ink": "^7.1.0",
     "ink-spinner": "^5.0.0",
     "knip": "catalog:",
+    "opencode-ai": "^1.17.13",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
@@ -117,7 +117,7 @@
       "src/**/*.live.test.ts"
     ],
     "ignore": [
-      "scripts/*.ts",
+      "scripts/**/*.ts",
       "tests/**/*.ts",
       "src/shared/telemetry/event-catalog.ts"
     ],
@@ -139,8 +139,8 @@
       "oxlint",
       "oxlint-tsgolint",
       "semantic-release",
-      "@anthropic-ai/claude-agent-sdk",
-      "@anthropic-ai/sdk",
+      "@opencode-ai/sdk",
+      "opencode-ai",
       "@modelcontextprotocol/sdk"
     ]
   },
