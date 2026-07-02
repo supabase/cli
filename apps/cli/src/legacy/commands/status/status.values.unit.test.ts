@@ -28,6 +28,7 @@ const CONTAINER_IDS: LegacyStatusContainerIds = {
 const HOSTNAME = "127.0.0.1";
 const NONE: ReadonlyArray<string> = [];
 const NO_OVERRIDES = new Map<string, string>();
+const WORKDIR = "/tmp/status-values-test";
 
 describe("legacyStatusValues", () => {
   it("emits DB_URL unconditionally, even when every other service is disabled/excluded", () => {
@@ -39,7 +40,14 @@ describe("legacyStatusValues", () => {
       storage: { enabled: false },
       edge_runtime: { enabled: false },
     });
-    const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
+    const { values } = legacyStatusValues(
+      config,
+      CONTAINER_IDS,
+      HOSTNAME,
+      NONE,
+      NO_OVERRIDES,
+      WORKDIR,
+    );
     expect(Object.keys(values)).toEqual(["DB_URL"]);
     expect(values.DB_URL).toContain("postgresql://postgres:postgres@127.0.0.1");
   });
@@ -52,13 +60,21 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         NONE,
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.API_URL).toBeDefined();
     });
 
     it("omits API_URL when api.enabled is false", () => {
       const config = baseConfig({ api: { enabled: false } });
-      const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.API_URL).toBeUndefined();
     });
 
@@ -69,6 +85,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         [CONTAINER_IDS.kong],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.API_URL).toBeUndefined();
     });
@@ -80,13 +97,21 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         ["kong"],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.API_URL).toBeUndefined();
     });
 
     it("omits REST/GraphQL when kong is disabled even though postgrest is enabled", () => {
       const config = baseConfig({ api: { enabled: false } });
-      const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.REST_URL).toBeUndefined();
       expect(values.GRAPHQL_URL).toBeUndefined();
     });
@@ -98,6 +123,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         [CONTAINER_IDS.rest],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.API_URL).toBeDefined();
       expect(values.REST_URL).toBeUndefined();
@@ -111,6 +137,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         NONE,
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.REST_URL).toBeDefined();
       expect(values.GRAPHQL_URL).toBeDefined();
@@ -123,6 +150,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         ["postgrest"],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.API_URL).toBeDefined();
       expect(values.REST_URL).toBeUndefined();
@@ -138,19 +166,34 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         NONE,
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.FUNCTIONS_URL).toBeDefined();
     });
 
     it("omits FUNCTIONS_URL when edge_runtime.enabled is false", () => {
       const config = baseConfig({ edge_runtime: { enabled: false } });
-      const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.FUNCTIONS_URL).toBeUndefined();
     });
 
     it("omits FUNCTIONS_URL when kong is disabled even though edge_runtime is enabled", () => {
       const config = baseConfig({ api: { enabled: false } });
-      const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.FUNCTIONS_URL).toBeUndefined();
     });
 
@@ -161,6 +204,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         [CONTAINER_IDS.edgeRuntime],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.FUNCTIONS_URL).toBeUndefined();
     });
@@ -174,6 +218,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         ["edge-runtime"],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.FUNCTIONS_URL).toBeUndefined();
     });
@@ -187,13 +232,21 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         NONE,
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.STUDIO_URL).toBeDefined();
     });
 
     it("omits STUDIO_URL when studio.enabled is false", () => {
       const config = baseConfig({ studio: { enabled: false } });
-      const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.STUDIO_URL).toBeUndefined();
     });
 
@@ -204,6 +257,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         [CONTAINER_IDS.studio],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.STUDIO_URL).toBeUndefined();
     });
@@ -215,6 +269,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         ["studio"],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.STUDIO_URL).toBeUndefined();
     });
@@ -226,19 +281,34 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         NONE,
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.MCP_URL).toBeDefined();
     });
 
     it("omits MCP_URL when kong is disabled", () => {
       const config = baseConfig({ api: { enabled: false } });
-      const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.MCP_URL).toBeUndefined();
     });
 
     it("omits MCP_URL when studio is disabled", () => {
       const config = baseConfig({ studio: { enabled: false } });
-      const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.MCP_URL).toBeUndefined();
     });
   });
@@ -251,6 +321,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         NONE,
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.PUBLISHABLE_KEY).toBeDefined();
       expect(values.SECRET_KEY).toBeDefined();
@@ -261,7 +332,14 @@ describe("legacyStatusValues", () => {
 
     it("omits all 5 auth fields when auth.enabled is false", () => {
       const config = baseConfig({ auth: { enabled: false } });
-      const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.PUBLISHABLE_KEY).toBeUndefined();
       expect(values.SECRET_KEY).toBeUndefined();
       expect(values.JWT_SECRET).toBeUndefined();
@@ -276,6 +354,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         [CONTAINER_IDS.auth],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.PUBLISHABLE_KEY).toBeUndefined();
     });
@@ -287,6 +366,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         ["gotrue"],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.PUBLISHABLE_KEY).toBeUndefined();
     });
@@ -300,6 +380,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         NONE,
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.MAILPIT_URL).toBeDefined();
       expect(values.INBUCKET_URL).toBe(values.MAILPIT_URL);
@@ -307,7 +388,14 @@ describe("legacyStatusValues", () => {
 
     it("omits MAILPIT_URL/INBUCKET_URL when local_smtp.enabled is false", () => {
       const config = baseConfig({ local_smtp: { enabled: false } });
-      const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.MAILPIT_URL).toBeUndefined();
       expect(values.INBUCKET_URL).toBeUndefined();
     });
@@ -319,6 +407,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         [CONTAINER_IDS.inbucket],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.MAILPIT_URL).toBeUndefined();
     });
@@ -330,6 +419,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         ["mailpit"],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.MAILPIT_URL).toBeUndefined();
     });
@@ -343,6 +433,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         NONE,
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.STORAGE_S3_URL).toBeDefined();
       expect(values.S3_PROTOCOL_ACCESS_KEY_ID).toBeDefined();
@@ -352,7 +443,14 @@ describe("legacyStatusValues", () => {
 
     it("omits storage S3 fields when storage.enabled is false", () => {
       const config = baseConfig({ storage: { enabled: false } });
-      const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.STORAGE_S3_URL).toBeUndefined();
     });
 
@@ -363,6 +461,7 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         [CONTAINER_IDS.storage],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.STORAGE_S3_URL).toBeUndefined();
     });
@@ -376,13 +475,21 @@ describe("legacyStatusValues", () => {
         HOSTNAME,
         ["storage-api"],
         NO_OVERRIDES,
+        WORKDIR,
       );
       expect(values.STORAGE_S3_URL).toBeUndefined();
     });
 
     it("omits storage S3 fields when storage.s3_protocol.enabled is false", () => {
       const config = baseConfig({ storage: { s3_protocol: { enabled: false } } });
-      const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+      );
       expect(values.STORAGE_S3_URL).toBeUndefined();
       expect(values.S3_PROTOCOL_ACCESS_KEY_ID).toBeUndefined();
     });
@@ -391,7 +498,14 @@ describe("legacyStatusValues", () => {
   describe("--override-name remapping", () => {
     it("remaps a field's output KEY while leaving the value unchanged", () => {
       const overrides = new Map([["api.url", "NEXT_PUBLIC_SUPABASE_URL"]]);
-      const { values } = legacyStatusValues(baseConfig(), CONTAINER_IDS, HOSTNAME, NONE, overrides);
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        overrides,
+        WORKDIR,
+      );
       expect(values.API_URL).toBeUndefined();
       expect(values.NEXT_PUBLIC_SUPABASE_URL).toBe("http://127.0.0.1:54321");
     });
@@ -401,7 +515,14 @@ describe("legacyStatusValues", () => {
         ["api.url", "CUSTOM_API_URL"],
         ["db.url", "CUSTOM_DB_URL"],
       ]);
-      const { values } = legacyStatusValues(baseConfig(), CONTAINER_IDS, HOSTNAME, NONE, overrides);
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        overrides,
+        WORKDIR,
+      );
       expect(values.CUSTOM_API_URL).toBeDefined();
       expect(values.CUSTOM_DB_URL).toBeDefined();
       expect(values.API_URL).toBeUndefined();
@@ -410,7 +531,14 @@ describe("legacyStatusValues", () => {
 
     it("leaves unrelated fields at their default name when only one is overridden", () => {
       const overrides = new Map([["api.url", "CUSTOM_API_URL"]]);
-      const { values } = legacyStatusValues(baseConfig(), CONTAINER_IDS, HOSTNAME, NONE, overrides);
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        overrides,
+        WORKDIR,
+      );
       expect(values.REST_URL).toBeDefined();
     });
 
@@ -420,7 +548,14 @@ describe("legacyStatusValues", () => {
         ["auth.anon_key", "CUSTOM_ANON_KEY"],
         ["auth.service_role_key", "CUSTOM_SERVICE_ROLE_KEY"],
       ]);
-      const { values } = legacyStatusValues(baseConfig(), CONTAINER_IDS, HOSTNAME, NONE, overrides);
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        overrides,
+        WORKDIR,
+      );
       expect(values.CUSTOM_JWT_SECRET).toBeDefined();
       expect(values.CUSTOM_ANON_KEY).toBeDefined();
       expect(values.CUSTOM_SERVICE_ROLE_KEY).toBeDefined();
@@ -431,7 +566,14 @@ describe("legacyStatusValues", () => {
 
     it("remaps the deprecated inbucket.url key independently of mailpit.url", () => {
       const overrides = new Map([["inbucket.url", "CUSTOM_INBUCKET_URL"]]);
-      const { values } = legacyStatusValues(baseConfig(), CONTAINER_IDS, HOSTNAME, NONE, overrides);
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        overrides,
+        WORKDIR,
+      );
       expect(values.CUSTOM_INBUCKET_URL).toBeDefined();
       expect(values.MAILPIT_URL).toBeDefined();
       expect(values.INBUCKET_URL).toBeUndefined();
@@ -449,6 +591,7 @@ describe("legacyStatusValues", () => {
       HOSTNAME,
       excluded,
       NO_OVERRIDES,
+      WORKDIR,
     );
     expect(values.STORAGE_S3_URL).toBeUndefined();
     expect(values.STUDIO_URL).toBeUndefined();

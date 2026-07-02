@@ -184,12 +184,14 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // `names` is intentionally unused here: the pretty-mode branch below
     // recomputes with an empty override map (matching Go), and every other
     // branch only needs `values`. `legacyStatusValues` can throw
-    // `LegacyInvalidJwtSecretError` (a short `auth.jwt_secret`) — Go's
-    // `Config.Validate` rejects that at config-load time, before this command
-    // would ever render anything, so it's surfaced here as a hard failure
-    // rather than silently signing with the too-short secret.
+    // `LegacyInvalidJwtSecretError` (a short `auth.jwt_secret`) or a
+    // signing-keys-file read/parse error — Go's `Config.Validate` rejects both
+    // at config-load time, before this command would ever render anything, so
+    // they're surfaced here as a hard failure rather than silently falling
+    // back to a default/HMAC-signed key.
     const { values } = yield* Effect.try({
-      try: () => legacyStatusValues(config, containerIds, hostname, excluded, overrides),
+      try: () =>
+        legacyStatusValues(config, containerIds, hostname, excluded, overrides, cliConfig.workdir),
       catch: (cause) =>
         new LegacyStatusInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
@@ -234,7 +236,14 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // affects `printStatus`'s env/json/toml/yaml path, never the pretty table.
     // Recompute with an empty override map so the rendered table matches Go
     // exactly instead of leaking `--override-name` into pretty-mode output.
-    const pretty = legacyStatusValues(config, containerIds, hostname, excluded, new Map());
+    const pretty = legacyStatusValues(
+      config,
+      containerIds,
+      hostname,
+      excluded,
+      new Map(),
+      cliConfig.workdir,
+    );
     yield* output.raw(legacyRenderStatusPretty(pretty.values, pretty.names));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

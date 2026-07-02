@@ -222,8 +222,9 @@ export function legacyStatusValues(
   hostname: string,
   excluded: ReadonlyArray<string>,
   overrides: ReadonlyMap<string, string>,
+  workdir: string,
 ): LegacyStatusValuesResult {
-  const local = legacyResolveLocalConfigValues(config, hostname);
+  const local = legacyResolveLocalConfigValues(config, hostname, workdir);
   const names = resolveOutputNames(overrides);
   const isExcluded = (id: string) => excluded.includes(id);
 

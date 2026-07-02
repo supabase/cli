@@ -1,9 +1,31 @@
-import { createHmac } from "node:crypto";
+import { createHmac, generateKeyPairSync } from "node:crypto";
+import { importJWK, jwtVerify } from "jose";
 import { describe, expect, it } from "vitest";
 
-import { legacyGenerateGoJwt } from "./legacy-go-jwt.ts";
+import {
+  legacyGenerateAsymmetricGoJwt,
+  legacyGenerateGoJwt,
+  type LegacyJwk,
+} from "./legacy-go-jwt.ts";
 
 const SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
+
+function generateRsaJwk(kid?: string): LegacyJwk {
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const jwk = privateKey.export({ format: "jwk" });
+  return { ...jwk, kty: "RSA", alg: "RS256", kid };
+}
+
+function generateEcJwk(kid?: string): LegacyJwk {
+  const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const jwk = privateKey.export({ format: "jwk" });
+  return { ...jwk, kty: "EC", alg: "ES256", kid };
+}
+
+function publicJwkOf(jwk: LegacyJwk): LegacyJwk {
+  const { d: _d, p: _p, q: _q, dp: _dp, dq: _dq, qi: _qi, ...publicJwk } = jwk;
+  return publicJwk;
+}
 
 function decodeSegment(segment: string): string {
   return Buffer.from(segment, "base64url").toString("utf8");
@@ -61,5 +83,58 @@ describe("legacyGenerateGoJwt", () => {
     const a = legacyGenerateGoJwt(SECRET, "anon");
     const b = legacyGenerateGoJwt("a-different-secret-value-1234567", "anon");
     expect(a).not.toBe(b);
+  });
+});
+
+describe("legacyGenerateAsymmetricGoJwt", () => {
+  it("signs and verifies an RS256 token from an RSA JWK", async () => {
+    const jwk = generateRsaJwk("rsa-kid");
+    const token = legacyGenerateAsymmetricGoJwt(jwk, "anon");
+    const publicKey = await importJWK(publicJwkOf(jwk), "RS256");
+    const { payload, protectedHeader } = await jwtVerify(token, publicKey);
+    expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
+    expect(protectedHeader).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+  });
+
+  it("signs and verifies an ES256 token from an EC JWK", async () => {
+    const jwk = generateEcJwk("ec-kid");
+    const token = legacyGenerateAsymmetricGoJwt(jwk, "service_role");
+    const publicKey = await importJWK(publicJwkOf(jwk), "ES256");
+    const { payload, protectedHeader } = await jwtVerify(token, publicKey);
+    expect(payload).toMatchObject({ iss: "supabase-demo", role: "service_role" });
+    expect(protectedHeader).toEqual({ alg: "ES256", kid: "ec-kid", typ: "JWT" });
+  });
+
+  it("omits the kid header entirely when the JWK has no kid", () => {
+    const jwk = generateRsaJwk();
+    const token = legacyGenerateAsymmetricGoJwt(jwk, "anon");
+    const [header] = token.split(".");
+    const decoded = JSON.parse(Buffer.from(header ?? "", "base64url").toString());
+    expect(decoded).toEqual({ alg: "RS256", typ: "JWT" });
+  });
+
+  it("sets a ~10-year expiry computed from the current time, not a fixed timestamp", () => {
+    const jwk = generateRsaJwk();
+    const before = Math.floor(Date.now() / 1000);
+    const token = legacyGenerateAsymmetricGoJwt(jwk, "anon");
+    const [, payload] = token.split(".");
+    const decoded = JSON.parse(Buffer.from(payload ?? "", "base64url").toString());
+    const tenYearsSeconds = 60 * 60 * 24 * 365 * 10;
+    expect(decoded.exp).toBeGreaterThanOrEqual(before + tenYearsSeconds);
+    expect(decoded.exp).toBeLessThan(before + tenYearsSeconds + 10);
+  });
+
+  it("rejects an unsupported algorithm", () => {
+    const jwk = { ...generateRsaJwk(), alg: "RS512" };
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+      "unsupported algorithm: RS512",
+    );
+  });
+
+  it("rejects a JWK with no algorithm", () => {
+    const { alg: _alg, ...jwkWithoutAlg } = generateRsaJwk();
+    expect(() => legacyGenerateAsymmetricGoJwt(jwkWithoutAlg, "anon")).toThrow(
+      "unsupported algorithm: ",
+    );
   });
 });
