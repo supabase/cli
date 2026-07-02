@@ -432,6 +432,28 @@ describe("legacy db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("renders plain JSON for --output-format json with --agent no", () => {
+    const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "json" });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      expect(JSON.parse(out.stdoutText)).toEqual([
+        { id: 1, name: "alice" },
+        { id: 2, name: "bob" },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("renders plain JSON for --output-format stream-json with --agent no", () => {
+    const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "stream-json" });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      expect(JSON.parse(out.stdoutText)).toEqual([
+        { id: 1, name: "alice" },
+        { id: 2, name: "bob" },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails JSON output on a non-finite float (Go's json.Encoder error), no stdout", () => {
     // select 'NaN'::float8 -o json — Go fails to encode and exits non-zero with empty
     // stdout, rather than emitting `null` like JSON.stringify.

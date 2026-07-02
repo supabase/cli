@@ -356,9 +356,10 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     // 2. Agent mode + the resolved payload format, mirroring Go's resolution
     //    (`cmd/db.go:316-325`): an explicit `-o json|table|csv` always wins;
     //    otherwise default to JSON for agents and a table for humans. The global
-    //    `-o` choice is a union (see `query.command.ts`), so values outside Go's
-    //    `json|table|csv` enum (`pretty|yaml|toml|env`) fall through to the
-    //    agent-mode default rather than erroring.
+    //    `-o` choice is a union (see `query.command.ts`), while TS
+    //    `--output-format json|stream-json` must also resolve to JSON here, so
+    //    values outside Go's `json|table|csv` enum (`pretty|yaml|toml|env`)
+    //    fall through to the agent/machine default rather than erroring.
     const agentMode = legacyResolveAgentMode(agentFlag, aiTool.name);
     const explicit = Option.getOrUndefined(outputFlag);
     const format: LegacyResolvedFormat =
@@ -368,7 +369,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
           ? "csv"
           : explicit === "table"
             ? "table"
-            : agentMode
+            : output.format !== "text" || agentMode
               ? "json"
               : "table";
 
