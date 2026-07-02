@@ -1,4 +1,4 @@
-import { loadProjectConfig } from "@supabase/config";
+import { loadProjectConfig, loadProjectEnvironment } from "@supabase/config";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, Option, Result } from "effect";
 
@@ -37,6 +37,19 @@ import {
  * config.toml; otherwise `flags.LoadConfig` reads config.toml and
  * `Config.ProjectId` (env → toml → workdir basename) is used.
  *
+ * "env" is Go's post-`loadNestedEnv` value, not just the ambient shell
+ * environment: `Config.Load` loads `supabase/.env`/`.env.local` into the
+ * process env via `godotenv.Load` (`pkg/config/config.go:735-738`; godotenv
+ * never overrides an already-set var) *before* Viper's `AutomaticEnv` reads
+ * `SUPABASE_PROJECT_ID` (`config.go:534-535`) — so an env-file-only value
+ * overrides config.toml too, not only an ambient shell export.
+ * `loadProjectEnvironment` already implements that exact "ambient wins over
+ * .env/.env.local" layering, so it's used here instead of reading
+ * `process.env` directly. It resolves to `null` when no `supabase/`
+ * config file exists anywhere up the tree, which would otherwise also drop
+ * the ambient-only case — falling back to `process.env` directly covers that
+ * gap without duplicating the "no config.toml" path's own error handling.
+ *
  * The config/env-derived (default) branch is sanitized with
  * {@link legacySanitizeProjectId} before it's used as a filter value,
  * matching Go's `Config.Validate` sanitizing the `Config.ProjectId`
@@ -59,18 +72,30 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
       return flags.projectId.value;
     }
 
+    const projectEnv = yield* loadProjectEnvironment({
+      cwd: cliConfig.workdir,
+      baseEnv: process.env,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyStopConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
+      ),
+    );
+
     // An absent config.toml is not a failure — Go's `flags.LoadConfig` still
     // resolves a project id via the workdir basename default. Only a
     // malformed file (`loadProjectConfig` failing rather than returning
     // `null`) is a hard error, matching `gen types`'s `loadConfig()` pattern.
-    const loaded = yield* loadProjectConfig(cliConfig.workdir).pipe(
+    const loaded = yield* loadProjectConfig(cliConfig.workdir, {
+      projectEnv: projectEnv ?? undefined,
+    }).pipe(
       Effect.mapError(
         (cause) =>
           new LegacyStopConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
       ),
     );
     const resolved = legacyResolveLocalProjectId(
-      process.env["SUPABASE_PROJECT_ID"],
+      projectEnv?.values["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
       loaded?.config.project_id,
       cliConfig.workdir,
     );

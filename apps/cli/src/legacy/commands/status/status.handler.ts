@@ -1,4 +1,4 @@
-import { loadProjectConfig, ProjectConfigSchema } from "@supabase/config";
+import { loadProjectConfig, loadProjectEnvironment, ProjectConfigSchema } from "@supabase/config";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, Option, Schema } from "effect";
 
@@ -101,7 +101,18 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // Mirror that by decoding an empty document through the schema for its
     // defaults (matching `packages/config/src/functions-manifest.ts`'s
     // `decodeProjectConfig({})` pattern) instead of failing.
-    const loaded = yield* loadProjectConfig(cliConfig.workdir).pipe(
+    const projectEnv = yield* loadProjectEnvironment({
+      cwd: cliConfig.workdir,
+      baseEnv: process.env,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyStatusConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
+      ),
+    );
+    const loaded = yield* loadProjectConfig(cliConfig.workdir, {
+      projectEnv: projectEnv ?? undefined,
+    }).pipe(
       Effect.mapError(
         (cause) =>
           new LegacyStatusConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
@@ -115,10 +126,14 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // (`pkg/config/config.go:938-944`) — every reader, including the Docker
     // LABEL `start` writes (`internal/utils/docker.go:375`), sees that same
     // sanitized string, so `status` must filter on it too (see
-    // `legacyCliProjectFilterValue`'s doc comment).
+    // `legacyCliProjectFilterValue`'s doc comment). "env" is Go's
+    // post-`loadNestedEnv` value (`supabase/.env`/`.env.local`, ambient wins) —
+    // see `stop.handler.ts`'s `resolveSearchProjectIdFilter` doc comment for
+    // the full precedence chain and why `loadProjectEnvironment` is used here
+    // instead of reading `process.env` directly.
     const projectId = legacySanitizeProjectId(
       legacyResolveLocalProjectId(
-        process.env["SUPABASE_PROJECT_ID"],
+        projectEnv?.values["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
         config.project_id,
         cliConfig.workdir,
       ),

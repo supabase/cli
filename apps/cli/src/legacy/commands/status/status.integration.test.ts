@@ -357,6 +357,48 @@ describe("legacy status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("resolves SUPABASE_PROJECT_ID from supabase/.env over config.toml", () => {
+    // Go's Config.Load runs loadNestedEnv (supabase/.env(.local) via godotenv)
+    // before loadFromFile's AutomaticEnv reads SUPABASE_PROJECT_ID
+    // (pkg/config/config.go:735-738) — an env-file-only value overrides
+    // config.toml's project_id too, not just an ambient shell export.
+    const supabaseDir = join(tempRoot.current, "supabase");
+    mkdirSync(supabaseDir, { recursive: true });
+    writeFileSync(join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=env-file-project\n");
+    const { layer, child } = setup({
+      configContents: 'project_id = "toml-project"\n',
+      route: defaultRoute({ runningNames: legacyServiceContainerIds("env-file-project") }),
+    });
+    return Effect.gen(function* () {
+      yield* legacyStatus(flags());
+      const inspectCall = child.spawned.find(
+        (s) => s.args[0] === "container" && s.args[1] === "inspect",
+      );
+      expect(inspectCall?.args).toContain(localDbContainerId("env-file-project"));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("prefers ambient SUPABASE_PROJECT_ID over supabase/.env", () => {
+    const supabaseDir = join(tempRoot.current, "supabase");
+    mkdirSync(supabaseDir, { recursive: true });
+    writeFileSync(join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=env-file-project\n");
+    process.env["SUPABASE_PROJECT_ID"] = "ambient-project";
+    const { layer, child } = setup({
+      configContents: 'project_id = "toml-project"\n',
+      route: defaultRoute({ runningNames: legacyServiceContainerIds("ambient-project") }),
+    });
+    return Effect.gen(function* () {
+      yield* legacyStatus(flags());
+      const inspectCall = child.spawned.find(
+        (s) => s.args[0] === "container" && s.args[1] === "inspect",
+      );
+      expect(inspectCall?.args).toContain(localDbContainerId("ambient-project"));
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => delete process.env["SUPABASE_PROJECT_ID"])),
+    );
+  });
+
   it.live("fails when both docker and podman are missing", () => {
     // Neither container runtime can be spawned at all — distinct from a spawned
     // process exiting non-zero (covered by the malformed/unhealthy scenarios

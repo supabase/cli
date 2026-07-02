@@ -33,6 +33,12 @@ function writeConfig(workdir: string, projectId: string) {
   writeFileSync(join(supabaseDir, "config.toml"), `project_id = "${projectId}"\n`);
 }
 
+function writeEnvFile(workdir: string, fileName: ".env" | ".env.local", contents: string) {
+  const supabaseDir = join(workdir, "supabase");
+  mkdirSync(supabaseDir, { recursive: true });
+  writeFileSync(join(supabaseDir, fileName), contents);
+}
+
 interface SpawnRecord {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -344,6 +350,48 @@ describe("legacy stop integration", () => {
         "{{.ID}}",
       ]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("resolves SUPABASE_PROJECT_ID from supabase/.env over config.toml", () => {
+    // Go's Config.Load runs loadNestedEnv (supabase/.env(.local) via godotenv)
+    // before loadFromFile's AutomaticEnv reads SUPABASE_PROJECT_ID
+    // (pkg/config/config.go:735-738) — an env-file-only value overrides
+    // config.toml's project_id too, not just an ambient shell export.
+    const { layer, child } = setup({ configuredProjectId: "toml-project", route: defaultRoute() });
+    writeEnvFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=env-file-project\n");
+    return Effect.gen(function* () {
+      yield* legacyStop(flags());
+      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      expect(psCall?.args).toEqual([
+        "ps",
+        "--filter",
+        "label=com.supabase.cli.project=env-file-project",
+        "--all",
+        "--format",
+        "{{.ID}}",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("prefers ambient SUPABASE_PROJECT_ID over supabase/.env", () => {
+    const { layer, child } = setup({ configuredProjectId: "toml-project", route: defaultRoute() });
+    writeEnvFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=env-file-project\n");
+    process.env["SUPABASE_PROJECT_ID"] = "ambient-project";
+    return Effect.gen(function* () {
+      yield* legacyStop(flags());
+      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      expect(psCall?.args).toEqual([
+        "ps",
+        "--filter",
+        "label=com.supabase.cli.project=ambient-project",
+        "--all",
+        "--format",
+        "{{.ID}}",
+      ]);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => delete process.env["SUPABASE_PROJECT_ID"])),
+    );
   });
 
   it.live("rejects --project-id together with --all", () => {
