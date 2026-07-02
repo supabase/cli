@@ -11,8 +11,8 @@ config_roots = [
 idiomatic_version_file_enable_tools = ["bun", "node"]
 
 [tools]
-# extracts the go version from the go.mod file in apps/cli-go
+# extracts the go version from `apps/cli-go/go.mod`
 go = "{{ exec(command=`awk '/^go / {print $2}' apps/cli-go/go.mod`) }}"
 golangci-lint = "2"
-# extracts the pnpm version from the root package.json file
+# extracts the pnpm version from `package.json` (in the root)
 pnpm = """{{ exec(command=`jq -r '.packageManager | split("@")[1]' package.json`) }}"""

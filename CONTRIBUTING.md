@@ -6,19 +6,45 @@ Bun monorepo for exploring the next generation of the Supabase CLI and local dev
 
 ### Tool versions
 
-This repo supports the use of [`mise`](https://mise.jdx.dev/) to manage the tool versions (Node, Bun, Go, pnpm, golangci-lint) needed to work on it.
+This repo pins the versions of Node, Bun, Go, pnpm, and golangci-lint that contributors are expected to build against, and uses [`mise`](https://mise.jdx.dev/) — a polyglot version manager — to install and activate them automatically. If you don't already have these tools installed, `mise` is the fastest way to get a working set without hand-installing each one.
 
-If you don't already have these tools installed, you can set up `mise` (by going through steps 1 [here](https://mise.en.dev/getting-started.html)) and let it install the correct versions for you.
+#### Installing mise
 
-Once `mise` is up and running, run this from the repo root to install the pinned tool versions:
+```sh
+# macOS / Linux
+curl https://mise.run | sh
+
+# macOS via Homebrew
+brew install mise
+```
+
+See the [`mise` installation docs](https://mise.jdx.dev/getting-started.html) for other package managers (apt, dnf, cargo, npm, Windows, …).
+
+`mise` needs to hook into your shell so it can inject the right tool versions into your `PATH` as you move between directories. Follow the `mise activate` instructions [in this section](https://mise.en.dev/getting-started.html#activate-mise) to add the activation line for your shell to its startup file.
+
+#### Installing the pinned tool versions
+
+From the repo root:
 
 ```sh
 mise install
 ```
 
-This reads `mise.toml` (and a handful of downstream files) to install matching versions of Node, Bun, pnpm, Go, and golangci-lint, and makes them available whenever you `cd` into this repo.
+`mise` resolves the versions this repo expects from a handful of files, rather than hardcoding them all in one place:
 
-If you already have these tools installed and managed some other way, `mise` is not required — just make sure your versions match the ones pinned in `apps/cli-go/go.mod`, `.bun-version`, and `.nvmrc`.
+| Tool | Version source |
+| --- | --- |
+| Bun | `.bun-version` |
+| Node.js | `.nvmrc` |
+| pnpm | `packageManager` field in `package.json` |
+| Go | `go.mod` in `apps/cli-go` |
+| golangci-lint | `mise.toml` |
+
+Once installed, `mise` activates these versions automatically whenever your shell is inside this repo — no manual `nvm use`, `gvm use`, or similar switching required.
+
+#### Without mise
+
+`mise` is not required. If you already have Node, Bun, Go, and pnpm installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `.nvmrc`, `package.json`, and `apps/cli-go/go.mod`.
 
 ### Install dependencies
 
