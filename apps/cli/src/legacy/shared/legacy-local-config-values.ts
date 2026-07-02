@@ -92,7 +92,7 @@ const MIN_JWT_SECRET_LENGTH = 16;
  * Go's `Config.Load` binds Viper with `SetEnvPrefix("SUPABASE")` +
  * `AutomaticEnv()` + a `.`→`_` key replacer (`pkg/config/config.go:529-535`),
  * so any config field can be overridden by a `SUPABASE_<DOTTED_KEY>` env var —
- * this resolves it for exactly the 5 auth fields this module reads, at the
+ * this resolves it for exactly the 6 auth fields this module reads, at the
  * same higher-than-config.toml precedence Viper gives env vars. An empty env
  * var is treated as unset, matching Viper's default (`AllowEmptyEnv` is never
  * enabled in `config.go`).
@@ -202,7 +202,10 @@ export function legacyResolveLocalConfigValues(
   const jwtSecret = resolveJwtSecret(
     envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret),
   );
-  const signingKeysPath = config.auth.signing_keys_path;
+  const signingKeysPath = envOverride(
+    "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+    config.auth.signing_keys_path,
+  );
   const signingKey =
     signingKeysPath !== undefined && signingKeysPath.length > 0
       ? loadFirstSigningKey(workdir, signingKeysPath)

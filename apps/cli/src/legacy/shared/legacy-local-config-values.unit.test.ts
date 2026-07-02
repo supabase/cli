@@ -27,6 +27,12 @@ function generateRsaJwk(): Record<string, unknown> {
   return { ...jwk, alg: "RS256", kid: "test-rsa-kid" };
 }
 
+function writeSigningKeys(workdir: string, jwks: ReadonlyArray<Record<string, unknown>>) {
+  const supabaseDir = join(workdir, "supabase");
+  mkdirSync(supabaseDir, { recursive: true });
+  writeFileSync(join(supabaseDir, "signing_keys.json"), JSON.stringify(jwks));
+}
+
 describe("legacyResolveLocalConfigValues", () => {
   it("derives every URL from api.external_url when unset", () => {
     const config = baseConfig();
@@ -136,6 +142,8 @@ describe("legacyResolveLocalConfigValues", () => {
   });
 
   describe("SUPABASE_AUTH_* env overrides", () => {
+    const tempRoot = useLegacyTempWorkdir("supabase-signing-keys-env-override-test-");
+
     // Go's Config.Load binds Viper with SetEnvPrefix("SUPABASE") + AutomaticEnv()
     // (pkg/config/config.go:529-535) — env vars take precedence over config.toml.
     const ENV_KEYS = [
@@ -144,6 +152,7 @@ describe("legacyResolveLocalConfigValues", () => {
       "SUPABASE_AUTH_SECRET_KEY",
       "SUPABASE_AUTH_ANON_KEY",
       "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+      "SUPABASE_AUTH_SIGNING_KEYS_PATH",
     ] as const;
 
     afterEach(() => {
@@ -193,16 +202,38 @@ describe("legacyResolveLocalConfigValues", () => {
         LegacyInvalidJwtSecretError,
       );
     });
+
+    it("overrides signing_keys_path even when config.toml doesn't set one", async () => {
+      const jwk = generateRsaJwk();
+      writeSigningKeys(tempRoot.current, [jwk]);
+      process.env["SUPABASE_AUTH_SIGNING_KEYS_PATH"] = "signing_keys.json";
+      const config = baseConfig();
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current);
+
+      const publicJwk = { ...jwk, d: undefined, p: undefined, q: undefined, dp: undefined };
+      const publicKey = await importJWK(publicJwk, "RS256");
+      const { protectedHeader } = await jwtVerify(values.anonKey, publicKey);
+      expect(protectedHeader).toMatchObject({ alg: "RS256", kid: "test-rsa-kid" });
+    });
+
+    it("prefers an env-provided signing_keys_path over config.toml's", () => {
+      const envJwk = { ...generateRsaJwk(), kid: "env-kid" };
+      const configJwk = { ...generateRsaJwk(), kid: "config-kid" };
+      writeSigningKeys(tempRoot.current, [envJwk]);
+      const supabaseDir = join(tempRoot.current, "supabase");
+      writeFileSync(join(supabaseDir, "other_keys.json"), JSON.stringify([configJwk]));
+      process.env["SUPABASE_AUTH_SIGNING_KEYS_PATH"] = "signing_keys.json";
+      const config = baseConfig({ auth: { signing_keys_path: "other_keys.json" } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current);
+      const [header] = values.anonKey.split(".");
+      expect(JSON.parse(Buffer.from(header ?? "", "base64url").toString())).toMatchObject({
+        kid: "env-kid",
+      });
+    });
   });
 
   describe("auth.signing_keys_path (asymmetric JWT signing)", () => {
     const tempRoot = useLegacyTempWorkdir("supabase-signing-keys-test-");
-
-    function writeSigningKeys(workdir: string, jwks: ReadonlyArray<Record<string, unknown>>) {
-      const supabaseDir = join(workdir, "supabase");
-      mkdirSync(supabaseDir, { recursive: true });
-      writeFileSync(join(supabaseDir, "signing_keys.json"), JSON.stringify(jwks));
-    }
 
     it("signs anon/service_role with the first RS256 key in the file", async () => {
       const jwk = generateRsaJwk();
