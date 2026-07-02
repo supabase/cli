@@ -36,6 +36,7 @@ import { LegacyCliConfig } from "../../src/legacy/config/legacy-cli-config.servi
 import { legacyProjectRefLayer } from "../../src/legacy/config/legacy-project-ref.layer.ts";
 import { LegacyLinkedProjectCache } from "../../src/legacy/telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
+import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { LegacyOutputFlag } from "../../src/shared/legacy/global-flags.ts";
 import type { Output } from "../../src/shared/output/output.service.ts";
 import type { ProcessControl } from "../../src/shared/runtime/process-control.service.ts";
@@ -671,6 +672,8 @@ export interface BuildLegacyTestRuntimeOpts {
   readonly linkedProjectCache?: Layer.Layer<LegacyLinkedProjectCache>;
   readonly analytics?: { readonly layer: Layer.Layer<Analytics> };
   readonly goOutput?: Option.Option<GoOutputValue>;
+  /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
+  readonly cliArgs?: ReadonlyArray<string>;
 }
 
 export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
@@ -721,6 +724,7 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
     ),
     BunServices.layer,
     Layer.succeed(LegacyOutputFlag, goOutput),
+    Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     linkedProjectCache,
     telemetry,
     analytics,
