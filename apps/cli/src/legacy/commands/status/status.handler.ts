@@ -38,8 +38,9 @@ import {
 import { legacyRenderStatusPretty } from "./status.pretty.ts";
 import {
   LEGACY_STATUS_FIELDS,
+  legacyResolveStatusState,
   legacyStatusContainerIds,
-  legacyStatusValues,
+  legacyStatusValuesFromState,
 } from "./status.values.ts";
 
 /**
@@ -181,22 +182,23 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // 7. --override-name KEY=VALUE parsing.
     const overrides = yield* parseOverrides(flags.overrideName);
 
-    // `names` is intentionally unused here: the pretty-mode branch below
-    // recomputes with an empty override map (matching Go), and every other
-    // branch only needs `values`. `legacyStatusValues` can throw
-    // `LegacyInvalidJwtSecretError` (a short `auth.jwt_secret`) or a
-    // signing-keys-file read/parse error — Go's `Config.Validate` rejects both
-    // at config-load time, before this command would ever render anything, so
-    // they're surfaced here as a hard failure rather than silently falling
-    // back to a default/HMAC-signed key.
-    const { values } = yield* Effect.try({
+    // `legacyResolveStatusState` can throw `LegacyInvalidJwtSecretError` (a short
+    // `auth.jwt_secret`) or a signing-keys-file read/parse error — Go's
+    // `Config.Validate` rejects both at config-load time, before this command
+    // would ever render anything, so they're surfaced here as a hard failure
+    // rather than silently falling back to a default/HMAC-signed key. Resolved
+    // once and reused for both the real and pretty-mode (empty-override) value
+    // maps below, so a configured `signing_keys_path` is read and the anon/
+    // service_role JWTs signed only once per invocation, not twice.
+    const state = yield* Effect.try({
       try: () =>
-        legacyStatusValues(config, containerIds, hostname, excluded, overrides, cliConfig.workdir),
+        legacyResolveStatusState(config, containerIds, hostname, excluded, cliConfig.workdir),
       catch: (cause) =>
         new LegacyStatusInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
         }),
     });
+    const { values } = legacyStatusValuesFromState(state, overrides);
 
     // 8. Output branching: Go's -o (env|json|toml|yaml) takes priority over
     // --output-format; -o pretty/unset falls through to text/json/stream-json.
@@ -234,16 +236,10 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // `EnvSet{}` into a brand-new `CustomName{}` rather than reusing the
     // CLI-supplied, override-populated `names` — `--override-name` only ever
     // affects `printStatus`'s env/json/toml/yaml path, never the pretty table.
-    // Recompute with an empty override map so the rendered table matches Go
-    // exactly instead of leaking `--override-name` into pretty-mode output.
-    const pretty = legacyStatusValues(
-      config,
-      containerIds,
-      hostname,
-      excluded,
-      new Map(),
-      cliConfig.workdir,
-    );
+    // Remap names from the already-resolved `state` (empty override map) so the
+    // rendered table matches Go exactly without leaking `--override-name` into
+    // pretty-mode output, and without a second (throwing) state resolution.
+    const pretty = legacyStatusValuesFromState(state, new Map());
     yield* output.raw(legacyRenderStatusPretty(pretty.values, pretty.names));
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

@@ -209,23 +209,48 @@ export interface LegacyStatusValuesResult {
 }
 
 /**
- * Port of Go's `(*CustomName).toValues(exclude...)` (`internal/status/status.go:50-97`).
- * `excluded` matches each gated service by its container id (`legacyStatusContainerIds`)
- * OR its default Docker image short name (`shortContainerImageName` above) — the 6
- * relevant Go config fields (`Api.KongImage`, `Api.Image`, `Studio.Image`, `Auth.Image`,
- * `Inbucket.Image`, `Storage.Image`, `EdgeRuntime.Image`) all carry `toml:"-"`, so they're
- * never user-overridable and the default image is always the one to check.
+ * Everything `toValues()` needs that does NOT depend on `--override-name` —
+ * i.e. every field except the output KEY remapping. Resolving this once and
+ * reusing it for both the env/json/toml/yaml values (real overrides) and the
+ * pretty-table values (Go always recomputes with an empty override map,
+ * `status.go:236-243`) avoids re-reading `auth.signing_keys_path` and
+ * re-signing the anon/service_role JWTs a second time per invocation.
  */
-export function legacyStatusValues(
+export interface LegacyStatusState {
+  readonly config: ProjectConfig;
+  readonly local: LegacyLocalConfigValues;
+  readonly kongEnabled: boolean;
+  readonly postgrestEnabled: boolean;
+  readonly studioEnabled: boolean;
+  readonly authEnabled: boolean;
+  readonly inbucketEnabled: boolean;
+  readonly storageEnabled: boolean;
+  readonly functionsEnabled: boolean;
+}
+
+/**
+ * Port of the non-override-dependent half of Go's `(*CustomName).toValues(exclude...)`
+ * (`internal/status/status.go:50-97`): resolves local config values (URLs, keys —
+ * can throw, see {@link legacyResolveLocalConfigValues}) and the per-service gating
+ * booleans. `excluded` matches each gated service by its container id
+ * (`legacyStatusContainerIds`) OR its default Docker image short name
+ * (`legacyShortContainerImageName` above) — the 6 relevant Go config fields
+ * (`Api.KongImage`, `Api.Image`, `Studio.Image`, `Auth.Image`, `Inbucket.Image`,
+ * `Storage.Image`, `EdgeRuntime.Image`) all carry `toml:"-"`, so they're never
+ * user-overridable and the default image is always the one to check.
+ *
+ * @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
+ * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
+ * or its first key is unsupported — see {@link legacyGenerateAsymmetricGoJwt}.
+ */
+export function legacyResolveStatusState(
   config: ProjectConfig,
   containerIds: LegacyStatusContainerIds,
   hostname: string,
   excluded: ReadonlyArray<string>,
-  overrides: ReadonlyMap<string, string>,
   workdir: string,
-): LegacyStatusValuesResult {
+): LegacyStatusState {
   const local = legacyResolveLocalConfigValues(config, hostname, workdir);
-  const names = resolveOutputNames(overrides);
   const isExcluded = (id: string) => excluded.includes(id);
 
   const kongEnabled =
@@ -246,6 +271,32 @@ export function legacyStatusValues(
     config.edge_runtime.enabled &&
     !isExcluded(containerIds.edgeRuntime) &&
     !isExcluded(EDGE_RUNTIME_IMAGE_NAME);
+
+  return {
+    config,
+    local,
+    kongEnabled,
+    postgrestEnabled,
+    studioEnabled,
+    authEnabled,
+    inbucketEnabled,
+    storageEnabled,
+    functionsEnabled,
+  };
+}
+
+/**
+ * Applies `--override-name` remapping to an already-resolved {@link LegacyStatusState}.
+ * Pure and non-throwing — every failure mode of `toValues()` lives in
+ * {@link legacyResolveStatusState}, which runs once per `status` invocation.
+ */
+export function legacyStatusValuesFromState(
+  state: LegacyStatusState,
+  overrides: ReadonlyMap<string, string>,
+): LegacyStatusValuesResult {
+  const { config, local, kongEnabled, postgrestEnabled, studioEnabled, authEnabled } = state;
+  const { inbucketEnabled, storageEnabled, functionsEnabled } = state;
+  const names = resolveOutputNames(overrides);
 
   // Go always sets db.url unconditionally, before any gating (status.go:52).
   const values: Record<string, string> = {
@@ -288,4 +339,23 @@ export function legacyStatusValues(
   }
 
   return { values, names, local };
+}
+
+/**
+ * Convenience wrapper combining {@link legacyResolveStatusState} +
+ * {@link legacyStatusValuesFromState} in one call — used directly by tests that
+ * only need a single override map. `status.handler.ts` calls the two halves
+ * separately so it can resolve state once and reuse it for both the real and
+ * pretty-mode (empty-override) value maps without recomputing `local`.
+ */
+export function legacyStatusValues(
+  config: ProjectConfig,
+  containerIds: LegacyStatusContainerIds,
+  hostname: string,
+  excluded: ReadonlyArray<string>,
+  overrides: ReadonlyMap<string, string>,
+  workdir: string,
+): LegacyStatusValuesResult {
+  const state = legacyResolveStatusState(config, containerIds, hostname, excluded, workdir);
+  return legacyStatusValuesFromState(state, overrides);
 }
