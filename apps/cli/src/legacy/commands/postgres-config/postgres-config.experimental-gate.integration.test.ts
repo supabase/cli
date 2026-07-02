@@ -6,7 +6,7 @@ import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts
 import { LEGACY_GLOBAL_FLAGS } from "../../../shared/legacy/global-flags.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
-import { mockOutput, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   mockLegacyCliConfig,
@@ -41,6 +41,13 @@ function setup() {
     out,
     api,
     cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+    // `RuntimeInfo` is ambient (not provided by `legacyManagementApiRuntimeLayer`
+    // itself), so the real `legacyCredentialsLayer` built inline inside the
+    // command for the "gate open" case resolves ITS `RuntimeInfo` from this
+    // layer. Point homeDir at this test's isolated tempRoot so the layer's
+    // file-based token fallback (`<homeDir>/.supabase/access-token`) can't pick
+    // up a stray token left at the shared default `/tmp/supabase-cli-test-home`.
+    runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
   });
   const layer = Layer.mergeAll(
     runtime,
