@@ -18,6 +18,7 @@ import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import { legacyCheckDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyApplyMigrations } from "../../../shared/legacy-migration-apply.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
@@ -36,7 +37,7 @@ import {
   legacyMatchPattern,
   legacySeedData,
 } from "../shared/legacy-seed-ops.ts";
-import { legacyReadVaultDocument, legacyUpsertVaultSecrets } from "../shared/legacy-vault.ts";
+import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";
 import { legacySeedBucketsRun } from "../../../shared/legacy-seed-buckets.ts";
 import type { LegacyDbResetFlags } from "./reset.command.ts";
 import {
@@ -308,10 +309,19 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       ),
     );
     const config = loaded === null ? decodeDefaultConfig({}) : loaded.config;
-    const document = loaded === null ? undefined : loaded.document;
     if (loaded !== null && loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
+
+    // Resolve + decrypt `[db.vault]` through Go's config-load path (`legacyCheckDbToml`):
+    // it decrypts every `encrypted:` secret with the shell AND project-`.env`
+    // `DOTENV_PRIVATE_KEY*` keys and aborts here — before the destructive prompt and
+    // `legacyDropUserSchemas` — on any undecryptable secret, exactly like Go's
+    // `DecryptSecretHookFunc` inside `LoadConfig`. The previous point-of-use decryption
+    // keyed only on `process.env` and ran AFTER the drop, so a project-`.env` key missed
+    // decryption and the reset dropped the schemas before failing.
+    const vaultSecrets = (yield* legacyCheckDbToml(fs, path, workdir, loadOptions?.projectRef))
+      .vault;
 
     // Go's resetRemote: prompt (default false) → cancel, then ResetAll.
     const shouldReset = yield* legacyPromptYesNo(
@@ -331,7 +341,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         const session = yield* dbConn.connect(cfg.conn, { isLocal: false, dnsResolver });
         // ResetAll: drop user schemas → upsert vault → migrate + seed.
         yield* legacyDropUserSchemas(session, applyError);
-        yield* legacyUpsertVaultSecrets(session, legacyReadVaultDocument(document), applyError);
+        yield* legacyUpsertVaultSecrets(session, vaultSecrets);
 
         if (legacyMigrationsEnabled(config.db.migrations.enabled)) {
           const locals = yield* legacyListLocalMigrations(fs, path, migrationsDir);

@@ -7,6 +7,7 @@ import { Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import {
   legacyApplyProjectEnv,
+  legacyCheckDbToml,
   legacyLoadProjectEnv,
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
@@ -45,6 +46,69 @@ const loadEnv = (workdir: string) =>
     const path = yield* Path.Path;
     return yield* legacyLoadProjectEnv(fs, path, workdir);
   }).pipe(Effect.provide(BunServices.layer));
+
+describe("read (lenient) vs check (throws) split", () => {
+  const withServices = <A, E>(
+    dir: string,
+    run: (fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, E, never>,
+  ) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      return yield* run(fs, path);
+    }).pipe(Effect.provide(BunServices.layer));
+
+  it.effect("legacyCheckDbToml throws on an undecryptable secret", () => {
+    const dir = withConfig('[db]\nroot_key = "encrypted:anything"\n');
+    return withServices(dir, (fs, path) => legacyCheckDbToml(fs, path, dir)).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "failed to parse config: missing private key",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "legacyReadDbToml({ validate: false }) tolerates the same secret, returning defaults",
+    () => {
+      const dir = withConfig('[db]\nroot_key = "encrypted:anything"\n');
+      return withServices(dir, (fs, path) =>
+        legacyReadDbToml(fs, path, dir, undefined, { validate: false }),
+      ).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            // The broken config is swallowed → the ignore-file defaults path (no vault).
+            expect(v.vault).toEqual([]);
+            expect(v.port).toBeGreaterThan(0);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("legacyReadDbToml({ validate: false }) still returns a valid config's values", () => {
+    const dir = withConfig('project_id = "lenientproj"\n');
+    return withServices(dir, (fs, path) =>
+      legacyReadDbToml(fs, path, dir, undefined, { validate: false }),
+    ).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.projectId).toEqual(Option.some("lenientproj"));
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+});
 
 describe("legacyReadDbToml", () => {
   it.effect("returns defaults when config.toml is absent", () => {

@@ -151,10 +151,17 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
         Effect.scoped(
           Effect.gen(function* () {
             // Resolve `utils.DbId` exactly as Go does (env → config.toml → workdir
-            // basename); the config.toml read is best-effort since the handler has
-            // already validated config.
-            const tomlProjectId = yield* legacyReadDbToml(fs, path, cliConfig.workdir).pipe(
+            // basename); the config.toml read is best-effort (`validate: false`) since
+            // the handler has already run Go's `LoadConfig` validation — an invalid
+            // config would have failed there, so here we only want the `projectId` and
+            // tolerate a fallback to the workdir basename rather than re-throwing.
+            const tomlProjectId = yield* legacyReadDbToml(fs, path, cliConfig.workdir, undefined, {
+              validate: false,
+            }).pipe(
               Effect.map((toml) => toml.projectId),
+              // The lenient read still surfaces a genuinely unreadable/malformed project
+              // `.env`; fall back to the workdir basename in that case rather than failing
+              // the running-check (the handler has already validated config).
               Effect.orElseSucceed(() => Option.none<string>()),
             );
             const projectId = legacyResolveLocalProjectId(

@@ -558,6 +558,30 @@ describe("legacy db push", () => {
     });
   });
 
+  it.live("decrypts an encrypted vault secret keyed by the project .env (not process.env)", () => {
+    // Regression: the old point-of-use vault decryption keyed only on `process.env`, so a
+    // `DOTENV_PRIVATE_KEY` present only in the project `.env` failed to decrypt. Go's config
+    // load merges the project `.env` into the key set (`legacyCheckDbToml`), so it resolves.
+    const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+    const ENCRYPTED =
+      "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: `project_id = "test"\n\n[db.vault]\nmy_secret = "${ENCRYPTED}"\n`,
+      files: {
+        ...migrationFile("20240101000000"),
+        "supabase/.env": `DOTENV_PRIVATE_KEY=${PRIVATE_KEY}\n`,
+      },
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Updating vault secrets...");
+      // The decrypted plaintext ("value") is written, proving the project-.env key was used.
+      const create = conn.queries.find((q) => q.sql === "SELECT vault.create_secret($1, $2)");
+      expect(create?.params).toEqual(["value", "my_secret"]);
+    });
+  });
+
   it.live("defaults to the linked target when no target flag is set", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',

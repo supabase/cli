@@ -1,12 +1,11 @@
-import { Effect, Option } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { loadProjectConfig } from "@supabase/config";
+import { legacyCheckDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
 import type { LegacyDbStartFlags } from "./start.command.ts";
-import { LegacyDbStartConfigLoadError } from "./start.errors.ts";
 
 /**
  * `supabase db start` — start the local Postgres database.
@@ -26,21 +25,17 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
   const cliConfig = yield* LegacyCliConfig;
   const seam = yield* LegacyDbBootstrapSeam;
   const telemetryState = yield* LegacyTelemetryState;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   const body = Effect.gen(function* () {
-    // Go's `flags.LoadConfig(fsys)` runs first; a malformed config aborts before
-    // any container work. A missing config is tolerated here (loadProjectConfig
-    // returns null) — the seam's Go LoadConfig then surfaces Go's authoritative
-    // missing-config error on the not-running path.
-    yield* loadProjectConfig(cliConfig.workdir).pipe(
-      Effect.catchTag(
-        "ProjectConfigParseError",
-        (cause) =>
-          new LegacyDbStartConfigLoadError({
-            message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
-          }),
-      ),
-    );
+    // Go's `flags.LoadConfig(fsys)` runs first thing in `start.Run`
+    // (`internal/db/start/start.go:45`): a missing config is tolerated (defaults), but
+    // a present config that is malformed, references an undecryptable `encrypted:`
+    // secret, or fails Validate aborts before any container work. `legacyCheckDbToml`
+    // is that exact load+validate — call it here (not via the seam's best-effort read,
+    // which swallows config errors) so `db start` fails fast on a broken config.
+    yield* legacyCheckDbToml(fs, path, cliConfig.workdir);
 
     // Go's AssertSupabaseDbIsRunning: if the db container is already up, print to
     // stderr and return nil (exit 0).

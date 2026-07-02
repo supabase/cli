@@ -497,6 +497,29 @@ describe("legacy db reset", () => {
     });
   });
 
+  it.live("fails a remote reset before dropping schemas on an undecryptable secret", () => {
+    // Regression: the old point-of-use vault decryption ran AFTER `legacyDropUserSchemas`,
+    // so an undecryptable `encrypted:` secret dropped the schemas before failing. Go runs
+    // `flags.LoadConfig` (which decrypts every secret) before ResetAll, so the reset must
+    // abort before any destructive work — matched here by `legacyCheckDbToml` at load time.
+    const { layer, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:anything"\n',
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("failed to parse config: missing private key");
+      }
+      // Config load failed before ResetAll → schemas were never dropped.
+      expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(false);
+    });
+  });
+
   it.live("still caches the linked ref when DB-config resolution fails", () => {
     // Go's Execute() runs ensureProjectGroupsCached after ExecuteC returns even on
     // error (root.go:171-181), and ParseDatabaseConfig sets ProjectRef via

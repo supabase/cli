@@ -1173,7 +1173,7 @@ const legacyValidateAuthConfig = Effect.fnUntraced(function* (
  * Fails with `LegacyDbConfigLoadError` only when the config file is present but
  * unparseable; an absent file (and an absent/empty pooler-url file) is not an error.
  */
-export const legacyReadDbToml = Effect.fnUntraced(function* (
+const readDbTomlCore = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
@@ -1183,6 +1183,12 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // `--local` / `--db-url` / declarative pass nothing and read the unmerged config,
   // matching Go (those paths never resolve a ref before config load).
   ref?: string,
+  // Internal: when true the on-disk `config.toml` is treated as absent so the body
+  // resolves pure defaults (still honoring `SUPABASE_*` env overrides, which Go binds
+  // regardless of a config file). The lenient `legacyReadDbToml({ validate: false })`
+  // wrapper uses this as its fallback after a config-load failure, mirroring the
+  // best-effort behavior the container-id seam relied on before.
+  ignoreConfigFile = false,
 ) {
   const supabaseDir = path.join(workdir, "supabase");
   const configPath = path.join(supabaseDir, "config.toml");
@@ -1192,18 +1198,20 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // is swallowed, every other read error aborts rather than silently running against the
   // default local database. Effect surfaces "not found" as `PlatformError` with a
   // `SystemError` reason tagged `"NotFound"`.
-  const maybeContent = yield* fs.readFileString(configPath).pipe(
-    Effect.map(Option.some<string>),
-    Effect.catchTag("PlatformError", (error) =>
-      error.reason._tag === "NotFound"
-        ? Effect.succeed(Option.none<string>())
-        : Effect.fail(
-            new LegacyDbConfigLoadError({
-              message: `failed to read file config: ${error.message}`,
-            }),
-          ),
-    ),
-  );
+  const maybeContent = ignoreConfigFile
+    ? Option.none<string>()
+    : yield* fs.readFileString(configPath).pipe(
+        Effect.map(Option.some<string>),
+        Effect.catchTag("PlatformError", (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(Option.none<string>())
+            : Effect.fail(
+                new LegacyDbConfigLoadError({
+                  message: `failed to read file config: ${error.message}`,
+                }),
+              ),
+        ),
+      );
 
   // Resolve `env(VAR)` against the shell env first, then the project `.env` files
   // (Go's `loadNestedEnv` populates the process env before `LoadEnvHook`). Built
@@ -1863,6 +1871,48 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   };
   return values;
 });
+
+/**
+ * Read + validate `config.toml` exactly like Go's `flags.LoadConfig` → `config.Load`
+ * → `Validate`: an absent file yields defaults, but a present config that is
+ * unreadable/malformed, references an undecryptable `encrypted:` secret, or fails any
+ * of Go's decode/Validate checks (remote refs, `db.port`, `db.major_version`,
+ * `edge_runtime.deno_version`, pgdelta gate, `format_options` JSON, bucket names,
+ * function slugs, auth, analytics) aborts with the matching Go error. Call this at the
+ * point Go fails fast — before asserting the stack is running, prompting, or any
+ * destructive work — so a broken config never runs against the default local database.
+ */
+export const legacyCheckDbToml = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  ref?: string,
+) => readDbTomlCore(fs, path, workdir, ref, false);
+
+/**
+ * Read `config.toml`. Defaults to Go's validating behavior (identical to
+ * {@link legacyCheckDbToml}); pass `{ validate: false }` for a best-effort read that
+ * never throws on an invalid config — a config-load failure falls back to pure
+ * defaults (env overrides still applied), matching the tolerant behavior the
+ * container-id seam needs when it only wants `projectId` and the handler has already
+ * validated the config. The throwing default keeps every existing caller at Go parity.
+ */
+export const legacyReadDbToml = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  ref?: string,
+  opts?: { readonly validate?: boolean },
+) =>
+  opts?.validate === false
+    ? readDbTomlCore(fs, path, workdir, ref, false).pipe(
+        // Fall back to the ignore-file defaults path (never re-reads the broken config)
+        // so a best-effort caller gets a well-formed defaults result instead of a throw.
+        Effect.catchTag("LegacyDbConfigLoadError", () =>
+          readDbTomlCore(fs, path, workdir, ref, true),
+        ),
+      )
+    : readDbTomlCore(fs, path, workdir, ref, false);
 
 /**
  * The effective declarative schema directory: the configured

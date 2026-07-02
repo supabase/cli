@@ -13,6 +13,7 @@ import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import { legacyCheckDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import {
   legacyApplyMigrations,
@@ -40,7 +41,7 @@ import {
   legacyGetPendingSeeds,
   legacySeedData,
 } from "../shared/legacy-seed-ops.ts";
-import { legacyReadVaultDocument, legacyUpsertVaultSecrets } from "../shared/legacy-vault.ts";
+import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";
 // Listing the remote `schema_migrations` history (with the 42P01 → empty rule)
 // lives in the shared migration-history module (Go's `migration.ListRemoteMigrations`).
 import { legacyListRemoteMigrations } from "../../../shared/legacy-migration-history.ts";
@@ -131,10 +132,18 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       ),
     );
     const config = loaded === null ? decodeDefaultConfig({}) : loaded.config;
-    const document = loaded === null ? undefined : loaded.document;
     if (loaded !== null && loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
+
+    // Resolve + decrypt `[db.vault]` through Go's config-load path (`legacyCheckDbToml`):
+    // it decrypts every `encrypted:` secret with the shell AND project-`.env`
+    // `DOTENV_PRIVATE_KEY*` keys and aborts here — before connecting or writing — on any
+    // undecryptable secret, exactly like Go's `DecryptSecretHookFunc` inside `LoadConfig`.
+    // The previous point-of-use decryption keyed only on `process.env` and ran inside the
+    // write transaction, so a project-`.env` key silently missed decryption.
+    const vaultSecrets = (yield* legacyCheckDbToml(fs, path, workdir, loadOptions?.projectRef))
+      .vault;
 
     if (flags.dryRun) {
       yield* output.raw("DRY RUN: migrations will *not* be pushed to the database.\n", "stderr");
@@ -294,7 +303,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
                 new LegacyDbPushCancelledError({ message: "context canceled" }),
               );
             }
-            yield* legacyUpsertVaultSecrets(session, legacyReadVaultDocument(document), applyError);
+            yield* legacyUpsertVaultSecrets(session, vaultSecrets);
             yield* legacyApplyMigrations(session, fs, path, pending, applyError);
             // Go best-effort caches the migrations catalog for pg-delta; a failure
             // only warns (`push.go:99-101`). The catalog cache is not yet ported, so

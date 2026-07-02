@@ -131,11 +131,31 @@ describe("legacy db start", () => {
       const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to parse supabase/config.toml");
+        expect(JSON.stringify(exit.cause)).toContain("failed to load config");
       }
       // No container work attempted; telemetry still flushes on failure.
       expect(seam.startCalls).toHaveLength(0);
       expect(telemetry.flushed).toBe(true);
+    });
+  });
+
+  it.live("fails fast on an undecryptable secret even when the db is already running", () => {
+    // Regression for the seam swallowing config-load errors: Go runs `flags.LoadConfig`
+    // (which decrypts every secret) BEFORE `AssertSupabaseDbIsRunning`, so a broken
+    // config aborts `db start` regardless of container state. Previously the handler's
+    // only config read was the seam's best-effort one, so an undecryptable secret with
+    // the container already up printed "already running" and exited 0.
+    const { layer, out } = setup(tmp.current, {
+      toml: '[db]\nroot_key = "encrypted:anything"\n',
+      running: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("failed to parse config: missing private key");
+      }
+      expect(out.stderrText).not.toContain("already running");
     });
   });
 
