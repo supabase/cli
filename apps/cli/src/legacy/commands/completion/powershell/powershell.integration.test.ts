@@ -19,8 +19,16 @@ describe("legacy completion powershell", () => {
   it.live("forwards `completion powershell` to the Go binary", () => {
     const { layer, calls } = setupLegacyCompletionPowershell();
     return Effect.gen(function* () {
-      yield* legacyCompletionPowershell({});
+      yield* legacyCompletionPowershell({ noDescriptions: false });
       expect(calls).toEqual([["completion", "powershell"]]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("forwards --no-descriptions when set", () => {
+    const { layer, calls } = setupLegacyCompletionPowershell();
+    return Effect.gen(function* () {
+      yield* legacyCompletionPowershell({ noDescriptions: true });
+      expect(calls).toEqual([["completion", "powershell", "--no-descriptions"]]);
     }).pipe(Effect.provide(layer));
   });
 });

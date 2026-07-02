@@ -58,3 +58,7 @@ which provides the matching hidden command.
 - The Go CLI exits non-zero when called without a shell subcommand (e.g.
   `supabase completion`). Effect CLI surfaces the same condition through its usual
   "missing subcommand" help-with-exit-1 behavior.
+- Each of `bash`/`zsh`/`fish`/`powershell` declares `--no-descriptions` (cobra's
+  auto-registered flag, `completions.go` in `spf13/cobra`) and forwards it to the
+  Go binary, so the emitted script omits completion descriptions exactly as it
+  would with the Go CLI.

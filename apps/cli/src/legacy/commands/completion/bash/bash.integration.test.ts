@@ -19,8 +19,16 @@ describe("legacy completion bash", () => {
   it.live("forwards `completion bash` to the Go binary", () => {
     const { layer, calls } = setupLegacyCompletionBash();
     return Effect.gen(function* () {
-      yield* legacyCompletionBash({});
+      yield* legacyCompletionBash({ noDescriptions: false });
       expect(calls).toEqual([["completion", "bash"]]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("forwards --no-descriptions when set", () => {
+    const { layer, calls } = setupLegacyCompletionBash();
+    return Effect.gen(function* () {
+      yield* legacyCompletionBash({ noDescriptions: true });
+      expect(calls).toEqual([["completion", "bash", "--no-descriptions"]]);
     }).pipe(Effect.provide(layer));
   });
 });

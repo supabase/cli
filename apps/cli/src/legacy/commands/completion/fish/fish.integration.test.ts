@@ -19,8 +19,16 @@ describe("legacy completion fish", () => {
   it.live("forwards `completion fish` to the Go binary", () => {
     const { layer, calls } = setupLegacyCompletionFish();
     return Effect.gen(function* () {
-      yield* legacyCompletionFish({});
+      yield* legacyCompletionFish({ noDescriptions: false });
       expect(calls).toEqual([["completion", "fish"]]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("forwards --no-descriptions when set", () => {
+    const { layer, calls } = setupLegacyCompletionFish();
+    return Effect.gen(function* () {
+      yield* legacyCompletionFish({ noDescriptions: true });
+      expect(calls).toEqual([["completion", "fish", "--no-descriptions"]]);
     }).pipe(Effect.provide(layer));
   });
 });

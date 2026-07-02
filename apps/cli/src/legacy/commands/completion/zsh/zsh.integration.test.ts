@@ -19,8 +19,16 @@ describe("legacy completion zsh", () => {
   it.live("forwards `completion zsh` to the Go binary", () => {
     const { layer, calls } = setupLegacyCompletionZsh();
     return Effect.gen(function* () {
-      yield* legacyCompletionZsh({});
+      yield* legacyCompletionZsh({ noDescriptions: false });
       expect(calls).toEqual([["completion", "zsh"]]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("forwards --no-descriptions when set", () => {
+    const { layer, calls } = setupLegacyCompletionZsh();
+    return Effect.gen(function* () {
+      yield* legacyCompletionZsh({ noDescriptions: true });
+      expect(calls).toEqual([["completion", "zsh", "--no-descriptions"]]);
     }).pipe(Effect.provide(layer));
   });
 });
