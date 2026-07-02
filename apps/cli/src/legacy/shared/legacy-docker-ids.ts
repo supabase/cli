@@ -32,15 +32,30 @@ function truncateText(text: string, maxLength: number) {
   return text.length > maxLength ? text.slice(0, maxLength) : text;
 }
 
-/** Go's `GetId` sanitisation: replace invalid runs with `_`, strip leading
- * `_.-`, and cap at 40 chars. */
-function sanitizeProjectId(src: string) {
+/**
+ * Go's `GetId` sanitisation: replace invalid runs with `_`, strip leading
+ * `_.-`, and cap at 40 chars.
+ *
+ * Exported because it is not only a container-*naming* concern: Go's
+ * `Config.Validate` (`pkg/config/config.go:938-944`) rewrites `c.ProjectId`
+ * to this same sanitized form **in place, once, at config-load time** (every
+ * `flags.LoadConfig` call ends in `Load` -> `Validate`), and every later use
+ * of `Config.ProjectId` — including the Docker LABEL value written by `start`
+ * (`internal/utils/docker.go:375`: `config.Labels[CliProjectLabel] =
+ * Config.ProjectId`) — reads that already-sanitized singleton. `GetId` itself
+ * performs no sanitisation of its own; it just reads the pre-sanitized value.
+ * So on the config/env-derived (non-`--project-id`) path, callers building a
+ * Docker label FILTER must sanitize too, or a `project_id` like `"my app"`
+ * filters on the raw string while `start` labeled the sanitized one and never
+ * matches anything (see `legacyCliProjectFilterValue`'s doc comment).
+ */
+export function legacySanitizeProjectId(src: string) {
   const sanitized = src.replaceAll(INVALID_PROJECT_ID, "_").replace(/^[_.-]+/, "");
   return truncateText(sanitized, MAX_PROJECT_ID_LENGTH);
 }
 
 function localDockerId(name: string, projectId: string) {
-  return `supabase_${name}_${sanitizeProjectId(projectId)}`;
+  return `supabase_${name}_${legacySanitizeProjectId(projectId)}`;
 }
 
 /** `utils.DbId` — the local Postgres container name. */
@@ -86,14 +101,21 @@ export function legacyServiceContainerIds(projectId: string): ReadonlyArray<stri
  * the value that follows `--filter label=` on the `docker`/`podman` CLI. An empty
  * `projectId` (Go's `--all` path) filters on the bare label across every project.
  *
- * Deliberately unsanitized, matching Go exactly: `CliProjectFilter` interpolates
- * `projectId` into the filter string raw, with none of `GetId`'s (this file's
- * `sanitizeProjectId`) character-stripping — that sanitization only applies to
- * Go's own generated container *names*, never to a user-supplied `--project-id`
- * filter value. There is no injection risk from skipping it here: this value is
- * always passed as a single argv element to a spawned process (never through a
- * shell), so a malformed value can only make Docker's own filter parsing reject
- * it or match nothing — it cannot break out into another command.
+ * This function itself does not sanitize — by design, it's a pure pass-through.
+ * The caller is responsible for sanitizing `projectId` with
+ * {@link legacySanitizeProjectId} on the config/env-derived (default) path
+ * BEFORE calling this, matching Go's `Config.Validate` sanitizing the
+ * `Config.ProjectId` singleton once at config-load time so every later
+ * reader — including the Docker LABEL `start` writes — sees the same
+ * sanitized string. An explicit `--project-id <value>` (where one exists,
+ * e.g. `stop`) is Go's one exception: it assigns straight to
+ * `Config.ProjectId` without going through `Validate`
+ * (`apps/cli-go/internal/stop/stop.go:19-20`), so that path must stay raw/
+ * unsanitized to match. There is also no injection risk either way: this
+ * value is always passed as a single argv element to a spawned process
+ * (never through a shell), so a malformed value can only make Docker's own
+ * filter parsing reject it or match nothing — it cannot break out into
+ * another command.
  */
 export function legacyCliProjectFilterValue(projectId: string): string {
   if (projectId.length === 0) return LEGACY_CLI_PROJECT_LABEL;

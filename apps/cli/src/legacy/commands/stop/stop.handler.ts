@@ -13,6 +13,7 @@ import {
 import {
   legacyCliProjectFilterValue,
   legacyResolveLocalProjectId,
+  legacySanitizeProjectId,
 } from "../../shared/legacy-docker-ids.ts";
 import {
   legacyListContainersByLabel,
@@ -35,6 +36,16 @@ import {
  * `--project-id` overrides `Config.ProjectId` directly, also bypassing
  * config.toml; otherwise `flags.LoadConfig` reads config.toml and
  * `Config.ProjectId` (env → toml → workdir basename) is used.
+ *
+ * The config/env-derived (default) branch is sanitized with
+ * {@link legacySanitizeProjectId} before it's used as a filter value,
+ * matching Go's `Config.Validate` sanitizing the `Config.ProjectId`
+ * singleton once at config-load time (`pkg/config/config.go:938-944`) — every
+ * later reader, including the Docker LABEL `start` writes
+ * (`internal/utils/docker.go:375`), sees that same sanitized string. The
+ * explicit `--project-id` bypass stays RAW to match: Go assigns the flag
+ * value straight to `Config.ProjectId` without going through `Validate`
+ * (`internal/stop/stop.go:19-20`).
  */
 const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProjectIdFilter")(
   function* (flags: LegacyStopFlags, cliConfig: LegacyCliConfig["Service"]) {
@@ -51,11 +62,12 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
           new LegacyStopConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
       ),
     );
-    return legacyResolveLocalProjectId(
+    const resolved = legacyResolveLocalProjectId(
       process.env["SUPABASE_PROJECT_ID"],
       loaded?.config.project_id,
       cliConfig.workdir,
     );
+    return legacySanitizeProjectId(resolved);
   },
 );
 

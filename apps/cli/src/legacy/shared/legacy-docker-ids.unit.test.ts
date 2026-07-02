@@ -4,6 +4,7 @@ import {
   LEGACY_CLI_PROJECT_LABEL,
   legacyCliProjectFilterValue,
   legacyResolveLocalProjectId,
+  legacySanitizeProjectId,
   legacyServiceContainerIds,
   localDbContainerId,
 } from "./legacy-docker-ids.ts";
@@ -64,5 +65,37 @@ describe("legacyCliProjectFilterValue", () => {
 
   it("returns label=projectId when a project id is given", () => {
     expect(legacyCliProjectFilterValue("my-app")).toBe(`${LEGACY_CLI_PROJECT_LABEL}=my-app`);
+  });
+
+  it("must be sanitized by the caller for the label to match what start wrote", () => {
+    // This function is a pure pass-through by design (see its doc comment) — a
+    // dirty config/env-derived id must be sanitized by the caller BEFORE being
+    // passed here, matching Go's Config.Validate sanitizing Config.ProjectId
+    // once at config-load time so every reader (including the Docker label
+    // `start` writes) sees the same string.
+    const dirty = "My App!!";
+    expect(legacyCliProjectFilterValue(dirty)).toBe(`${LEGACY_CLI_PROJECT_LABEL}=My App!!`);
+    expect(legacyCliProjectFilterValue(legacySanitizeProjectId(dirty))).toBe(
+      `${LEGACY_CLI_PROJECT_LABEL}=My_App_`,
+    );
+  });
+});
+
+describe("legacySanitizeProjectId", () => {
+  it("replaces invalid character runs with a single underscore", () => {
+    expect(legacySanitizeProjectId("My App!!")).toBe("My_App_");
+  });
+
+  it("strips leading underscore/dot/dash runs", () => {
+    expect(legacySanitizeProjectId("...hidden-app")).toBe("hidden-app");
+  });
+
+  it("caps the result at 40 characters", () => {
+    const long = "a".repeat(50);
+    expect(legacySanitizeProjectId(long)).toBe("a".repeat(40));
+  });
+
+  it("leaves an already-clean id unchanged", () => {
+    expect(legacySanitizeProjectId("my-app_123")).toBe("my-app_123");
   });
 });

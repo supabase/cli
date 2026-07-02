@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -208,6 +208,27 @@ describe("legacy status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "sanitizes a dirty config.toml project_id before filtering, matching start's label",
+    () => {
+      // Go's Config.Validate rewrites Config.ProjectId to its sanitized form once
+      // at config-load time (pkg/config/config.go:938-944); every later reader —
+      // including the Docker label `start` writes — sees that same sanitized
+      // string. Filtering/inspecting with the raw value here would target
+      // containers `start` never created.
+      const { layer, child } = setup({ configContents: 'project_id = "My App!!"\n' });
+      return Effect.gen(function* () {
+        yield* legacyStatus(flags());
+        const inspectCall = child.spawned.find(
+          (s) => s.args[0] === "container" && s.args[1] === "inspect",
+        );
+        expect(inspectCall?.args[2]).toBe(localDbContainerId("My_App_"));
+        const psCall = child.spawned.find((s) => s.args[0] === "ps");
+        expect(psCall?.args).toContain("label=com.supabase.cli.project=My_App_");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("skips the db health check with --ignore-health-check", () => {
     const { layer, child } = setup({
       route: (args) => {
@@ -251,14 +272,27 @@ describe("legacy status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when config.toml is missing entirely", () => {
-    const { layer } = setup({ skipConfig: true });
+  it.live("reports status using schema defaults when config.toml is missing entirely", () => {
+    // Matches Go: `flags.LoadConfig` -> `Config.Load` -> `loadFromFile` ->
+    // `mergeFileConfig` treats a missing file as a no-op (`os.ErrNotExist` ->
+    // nil, pkg/config/config.go:655-656), not an error — `status` proceeds
+    // using template defaults. Only a malformed file is a hard failure (see
+    // the sibling "malformed" test above).
+    //
+    // Without config.toml, the resolved project id falls back to the workdir
+    // basename (not the module-level `ALL_RUNNING_NAMES`, which is fixed to
+    // "demo") — route `ps` off that so the expected services actually show as
+    // running rather than all appearing "stopped" and excluded.
+    const projectId = basename(tempRoot.current);
+    const { layer, out } = setup({
+      skipConfig: true,
+      route: defaultRoute({ runningNames: legacyServiceContainerIds(projectId) }),
+    });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStatus(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusConfigLoadError");
-      }
+      yield* legacyStatus(flags());
+      expect(out.stderrText).toContain("local development setup is running.");
+      expect(out.stdoutText).toContain("Project URL");
+      expect(out.stdoutText).toContain("Database");
     }).pipe(Effect.provide(layer));
   });
 
@@ -434,16 +468,28 @@ describe("legacy status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails on an --override-name entry with an unknown field key", () => {
-    const { layer } = setup();
+  it.live("silently ignores an --override-name entry with an unknown field key", () => {
+    // Matches Go: `env.Unmarshal` (Netflix go-env) walks CustomName's own struct
+    // fields and looks up each field's tag in the override map — it never checks
+    // for leftover/unmatched keys, so an unrecognized key is a no-op, not an error.
+    const { layer, out } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacyStatus(flags({ overrideName: ["not.a.real.field=NAME"] })),
+      yield* legacyStatus(flags({ overrideName: ["not.a.real.field=NAME"] }));
+      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      expect(parsed.NAME).toBeUndefined();
+      expect(parsed.API_URL).toBe("http://127.0.0.1:54321");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("applies a valid --override-name entry alongside an unknown one", () => {
+    const { layer, out } = setup({ goOutput: Option.some("json") });
+    return Effect.gen(function* () {
+      yield* legacyStatus(
+        flags({ overrideName: ["not.a.real.field=NAME", "api.url=NEXT_PUBLIC_SUPABASE_URL"] }),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusOverrideParseError");
-      }
+      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      expect(parsed.NEXT_PUBLIC_SUPABASE_URL).toBe("http://127.0.0.1:54321");
+      expect(parsed.NAME).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 

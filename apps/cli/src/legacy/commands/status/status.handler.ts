@@ -1,6 +1,6 @@
-import { loadProjectConfig } from "@supabase/config";
+import { loadProjectConfig, ProjectConfigSchema } from "@supabase/config";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, Option } from "effect";
+import { Effect, Option, Schema } from "effect";
 
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
@@ -10,6 +10,7 @@ import { legacyAqua } from "../../shared/legacy-colors.ts";
 import {
   legacyCliProjectFilterValue,
   legacyResolveLocalProjectId,
+  legacySanitizeProjectId,
   legacyServiceContainerIds,
   localDbContainerId,
 } from "../../shared/legacy-docker-ids.ts";
@@ -44,7 +45,13 @@ import {
  * Parses `--override-name api.url=NEXT_PUBLIC_SUPABASE_URL` entries into a
  * `fieldKey -> outputName` map, mirroring Go's `env.EnvironToEnvSet` +
  * `env.Unmarshal` (`cmd/status.go:21-27`): each entry must be a `KEY=VALUE`
- * pair whose `KEY` matches one of the 18 known `CustomName` field keys.
+ * pair. `env.EnvironToEnvSet` only validates that shape (`go-env`'s
+ * `ErrInvalidEnviron`); the Netflix `go-env` library's `Unmarshal` then walks
+ * `CustomName`'s own struct fields and looks up each field's tag in the
+ * resulting map — it never checks the map for leftover/unmatched keys, so an
+ * entry whose `KEY` isn't one of the 18 known `CustomName` field keys is
+ * silently ignored, not an error (verified against `go-env@v0.1.2`'s
+ * `env.go`/`transform.go`).
  */
 function parseOverrides(
   entries: ReadonlyArray<string>,
@@ -63,11 +70,7 @@ function parseOverrides(
     const key = entry.slice(0, separatorIndex);
     const value = entry.slice(separatorIndex + 1);
     if (!knownKeys.has(key)) {
-      return Effect.fail(
-        new LegacyStatusOverrideParseError({
-          message: `unknown override-name key: ${key}`,
-        }),
-      );
+      continue;
     }
     overrides.set(key, value);
   }
@@ -87,27 +90,36 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   yield* Effect.gen(function* () {
-    // 1. `status` always needs config, unlike `stop` (status.go:99-103).
+    // 1. `status` always needs config, unlike `stop` (status.go:99-103). An
+    // ABSENT config.toml is not a hard failure in Go: `flags.LoadConfig` ->
+    // `Config.Load` -> `loadFromFile` -> `mergeFileConfig` treats a missing
+    // file as a no-op (`os.ErrNotExist` -> nil, pkg/config/config.go:655-656)
+    // and proceeds with template defaults (`mergeDefaultValues`,
+    // pkg/config/config.go:639-648). Only a MALFORMED file is a hard error.
+    // Mirror that by decoding an empty document through the schema for its
+    // defaults (matching `packages/config/src/functions-manifest.ts`'s
+    // `decodeProjectConfig({})` pattern) instead of failing.
     const loaded = yield* loadProjectConfig(cliConfig.workdir).pipe(
       Effect.mapError(
         (cause) =>
           new LegacyStatusConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
       ),
     );
-    if (loaded === null) {
-      return yield* Effect.fail(
-        new LegacyStatusConfigLoadError({
-          message: "failed to read config: supabase/config.toml not found",
-        }),
-      );
-    }
-    const config = loaded.config;
+    const config = loaded?.config ?? Schema.decodeUnknownSync(ProjectConfigSchema)({});
 
-    // 2. status has no --project-id flag; resolution is always env → toml → workdir basename.
-    const projectId = legacyResolveLocalProjectId(
-      process.env["SUPABASE_PROJECT_ID"],
-      config.project_id,
-      cliConfig.workdir,
+    // 2. status has no --project-id flag; resolution is always env → toml →
+    // workdir basename, then sanitized to match the singleton Go's
+    // `Config.Validate` produces once at config-load time
+    // (`pkg/config/config.go:938-944`) — every reader, including the Docker
+    // LABEL `start` writes (`internal/utils/docker.go:375`), sees that same
+    // sanitized string, so `status` must filter on it too (see
+    // `legacyCliProjectFilterValue`'s doc comment).
+    const projectId = legacySanitizeProjectId(
+      legacyResolveLocalProjectId(
+        process.env["SUPABASE_PROJECT_ID"],
+        config.project_id,
+        cliConfig.workdir,
+      ),
     );
     const dbContainerId = localDbContainerId(projectId);
 

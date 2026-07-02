@@ -223,6 +223,52 @@ describe("legacy stop integration", () => {
     },
   );
 
+  it.live(
+    "sanitizes a dirty config.toml project_id before filtering, matching start's label",
+    () => {
+      // Go's Config.Validate rewrites Config.ProjectId to its sanitized form once
+      // at config-load time (pkg/config/config.go:938-944); every later reader —
+      // including the Docker label `start` writes — sees that same sanitized
+      // string. Filtering on the raw value here would match nothing `start`
+      // ever labeled.
+      const { layer, child } = setup({
+        configuredProjectId: "My App!!",
+        route: defaultRoute(),
+      });
+      return Effect.gen(function* () {
+        yield* legacyStop(flags());
+        const psCall = child.spawned.find((s) => s.args[0] === "ps");
+        expect(psCall?.args).toEqual([
+          "ps",
+          "--filter",
+          "label=com.supabase.cli.project=My_App_",
+          "--all",
+          "--format",
+          "{{.ID}}",
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("keeps an explicit --project-id raw, unsanitized (Go's bypass)", () => {
+    // Go assigns the --project-id flag value straight to Config.ProjectId
+    // without going through Validate (internal/stop/stop.go:19-20), so this
+    // path must NOT sanitize even though the default (config-derived) path does.
+    const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
+    return Effect.gen(function* () {
+      yield* legacyStop(flags({ projectId: Option.some("Raw Value!!") }));
+      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      expect(psCall?.args).toEqual([
+        "ps",
+        "--filter",
+        "label=com.supabase.cli.project=Raw Value!!",
+        "--all",
+        "--format",
+        "{{.ID}}",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("stops every project's containers with --all without reading config.toml", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
