@@ -6,14 +6,14 @@ import { Effect, type FileSystem, type Path } from "effect";
  * declarative pg-delta scripts that run inside the edge-runtime container.
  *
  * The default tag is baked into the Go binary via the embedded Dockerfile
- * (`FROM supabase/edge-runtime:v1.74.1 AS edgeruntime`), mirrored here as a
+ * (`FROM supabase/edge-runtime:v1.74.2 AS edgeruntime`), mirrored here as a
  * constant. A pinned tag in `supabase/.temp/edge-runtime-version` overrides it
  * (written by `supabase start`). `edge_runtime.deno_version = 1` selects the
- * legacy `deno1` image instead (default `deno_version = 2` keeps v1.74.1).
+ * legacy `deno1` image instead (default `deno_version = 2` keeps v1.74.2).
  */
 
-// `FROM supabase/edge-runtime:v1.74.1 AS edgeruntime` (embedded Dockerfile).
-export const LEGACY_EDGE_RUNTIME_IMAGE = "supabase/edge-runtime:v1.74.1";
+// `FROM supabase/edge-runtime:v1.74.2 AS edgeruntime` (embedded Dockerfile).
+export const LEGACY_EDGE_RUNTIME_IMAGE = "supabase/edge-runtime:v1.74.2";
 // `deno1` (`pkg/config/constants.go:15`) — used when `deno_version = 1`.
 const LEGACY_EDGE_RUNTIME_DENO1_IMAGE = "supabase/edge-runtime:v1.68.4";
 
@@ -26,7 +26,7 @@ function replaceImageTag(image: string, tag: string): string {
 /**
  * Resolve the edge-runtime image, honoring the pinned tag in
  * `supabase/.temp/edge-runtime-version` and the `deno_version` selector
- * (default 2 → v1.74.1; 1 → `deno1`). The version pin is applied first (Go's
+ * (default 2 → v1.74.2; 1 → `deno1`). The version pin is applied first (Go's
  * `Load`), then `deno_version = 1` overrides to `deno1` (Go's validate pass).
  */
 export const legacyResolveEdgeRuntimeImage = Effect.fnUntraced(function* (

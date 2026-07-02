@@ -1,5 +1,5 @@
 import { Data, Effect, Exit, Option, Redacted } from "effect";
-import { UrlParams } from "effect/unstable/http";
+import { Url, UrlParams } from "effect/unstable/http";
 import { validateToken } from "../../auth/token.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -151,7 +151,7 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
   const sessionId = yield* crypto.generateSessionId;
   const tokenName = Option.isSome(flags.name) ? flags.name.value : yield* crypto.defaultTokenName;
 
-  const loginUrl = yield* UrlParams.makeUrl(
+  const loginUrl = yield* Url.make(
     `${dashboardUrl}/cli/login`,
     UrlParams.fromInput({
       session_id: sessionId,

@@ -1427,6 +1427,7 @@ const (
 
 // Defines values for V1ListEntitlementsResponseEntitlementsFeatureKey.
 const (
+	V1ListEntitlementsResponseEntitlementsFeatureKeyApiMembersInvitations                 V1ListEntitlementsResponseEntitlementsFeatureKey = "api.members.invitations"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyApiMembersRoles                       V1ListEntitlementsResponseEntitlementsFeatureKey = "api.members.roles"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAssistantAdvanceModel                 V1ListEntitlementsResponseEntitlementsFeatureKey = "assistant.advance_model"
 	V1ListEntitlementsResponseEntitlementsFeatureKeyAuditLogDrains                        V1ListEntitlementsResponseEntitlementsFeatureKey = "audit_log_drains"

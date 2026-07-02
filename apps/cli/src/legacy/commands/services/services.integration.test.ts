@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
@@ -19,7 +19,10 @@ import {
   processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
 import { mockLegacyTelemetryStateTracked } from "../../../../tests/helpers/legacy-mocks.ts";
-import { listLocalServiceVersions } from "../../../shared/services/services.shared.ts";
+import {
+  listLocalServiceVersions,
+  postgresImageForDbMajorVersion,
+} from "../../../shared/services/services.shared.ts";
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
@@ -41,6 +44,7 @@ function setup(
   opts: {
     format?: "text" | "json" | "stream-json";
     goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
+    workdir?: string;
   } = {},
 ) {
   const out = mockOutput({
@@ -69,7 +73,7 @@ function setup(
           poolerHost: "supabase.com",
           accessToken: Option.none(),
           projectId: Option.none(),
-          workdir: process.cwd(),
+          workdir: opts.workdir ?? process.cwd(),
           userAgent: "SupabaseCLI/test",
         }),
       ),
@@ -99,6 +103,38 @@ const legacyTestRoot = Command.make("supabase").pipe(
   Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyServicesCommand]),
 );
+
+function makeProjectWithConfig(config: string): string {
+  const workdir = mkdtempSync(join(tmpdir(), "supabase-services-config-"));
+  const configDir = join(workdir, "supabase");
+  mkdirSync(configDir, { recursive: true });
+  writeFileSync(join(configDir, "config.toml"), config);
+  return workdir;
+}
+
+function makeProjectWithConfigFiles(opts: { toml: string; json: string }): string {
+  const workdir = makeProjectWithConfig(opts.toml);
+  writeFileSync(join(workdir, "supabase", "config.json"), opts.json);
+  return workdir;
+}
+
+function makeProjectWithDbMajorVersion(majorVersion: number): string {
+  return makeProjectWithConfig(`[db]\nmajor_version = ${majorVersion}\n`);
+}
+
+function writeTempFile(workdir: string, name: string, content: string): void {
+  const tempDir = join(workdir, "supabase", ".temp");
+  mkdirSync(tempDir, { recursive: true });
+  writeFileSync(join(tempDir, name), content);
+}
+
+function postgresVersionForDbMajorVersion(majorVersion: number): string {
+  const image = postgresImageForDbMajorVersion(majorVersion);
+  if (image === undefined) {
+    throw new Error(`Missing Postgres image for db major ${majorVersion}.`);
+  }
+  return image.slice(image.lastIndexOf(":") + 1);
+}
 
 function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string) {
   expect(Exit.isFailure(exit)).toBe(true);
@@ -195,6 +231,143 @@ describe("legacy services", () => {
         local: LOCAL_POSTGRES_VERSION,
       });
     });
+  });
+
+  it.live("reports the configured Postgres version for local projects", () => {
+    const workdir = makeProjectWithDbMajorVersion(15);
+    const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      const rows = JSON.parse(out.stdoutText) as Array<{
+        name: string;
+        local: string;
+        remote: string;
+      }>;
+      expect(rows).toContainEqual(
+        expect.objectContaining({
+          name: "supabase/postgres",
+          local: postgresVersionForDbMajorVersion(15),
+        }),
+      );
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
+  it.live("ignores config.json and reads legacy config.toml for local image selection", () => {
+    const workdir = makeProjectWithConfigFiles({
+      toml: "[db]\nmajor_version = 15\n",
+      json: JSON.stringify({ db: { major_version: 14 } }),
+    });
+    const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      const rows = JSON.parse(out.stdoutText) as Array<{
+        name: string;
+        local: string;
+        remote: string;
+      }>;
+      expect(rows).toContainEqual(
+        expect.objectContaining({
+          name: "supabase/postgres",
+          local: postgresVersionForDbMajorVersion(15),
+        }),
+      );
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
+  it.live("applies linked-project remote config overrides when choosing the local image", () => {
+    const workdir = makeProjectWithConfig(`
+[db]
+major_version = 17
+
+[remotes.linked]
+project_id = "abcdefghijklmnopqrst"
+
+[remotes.linked.db]
+major_version = 15
+`);
+    writeTempFile(workdir, "project-ref", "abcdefghijklmnopqrst");
+    const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      const rows = JSON.parse(out.stdoutText) as Array<{
+        name: string;
+        local: string;
+        remote: string;
+      }>;
+      expect(rows).toContainEqual(
+        expect.objectContaining({
+          name: "supabase/postgres",
+          local: postgresVersionForDbMajorVersion(15),
+        }),
+      );
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
+  it.live("reports pinned legacy temp service versions", () => {
+    const workdir = makeProjectWithDbMajorVersion(15);
+    writeTempFile(workdir, "postgres-version", "15.1.0.117\n");
+    writeTempFile(workdir, "gotrue-version", "2.74.2\n");
+    writeTempFile(workdir, "storage-version", "v1.28.0\n");
+    const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      const rows = JSON.parse(out.stdoutText) as Array<{
+        name: string;
+        local: string;
+        remote: string;
+      }>;
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ name: "supabase/postgres", local: "15.1.0.117" }),
+          expect.objectContaining({ name: "supabase/gotrue", local: "2.74.2" }),
+          expect.objectContaining({ name: "supabase/storage-api", local: "v1.28.0" }),
+        ]),
+      );
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
+  it.live("reports the Deno 1 edge-runtime image instead of the temp pin", () => {
+    const workdir = makeProjectWithConfig("[edge_runtime]\ndeno_version = 1\n");
+    writeTempFile(workdir, "edge-runtime-version", "v9.9.9\n");
+    const { layer, out } = setup({ goOutput: Option.some("json"), workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      const rows = JSON.parse(out.stdoutText) as Array<{
+        name: string;
+        local: string;
+        remote: string;
+      }>;
+      expect(rows).toContainEqual(
+        expect.objectContaining({
+          name: "supabase/edge-runtime",
+          local: "v1.68.4",
+        }),
+      );
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
+  it.live("prints config load errors and falls back to the default matrix", () => {
+    const workdir = makeProjectWithConfig("[db]\nmajor_version = ");
+    writeTempFile(workdir, "storage-version", "v9.9.9\n");
+    const { layer, out } = setup({ workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      expect(out.stdoutText).toContain("supabase/postgres");
+      expect(out.stdoutText).not.toContain("v9.9.9");
+      expect(out.stderrText).not.toBe("");
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
   });
 
   it.live("emits structured JSON for --output pretty combined with --output-format json", () => {

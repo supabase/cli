@@ -5,6 +5,7 @@ import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 
 /**
  * Lean runtime for `logout`. Like `unlink`, it must NOT use
@@ -14,8 +15,10 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
  *
  * `legacyCliConfigLayer` is provided to `legacyCredentialsLayer` and also exposed
  * at the top level (`Layer.provide` does not share to siblings inside a merge —
- * legacy CLAUDE.md item 5). `Analytics`, `Output`, `Stdio`, `FileSystem`,
- * `Path`, `TelemetryRuntime`, and `LegacyYesFlag` come from the root layer.
+ * legacy CLAUDE.md item 5). `Analytics`, `Output`, `Stdio`, `Tty`, `FileSystem`,
+ * `Path`, `TelemetryRuntime`, and `LegacyYesFlag` come from the root layer;
+ * `stdinLayer` (the shared piped-stdin reader for the logout confirm) builds its
+ * `Stdin` from the root `Stdio`/`Tty`, like the migration runtimes.
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const credentials = legacyCredentialsLayer.pipe(
@@ -28,4 +31,5 @@ export const legacyLogoutRuntimeLayer = Layer.mergeAll(
   cliConfig,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["logout"]),
+  stdinLayer,
 );
