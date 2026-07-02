@@ -443,14 +443,36 @@ describe("legacy db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("renders plain JSON for --output-format stream-json with --agent no", () => {
+  it.live("emits a result event for --output-format stream-json with --agent no", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "stream-json" });
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      expect(JSON.parse(out.stdoutText)).toEqual([
-        { id: 1, name: "alice" },
-        { id: 2, name: "bob" },
-      ]);
+      expect(JSON.parse(out.stdoutText)).toEqual(
+        expect.objectContaining({
+          type: "result",
+          data: [
+            { id: 1, name: "alice" },
+            { id: 2, name: "bob" },
+          ],
+        }),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("preserves exact bigint tokens in --output-format stream-json", () => {
+    const { layer, out } = setup({
+      result: {
+        fields: ["n"],
+        fieldTypeIds: [20],
+        rows: [["9223372036854775807"]],
+        commandTag: "SELECT 1",
+      },
+      agent: "no",
+      format: "stream-json",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      expect(out.stdoutText).toContain('"data":[\n  {\n    "n": 9223372036854775807\n  }\n]');
     }).pipe(Effect.provide(layer));
   });
 

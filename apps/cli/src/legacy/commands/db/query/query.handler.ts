@@ -121,7 +121,14 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       const jsonData =
         fieldTypeIds === undefined ? data : legacyCoerceLocalJsonRows(data, fieldTypeIds);
       const boundary = agentMode ? yield* random.randomHex(BOUNDARY_BYTES) : "";
-      yield* output.raw(legacyRenderJson(cols, jsonData, agentMode, boundary, advisory));
+      const rendered = legacyRenderJson(cols, jsonData, agentMode, boundary, advisory);
+      if (output.format === "stream-json" && Option.getOrUndefined(outputFlag) !== "json") {
+        yield* output.raw(
+          `{"type":"result","data":${rendered.trimEnd()},"timestamp":${JSON.stringify(new Date().toISOString())}}\n`,
+        );
+        return;
+      }
+      yield* output.raw(rendered);
     });
 
   const runLocal = (
