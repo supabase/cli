@@ -46,11 +46,18 @@ import {
  * explicit `--project-id` bypass stays RAW to match: Go assigns the flag
  * value straight to `Config.ProjectId` without going through `Validate`
  * (`internal/stop/stop.go:19-20`).
+ *
+ * Go's check is `len(projectId) > 0` (`internal/stop/stop.go:18`), not merely
+ * "was the flag set" — an explicit but empty `--project-id ""` falls through
+ * to the config.toml branch exactly like an absent flag, so that's mirrored
+ * here with a non-empty check rather than `Option.isSome` alone.
  */
 const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProjectIdFilter")(
   function* (flags: LegacyStopFlags, cliConfig: LegacyCliConfig["Service"]) {
     if (flags.all) return "";
-    if (Option.isSome(flags.projectId)) return flags.projectId.value;
+    if (Option.isSome(flags.projectId) && flags.projectId.value.length > 0) {
+      return flags.projectId.value;
+    }
 
     // An absent config.toml is not a failure — Go's `flags.LoadConfig` still
     // resolves a project id via the workdir basename default. Only a

@@ -326,6 +326,25 @@ describe("legacy stop integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("falls back to config.toml when --project-id is an empty string", () => {
+    // Go's check is `len(projectId) > 0` (internal/stop/stop.go:18), not just
+    // "was --project-id set" — an empty value must fall through to config.toml
+    // exactly like an absent flag, not resolve to the bare/all-projects filter.
+    const { layer, child } = setup({ configuredProjectId: "demo", route: defaultRoute() });
+    return Effect.gen(function* () {
+      yield* legacyStop(flags({ projectId: Option.some("") }));
+      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      expect(psCall?.args).toEqual([
+        "ps",
+        "--filter",
+        "label=com.supabase.cli.project=demo",
+        "--all",
+        "--format",
+        "{{.ID}}",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("rejects --project-id together with --all", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
