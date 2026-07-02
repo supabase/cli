@@ -1,14 +1,10 @@
 monorepo_root = true
 
+min_version = {soft = '2026.6.14'}
+
 [hooks]
 # installs the package manager (e.g., pnpm) for the project, if it is not already installed
 postinstall = "corepack enable"
-
-[monorepo]
-config_roots = [
-  "apps/*",
-  "packages/*",
-]
 
 [settings]
 # uses .bun-version and .nvmrc to determine the bun and node versions to use
