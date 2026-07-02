@@ -3,6 +3,11 @@ import { Effect } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import type { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
+import {
+  legacyCollectDotenvPrivateKeys,
+  legacyDecryptSecret,
+  legacyIsEncryptedSecret,
+} from "../../../shared/legacy-vault-decrypt.ts";
 
 /**
  * Vault SQL, verbatim from Go's `pkg/vault/batch.go`. `create_secret(value, name)`
@@ -19,9 +24,6 @@ const UPDATE_VAULT_KV = "SELECT vault.update_secret($1, $2)";
 // excludes newline in both RE2 and JS without the `s` flag) so a lowercase/oddly
 // named reference such as `env(foo)` is skipped, not synced as a literal.
 const ENV_REFERENCE_PATTERN = /^env\(.*\)$/u;
-// dotenvx-encrypted secrets (Go decrypts before hashing). Decryption is not yet
-// ported, so encrypted entries are skipped rather than sent as ciphertext.
-const ENCRYPTED_PREFIX = "encrypted:";
 
 /**
  * Extracts the raw `[db.vault]` string entries from a loaded config document.
@@ -43,11 +45,12 @@ export function legacyReadVaultDocument(
 }
 
 /**
- * Selects the `[db.vault]` entries Go would sync. Go's secret decode
+ * Selects the syncable `[db.vault]` candidates (pre-decryption). Go's secret decode
  * (`pkg/config/secret.go:86-108`) sets a non-empty `SHA256` — the gate
  * `UpsertVaultSecrets` keys on — only for non-empty, non-`env()` values, so those
- * are exactly the syncable ones. Encrypted values are excluded pending the
- * decryption port (documented in SIDE_EFFECTS.md).
+ * are exactly the syncable ones. `encrypted:` values ARE syncable (Go decrypts them
+ * during config load and syncs the plaintext); the raw ciphertext is kept here and
+ * decrypted in `legacyUpsertVaultSecrets`.
  */
 export function legacySyncableVaultSecrets(
   vault: Readonly<Record<string, string>> | undefined,
@@ -57,7 +60,6 @@ export function legacySyncableVaultSecrets(
   for (const [key, value] of Object.entries(vault)) {
     if (value.length === 0) continue;
     if (ENV_REFERENCE_PATTERN.test(value)) continue;
-    if (value.startsWith(ENCRYPTED_PREFIX)) continue;
     result.push({ key, value });
   }
   return result;
@@ -77,32 +79,51 @@ export const legacyUpsertVaultSecrets = <E>(
 ): Effect.Effect<void, E, Output> =>
   Effect.gen(function* () {
     const output = yield* Output;
-    const secrets = legacySyncableVaultSecrets(vault);
-    if (secrets.length === 0) return;
+    const candidates = legacySyncableVaultSecrets(vault);
+    if (candidates.length === 0) return;
+
+    // Decrypt dotenvx `encrypted:` values (Go decrypts every secret during config
+    // load and upserts the plaintext; an undecryptable value — e.g. no matching
+    // `DOTENV_PRIVATE_KEY*` — aborts with `failed to parse config: <error>` before
+    // touching the database). Non-encrypted values pass through unchanged.
+    const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys(process.env);
+    const secrets: Array<{ readonly key: string; readonly value: string }> = [];
+    for (const candidate of candidates) {
+      if (!legacyIsEncryptedSecret(candidate.value)) {
+        secrets.push(candidate);
+        continue;
+      }
+      const decrypted = legacyDecryptSecret(candidate.value, dotenvPrivateKeys);
+      if (!decrypted.ok) {
+        return yield* Effect.fail(mapError(`failed to parse config: ${decrypted.error}`));
+      }
+      secrets.push({ key: candidate.key, value: decrypted.value });
+    }
     const toInsert = new Map(secrets.map((s) => [s.key, s.value]));
 
     yield* output.raw("Updating vault secrets...\n", "stderr");
-
-    const existing = yield* session.query(READ_VAULT_KV, [secrets.map((s) => s.key)]);
 
     // Go queues every update/create in a single `pgx.Batch` and `SendBatch().Close()`
     // runs it as one implicit transaction (`pkg/vault/batch.go:46-58`), so a later
     // failure leaves Vault entirely unchanged. Mirror that atomicity with an explicit
     // transaction around the write phase (the read above stays outside, as in Go).
-    yield* session.exec("BEGIN");
-    const writes = Effect.gen(function* () {
-      for (const row of existing) {
-        const name = String(row["name"]);
-        const id = String(row["id"]);
-        const value = toInsert.get(name);
-        if (value === undefined) continue;
-        yield* session.query(UPDATE_VAULT_KV, [id, value]);
-        toInsert.delete(name);
-      }
-      for (const [key, value] of toInsert) {
-        yield* session.query(CREATE_VAULT_KV, [value, key]);
-      }
-      yield* session.exec("COMMIT");
-    });
-    yield* writes.pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
-  }).pipe(Effect.mapError((error: LegacyDbExecError) => mapError(error.message)));
+    yield* Effect.gen(function* () {
+      const existing = yield* session.query(READ_VAULT_KV, [secrets.map((s) => s.key)]);
+      yield* session.exec("BEGIN");
+      const writes = Effect.gen(function* () {
+        for (const row of existing) {
+          const name = String(row["name"]);
+          const id = String(row["id"]);
+          const value = toInsert.get(name);
+          if (value === undefined) continue;
+          yield* session.query(UPDATE_VAULT_KV, [id, value]);
+          toInsert.delete(name);
+        }
+        for (const [key, value] of toInsert) {
+          yield* session.query(CREATE_VAULT_KV, [value, key]);
+        }
+        yield* session.exec("COMMIT");
+      });
+      yield* writes.pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
+    }).pipe(Effect.mapError((error: LegacyDbExecError) => mapError(error.message)));
+  });

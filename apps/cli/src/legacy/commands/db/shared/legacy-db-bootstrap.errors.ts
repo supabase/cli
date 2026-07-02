@@ -11,4 +11,10 @@ import { Data } from "effect";
  */
 export class LegacyDbBootstrapError extends Data.TaggedError("LegacyDbBootstrapError")<{
   readonly message: string;
+  /**
+   * Optional actionable hint rendered as a separate "Suggestion:" line, mirroring
+   * Go's `utils.CmdSuggestion` — set to the Docker-install hint when the container
+   * runtime's daemon is unreachable (`AssertServiceIsRunning`, `misc.go:148-154`).
+   */
+  readonly suggestion?: string;
 }> {}

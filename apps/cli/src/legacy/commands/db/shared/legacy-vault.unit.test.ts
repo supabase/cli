@@ -11,15 +11,21 @@ import {
 
 class FakeExecError extends Data.TaggedError("LegacyDbExecError")<{ readonly message: string }> {}
 
+// Go's dotenvx test vector (`apps/cli-go/pkg/config/secret_test.go`): this key
+// decrypts ENCRYPTED_VALUE to the plaintext "value".
+const DOTENV_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+const ENCRYPTED_VALUE =
+  "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+
 function fakeVaultSession(opts: { failOn?: string } = {}) {
-  const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
+  const calls: Array<{ kind: "exec" | "query"; sql: string; params?: ReadonlyArray<unknown> }> = [];
   const session: LegacyDbSession = {
     exec: (sql) => {
       calls.push({ kind: "exec", sql });
       return Effect.void;
     },
-    query: (sql) => {
-      calls.push({ kind: "query", sql });
+    query: (sql, params) => {
+      calls.push({ kind: "query", sql, params });
       return opts.failOn !== undefined && sql.includes(opts.failOn)
         ? Effect.fail(new FakeExecError({ message: "boom" }))
         : Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
@@ -52,14 +58,19 @@ describe("legacySyncableVaultSecrets", () => {
     expect(legacySyncableVaultSecrets(undefined)).toEqual([]);
   });
 
-  it("skips empty, env-reference, and encrypted values", () => {
+  it("skips empty + env-reference values but keeps encrypted candidates (decrypted later)", () => {
     const result = legacySyncableVaultSecrets({
       empty: "",
       fromEnv: "env(MY_SECRET)",
       encrypted: "encrypted:abc",
       literal: "plain-value",
     });
-    expect(result).toEqual([{ key: "literal", value: "plain-value" }]);
+    // `encrypted:` values are syncable candidates — the raw ciphertext is decrypted
+    // in legacyUpsertVaultSecrets (Go decrypts during config load then syncs plaintext).
+    expect(result).toEqual([
+      { key: "encrypted", value: "encrypted:abc" },
+      { key: "literal", value: "plain-value" },
+    ]);
   });
 
   it("skips any env(...) reference regardless of inner casing (Go's broad envPattern)", () => {
@@ -108,6 +119,50 @@ describe("legacyUpsertVaultSecrets", () => {
           expect(execs).toContain("BEGIN");
           expect(execs).toContain("ROLLBACK");
           expect(execs).not.toContain("COMMIT");
+        }),
+      ),
+    );
+  });
+
+  it.effect("decrypts an encrypted: secret and upserts the plaintext", () => {
+    const prev = process.env["DOTENV_PRIVATE_KEY"];
+    process.env["DOTENV_PRIVATE_KEY"] = DOTENV_PRIVATE_KEY;
+    const { session, calls } = fakeVaultSession();
+    return run(session, { my_secret: ENCRYPTED_VALUE }).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const create = calls.find((c) => c.sql.includes("create_secret"));
+          // Go decrypts during config load and syncs the plaintext (not the ciphertext).
+          expect(create?.params).toEqual(["value", "my_secret"]);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
+          else process.env["DOTENV_PRIVATE_KEY"] = prev;
+        }),
+      ),
+    );
+  });
+
+  it.effect("fails (before touching the DB) when an encrypted: secret cannot be decrypted", () => {
+    const prev = process.env["DOTENV_PRIVATE_KEY"];
+    delete process.env["DOTENV_PRIVATE_KEY"];
+    const { session, calls } = fakeVaultSession();
+    return run(session, { my_secret: ENCRYPTED_VALUE }).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          // No DOTENV_PRIVATE_KEY → Go aborts config load; the sync must fail and
+          // never open a transaction (no BEGIN, no writes).
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(calls.some((c) => c.sql === "BEGIN")).toBe(false);
+          expect(calls.some((c) => c.sql.includes("create_secret"))).toBe(false);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev !== undefined) process.env["DOTENV_PRIVATE_KEY"] = prev;
         }),
       ),
     );

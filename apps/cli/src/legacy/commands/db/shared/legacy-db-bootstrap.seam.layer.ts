@@ -16,6 +16,10 @@ import {
   legacyResolveLocalProjectId,
   localDbContainerId,
 } from "../../../shared/legacy-docker-ids.ts";
+import {
+  LEGACY_SUGGEST_DOCKER_INSTALL,
+  legacyIsDockerDaemonUnreachable,
+} from "../../../shared/legacy-docker-suggest.ts";
 import { LegacyDbBootstrapError } from "./legacy-db-bootstrap.errors.ts";
 import { LegacyDbBootstrapSeam } from "./legacy-db-bootstrap.seam.service.ts";
 
@@ -187,12 +191,19 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
             // Any other inspect failure (e.g. the Docker daemon is down) propagates,
             // matching Go's `AssertSupabaseDbIsRunning`.
             if (!stderr.includes("No such container") && !stderr.includes("No such object")) {
+              // Go's `AssertServiceIsRunning` sets `CmdSuggestion = suggestDockerInstall`
+              // on a daemon-connection failure (`misc.go:148-154`), so a down daemon
+              // still surfaces the actionable Docker Desktop hint, not just raw stderr.
               return yield* Effect.fail(
-                seamFailure(
-                  stderr.length > 0
-                    ? `failed to inspect service: ${stderr}`
-                    : "failed to inspect service",
-                ),
+                new LegacyDbBootstrapError({
+                  message:
+                    stderr.length > 0
+                      ? `failed to inspect service: ${stderr}`
+                      : "failed to inspect service",
+                  ...(legacyIsDockerDaemonUnreachable(stderr)
+                    ? { suggestion: LEGACY_SUGGEST_DOCKER_INSTALL }
+                    : {}),
+                }),
               );
             }
             return false;
