@@ -432,6 +432,66 @@ describe("legacy db query integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("renders plain JSON for --output-format json with --agent no", () => {
+    const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "json" });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      expect(JSON.parse(out.stdoutText)).toEqual([
+        { id: 1, name: "alice" },
+        { id: 2, name: "bob" },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("emits a result event for --output-format stream-json with --agent no", () => {
+    const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "stream-json" });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      expect(out.stdoutText.trimEnd().split("\n")).toHaveLength(1);
+      expect(JSON.parse(out.stdoutText)).toEqual(
+        expect.objectContaining({
+          type: "result",
+          data: [
+            { id: 1, name: "alice" },
+            { id: 2, name: "bob" },
+          ],
+        }),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("preserves exact bigint tokens in --output-format stream-json", () => {
+    const { layer, out } = setup({
+      result: {
+        fields: ["n"],
+        fieldTypeIds: [20],
+        rows: [["9223372036854775807"]],
+        commandTag: "SELECT 1",
+      },
+      agent: "no",
+      format: "stream-json",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      expect(out.stdoutText.trimEnd().split("\n")).toHaveLength(1);
+      expect(out.stdoutText).toContain('"n": 9223372036854775807');
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("lets --output pretty win over --output-format json", () => {
+    const { layer, out } = setup({
+      result: SELECT_RESULT,
+      agent: "no",
+      format: "json",
+      goOutput: "pretty",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      expect(out.stdoutText).toContain("│ id │ name  │");
+      expect(out.messages.find((message) => message.type === "success")).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails JSON output on a non-finite float (Go's json.Encoder error), no stdout", () => {
     // select 'NaN'::float8 -o json — Go fails to encode and exits non-zero with empty
     // stdout, rather than emitting `null` like JSON.stringify.

@@ -119,6 +119,52 @@ describe("legacy storage rm", () => {
     });
   });
 
+  it.live("honors a piped 'y' on non-TTY stdin and deletes", () => {
+    // Go scans piped stdin before defaulting (`console.go:74-82`); a piped `y`
+    // overrides the `n` default and deletes, even on a non-terminal.
+    const { layer, requests, out } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stdinIsTty: false,
+      pipedAnswers: ["y"],
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: true,
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.some((r) => r.method === "DELETE")).toBe(true);
+      // The consumed answer is echoed after the label (Go's non-TTY `PromptText`).
+      expect(out.stderrText).toContain("[y/N] y");
+    });
+  });
+
+  it.live("falls back to the default (no) on an unparseable piped answer", () => {
+    // Go's `parseYesNo` returns nil for unrecognized input (`console.go:84-93`), so
+    // `PromptYesNo` keeps the `n` default and the deletion is skipped.
+    const { layer, requests } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      stdinIsTty: false,
+      pipedAnswers: ["maybe"],
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: true,
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.some((r) => r.method === "DELETE")).toBe(false);
+    });
+  });
+
   it.live("uses the default (no) when non-interactive and skips deletion", () => {
     const { layer, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',

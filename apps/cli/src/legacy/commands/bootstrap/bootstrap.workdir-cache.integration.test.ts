@@ -33,6 +33,7 @@ import {
   LegacyYesFlag,
 } from "../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
@@ -117,6 +118,7 @@ describe("legacy bootstrap linked-project cache location", () => {
         Layer.succeed(LegacyYesFlag, false),
         Layer.succeed(LegacyOutputFlag, Option.none()),
         Layer.succeed(LegacyDebugFlag, false),
+        Layer.succeed(CliArgs, { args: [] }),
       );
       const runtime = mockRuntimeInfo({ cwd: parent });
       const credentials = mockLegacyCredentialsTracked();

@@ -14,6 +14,26 @@ export { parseDockerfileServiceImages } from "./dockerfile-images.ts";
 
 export type RemoteServiceName = "postgres" | "auth" | "postgrest" | "storage";
 export type OptionalRemoteServiceName = Exclude<RemoteServiceName, "postgres">;
+export type LocalServiceVersionName =
+  | "postgres"
+  | "auth"
+  | "postgrest"
+  | "realtime"
+  | "storage"
+  | "edge-runtime"
+  | "studio"
+  | "pgmeta"
+  | "analytics"
+  | "pooler";
+
+export type LocalServiceVersionOverrides = Partial<Record<LocalServiceVersionName, string>>;
+export type LocalServiceImageOverrides = Partial<Record<LocalServiceVersionName, string>>;
+
+export interface LocalServiceImageOptions {
+  readonly imageOverrides?: LocalServiceImageOverrides;
+  readonly normalizeVersionTags?: boolean;
+  readonly serviceVersions?: LocalServiceVersionOverrides;
+}
 
 // Mirrors Go's `utils.ProjectRefPattern` (`apps/cli-go/internal/utils/misc.go`).
 // Validating the ref before it reaches the management API path param or the
@@ -24,25 +44,36 @@ const PROJECT_REF_PATTERN = /^[a-z]{20}$/;
 interface ServiceImageSpec {
   readonly image: string;
   readonly remoteService: RemoteServiceName | undefined;
+  readonly localService: LocalServiceVersionName;
 }
 
 interface ServiceImageAliasSpec {
   readonly alias: string;
   readonly remoteService: RemoteServiceName | undefined;
+  readonly localService: LocalServiceVersionName;
 }
 
 const SERVICE_IMAGE_ALIASES: ReadonlyArray<ServiceImageAliasSpec> = [
-  { alias: "pg", remoteService: "postgres" },
-  { alias: "gotrue", remoteService: "auth" },
-  { alias: "postgrest", remoteService: "postgrest" },
-  { alias: "realtime", remoteService: undefined },
-  { alias: "storage", remoteService: "storage" },
-  { alias: "edgeruntime", remoteService: undefined },
-  { alias: "studio", remoteService: undefined },
-  { alias: "pgmeta", remoteService: undefined },
-  { alias: "logflare", remoteService: undefined },
-  { alias: "supavisor", remoteService: undefined },
+  { alias: "pg", remoteService: "postgres", localService: "postgres" },
+  { alias: "gotrue", remoteService: "auth", localService: "auth" },
+  { alias: "postgrest", remoteService: "postgrest", localService: "postgrest" },
+  { alias: "realtime", remoteService: undefined, localService: "realtime" },
+  { alias: "storage", remoteService: "storage", localService: "storage" },
+  { alias: "edgeruntime", remoteService: undefined, localService: "edge-runtime" },
+  { alias: "studio", remoteService: undefined, localService: "studio" },
+  { alias: "pgmeta", remoteService: undefined, localService: "pgmeta" },
+  { alias: "logflare", remoteService: undefined, localService: "analytics" },
+  { alias: "supavisor", remoteService: undefined, localService: "pooler" },
 ];
+
+const SERVICE_VERSION_TAG_PREFIX: Partial<Record<LocalServiceVersionName, string>> = {
+  auth: "v",
+  postgrest: "v",
+  realtime: "v",
+  storage: "v",
+  "edge-runtime": "v",
+  pgmeta: "v",
+};
 
 function localServiceImagesFromSpecs(
   specs: ReadonlyArray<DockerfileImageSpec>,
@@ -57,6 +88,7 @@ function localServiceImagesFromSpecs(
     return {
       image,
       remoteService: service.remoteService,
+      localService: service.localService,
     };
   });
 }
@@ -68,6 +100,57 @@ export function localServiceImagesFromDockerfile(
 }
 
 const LOCAL_SERVICE_IMAGES = localServiceImagesFromSpecs(dockerfileServiceImages);
+
+// Mirrors Go's config image rewrite in `apps/cli-go/pkg/config/config.go`.
+// Major version 13 intentionally falls through to the pg15 image there.
+export function postgresImageForDbMajorVersion(majorVersion: number): string | undefined {
+  switch (majorVersion) {
+    case 13:
+    case 15:
+      return "supabase/postgres:15.8.1.085";
+    case 14:
+      return "supabase/postgres:14.1.0.89";
+    default:
+      return undefined;
+  }
+}
+
+function replaceImageTag(image: string, tag: string): string {
+  const index = image.lastIndexOf(":");
+  if (index === -1) {
+    return image;
+  }
+  return `${image.slice(0, index + 1)}${tag.trim()}`;
+}
+
+function tagForServiceVersion(service: LocalServiceVersionName, version: string): string {
+  const trimmed = version.trim();
+  const prefix = SERVICE_VERSION_TAG_PREFIX[service];
+  if (prefix === "v" && !trimmed.toLowerCase().startsWith("v")) {
+    return `v${trimmed}`;
+  }
+  return trimmed;
+}
+
+function localServiceImagesForOptions(
+  options: LocalServiceImageOptions = {},
+): ReadonlyArray<ServiceImageSpec> {
+  const normalizeVersionTags = options.normalizeVersionTags ?? true;
+  return LOCAL_SERVICE_IMAGES.map((service) => {
+    const baseImage = options.imageOverrides?.[service.localService] ?? service.image;
+    const version = options.serviceVersions?.[service.localService];
+    if (version === undefined || version.trim().length === 0) {
+      return baseImage === service.image ? service : { ...service, image: baseImage };
+    }
+    return {
+      ...service,
+      image: replaceImageTag(
+        baseImage,
+        normalizeVersionTags ? tagForServiceVersion(service.localService, version) : version,
+      ),
+    };
+  });
+}
 
 const TABLE_HEADERS = ["SERVICE IMAGE", "LOCAL", "LINKED"] as const;
 
@@ -288,14 +371,19 @@ const makeConfiguredApiClient = Effect.fnUntraced(function* (input: ServiceFetch
   );
 });
 
-export function listLocalServiceVersions(): ReadonlyArray<ServiceVersionRow> {
-  return LOCAL_SERVICE_IMAGES.map((service) => toServiceVersionRow(service));
+export function listLocalServiceVersions(
+  options: LocalServiceImageOptions = {},
+): ReadonlyArray<ServiceVersionRow> {
+  return localServiceImagesForOptions(options).map((service) => toServiceVersionRow(service));
 }
 
 export function mergeRemoteServiceVersions(
   remote: Partial<Record<RemoteServiceName, string>>,
+  options: LocalServiceImageOptions = {},
 ): ReadonlyArray<ServiceVersionRow> {
-  return LOCAL_SERVICE_IMAGES.map((service) => toServiceVersionRow(service, remote));
+  return localServiceImagesForOptions(options).map((service) =>
+    toServiceVersionRow(service, remote),
+  );
 }
 
 export function renderServicesTable(rows: ReadonlyArray<ServiceVersionRow>): string {

@@ -2,8 +2,9 @@ import { Effect } from "effect";
 
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyYesFlag } from "../../../shared/legacy/global-flags.ts";
+import { legacyResolveYes } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
+import { legacyPromptYesNo } from "../../shared/legacy-prompt-yes-no.ts";
 import { LegacyLogoutCancelledError, LEGACY_LOGOUT_CANCELLED_MESSAGE } from "./logout.errors.ts";
 
 const LOGGED_OUT_MSG = "Access token deleted successfully. You are now logged out.";
@@ -12,16 +13,28 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
   const output = yield* Output;
   const credentials = yield* LegacyCredentials;
   const telemetryState = yield* LegacyTelemetryState;
-  const yes = yield* LegacyYesFlag;
+  // `--yes` OR `SUPABASE_YES` (Go's `viper.GetBool("YES")`, root.go:318-320): Go
+  // reads it before scanning stdin, so the env var auto-confirms logout too.
+  const yes = yield* legacyResolveYes;
+
+  const confirmLabel =
+    "Do you want to log out? This will remove the access token from your system.";
 
   const body = Effect.gen(function* () {
-    // Confirm prompt, honoring the global `--yes` (`logout.go:15`).
-    const confirmed = yes
-      ? true
-      : yield* output.promptConfirm(
-          "Do you want to log out? This will remove the access token from your system.",
-          { defaultValue: false },
-        );
+    // Confirm prompt, honoring the global `--yes`/`SUPABASE_YES` (`logout.go:15-16`).
+    const confirmed = yield* Effect.gen(function* () {
+      if (yes) return true;
+      // Machine (json/stream-json) mode has no Go equivalent — fail loudly on a
+      // non-interactive prompt rather than silently defaulting, preserving the
+      // existing contract.
+      if (output.format !== "text") {
+        return yield* output.promptConfirm(confirmLabel, { defaultValue: false });
+      }
+      // Text mode mirrors Go's `PromptYesNo(..., false)` (`logout.go:16`): it scans
+      // piped stdin before falling back to the default (`console.go:64-82`), so
+      // `printf 'y\n' | supabase logout` deletes the token.
+      return yield* legacyPromptYesNo(output, yes, confirmLabel, false);
+    });
     if (!confirmed) {
       return yield* Effect.fail(
         new LegacyLogoutCancelledError({ message: LEGACY_LOGOUT_CANCELLED_MESSAGE }),

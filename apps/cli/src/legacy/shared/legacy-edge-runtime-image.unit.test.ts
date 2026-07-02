@@ -15,12 +15,12 @@ const resolve = (workdir: string, denoVersion: number) =>
   }).pipe(Effect.provide(BunServices.layer));
 
 describe("legacyResolveEdgeRuntimeImage", () => {
-  it.effect("returns the default v1.74.1 image when nothing is pinned", () => {
+  it.effect("returns the default v1.74.2 image when nothing is pinned", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-edge-img-"));
     return resolve(dir, 2).pipe(
       Effect.tap((image) =>
         Effect.sync(() => {
-          expect(image).toBe("supabase/edge-runtime:v1.74.1");
+          expect(image).toBe("supabase/edge-runtime:v1.74.2");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
