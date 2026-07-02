@@ -2,10 +2,6 @@ monorepo_root = true
 
 min_version = {soft = '2026.6.14'}
 
-[hooks]
-# installs the package manager (e.g., pnpm) for the project, if it is not already installed
-postinstall = "corepack enable"
-
 [settings]
 # uses .bun-version and .nvmrc to determine the bun and node versions to use
 idiomatic_version_file_enable_tools = ["bun", "node"]
@@ -14,3 +10,5 @@ idiomatic_version_file_enable_tools = ["bun", "node"]
 # extracts the go version from `apps/cli-go/go.mod`
 go = "{{ exec(command=`awk '/^go / {print $2}' apps/cli-go/go.mod`) }}"
 golangci-lint = "2"
+# extracts the pnpm version from `package.json` (in the root)
+pnpm = """{{ exec(command=`jq -r '.packageManager | split("@")[1]' package.json`) }}"""
