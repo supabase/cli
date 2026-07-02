@@ -3,6 +3,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { legacyParseStringSliceFlag } from "../../../shared/legacy-string-slice-flag.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacySsoUpdate } from "./update.handler.ts";
 
@@ -13,30 +14,46 @@ const NAME_ID_FORMATS = [
   "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
 ] as const;
 
+export const legacySsoUpdateDomainsFlag = Flag.string("domains").pipe(
+  Flag.atLeast(0),
+  Flag.withDescription("Replace domains with this comma separated list of email domains."),
+  Flag.mapTryCatch(
+    (rawValues) => legacyParseStringSliceFlag(rawValues),
+    (err) => (err instanceof Error ? err.message : String(err)),
+  ),
+  Flag.withDefault([] as ReadonlyArray<string>),
+);
+
+export const legacySsoUpdateAddDomainsFlag = Flag.string("add-domains").pipe(
+  Flag.atLeast(0),
+  Flag.withDescription("Add this comma separated list of email domains to the identity provider."),
+  Flag.mapTryCatch(
+    (rawValues) => legacyParseStringSliceFlag(rawValues),
+    (err) => (err instanceof Error ? err.message : String(err)),
+  ),
+  Flag.withDefault([] as ReadonlyArray<string>),
+);
+
+export const legacySsoUpdateRemoveDomainsFlag = Flag.string("remove-domains").pipe(
+  Flag.atLeast(0),
+  Flag.withDescription(
+    "Remove this comma separated list of email domains from the identity provider.",
+  ),
+  Flag.mapTryCatch(
+    (rawValues) => legacyParseStringSliceFlag(rawValues),
+    (err) => (err instanceof Error ? err.message : String(err)),
+  ),
+  Flag.withDefault([] as ReadonlyArray<string>),
+);
+
 const config = {
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  domains: Flag.string("domains").pipe(
-    Flag.atLeast(0),
-    Flag.withDescription("Replace domains with this comma separated list of email domains."),
-    Flag.withDefault([] as ReadonlyArray<string>),
-  ),
-  addDomains: Flag.string("add-domains").pipe(
-    Flag.atLeast(0),
-    Flag.withDescription(
-      "Add this comma separated list of email domains to the identity provider.",
-    ),
-    Flag.withDefault([] as ReadonlyArray<string>),
-  ),
-  removeDomains: Flag.string("remove-domains").pipe(
-    Flag.atLeast(0),
-    Flag.withDescription(
-      "Remove this comma separated list of email domains from the identity provider.",
-    ),
-    Flag.withDefault([] as ReadonlyArray<string>),
-  ),
+  domains: legacySsoUpdateDomainsFlag,
+  addDomains: legacySsoUpdateAddDomainsFlag,
+  removeDomains: legacySsoUpdateRemoveDomainsFlag,
   metadataFile: Flag.string("metadata-file").pipe(
     Flag.withDescription(
       "File containing a SAML 2.0 Metadata XML document describing the identity provider.",
