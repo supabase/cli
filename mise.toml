@@ -9,6 +9,7 @@ idiomatic_version_file_enable_tools = ["bun", "node"]
 [tools]
 # extracts the go version from `apps/cli-go/go.mod`
 go = "{{ exec(command=`awk '/^go / {print $2}' apps/cli-go/go.mod`) }}"
-golangci-lint = "2"
+# extracts the golangci-lint version from `apps/cli-go/go.mod`
+golangci-lint = "{{ exec(command=`awk '/golangci-lint\\/v2 v/ {print $2}' apps/cli-go/go.mod`) }}"
 # extracts the pnpm version from `package.json` (in the root)
 pnpm = """{{ exec(command=`jq -r '.packageManager | split("@")[1]' package.json`) }}"""
