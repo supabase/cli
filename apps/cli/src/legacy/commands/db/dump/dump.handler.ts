@@ -5,7 +5,11 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
-import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
+import {
+  legacyApplyProjectEnv,
+  legacyLoadProjectEnv,
+  legacyReadDbToml,
+} from "../../../shared/legacy-db-config.toml-read.ts";
 import { legacyReadProjectRefFile } from "../../../shared/legacy-temp-paths.ts";
 import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import {
@@ -70,6 +74,13 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
+    // Make an allowlisted `supabase/.env` registry override visible to the
+    // synchronous `process.env` reader in `legacyGetRegistryImageUrl` (the pg_dump
+    // image), reverted when this scope closes. Go's `loadNestedEnv` `os.Setenv`s the
+    // project `.env`; the pure `legacyLoadProjectEnv` no longer does that as a side
+    // effect of `resolveDbPassword`, so `db dump` opts in explicitly here.
+    yield* legacyApplyProjectEnv(yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir));
+
     // The grouped boolean flags are modelled as `Option` (presence = pflag `Changed`)
     // for the mutex/target checks; resolve their effective values here for the places
     // that consume the value (Go's `BoolVar` default is false).
@@ -384,5 +395,8 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       ),
     ),
     Effect.ensuring(telemetryState.flush),
+    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
+    // command run: `legacyApplyProjectEnv` registers a finalizer that reverts it.
+    Effect.scoped,
   );
 });

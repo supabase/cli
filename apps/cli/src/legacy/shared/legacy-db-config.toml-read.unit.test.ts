@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import {
+  legacyApplyProjectEnv,
   legacyLoadProjectEnv,
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
@@ -1669,14 +1670,12 @@ describe("legacyReadDbToml", () => {
     },
   );
 
-  it.effect("legacyLoadProjectEnv applies only the allowlisted registry key to process.env", () => {
-    // Go's loadNestedEnv os.Setenv's the project .env, but its root globals
-    // (project-ref, SUPABASE_ENV, workdir/profile) are resolved from the shell
-    // BEFORE loadNestedEnv. Our resolvers read process.env lazily, so we apply only
-    // the allowlisted `SUPABASE_INTERNAL_IMAGE_REGISTRY` (the one process.env-only
-    // reader): a .env project-ref must not retarget the lazy ref/pooler resolvers,
-    // and a .env SUPABASE_ENV must not switch the env-file set. All keys still
-    // appear in the returned map for config `env(...)` resolution.
+  it.effect("legacyLoadProjectEnv is pure: returns every key and never touches process.env", () => {
+    // The loader is a pure read: it returns all project-.env keys in the map (config
+    // env() resolution + the SUPABASE_YES / db-password readers use the map) and does
+    // NOT mutate process.env. Applying to process.env is the separate, opt-in
+    // legacyApplyProjectEnv (below), so a mere `load` for SUPABASE_YES has no global
+    // side effect.
     const saved: Record<string, string | undefined> = {};
     for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
       saved[k] = process.env[k];
@@ -1691,12 +1690,12 @@ describe("legacyReadDbToml", () => {
     return loadEnv(dir).pipe(
       Effect.tap((env) =>
         Effect.sync(() => {
-          // The returned map carries all keys (config env() resolution still works).
+          // The returned map carries all keys.
           expect(env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
           expect(env["SUPABASE_PROJECT_ID"]).toBe("envonlyref");
           expect(env["SUPABASE_ENV"]).toBe("staging");
-          // process.env gets only the ambient registry — not the ref or env selector.
-          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
+          // ...but process.env is untouched, including the allowlisted registry key.
+          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
           expect(process.env["SUPABASE_PROJECT_ID"]).toBeUndefined();
           expect(process.env["SUPABASE_ENV"]).toBeUndefined();
           for (const [k, v] of Object.entries(saved)) {
@@ -1708,6 +1707,55 @@ describe("legacyReadDbToml", () => {
       ),
     );
   });
+
+  it.effect(
+    "legacyApplyProjectEnv sets only the allowlisted key in-scope, never overrides, reverts on close",
+    () => {
+      // Go's loadNestedEnv os.Setenv's the project .env, but its root globals
+      // (project-ref, SUPABASE_ENV, workdir/profile) are resolved from the shell
+      // BEFORE loadNestedEnv. Our resolvers read process.env lazily, so we apply only
+      // the allowlisted `SUPABASE_INTERNAL_IMAGE_REGISTRY` (the one process.env-only
+      // reader): a .env project-ref must not retarget the lazy ref/pooler resolvers,
+      // and a .env SUPABASE_ENV must not switch the env-file set.
+      const saved: Record<string, string | undefined> = {};
+      for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
+        saved[k] = process.env[k];
+        delete process.env[k];
+      }
+      const loaded = {
+        SUPABASE_INTERNAL_IMAGE_REGISTRY: "my-mirror.example.com",
+        SUPABASE_PROJECT_ID: "envonlyref",
+        SUPABASE_ENV: "staging",
+      };
+      return Effect.gen(function* () {
+        // Inside the scope: only the registry key is applied; the ref/env selector are not.
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            yield* legacyApplyProjectEnv(loaded);
+            expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
+            expect(process.env["SUPABASE_PROJECT_ID"]).toBeUndefined();
+            expect(process.env["SUPABASE_ENV"]).toBeUndefined();
+          }),
+        );
+        // After the scope closes the applied key is reverted (no test-worker leak).
+        expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
+
+        // An existing process.env value is never overridden, and is NOT deleted on close.
+        process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = "shell-wins.example.com";
+        yield* Effect.scoped(legacyApplyProjectEnv(loaded));
+        expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("shell-wins.example.com");
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            for (const [k, v] of Object.entries(saved)) {
+              if (v === undefined) delete process.env[k];
+              else process.env[k] = v;
+            }
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("ignores a [db.pooler] connection_string in config.toml (Go reads .temp only)", () => {
     // The Go config field is tagged `toml:"-"`, so a connection_string in config.toml

@@ -864,7 +864,8 @@ describe("legacy db pull", () => {
     () => {
       // Go's LoadConfig applies the project `.env` (os.Setenv) before GetRegistryImageUrl,
       // so a registry mirror set only in `supabase/.env` is used for the native pg_dump
-      // seed. `legacyLoadProjectEnv` now mirrors that by writing to process.env.
+      // seed. The handler mirrors that with `legacyApplyProjectEnv` (scoped to the run,
+      // reverted on close); the loader itself stays pure.
       const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
       delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });

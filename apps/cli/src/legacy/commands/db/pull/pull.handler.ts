@@ -22,6 +22,7 @@ import {
   type LegacyPgConnInput,
 } from "../../../shared/legacy-db-connection.service.ts";
 import {
+  legacyApplyProjectEnv,
   legacyLoadProjectEnv,
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
@@ -164,6 +165,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
+    // Make an allowlisted `supabase/.env` registry override visible to the
+    // synchronous `process.env` reader in `legacyGetRegistryImageUrl` (the pg_dump
+    // seed + migra/pg-delta diff images), reverted when this scope closes. Go's
+    // `loadNestedEnv` `os.Setenv`s the project `.env` before the dump runs.
+    yield* legacyApplyProjectEnv(projectEnv);
     const name = Option.getOrElse(flags.name, () => "remote_schema");
     // `--declarative` and the deprecated `--use-pg-delta` both bind to the same
     // `useDeclarative` variable in Go (`cmd/db.go:534-535`), so when BOTH are
@@ -764,5 +770,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       ),
     ),
     Effect.ensuring(telemetryState.flush),
+    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply below to this
+    // command run: `legacyApplyProjectEnv` registers a finalizer that reverts it.
+    Effect.scoped,
   );
 });
