@@ -5,24 +5,43 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { LEGACY_RESOURCE_OUTPUT_FORMATS } from "../../shared/legacy-go-output-flag.ts";
+import { legacyParseStringSliceFlag } from "../../shared/legacy-string-slice-flag.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
 import { legacyStatus } from "./status.handler.ts";
 
+/**
+ * Go registers both `--override-name` and `--exclude` as pflag `StringSliceVar`
+ * (`cmd/status.go:36-37`), which CSV-splits each occurrence and accumulates
+ * across repeats — `--override-name a=1,b=2` is two overrides, not one. Effect's
+ * `Flag.atLeast(0)` only handles repetition, so every occurrence needs the same
+ * `legacyParseStringSliceFlag` normalization already used for `sso`/`postgres-config`.
+ */
+function csvStringSliceFlag(name: string) {
+  return Flag.string(name).pipe(
+    Flag.atLeast(0),
+    Flag.mapTryCatch(
+      (rawValues) => legacyParseStringSliceFlag(rawValues),
+      (err) => (err instanceof Error ? err.message : String(err)),
+    ),
+    Flag.withDefault([] as ReadonlyArray<string>),
+  );
+}
+
+export const legacyStatusOverrideNameFlag = csvStringSliceFlag("override-name").pipe(
+  Flag.withDescription("Override specific variable names."),
+);
+
+export const legacyStatusExcludeFlag = csvStringSliceFlag("exclude").pipe(
+  Flag.withDescription("Names of containers to omit from output."),
+  Flag.withHidden,
+);
+
 const config = {
-  overrideName: Flag.string("override-name").pipe(
-    Flag.atLeast(0),
-    Flag.withDescription("Override specific variable names."),
-    Flag.withDefault([] as ReadonlyArray<string>),
-  ),
-  exclude: Flag.string("exclude").pipe(
-    Flag.atLeast(0),
-    Flag.withDescription("Names of containers to omit from output."),
-    Flag.withDefault([] as ReadonlyArray<string>),
-    Flag.withHidden,
-  ),
+  overrideName: legacyStatusOverrideNameFlag,
+  exclude: legacyStatusExcludeFlag,
   ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
     Flag.withHidden,
