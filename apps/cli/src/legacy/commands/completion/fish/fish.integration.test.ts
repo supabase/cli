@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
+import { Command } from "effect/unstable/cli";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
+import { legacyCompletionFishCommand } from "./fish.command.ts";
 import { legacyCompletionFish } from "./fish.handler.ts";
 
 function setupLegacyCompletionFish() {
@@ -13,6 +15,10 @@ function setupLegacyCompletionFish() {
     execCapture: () => Effect.succeed(""),
   });
   return { layer, calls };
+}
+
+function legacyTestRoot() {
+  return Command.make("supabase").pipe(Command.withSubcommands([legacyCompletionFishCommand]));
 }
 
 describe("legacy completion fish", () => {
@@ -30,5 +36,16 @@ describe("legacy completion fish", () => {
       yield* legacyCompletionFish({ noDescriptions: true });
       expect(calls).toEqual([["completion", "fish", "--no-descriptions"]]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("accepts --no-descriptions from real argv via the command parser", () => {
+    const { layer, calls } = setupLegacyCompletionFish();
+    return Effect.gen(function* () {
+      yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })([
+        "fish",
+        "--no-descriptions",
+      ]);
+      expect(calls).toEqual([["completion", "fish", "--no-descriptions"]]);
+    }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
   });
 });

@@ -44,8 +44,9 @@ brew-managed `_supabase` files in their `fpath`, or analogous bash/fish/powershe
 artifacts. Drift would break tab completion for those users.
 
 The generated scripts call back to `supabase __complete <args>` on every tab press to
-fetch dynamic completion candidates — see `apps/cli/src/legacy/commands/__complete/`,
-which provides the matching hidden command.
+fetch dynamic completion candidates — see `apps/cli/src/legacy/cli/complete-passthrough.ts`,
+which intercepts `__complete` before Effect's argv parser and proxies it straight to
+the Go binary.
 
 ## Notes
 
