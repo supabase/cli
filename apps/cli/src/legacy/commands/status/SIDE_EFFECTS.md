@@ -157,9 +157,11 @@ Additive — no Go CLI equivalent. Emits the same resolved value map via
 - When neither `docker` nor `podman` can be spawned at all, the error message names the actual
   root cause (e.g. "docker: command not found (podman also not found) — install Docker Desktop or
   Podman and ensure it is on PATH") rather than a generic "failed to ..." string.
-- `--exclude <container-id>` (hidden) omits a service from the value map by container id only —
-  Go additionally supports excluding by Docker image short-name, which has no `@supabase/config`
-  schema equivalent to check against, so that branch is not replicated (documented divergence).
+- `--exclude <value>` (hidden) omits a service from the value map when `value` matches either its
+  container id or its default Docker image short name (Go's `ShortContainerImageName`, e.g.
+  `storage-api` for the storage service, `edge-runtime` for edge functions) — the default image
+  is read from the same embedded Dockerfile manifest Go parses, so a version bump there is picked
+  up automatically without needing to read the `.temp/<service>-version` pin file.
 - `--ignore-health-check` (hidden) skips the db container health assertion entirely and always
   exits `0`, matching Go's early-return in `Run()`.
 - Default `auth.anon_key`/`auth.service_role_key`/`auth.jwt_secret` values are generated via a

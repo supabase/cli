@@ -3,6 +3,7 @@ import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
 import {
+  legacyShortContainerImageName,
   legacyStatusContainerIds,
   legacyStatusValues,
   type LegacyStatusContainerIds,
@@ -72,6 +73,17 @@ describe("legacyStatusValues", () => {
       expect(values.API_URL).toBeUndefined();
     });
 
+    it("omits API_URL when the kong image short name is excluded", () => {
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        ["kong"],
+        NO_OVERRIDES,
+      );
+      expect(values.API_URL).toBeUndefined();
+    });
+
     it("omits REST/GraphQL when kong is disabled even though postgrest is enabled", () => {
       const config = baseConfig({ api: { enabled: false } });
       const { values } = legacyStatusValues(config, CONTAINER_IDS, HOSTNAME, NONE, NO_OVERRIDES);
@@ -102,6 +114,19 @@ describe("legacyStatusValues", () => {
       );
       expect(values.REST_URL).toBeDefined();
       expect(values.GRAPHQL_URL).toBeDefined();
+    });
+
+    it("omits REST/GraphQL when the postgrest image short name is excluded", () => {
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        ["postgrest"],
+        NO_OVERRIDES,
+      );
+      expect(values.API_URL).toBeDefined();
+      expect(values.REST_URL).toBeUndefined();
+      expect(values.GRAPHQL_URL).toBeUndefined();
     });
   });
 
@@ -139,6 +164,19 @@ describe("legacyStatusValues", () => {
       );
       expect(values.FUNCTIONS_URL).toBeUndefined();
     });
+
+    it("omits FUNCTIONS_URL when the edge-runtime image short name is excluded", () => {
+      // The image repo name (`supabase/edge-runtime`) differs from the Dockerfile's
+      // build alias (`edgeruntime`) — the short name Go matches against is the former.
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        ["edge-runtime"],
+        NO_OVERRIDES,
+      );
+      expect(values.FUNCTIONS_URL).toBeUndefined();
+    });
   });
 
   describe("studio / mcp gating", () => {
@@ -165,6 +203,17 @@ describe("legacyStatusValues", () => {
         CONTAINER_IDS,
         HOSTNAME,
         [CONTAINER_IDS.studio],
+        NO_OVERRIDES,
+      );
+      expect(values.STUDIO_URL).toBeUndefined();
+    });
+
+    it("omits STUDIO_URL when the studio image short name is excluded", () => {
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        ["studio"],
         NO_OVERRIDES,
       );
       expect(values.STUDIO_URL).toBeUndefined();
@@ -230,6 +279,17 @@ describe("legacyStatusValues", () => {
       );
       expect(values.PUBLISHABLE_KEY).toBeUndefined();
     });
+
+    it("omits all 5 auth fields when the gotrue image short name is excluded", () => {
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        ["gotrue"],
+        NO_OVERRIDES,
+      );
+      expect(values.PUBLISHABLE_KEY).toBeUndefined();
+    });
   });
 
   describe("inbucket/mailpit gating", () => {
@@ -258,6 +318,17 @@ describe("legacyStatusValues", () => {
         CONTAINER_IDS,
         HOSTNAME,
         [CONTAINER_IDS.inbucket],
+        NO_OVERRIDES,
+      );
+      expect(values.MAILPIT_URL).toBeUndefined();
+    });
+
+    it("omits MAILPIT_URL/INBUCKET_URL when the mailpit image short name is excluded", () => {
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        ["mailpit"],
         NO_OVERRIDES,
       );
       expect(values.MAILPIT_URL).toBeUndefined();
@@ -291,6 +362,19 @@ describe("legacyStatusValues", () => {
         CONTAINER_IDS,
         HOSTNAME,
         [CONTAINER_IDS.storage],
+        NO_OVERRIDES,
+      );
+      expect(values.STORAGE_S3_URL).toBeUndefined();
+    });
+
+    it("omits storage S3 fields when the storage-api image short name is excluded", () => {
+      // The image repo name (`supabase/storage-api`) differs from the Dockerfile's
+      // build alias (`storage`) — the short name Go matches against is the former.
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        ["storage-api"],
         NO_OVERRIDES,
       );
       expect(values.STORAGE_S3_URL).toBeUndefined();
@@ -369,6 +453,17 @@ describe("legacyStatusValues", () => {
     expect(values.STORAGE_S3_URL).toBeUndefined();
     expect(values.STUDIO_URL).toBeUndefined();
     expect(values.API_URL).toBeDefined();
+  });
+});
+
+describe("legacyShortContainerImageName", () => {
+  it("extracts the repo name between the first slash and the last colon", () => {
+    expect(legacyShortContainerImageName("supabase/storage-api:v1.61.9")).toBe("storage-api");
+    expect(legacyShortContainerImageName("library/kong:2.8.1")).toBe("kong");
+  });
+
+  it("falls back to the full string when there is no slash/tag to extract", () => {
+    expect(legacyShortContainerImageName("kong")).toBe("kong");
   });
 });
 

@@ -1,5 +1,6 @@
 import type { ProjectConfig } from "@supabase/config";
 
+import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { legacyServiceContainerIds } from "../../shared/legacy-docker-ids.ts";
 import {
   legacyResolveLocalConfigValues,
@@ -174,6 +175,33 @@ export function legacyStatusContainerIds(projectId: string): LegacyStatusContain
   };
 }
 
+/**
+ * Port of Go's `utils.ShortContainerImageName` (`internal/utils/misc.go:33-39,75`):
+ * extracts the repo name between the (first) `/` and the (last) `:`, falling back to
+ * the full string when the image ref doesn't match (no slash, or no tag).
+ */
+export function legacyShortContainerImageName(imageName: string): string {
+  const match = /\/(.*):/.exec(imageName);
+  return match?.[1] ?? imageName;
+}
+
+// Default image short names Go's `--exclude` also matches against
+// (`internal/status/status.go:55-61`), one per gated service. Sourced from the same
+// embedded Dockerfile manifest Go parses (`dockerfileServiceImage`), so a version bump
+// there is picked up automatically. Pinned-version substitution
+// (`legacy-db-image.ts`'s `replaceImageTag`) only ever rewrites the portion after the
+// first `:`, which `legacyShortContainerImageName` discards — so these are invariant to
+// version pinning and no `.temp/<service>-version` file needs to be read here.
+const KONG_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImage("kong"));
+const POSTGREST_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImage("postgrest"));
+const STUDIO_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImage("studio"));
+const GOTRUE_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImage("gotrue"));
+const MAILPIT_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImage("mailpit"));
+const STORAGE_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImage("storage"));
+const EDGE_RUNTIME_IMAGE_NAME = legacyShortContainerImageName(
+  dockerfileServiceImage("edgeruntime"),
+);
+
 export interface LegacyStatusValuesResult {
   readonly values: Record<string, string>;
   readonly names: LegacyStatusOutputNames;
@@ -182,8 +210,11 @@ export interface LegacyStatusValuesResult {
 
 /**
  * Port of Go's `(*CustomName).toValues(exclude...)` (`internal/status/status.go:50-97`).
- * `excluded` matches by container id only — Go's `ShortContainerImageName` branch
- * has no schema equivalent to check against (decision #3 in the port plan).
+ * `excluded` matches each gated service by its container id (`legacyStatusContainerIds`)
+ * OR its default Docker image short name (`shortContainerImageName` above) — the 6
+ * relevant Go config fields (`Api.KongImage`, `Api.Image`, `Studio.Image`, `Auth.Image`,
+ * `Inbucket.Image`, `Storage.Image`, `EdgeRuntime.Image`) all carry `toml:"-"`, so they're
+ * never user-overridable and the default image is always the one to check.
  */
 export function legacyStatusValues(
   config: ProjectConfig,
@@ -196,13 +227,24 @@ export function legacyStatusValues(
   const names = resolveOutputNames(overrides);
   const isExcluded = (id: string) => excluded.includes(id);
 
-  const kongEnabled = config.api.enabled && !isExcluded(containerIds.kong);
-  const postgrestEnabled = kongEnabled && !isExcluded(containerIds.rest);
-  const studioEnabled = config.studio.enabled && !isExcluded(containerIds.studio);
-  const authEnabled = config.auth.enabled && !isExcluded(containerIds.auth);
-  const inbucketEnabled = config.local_smtp.enabled && !isExcluded(containerIds.inbucket);
-  const storageEnabled = config.storage.enabled && !isExcluded(containerIds.storage);
-  const functionsEnabled = config.edge_runtime.enabled && !isExcluded(containerIds.edgeRuntime);
+  const kongEnabled =
+    config.api.enabled && !isExcluded(containerIds.kong) && !isExcluded(KONG_IMAGE_NAME);
+  const postgrestEnabled =
+    kongEnabled && !isExcluded(containerIds.rest) && !isExcluded(POSTGREST_IMAGE_NAME);
+  const studioEnabled =
+    config.studio.enabled && !isExcluded(containerIds.studio) && !isExcluded(STUDIO_IMAGE_NAME);
+  const authEnabled =
+    config.auth.enabled && !isExcluded(containerIds.auth) && !isExcluded(GOTRUE_IMAGE_NAME);
+  const inbucketEnabled =
+    config.local_smtp.enabled &&
+    !isExcluded(containerIds.inbucket) &&
+    !isExcluded(MAILPIT_IMAGE_NAME);
+  const storageEnabled =
+    config.storage.enabled && !isExcluded(containerIds.storage) && !isExcluded(STORAGE_IMAGE_NAME);
+  const functionsEnabled =
+    config.edge_runtime.enabled &&
+    !isExcluded(containerIds.edgeRuntime) &&
+    !isExcluded(EDGE_RUNTIME_IMAGE_NAME);
 
   // Go always sets db.url unconditionally, before any gating (status.go:52).
   const values: Record<string, string> = {
