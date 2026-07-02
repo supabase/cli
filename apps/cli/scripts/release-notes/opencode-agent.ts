@@ -50,13 +50,15 @@ export interface GenerateNotesResult {
 // Investigation needs `bash` (for authenticated `gh` queries) and `webfetch`
 // (to open PR/issue URLs). File-mutating tools stay off — the calling script
 // owns the final release-notes file, matching the previous Claude setup that
-// deliberately excluded Edit/Write.
+// deliberately excluded Edit/Write. Mutation is denied authoritatively via the
+// `edit` permission in serverConfig() (which gates edit/write/apply_patch
+// regardless of their exact tool ids); these entries just avoid offering the
+// well-known mutating tools in the first place.
 const TOOLS: Record<string, boolean> = {
   bash: true,
   webfetch: true,
   write: false,
   edit: false,
-  patch: false,
 };
 
 /** OpenCode server config for a non-interactive, API-key-only run. */
@@ -74,6 +76,10 @@ function serverConfig(model: string) {
       bash: "allow" as const,
       webfetch: "allow" as const,
       external_directory: "allow" as const,
+      // The script owns the final release-notes file — the agent must never
+      // mutate the filesystem. `edit` gates edit/write and the patch
+      // (`apply_patch`) tool, so denying it here is the real guard.
+      edit: "deny" as const,
     },
   };
 }
