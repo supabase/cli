@@ -15,6 +15,7 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { Output } from "../output/output.service.ts";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
+import { findGitRootPath } from "../git/git-root.ts";
 import { invalidFunctionSlugDetail, validateFunctionSlugMessage } from "./functions.shared.ts";
 import {
   ConflictingFunctionDeployFlagsError,
@@ -325,27 +326,8 @@ async function realpathIfExists(pathname: string) {
   }
 }
 
-async function findGitRoot(startPath: string) {
-  let current = resolve(startPath);
-
-  for (;;) {
-    try {
-      await stat(join(current, ".git"));
-      return current;
-    } catch {
-      // Keep walking until we hit the filesystem root.
-    }
-
-    const parent = dirname(current);
-    if (parent === current) {
-      return undefined;
-    }
-    current = parent;
-  }
-}
-
 async function resolveFunctionsSourceRoot(projectRoot: string) {
-  return (await findGitRoot(projectRoot)) ?? resolve(projectRoot);
+  return (await findGitRootPath(projectRoot)) ?? resolve(projectRoot);
 }
 
 function humanSize(bytes: number) {
@@ -672,7 +654,7 @@ async function walkImportPaths(
     try {
       const resolvedCurrent = await realpath(resolve(current));
       if (!isContainedInAnyPath(allowedRoots, resolvedCurrent)) {
-        await onWarning(`WARN: Skipping import path outside project root: ${current}\n`);
+        await onWarning(`WARN: Skipping import path outside source root: ${current}\n`);
         continue;
       }
       contents = await readFile(resolvedCurrent);
@@ -723,7 +705,7 @@ async function walkImportPaths(
       const resolvedModule = resolve(modulePath);
       const containmentPath = await realpathIfExists(resolvedModule);
       if (!isContainedInAnyPath(allowedRoots, containmentPath)) {
-        await onWarning(`WARN: Skipping import path outside project root: ${modulePath}\n`);
+        await onWarning(`WARN: Skipping import path outside source root: ${modulePath}\n`);
         continue;
       }
       queue.push(toSlash(resolvedModule));
@@ -934,7 +916,7 @@ async function writeSourceDeployForm(
   const uploadAsset = async (pathname: string, contents: Uint8Array) => {
     const realPathname = await realpath(pathname);
     if (!isContainedPath(realSourceRoot, realPathname)) {
-      throw new Error(`refusing to upload asset outside project root: ${pathname}`);
+      throw new Error(`refusing to upload asset outside source root: ${pathname}`);
     }
     await appendAsset(pathname, contents, realPathname);
   };
@@ -951,7 +933,7 @@ async function writeSourceDeployForm(
     const realPathname = await realpath(pathname);
     if (!isContainedInAnyPath(importMapAllowedRoots, realPathname)) {
       await Effect.runPromise(
-        outputRaw(`WARN: Skipping import path outside project root: ${pathname}\n`),
+        outputRaw(`WARN: Skipping import path outside source root: ${pathname}\n`),
       );
       return;
     }
@@ -962,7 +944,7 @@ async function writeSourceDeployForm(
     const resolvedPath = await realpath(pathname);
     if (!isContainedInAnyPath(importMapAllowedRoots, resolvedPath)) {
       await Effect.runPromise(
-        outputRaw(`WARN: Skipping import path outside project root: ${pathname}\n`),
+        outputRaw(`WARN: Skipping import path outside source root: ${pathname}\n`),
       );
       return;
     }
@@ -989,7 +971,7 @@ async function writeSourceDeployForm(
       const resolvedNestedPath = await realpath(nestedPath);
       if (!isContainedInAnyPath(importMapAllowedRoots, resolvedNestedPath)) {
         await Effect.runPromise(
-          outputRaw(`WARN: Skipping import path outside project root: ${nestedPath}\n`),
+          outputRaw(`WARN: Skipping import path outside source root: ${nestedPath}\n`),
         );
         continue;
       }

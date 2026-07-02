@@ -1176,7 +1176,7 @@ describe("functions deploy", () => {
 
       expect(api.multiparts[0]?.fileNames).not.toContain(secretPath);
       expect(api.multiparts[0]?.fileNames).not.toContain("access-token.txt");
-      expect(out.stderrText).toContain("WARN: Skipping import path outside project root:");
+      expect(out.stderrText).toContain("WARN: Skipping import path outside source root:");
     }).pipe(Effect.ensuring(Effect.all([cleanupTempDir(tempDir), cleanupTempDir(outsideDir)])));
   });
 
@@ -1231,7 +1231,7 @@ describe("functions deploy", () => {
       expect(api.multiparts[0]?.metadata).toContain(
         '"import_map_path":"app/supabase/functions/hello-world/deno.json"',
       );
-      expect(out.stderrText).not.toContain("WARN: Skipping import path outside project root:");
+      expect(out.stderrText).not.toContain("WARN: Skipping import path outside source root:");
     }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
   });
 
@@ -1422,7 +1422,7 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer));
 
       expect(api.multiparts[0]?.fileNames).not.toContain("packages/shared/src/index.ts");
-      expect(out.stderrText).toContain("WARN: Skipping import path outside project root:");
+      expect(out.stderrText).toContain("WARN: Skipping import path outside source root:");
     }).pipe(Effect.ensuring(cleanupTempDir(outerRoot)));
   });
 
