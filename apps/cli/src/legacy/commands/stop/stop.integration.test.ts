@@ -211,6 +211,7 @@ describe("legacy stop integration", () => {
           ["stop", "c1"],
           ["stop", "c2"],
         ]);
+        expect(out.stdoutText).toContain("Stopping containers...");
         expect(out.stdoutText).toContain("Stopped");
         expect(out.stdoutText).toContain("local development setup.");
         expect(out.stderrText).toContain(
@@ -471,26 +472,30 @@ describe("legacy stop integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails cleanly in json mode without a text-mode spinner to dismiss", () => {
-    // No `output.task` handle exists outside text mode — this exercises that
-    // the failure path's `stopping?.fail() ?? Effect.void` no-ops correctly.
-    const { layer } = setup({
-      format: "json",
-      configuredProjectId: "demo",
-      route: (args) => {
-        if (args[0] === "ps") return { stdout: ["c1"] };
-        if (args[0] === "stop") return { exitCode: 1, stderr: ["boom"] };
-        return { exitCode: 0 };
-      },
-    });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyStop(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerError");
-      }
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "fails the same way in json mode, where 'Stopping containers...' is never printed",
+    () => {
+      // The `output.format === "text"` gate around the "Stopping containers..."
+      // line means json mode skips it entirely; this exercises that the
+      // list/stop/prune failure path is unaffected by that gate.
+      const { layer } = setup({
+        format: "json",
+        configuredProjectId: "demo",
+        route: (args) => {
+          if (args[0] === "ps") return { stdout: ["c1"] };
+          if (args[0] === "stop") return { exitCode: 1, stderr: ["boom"] };
+          return { exitCode: 0 };
+        },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyStop(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerError");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("fails when container prune errors", () => {
     const { layer } = setup({

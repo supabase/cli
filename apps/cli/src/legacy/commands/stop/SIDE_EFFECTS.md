@@ -70,7 +70,8 @@ This is a harmless, documented divergence: Go would reject an unknown `-o` flag 
 
 ### `--output-format text` (Go CLI compatible)
 
-- stderr (transient): `Stopping containers...`
+- stdout: `Stopping containers...` (printed unconditionally before any Docker call,
+  matching Go's `fmt.Fprintln` — see `docker.go:97`)
 - stdout: `Stopped supabase local development setup.` (`supabase` rendered in Aqua/cyan
   when the output stream is a TTY, plain otherwise)
 - stderr (conditional): when any Docker volume still carries the project's

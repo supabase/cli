@@ -108,16 +108,17 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     const deleteVolumes = flags.noBackup;
     const filterValue = legacyCliProjectFilterValue(searchProjectIdFilter);
 
-    // Captured (not discarded) so it can be `.fail()`ed or `.clear()`ed below,
-    // matching the project's established `output.task` usage pattern
-    // (apps/cli/CLAUDE.md's "always wrap API calls in output.task"). In
-    // non-interactive/CI runs the spinner never renders, but `.fail()`/`.clear()`
-    // still resolve cleanly — a discarded handle would otherwise leave a spinner
-    // that's started but never stopped. A single `Effect.tapError` around the
-    // whole list/stop/prune sequence (rather than one per step) fails the same
-    // task on any error without repeating the same branch at every call site.
-    const stopping =
-      output.format === "text" ? yield* output.task("Stopping containers...") : undefined;
+    // Go prints this line unconditionally and immediately — `docker.go:97`'s
+    // `fmt.Fprintln(w, "Stopping containers...")`, where `w` is a
+    // `StatusWriter` that `fmt.Println`s straight to stdout in non-interactive
+    // mode (`tea.go:59-60,87-90`) before any Docker call runs. The debounced
+    // `output.task` spinner used elsewhere in this codebase gates its message
+    // behind a delay, which drops this line whenever the underlying calls
+    // resolve faster than that threshold — exactly what happens against the
+    // mocked/replayed Docker CLI. Print it directly so it always appears.
+    if (output.format === "text") {
+      yield* output.raw("Stopping containers...\n");
+    }
 
     yield* Effect.gen(function* () {
       const containerIds = yield* legacyListContainersByLabel(spawner, {
@@ -212,9 +213,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
           new LegacyStopNetworkPruneError({ message: "failed to prune networks" }),
         );
       }
-    }).pipe(Effect.tapError(() => stopping?.fail() ?? Effect.void));
-
-    yield* stopping?.clear() ?? Effect.void;
+    });
 
     if (output.format === "text") {
       // Written to stdout (no stream arg): `legacyAqua` must target stdout's own
