@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   mockLegacyCredentialsTracked,
   mockLegacyTelemetryStateTracked,
@@ -15,6 +16,10 @@ interface SetupOpts {
   readonly yes?: boolean;
   readonly deleteOutcome?: "ok" | "notLoggedIn" | "deleteError";
   readonly promptConfirmFail?: boolean;
+  /** stdin interactivity; defaults to a TTY so prompt-driven tests reach the confirm. */
+  readonly stdinIsTty?: boolean;
+  /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
+  readonly pipedAnswers?: ReadonlyArray<string>;
 }
 
 function setupLegacyLogout(opts: SetupOpts = {}) {
@@ -30,6 +35,12 @@ function setupLegacyLogout(opts: SetupOpts = {}) {
     credentials.layer,
     telemetry.layer,
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
+    mockStdin(
+      opts.stdinIsTty ?? true,
+      opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
+    ),
+    Layer.succeed(CliArgs, { args: [] }),
   );
   return { layer, out, telemetry, credentials };
 }
@@ -67,6 +78,53 @@ describe("legacy logout integration", () => {
       }
       expect(credentials.deletedAll).toBe(false);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("empty non-interactive stdin takes Go's default (false) and cancels", () => {
+    // Go's `PromptYesNo(..., false)` scans stdin and falls back to the default when
+    // the scan is empty (`logout.go:16`, `console.go:64-82`). With no piped input
+    // logout cancels — without hanging on the clack confirm.
+    const { layer, credentials } = setupLegacyLogout({ stdinIsTty: false });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyLogout());
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyLogoutCancelledError");
+      }
+      expect(credentials.deletedAll).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("honors a piped 'y' on non-interactive stdin and logs out", () => {
+    // Regression: Go scans piped stdin before defaulting (`console.go:74-82`), so
+    // `printf 'y\n' | supabase logout` deletes the token even on a non-terminal.
+    const { layer, credentials } = setupLegacyLogout({ stdinIsTty: false, pipedAnswers: ["y"] });
+    return Effect.gen(function* () {
+      yield* legacyLogout();
+      expect(credentials.deletedAll).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("honors SUPABASE_YES and logs out even when a piped 'n' is present", () => {
+    // Go reads `viper.GetBool("YES")` (incl. the SUPABASE_YES env var) BEFORE
+    // scanning stdin (`console.go:71`), so `SUPABASE_YES=1 printf 'n\n' | supabase
+    // logout` auto-confirms and deletes rather than consuming the piped `n`. The
+    // handler resolves `yes` via legacyResolveYes, not the raw --yes flag.
+    const prev = process.env["SUPABASE_YES"];
+    process.env["SUPABASE_YES"] = "1";
+    const { layer, credentials } = setupLegacyLogout({ stdinIsTty: false, pipedAnswers: ["n"] });
+    return Effect.gen(function* () {
+      yield* legacyLogout();
+      expect(credentials.deletedAll).toBe(true);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (prev === undefined) delete process.env["SUPABASE_YES"];
+          else process.env["SUPABASE_YES"] = prev;
+        }),
+      ),
+      Effect.provide(layer),
+    );
   });
 
   it.live("not logged in: prints to stderr, exits 0, and does not sweep credentials", () => {

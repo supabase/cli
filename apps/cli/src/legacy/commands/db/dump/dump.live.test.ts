@@ -1,3 +1,6 @@
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vitest";
 
 import {
@@ -6,25 +9,40 @@ import {
   runSupabaseLive,
 } from "../../../../../tests/helpers/live.ts";
 
-const LIVE_TIMEOUT_MS = 180_000;
+const LIVE_TIMEOUT_MS = 300_000;
 
-// Data-plane scenario: `db dump --linked` connects to the project's *Postgres*
-// (the cli mints a temp login role via the Management API), so it gates on
-// `describeLiveDataPlane` — runs only when the project instance is
-// ACTIVE_HEALTHY, otherwise SKIPS (e.g. the current cli-e2e-ci CI without
-// supabase-postgres-17, CLI-1825). Activates once the data-plane is provisioned.
-// The ref is supplied via SUPABASE_PROJECT_ID (db commands resolve the linked
-// ref from env / config.toml / ref-file, not a `--project-ref` flag).
+// A fresh, isolated temp workdir so the CLI writes the dump there and never touches
+// the repo tree. The provisioned project ref is supplied to `--linked` via the
+// `SUPABASE_PROJECT_ID` env var — that is the `--linked` resolver chain in both Go
+// and the legacy port (flag → `SUPABASE_PROJECT_ID` → `supabase/.temp/project-ref`);
+// `config.toml`'s `project_id` is NOT consulted for `--linked`.
+function tempWorkdir(): string {
+  return mkdtempSync(join(tmpdir(), "sb-db-dump-live-"));
+}
+
+// Data-plane: needs a provisioned project whose database is routable (the
+// cli-e2e-ci Linux runner). `describeLiveDataPlane` runs this only when the project
+// instance is ACTIVE_HEALTHY, so a control-plane-only stack (ref set but the DB
+// unreachable, e.g. local macOS or the current cli-e2e-ci control-plane case) is
+// skipped rather than timing out on pg_dump.
 describeLiveDataPlane("supabase db dump (live)", () => {
-  test("dumps the linked project schema to stdout", { timeout: LIVE_TIMEOUT_MS }, async () => {
+  test("dumps the linked project's schema to a file", { timeout: LIVE_TIMEOUT_MS }, async () => {
     const ref = requireLiveProjectRef();
-    const { exitCode, stdout, stderr } = await runSupabaseLive(["db", "dump", "--linked"], {
-      env: { SUPABASE_PROJECT_ID: ref },
-    });
-    expect(stderr).not.toContain("Unauthorized");
-    expect(exitCode, `stdout:\n${stdout}\nstderr:\n${stderr}`).toBe(0);
-    // A real pg_dump of a Supabase project emits SQL DDL to stdout; assert it is
-    // non-empty rather than pinning an exact header that varies by pg version.
-    expect(stdout.trim().length).toBeGreaterThan(0);
+    const dir = tempWorkdir();
+    try {
+      const outFile = join(dir, "schema.sql");
+      const { exitCode, stdout, stderr } = await runSupabaseLive(
+        ["db", "dump", "--linked", "-f", outFile],
+        { cwd: dir, env: { SUPABASE_PROJECT_ID: ref }, exitTimeoutMs: LIVE_TIMEOUT_MS - 20_000 },
+      );
+      expect(`${stdout}${stderr}`).not.toContain("Unauthorized");
+      expect(exitCode).toBe(0);
+      // The native pg_dump container (shared `legacyStreamPgDump`) opened + wrote
+      // the dump file. A fresh project's public schema may be near-empty, so assert
+      // the file was created rather than its size.
+      expect(existsSync(outFile)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

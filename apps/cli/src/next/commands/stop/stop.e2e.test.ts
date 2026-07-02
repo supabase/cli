@@ -68,7 +68,10 @@ describe("supabase stop", () => {
         cwd: project.dir,
         home: home.dir,
       });
-      expect(stopResult.exitCode).toBe(0);
+      expect(
+        stopResult.exitCode,
+        `stdout:\n${stopResult.stdout}\n\nstderr:\n${stopResult.stderr}`,
+      ).toBe(0);
       expect(existsSync(stackDir)).toBe(false);
     },
   );

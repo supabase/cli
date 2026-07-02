@@ -78,10 +78,28 @@ export function shouldUseGlobalSignalInterrupt(args: ReadonlyArray<string>): boo
   );
 }
 
-function formatterLayerFor(format: OutputFormat) {
+function formatterLayerFor(
+  rootCommand: Command.Command.Any,
+  args: ReadonlyArray<string>,
+  format: OutputFormat,
+) {
+  const context = { rootCommand, args };
   return format === "json" || format === "stream-json"
-    ? CliOutput.layer(jsonCliOutputFormatter())
-    : CliOutput.layer(textCliOutputFormatter());
+    ? CliOutput.layer(jsonCliOutputFormatter(context))
+    : CliOutput.layer(textCliOutputFormatter(context));
+}
+
+function isErrorRecord(error: unknown): error is Record<string, unknown> {
+  return typeof error === "object" && error !== null;
+}
+
+function isExplicitHelpCause(cause: Cause.Cause<unknown>): boolean {
+  const error = Cause.findErrorOption(cause);
+  if (error._tag !== "Some" || !isErrorRecord(error.value)) return false;
+  if (error.value["_tag"] !== "ShowHelp") return false;
+
+  const errors = error.value["errors"];
+  return !Array.isArray(errors) || errors.length === 0;
 }
 
 function projectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
@@ -141,7 +159,7 @@ function cliProgramFor(
     ),
   );
   return Command.runWith(rootCommand, { version: CLI_VERSION })(args).pipe(
-    Effect.provide(formatterLayerFor(outputFormat)),
+    Effect.provide(formatterLayerFor(rootCommand, args, outputFormat)),
     Effect.provide(options.analyticsLayer),
     Effect.provide(tracingLayer),
     Effect.provide(telemetryRuntimeLayer),
@@ -211,7 +229,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       const exit = yield* program.pipe(Effect.exit);
       if (Exit.isFailure(exit)) {
         const interrupted = Cause.hasInterruptsOnly(exit.cause);
-        if (!interrupted) {
+        if (!interrupted && !isExplicitHelpCause(exit.cause)) {
           yield* output.fail(normalizeCause(exit.cause));
         }
         return yield* processControl.exit(interrupted ? 130 : 1);

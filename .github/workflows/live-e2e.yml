@@ -11,7 +11,7 @@ name: Live E2E
 #     ref (github.ref), always a same-repo branch. We deliberately take NO
 #     free-form `ref` input: that would let a manual run check out arbitrary
 #     (e.g. external PR) code while the staging token is in the job env.
-#   - schedule (hourly) — exercises the `@beta` channel. `develop` is the default
+#   - schedule (daily) — exercises the `@beta` channel. `develop` is the default
 #     branch AND the beta release source, so a scheduled run checks it out and
 #     builds from source. The `gate` job skips the run unless the published
 #     `supabase@beta` version changed since the last green run (an actions/cache
@@ -23,8 +23,8 @@ name: Live E2E
 on:
   workflow_dispatch:
   schedule:
-    # Hourly, offset from other scheduled workflows. Cron timing is best-effort.
-    - cron: "23 * * * *"
+    # Daily, offset from other scheduled workflows. Cron timing is best-effort.
+    - cron: "23 6 * * *"
 
 permissions:
   contents: read
@@ -168,7 +168,7 @@ jobs:
 
   # Record that this beta tested green so the next scheduled run skips it. Needs
   # the whole matrix: the marker is saved only if BOTH go and ts-legacy passed
-  # (a red leg leaves no marker, so the next hour re-runs the same beta).
+  # (a red leg leaves no marker, so the next day re-runs the same beta).
   finalize:
     needs: [gate, live-e2e]
     if: github.event_name == 'schedule' && needs.live-e2e.result == 'success'

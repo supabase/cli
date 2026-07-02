@@ -15,9 +15,9 @@ permissions:
 
 jobs:
   check:
-    if: github.head_ref != 'develop'
+    if: github.head_ref != 'develop' && !startsWith(github.head_ref, 'hotfix/')
     runs-on: ubuntu-latest
     steps:
       - run: |
-          echo "Pull requests to main branch are only allowed from develop branch."
+          echo "Pull requests to main branch are only allowed from develop or hotfix/* branches."
           exit 1

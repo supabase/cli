@@ -1,6 +1,8 @@
+import { planStackVersions, StateManager } from "@supabase/stack/effect";
 import { Effect, Exit, Option } from "effect";
 import { Credentials } from "../../auth/credentials.service.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
+import { ProjectLocalServiceVersions } from "../../config/project-local-service-versions.service.ts";
 import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
@@ -20,14 +22,31 @@ export const services = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const cliConfig = yield* CliConfig;
   const credentials = yield* Credentials;
+  const projectLocalServiceVersions = yield* ProjectLocalServiceVersions;
   const projectLinkState = yield* ProjectLinkState;
+  const stateManager = yield* StateManager;
   const commandRuntime = yield* CommandRuntime;
 
   const linkedStateExit = yield* projectLinkState.load.pipe(Effect.exit);
   const linkedState = Exit.isSuccess(linkedStateExit) ? linkedStateExit.value : Option.none();
   const accessToken = yield* credentials.getAccessToken;
+  const localServiceVersions = yield* projectLocalServiceVersions.load;
+  const existingMetadata = yield* stateManager.readMetadata("default").pipe(
+    Effect.map(Option.some),
+    Effect.catchTag("StackMetadataNotFoundError", () => Effect.succeed(Option.none())),
+  );
+  const serviceVersionContext = planStackVersions({
+    ...(Option.isSome(linkedState) ? { candidateBaseline: linkedState.value.versions } : {}),
+    ...(Option.isSome(existingMetadata) ? { pinnedBaseline: existingMetadata.value.services } : {}),
+    ...(Option.isSome(localServiceVersions)
+      ? { localOverrides: localServiceVersions.value.versions }
+      : {}),
+  });
+  const localImageOptions = {
+    serviceVersions: serviceVersionContext.runtimeVersions,
+  };
 
-  let rows = listLocalServiceVersions();
+  let rows = listLocalServiceVersions(localImageOptions);
   if (Option.isSome(linkedState) && Option.isSome(accessToken)) {
     const remote = yield* fetchLinkedServiceVersions({
       apiUrl: cliConfig.apiUrl,
@@ -40,7 +59,7 @@ export const services = Effect.fnUntraced(function* () {
         "X-Supabase-Command-Run-ID": commandRuntime.commandRunId,
       },
     });
-    rows = mergeRemoteServiceVersions(remote);
+    rows = mergeRemoteServiceVersions(remote, localImageOptions);
   }
 
   const warning = renderServicesWarning(rows);
