@@ -16,7 +16,7 @@ import {
   legacyIpv6Suggestion,
   legacyIsIPv6ConnectivityError,
 } from "../../../shared/legacy-connect-errors.ts";
-import { legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
+import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import type { LegacyDbDumpFlags } from "./dump.command.ts";
@@ -33,6 +33,7 @@ import {
   legacyExpandScript,
 } from "../shared/legacy-pg-dump.env.ts";
 import { legacyStreamPgDump } from "../shared/legacy-pg-dump.run.ts";
+import { legacyRunWithPoolerFallback } from "../shared/legacy-pooler-fallback.ts";
 import {
   legacyDumpDataScript,
   legacyDumpRoleScript,
@@ -141,7 +142,6 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     //    linked, defaulting to linked when neither local nor db-url is set
     //    (`internal/utils/flags/db_url.go:46-62`).
     const useLocal = Option.isNone(flags.dbUrl) && Option.isSome(flags.local);
-    const useLinked = Option.isNone(flags.dbUrl) && Option.isNone(flags.local);
     // `connType` selects the resolver branch (Go's Changed-first precedence): a
     // `--db-url` wins, then explicit `--local`; otherwise dump defaults to linked
     // (unlike the other db commands, whose unset default is local).
@@ -314,48 +314,33 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
             onStdout: (chunk) => output.rawBytes(chunk),
           });
 
-    let result = yield* runContainer(modeEnv);
-
-    // 7b. Container-level pooler fallback (Go's `RunWithPoolerFallback`,
-    //     `internal/db/dump/pooler_fallback.go`). A linked dump can reach the direct
-    //     host from the CLI process (so the resolver returned the direct conn) yet
-    //     fail from inside the pg_dump container on an IPv6-only Docker network. When
-    //     the captured container stderr classifies as an IPv6 connectivity error,
-    //     retry once through the project's IPv4 transaction pooler. Gated to the
-    //     `--linked` path with a direct `db.<ref>.<host>` connection (Go's
-    //     `PoolerFallbackEligible` + `ProjectRefFromDirectDbHost`).
-    if (
-      result.exitCode !== 0 &&
-      useLinked &&
-      !isLocal &&
-      conn.host.startsWith("db.") &&
-      conn.host.endsWith(`.${cliConfig.projectHost}`) &&
-      legacyIsIPv6ConnectivityError(result.stderr)
-    ) {
-      // Go's `PoolerFallbackConfig` returns `ok=false` on ANY fallback-resolution
-      // error (e.g. temp-role creation/wait fails) and then reports the ORIGINAL
-      // pg_dump failure with the IPv6 guidance — the optional retry must not replace
-      // the actionable dump error. So a resolution failure is treated as "no
-      // fallback" (the original `result` is surfaced at step 9).
-      const pooler = yield* resolver
-        .resolvePoolerFallback({
-          dbUrl: flags.dbUrl,
-          connType: "linked",
-          dnsResolver,
-          password: flags.password,
-        })
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isSome(pooler)) {
-        yield* output.raw(
-          `${legacyYellow(
-            `Warning: Direct connection to ${conn.host} is unavailable because this environment does not support IPv6.\nRetrying via the IPv4 connection pooler.`,
-          )}\n`,
-          "stderr",
-        );
-        yield* output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr");
-        result = yield* runContainer(mode.buildEnv(pooler.value, opt));
-      }
-    }
+    // 7b. Container-level IPv6 → IPv4-pooler retry (Go's `RunWithPoolerFallback`,
+    //     `internal/db/dump/pooler_fallback.go`), shared with `db pull`. A linked dump
+    //     can reach the direct host from the CLI process (so the resolver returned the
+    //     direct conn) yet fail from inside the pg_dump container on an IPv6-only Docker
+    //     network. `resolvePoolerFallback` is neutralised to `None` on any resolution
+    //     error so the original, actionable pg_dump failure is surfaced at step 9 rather
+    //     than a fallback-setup error (Go's `PoolerFallbackConfig` ok=false path).
+    //     `db dump` re-prints the "Dumping …" line on the retry (Go prints it inside the
+    //     run closure, `dump.go:39-45`).
+    const result = yield* legacyRunWithPoolerFallback({
+      result: yield* runContainer(modeEnv),
+      connType,
+      host: conn.host,
+      isLocal,
+      projectHost: cliConfig.projectHost,
+      resolvePooler: () =>
+        resolver
+          .resolvePoolerFallback({
+            dbUrl: flags.dbUrl,
+            connType: "linked",
+            dnsResolver,
+            password: flags.password,
+          })
+          .pipe(Effect.orElseSucceed(() => Option.none())),
+      runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),
+      reprintOnRetry: output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr"),
+    });
 
     // 8. The dump has already been streamed to the destination by `runContainer`
     //    (to `--file` or stdout) as pg_dump produced it.

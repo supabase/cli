@@ -9,7 +9,7 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { legacyAqua, legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
+import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
 import {
   legacyIpv6Suggestion,
@@ -46,6 +46,11 @@ import {
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
 import { type LegacyDumpOptions, legacyBuildSchemaDumpEnv } from "../shared/legacy-pg-dump.env.ts";
 import { legacyStreamPgDump } from "../shared/legacy-pg-dump.run.ts";
+import {
+  legacyEmitPoolerFallbackWarning,
+  legacyIsDirectLinkedHost,
+  legacyRunWithPoolerFallback,
+} from "../shared/legacy-pooler-fallback.ts";
 import { legacyDumpSchemaScript } from "../shared/legacy-pg-dump.scripts.ts";
 import {
   legacyFormatMigrationTimestamp,
@@ -267,10 +272,12 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         Effect.catch((error) =>
           Effect.gen(function* () {
             if (
-              connType === "linked" &&
-              !resolved.isLocal &&
-              resolved.conn.host.startsWith("db.") &&
-              resolved.conn.host.endsWith(`.${cliConfig.projectHost}`) &&
+              legacyIsDirectLinkedHost({
+                connType,
+                host: resolved.conn.host,
+                isLocal: resolved.isLocal,
+                projectHost: cliConfig.projectHost,
+              }) &&
               legacyIsIPv6ConnectivityError(error.message)
             ) {
               // Go's `PoolerFallbackConfig` returns `ok=false` on ANY resolution
@@ -285,12 +292,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 })
                 .pipe(Effect.orElseSucceed(() => Option.none()));
               if (Option.isSome(pooler)) {
-                yield* output.raw(
-                  `${legacyYellow(
-                    `Warning: Direct connection to ${resolved.conn.host} is unavailable because this environment does not support IPv6.\nRetrying via the IPv4 connection pooler.`,
-                  )}\n`,
-                  "stderr",
-                );
+                yield* legacyEmitPoolerFallbackWarning(resolved.conn.host);
                 return yield* attempt(connToUrl(pooler.value));
               }
             }
@@ -521,37 +523,27 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           };
           // Go's `dumpRemoteSchema` prints this once, before `RunWithPoolerFallback`.
           yield* output.raw("Dumping schema from remote database...\n", "stderr");
-          let dumpResult = yield* runSchemaDump(resolved.conn);
-          // Container-level pooler fallback (Go's `dump.RunWithPoolerFallback`): on an
-          // IPv6 connectivity failure from a `--linked` direct `db.<ref>` host, warn
-          // and retry once via the IPv4 transaction pooler. Go's `PoolerFallbackConfig`
-          // emits the warning and does NOT re-print "Dumping…" on the retry.
-          if (
-            dumpResult.exitCode !== 0 &&
-            connType === "linked" &&
-            !resolved.isLocal &&
-            resolved.conn.host.startsWith("db.") &&
-            resolved.conn.host.endsWith(`.${cliConfig.projectHost}`) &&
-            legacyIsIPv6ConnectivityError(dumpResult.stderr)
-          ) {
-            const pooler = yield* resolver
-              .resolvePoolerFallback({
-                dbUrl: flags.dbUrl,
-                connType: "linked",
-                dnsResolver,
-                password: flags.password ?? Option.none(),
-              })
-              .pipe(Effect.orElseSucceed(() => Option.none()));
-            if (Option.isSome(pooler)) {
-              yield* output.raw(
-                `${legacyYellow(
-                  `Warning: Direct connection to ${resolved.conn.host} is unavailable because this environment does not support IPv6.\nRetrying via the IPv4 connection pooler.`,
-                )}\n`,
-                "stderr",
-              );
-              dumpResult = yield* runSchemaDump(pooler.value);
-            }
-          }
+          // Container-level IPv6 → IPv4-pooler retry (Go's `dump.RunWithPoolerFallback`),
+          // shared with `db dump`. `db pull` prints "Dumping…" once above, so it passes
+          // `Effect.void` for the retry re-print (Go prints it outside the retried closure).
+          const dumpResult = yield* legacyRunWithPoolerFallback({
+            result: yield* runSchemaDump(resolved.conn),
+            connType,
+            host: resolved.conn.host,
+            isLocal: resolved.isLocal,
+            projectHost: cliConfig.projectHost,
+            resolvePooler: () =>
+              resolver
+                .resolvePoolerFallback({
+                  dbUrl: flags.dbUrl,
+                  connType: "linked",
+                  dnsResolver,
+                  password: flags.password ?? Option.none(),
+                })
+                .pipe(Effect.orElseSucceed(() => Option.none())),
+            runWithConn: runSchemaDump,
+            reprintOnRetry: Effect.void,
+          });
           if (dumpResult.exitCode !== 0) {
             return yield* Effect.fail(
               new LegacyDbPullDumpError({
