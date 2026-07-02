@@ -20,7 +20,7 @@ brew install mise
 
 See the [`mise` installation docs](https://mise.jdx.dev/getting-started.html) for other package managers (apt, dnf, cargo, npm, Windows, …).
 
-`mise` needs to hook into your shell so it can inject the right tool versions into your `PATH` as you move between directories. Follow the `mise activate` instructions [in this section](https://mise.en.dev/getting-started.html#activate-mise) to add the activation line for your shell to its startup file.
+`mise` needs to hook into your shell so it can inject the right tool versions into your `PATH` as you move between directories. Follow the `mise activate` instructions [in this section](https://mise.jdx.dev/getting-started.html#activate-mise) to add the activation line for your shell to its startup file.
 
 #### Installing the pinned tool versions
 
