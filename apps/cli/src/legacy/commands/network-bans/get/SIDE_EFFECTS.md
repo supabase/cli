@@ -9,10 +9,10 @@
 
 ## Files Written
 
-| Path                                             | Format | When                                                                          |
-| ------------------------------------------------ | ------ | ----------------------------------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (after ref resolution), via `Effect.ensuring` — on success and failure |
-| `~/.supabase/telemetry.json`                     | JSON   | always, via `Effect.ensuring` — on success and failure                        |
+| Path                                             | Format | When                                                                                                                       |
+| ------------------------------------------------ | ------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | once the `--experimental` gate is open, after ref resolution, via `Effect.ensuring` — on success and failure               |
+| `~/.supabase/telemetry.json`                     | JSON   | once the `--experimental` gate is open, via `Effect.ensuring` — on success and failure. Not written if the gate is closed. |
 
 ## API Routes
 
@@ -24,21 +24,23 @@ The Management API exposes this read operation as `POST .../network-bans/retriev
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                |
-| ----------------------- | ---------------------------------------------------- | -------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)  |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)              |
-| `PROJECT_ID`            | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref` → prompt) |
+| Variable                | Purpose                                                  | Required?                                                      |
+| ----------------------- | -------------------------------------------------------- | -------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring → `~/.supabase/access-token`)        |
+| `SUPABASE_API_URL`      | override Management API base URL                         | no (defaults to `https://api.supabase.com`)                    |
+| `PROJECT_ID`            | project ref fallback when `--project-ref` is unset       | no (falls back to `supabase/.temp/project-ref` → prompt)       |
+| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag | no (pass `--experimental` instead; one of the two is required) |
 
 ## Exit Codes
 
-| Code | Condition                                                                               |
-| ---- | --------------------------------------------------------------------------------------- |
-| `0`  | success — network bans printed to stdout                                                |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`) |
-| `1`  | API non-2xx (`LegacyNetworkBansGetUnexpectedStatusError`)                               |
-| `1`  | transport failure (`LegacyNetworkBansGetNetworkError`)                                  |
-| `1`  | `--output env` requested (`LegacyNetworkBansEnvNotSupportedError`)                      |
+| Code | Condition                                                                                                                                       |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — network bans printed to stdout                                                                                                        |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before ref resolution/API/telemetry |
+| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                         |
+| `1`  | API non-2xx (`LegacyNetworkBansGetUnexpectedStatusError`)                                                                                       |
+| `1`  | transport failure (`LegacyNetworkBansGetNetworkError`)                                                                                          |
+| `1`  | `--output env` requested (`LegacyNetworkBansEnvNotSupportedError`)                                                                              |
 
 ## Telemetry Events Fired
 
@@ -80,5 +82,10 @@ One `result` event whose `data` is the full response object.
 
 - The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
 - `linked-project.json` is written **after** the project ref is resolved, regardless of whether the subsequent API call succeeds (mirrors Go's `PersistentPostRun`).
-- `telemetry.json` is written on every invocation, including failures.
+- `telemetry.json` is written on every invocation, including failures, but only once the `--experimental` gate is open.
 - Network bans are temporary blocks on IPs with abusive traffic patterns (e.g. multiple failed auth attempts).
+- `network-bans` is an experimental command (Go `root.go:63`, `bansCmd`): `get` requires
+  `--experimental` (or `SUPABASE_EXPERIMENTAL`), matching Go's root-level `PersistentPreRunE`
+  gate (`root.go:91-96`), which runs before the `IsManagementAPI` login check (`root.go:105-109`).
+  A closed gate exits 1 before project-ref resolution, the API call, the `linked-project.json`
+  write, the `telemetry.json` write, and the `cli_command_executed` event.
