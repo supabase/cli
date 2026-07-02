@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyResolveLocalProjectId, localDbContainerId } from "./legacy-docker-ids.ts";
+import {
+  LEGACY_CLI_PROJECT_LABEL,
+  legacyCliProjectFilterValue,
+  legacyResolveLocalProjectId,
+  legacyServiceContainerIds,
+  localDbContainerId,
+} from "./legacy-docker-ids.ts";
 
 describe("legacyResolveLocalProjectId", () => {
   it("prefers SUPABASE_PROJECT_ID (env) over config.toml and the basename", () => {
@@ -21,5 +27,42 @@ describe("legacyResolveLocalProjectId", () => {
   it("feeds the resolved id into the local db container name", () => {
     const id = legacyResolveLocalProjectId("env-id", undefined, "/work/proj");
     expect(localDbContainerId(id)).toBe("supabase_db_env-id");
+  });
+});
+
+describe("legacyServiceContainerIds", () => {
+  it("returns the 13 service container ids in Go's GetDockerIds() order", () => {
+    // apps/cli-go/internal/utils/config.go:82-98 — kong, auth, inbucket, realtime,
+    // rest, storage, imgproxy, pg_meta, studio, edge_runtime, analytics, vector, pooler.
+    expect(legacyServiceContainerIds("my-app")).toEqual([
+      "supabase_kong_my-app",
+      "supabase_auth_my-app",
+      "supabase_inbucket_my-app",
+      "supabase_realtime_my-app",
+      "supabase_rest_my-app",
+      "supabase_storage_my-app",
+      "supabase_imgproxy_my-app",
+      "supabase_pg_meta_my-app",
+      "supabase_studio_my-app",
+      "supabase_edge_runtime_my-app",
+      "supabase_analytics_my-app",
+      "supabase_vector_my-app",
+      "supabase_pooler_my-app",
+    ]);
+  });
+
+  it("sanitizes the project id the same way as localDbContainerId", () => {
+    const ids = legacyServiceContainerIds("My App!!");
+    expect(ids[0]).toBe("supabase_kong_My_App_");
+  });
+});
+
+describe("legacyCliProjectFilterValue", () => {
+  it("returns the bare label when the project id is empty (Go's --all path)", () => {
+    expect(legacyCliProjectFilterValue("")).toBe(LEGACY_CLI_PROJECT_LABEL);
+  });
+
+  it("returns label=projectId when a project id is given", () => {
+    expect(legacyCliProjectFilterValue("my-app")).toBe(`${LEGACY_CLI_PROJECT_LABEL}=my-app`);
   });
 });

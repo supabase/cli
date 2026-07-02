@@ -52,3 +52,50 @@ export function localDbContainerId(projectId: string) {
 export function localNetworkId(projectId: string) {
   return localDockerId("network", projectId);
 }
+
+/** Go's `utils.CliProjectLabel` (`apps/cli-go/internal/utils/docker.go:59`) — the
+ * Docker label every container/volume/network created by `supabase start` carries. */
+export const LEGACY_CLI_PROJECT_LABEL = "com.supabase.cli.project";
+
+/**
+ * Go's `utils.GetDockerIds()` (`apps/cli-go/internal/utils/config.go:82-98`) — the
+ * 13 service container ids (excludes `db`, `network`, and the `differ` shadow
+ * container, which are not part of the "expected running services" set). Order and
+ * alias-name strings are taken verbatim from `config.go:36-49,61-79`.
+ */
+export function legacyServiceContainerIds(projectId: string): ReadonlyArray<string> {
+  return [
+    localDockerId("kong", projectId),
+    localDockerId("auth", projectId),
+    localDockerId("inbucket", projectId),
+    localDockerId("realtime", projectId),
+    localDockerId("rest", projectId),
+    localDockerId("storage", projectId),
+    localDockerId("imgproxy", projectId),
+    localDockerId("pg_meta", projectId),
+    localDockerId("studio", projectId),
+    localDockerId("edge_runtime", projectId),
+    localDockerId("analytics", projectId),
+    localDockerId("vector", projectId),
+    localDockerId("pooler", projectId),
+  ];
+}
+
+/**
+ * Go's `utils.CliProjectFilter` (`apps/cli-go/internal/utils/docker.go:148-156`) —
+ * the value that follows `--filter label=` on the `docker`/`podman` CLI. An empty
+ * `projectId` (Go's `--all` path) filters on the bare label across every project.
+ *
+ * Deliberately unsanitized, matching Go exactly: `CliProjectFilter` interpolates
+ * `projectId` into the filter string raw, with none of `GetId`'s (this file's
+ * `sanitizeProjectId`) character-stripping — that sanitization only applies to
+ * Go's own generated container *names*, never to a user-supplied `--project-id`
+ * filter value. There is no injection risk from skipping it here: this value is
+ * always passed as a single argv element to a spawned process (never through a
+ * shell), so a malformed value can only make Docker's own filter parsing reject
+ * it or match nothing — it cannot break out into another command.
+ */
+export function legacyCliProjectFilterValue(projectId: string): string {
+  if (projectId.length === 0) return LEGACY_CLI_PROJECT_LABEL;
+  return `${LEGACY_CLI_PROJECT_LABEL}=${projectId}`;
+}

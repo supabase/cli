@@ -2,9 +2,19 @@ import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { containerCliExitCode, spawnContainerCli } from "./legacy-container-cli.ts";
+import {
+  containerCliExitCode,
+  legacyDescribeContainerCliFailure,
+  spawnContainerCli,
+} from "./legacy-container-cli.ts";
 
-function mockSpawner(opts: { readonly dockerMissing?: boolean; readonly exitCode?: number } = {}) {
+function mockSpawner(
+  opts: {
+    readonly dockerMissing?: boolean;
+    readonly bothMissing?: boolean;
+    readonly exitCode?: number;
+  } = {},
+) {
   const spawned: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
 
   const spawner = ChildProcessSpawner.make((command) =>
@@ -13,13 +23,13 @@ function mockSpawner(opts: { readonly dockerMissing?: boolean; readonly exitCode
       const args = command._tag === "StandardCommand" ? command.args : [];
       spawned.push({ command: cmd, args });
 
-      if (opts.dockerMissing && cmd === "docker") {
+      if ((opts.dockerMissing && cmd === "docker") || opts.bothMissing === true) {
         return yield* Effect.fail(
           PlatformError.systemError({
             _tag: "NotFound",
             module: "ChildProcess",
             method: "spawn",
-            description: "docker not found",
+            description: `${cmd} not found`,
           }),
         );
       }
@@ -97,5 +107,38 @@ describe("containerCliExitCode", () => {
         expect(mock.spawned.map((entry) => entry.command)).toEqual(["docker", "podman"]);
       }),
     );
+  });
+
+  it.live("fails with a clear message when neither docker nor podman can be spawned", () => {
+    const mock = mockSpawner({ bothMissing: true });
+    return containerCliExitCode(mock.spawner, ["image", "inspect", "img"]).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(legacyDescribeContainerCliFailure(error)).toBe(
+          "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH",
+        );
+      }),
+    );
+  });
+});
+
+describe("legacyDescribeContainerCliFailure", () => {
+  it.live("describes a both-runtimes-missing failure with its clear message", () => {
+    const mock = mockSpawner({ bothMissing: true });
+    return containerCliExitCode(mock.spawner, ["ps"]).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(legacyDescribeContainerCliFailure(error)).toContain("docker: command not found");
+      }),
+    );
+  });
+
+  it("falls back to an Error instance's own message", () => {
+    expect(legacyDescribeContainerCliFailure(new Error("boom"))).toBe("boom");
+  });
+
+  it("stringifies a non-Error cause", () => {
+    expect(legacyDescribeContainerCliFailure("boom")).toBe("boom");
+    expect(legacyDescribeContainerCliFailure(42)).toBe("42");
   });
 });
