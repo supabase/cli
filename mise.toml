@@ -1,0 +1,18 @@
+monorepo_root = true
+
+[monorepo]
+config_roots = [
+  "apps/*",
+  "packages/*",
+]
+
+[settings]
+# uses .bun-version and .nvmrc to determine the bun and node versions to use
+idiomatic_version_file_enable_tools = ["bun", "node"]
+
+[tools]
+# extracts the go version from the go.mod file in apps/cli-go
+go = "{{ exec(command=`awk '/^go / {print $2}' apps/cli-go/go.mod`) }}"
+golangci-lint = "2"
+# extracts the pnpm version from the root package.json file
+pnpm = """{{ exec(command=`jq -r '.packageManager | split("@")[1]' package.json`) }}"""

@@ -4,6 +4,24 @@ Bun monorepo for exploring the next generation of the Supabase CLI and local dev
 
 ## Setup
 
+### Tool versions
+
+This repo supports the use of [`mise`](https://mise.jdx.dev/) to manage the tool versions (Node, Bun, Go, pnpm, golangci-lint) needed to work on it.
+
+If you don't already have these tools installed, you can set up `mise` (by going through steps 1 [here](https://mise.en.dev/getting-started.html)) and let it install the correct versions for you.
+
+Once `mise` is up and running, run this from the repo root to install the pinned tool versions:
+
+```sh
+mise install
+```
+
+This reads `mise.toml` (and a handful of downstream files) to install matching versions of Node, Bun, pnpm, Go, and golangci-lint, and makes them available whenever you `cd` into this repo.
+
+If you already have these tools installed and managed some other way, `mise` is not required — just make sure your versions match the ones pinned in `apps/cli-go/go.mod`, `.bun-version`, and `.nvmrc`.
+
+### Install dependencies
+
 Install workspace dependencies:
 
 ```sh

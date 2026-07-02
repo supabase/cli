@@ -20,7 +20,7 @@ runs:
   steps:
     - name: Resolve Bun version
       shell: bash
-      run: echo "BUN_VERSION=1.3.13" >> "$GITHUB_ENV"
+      run: echo "BUN_VERSION=$(cat .bun-version)" >> "$GITHUB_ENV"
 
     - name: Install Bun
       id: install-bun
