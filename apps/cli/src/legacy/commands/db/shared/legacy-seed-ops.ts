@@ -180,7 +180,7 @@ const globOne = (
       const absDir = d === "" ? workdir : resolve(d);
       const names = yield* fs
         .readDirectory(absDir)
-        .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
       for (const name of names) {
         if (legacyMatchPattern(file, name)) {
           result.push(d === "" ? name : `${d}/${name}`);
@@ -228,10 +228,10 @@ export const legacyGetPendingSeeds = Effect.fnUntraced(function* (
   if (Option.isSome(warning)) {
     yield* output.raw(`WARN: ${warning.value}\n`, "stderr");
   }
-  if (files.length === 0) return [] as ReadonlyArray<LegacySeedFile>;
+  const pending: Array<LegacySeedFile> = [];
+  if (files.length === 0) return pending;
 
   const applied = yield* readRemoteSeeds(session);
-  const pending: Array<LegacySeedFile> = [];
   for (const file of files) {
     const content = yield* fs.readFileString(
       path.isAbsolute(file) ? file : path.join(workdir, file),
@@ -245,7 +245,7 @@ export const legacyGetPendingSeeds = Effect.fnUntraced(function* (
     }
     pending.push({ path: file, hash, dirty: false });
   }
-  return pending as ReadonlyArray<LegacySeedFile>;
+  return pending;
 });
 
 /**
@@ -300,8 +300,11 @@ export const legacySeedData = <E>(
   }).pipe(
     Effect.mapError((error) =>
       mapError(
-        typeof error === "object" && error !== null && "message" in error
-          ? String((error as { message: unknown }).message)
+        typeof error === "object" &&
+          error !== null &&
+          "message" in error &&
+          typeof error.message === "string"
+          ? error.message
           : String(error),
       ),
     ),

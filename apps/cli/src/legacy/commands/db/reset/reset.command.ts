@@ -58,9 +58,9 @@ export const legacyDbResetCommand = Command.make("reset", config).pipe(
           version: flags.version,
           last: flags.last,
         },
-        // Go marks `--version` telemetry-safe for migration/squash; reset reuses
-        // the same package-level var, so keep it safe here too.
-        safeFlags: ["version"],
+        // NO safeFlags: `markFlagTelemetrySafe` is per flag INSTANCE, and Go only
+        // marks migration squash's `--version` (cmd/migration.go:134). db reset's
+        // `--version` (cmd/db.go) is unmarked, so Go redacts it — match that.
       }),
       withJsonErrorHandling,
     ),

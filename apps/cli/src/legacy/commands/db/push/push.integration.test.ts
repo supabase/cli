@@ -412,6 +412,39 @@ describe("legacy db push", () => {
     });
   });
 
+  it.live("--include-roles without a roles.sql pushes migrations and skips globals", () => {
+    // Go's push only globs supabase/roles.sql when it exists; an absent file is
+    // silently skipped (no error, no "Seeding globals" line) and the rest pushes.
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeRoles: true }).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("Seeding globals");
+      expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
+    });
+  });
+
+  it.live("emits the seeded file paths in the json success payload", () => {
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: {
+        ...migrationFile("20240101000000"),
+        "supabase/seed.sql": "insert into t values (1);",
+      },
+      format: "json",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      const success = out.messages.find((m) => m.type === "success");
+      expect(success?.data?.["upToDate"]).toBe(false);
+      expect(success?.data?.["migrations"]).toEqual(["20240101000000_test.sql"]);
+      expect(success?.data?.["seeds"]).toEqual(["supabase/seed.sql"]);
+    });
+  });
+
   it.live("reports schema migrations up to date when only roles are pushed", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
