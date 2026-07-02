@@ -25,6 +25,7 @@ import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectRefResolver } from "../../../../legacy/config/legacy-project-ref.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../../legacy/config/legacy-project-ref.errors.ts";
+import { legacySeedBucketsRun } from "../../../shared/legacy-seed-buckets.ts";
 import { legacySeedBuckets } from "./buckets.handler.ts";
 import type { LegacyBucketsFlags } from "./buckets.command.ts";
 import { LegacyPlatformApi } from "../../../../legacy/auth/legacy-platform-api.service.ts";
@@ -322,6 +323,36 @@ describe("legacy seed buckets", () => {
       expect(requests.some((r) => r.method === "PUT")).toBe(false);
     });
   });
+
+  it.live(
+    "honors a piped decline for the overwrite prompt when non-interactive (db reset path)",
+    () => {
+      const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: "[storage.buckets.test]\npublic = true\n",
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [{ name: "test", id: "test" }] },
+        ],
+        pipedAnswers: ["n"],
+      });
+      return Effect.gen(function* () {
+        // db reset seeds buckets with interactive=false (Go's `buckets.Run(ctx, "",
+        // false, fsys)` forces console.IsTTY=false). Go does NOT silently take the
+        // default: the prompt still prints its label, scans one line, and honors a
+        // parsed answer — so the piped "n" must skip the overwrite (default is yes).
+        const exit = yield* legacySeedBucketsRun({
+          projectRef: "",
+          emitSummary: false,
+          interactive: false,
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain(
+          "already exists. Do you want to overwrite its properties?",
+        );
+        expect(out.stderrText).not.toContain("Updating Storage bucket");
+        expect(requests.some((r) => r.method === "PUT")).toBe(false);
+      });
+    },
+  );
 
   it.live("creates configured vector buckets and leaves stale ones (prune default no)", () => {
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {

@@ -23,6 +23,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import {
   LegacyDnsResolverFlag,
@@ -36,6 +37,7 @@ import type {
   LegacyDbConfigFlags,
   LegacyResolvedDbConfig,
 } from "../../../shared/legacy-db-config.types.ts";
+import { LegacyDbConfigConnectTempRoleError } from "../../../shared/legacy-db-config.errors.ts";
 import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import {
   LegacyDbConnection,
@@ -67,18 +69,29 @@ const DEFAULT_FLAGS: LegacyDbResetFlags = {
   last: Option.none(),
 };
 
-function mockResolver(opts: { isLocal: boolean; ref?: string; omitRef?: boolean }) {
+function mockResolver(opts: {
+  isLocal: boolean;
+  ref?: string;
+  omitRef?: boolean;
+  resolveFails?: boolean;
+}) {
   return Layer.succeed(LegacyDbConfigResolver, {
     resolve: (_flags: LegacyDbConfigFlags) =>
-      Effect.succeed(
-        (opts.omitRef === true
-          ? { conn: CONN, isLocal: opts.isLocal }
-          : {
-              conn: CONN,
-              isLocal: opts.isLocal,
-              ref: opts.ref !== undefined ? Option.some(opts.ref) : Option.none(),
-            }) satisfies LegacyResolvedDbConfig,
-      ),
+      opts.resolveFails === true
+        ? Effect.fail(
+            new LegacyDbConfigConnectTempRoleError({
+              message: "failed to create login role: network error",
+            }),
+          )
+        : Effect.succeed(
+            (opts.omitRef === true
+              ? { conn: CONN, isLocal: opts.isLocal }
+              : {
+                  conn: CONN,
+                  isLocal: opts.isLocal,
+                  ref: opts.ref !== undefined ? Option.some(opts.ref) : Option.none(),
+                }) satisfies LegacyResolvedDbConfig,
+          ),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 }
@@ -206,6 +219,7 @@ function setup(
     remoteSeeds?: Readonly<Record<string, string>>;
     yes?: boolean;
     omitRef?: boolean;
+    resolveFails?: boolean;
     running?: boolean;
     storageReady?: boolean;
   },
@@ -239,6 +253,7 @@ function setup(
       isLocal: opts.isLocal ?? false,
       ref: opts.ref ?? LEGACY_VALID_REF,
       omitRef: opts.omitRef,
+      resolveFails: opts.resolveFails,
     }),
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
@@ -249,6 +264,15 @@ function setup(
     // be present to satisfy the effect's requirements.
     mockTty({ stdinIsTty: true }),
     mockStdin(true),
+    // The linked ref is pre-loaded (for the post-run cache) before resolve,
+    // mirroring Go's LoadProjectRef-before-NewDbConfigWithPassword order.
+    Layer.succeed(LegacyProjectRefResolver, {
+      resolve: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+      resolveForLink: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+      resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? LEGACY_VALID_REF)),
+      loadProjectRef: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+      promptProjectRef: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+    }),
     mockStorageHttp,
     Layer.succeed(LegacyPlatformApiFactory, {
       make: LegacyPlatformApi.pipe(Effect.provide(platformApi.layer)),
@@ -470,6 +494,26 @@ describe("legacy db reset", () => {
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
       expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
       expect(linkedCache.cached).toBe(true);
+    });
+  });
+
+  it.live("still caches the linked ref when DB-config resolution fails", () => {
+    // Go's Execute() runs ensureProjectGroupsCached after ExecuteC returns even on
+    // error (root.go:171-181), and ParseDatabaseConfig sets ProjectRef via
+    // LoadProjectRef BEFORE the fallible temp-role/connection step — so a failed
+    // linked resolve must not skip the post-run linked-project cache write.
+    const { layer, linkedCache } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      resolveFails: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(linkedCache.cached).toBe(true);
+      expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
     });
   });
 

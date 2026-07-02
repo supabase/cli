@@ -16,6 +16,7 @@ import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyApplyMigrations } from "../../../shared/legacy-migration-apply.ts";
@@ -206,6 +207,15 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     }
 
     const connType = target.connType ?? "local";
+    // Go's ParseDatabaseConfig runs LoadProjectRef BEFORE the fallible linked
+    // resolution (db_url.go:87-95), and Execute() writes the linked-project cache
+    // even when a later step errors (root.go:171-181). Pre-load the ref so the
+    // post-run cache finalizer still fires when resolve fails mid-way (merged
+    // config, temp-role mint, connection) — mirrors push.handler.
+    if (connType === "linked") {
+      const refResolver = yield* LegacyProjectRefResolver;
+      linkedRefForCache = yield* refResolver.loadProjectRef(Option.none());
+    }
     const cfg = yield* resolver.resolve({ dbUrl: flags.dbUrl, connType, dnsResolver });
 
     // Local target → native local reset. The container-recreate primitives live
