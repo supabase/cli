@@ -63,9 +63,30 @@ function apiUrlWithPath(apiExternalUrl: string, path: string): string {
   return `${apiExternalUrl}${path}`;
 }
 
+/**
+ * Thrown by {@link legacyResolveLocalConfigValues} when `auth.jwt_secret` is
+ * configured but too short to sign with, mirroring Go's `Config.Validate`
+ * (`pkg/config/apikeys.go:45-47`) — that check runs at config-load time, before
+ * any command renders output, so no local dev stack can even start with a
+ * short secret.
+ */
+export class LegacyInvalidJwtSecretError extends Error {
+  constructor() {
+    super("Invalid config for auth.jwt_secret. Must be at least 16 characters");
+    this.name = "LegacyInvalidJwtSecretError";
+  }
+}
+
+/** Go's minimum `auth.jwt_secret` length (`pkg/config/apikeys.go:46`). */
+const MIN_JWT_SECRET_LENGTH = 16;
+
 /** Go's `(a *auth) generateAPIKeys` (`pkg/config/apikeys.go:43-73`). */
 function resolveJwtSecret(configured: string | undefined): string {
-  return configured !== undefined && configured.length > 0 ? configured : defaultJwtSecret;
+  if (configured === undefined || configured.length === 0) return defaultJwtSecret;
+  if (configured.length < MIN_JWT_SECRET_LENGTH) {
+    throw new LegacyInvalidJwtSecretError();
+  }
+  return configured;
 }
 
 function resolveOpaqueKey(configured: string | undefined, fallback: string): string {
@@ -82,6 +103,7 @@ function resolveSignedKey(
     : legacyGenerateGoJwt(jwtSecret, role);
 }
 
+/** @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short. */
 export function legacyResolveLocalConfigValues(
   config: ProjectConfig,
   hostname: string,

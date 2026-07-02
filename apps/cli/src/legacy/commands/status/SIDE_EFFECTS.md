@@ -43,6 +43,7 @@ resolved from local `config.toml` and the local Docker daemon.
 | `1`  | the db container inspect call failed (including "not found") — health assertion, skipped by `--ignore-health-check` above              |
 | `1`  | the db container is present but not in the `running` state — health assertion, skipped by `--ignore-health-check` above                |
 | `1`  | the db container is running but its Docker health check isn't `healthy` — health assertion, skipped by `--ignore-health-check` above   |
+| `1`  | `auth.jwt_secret` is configured but shorter than 16 characters (Go's `Config.Validate` rejects this at config-load time)               |
 
 ## Telemetry Events Fired
 
@@ -167,7 +168,9 @@ Additive — no Go CLI equivalent. Emits the same resolved value map via
 - Default `auth.anon_key`/`auth.service_role_key`/`auth.jwt_secret` values are generated via a
   Go-byte-exact HS256 signer (`legacy-go-jwt.ts`), not `@supabase/stack`'s `generateJwt` — the
   latter uses a different issuer, expiry, and claim order that would not match what Go prints
-  for local dev keys.
+  for local dev keys. A configured `auth.jwt_secret` shorter than 16 characters fails the command
+  (`LegacyStatusInvalidConfigError`), matching Go's `Config.Validate` rejecting it at config-load
+  time before any command can render output.
 - `db.password` and the `storage.s3_credentials` triple have no `@supabase/config` schema field;
   Go hardcodes both (`"postgres"` and the S3 access key/secret/region seen above), reproduced
   identically in `legacy-local-config-values.ts`.

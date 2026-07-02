@@ -272,6 +272,25 @@ describe("legacy status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("fails when auth.jwt_secret is configured but shorter than 16 characters", () => {
+    // Go's Config.Validate rejects this at config-load time
+    // (pkg/config/apikeys.go:45-47), before any command can render output.
+    const { layer, child } = setup({
+      configContents: 'project_id = "demo"\n[auth]\njwt_secret = "too-short"\n',
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyStatus(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusInvalidConfigError");
+        expect(JSON.stringify(exit.cause)).toContain(
+          "Invalid config for auth.jwt_secret. Must be at least 16 characters",
+        );
+      }
+      expect(child.spawned.some((s) => s.args[0] === "ps")).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("reports status using schema defaults when config.toml is missing entirely", () => {
     // Matches Go: `flags.LoadConfig` -> `Config.Load` -> `loadFromFile` ->
     // `mergeFileConfig` treats a missing file as a no-op (`os.ErrNotExist` ->

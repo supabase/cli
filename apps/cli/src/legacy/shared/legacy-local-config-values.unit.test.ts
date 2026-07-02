@@ -2,7 +2,10 @@ import { ProjectConfigSchema, type ProjectConfig } from "@supabase/config";
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { legacyResolveLocalConfigValues } from "./legacy-local-config-values.ts";
+import {
+  LegacyInvalidJwtSecretError,
+  legacyResolveLocalConfigValues,
+} from "./legacy-local-config-values.ts";
 
 const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 
@@ -96,6 +99,16 @@ describe("legacyResolveLocalConfigValues", () => {
     const values = legacyResolveLocalConfigValues(config, "127.0.0.1");
     expect(values.jwtSecret).toBe("a".repeat(32));
     expect(values.anonKey).not.toBe("");
+  });
+
+  it("rejects a configured jwt_secret shorter than 16 characters", () => {
+    // Go's Config.Validate fails this at config-load time, before any command
+    // can render output (pkg/config/apikeys.go:45-47) — reproduced as a thrown
+    // error here rather than silently signing with the too-short secret.
+    const config = baseConfig({ auth: { jwt_secret: "a".repeat(15) } });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1")).toThrow(
+      LegacyInvalidJwtSecretError,
+    );
   });
 
   it("hardcodes the Go-parity local S3 credentials", () => {

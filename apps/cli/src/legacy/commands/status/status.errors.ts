@@ -33,3 +33,14 @@ export class LegacyStatusDbNotReadyError extends Data.TaggedError("LegacyStatusD
 export class LegacyStatusListError extends Data.TaggedError("LegacyStatusListError")<{
   readonly message: string;
 }> {}
+
+/**
+ * `config.toml` resolved to a value `Config.Validate` would reject before status
+ * ever renders — e.g. an `auth.jwt_secret` shorter than 16 characters
+ * (`pkg/config/apikeys.go:45-47`).
+ */
+export class LegacyStatusInvalidConfigError extends Data.TaggedError(
+  "LegacyStatusInvalidConfigError",
+)<{
+  readonly message: string;
+}> {}

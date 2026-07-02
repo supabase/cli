@@ -31,6 +31,7 @@ import {
   LegacyStatusDbInspectError,
   LegacyStatusDbNotReadyError,
   LegacyStatusDbNotRunningError,
+  LegacyStatusInvalidConfigError,
   LegacyStatusListError,
   LegacyStatusOverrideParseError,
 } from "./status.errors.ts";
@@ -182,8 +183,18 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
 
     // `names` is intentionally unused here: the pretty-mode branch below
     // recomputes with an empty override map (matching Go), and every other
-    // branch only needs `values`.
-    const { values } = legacyStatusValues(config, containerIds, hostname, excluded, overrides);
+    // branch only needs `values`. `legacyStatusValues` can throw
+    // `LegacyInvalidJwtSecretError` (a short `auth.jwt_secret`) — Go's
+    // `Config.Validate` rejects that at config-load time, before this command
+    // would ever render anything, so it's surfaced here as a hard failure
+    // rather than silently signing with the too-short secret.
+    const { values } = yield* Effect.try({
+      try: () => legacyStatusValues(config, containerIds, hostname, excluded, overrides),
+      catch: (cause) =>
+        new LegacyStatusInvalidConfigError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
 
     // 8. Output branching: Go's -o (env|json|toml|yaml) takes priority over
     // --output-format; -o pretty/unset falls through to text/json/stream-json.
