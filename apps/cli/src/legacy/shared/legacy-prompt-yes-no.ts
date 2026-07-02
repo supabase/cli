@@ -1,8 +1,11 @@
 import { Effect, Option } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
+import { Stdin } from "../../shared/runtime/stdin.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
-import { LegacyPromptInput } from "./legacy-prompt-input.service.ts";
+
+/** Go's non-TTY `Console.ReadLine` timeout (`internal/utils/console.go:36`). */
+const LEGACY_NON_TTY_TIMEOUT_MILLIS = 100;
 
 /**
  * Port of Go's `parseYesNo` (`apps/cli-go/internal/utils/console.go:84-93`):
@@ -31,7 +34,7 @@ export const legacyParseYesNo = (input: string): boolean | undefined => {
  *  - on a non-TTY stdin, Go does **not** short-circuit to the default: it prints
  *    the label, scans the next piped line, echoes it, and honors a parsed answer
  *    (`console.go:74-82,96-102`). Only empty/unparseable input falls back to the
- *    default. `LegacyPromptInput` supplies the piped line (one per prompt).
+ *    default. The shared `Stdin` reader supplies the piped line (one per prompt).
  *
  * Callers resolve `yes` via `legacyResolveYes` so it honors both `--yes` and
  * `SUPABASE_YES`, matching Go's `viper.GetBool("YES")` (root.go:318-320,334).
@@ -56,8 +59,8 @@ export const legacyPromptYesNo = Effect.fnUntraced(function* (
     // non-TTY) echoes it to stderr (`console.go:96-102`). A parsed piped answer
     // wins; an empty/exhausted scan or an unparseable line uses the default.
     yield* output.raw(`${label} [${choices}] `, "stderr");
-    const promptInput = yield* LegacyPromptInput;
-    const line = yield* promptInput.nextLine;
+    const stdin = yield* Stdin;
+    const line = yield* stdin.readLine(LEGACY_NON_TTY_TIMEOUT_MILLIS);
     const input = Option.getOrElse(line, () => "");
     yield* output.raw(`${input}\n`, "stderr");
     if (input.length > 0) {

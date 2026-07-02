@@ -17,8 +17,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockRuntimeInfo, mockTty } from "../../../../../tests/helpers/mocks.ts";
-import { mockLegacyPromptInput } from "../../../../../tests/helpers/legacy-prompt-input.ts";
+import { mockRuntimeInfo, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { legacyConfigPush } from "./push.handler.ts";
 
@@ -123,7 +122,10 @@ function setup(opts: {
       linkedProjectCache: linkedProjectCache.layer,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
     }),
-    mockLegacyPromptInput({ pipedLines: opts.pipedAnswers }),
+    mockStdin(
+      opts.stdinIsTty ?? true,
+      opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
+    ),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
   );
   return { layer, out, api, telemetry, linkedProjectCache };
@@ -499,7 +501,7 @@ file_size_limit = "50MiB"
         cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
-      mockLegacyPromptInput(),
+      mockStdin(true),
       Layer.succeed(LegacyYesFlag, true),
     );
     return Effect.gen(function* () {
@@ -571,7 +573,7 @@ function setupService(opts: {
       // Gated-service prompts model an interactive user answering via `confirm`.
       tty: mockTty({ stdinIsTty: true, stdoutIsTty: false }),
     }),
-    mockLegacyPromptInput(),
+    mockStdin(true),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
   );
   return { layer, out, apiMock };

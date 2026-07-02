@@ -1,8 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
 
-import { mockOutput, mockTty } from "../../../../tests/helpers/mocks.ts";
-import { mockLegacyPromptInput } from "../../../../tests/helpers/legacy-prompt-input.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   mockLegacyCredentialsTracked,
@@ -37,7 +36,10 @@ function setupLegacyLogout(opts: SetupOpts = {}) {
     telemetry.layer,
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
-    mockLegacyPromptInput({ pipedLines: opts.pipedAnswers }),
+    mockStdin(
+      opts.stdinIsTty ?? true,
+      opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
+    ),
     Layer.succeed(CliArgs, { args: [] }),
   );
   return { layer, out, telemetry, credentials };

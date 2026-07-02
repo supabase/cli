@@ -10,8 +10,12 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockLegacyPromptInput } from "../../../../../tests/helpers/legacy-prompt-input.ts";
-import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import {
+  mockOutput,
+  mockRuntimeInfo,
+  mockStdin,
+  mockTty,
+} from "../../../../../tests/helpers/mocks.ts";
 import {
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
@@ -230,7 +234,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     proxy,
     mockLegacyCliConfig({ workdir, projectId: Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
-    mockLegacyPromptInput({ pipedLines: opts.pipedAnswers }),
+    mockStdin(
+      opts.stdinIsTty ?? false,
+      opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
+    ),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(LegacyDnsResolverFlag, "native"),

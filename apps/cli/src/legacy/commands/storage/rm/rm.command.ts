@@ -4,8 +4,8 @@ import { Argument, Command, Flag } from "effect/unstable/cli";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyRequireExperimental } from "../../../shared/legacy-experimental-gate.ts";
-import { legacyPromptInputRuntimeLayer } from "../../../shared/legacy-prompt-input.layer.ts";
 import { legacyStorageGatewayRuntimeLayer } from "../../../shared/legacy-storage-runtime.layer.ts";
 import {
   LegacyStorageLinkedFlagDef,
@@ -60,10 +60,5 @@ export const legacyStorageRmCommand = Command.make("rm", config).pipe(
       }).pipe(withLegacyCommandInstrumentation({ flags: telemetryFlags }));
     }).pipe(withJsonErrorHandling),
   ),
-  Command.provide(
-    Layer.mergeAll(
-      legacyStorageGatewayRuntimeLayer(["storage", "rm"]),
-      legacyPromptInputRuntimeLayer,
-    ),
-  ),
+  Command.provide(Layer.mergeAll(legacyStorageGatewayRuntimeLayer(["storage", "rm"]), stdinLayer)),
 );

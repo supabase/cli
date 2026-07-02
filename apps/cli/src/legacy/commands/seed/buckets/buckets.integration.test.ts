@@ -8,8 +8,7 @@ import { Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 
-import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
-import { mockLegacyPromptInput } from "../../../../../tests/helpers/legacy-prompt-input.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   legacyJsonResponse,
@@ -186,7 +185,7 @@ function setupLegacySeedBuckets(
     BunServices.layer,
     // Seed-bucket prompts model an interactive user answering via `confirm`.
     mockTty({ stdinIsTty: true, stdoutIsTty: false }),
-    mockLegacyPromptInput({ pipedLines: opts.pipedAnswers }),
+    mockStdin(true, opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined),
     Layer.succeed(CliArgs, { args: opts.args ?? ["seed", "buckets"] }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     projectRefLayer,
