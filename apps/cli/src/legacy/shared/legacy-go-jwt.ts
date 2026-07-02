@@ -78,7 +78,14 @@ const GO_JWT_ASYMMETRIC_EXPIRY_SECONDS = 60 * 60 * 24 * 365 * 10;
  * `CustomClaims.NewToken()`'s fixed default.
  *
  * Only `RS256`/`ES256` are supported, matching Go's `jwkToPrivateKey`
- * (RSA/EC key types) + this function's own switch on `jwk.alg`. The header key
+ * (RSA/EC key types) + this function's own switch on `jwk.alg`. `kty`/`alg`
+ * are cross-validated (RS256 requires `kty: "RSA"`, ES256 requires
+ * `kty: "EC"` and `crv: "P-256"`) — matching Go's `jwkToRSAPrivateKey` /
+ * `jwkToECDSAPrivateKey`, which reject any other combination rather than
+ * signing with a mismatched key or curve (Node's `createPrivateKey`/`createSign`
+ * do not themselves catch this: an EC key signed as RS256, or a non-P-256
+ * curve signed as ES256, both "succeed" and produce a spec-invalid token that
+ * silently fails verification instead of raising an error). The header key
  * order (`alg`, `kid`, `typ`) matches Go's `encoding/json` alphabetically
  * sorting `map[string]interface{}` keys — `kid` is only present when set on
  * the JWK, matching Go's `if len(jwk.KeyID) > 0` guard.
@@ -94,6 +101,17 @@ export function legacyGenerateAsymmetricGoJwt(
   const algorithm = jwk.alg;
   if (algorithm !== "RS256" && algorithm !== "ES256") {
     throw new Error(`unsupported algorithm: ${algorithm ?? ""}`);
+  }
+  if (algorithm === "RS256" && jwk.kty !== "RSA") {
+    throw new Error(`unsupported key type: ${jwk.kty}`);
+  }
+  if (algorithm === "ES256") {
+    if (jwk.kty !== "EC") {
+      throw new Error(`unsupported key type: ${jwk.kty}`);
+    }
+    if (jwk.crv !== "P-256") {
+      throw new Error(`unsupported curve: ${jwk.crv ?? ""}`);
+    }
   }
   const header =
     jwk.kid !== undefined && jwk.kid.length > 0

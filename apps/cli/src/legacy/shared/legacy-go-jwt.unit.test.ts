@@ -137,4 +137,28 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
       "unsupported algorithm: ",
     );
   });
+
+  it("rejects an EC key forged with alg: RS256 instead of signing garbage", () => {
+    const jwk = { ...generateEcJwk(), alg: "RS256" };
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow("unsupported key type: EC");
+  });
+
+  it("rejects an RSA key forged with alg: ES256 instead of signing garbage", () => {
+    const jwk = { ...generateRsaJwk(), alg: "ES256" };
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow("unsupported key type: RSA");
+  });
+
+  it("rejects an ES256 EC key whose curve is not P-256", () => {
+    const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-384" });
+    const jwk = { ...privateKey.export({ format: "jwk" }), kty: "EC", alg: "ES256" };
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow("unsupported curve: P-384");
+  });
+
+  it("rejects an ES256 EC key with no curve at all", () => {
+    const jwk = generateEcJwk();
+    const { crv: _crv, ...jwkWithoutCurve } = jwk;
+    expect(() => legacyGenerateAsymmetricGoJwt(jwkWithoutCurve, "anon")).toThrow(
+      "unsupported curve: ",
+    );
+  });
 });
