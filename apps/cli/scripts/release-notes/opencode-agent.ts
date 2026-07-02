@@ -13,22 +13,20 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 
-// The SDK spawns the `opencode` binary by name via cross-spawn, so it must be
-// resolvable on PATH. `pnpm exec` adds node_modules/.bin automatically, but a
-// bare `bun apps/cli/scripts/...` invocation does not — walk up from this file
-// to the nearest node_modules/.bin that carries the shim and prepend it.
+// The SDK spawns the `opencode` binary by name via cross-spawn. Always prepend
+// the workspace-pinned shim when present — a globally installed `opencode` on
+// PATH (often a different version with OAuth plugins) must not shadow the
+// `opencode-ai` dependency this script depends on.
 function ensureOpencodeOnPath(): void {
   const delimiter = path.delimiter;
-  const onPath = (process.env.PATH ?? "")
-    .split(delimiter)
-    .some((dir) => dir && existsSync(path.join(dir, "opencode")));
-  if (onPath) return;
-
   let dir = import.meta.dir;
   for (;;) {
     const bin = path.join(dir, "node_modules", ".bin");
     if (existsSync(path.join(bin, "opencode"))) {
-      process.env.PATH = `${bin}${delimiter}${process.env.PATH ?? ""}`;
+      const pathEntries = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
+      if (!pathEntries.includes(bin)) {
+        process.env.PATH = `${bin}${delimiter}${process.env.PATH ?? ""}`;
+      }
       return;
     }
     const parent = path.dirname(dir);
@@ -60,6 +58,25 @@ const TOOLS: Record<string, boolean> = {
   patch: false,
 };
 
+/** OpenCode server config for a non-interactive, API-key-only run. */
+function serverConfig(model: string) {
+  const providerId = model.slice(0, model.indexOf("/"));
+  return {
+    model,
+    // Do not inherit a developer's global OpenCode plugins (OAuth auth shims,
+    // skills, etc.) — CI has none, but locally they can hijack the provider
+    // and crash API-key models like openai/gpt-5-mini.
+    plugin: [] as string[],
+    instructions: [] as string[],
+    enabled_providers: [providerId],
+    permission: {
+      bash: "allow" as const,
+      webfetch: "allow" as const,
+      external_directory: "allow" as const,
+    },
+  };
+}
+
 export async function generateNotes(args: {
   prompt: string;
   /** OpenCode-valid model id in `provider/model` form, e.g. `openai/gpt-5-mini`. */
@@ -74,14 +91,32 @@ export async function generateNotes(args: {
   // the previous `settingSources: []` isolation.
   const directory = await mkdtemp(path.join(tmpdir(), "release-notes-"));
 
+  // OpenCode always merges ~/.config/opencode (plugins, OAuth provider shims,
+  // custom model tables). On a developer machine that hijacks API-key models
+  // and crashes openai/* runs; CI has no such config. Point HOME at an empty
+  // temp dir for the server lifetime so only OPENCODE_CONFIG_CONTENT applies.
+  const isolatedHome = await mkdtemp(path.join(tmpdir(), "release-notes-home-"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = isolatedHome;
+
   ensureOpencodeOnPath();
   log(`==> Starting OpenCode server`);
   // `config.model` sets the session's default model, so the prompt below omits
   // `body.model`. OpenCode resolves the provider and its credential (e.g.
   // ANTHROPIC_API_KEY / OPENAI_API_KEY) from the environment via ai-sdk +
   // models.dev — no provider wiring needed on our side.
-  const { client, server } = await createOpencode({ config: { model }, timeout: 30_000 });
+  //
+  // bash/webfetch/external_directory default to "ask", which hangs in CI and
+  // other non-interactive runs — allow them explicitly for the investigation
+  // tools the prompt requires.
+  let server: { close(): void } | undefined;
   try {
+    const opencode = await createOpencode({
+      config: serverConfig(model),
+      timeout: 30_000,
+    });
+    server = opencode.server;
+    const { client } = opencode;
     const session = await client.session.create({ query: { directory } });
     if (session.error || !session.data) {
       throw new Error(`Failed to create OpenCode session: ${JSON.stringify(session.error)}`);
@@ -113,7 +148,13 @@ export async function generateNotes(args: {
 
     return { text, costUsd: info.cost };
   } finally {
-    server.close();
+    server?.close();
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    await rm(isolatedHome, { recursive: true, force: true }).catch(() => {});
     await rm(directory, { recursive: true, force: true }).catch(() => {});
   }
 }
