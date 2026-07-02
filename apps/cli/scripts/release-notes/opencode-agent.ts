@@ -47,16 +47,16 @@ export interface GenerateNotesResult {
   costUsd?: number;
 }
 
-// Investigation needs `bash` (for authenticated `gh` queries) and `webfetch`
-// (to open PR/issue URLs). File-mutating tools stay off — the calling script
-// owns the final release-notes file, matching the previous Claude setup that
-// deliberately excluded Edit/Write. Mutation is denied authoritatively via the
-// `edit` permission in serverConfig() (which gates edit/write/apply_patch
-// regardless of their exact tool ids); these entries just avoid offering the
-// well-known mutating tools in the first place.
+// Investigation uses `webfetch` only (to open PR/issue URLs and the public
+// GitHub REST API). `bash` is deliberately OFF: the prompt embeds untrusted
+// third-party commit messages / PR titles, so a bash-enabled agent could be
+// prompt-injected into exfiltrating the provider key or GH_TOKEN from the
+// process environment (a spawned shell inherits it). Denying the shell removes
+// that path entirely. File-mutating tools stay off too — the script owns the
+// final notes file (mutation is also denied via the `edit` permission below).
 const TOOLS: Record<string, boolean> = {
-  bash: true,
   webfetch: true,
+  bash: false,
   write: false,
   edit: false,
 };
@@ -73,9 +73,10 @@ function serverConfig(model: string) {
     instructions: [] as string[],
     enabled_providers: [providerId],
     permission: {
-      bash: "allow" as const,
       webfetch: "allow" as const,
-      external_directory: "allow" as const,
+      // No shell for an agent that processes untrusted commit text: denying
+      // bash removes the prompt-injection → secret-exfil path entirely.
+      bash: "deny" as const,
       // The script owns the final release-notes file — the agent must never
       // mutate the filesystem. `edit` gates edit/write and the patch
       // (`apply_patch`) tool, so denying it here is the real guard.
