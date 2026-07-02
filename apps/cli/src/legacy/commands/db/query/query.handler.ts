@@ -123,8 +123,9 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       const boundary = agentMode ? yield* random.randomHex(BOUNDARY_BYTES) : "";
       const rendered = legacyRenderJson(cols, jsonData, agentMode, boundary, advisory);
       if (output.format === "stream-json" && Option.getOrUndefined(outputFlag) !== "json") {
+        const compactRendered = rendered.trimEnd().replaceAll("\n", "");
         yield* output.raw(
-          `{"type":"result","data":${rendered.trimEnd()},"timestamp":${JSON.stringify(new Date().toISOString())}}\n`,
+          `{"type":"result","data":${compactRendered},"timestamp":${JSON.stringify(new Date().toISOString())}}\n`,
         );
         return;
       }
@@ -374,9 +375,9 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
         ? "json"
         : explicit === "csv"
           ? "csv"
-          : explicit === "table"
+          : explicit === "table" || explicit === "pretty"
             ? "table"
-            : output.format !== "text" || agentMode
+            : explicit === undefined && (output.format !== "text" || agentMode)
               ? "json"
               : "table";
 

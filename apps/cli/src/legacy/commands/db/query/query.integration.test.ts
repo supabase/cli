@@ -447,6 +447,7 @@ describe("legacy db query integration", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "stream-json" });
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      expect(out.stdoutText.trimEnd().split("\n")).toHaveLength(1);
       expect(JSON.parse(out.stdoutText)).toEqual(
         expect.objectContaining({
           type: "result",
@@ -472,7 +473,22 @@ describe("legacy db query integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      expect(out.stdoutText).toContain('"data":[\n  {\n    "n": 9223372036854775807\n  }\n]');
+      expect(out.stdoutText.trimEnd().split("\n")).toHaveLength(1);
+      expect(out.stdoutText).toContain('"n": 9223372036854775807');
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("lets --output pretty win over --output-format json", () => {
+    const { layer, out } = setup({
+      result: SELECT_RESULT,
+      agent: "no",
+      format: "json",
+      goOutput: "pretty",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
+      expect(out.stdoutText).toContain("│ id │ name  │");
+      expect(out.messages.find((message) => message.type === "success")).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
