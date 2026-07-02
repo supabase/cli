@@ -5,6 +5,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { findGitRootPath } from "../../../../shared/git/git-root.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -219,37 +220,19 @@ const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
   } satisfies ResolvedSigningKeysConfig;
 });
 
-const findGitRoot = Effect.fnUntraced(function* (start: string) {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-
-  let current = path.resolve(start);
-  const root = path.parse(current).root;
-
-  while (true) {
-    if (yield* fs.exists(path.join(current, ".git")).pipe(Effect.orElseSucceed(() => false))) {
-      return Option.some(current);
-    }
-    if (current === root) {
-      return Option.none<string>();
-    }
-    current = path.dirname(current);
-  }
-});
-
 const isGitIgnored = Effect.fnUntraced(function* (filePath: string, searchFrom: string) {
   const path = yield* Path.Path;
-  const gitRoot = yield* findGitRoot(searchFrom);
-  if (Option.isNone(gitRoot)) {
+  const gitRoot = yield* Effect.tryPromise(() => findGitRootPath(searchFrom)).pipe(Effect.orDie);
+  if (gitRoot === undefined) {
     return Option.none<boolean>();
   }
 
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const relative = path.relative(gitRoot.value, filePath).replaceAll("\\", "/");
+  const relative = path.relative(gitRoot, filePath).replaceAll("\\", "/");
   const command = ChildProcess.make(
     "git",
     // `--` terminates flag parsing so a path beginning with `-` is never read as a git option.
-    ["-C", gitRoot.value, "check-ignore", "--quiet", "--", relative],
+    ["-C", gitRoot, "check-ignore", "--quiet", "--", relative],
     {
       detached: true,
       stdin: "ignore",

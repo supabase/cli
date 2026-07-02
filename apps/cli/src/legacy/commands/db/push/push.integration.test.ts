@@ -6,7 +6,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   mockLegacyCliConfig,
@@ -190,6 +190,11 @@ function setup(
     mockResolver({ isLocal: opts.isLocal ?? true }),
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
+    // Prompts (migration/seed confirmation) are answered through mockOutput's
+    // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is
+    // only referenced by legacyPromptYesNo's non-TTY branch (unreached here).
+    mockTty({ stdinIsTty: true }),
+    mockStdin(true),
     Layer.succeed(CliArgs, { args: opts.args ?? ["db", "push", "--local"] }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(LegacyDnsResolverFlag, "native"),

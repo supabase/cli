@@ -1,6 +1,8 @@
 import type { CliOutput, HelpDoc } from "effect/unstable/cli";
+import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
+import { formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
 
-export function jsonCliOutputFormatter(): CliOutput.Formatter {
+export function jsonCliOutputFormatter(context?: CliErrorSuggestionContext): CliOutput.Formatter {
   return {
     formatHelpDoc: (doc: HelpDoc.HelpDoc) => JSON.stringify({ _tag: "Help", doc }),
     formatCliError: (error) =>
@@ -11,7 +13,10 @@ export function jsonCliOutputFormatter(): CliOutput.Formatter {
     formatErrors: (errors) =>
       JSON.stringify({
         _tag: "Errors",
-        errors: errors.map((e) => ({ code: e._tag, message: e.message })),
+        errors: formatCliErrorsForDisplay(errors, context).errors.map((e) => ({
+          code: e._tag,
+          message: e.message,
+        })),
       }),
   };
 }

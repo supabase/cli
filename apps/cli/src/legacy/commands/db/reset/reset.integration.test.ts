@@ -7,7 +7,12 @@ import { Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
+import {
+  mockOutput,
+  mockRuntimeInfo,
+  mockStdin,
+  mockTty,
+} from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   mockLegacyCliConfig,
@@ -238,6 +243,12 @@ function setup(
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
     mockRuntimeInfo(),
+    // The remote-reset confirmation is answered through mockOutput's
+    // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is
+    // only referenced by legacyPromptYesNo's non-TTY branch (unreached here) but must
+    // be present to satisfy the effect's requirements.
+    mockTty({ stdinIsTty: true }),
+    mockStdin(true),
     mockStorageHttp,
     Layer.succeed(LegacyPlatformApiFactory, {
       make: LegacyPlatformApi.pipe(Effect.provide(platformApi.layer)),
