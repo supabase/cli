@@ -1,8 +1,16 @@
+import { readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+
 import type { ProjectConfig } from "@supabase/config";
 import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
+import { Schema } from "effect";
 
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
-import { legacyGenerateGoJwt } from "./legacy-go-jwt.ts";
+import {
+  legacyGenerateAsymmetricGoJwt,
+  legacyGenerateGoJwt,
+  type LegacyJwk,
+} from "./legacy-go-jwt.ts";
 
 /**
  * Go-parity derived local-dev config values, ported from `utils.Config`'s
@@ -80,6 +88,20 @@ export class LegacyInvalidJwtSecretError extends Error {
 /** Go's minimum `auth.jwt_secret` length (`pkg/config/apikeys.go:46`). */
 const MIN_JWT_SECRET_LENGTH = 16;
 
+/**
+ * Go's `Config.Load` binds Viper with `SetEnvPrefix("SUPABASE")` +
+ * `AutomaticEnv()` + a `.`→`_` key replacer (`pkg/config/config.go:529-535`),
+ * so any config field can be overridden by a `SUPABASE_<DOTTED_KEY>` env var —
+ * this resolves it for exactly the 5 auth fields this module reads, at the
+ * same higher-than-config.toml precedence Viper gives env vars. An empty env
+ * var is treated as unset, matching Viper's default (`AllowEmptyEnv` is never
+ * enabled in `config.go`).
+ */
+function envOverride(name: string, configured: string | undefined): string | undefined {
+  const value = process.env[name];
+  return value !== undefined && value.length > 0 ? value : configured;
+}
+
 /** Go's `(a *auth) generateAPIKeys` (`pkg/config/apikeys.go:43-73`). */
 function resolveJwtSecret(configured: string | undefined): string {
   if (configured === undefined || configured.length === 0) return defaultJwtSecret;
@@ -96,20 +118,74 @@ function resolveOpaqueKey(configured: string | undefined, fallback: string): str
 function resolveSignedKey(
   configured: string | undefined,
   jwtSecret: string,
+  signingKey: LegacyJwk | undefined,
   role: "anon" | "service_role",
 ): string {
-  return configured !== undefined && configured.length > 0
-    ? configured
+  if (configured !== undefined && configured.length > 0) return configured;
+  return signingKey !== undefined
+    ? legacyGenerateAsymmetricGoJwt(signingKey, role)
     : legacyGenerateGoJwt(jwtSecret, role);
 }
 
-/** @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short. */
+/** Matches Go's `JWK` struct fields (`pkg/config/auth.go:88-108`) — see `LegacyJwk`. */
+const LegacyJwkSchema = Schema.Struct({
+  kty: Schema.String,
+  kid: Schema.optionalKey(Schema.String),
+  alg: Schema.optionalKey(Schema.String),
+  n: Schema.optionalKey(Schema.String),
+  e: Schema.optionalKey(Schema.String),
+  d: Schema.optionalKey(Schema.String),
+  p: Schema.optionalKey(Schema.String),
+  q: Schema.optionalKey(Schema.String),
+  dp: Schema.optionalKey(Schema.String),
+  dq: Schema.optionalKey(Schema.String),
+  qi: Schema.optionalKey(Schema.String),
+  crv: Schema.optionalKey(Schema.String),
+  x: Schema.optionalKey(Schema.String),
+  y: Schema.optionalKey(Schema.String),
+});
+const decodeLegacyJwks = Schema.decodeUnknownSync(Schema.Array(LegacyJwkSchema));
+
+/**
+ * Go's `Config.Validate` (`pkg/config/config.go:877-878,1059-1062`): a relative
+ * `signing_keys_path` resolves against `<workdir>/supabase`, then the file is
+ * read and JSON-decoded into `[]JWK`. Only the first key is ever used
+ * ({@link resolveSignedKey}), matching `generateJWT`'s `a.SigningKeys[0]`.
+ *
+ * Uses `node:fs` directly (not the `FileSystem` Effect service other Go-parity
+ * resolvers in `legacy/` use for file reads) so this function — and its large
+ * existing test surface — can stay a plain synchronous resolver; this is an
+ * optional, rarely-configured field, not worth threading Effect dependencies
+ * through `legacyStatusValues`/`status.handler.ts` for.
+ */
+function loadFirstSigningKey(workdir: string, signingKeysPath: string): LegacyJwk | undefined {
+  const absolutePath = isAbsolute(signingKeysPath)
+    ? signingKeysPath
+    : join(workdir, "supabase", signingKeysPath);
+  const contents = readFileSync(absolutePath, "utf8");
+  const jwks = decodeLegacyJwks(JSON.parse(contents));
+  return jwks[0];
+}
+
+/**
+ * @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
+ * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
+ * or its first key uses an unsupported algorithm — see {@link legacyGenerateAsymmetricGoJwt}.
+ */
 export function legacyResolveLocalConfigValues(
   config: ProjectConfig,
   hostname: string,
+  workdir: string,
 ): LegacyLocalConfigValues {
   const apiExternalUrl = legacyResolveApiExternalUrl(config.api, hostname);
-  const jwtSecret = resolveJwtSecret(config.auth.jwt_secret);
+  const jwtSecret = resolveJwtSecret(
+    envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret),
+  );
+  const signingKeysPath = config.auth.signing_keys_path;
+  const signingKey =
+    signingKeysPath !== undefined && signingKeysPath.length > 0
+      ? loadFirstSigningKey(workdir, signingKeysPath)
+      : undefined;
 
   return {
     apiUrl: apiExternalUrl,
@@ -120,11 +196,27 @@ export function legacyResolveLocalConfigValues(
     studioUrl: `http://${hostname}:${config.studio.port}`,
     mailpitUrl: `http://${hostname}:${config.local_smtp.port}`,
     dbUrl: `postgresql://postgres:${DEFAULT_DB_PASSWORD}@${hostname}:${config.db.port}/postgres`,
-    publishableKey: resolveOpaqueKey(config.auth.publishable_key, defaultPublishableKey),
-    secretKey: resolveOpaqueKey(config.auth.secret_key, defaultSecretKey),
+    publishableKey: resolveOpaqueKey(
+      envOverride("SUPABASE_AUTH_PUBLISHABLE_KEY", config.auth.publishable_key),
+      defaultPublishableKey,
+    ),
+    secretKey: resolveOpaqueKey(
+      envOverride("SUPABASE_AUTH_SECRET_KEY", config.auth.secret_key),
+      defaultSecretKey,
+    ),
     jwtSecret,
-    anonKey: resolveSignedKey(config.auth.anon_key, jwtSecret, "anon"),
-    serviceRoleKey: resolveSignedKey(config.auth.service_role_key, jwtSecret, "service_role"),
+    anonKey: resolveSignedKey(
+      envOverride("SUPABASE_AUTH_ANON_KEY", config.auth.anon_key),
+      jwtSecret,
+      signingKey,
+      "anon",
+    ),
+    serviceRoleKey: resolveSignedKey(
+      envOverride("SUPABASE_AUTH_SERVICE_ROLE_KEY", config.auth.service_role_key),
+      jwtSecret,
+      signingKey,
+      "service_role",
+    ),
     storageS3Url: apiUrlWithPath(apiExternalUrl, "/storage/v1/s3"),
     storageS3AccessKeyId: DEFAULT_S3_ACCESS_KEY_ID,
     storageS3SecretAccessKey: DEFAULT_S3_SECRET_ACCESS_KEY,

@@ -2,9 +2,10 @@
 
 ## Files Read
 
-| Path                             | Format | When                                     |
-| -------------------------------- | ------ | ---------------------------------------- |
-| `<workdir>/supabase/config.toml` | TOML   | always, to resolve project configuration |
+| Path                                                   | Format | When                                                     |
+| ------------------------------------------------------ | ------ | -------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                       | TOML   | always, to resolve project configuration                 |
+| `auth.signing_keys_path` (config-relative or absolute) | JSON   | only when `auth.signing_keys_path` is set in config.toml |
 
 ## Files Written
 
@@ -23,11 +24,20 @@ resolved from local `config.toml` and the local Docker daemon.
 
 ## Environment Variables
 
-| Variable                     | Purpose                                                 | Required?                                                               |
-| ---------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
-| `SUPABASE_PROJECT_ID`        | overrides the resolved local project id                 | no (falls back to config.toml `project_id` → workdir basename)          |
-| `SUPABASE_WORKDIR`           | overrides the resolved project workdir                  | no (falls back to `--workdir` → walk-up search for `config.toml` → cwd) |
-| `SUPABASE_SERVICES_HOSTNAME` | overrides the hostname used to build local service URLs | no (falls back to `DOCKER_HOST`'s tcp host → `127.0.0.1`)               |
+| Variable                         | Purpose                                                 | Required?                                                               |
+| -------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `SUPABASE_PROJECT_ID`            | overrides the resolved local project id                 | no (falls back to config.toml `project_id` → workdir basename)          |
+| `SUPABASE_WORKDIR`               | overrides the resolved project workdir                  | no (falls back to `--workdir` → walk-up search for `config.toml` → cwd) |
+| `SUPABASE_SERVICES_HOSTNAME`     | overrides the hostname used to build local service URLs | no (falls back to `DOCKER_HOST`'s tcp host → `127.0.0.1`)               |
+| `SUPABASE_AUTH_JWT_SECRET`       | overrides `auth.jwt_secret`                             | no                                                                      |
+| `SUPABASE_AUTH_PUBLISHABLE_KEY`  | overrides `auth.publishable_key`                        | no                                                                      |
+| `SUPABASE_AUTH_SECRET_KEY`       | overrides `auth.secret_key`                             | no                                                                      |
+| `SUPABASE_AUTH_ANON_KEY`         | overrides `auth.anon_key`                               | no                                                                      |
+| `SUPABASE_AUTH_SERVICE_ROLE_KEY` | overrides `auth.service_role_key`                       | no                                                                      |
+
+The `SUPABASE_AUTH_*` vars mirror Go's Viper `AutomaticEnv` (`SetEnvPrefix("SUPABASE")` +
+`.`→`_` key replacer, `pkg/config/config.go:529-535`) and take precedence over the corresponding
+`config.toml` value, matching Viper's real precedence order.
 
 `docker` (or `podman` as a fallback) must be on `PATH`.
 
@@ -44,6 +54,7 @@ resolved from local `config.toml` and the local Docker daemon.
 | `1`  | the db container is present but not in the `running` state — health assertion, skipped by `--ignore-health-check` above                |
 | `1`  | the db container is running but its Docker health check isn't `healthy` — health assertion, skipped by `--ignore-health-check` above   |
 | `1`  | `auth.jwt_secret` is configured but shorter than 16 characters (Go's `Config.Validate` rejects this at config-load time)               |
+| `1`  | `auth.signing_keys_path` is configured but the file is missing/malformed, or its first key's algorithm is not `RS256`/`ES256`          |
 
 ## Telemetry Events Fired
 
@@ -171,6 +182,17 @@ Additive — no Go CLI equivalent. Emits the same resolved value map via
   for local dev keys. A configured `auth.jwt_secret` shorter than 16 characters fails the command
   (`LegacyStatusInvalidConfigError`), matching Go's `Config.Validate` rejecting it at config-load
   time before any command can render output.
+- When `auth.signing_keys_path` is set and resolves to a non-empty JWK array, `anon_key`/
+  `service_role_key` are instead signed asymmetrically (RS256/ES256) with the file's first key,
+  matching Go's `generateJWT` (`pkg/config/apikeys.go:76-113`) — a relative path resolves against
+  `<workdir>/supabase`. This path is skipped entirely when `auth.anon_key`/`auth.service_role_key`
+  are explicitly configured. A missing/malformed file, or a first key with an algorithm other than
+  `RS256`/`ES256`, fails the command (`LegacyStatusInvalidConfigError`).
+- `SUPABASE_AUTH_JWT_SECRET`/`SUPABASE_AUTH_PUBLISHABLE_KEY`/`SUPABASE_AUTH_SECRET_KEY`/
+  `SUPABASE_AUTH_ANON_KEY`/`SUPABASE_AUTH_SERVICE_ROLE_KEY` override the corresponding
+  `config.toml` value at higher precedence, matching Go's Viper `AutomaticEnv` — an empty env var
+  is treated as unset. This is scoped to exactly the 5 auth fields `status` reads; it is not a
+  general `@supabase/config` port of Viper's `AutomaticEnv` (which applies to every config field).
 - `db.password` and the `storage.s3_credentials` triple have no `@supabase/config` schema field;
   Go hardcodes both (`"postgres"` and the S3 access key/secret/region seen above), reproduced
   identically in `legacy-local-config-values.ts`.
