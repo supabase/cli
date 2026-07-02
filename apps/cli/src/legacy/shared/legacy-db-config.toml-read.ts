@@ -143,7 +143,7 @@ const DEFAULT_PORT = 54322;
 const DEFAULT_SHADOW_PORT = 54320;
 const DEFAULT_MAJOR_VERSION = 17;
 const DEFAULT_PASSWORD = "postgres";
-/** `[edge_runtime] deno_version` default (`config.toml` template). 2 → v1.74.1. */
+/** `[edge_runtime] deno_version` default (`config.toml` template). 2 → the current edge-runtime image. */
 const DEFAULT_DENO_VERSION = 2;
 
 /** Default declarative schema dir (`utils.DeclarativeDir`, `misc.go:102`). */
