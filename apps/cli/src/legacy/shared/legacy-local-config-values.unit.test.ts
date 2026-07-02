@@ -261,9 +261,21 @@ describe("legacyResolveLocalConfigValues", () => {
       });
     });
 
-    it("throws when the signing keys file does not exist", () => {
+    it("throws a Go-worded error when the signing keys file does not exist", () => {
       const config = baseConfig({ auth: { signing_keys_path: "missing.json" } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "failed to read signing keys: ",
+      );
+    });
+
+    it("throws a Go-worded error when the signing keys file is malformed JSON", () => {
+      const supabaseDir = join(tempRoot.current, "supabase");
+      mkdirSync(supabaseDir, { recursive: true });
+      writeFileSync(join(supabaseDir, "signing_keys.json"), "not valid json");
+      const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "failed to decode signing keys: ",
+      );
     });
 
     it("throws when the first key uses an unsupported algorithm", () => {

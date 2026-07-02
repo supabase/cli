@@ -157,13 +157,34 @@ const decodeLegacyJwks = Schema.decodeUnknownSync(Schema.Array(LegacyJwkSchema))
  * existing test surface — can stay a plain synchronous resolver; this is an
  * optional, rarely-configured field, not worth threading Effect dependencies
  * through `legacyStatusValues`/`status.handler.ts` for.
+ *
+ * Error wording matches Go's two `Validate` failure branches exactly
+ * (`"failed to read signing keys: %w"` for an open failure, `"failed to decode
+ * signing keys: %w"` for a parse failure) rather than letting `readFileSync`/
+ * `JSON.parse`'s raw Node error text through unwrapped.
  */
 function loadFirstSigningKey(workdir: string, signingKeysPath: string): LegacyJwk | undefined {
   const absolutePath = isAbsolute(signingKeysPath)
     ? signingKeysPath
     : join(workdir, "supabase", signingKeysPath);
-  const contents = readFileSync(absolutePath, "utf8");
-  const jwks = decodeLegacyJwks(JSON.parse(contents));
+
+  let contents: string;
+  try {
+    contents = readFileSync(absolutePath, "utf8");
+  } catch (cause) {
+    throw new Error(
+      `failed to read signing keys: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
+
+  let jwks: ReadonlyArray<LegacyJwk>;
+  try {
+    jwks = decodeLegacyJwks(JSON.parse(contents));
+  } catch (cause) {
+    throw new Error(
+      `failed to decode signing keys: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
   return jwks[0];
 }
 

@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -5,6 +6,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { afterEach } from "vitest";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -18,6 +20,10 @@ import type { LegacyStatusFlags } from "./status.command.ts";
 import { legacyStatus } from "./status.handler.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-status-int-");
+
+afterEach(() => {
+  delete process.env["SUPABASE_AUTH_JWT_SECRET"];
+});
 
 function flags(overrides: Partial<LegacyStatusFlags> = {}): LegacyStatusFlags {
   return {
@@ -288,6 +294,42 @@ describe("legacy status integration", () => {
         );
       }
       expect(child.spawned.some((s) => s.args[0] === "ps")).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("honors SUPABASE_AUTH_JWT_SECRET over a config.toml value with -o env", () => {
+    // Go's Viper AutomaticEnv gives env vars higher precedence than config.toml
+    // (pkg/config/config.go:529-535) — a stack started with this env var set
+    // must report the env-derived secret, not the one in config.toml.
+    const { layer, out } = setup({
+      goOutput: Option.some("env"),
+      configContents: `project_id = "demo"\n[auth]\njwt_secret = "${"a".repeat(32)}"\n`,
+    });
+    process.env["SUPABASE_AUTH_JWT_SECRET"] = "b".repeat(32);
+    return Effect.gen(function* () {
+      yield* legacyStatus(flags());
+      expect(out.stdoutText).toContain(`JWT_SECRET="${"b".repeat(32)}"`);
+      expect(out.stdoutText).not.toContain("a".repeat(32));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("signs anon/service_role keys asymmetrically when signing_keys_path is set", () => {
+    // Go's generateJWT signs with the first key in auth.signing_keys_path
+    // (RS256/ES256) instead of HMAC when that file resolves to a non-empty JWK
+    // array (pkg/config/apikeys.go:76-113).
+    const { layer, out, workdir } = setup({
+      goOutput: Option.some("json"),
+      configContents: 'project_id = "demo"\n[auth]\nsigning_keys_path = "signing_keys.json"\n',
+    });
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const jwk = { ...privateKey.export({ format: "jwk" }), alg: "RS256", kid: "test-kid" };
+    writeFileSync(join(workdir, "supabase", "signing_keys.json"), JSON.stringify([jwk]));
+    return Effect.gen(function* () {
+      yield* legacyStatus(flags());
+      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      const [headerSegment] = parsed.ANON_KEY?.split(".") ?? [];
+      const header = JSON.parse(Buffer.from(headerSegment ?? "", "base64url").toString());
+      expect(header).toEqual({ alg: "RS256", kid: "test-kid", typ: "JWT" });
     }).pipe(Effect.provide(layer));
   });
 
