@@ -2,8 +2,8 @@ import { describe, expect, test } from "vitest";
 import { resolveModel } from "./select-model.ts";
 
 describe("resolveModel", () => {
-  test("defaults to anthropic/claude-haiku-4-5 with no flag or env", () => {
-    expect(resolveModel({}, {})).toBe("anthropic/claude-haiku-4-5");
+  test("defaults to openai/gpt-5.5 with no flag or env", () => {
+    expect(resolveModel({}, {})).toBe("openai/gpt-5.5");
   });
 
   test("--model wins over env", () => {
@@ -20,11 +20,11 @@ describe("resolveModel", () => {
   });
 
   test("empty-string flag is ignored and falls through to the default", () => {
-    expect(resolveModel({ model: "" }, {})).toBe("anthropic/claude-haiku-4-5");
+    expect(resolveModel({ model: "" }, {})).toBe("openai/gpt-5.5");
   });
 
   test("empty-string env is ignored and falls through to the default", () => {
-    expect(resolveModel({}, { RELEASE_NOTES_MODEL: "" })).toBe("anthropic/claude-haiku-4-5");
+    expect(resolveModel({}, { RELEASE_NOTES_MODEL: "" })).toBe("openai/gpt-5.5");
   });
 
   test("trims surrounding whitespace", () => {

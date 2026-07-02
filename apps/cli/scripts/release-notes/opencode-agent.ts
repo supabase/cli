@@ -7,6 +7,7 @@
 // that) and reads provider credentials from the environment
 // (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …).
 import { createOpencode } from "@opencode-ai/sdk";
+import { createServer } from "node:net";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -77,6 +78,23 @@ function serverConfig(model: string) {
   };
 }
 
+/** Pick a free localhost port so a stale `opencode serve` on 4096 cannot block runs. */
+function reserveFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      if (address === null || typeof address === "string") {
+        probe.close(() => reject(new Error("Failed to reserve a free port for OpenCode")));
+        return;
+      }
+      const { port } = address;
+      probe.close((error) => (error ? reject(error) : resolve(port)));
+    });
+  });
+}
+
 export async function generateNotes(args: {
   prompt: string;
   /** OpenCode-valid model id in `provider/model` form, e.g. `openai/gpt-5-mini`. */
@@ -113,6 +131,7 @@ export async function generateNotes(args: {
   try {
     const opencode = await createOpencode({
       config: serverConfig(model),
+      port: await reserveFreePort(),
       timeout: 30_000,
     });
     server = opencode.server;

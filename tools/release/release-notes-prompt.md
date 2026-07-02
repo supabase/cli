@@ -104,6 +104,19 @@ Voice: second person, active; lead with benefit; name commands/flags/env vars; s
 
 ---
 
+## Beta prereleases
+
+When VERSION contains `-beta.` (e.g. `2.109.1-beta.7`):
+
+- Use the same investigation rigor and user-centric bullets — beta testers need actionable notes, not a raw semantic-release dump.
+- Title: `## Supabase CLI v<VERSION> (beta) — <DATE>`.
+- Open the intro by framing this as a **beta** cut from the `develop` integration line (ahead of stable).
+- Tell testers how to install: `npm install supabase@beta`, Homebrew `supabase-beta`, or Scoop `supabase-beta` — not `latest` / plain `supabase`.
+- Call out gotchas and breaking changes honestly; beta is where we want early feedback.
+- Do not mention alpha or the `next/` shell.
+
+---
+
 ## Output format
 
 From the header line extract `VERSION`, `COMPARE_URL`, `DATE`.

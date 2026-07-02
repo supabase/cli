@@ -53,6 +53,8 @@ on:
         required: false
       ANTHROPIC_API_KEY:
         required: false
+      OPENAI_API_KEY:
+        required: false
       DF_FIREWALL_TOKEN:
         required: false
       LINEAR_CLI_STABLE_RELEASE_ACCESS_KEY:
@@ -459,20 +461,21 @@ jobs:
     secrets:
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-  # Once the raw semantic-release block is in the release body, ask Claude to
+  # Once the raw semantic-release block is in the release body, ask OpenCode to
   # rewrite it into user-centric notes and open a PR for human approval. Stable
-  # releases only on this path — prereleases keep the raw body. Non-blocking so
-  # an LLM hiccup never gates a published release; reviewers can propose beta/
-  # alpha notes manually from the Actions tab (workflow_dispatch).
+  # and beta releases run on this path; alpha keeps the raw body. Non-blocking so
+  # an LLM hiccup never gates a published release; reviewers can propose alpha
+  # notes manually from the Actions tab (workflow_dispatch).
   propose-release-notes:
     uses: ./.github/workflows/propose-release-notes.yml
     needs: backfill-release-notes
-    if: ${{ !inputs.dry_run && !inputs.prerelease && needs.backfill-release-notes.result == 'success' }}
+    if: ${{ !inputs.dry_run && inputs.channel != 'alpha' && needs.backfill-release-notes.result == 'success' }}
     with:
       tag: v${{ inputs.version }}
       non_blocking: true
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       GH_APP_PRIVATE_KEY: ${{ secrets.GH_APP_PRIVATE_KEY }}
       DF_FIREWALL_TOKEN: ${{ secrets.DF_FIREWALL_TOKEN }}
 

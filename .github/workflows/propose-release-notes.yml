@@ -1,14 +1,15 @@
 name: Propose release notes
 
 # Runs after backfill-release-notes lands the raw semantic-release block in the
-# GitHub Release body. Re-derives that block, asks Claude to rewrite it into
-# user-centric notes per tools/release/release-notes-prompt.md, and opens a PR
-# adding release-notes/v<VERSION>.md. Merging the PR triggers
-# apply-release-notes.yml, which pushes the file's contents to the GH Release.
+# GitHub Release body. Re-derives that block, asks an OpenCode agent to rewrite
+# it into user-centric notes per tools/release/release-notes-prompt.md, and
+# opens a PR adding release-notes/v<VERSION>.md. Merging the PR triggers
+# apply-release-notes.yml, which pushes the file's contents to the GH release
+# body and closes the PR without merging.
 #
-# Stable releases only on the automatic release pipeline — prerelease tags
-# (-beta./-alpha.) keep the raw body unless this workflow is triggered
-# manually from the Actions tab (workflow_dispatch).
+# Stable and beta releases run automatically after publish; alpha keeps the raw
+# body unless this workflow is triggered manually from the Actions tab
+# (workflow_dispatch).
 
 on:
   workflow_call:
@@ -23,7 +24,7 @@ on:
         type: boolean
         default: false
       model:
-        description: OpenCode provider/model id (e.g. openai/gpt-5-mini). Blank uses the default.
+        description: OpenCode provider/model id (e.g. openai/gpt-5.5). Blank uses the default.
         required: false
         type: string
         default: ""
@@ -43,7 +44,7 @@ on:
         required: true
         type: string
       model:
-        description: OpenCode provider/model id (e.g. openai/gpt-5-mini). Blank uses the default.
+        description: OpenCode provider/model id (e.g. openai/gpt-5.5). Blank uses the default.
         required: false
         type: string
         default: ""
@@ -53,9 +54,9 @@ permissions:
 
 jobs:
   propose:
-    # workflow_call (release pipeline): skip prereleases. workflow_dispatch:
-    # allow any tag so reviewers can opt in for beta/alpha from the Actions tab.
-    if: ${{ github.event_name == 'workflow_dispatch' || (!contains(inputs.tag, '-beta.') && !contains(inputs.tag, '-alpha.')) }}
+    # workflow_call (release pipeline): skip alpha only. workflow_dispatch:
+    # allow any tag so reviewers can opt in for alpha from the Actions tab.
+    if: ${{ github.event_name == 'workflow_dispatch' || !contains(inputs.tag, '-alpha.') }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     continue-on-error: ${{ inputs.non_blocking || false }}

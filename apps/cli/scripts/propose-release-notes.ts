@@ -33,7 +33,7 @@
 // Usage:
 //   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --dry-run
 //   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --apply
-//   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --model openai/gpt-5-mini --dry-run
+//   bun apps/cli/scripts/propose-release-notes.ts --tag v2.101.0 --model anthropic/claude-haiku-4-5 --dry-run
 //
 //   --tag       Required. Release tag (e.g. v2.101.0 or v2.99.0-beta.1).
 //   --dry-run   Print the proposed notes to stdout. Does not write any files,
@@ -45,9 +45,8 @@
 //               and exit before any LLM call. Useful for prompt iteration
 //               and for verifying the pipeline shape without spending tokens.
 //   --model     Optional. OpenCode-valid `provider/model` id (e.g.
-//               `openai/gpt-5-mini`, `anthropic/claude-haiku-4-5`). Falls back
-//               to the RELEASE_NOTES_MODEL env var, then to
-//               `anthropic/claude-haiku-4-5`.
+//               `openai/gpt-5.5`, `anthropic/claude-haiku-4-5`). Falls back
+//               to the RELEASE_NOTES_MODEL env var, then to `openai/gpt-5.5`.
 import { $ } from "bun";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";

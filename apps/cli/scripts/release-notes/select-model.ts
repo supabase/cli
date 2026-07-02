@@ -11,9 +11,9 @@
 // Resolution order (first match wins):
 //   1. `--model "provider/model"` flag.
 //   2. `RELEASE_NOTES_MODEL` env (same `provider/model` form).
-//   3. Default: `anthropic/claude-haiku-4-5` (preserves prior behavior).
+//   3. Default: `openai/gpt-5.5`.
 
-const DEFAULT_MODEL = "anthropic/claude-haiku-4-5";
+const DEFAULT_MODEL = "openai/gpt-5.5";
 
 /** Validate that a model id is a non-empty `provider/model` string. */
 function assertModel(value: string): string {
