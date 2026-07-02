@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -16,7 +16,9 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
+import { LegacyExperimentalRequiredError } from "../../shared/legacy-experimental-gate.ts";
 import { legacyStorageCommand } from "./storage.command.ts";
+import { LegacyStorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 
 // Go gates `storageCmd` behind `--experimental` in `PersistentPreRunE`
 // (`apps/cli-go/cmd/root.go:91-96`), which cobra runs BEFORE
@@ -40,8 +42,7 @@ function setup(args: ReadonlyArray<string>) {
     Layer.succeed(CliArgs, { args }),
     // `legacyStorageGatewayRuntimeLayer`'s cliConfig/credentials layers read
     // real env/files when built. Neither check under test ever reaches that
-    // lazy factory, but isolate ambient env defensively anyway (same lesson
-    // as the postgres-config/ssl-enforcement/network-bans gate tests).
+    // lazy factory, but isolate ambient env defensively anyway.
     processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),
     mockRuntimeInfo(),
     mockProcessControl().layer,
@@ -90,9 +91,10 @@ describe("legacy storage experimental gate vs mutual-exclusivity ordering (Go Pe
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const causeText = JSON.stringify(exit.cause);
-            expect(causeText).toContain("LegacyExperimentalRequiredError");
-            expect(causeText).not.toContain("LegacyStorageMutuallyExclusiveFlagsError");
+            const failure = Cause.findErrorOption(exit.cause);
+            expect(
+              Option.isSome(failure) && failure.value instanceof LegacyExperimentalRequiredError,
+            ).toBe(true);
           }
         }).pipe(Effect.provide(layer));
       },
@@ -107,9 +109,11 @@ describe("legacy storage experimental gate vs mutual-exclusivity ordering (Go Pe
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const causeText = JSON.stringify(exit.cause);
-          expect(causeText).not.toContain("LegacyExperimentalRequiredError");
-          expect(causeText).toContain("LegacyStorageMutuallyExclusiveFlagsError");
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(
+            Option.isSome(failure) &&
+              failure.value instanceof LegacyStorageMutuallyExclusiveFlagsError,
+          ).toBe(true);
         }
       }).pipe(Effect.provide(layer));
     });

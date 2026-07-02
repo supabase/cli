@@ -40,12 +40,8 @@ export const legacyStorageLsCommand = Command.make("ls", config).pipe(
   ]),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Go gates `storageCmd` behind `--experimental` in `PersistentPreRunE`
-      // (root.go:91-96), which cobra runs BEFORE `ValidateFlagGroups()`
-      // (mutual-exclusivity checks, `cobra@v1.10.2/command.go:985,1010`) and
-      // RunE/PostRun — so the gate must run before the mutex check below.
-      // Both checks still run before instrumentation, so a rejection from
-      // either one doesn't emit `cli_command_executed`.
+      // Gate before the mutex check below — order matters; see
+      // legacyRequireExperimental's doc comment for why.
       yield* legacyRequireExperimental;
       const cliArgs = yield* CliArgs;
       yield* legacyAssertStorageTargetsExclusive(cliArgs.args);
