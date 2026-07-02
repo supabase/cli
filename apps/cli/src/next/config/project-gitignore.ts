@@ -1,30 +1,9 @@
 import { Effect, FileSystem, Path } from "effect";
+import { findGitRootPath } from "../../shared/git/git-root.ts";
 
 const GITIGNORE_ENTRY = ".supabase/";
 
 const normalizeGitignoreEntry = (entry: string): string => entry.replaceAll("\\", "/");
-
-const findGitRoot = (
-  start: string,
-): Effect.Effect<string | null, never, FileSystem.FileSystem | Path.Path> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-
-    let current = path.resolve(start);
-    const root = path.parse(current).root;
-
-    while (true) {
-      const gitPath = path.join(current, ".git");
-      if (yield* fs.exists(gitPath).pipe(Effect.orDie)) {
-        return current;
-      }
-      if (current === root) {
-        return null;
-      }
-      current = path.dirname(current);
-    }
-  });
 
 export const ensureProjectStateIgnored = (
   projectRoot: string,
@@ -32,9 +11,9 @@ export const ensureProjectStateIgnored = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const gitRoot = yield* findGitRoot(projectRoot);
+    const gitRoot = yield* Effect.tryPromise(() => findGitRootPath(projectRoot)).pipe(Effect.orDie);
 
-    if (gitRoot === null) {
+    if (gitRoot === undefined) {
       return;
     }
 

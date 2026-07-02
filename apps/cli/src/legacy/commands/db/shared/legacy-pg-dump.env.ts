@@ -3,8 +3,8 @@ import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.ser
 /**
  * Pure pg_dump environment builders, ported 1:1 from Go's `pkg/migration/dump.go`.
  * No Effect or service dependencies, so the schema/role/config lists and the
- * `os.Expand` dry-run expansion stay unit-testable in isolation. Promote to
- * `legacy/shared/` if `db diff` / `db pull` ever need the same env builders.
+ * `os.Expand` dry-run expansion stay unit-testable in isolation. Shared by the
+ * `db` command family (`db dump`, and `db pull`'s initial-migra schema dump).
  */
 
 /** `migration.InternalSchemas` (`pkg/migration/dump.go:18-49`). Used by schema dumps. */

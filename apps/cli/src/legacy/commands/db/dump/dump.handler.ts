@@ -5,22 +5,20 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
-import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
+import {
+  legacyApplyProjectEnv,
+  legacyLoadProjectEnv,
+  legacyReadDbToml,
+} from "../../../shared/legacy-db-config.toml-read.ts";
 import { legacyReadProjectRefFile } from "../../../shared/legacy-temp-paths.ts";
 import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
-import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
-import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
 import {
   legacyIpv6Suggestion,
   legacyIsIPv6ConnectivityError,
 } from "../../../shared/legacy-connect-errors.ts";
-import { legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
-import {
-  LegacyDnsResolverFlag,
-  LegacyNetworkIdFlag,
-} from "../../../../shared/legacy/global-flags.ts";
+import { legacyBold } from "../../../shared/legacy-colors.ts";
+import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import type { LegacyDbDumpFlags } from "./dump.command.ts";
 import {
   LegacyDbDumpMutuallyExclusiveFlagsError,
@@ -33,12 +31,14 @@ import {
   legacyBuildRoleDumpEnv,
   legacyBuildSchemaDumpEnv,
   legacyExpandScript,
-} from "./dump.env.ts";
+} from "../shared/legacy-pg-dump.env.ts";
+import { legacyStreamPgDump } from "../shared/legacy-pg-dump.run.ts";
+import { legacyRunWithPoolerFallback } from "../shared/legacy-pooler-fallback.ts";
 import {
   legacyDumpDataScript,
   legacyDumpRoleScript,
   legacyDumpSchemaScript,
-} from "./dump.scripts.ts";
+} from "../shared/legacy-pg-dump.scripts.ts";
 
 /**
  * Mutually-exclusive flag groups, in cobra's check order (it sorts the joined
@@ -62,15 +62,12 @@ const toOpenFileError = (cause: { readonly message: string }) =>
 export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: LegacyDbDumpFlags) {
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
-  const docker = yield* LegacyDockerRun;
   const cliConfig = yield* LegacyCliConfig;
-  const runtimeInfo = yield* RuntimeInfo;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
-  const networkIdFlag = yield* LegacyNetworkIdFlag;
 
   // Resolved linked ref, captured so the post-run finalizer can cache the project
   // (GET /v1/projects/{ref}) AFTER the command's own API calls — matching Go's
@@ -78,6 +75,13 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
+    // Make an allowlisted `supabase/.env` registry override visible to the
+    // synchronous `process.env` reader in `legacyGetRegistryImageUrl` (the pg_dump
+    // image), reverted when this scope closes. Go's `loadNestedEnv` `os.Setenv`s the
+    // project `.env`; the pure `legacyLoadProjectEnv` no longer does that as a side
+    // effect of `resolveDbPassword`, so `db dump` opts in explicitly here.
+    yield* legacyApplyProjectEnv(yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir));
+
     // The grouped boolean flags are modelled as `Option` (presence = pflag `Changed`)
     // for the mutex/target checks; resolve their effective values here for the places
     // that consume the value (Go's `BoolVar` default is false).
@@ -138,7 +142,6 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     //    linked, defaulting to linked when neither local nor db-url is set
     //    (`internal/utils/flags/db_url.go:46-62`).
     const useLocal = Option.isNone(flags.dbUrl) && Option.isSome(flags.local);
-    const useLinked = Option.isNone(flags.dbUrl) && Option.isNone(flags.local);
     // `connType` selects the resolver branch (Go's Changed-first precedence): a
     // `--db-url` wins, then explicit `--local`; otherwise dump defaults to linked
     // (unlike the other db commands, whose unset default is local).
@@ -190,7 +193,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // remote `project_id`) fails rather than silently printing a script.
     const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
 
-    // 4. Pick the mode-specific script + env (pure builders, `dump.env.ts`).
+    // 4. Pick the mode-specific script + env (pure builders, `legacy-pg-dump.env.ts`).
     //    Go declares --schema/-s and --exclude/-x as cobra StringSlice
     //    (`apps/cli-go/cmd/db.go:432,444`); both flags are CSV-parsed at the flag
     //    level via `legacyParseSchemaFlags` (pflag `readAsCSV` semantics, quoted
@@ -267,33 +270,14 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // 6. Diagnostic to stderr (Go writes this for both real and dry-run paths).
     yield* output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr");
 
-    // 7. Run the pg_dump container, capturing stdout. dump always uses host
-    //    networking (`dockerExec` sets `NetworkMode: NetworkHost`), overridden only
-    //    by `--network-id` (Go's `DockerStart`). No `SecurityOpt` is set.
-    const networkId = Option.getOrUndefined(networkIdFlag);
-    const network =
-      networkId !== undefined && networkId.length > 0
-        ? { _tag: "named" as const, name: networkId }
-        : { _tag: "host" as const };
-    const extraHosts =
-      runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-
-    const dockerOpts = (env: Readonly<Record<string, string>>) => ({
-      image: legacyGetRegistryImageUrl(image),
-      cmd: ["bash", "-c", mode.script, "--"],
-      env,
-      binds: [],
-      workingDir: Option.none(),
-      securityOpt: [],
-      extraHosts,
-      network,
-    });
-
+    // 7. Run the pg_dump container, streaming stdout. `legacyStreamPgDump` applies
+    //    the registry mirror + host networking (overridden by `--network-id`) and
+    //    tees stderr, mirroring Go's `dockerExec` (`internal/db/dump/dump.go`).
+    //
     // Go streams pg_dump stdout straight to the destination sink (the `--file` handle
     // or `os.Stdout`) via `stdcopy.StdCopy` with `Follow:true`, at constant memory
     // (`apps/cli-go/internal/utils/docker.go:374,394`). Mirror that: write each chunk
-    // to the destination as it arrives instead of buffering the whole dump. stderr is
-    // teed live (Go's `io.MultiWriter(os.Stderr, errBuf)`).
+    // to the destination as it arrives instead of buffering the whole dump.
     const runContainer = (env: Readonly<Record<string, string>>) =>
       Option.isSome(resolvedFile)
         ? // `--file`: (re)truncate then append-stream. Truncating per attempt
@@ -309,10 +293,12 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
                     const file = yield* fs
                       .open(resolvedFile.value, { flag: "a" })
                       .pipe(Effect.mapError(toOpenFileError));
-                    return yield* docker.runStream(dockerOpts(env), {
+                    return yield* legacyStreamPgDump({
+                      image,
+                      script: mode.script,
+                      env,
                       onStdout: (chunk) =>
                         file.writeAll(chunk).pipe(Effect.mapError(toOpenFileError)),
-                      teeStderr: true,
                     });
                   }),
                 ),
@@ -321,53 +307,40 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
         : // stdout: write each chunk straight to stdout (binary-safe, no decode).
           // On a pooler retry Go leaves the partial first-attempt bytes on stdout
           // (its `resetOutput` can't rewind a pipe); streaming matches that.
-          docker.runStream(dockerOpts(env), {
+          legacyStreamPgDump({
+            image,
+            script: mode.script,
+            env,
             onStdout: (chunk) => output.rawBytes(chunk),
-            teeStderr: true,
           });
 
-    let result = yield* runContainer(modeEnv);
-
-    // 7b. Container-level pooler fallback (Go's `RunWithPoolerFallback`,
-    //     `internal/db/dump/pooler_fallback.go`). A linked dump can reach the direct
-    //     host from the CLI process (so the resolver returned the direct conn) yet
-    //     fail from inside the pg_dump container on an IPv6-only Docker network. When
-    //     the captured container stderr classifies as an IPv6 connectivity error,
-    //     retry once through the project's IPv4 transaction pooler. Gated to the
-    //     `--linked` path with a direct `db.<ref>.<host>` connection (Go's
-    //     `PoolerFallbackEligible` + `ProjectRefFromDirectDbHost`).
-    if (
-      result.exitCode !== 0 &&
-      useLinked &&
-      !isLocal &&
-      conn.host.startsWith("db.") &&
-      conn.host.endsWith(`.${cliConfig.projectHost}`) &&
-      legacyIsIPv6ConnectivityError(result.stderr)
-    ) {
-      // Go's `PoolerFallbackConfig` returns `ok=false` on ANY fallback-resolution
-      // error (e.g. temp-role creation/wait fails) and then reports the ORIGINAL
-      // pg_dump failure with the IPv6 guidance — the optional retry must not replace
-      // the actionable dump error. So a resolution failure is treated as "no
-      // fallback" (the original `result` is surfaced at step 9).
-      const pooler = yield* resolver
-        .resolvePoolerFallback({
-          dbUrl: flags.dbUrl,
-          connType: "linked",
-          dnsResolver,
-          password: flags.password,
-        })
-        .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isSome(pooler)) {
-        yield* output.raw(
-          `${legacyYellow(
-            `Warning: Direct connection to ${conn.host} is unavailable because this environment does not support IPv6.\nRetrying via the IPv4 connection pooler.`,
-          )}\n`,
-          "stderr",
-        );
-        yield* output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr");
-        result = yield* runContainer(mode.buildEnv(pooler.value, opt));
-      }
-    }
+    // 7b. Container-level IPv6 → IPv4-pooler retry (Go's `RunWithPoolerFallback`,
+    //     `internal/db/dump/pooler_fallback.go`), shared with `db pull`. A linked dump
+    //     can reach the direct host from the CLI process (so the resolver returned the
+    //     direct conn) yet fail from inside the pg_dump container on an IPv6-only Docker
+    //     network. `resolvePoolerFallback` is neutralised to `None` on any resolution
+    //     error so the original, actionable pg_dump failure is surfaced at step 9 rather
+    //     than a fallback-setup error (Go's `PoolerFallbackConfig` ok=false path).
+    //     `db dump` re-prints the "Dumping …" line on the retry (Go prints it inside the
+    //     run closure, `dump.go:39-45`).
+    const result = yield* legacyRunWithPoolerFallback({
+      result: yield* runContainer(modeEnv),
+      connType,
+      host: conn.host,
+      isLocal,
+      projectHost: cliConfig.projectHost,
+      resolvePooler: () =>
+        resolver
+          .resolvePoolerFallback({
+            dbUrl: flags.dbUrl,
+            connType: "linked",
+            dnsResolver,
+            password: flags.password,
+          })
+          .pipe(Effect.orElseSucceed(() => Option.none())),
+      runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),
+      reprintOnRetry: output.raw(`Dumping ${mode.verb} from ${db} database...\n`, "stderr"),
+    });
 
     // 8. The dump has already been streamed to the destination by `runContainer`
     //    (to `--file` or stdout) as pg_dump produced it.
@@ -407,5 +380,8 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       ),
     ),
     Effect.ensuring(telemetryState.flush),
+    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
+    // command run: `legacyApplyProjectEnv` registers a finalizer that reverts it.
+    Effect.scoped,
   );
 });

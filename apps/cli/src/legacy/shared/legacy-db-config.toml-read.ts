@@ -480,17 +480,37 @@ function legacyJoinSupabaseSeedPath(pattern: string): string {
 const DEFAULT_SUPABASE_ENV = "development";
 
 /**
- * Load the project's nested `.env` files into a lookup map, mirroring Go's
- * `loadNestedEnv` + `loadDefaultEnv` (`pkg/config/config.go:1047-1085`). Go walks
- * from the `supabase/` directory up to the repo root and, in each directory,
- * loads `.env.<env>.local`, `.env.local` (skipped when `SUPABASE_ENV=test`),
- * `.env.<env>`, then `.env` via `godotenv.Load`, which never overrides a value
- * already set. So the shell environment wins over the files, the `supabase/`
- * directory wins over the repo root, and earlier filenames win within a
- * directory. A malformed `.env` — or one that exists but cannot be read —
- * aborts: Go's `loadEnvIfExists` swallows only `os.ErrNotExist` and returns
- * every other error. The path is named without leaking file contents
- * (CWE-209-safe).
+ * Keys {@link legacyApplyProjectEnv} copies from the project `.env` into
+ * `process.env`. Kept to an allowlist of values that are read *only* via
+ * `process.env` (no project-env map path) and must reflect `supabase/.env` —
+ * currently just `SUPABASE_INTERNAL_IMAGE_REGISTRY` (`legacyGetRegistryImageUrl`).
+ * Everything else is read from {@link legacyLoadProjectEnv}'s returned map
+ * (`envLookup`, `legacyResolveYesWithProjectEnv`, `resolveDbPassword`) or resolved
+ * eagerly from the shell before any `.env` load — Go's root globals (workdir /
+ * profile / `SUPABASE_ENV` / project-ref) are frozen before `loadNestedEnv`, so
+ * writing them here would let our lazily-built resolvers diverge from Go (retarget
+ * the project, switch the env-file set, or leak into the Go `--experimental` proxy).
+ */
+const LEGACY_PROCESS_ENV_APPLY_KEYS = ["SUPABASE_INTERNAL_IMAGE_REGISTRY"] as const;
+
+/**
+ * Load the project's nested `.env` files into a lookup map. **Pure**: it reads the
+ * files and returns the merged map, with no `process.env` side effect — so the
+ * `SUPABASE_YES` / `SUPABASE_DB_PASSWORD` readers that call it
+ * (`legacyResolveYesWithProjectEnv`, `resolveDbPassword`) never mutate the global
+ * environment. Commands that need an allowlisted key visible to a synchronous
+ * `process.env` reader (`db dump` / `db pull` → `legacyGetRegistryImageUrl`) opt
+ * into {@link legacyApplyProjectEnv} around the container work instead.
+ *
+ * Partially mirrors Go's `loadNestedEnv` + `loadDefaultEnv`
+ * (`pkg/config/config.go:1047-1085`). Go walks from the `supabase/` directory up to
+ * the repo root and, in each directory, loads `.env.<env>.local`, `.env.local`
+ * (skipped when `SUPABASE_ENV=test`), `.env.<env>`, then `.env` via `godotenv.Load`,
+ * which never overrides a value already set. So the shell environment wins over the
+ * files, the `supabase/` directory wins over the repo root, and earlier filenames
+ * win within a directory. A malformed `.env` — or one that exists but cannot be
+ * read — aborts: Go's `loadEnvIfExists` swallows only `os.ErrNotExist` and returns
+ * every other error. The path is named without leaking file contents (CWE-209-safe).
  */
 export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -538,6 +558,42 @@ export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
   }
   return loaded;
 });
+
+/**
+ * Apply the allowlisted project-`.env` keys (see {@link LEGACY_PROCESS_ENV_APPLY_KEYS})
+ * to `process.env` **for the duration of the current scope**, then revert. This is
+ * the opt-in counterpart to the pure {@link legacyLoadProjectEnv}: `db dump` /
+ * `db pull` run it around their pg_dump / diff container work so a
+ * `SUPABASE_INTERNAL_IMAGE_REGISTRY` set in `supabase/.env` reaches
+ * `legacyGetRegistryImageUrl` (which reads `process.env` synchronously) — mirroring
+ * the `os.Setenv` half of Go's `loadNestedEnv`. Kept out of the shared loader so
+ * SUPABASE_YES / db-password reads stay side-effect-free.
+ *
+ * Never overrides an existing `process.env` value (Go's `godotenv.Load` never
+ * overrides; `loaded` already excludes keys present in `process.env`, and this
+ * re-checks). The `acquireRelease` finalizer deletes only the keys it set when the
+ * scope closes, so in-process test workers don't leak env between cases.
+ */
+export const legacyApplyProjectEnv = (loaded: Record<string, string>) =>
+  Effect.forEach(
+    LEGACY_PROCESS_ENV_APPLY_KEYS,
+    (key) => {
+      const value = loaded[key];
+      if (value === undefined || process.env[key] !== undefined) {
+        return Effect.void;
+      }
+      return Effect.acquireRelease(
+        Effect.sync(() => {
+          process.env[key] = value;
+        }),
+        () =>
+          Effect.sync(() => {
+            delete process.env[key];
+          }),
+      );
+    },
+    { discard: true },
+  );
 
 function nonEmptyString(value: unknown): Option.Option<string> {
   return typeof value === "string" && value.length > 0 ? Option.some(value) : Option.none();
