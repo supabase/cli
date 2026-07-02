@@ -6,7 +6,7 @@ import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts
 import { LEGACY_GLOBAL_FLAGS } from "../../../shared/legacy/global-flags.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   mockLegacyCliConfig,
@@ -42,6 +42,13 @@ function setup() {
   const layer = Layer.mergeAll(
     runtime,
     CliOutput.layer(textCliOutputFormatter()),
+    // The "gate open" case reaches the real `legacyManagementApiRuntimeLayer`
+    // (provided inline inside the command, not by this test's mocked runtime),
+    // which reads credentials/env directly — an ambient SUPABASE_ACCESS_TOKEN,
+    // SUPABASE_EXPERIMENTAL, or OS keyring entry on the machine running the
+    // test would make these assertions non-deterministic. Wipe process.env
+    // down to just this and disable the keyring fallback.
+    processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),
     Layer.succeed(
       TelemetryRuntime,
       TelemetryRuntime.of({
