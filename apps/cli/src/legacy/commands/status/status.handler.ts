@@ -130,17 +130,12 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // container fails `ContainerInspect` itself, which surfaces as the generic
     // inspect error (status.go:147-150), not the "not running" branch (which
     // only applies to a present-but-stopped container, status.go:150-151).
+    // `legacyInspectContainerState` mirrors that: a missing container is just
+    // another non-zero exit, mapped below with the real Docker stderr text.
     if (!flags.ignoreHealthCheck) {
       const state = yield* legacyInspectContainerState(spawner, dbContainerId).pipe(
         Effect.mapError((cause) => new LegacyStatusDbInspectError({ message: cause.message })),
       );
-      if (state === "absent") {
-        return yield* Effect.fail(
-          new LegacyStatusDbInspectError({
-            message: "failed to inspect container health: no such container",
-          }),
-        );
-      }
       if (!state.running) {
         return yield* Effect.fail(
           new LegacyStatusDbNotRunningError({

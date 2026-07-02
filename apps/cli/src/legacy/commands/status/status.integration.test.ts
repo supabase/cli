@@ -418,18 +418,25 @@ describe("legacy status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails when the db container is absent", () => {
+  it.live("fails when the db container is absent, preserving the real Docker stderr text", () => {
+    // Go's `assertContainerHealthy` never special-cases "not found" — it wraps
+    // whatever `ContainerInspect` returns (`status.go:148-149`), so the real
+    // Docker stderr must flow through rather than a hardcoded TS string.
     const { layer } = setup({
       route: defaultRoute({
         dbInspectExitCode: 1,
-        dbInspectStderr: ["Error: No such container: x"],
+        dbInspectStderr: ["Error response from daemon: No such container: x"],
       }),
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbInspectError");
+        const serialized = JSON.stringify(exit.cause);
+        expect(serialized).toContain("LegacyStatusDbInspectError");
+        expect(serialized).toContain(
+          "failed to inspect container health: Error response from daemon: No such container: x",
+        );
       }
     }).pipe(Effect.provide(layer));
   });

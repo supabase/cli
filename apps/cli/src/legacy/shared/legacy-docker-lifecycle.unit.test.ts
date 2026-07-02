@@ -200,17 +200,27 @@ describe("legacyInspectContainerState", () => {
     );
   });
 
-  it.live('resolves to "absent" when the container does not exist', () => {
-    const mock = mockSpawner({
-      exitCode: 1,
-      stderr: "Error: No such container: supabase_db_my-app\n",
-    });
-    return legacyInspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
-      Effect.map((state) => {
-        expect(state).toBe("absent");
-      }),
-    );
-  });
+  it.live(
+    "fails with LegacyDockerLifecycleInspectError, preserving the real stderr, when the container does not exist",
+    () => {
+      // Go's `assertContainerHealthy` never special-cases "not found" — it
+      // wraps whatever `ContainerInspect` returns (`status.go:148-149`), so a
+      // missing container is just another non-zero exit here too.
+      const mock = mockSpawner({
+        exitCode: 1,
+        stderr: "Error response from daemon: No such container: supabase_db_my-app\n",
+      });
+      return legacyInspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
+        Effect.flip,
+        Effect.map((error) => {
+          expect(error).toBeInstanceOf(LegacyDockerLifecycleInspectError);
+          expect(error.message).toBe(
+            "failed to inspect container health: Error response from daemon: No such container: supabase_db_my-app",
+          );
+        }),
+      );
+    },
+  );
 
   it.live("fails with LegacyDockerLifecycleInspectError on any other inspect failure", () => {
     const mock = mockSpawner({ exitCode: 1, stderr: "Cannot connect to the Docker daemon\n" });

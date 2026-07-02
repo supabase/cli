@@ -40,10 +40,6 @@ function splitNonEmptyLines(text: string): ReadonlyArray<string> {
     .filter((line) => line.length > 0);
 }
 
-function isMissingContainerError(stderr: string): boolean {
-  return stderr.toLowerCase().includes("no such container");
-}
-
 /**
  * Go's `Docker.ContainerList(ctx, container.ListOptions{All, Filters})`
  * (`docker.go:99-104`, `status.go:126-131`) via `docker ps --filter
@@ -81,11 +77,19 @@ export const legacyListContainersByLabel = (
             }),
         ),
       );
-      const [exitCode, stdout, stderr] = yield* Effect.all([
-        child.exitCode.pipe(Effect.map(Number)),
-        collectByteStream(child.stdout),
-        collectByteStream(child.stderr),
-      ]).pipe(
+      // Concurrency is required, not cosmetic: sequential `Effect.all` would
+      // await `exitCode` (resolved by Node's "exit" event) before subscribing
+      // to `stdout`/`stderr` at all. Node's "exit" can fire before a fast
+      // process's stdio pipes are drained, so a late subscriber sees an
+      // already-ended, empty stream instead of the buffered bytes.
+      const [exitCode, stdout, stderr] = yield* Effect.all(
+        [
+          child.exitCode.pipe(Effect.map(Number)),
+          collectByteStream(child.stdout),
+          collectByteStream(child.stderr),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(
         Effect.mapError(
           () => new LegacyDockerLifecycleListError({ message: "failed to list containers" }),
         ),
@@ -108,10 +112,11 @@ export const legacyListContainersByLabel = (
 /**
  * Go's `Docker.ContainerInspect(ctx, containerId)` (`docker.go:148`,
  * `status.go:148-155`) via `docker container inspect <id> --format
- * {{json .State}}`. A "no such container" stderr resolves to the literal
- * `"absent"`, mirroring `errdefs.IsNotFound(err)` — every other non-zero exit
- * propagates as `LegacyDockerLifecycleInspectError`, matching Go's
- * `assertContainerHealthy`, which does not special-case any other inspect failure.
+ * {{json .State}}`. Go's `assertContainerHealthy` does not special-case a
+ * missing container — it wraps whatever error `ContainerInspect` returns
+ * (`status.go:148-149`), so every non-zero exit, including "no such
+ * container", propagates as `LegacyDockerLifecycleInspectError` carrying the
+ * real Docker stderr text.
  */
 export const legacyInspectContainerState = (spawner: Spawner, containerId: string) =>
   Effect.scoped(
@@ -132,11 +137,16 @@ export const legacyInspectContainerState = (spawner: Spawner, containerId: strin
             }),
         ),
       );
-      const [exitCode, stdout, stderr] = yield* Effect.all([
-        child.exitCode.pipe(Effect.map(Number)),
-        collectByteStream(child.stdout),
-        collectByteStream(child.stderr),
-      ]).pipe(
+      // Concurrency is required, not cosmetic — see the matching comment in
+      // `legacyListContainersByLabel` above.
+      const [exitCode, stdout, stderr] = yield* Effect.all(
+        [
+          child.exitCode.pipe(Effect.map(Number)),
+          collectByteStream(child.stdout),
+          collectByteStream(child.stderr),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(
         Effect.mapError(
           () =>
             new LegacyDockerLifecycleInspectError({
@@ -146,9 +156,6 @@ export const legacyInspectContainerState = (spawner: Spawner, containerId: strin
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        if (isMissingContainerError(message)) {
-          return "absent" as const;
-        }
         return yield* Effect.fail(
           new LegacyDockerLifecycleInspectError({
             message:
@@ -217,11 +224,16 @@ export const legacyListVolumesByLabel = (spawner: Spawner, projectIdFilter: stri
             }),
         ),
       );
-      const [exitCode, stdout, stderr] = yield* Effect.all([
-        child.exitCode.pipe(Effect.map(Number)),
-        collectByteStream(child.stdout),
-        collectByteStream(child.stderr),
-      ]).pipe(
+      // Concurrency is required, not cosmetic — see the matching comment in
+      // `legacyListContainersByLabel` above.
+      const [exitCode, stdout, stderr] = yield* Effect.all(
+        [
+          child.exitCode.pipe(Effect.map(Number)),
+          collectByteStream(child.stdout),
+          collectByteStream(child.stderr),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(
         Effect.mapError(
           () => new LegacyDockerLifecycleListError({ message: "failed to list volumes" }),
         ),
