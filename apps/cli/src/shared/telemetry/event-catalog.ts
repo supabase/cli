@@ -29,6 +29,13 @@ export const PropFlags = "flags";
 export const PropExitCode = "exit_code";
 export const PropDurationMs = "duration_ms";
 export const PropOutputFormat = "output_format";
+export const PropErrorKind = "error_kind";
+export const PropErrorCategory = "error_category";
+export const PropErrorFingerprint = "error_fingerprint";
+export const PropHasSuggestion = "has_suggestion";
+export const PropSuggestionType = "suggestion_type";
+export const PropSuggestedCommand = "suggested_command";
+export const PropWorkflow = "workflow";
 
 export const GroupOrganization = "organization";
 export const GroupProject = "project";

@@ -114,6 +114,28 @@ const (
 	// example "pretty", "json", "yaml"), after agent auto-detection and any
 	// command-local override are applied.
 	PropOutputFormat = "output_format"
+	// PropErrorKind classifies failed commands into the CLI error actionability
+	// taxonomy. Values are user_actionable, internal_bug, external_service, or
+	// unknown.
+	PropErrorKind = "error_kind"
+	// PropErrorCategory is the sanitized CLI error category used for KPI
+	// reporting. It must never contain raw error text or user-specific data.
+	PropErrorCategory = "error_category"
+	// PropErrorFingerprint is a stable sanitized identifier for grouping repeated
+	// failures. It must never contain raw error text or user-specific data.
+	PropErrorFingerprint = "error_fingerprint"
+	// PropHasSuggestion indicates whether the failed command had a known
+	// remediation suggestion.
+	PropHasSuggestion = "has_suggestion"
+	// PropSuggestionType is the sanitized kind of remediation suggestion shown or
+	// known for the failure.
+	PropSuggestionType = "suggestion_type"
+	// PropSuggestedCommand is a safe command-only remediation hint when one is
+	// known, such as "supabase login". It must not include user-provided values.
+	PropSuggestedCommand = "suggested_command"
+	// PropWorkflow is an optional safe workflow label for future mapped recovery
+	// analysis.
+	PropWorkflow = "workflow"
 )
 
 // Group identifiers associate events with higher-level entities in PostHog.
