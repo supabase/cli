@@ -49,14 +49,6 @@ runs:
           {{cache_key_prefix}}-{{platform}}-{{version}}-${{
           steps.mise-cache-key.outputs.hash }}
 
-    - name: Add toolchains to PATH
-      shell: bash
-      run: |
-        echo "$(mise where go)/bin" >> "$GITHUB_PATH"
-        echo "$(mise where node)/bin" >> "$GITHUB_PATH"
-        echo "$(mise where pnpm)" >> "$GITHUB_PATH"
-        echo "$(mise where bun)/bin" >> "$GITHUB_PATH"
-
     - name: Resolve pnpm store path
       if: inputs.dependency-cache == 'true'
       id: pnpm-store
