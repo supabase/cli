@@ -64,15 +64,7 @@ url = "https://dl.google.com/go/go1.25.11.linux-arm64.tar.gz"
 checksum = "sha256:34f14304e856893f4ba30c2cacfe93906e9de7915c5f6aaaf3a81cdccd7ba30b"
 url = "https://dl.google.com/go/go1.25.11.linux-amd64.tar.gz"
 
-[tools.go."platforms.linux-x64-baseline"]
-checksum = "sha256:34f14304e856893f4ba30c2cacfe93906e9de7915c5f6aaaf3a81cdccd7ba30b"
-url = "https://dl.google.com/go/go1.25.11.linux-amd64.tar.gz"
-
 [tools.go."platforms.linux-x64-musl"]
-checksum = "sha256:34f14304e856893f4ba30c2cacfe93906e9de7915c5f6aaaf3a81cdccd7ba30b"
-url = "https://dl.google.com/go/go1.25.11.linux-amd64.tar.gz"
-
-[tools.go."platforms.linux-x64-musl-baseline"]
 checksum = "sha256:34f14304e856893f4ba30c2cacfe93906e9de7915c5f6aaaf3a81cdccd7ba30b"
 url = "https://dl.google.com/go/go1.25.11.linux-amd64.tar.gz"
 
@@ -84,65 +76,13 @@ url = "https://dl.google.com/go/go1.25.11.darwin-arm64.tar.gz"
 checksum = "sha256:26d0ee4071de42b5c332337db9fdd234072877697c547e46e85efb0f59507c66"
 url = "https://dl.google.com/go/go1.25.11.darwin-amd64.tar.gz"
 
-[tools.go."platforms.macos-x64-baseline"]
-checksum = "sha256:26d0ee4071de42b5c332337db9fdd234072877697c547e46e85efb0f59507c66"
-url = "https://dl.google.com/go/go1.25.11.darwin-amd64.tar.gz"
-
 [tools.go."platforms.windows-x64"]
 checksum = "sha256:b7401f1b41517428e537493316256fb7cf03c66a130a0103ab07f3a2152e2112"
 url = "https://dl.google.com/go/go1.25.11.windows-amd64.zip"
 
-[tools.go."platforms.windows-x64-baseline"]
-checksum = "sha256:b7401f1b41517428e537493316256fb7cf03c66a130a0103ab07f3a2152e2112"
-url = "https://dl.google.com/go/go1.25.11.windows-amd64.zip"
-
-[[tools.golangci-lint]]
+[[tools."go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint"]]
 version = "2.1.6"
-backend = "aqua:golangci/golangci-lint"
-
-[tools.golangci-lint."platforms.linux-arm64"]
-checksum = "sha256:582eb73880f4408d7fb89f12b502d577bd7b0b63d8c681da92bb6b9d934d4363"
-url = "https://github.com/golangci/golangci-lint/releases/download/v2.1.6/golangci-lint-2.1.6-linux-arm64.tar.gz"
-
-[tools.golangci-lint."platforms.linux-arm64-musl"]
-checksum = "sha256:582eb73880f4408d7fb89f12b502d577bd7b0b63d8c681da92bb6b9d934d4363"
-url = "https://github.com/golangci/golangci-lint/releases/download/v2.1.6/golangci-lint-2.1.6-linux-arm64.tar.gz"
-
-[tools.golangci-lint."platforms.linux-x64"]
-checksum = "sha256:e55e0eb515936c0fbd178bce504798a9bd2f0b191e5e357768b18fd5415ee541"
-url = "https://github.com/golangci/golangci-lint/releases/download/v2.1.6/golangci-lint-2.1.6-linux-amd64.tar.gz"
-
-[tools.golangci-lint."platforms.linux-x64-baseline"]
-checksum = "sha256:e55e0eb515936c0fbd178bce504798a9bd2f0b191e5e357768b18fd5415ee541"
-url = "https://github.com/golangci/golangci-lint/releases/download/v2.1.6/golangci-lint-2.1.6-linux-amd64.tar.gz"
-
-[tools.golangci-lint."platforms.linux-x64-musl"]
-checksum = "sha256:e55e0eb515936c0fbd178bce504798a9bd2f0b191e5e357768b18fd5415ee541"
-url = "https://github.com/golangci/golangci-lint/releases/download/v2.1.6/golangci-lint-2.1.6-linux-amd64.tar.gz"
-
-[tools.golangci-lint."platforms.linux-x64-musl-baseline"]
-checksum = "sha256:e55e0eb515936c0fbd178bce504798a9bd2f0b191e5e357768b18fd5415ee541"
-url = "https://github.com/golangci/golangci-lint/releases/download/v2.1.6/golangci-lint-2.1.6-linux-amd64.tar.gz"
-
-[tools.golangci-lint."platforms.macos-arm64"]
-checksum = "sha256:90783fa092a0f64a4f7b7d419f3da1f53207e300261773babe962957240e9ea6"
-url = "https://github.com/golangci/golangci-lint/releases/download/v2.1.6/golangci-lint-2.1.6-darwin-arm64.tar.gz"
-
-[tools.golangci-lint."platforms.macos-x64"]
-checksum = "sha256:e091107c4ca7e283902343ba3a09d14fb56b86e071effd461ce9d67193ef580e"
-url = "https://github.com/golangci/golangci-lint/releases/download/v2.1.6/golangci-lint-2.1.6-darwin-amd64.tar.gz"
-
-[tools.golangci-lint."platforms.macos-x64-baseline"]
-checksum = "sha256:e091107c4ca7e283902343ba3a09d14fb56b86e071effd461ce9d67193ef580e"
-url = "https://github.com/golangci/golangci-lint/releases/download/v2.1.6/golangci-lint-2.1.6-darwin-amd64.tar.gz"
-
-[tools.golangci-lint."platforms.windows-x64"]
-checksum = "sha256:fd7298019c76cf414ab083491f87f6c0a3e537ed6d727d6ff9135e503d6f9c32"
-url = "https://github.com/golangci/golangci-lint/releases/download/v2.1.6/golangci-lint-2.1.6-windows-amd64.zip"
-
-[tools.golangci-lint."platforms.windows-x64-baseline"]
-checksum = "sha256:fd7298019c76cf414ab083491f87f6c0a3e537ed6d727d6ff9135e503d6f9c32"
-url = "https://github.com/golangci/golangci-lint/releases/download/v2.1.6/golangci-lint-2.1.6-windows-amd64.zip"
+backend = "go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint"
 
 [[tools.node]]
 version = "24.18.0"
@@ -160,15 +100,7 @@ url = "https://unofficial-builds.nodejs.org/download/release/v24.18.0/node-v24.1
 checksum = "sha256:783130984963db7ba9cbd01089eaf2c2efb055c7c1693c943174b967b3050cb8"
 url = "https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.gz"
 
-[tools.node."platforms.linux-x64-baseline"]
-checksum = "sha256:783130984963db7ba9cbd01089eaf2c2efb055c7c1693c943174b967b3050cb8"
-url = "https://nodejs.org/dist/v24.18.0/node-v24.18.0-linux-x64.tar.gz"
-
 [tools.node."platforms.linux-x64-musl"]
-checksum = "sha256:ea58409911e141ec6b19d9178efa2d9185a13295005b1cbf5521b3157eed1d95"
-url = "https://unofficial-builds.nodejs.org/download/release/v24.18.0/node-v24.18.0-linux-x64-musl.tar.gz"
-
-[tools.node."platforms.linux-x64-musl-baseline"]
 checksum = "sha256:ea58409911e141ec6b19d9178efa2d9185a13295005b1cbf5521b3157eed1d95"
 url = "https://unofficial-builds.nodejs.org/download/release/v24.18.0/node-v24.18.0-linux-x64-musl.tar.gz"
 
@@ -180,15 +112,7 @@ url = "https://nodejs.org/dist/v24.18.0/node-v24.18.0-darwin-arm64.tar.gz"
 checksum = "sha256:dfd0dbd3e721503434df7b7205e719f61b3a3a31b2bcf9729b8b91fea240f080"
 url = "https://nodejs.org/dist/v24.18.0/node-v24.18.0-darwin-x64.tar.gz"
 
-[tools.node."platforms.macos-x64-baseline"]
-checksum = "sha256:dfd0dbd3e721503434df7b7205e719f61b3a3a31b2bcf9729b8b91fea240f080"
-url = "https://nodejs.org/dist/v24.18.0/node-v24.18.0-darwin-x64.tar.gz"
-
 [tools.node."platforms.windows-x64"]
-checksum = "sha256:0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821"
-url = "https://nodejs.org/dist/v24.18.0/node-v24.18.0-win-x64.zip"
-
-[tools.node."platforms.windows-x64-baseline"]
 checksum = "sha256:0ae68406b42d7725661da979b1403ec9926da205c6770827f33aac9d8f26e821"
 url = "https://nodejs.org/dist/v24.18.0/node-v24.18.0-win-x64.zip"
 
@@ -211,17 +135,7 @@ checksum = "sha256:f3f8d1217eef013bbc71a24d52efb1f1041e4aff55edd80e0b08e25f40930
 url = "https://github.com/pnpm/pnpm/releases/download/v11.4.0/pnpm-linux-x64.tar.gz"
 provenance = "github-attestations"
 
-[tools.pnpm."platforms.linux-x64-baseline"]
-checksum = "sha256:f3f8d1217eef013bbc71a24d52efb1f1041e4aff55edd80e0b08e25f409305a4"
-url = "https://github.com/pnpm/pnpm/releases/download/v11.4.0/pnpm-linux-x64.tar.gz"
-provenance = "github-attestations"
-
 [tools.pnpm."platforms.linux-x64-musl"]
-checksum = "sha256:60010ad00a96b71e20d1618acaca7a71395e710cbd5e88946c030a1d07c56916"
-url = "https://github.com/pnpm/pnpm/releases/download/v11.4.0/pnpm-linux-x64-musl.tar.gz"
-provenance = "github-attestations"
-
-[tools.pnpm."platforms.linux-x64-musl-baseline"]
 checksum = "sha256:60010ad00a96b71e20d1618acaca7a71395e710cbd5e88946c030a1d07c56916"
 url = "https://github.com/pnpm/pnpm/releases/download/v11.4.0/pnpm-linux-x64-musl.tar.gz"
 provenance = "github-attestations"
@@ -232,11 +146,6 @@ url = "https://github.com/pnpm/pnpm/releases/download/v11.4.0/pnpm-darwin-arm64.
 provenance = "github-attestations"
 
 [tools.pnpm."platforms.windows-x64"]
-checksum = "sha256:84ce90e38bc0b1164173eb853a0fbffc7edcb050cb0d5c8ce4ca609f5c808e0a"
-url = "https://github.com/pnpm/pnpm/releases/download/v11.4.0/pnpm-win32-x64.zip"
-provenance = "github-attestations"
-
-[tools.pnpm."platforms.windows-x64-baseline"]
 checksum = "sha256:84ce90e38bc0b1164173eb853a0fbffc7edcb050cb0d5c8ce4ca609f5c808e0a"
 url = "https://github.com/pnpm/pnpm/releases/download/v11.4.0/pnpm-win32-x64.zip"
 provenance = "github-attestations"
