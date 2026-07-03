@@ -6,5 +6,4 @@ go = "1.25.11"
 
 [settings]
 idiomatic_version_file_enable_tools = ["node", "bun", "pnpm"]
-locked = true
 lockfile = true
