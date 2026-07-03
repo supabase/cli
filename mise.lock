@@ -96,10 +96,6 @@ url = "https://dl.google.com/go/go1.25.11.windows-amd64.zip"
 checksum = "sha256:b7401f1b41517428e537493316256fb7cf03c66a130a0103ab07f3a2152e2112"
 url = "https://dl.google.com/go/go1.25.11.windows-amd64.zip"
 
-[[tools."go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint"]]
-version = "2.12.2"
-backend = "go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint"
-
 [[tools.golangci-lint]]
 version = "2.12.2"
 backend = "aqua:golangci/golangci-lint"
