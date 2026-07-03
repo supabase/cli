@@ -346,6 +346,35 @@ describe("legacy db reset", () => {
     });
   });
 
+  it.live("finishes a local reset when bucket seeding hits a strict-loader-rejected config", () => {
+    // The bucket-seeding core re-loads config via the strict `@supabase/config` loader,
+    // which rejects some Go-valid configs (e.g. `[db.seed] enabled = "env(SEED_ENABLED)"`).
+    // The seam's Go recreate already validated + rebuilt the DB, so aborting here would
+    // leave the reset half-done — warn and skip buckets so reset finishes like Go.
+    const previous = process.env["SEED_ENABLED"];
+    process.env["SEED_ENABLED"] = "1";
+    const { layer, out, seam } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.seed]\nenabled = "env(SEED_ENABLED)"\n',
+      args: ["db", "reset"],
+      isLocal: true,
+      running: true,
+      storageReady: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("skipped seeding storage buckets");
+      expect(out.stderrText).toContain("Finished ");
+      expect(seam.recreateCalls).toHaveLength(1);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SEED_ENABLED"];
+          else process.env["SEED_ENABLED"] = previous;
+        }),
+      ),
+    );
+  });
+
   it.live("uses the detected git branch in the Finished line", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',

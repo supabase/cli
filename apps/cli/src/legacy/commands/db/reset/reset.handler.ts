@@ -239,7 +239,26 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       if (storageReady) {
         // Go's `buckets.Run(ctx, "", false, fsys)` — non-interactive: overwrite/prune
         // confirmations take their defaults instead of blocking on input.
-        yield* legacySeedBucketsRun({ projectRef: "", emitSummary: false, interactive: false });
+        //
+        // Bucket seeding re-loads config.toml through the strict `@supabase/config`
+        // loader, which (unlike the Go-parity reader used elsewhere in reset) rejects some
+        // Go-valid configs — e.g. `[db.seed] enabled = "env(SEED_ENABLED)"`. The seam's Go
+        // `recreate` has already run Go's full `LoadConfig`+`Validate` on this same config,
+        // so a parse failure HERE is that loader-strictness gap, not a genuinely invalid
+        // config. Recreate already dropped/rebuilt the DB, so aborting now would leave the
+        // reset half-done; warn and skip buckets so `db reset` finishes like Go instead.
+        yield* legacySeedBucketsRun({
+          projectRef: "",
+          emitSummary: false,
+          interactive: false,
+        }).pipe(
+          Effect.catchTag("LegacySeedConfigLoadError", (error) =>
+            output.raw(
+              `${legacyYellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,
+              "stderr",
+            ),
+          ),
+        );
       }
 
       // "Finished supabase db reset on branch <branch>." (both Aqua).

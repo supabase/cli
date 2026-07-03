@@ -2254,6 +2254,62 @@ describe("legacyReadDbToml encrypted secret decryption (Go DecryptSecretHookFunc
   it.effect("treats an unset env() secret as a no-op (verbatim, like Go's hook)", () =>
     expectLoads(["[db]", 'root_key = "env(SOME_UNSET_ROOT_KEY)"']),
   );
+  it.effect("does NOT decrypt a non-secret string that starts with encrypted:", () =>
+    // Go's hook only runs while decoding into `config.Secret`; a non-secret field like an
+    // email-template subject stays plain text, so `db push`/`reset`/`start` must not abort.
+    expectLoads([
+      "[auth.email.template.invite]",
+      'subject = "encrypted: your invite"',
+      "[db]",
+      'root_key = "env(SOME_UNSET_ROOT_KEY)"',
+    ]),
+  );
+  it.effect("fails on an undecryptable auth.captcha.secret (Secret-typed field)", () =>
+    expectFails(
+      [
+        "[auth.captcha]",
+        "enabled = false",
+        'provider = "hcaptcha"',
+        'secret = "encrypted:anything"',
+      ],
+      "failed to parse config: missing private key",
+    ),
+  );
+  it.effect("fails on an undecryptable Secret inside a [remotes.*] block", () =>
+    // Go decodes every remote block into the same struct, so an undecryptable secret in any
+    // remote (matched or not) aborts the load.
+    expectFails(
+      [
+        "[remotes.preview]",
+        'project_id = "abcdefghijklmnopqrst"',
+        "[remotes.preview.db]",
+        'root_key = "encrypted:anything"',
+      ],
+      "failed to parse config: missing private key",
+    ),
+  );
+});
+
+describe("legacyReadDbToml non-scalar config booleans (Go UnmarshalExact parity)", () => {
+  // Go's `UnmarshalExact` fails to decode a bool field given an array/inline-table value,
+  // aborting `LoadConfig` before any destructive work. A present non-scalar must not fall
+  // through to the schema default (which would let `db reset` prompt + drop schemas).
+  const failsInvalid = (lines: ReadonlyArray<string>, field: string) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      const exit = yield* read(dir).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(`failed to parse config: invalid ${field}.`);
+      }
+      rmSync(dir, { recursive: true, force: true });
+    });
+  it.effect("rejects an array value for [db.migrations] enabled", () =>
+    failsInvalid(["[db.migrations]", "enabled = []"], "db.migrations.enabled"),
+  );
+  it.effect("rejects an inline-table value for [db.seed] enabled", () =>
+    failsInvalid(["[db.seed]", "enabled = {}"], "db.seed.enabled"),
+  );
 });
 
 describe("legacyReadDbToml [analytics] validation (Go config.Validate parity)", () => {

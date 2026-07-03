@@ -135,6 +135,25 @@ const legacyGlobSeedFiles = Effect.fnUntraced(function* (
     }
     for (const match of [...matches].sort()) {
       const fp = toSlash(match);
+      // Go's `GetPendingSeeds` globs via `Glob.SQLFiles`, which `Stat`s each match: a
+      // directory is expanded to its regular `.sql` files recursively (`walkMatchedDir`,
+      // sorted) while a file match is kept verbatim (`config.go:157-183`). Without this a
+      // directory `sql_paths` entry (e.g. `["seeds"]`) would flow into
+      // `readFileString(<dir>)` and fail — Go's `db push --include-seed` / remote reset
+      // seed the directory's SQL children instead.
+      const matchType = yield* fs.stat(path.isAbsolute(fp) ? fp : path.join(workdir, fp)).pipe(
+        Effect.map((info) => info.type),
+        Effect.orElseSucceed(() => "File" as const),
+      );
+      if (matchType === "Directory") {
+        for (const file of yield* legacyWalkSeedSqlFiles(fs, path, workdir, fp)) {
+          if (!seen.has(file)) {
+            seen.add(file);
+            files.push(file);
+          }
+        }
+        continue;
+      }
       if (!seen.has(fp)) {
         seen.add(fp);
         files.push(fp);
@@ -189,6 +208,45 @@ const globOne = (
       }
     }
     return result;
+  });
+
+/**
+ * Recursively collects the regular `.sql` files under a matched seed directory, porting
+ * Go's `walkMatchedDir` with the `SQLFiles` include filter (`entry.Type().IsRegular() &&
+ * filepath.Ext(path) == ".sql"`, `config.go:126-131,194-211`). Paths are workdir-relative
+ * (matching the glob output), forward-slashed, and sorted for deterministic application.
+ */
+const legacyWalkSeedSqlFiles = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  dir: string,
+): Effect.Effect<ReadonlyArray<string>, never> =>
+  Effect.gen(function* () {
+    const collected: Array<string> = [];
+    const walk = (rel: string): Effect.Effect<void, never> =>
+      Effect.gen(function* () {
+        const absDir = path.isAbsolute(rel) ? rel : path.join(workdir, rel);
+        const names = yield* fs
+          .readDirectory(absDir)
+          .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+        for (const name of names) {
+          const childRel = `${rel}/${name}`;
+          const childType = yield* fs
+            .stat(path.isAbsolute(childRel) ? childRel : path.join(workdir, childRel))
+            .pipe(
+              Effect.map((info) => info.type),
+              Effect.orElseSucceed(() => "Unknown" as const),
+            );
+          if (childType === "Directory") {
+            yield* walk(childRel);
+          } else if (childType === "File" && childRel.endsWith(".sql")) {
+            collected.push(toSlash(childRel));
+          }
+        }
+      });
+    yield* walk(dir);
+    return collected.sort();
   });
 
 /** `SELECT path, hash FROM supabase_migrations.seed_files`, `42P01` → empty map. */

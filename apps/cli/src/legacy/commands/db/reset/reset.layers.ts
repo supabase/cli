@@ -9,6 +9,7 @@ import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
 import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
@@ -69,6 +70,10 @@ export const legacyDbResetRuntimeLayer = Layer.mergeAll(
   linkedProjectCache,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
+  // `legacyPromptYesNo`'s non-TTY branch reads the piped answer via `Stdin` (Go's
+  // `console.ReadLine`); without it a CI/piped remote `db reset` that reaches the
+  // confirmation prompt fails with a missing-service defect instead of the default.
+  stdinLayer,
   // Container-recreate / storage-health primitives for the native local reset.
   legacyDbBootstrapSeamLayer.pipe(Layer.provide(cliConfig)),
   commandRuntimeLayer(["db", "reset"]),

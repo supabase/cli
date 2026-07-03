@@ -668,7 +668,12 @@ function resolveBool(value: unknown, fallback: boolean, lookup: EnvLookup): bool
   // width). A TOML number (`enabled = 0`) is therefore an explicit false, NOT absent — it
   // must not fall through to the schema default.
   if (typeof value === "number") return value !== 0;
-  return fallback;
+  // Absent → the schema default. A PRESENT non-scalar (array/inline table, e.g.
+  // `enabled = []`) is a decode error in Go's `UnmarshalExact` during `LoadConfig`, so it
+  // must NOT fall through to the default — otherwise `db reset` could accept the prompt and
+  // drop schemas on a config Go rejects up front.
+  if (value === undefined) return fallback;
+  return "invalid";
 }
 
 /**
@@ -741,45 +746,112 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
     }
     return Option.some(parsed);
   }
-  return Option.none<boolean>();
+  // Absent → `None` (Go's `*bool` stays nil). A present non-scalar value fails Go's
+  // `UnmarshalExact`, so reject it here rather than silently treating it as absent.
+  if (value === undefined) return Option.none<boolean>();
+  return yield* Effect.fail(
+    new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
+  );
 });
 
 /**
- * Recursively asserts every `encrypted:` secret in the (merged) config can be decrypted,
- * mirroring Go's global `DecryptSecretHookFunc` (`pkg/config/secret.go:77-109`,
- * `config.go:730`), which decrypts every `config.Secret` field during `UnmarshalExact` and
- * aborts the load with `failed to parse config: <error>` when one cannot be decrypted (e.g.
- * no `DOTENV_PRIVATE_KEY`). The reader's `[db.vault]` walk only covered vault secrets, so
- * non-vault `Secret` fields (`db.root_key`, `auth.external.<p>.secret`, smtp `pass`, …) were
- * silently passed through. A recursive string scan tracks Go's "decode the entire config"
- * behaviour and stays robust as new `Secret` fields are added. The unset-`env(...)` and
- * plain-string forms are returned verbatim by Go's hook (no error), so they are no-ops here.
- * Returns the failure (or `undefined`); the caller surfaces it via `Effect.fail`.
+ * Dotted paths of every `config.Secret`-typed field Go decrypts via its global
+ * `DecryptSecretHookFunc` (`pkg/config/secret.go`, `config.go:730`) — the hook only runs
+ * while decoding INTO a `config.Secret`, never over arbitrary strings. `*` matches any map
+ * key (`auth.external.<provider>`, `auth.hook.<name>`). `[db.vault]` (a `map[string]Secret`)
+ * is intentionally omitted — the reader decrypts it directly in the body with the same
+ * fail-on-undecryptable behaviour. Derived from the Go structs (`auth.go`, `db.go`,
+ * `config.go`); update alongside any new `Secret` field.
  */
-const legacyAssertDecryptableSecrets = (
-  value: unknown,
+const LEGACY_SECRET_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
+  ["db", "root_key"],
+  ["auth", "publishable_key"],
+  ["auth", "secret_key"],
+  ["auth", "jwt_secret"],
+  ["auth", "anon_key"],
+  ["auth", "service_role_key"],
+  ["auth", "email", "smtp", "pass"],
+  ["auth", "external", "*", "secret"],
+  ["auth", "hook", "*", "secrets"],
+  ["auth", "sms", "twilio", "auth_token"],
+  ["auth", "sms", "twilio_verify", "auth_token"],
+  ["auth", "sms", "messagebird", "access_key"],
+  ["auth", "sms", "textlocal", "api_key"],
+  ["auth", "sms", "vonage", "api_secret"],
+  ["auth", "captcha", "secret"],
+  ["studio", "openai_api_key"],
+];
+
+/** Collects the string leaves reachable from `node` along `segs` (`*` spans map keys). */
+const legacyCollectSecretStrings = (
+  node: unknown,
+  segs: ReadonlyArray<string>,
+  index: number,
+  out: Array<string>,
+): void => {
+  if (index === segs.length) {
+    if (typeof node === "string") out.push(node);
+    return;
+  }
+  const record = asRecord(node);
+  if (record === undefined) return;
+  const seg = segs[index]!;
+  if (seg === "*") {
+    for (const key of Object.keys(record)) {
+      legacyCollectSecretStrings(record[key], segs, index + 1, out);
+    }
+  } else {
+    legacyCollectSecretStrings(record[seg], segs, index + 1, out);
+  }
+};
+
+/** Fails when a single `encrypted:` secret value cannot be decrypted (Go's hook error). */
+const legacyAssertSecretValue = (
+  value: string,
   lookup: EnvLookup,
   dotenvPrivateKeys: ReadonlyArray<string>,
 ): LegacyDbConfigLoadError | undefined => {
-  if (typeof value === "string") {
-    const expanded = legacyExpandEnv(value, lookup);
-    if (ENV_PATTERN.test(expanded) || !legacyIsEncryptedSecret(expanded)) return undefined;
-    const decrypted = legacyDecryptSecret(expanded, dotenvPrivateKeys);
-    return decrypted.ok
-      ? undefined
-      : new LegacyDbConfigLoadError({ message: `failed to parse config: ${decrypted.error}` });
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const error = legacyAssertDecryptableSecrets(item, lookup, dotenvPrivateKeys);
-      if (error !== undefined) return error;
+  const expanded = legacyExpandEnv(value, lookup);
+  // Unset `env(...)` and plain strings are returned verbatim by Go's hook (no error).
+  if (ENV_PATTERN.test(expanded) || !legacyIsEncryptedSecret(expanded)) return undefined;
+  const decrypted = legacyDecryptSecret(expanded, dotenvPrivateKeys);
+  return decrypted.ok
+    ? undefined
+    : new LegacyDbConfigLoadError({ message: `failed to parse config: ${decrypted.error}` });
+};
+
+/**
+ * Asserts every `config.Secret`-typed `encrypted:` value in the (merged) config can be
+ * decrypted, mirroring Go's global `DecryptSecretHookFunc`, which aborts the load with
+ * `failed to parse config: <error>` when a secret cannot be decrypted. Only the actual
+ * `Secret` field paths ({@link LEGACY_SECRET_PATHS}) are scanned — a non-secret string that
+ * merely starts with `encrypted:` (e.g. an auth email-template `subject`) stays plain text
+ * in Go and must not block the load. Go decodes every `[remotes.<name>]` block into the same
+ * struct, so the same paths are checked under each remote too. Returns the failure (or
+ * `undefined`); the caller surfaces it via `Effect.fail`.
+ */
+const legacyAssertDecryptableSecrets = (
+  doc: unknown,
+  lookup: EnvLookup,
+  dotenvPrivateKeys: ReadonlyArray<string>,
+): LegacyDbConfigLoadError | undefined => {
+  const scan = (node: unknown): LegacyDbConfigLoadError | undefined => {
+    for (const segs of LEGACY_SECRET_PATHS) {
+      const values: Array<string> = [];
+      legacyCollectSecretStrings(node, segs, 0, values);
+      for (const value of values) {
+        const error = legacyAssertSecretValue(value, lookup, dotenvPrivateKeys);
+        if (error !== undefined) return error;
+      }
     }
     return undefined;
-  }
-  const record = asRecord(value);
-  if (record !== undefined) {
-    for (const key of Object.keys(record)) {
-      const error = legacyAssertDecryptableSecrets(record[key], lookup, dotenvPrivateKeys);
+  };
+  const topLevel = scan(doc);
+  if (topLevel !== undefined) return topLevel;
+  const remotes = asRecord(asRecord(doc)?.["remotes"]);
+  if (remotes !== undefined) {
+    for (const name of Object.keys(remotes)) {
+      const error = scan(remotes[name]);
       if (error !== undefined) return error;
     }
   }

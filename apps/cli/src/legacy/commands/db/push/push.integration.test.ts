@@ -372,6 +372,27 @@ describe("legacy db push", () => {
     });
   });
 
+  it.live("expands a directory in [db.seed].sql_paths to its sorted .sql children", () => {
+    // Go's `GetPendingSeeds` (`Glob.SQLFiles`) walks a matched directory and seeds its
+    // regular `.sql` files recursively; non-.sql files are skipped. Without dir expansion
+    // the directory path reached `readFileString(<dir>)` and failed.
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["seeds"]\n',
+      files: {
+        "supabase/seeds/a.sql": "insert into t values (1);",
+        "supabase/seeds/nested/b.sql": "insert into t values (2);",
+        "supabase/seeds/notes.txt": "not a seed",
+      },
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Seeding data from supabase/seeds/a.sql...");
+      expect(out.stderrText).toContain("Seeding data from supabase/seeds/nested/b.sql...");
+      expect(out.stderrText).not.toContain("notes.txt");
+    });
+  });
+
   it.live("reports seed files up to date when hash matches remote", () => {
     // sha256 of the seed body must match the remote hash to be skipped.
     const body = "insert into t values (1);";
