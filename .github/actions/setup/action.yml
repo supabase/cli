@@ -18,6 +18,26 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - name: Resolve mise cache key
+      id: mise-cache-key
+      shell: bash
+      run: |
+        python3 <<'PY' >> "$GITHUB_OUTPUT"
+        import hashlib
+        import json
+        from pathlib import Path
+
+        package_json = json.loads(Path("package.json").read_text())
+        payload = {
+            "bun": Path(".bun-version").read_text().strip(),
+            "go": Path(".tool-versions").read_text().strip(),
+            "node": package_json.get("devEngines", {}).get("runtime"),
+            "pnpm": package_json.get("packageManager"),
+        }
+        digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        print(f"hash={digest}")
+        PY
+
     - name: Install toolchains
       uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4
       env:
@@ -27,7 +47,7 @@ runs:
         install: true
         cache_key: >-
           {{cache_key_prefix}}-{{platform}}-{{version}}-${{
-          hashFiles('.tool-versions', '.bun-version', 'package.json') }}
+          steps.mise-cache-key.outputs.hash }}
 
     - name: Resolve pnpm store path
       if: inputs.dependency-cache == 'true'
