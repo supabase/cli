@@ -458,10 +458,12 @@ describe("withLegacyCommandInstrumentation", () => {
     );
   });
 
-  it.live("captures failed commands with exit_code=1", () => {
+  it.live("captures failed commands with actionability metadata", () => {
     const analytics = mockContextualAnalytics();
 
-    return withLegacyCommandInstrumentation()(Effect.fail(new Error("boom"))).pipe(
+    return withLegacyCommandInstrumentation()(
+      Effect.fail({ _tag: "LegacyProjectNotLinkedError", message: "Project not linked." }),
+    ).pipe(
       Effect.provide(analytics.layer),
       Effect.provide(mockProcessControl().layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
@@ -472,6 +474,14 @@ describe("withLegacyCommandInstrumentation", () => {
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
           expect(analytics.captured[0]?.properties.exit_code).toBe(1);
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            error_kind: "user_actionable",
+            error_category: "project_not_linked",
+            error_fingerprint: "tag:LegacyProjectNotLinkedError",
+            has_suggestion: true,
+            suggestion_type: "link_project",
+            suggested_command: "supabase link",
+          });
         }),
       ),
       Effect.asVoid,
@@ -500,7 +510,14 @@ describe("withLegacyCommandInstrumentation", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
-          expect(analytics.captured[0]?.properties.exit_code).toBe(1);
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            exit_code: 1,
+            error_kind: "user_actionable",
+            error_category: "invalid_config",
+            error_fingerprint: "process_control:db_lint_fail_on",
+            has_suggestion: false,
+            suggestion_type: "none",
+          });
         }),
       ),
     );

@@ -16,6 +16,10 @@ import {
   PropOutputFormat,
 } from "../../shared/telemetry/event-catalog.ts";
 import {
+  classifyCliCauseActionability,
+  classifyProcessControlledFailureActionability,
+} from "../../shared/telemetry/error-actionability.ts";
+import {
   LEGACY_RESOURCE_OUTPUT_FORMATS,
   LegacyInvalidOutputFormatError,
   legacyInvalidOutputFormatMessage,
@@ -292,6 +296,11 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
         const processExitCode = yield* processControl.getExitCode;
         const recordedExitCode =
           Exit.isFailure(exit) || (processExitCode !== undefined && processExitCode !== 0) ? 1 : 0;
+        const actionability = Exit.isFailure(exit)
+          ? classifyCliCauseActionability(exit.cause)
+          : recordedExitCode === 1
+            ? classifyProcessControlledFailureActionability(command)
+            : {};
 
         // Go's Execute() reads s.distinctID() AFTER the command handler runs
         // (cmd/root.go:177), which returns the just-stitched gotrue id when
@@ -317,6 +326,7 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
             [PropOutputFormat]: Option.isSome(resolvedOutputFormat)
               ? resolvedOutputFormat.value
               : resolveOutputFormatForTelemetry(args, output.format),
+            ...actionability,
           })
           .pipe(withAnalyticsContext(captureContext));
 

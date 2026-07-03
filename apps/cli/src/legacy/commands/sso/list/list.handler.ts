@@ -14,7 +14,10 @@ import {
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyMarkUpgradeSuggested,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacySsoListNetworkError,
   LegacySsoListSamlDisabledError,
@@ -37,16 +40,20 @@ const handleListError = (ref: string, cause: SupabaseApiError) =>
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
     if (mapped._tag === "LegacySsoListUnexpectedStatusError") {
-      yield* legacySuggestUpgrade({
+      const upgradeSuggested = yield* legacySuggestUpgrade({
         projectRef: ref,
         featureKey: "auth.saml_2",
         statusCode: mapped.status,
       });
       if (mapped.status === 404) {
         return yield* Effect.fail(
-          new LegacySsoListSamlDisabledError({ message: SAML_DISABLED_MESSAGE }),
+          legacyMarkUpgradeSuggested(
+            new LegacySsoListSamlDisabledError({ message: SAML_DISABLED_MESSAGE }),
+            upgradeSuggested,
+          ),
         );
       }
+      return yield* Effect.fail(legacyMarkUpgradeSuggested(mapped, upgradeSuggested));
     }
     return yield* Effect.fail(mapped);
   });

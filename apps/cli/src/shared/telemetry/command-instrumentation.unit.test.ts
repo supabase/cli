@@ -97,10 +97,12 @@ describe("withCommandInstrumentation", () => {
     );
   });
 
-  it.live("captures failed commands with a non-zero exit code", () => {
+  it.live("captures failed commands with actionability metadata", () => {
     const analytics = mockContextualAnalytics();
 
-    const program = withCommandInstrumentation()(Effect.fail(new Error("boom"))).pipe(
+    const program = withCommandInstrumentation()(
+      Effect.fail({ _tag: "ProjectNotLinkedError", message: "Project not linked." }),
+    ).pipe(
       Effect.provide(analytics.layer),
       Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
@@ -115,6 +117,14 @@ describe("withCommandInstrumentation", () => {
           expect(analytics.captured).toHaveLength(1);
           expect(analytics.captured[0]?.event).toBe("cli_command_executed");
           expect(analytics.captured[0]?.properties.exit_code).toBe(1);
+          expect(analytics.captured[0]?.properties).toMatchObject({
+            error_kind: "user_actionable",
+            error_category: "project_not_linked",
+            error_fingerprint: "tag:ProjectNotLinkedError",
+            has_suggestion: true,
+            suggestion_type: "link_project",
+            suggested_command: "supabase link",
+          });
         }),
       ),
     );

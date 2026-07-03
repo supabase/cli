@@ -223,6 +223,9 @@ function mockQueuedProcessControl() {
             exitCode = code;
           }),
         getExitCode: Effect.sync(() => exitCode),
+        setHandledFailureCause: () => Effect.void,
+        getHandledFailureCause: Effect.succeed(undefined),
+        clearHandledFailureCause: Effect.void,
       }),
     ),
     signal(signal: CliProcessSignal = "SIGINT") {

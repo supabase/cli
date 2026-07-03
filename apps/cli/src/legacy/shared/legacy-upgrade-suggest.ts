@@ -58,7 +58,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly trackAnalytics?: boolean;
 }) {
   if (opts.statusCode < 400 || opts.statusCode >= 500) {
-    return;
+    return false;
   }
 
   const output = yield* Output;
@@ -78,15 +78,15 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   ).pipe(authHeader, HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent));
   const projectResp = yield* httpClient.execute(projectReq).pipe(Effect.option);
   if (projectResp._tag === "None" || projectResp.value.status !== 200) {
-    return;
+    return false;
   }
   const projectBody = yield* projectResp.value.json.pipe(Effect.option);
   if (projectBody._tag === "None") {
-    return;
+    return false;
   }
   const orgSlug = readString(projectBody.value, "organization_slug");
   if (orgSlug.length === 0) {
-    return;
+    return false;
   }
 
   const entReq = HttpClientRequest.get(
@@ -94,15 +94,15 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   ).pipe(authHeader, HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent));
   const entResp = yield* httpClient.execute(entReq).pipe(Effect.option);
   if (entResp._tag === "None" || entResp.value.status !== 200) {
-    return;
+    return false;
   }
   const entBody = yield* entResp.value.json.pipe(Effect.option);
   if (entBody._tag === "None") {
-    return;
+    return false;
   }
   const entitlements = (entBody.value as { entitlements?: unknown }).entitlements;
   if (!Array.isArray(entitlements)) {
-    return;
+    return false;
   }
 
   const gated = entitlements.some((entry: unknown) => {
@@ -114,7 +114,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
     return key === opts.featureKey && hasAccess === false;
   });
   if (!gated) {
-    return;
+    return false;
   }
 
   const url = legacyBillingUrl(cliConfig.profile, orgSlug);
@@ -130,4 +130,19 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
       [PropOrgSlug]: orgSlug,
     });
   }
+
+  return true;
 });
+
+export function legacyMarkUpgradeSuggested<T extends object>(
+  error: T,
+  upgradeSuggested: boolean,
+): T {
+  if (upgradeSuggested) {
+    Object.defineProperty(error, "upgradeSuggested", {
+      value: true,
+      enumerable: true,
+    });
+  }
+  return error;
+}

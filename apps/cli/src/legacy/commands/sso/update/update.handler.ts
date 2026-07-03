@@ -18,7 +18,10 @@ import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../../shared/leg
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyMarkUpgradeSuggested,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacySsoMutexFlagError,
   LegacySsoUpdateAttributeMappingFileError,
@@ -52,18 +55,22 @@ const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapGetStatusOrNetwork(cause));
     if (mapped._tag === "LegacySsoUpdateUnexpectedStatusError") {
-      yield* legacySuggestUpgrade({
+      const upgradeSuggested = yield* legacySuggestUpgrade({
         projectRef: ref,
         featureKey: "auth.saml_2",
         statusCode: mapped.status,
       });
       if (mapped.status === 404) {
         return yield* Effect.fail(
-          new LegacySsoUpdateNotFoundError({
-            message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-          }),
+          legacyMarkUpgradeSuggested(
+            new LegacySsoUpdateNotFoundError({
+              message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
+            }),
+            upgradeSuggested,
+          ),
         );
       }
+      return yield* Effect.fail(legacyMarkUpgradeSuggested(mapped, upgradeSuggested));
     }
     return yield* Effect.fail(mapped);
   });
@@ -209,7 +216,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         // Cap + sanitise to match `mapLegacyHttpError`'s defences — see add handler
         // for the rationale; the raw-HTTP path must not bypass these.
         const bodyText = sanitizeLegacyErrorBody(rawBody);
-        yield* legacySuggestUpgrade({
+        const upgradeSuggested = yield* legacySuggestUpgrade({
           projectRef: ref,
           featureKey: "auth.saml_2",
           statusCode: response.status,
@@ -217,11 +224,14 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         yield* fetching?.fail() ?? Effect.void;
         return yield* Effect.fail(
           // Go reuses the GET error message even for PUT (see `update.go:133`).
-          new LegacySsoUpdateUnexpectedStatusError({
-            status: response.status,
-            body: bodyText,
-            message: `unexpected error fetching identity provider: ${bodyText}`,
-          }),
+          legacyMarkUpgradeSuggested(
+            new LegacySsoUpdateUnexpectedStatusError({
+              status: response.status,
+              body: bodyText,
+              message: `unexpected error fetching identity provider: ${bodyText}`,
+            }),
+            upgradeSuggested,
+          ),
         );
       }
 

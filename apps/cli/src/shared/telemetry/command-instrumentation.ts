@@ -7,6 +7,7 @@ import {
 import { Output } from "../output/output.service.ts";
 import { withAnalyticsContext } from "./analytics-context.ts";
 import { Analytics } from "./analytics.service.ts";
+import { classifyCliCauseActionability } from "./error-actionability.ts";
 
 interface CommandInstrumentationOptions<Flags extends Record<string, unknown> = never> {
   readonly analytics?: boolean;
@@ -123,6 +124,7 @@ function withCommandAnalyticsImplementation<Flags extends Record<string, unknown
             exit_code: Exit.isSuccess(exit) ? 0 : 1,
             duration_ms: finishedAt - startedAt,
             output_format: output.format,
+            ...(Exit.isFailure(exit) ? classifyCliCauseActionability(exit.cause) : {}),
           })
           .pipe(withAnalyticsContext(analyticsContext));
 

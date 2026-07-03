@@ -1,6 +1,6 @@
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
-import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
+import { type Cause, Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
 import type { ReactElement } from "react";
 import type { ProjectEnvironment, ProjectPaths } from "@supabase/config";
 import {
@@ -172,6 +172,7 @@ export function mockProcessControl(
   } = {},
 ) {
   let exitCode: number | undefined;
+  let handledFailureCause: Cause.Cause<unknown> | undefined;
   const exitCalls: number[] = [];
   const exitDeferred = Deferred.makeUnsafe<number>();
 
@@ -199,6 +200,14 @@ export function mockProcessControl(
           exitCode = code;
         }),
       getExitCode: Effect.sync(() => exitCode),
+      setHandledFailureCause: (cause) =>
+        Effect.sync(() => {
+          handledFailureCause = cause;
+        }),
+      getHandledFailureCause: Effect.sync(() => handledFailureCause),
+      clearHandledFailureCause: Effect.sync(() => {
+        handledFailureCause = undefined;
+      }),
     }),
     get exitCalls() {
       return exitCalls;
@@ -206,6 +215,9 @@ export function mockProcessControl(
     awaitExit: Deferred.await(exitDeferred),
     get exitCode() {
       return exitCode;
+    },
+    get handledFailureCause() {
+      return handledFailureCause;
     },
   };
 }

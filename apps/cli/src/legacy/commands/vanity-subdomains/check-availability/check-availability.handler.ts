@@ -2,7 +2,10 @@ import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyMarkUpgradeSuggested,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -60,12 +63,13 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
               if (mapped._tag === "LegacyVanitySubdomainsCheckUnexpectedStatusError") {
                 // Go's check command calls SuggestUpgradeOnError without a following
                 // TrackUpgradeSuggested, so suppress the analytics event for parity.
-                yield* legacySuggestUpgrade({
+                const upgradeSuggested = yield* legacySuggestUpgrade({
                   projectRef: ref,
                   featureKey: "vanity_subdomain",
                   statusCode: mapped.status,
                   trackAnalytics: false,
                 });
+                return yield* Effect.fail(legacyMarkUpgradeSuggested(mapped, upgradeSuggested));
               }
               return yield* Effect.fail(mapped);
             }),

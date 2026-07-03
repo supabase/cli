@@ -166,6 +166,21 @@ function isRetryableResponse(response: HttpClientResponse.HttpClientResponse): b
   );
 }
 
+function markRequestInputError<E>(error: E): E {
+  if (typeof error === "object" && error !== null) {
+    try {
+      Object.defineProperty(error, "requestInput", {
+        configurable: true,
+        enumerable: true,
+        value: true,
+      });
+    } catch {
+      return error;
+    }
+  }
+  return error;
+}
+
 function applySupabaseRetryPolicy(
   client: HttpClient.HttpClient,
   options?: SupabaseApiRetryOptions,
@@ -442,7 +457,9 @@ function executeRequest(
   input: object,
 ): Effect.Effect<HttpClientResponse.HttpClientResponse, SupabaseApiError> {
   return Effect.gen(function* () {
-    const request = yield* buildRequest(definition, input);
+    const request = yield* buildRequest(definition, input).pipe(
+      Effect.mapError(markRequestInputError),
+    );
     const response = yield* client.execute(request);
     return yield* HttpClientResponse.filterStatusOk(response);
   });
@@ -516,7 +533,9 @@ export function makeSupabaseApiClient(
     return {
       execute: (definition, input) =>
         Effect.gen(function* () {
-          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input);
+          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input).pipe(
+            Effect.mapError(markRequestInputError),
+          );
           const response = yield* executeRequest(prepared, definition, validated);
           if (isJsonOperation(definition)) {
             return yield* decodeJsonResponse(definition, response);
@@ -531,8 +550,11 @@ export function makeSupabaseApiClient(
         }),
       executeRaw: (definition, input, headers) =>
         Effect.gen(function* () {
-          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input);
+          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input).pipe(
+            Effect.mapError(markRequestInputError),
+          );
           const request = yield* buildRequest(definition, validated).pipe(
+            Effect.mapError(markRequestInputError),
             Effect.map((request) =>
               headers === undefined ? request : HttpClientRequest.setHeaders(request, headers),
             ),

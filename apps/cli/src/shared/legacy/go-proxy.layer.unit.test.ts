@@ -100,6 +100,9 @@ function mockProcessControl(opts: { exitBehavior?: "never" | "terminateDie" } = 
         exit,
         setExitCode: () => Effect.void,
         getExitCode: Effect.succeed(undefined),
+        setHandledFailureCause: () => Effect.void,
+        getHandledFailureCause: Effect.succeed(undefined),
+        clearHandledFailureCause: Effect.void,
       }),
     ),
   };

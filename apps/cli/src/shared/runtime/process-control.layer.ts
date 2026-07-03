@@ -1,9 +1,10 @@
 import process from "node:process";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, type Cause } from "effect";
 
 import { ProcessControl, type CliProcessSignal } from "./process-control.service.ts";
 
 const defaultSignals: ReadonlyArray<CliProcessSignal> = ["SIGINT", "SIGTERM"];
+let handledFailureCause: Cause.Cause<unknown> | undefined;
 
 /**
  * processControlLayer - Node process lifecycle wiring.
@@ -94,6 +95,14 @@ export const processControlLayer = Layer.sync(ProcessControl, () =>
     getExitCode: Effect.sync(() => {
       const exitCode = process.exitCode;
       return typeof exitCode === "number" ? exitCode : undefined;
+    }),
+    setHandledFailureCause: (cause) =>
+      Effect.sync(() => {
+        handledFailureCause = cause;
+      }),
+    getHandledFailureCause: Effect.sync(() => handledFailureCause),
+    clearHandledFailureCause: Effect.sync(() => {
+      handledFailureCause = undefined;
     }),
   }),
 );

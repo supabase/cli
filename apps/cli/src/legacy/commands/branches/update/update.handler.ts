@@ -16,7 +16,10 @@ import {
   encodeYaml,
 } from "../../../shared/legacy-go-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyMarkUpgradeSuggested,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacyBranchesUpdateNetworkError,
   LegacyBranchesUpdateUnexpectedStatusError,
@@ -78,12 +81,13 @@ export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function
                 : 0;
             // Mirrors Go's `update.go:26` — pass the resolved branch's project
             // ref so the entitlements check is scoped to the branch's org.
-            yield* legacySuggestUpgrade({
+            const upgradeSuggested = yield* legacySuggestUpgrade({
               projectRef: branchRef,
               featureKey: "branching_persistent",
               statusCode: status,
             });
-            return yield* mapUpdateError(cause);
+            const mapped = yield* Effect.flip(mapUpdateError(cause));
+            return yield* Effect.fail(legacyMarkUpgradeSuggested(mapped, upgradeSuggested));
           }),
         ),
       );

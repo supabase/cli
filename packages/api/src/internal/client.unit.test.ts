@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Effect, Exit, Layer, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -154,6 +154,13 @@ const config = {
   userAgent: "supabase-api/test",
 } as const;
 
+function exitError(exit: Exit.Exit<unknown, unknown>): unknown {
+  if (Exit.isSuccess(exit)) {
+    throw new Error("Expected failed exit");
+  }
+  return Option.getOrThrow(Cause.findErrorOption(exit.cause));
+}
+
 describe("makeSupabaseApiClient", () => {
   test("retries transport errors for POST requests", async () => {
     let attempts = 0;
@@ -193,6 +200,60 @@ describe("makeSupabaseApiClient", () => {
 
     expect(attempts).toBe(3);
     expect(result.ref).toBe("abcdefghijklmnopqrst");
+  });
+
+  test("marks input schema failures as request input errors", async () => {
+    const exit = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1GetProject">(operationDefinitions.v1GetProject, {
+            ref: "short",
+          }),
+        ),
+        Effect.exit,
+        Effect.provide(
+          httpClientLayer((request) =>
+            Effect.succeed(
+              jsonResponse(request, 200, {
+                ref: "abcdefghijklmnopqrst",
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(exitError(exit)).toMatchObject({
+      _tag: "SchemaError",
+      requestInput: true,
+    });
+  });
+
+  test("marks raw input schema failures as request input errors", async () => {
+    const exit = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.executeRaw(operationDefinitions.v1GetProject, {
+            ref: "short",
+          }),
+        ),
+        Effect.exit,
+        Effect.provide(
+          httpClientLayer((request) =>
+            Effect.succeed(
+              jsonResponse(request, 200, {
+                ref: "abcdefghijklmnopqrst",
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(exitError(exit)).toMatchObject({
+      _tag: "SchemaError",
+      requestInput: true,
+    });
   });
 
   test("reveals redacted auth tokens only at the transport boundary", async () => {

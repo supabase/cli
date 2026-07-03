@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Data, Effect, Exit, Layer, Option } from "effect";
 import { mockProcessControl } from "../../../tests/helpers/mocks.ts";
 import { Output } from "./output.service.ts";
 import { withJsonErrorHandling } from "./json-error-handling.ts";
@@ -135,6 +135,7 @@ describe("withJsonErrorHandling", () => {
           suggestion: "try again",
         });
         expect(processControl.exitCode).toBe(1);
+        expect(processControl.handledFailureCause).toEqual(Cause.fail(error));
       }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
     });
 

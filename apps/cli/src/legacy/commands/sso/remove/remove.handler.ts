@@ -9,7 +9,10 @@ import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyMarkUpgradeSuggested,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacySsoRemoveNetworkError,
   LegacySsoRemoveNotFoundError,
@@ -29,18 +32,22 @@ const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiEr
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
     if (mapped._tag === "LegacySsoRemoveUnexpectedStatusError") {
-      yield* legacySuggestUpgrade({
+      const upgradeSuggested = yield* legacySuggestUpgrade({
         projectRef: ref,
         featureKey: "auth.saml_2",
         statusCode: mapped.status,
       });
       if (mapped.status === 404) {
         return yield* Effect.fail(
-          new LegacySsoRemoveNotFoundError({
-            message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-          }),
+          legacyMarkUpgradeSuggested(
+            new LegacySsoRemoveNotFoundError({
+              message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
+            }),
+            upgradeSuggested,
+          ),
         );
       }
+      return yield* Effect.fail(legacyMarkUpgradeSuggested(mapped, upgradeSuggested));
     }
     return yield* Effect.fail(mapped);
   });

@@ -1,4 +1,4 @@
-import type { Effect, Scope } from "effect";
+import type { Cause, Effect, Scope } from "effect";
 import { Context } from "effect";
 
 export type CliProcessSignal = "SIGINT" | "SIGTERM" | "SIGHUP";
@@ -27,6 +27,9 @@ interface ProcessControlShape {
   readonly exit: (code: number) => Effect.Effect<never>;
   readonly setExitCode: (code: number) => Effect.Effect<void>;
   readonly getExitCode: Effect.Effect<number | undefined>;
+  readonly setHandledFailureCause: (cause: Cause.Cause<unknown>) => Effect.Effect<void>;
+  readonly getHandledFailureCause: Effect.Effect<Cause.Cause<unknown> | undefined>;
+  readonly clearHandledFailureCause: Effect.Effect<void>;
 }
 
 /**

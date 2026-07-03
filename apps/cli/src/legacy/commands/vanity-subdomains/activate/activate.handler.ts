@@ -2,7 +2,10 @@ import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyMarkUpgradeSuggested,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -57,11 +60,12 @@ export const legacyVanitySubdomainsActivate = Effect.fn("legacy.vanity-subdomain
                 // tagged error before deciding whether to suggest an upgrade, then re-fail.
                 const mapped = yield* Effect.flip(mapActivateError(cause));
                 if (mapped._tag === "LegacyVanitySubdomainsActivateUnexpectedStatusError") {
-                  yield* legacySuggestUpgrade({
+                  const upgradeSuggested = yield* legacySuggestUpgrade({
                     projectRef: ref,
                     featureKey: "vanity_subdomain",
                     statusCode: mapped.status,
                   });
+                  return yield* Effect.fail(legacyMarkUpgradeSuggested(mapped, upgradeSuggested));
                 }
                 return yield* Effect.fail(mapped);
               }),

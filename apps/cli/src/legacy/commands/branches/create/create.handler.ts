@@ -16,7 +16,10 @@ import {
   encodeYaml,
 } from "../../../shared/legacy-go-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
-import { legacySuggestUpgrade } from "../../../shared/legacy-upgrade-suggest.ts";
+import {
+  legacyMarkUpgradeSuggested,
+  legacySuggestUpgrade,
+} from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacyBranchesCreateCancelledError,
   LegacyBranchesCreateNetworkError,
@@ -106,12 +109,13 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
               HttpClientError.isHttpClientError(cause) && cause.response !== undefined
                 ? cause.response.status
                 : 0;
-            yield* legacySuggestUpgrade({
+            const upgradeSuggested = yield* legacySuggestUpgrade({
               projectRef: ref,
               featureKey: "branching_limit",
               statusCode: status,
             });
-            return yield* mapCreateErrorRaw(cause);
+            const mapped = yield* Effect.flip(mapCreateErrorRaw(cause));
+            return yield* Effect.fail(legacyMarkUpgradeSuggested(mapped, upgradeSuggested));
           }),
         ),
       );
