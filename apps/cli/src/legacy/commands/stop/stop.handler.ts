@@ -197,14 +197,21 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
         // Go gates the `--all` filter arg on Docker engine >= 1.42 (`docker.go:120-124`).
         // All currently supported Docker versions are well past 1.42, so the TS port
         // always passes `--all` — documented divergence, see SIDE_EFFECTS.md Notes.
-        const volumePruneExitCode = yield* containerCliExitCode(spawner, [
-          "volume",
-          "prune",
-          "--force",
-          "--all",
-          "--filter",
-          `label=${filterValue}`,
-        ]).pipe(
+        //
+        // Podman is a Docker-CLI-compatible fallback this port adds, not something
+        // Go itself has (Go talks to the Docker Engine API directly, never a
+        // `docker`/`podman` binary), so there's no Go behavior to match here — but
+        // `--all` isn't a real flag on any released Podman `volume prune` (only
+        // `--filter`/`--force`/`--help`, checked v4.3 through the current v5.7;
+        // `--all` only exists in unreleased dev docs), so it hard-fails on a real
+        // Podman-only host. Podman already prunes every unused volume by default,
+        // so omitting `--all` on the Podman fallback is a lossless fix.
+        const volumePruneExitCode = yield* containerCliExitCode(
+          spawner,
+          ["volume", "prune", "--force", "--all", "--filter", `label=${filterValue}`],
+          undefined,
+          ["volume", "prune", "--force", "--filter", `label=${filterValue}`],
+        ).pipe(
           Effect.mapError(
             (cause) =>
               new LegacyStopVolumePruneError({

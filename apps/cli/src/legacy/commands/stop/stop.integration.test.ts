@@ -630,6 +630,32 @@ describe("legacy stop integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("omits --all from podman's volume prune (not a real Podman flag)", () => {
+    // No released Podman `volume prune` accepts `--all` (only `--filter`/`--force`/
+    // `--help`), so passing Docker's `--all` argv straight through to the Podman
+    // fallback would hard-fail after containers are already stopped. Podman prunes
+    // every unused volume by default, so dropping `--all` there is lossless.
+    const { layer, child } = setup({
+      configuredProjectId: "demo",
+      route: defaultRoute(),
+      dockerMissing: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyStop(flags({ noBackup: true }));
+      const volumePruneCalls = child.spawned.filter(
+        (s) => s.args[0] === "volume" && s.args[1] === "prune",
+      );
+      expect(volumePruneCalls.at(-1)?.command).toBe("podman");
+      expect(volumePruneCalls.at(-1)?.args).toEqual([
+        "volume",
+        "prune",
+        "--force",
+        "--filter",
+        "label=com.supabase.cli.project=demo",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("emits a machine result in json mode without spinner text", () => {
     const { layer, out } = setup({
       format: "json",

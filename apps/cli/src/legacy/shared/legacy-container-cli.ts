@@ -72,18 +72,25 @@ export const spawnContainerCli = (
 /**
  * Run a container-CLI command and resolve to its exit code, mirroring the
  * spawner's `exitCode` convenience for callers that only need the status.
+ *
+ * `podmanArgs` lets a caller pass different argv to the Podman fallback than to
+ * Docker, for the rare case where the two aren't drop-in compatible on a given
+ * subcommand (e.g. `volume prune --all` — Docker-only, see
+ * `stop.handler.ts`'s volume-prune call). Defaults to reusing `args` unchanged,
+ * which is correct for every other call site.
  */
 export const containerCliExitCode = (
   spawner: Spawner,
   args: ReadonlyArray<string>,
   options?: ChildProcess.CommandOptions,
+  podmanArgs?: ReadonlyArray<string>,
 ) =>
   spawner
     .exitCode(ChildProcess.make("docker", args, options))
     .pipe(
       Effect.catch(() =>
         spawner
-          .exitCode(ChildProcess.make("podman", args, options))
+          .exitCode(ChildProcess.make("podman", podmanArgs ?? args, options))
           .pipe(
             Effect.catch(() =>
               Effect.fail(

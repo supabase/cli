@@ -102,10 +102,14 @@ Same payload as `json`, delivered as a `result` NDJSON event.
   regardless of `--backup`. The TS port matches this exactly: `deleteVolumes =
 flags.noBackup`. `--backup=false` alone does **not** delete volumes; only
   `--no-backup` does.
-- Volume prune always passes `--all`. Go gates that flag on Docker engine >= 1.42
-  (`docker.go:120-124`, since named-volume pruning requires it); the TS port skips the
-  version check and always passes `--all` because every currently supported Docker
-  version is far past 1.42.
+- Volume prune always passes `--all` on Docker. Go gates that flag on Docker engine >=
+  1.42 (`docker.go:120-124`, since named-volume pruning requires it); the TS port skips
+  the version check and always passes `--all` because every currently supported Docker
+  version is far past 1.42. On the Podman fallback, `--all` is omitted instead: no
+  released Podman `volume prune` (checked v4.3 through the current v5.7) accepts that
+  flag, and Podman already prunes every unused volume by default, so dropping it there
+  is lossless. Podman itself is a TS-only fallback (Go never shells out to a
+  `docker`/`podman` binary), so this has no Go-parity implication either way.
 - Containers are stopped concurrently (`Effect.all(..., { concurrency: "unbounded" })`),
   mirroring Go's `WaitAll` goroutine fan-out. Every container's failure is checked before
   failing the command (rather than stopping at the first failure), matching Go's
