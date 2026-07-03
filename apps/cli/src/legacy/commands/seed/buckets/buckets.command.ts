@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Layer } from "effect";
 import { Command } from "effect/unstable/cli";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
@@ -6,6 +6,7 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { LegacySeedLinkedFlag, LegacySeedLocalFlag } from "../seed.flags.ts";
 import { legacyAssertSeedTargetsExclusive } from "./buckets.flags.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyStorageGatewayRuntimeLayer } from "../../../shared/legacy-storage-runtime.layer.ts";
 import { legacySeedBuckets } from "./buckets.handler.ts";
 
@@ -36,5 +37,7 @@ export const legacyBucketsCommand = Command.make("buckets").pipe(
       return yield* legacySeedBuckets(flags).pipe(withLegacyCommandInstrumentation({ flags }));
     }).pipe(withJsonErrorHandling),
   ),
-  Command.provide(legacyStorageGatewayRuntimeLayer(["seed", "buckets"])),
+  Command.provide(
+    Layer.mergeAll(legacyStorageGatewayRuntimeLayer(["seed", "buckets"]), stdinLayer),
+  ),
 );

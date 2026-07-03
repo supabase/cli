@@ -33,6 +33,7 @@ import {
   LegacyOutputFlag,
 } from "../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../shared/legacy/go-proxy.service.ts";
+import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { LegacyTemplateService, type LegacyStarterTemplate } from "./bootstrap.templates.ts";
 import { legacyBootstrap } from "./bootstrap.handler.ts";
 import type { LegacyBootstrapFlags } from "./bootstrap.command.ts";
@@ -175,6 +176,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(LegacyWorkdirFlag, opts.workdir ?? Option.some(tempRoot.current)),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
+    Layer.succeed(CliArgs, { args: [] }),
   );
 
   return {

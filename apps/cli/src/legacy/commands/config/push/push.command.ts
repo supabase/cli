@@ -1,7 +1,9 @@
+import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyConfigPush } from "./push.handler.ts";
@@ -34,5 +36,5 @@ export const legacyConfigPushCommand = Command.make("push", config).pipe(
       withJsonErrorHandling,
     ),
   ),
-  Command.provide(legacyManagementApiRuntimeLayer(["config", "push"])),
+  Command.provide(Layer.mergeAll(legacyManagementApiRuntimeLayer(["config", "push"]), stdinLayer)),
 );

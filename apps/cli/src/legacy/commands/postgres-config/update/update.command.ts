@@ -3,18 +3,25 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { legacyParseStringSliceFlag } from "../../../shared/legacy-string-slice-flag.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyPostgresConfigUpdate } from "./update.handler.ts";
+
+export const legacyPostgresConfigUpdateConfigFlag = Flag.string("config").pipe(
+  Flag.withDescription("Config overrides specified as a 'key=value' pair"),
+  Flag.atLeast(0),
+  Flag.mapTryCatch(
+    (rawValues) => legacyParseStringSliceFlag(rawValues),
+    (err) => (err instanceof Error ? err.message : String(err)),
+  ),
+);
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  config: Flag.string("config").pipe(
-    Flag.withDescription("Config overrides specified as a 'key=value' pair"),
-    Flag.atLeast(0),
-  ),
+  config: legacyPostgresConfigUpdateConfigFlag,
   replaceExistingOverrides: Flag.boolean("replace-existing-overrides").pipe(
     Flag.withDescription(
       "If true, replaces all existing overrides with the ones provided. If false (default), merges existing overrides with the ones provided.",

@@ -1,4 +1,4 @@
-import { Duration, Effect, Layer, Option, Stdio, Stream } from "effect";
+import { Duration, Effect, Layer, Option, Pull, Ref, Scope, Stdio, Stream } from "effect";
 
 import { Tty } from "./tty.service.ts";
 import { Stdin } from "./stdin.service.ts";
@@ -7,6 +7,24 @@ const makeStdin = Effect.gen(function* () {
   const stdio = yield* Stdio.Stdio;
   const tty = yield* Tty;
   const textDecoder = new TextDecoder();
+
+  // Persistent, lazily-opened line reader shared by every `readLine` call, so a
+  // command issuing several prompts (config push, seed buckets) reads the *next*
+  // piped line each time — one `bufio.Scanner` over os.Stdin, as in Go
+  // (`internal/utils/console.go:20,50`). `Stream.toPull` is deferred behind
+  // `Effect.cached` and tied to this layer's scope: stdin is not touched until the
+  // first `readLine`, so a TTY command that only prompts via clack never grabs the
+  // keyboard (no contention with clack's own stdin capture), and the pull outlives
+  // individual prompts. `splitLines` preserves interior blank lines so answers stay
+  // aligned across prompts.
+  const scope = yield* Effect.scope;
+  const getPull = yield* Effect.cached(
+    Stream.toPull(stdio.stdin.pipe(Stream.decodeText(), Stream.splitLines)).pipe(
+      Scope.provide(scope),
+    ),
+  );
+  // Leftover lines from the last pulled chunk (a single pull may yield several).
+  const bufferRef = yield* Ref.make<ReadonlyArray<string>>([]);
 
   const readPipedBytes = Effect.gen(function* () {
     const chunks = yield* stdio.stdin.pipe(Stream.runCollect);
@@ -30,21 +48,35 @@ const makeStdin = Effect.gen(function* () {
     return Option.some(bytes);
   }).pipe(Effect.orElseSucceed(() => Option.none<Uint8Array>()));
 
-  // Read one line (up to the first newline), trimmed, bounded by `timeoutMillis`.
-  // Mirrors Go's `Console.ReadLine` (`internal/utils/console.go:38-61`); `Stream.take(1)`
-  // stops at the first line so an interactive TTY isn't drained to EOF. A timeout, EOF,
-  // or read error all collapse to `None` (Go returns "" — i.e. the default — for each).
+  // Read the next line (trimmed), bounded by `timeoutMillis`, from the persistent
+  // reader above. Mirrors Go's `Console.ReadLine` (`internal/utils/console.go:38-61`):
+  // successive calls return successive lines, and a timeout, EOF, or read error all
+  // collapse to `None` (Go returns "" — i.e. the prompt default — for each). The
+  // timeout bounds an open pipe that yields no newline (e.g. `yes y | …`) so it takes
+  // the default instead of blocking on EOF.
   const readLine = (timeoutMillis: number): Effect.Effect<Option.Option<string>> =>
-    stdio.stdin.pipe(
-      Stream.decodeText(),
-      Stream.splitLines,
-      Stream.take(1),
-      Stream.runHead,
-      Effect.map(Option.map((line) => line.trim())),
-      Effect.timeoutOption(Duration.millis(timeoutMillis)),
-      Effect.map(Option.flatten),
-      Effect.orElseSucceed(() => Option.none<string>()),
-    );
+    Effect.gen(function* () {
+      const buffered = yield* Ref.get(bufferRef);
+      if (buffered.length > 0) {
+        yield* Ref.set(bufferRef, buffered.slice(1));
+        return Option.some((buffered[0] ?? "").trim());
+      }
+      const pull = yield* getPull;
+      const readChunk = Pull.matchEffect(pull, {
+        onSuccess: (chunk) => Effect.succeed(Option.some(chunk)),
+        onFailure: () => Effect.succeedNone,
+        onDone: () => Effect.succeedNone,
+      });
+      // Outer `None` = timed out; inner `None` = EOF / read error; either way the
+      // prompt takes its default.
+      const pulled = yield* readChunk.pipe(Effect.timeoutOption(Duration.millis(timeoutMillis)));
+      if (Option.isNone(pulled) || Option.isNone(pulled.value)) {
+        return Option.none<string>();
+      }
+      const chunk = pulled.value.value;
+      yield* Ref.set(bufferRef, chunk.slice(1));
+      return Option.some((chunk[0] ?? "").trim());
+    });
 
   // Stream piped stdin without collecting it (constant memory). Read errors PROPAGATE on
   // the error channel (unlike `readPipedBytes`'s `orElseSucceed(none)` swallow): Go's

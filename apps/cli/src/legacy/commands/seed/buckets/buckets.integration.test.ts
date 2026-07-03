@@ -8,7 +8,7 @@ import { Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   legacyJsonResponse,
@@ -53,6 +53,8 @@ function setupLegacySeedBuckets(
     readonly format?: OutputFormat;
     readonly confirm?: ReadonlyArray<boolean>;
     readonly promptConfirmFail?: boolean;
+    /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
+    readonly pipedAnswers?: ReadonlyArray<string>;
     readonly args?: ReadonlyArray<string>;
     readonly yes?: boolean;
     /** Project ref returned by loadProjectRef for --linked tests. */
@@ -181,6 +183,9 @@ function setupLegacySeedBuckets(
     telemetry.layer,
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
+    // Seed-bucket prompts model an interactive user answering via `confirm`.
+    mockTty({ stdinIsTty: true, stdoutIsTty: false }),
+    mockStdin(true, opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined),
     Layer.succeed(CliArgs, { args: opts.args ?? ["seed", "buckets"] }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     projectRefLayer,

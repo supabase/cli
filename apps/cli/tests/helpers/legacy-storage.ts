@@ -6,13 +6,14 @@ import { Effect, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
+import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
 import { LegacyPlatformApiFactory } from "../../src/legacy/auth/legacy-platform-api-factory.service.ts";
 import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-project-ref.errors.ts";
 import { LegacyProjectRefResolver } from "../../src/legacy/config/legacy-project-ref.service.ts";
 import { LegacyYesFlag } from "../../src/shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
-import { mockOutput, mockRuntimeInfo } from "./mocks.ts";
+import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
 import {
   LEGACY_VALID_REF,
   legacyJsonResponse,
@@ -66,6 +67,12 @@ export interface SetupLegacyStorageOptions {
   readonly yes?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
   readonly promptConfirmFail?: boolean;
+  /** stdin interactivity; defaults to a TTY so `confirm`-driven tests reach clack. */
+  readonly stdinIsTty?: boolean;
+  /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
+  readonly pipedAnswers?: ReadonlyArray<string>;
+  /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
+  readonly cliArgs?: ReadonlyArray<string>;
   /** Project ref returned by the resolver for the linked path. */
   readonly projectRef?: string;
   /** api-keys list returned by the Management API mock (linked path). */
@@ -200,9 +207,18 @@ export function setupLegacyStorage(workdir: string, opts: SetupLegacyStorageOpti
       make: LegacyPlatformApi.pipe(Effect.provide(managementApi.layer)),
     }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    // `storage rm` confirms deletions via `legacyPromptYesNo`; model an
+    // interactive user answering via `confirm` (other storage commands ignore it).
+    mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
+    mockStdin(
+      opts.stdinIsTty ?? true,
+      opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
+    ),
     // `cp` resolves relative local paths against the original cwd (Go's
     // `utils.CurrentDirAbs`); point it at the temp workdir for tests.
     mockRuntimeInfo({ cwd: workdir }),
+    // `legacyResolveYes` scans the raw argv for an explicit `--yes=false`.
+    Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
   );
 
   return { layer, out, requests, telemetry, linkedCache };
