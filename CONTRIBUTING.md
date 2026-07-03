@@ -22,7 +22,17 @@ See the [`mise` installation docs](https://mise.jdx.dev/getting-started.html) fo
 
 `mise` needs to hook into your shell so it can inject the right tool versions into your `PATH` as you move between directories. Follow the `mise activate` instructions [in this section](https://mise.jdx.dev/getting-started.html#activate-mise) to add the activation line for your shell to its startup file.
 
+This repo relies on `mise` support for reading Node and pnpm versions from `package.json`, so use mise `2026.7.0` or newer.
+
 #### Installing the pinned tool versions
+
+Enable the idiomatic version files used by this repo once on your machine:
+
+```sh
+mise settings add idiomatic_version_file_enable_tools node
+mise settings add idiomatic_version_file_enable_tools bun
+mise settings add idiomatic_version_file_enable_tools pnpm
+```
 
 From the repo root:
 
@@ -35,16 +45,18 @@ mise install
 | Tool | Version source |
 | --- | --- |
 | Bun | `.bun-version` |
-| Node.js | `.nvmrc` |
+| Node.js | `devEngines.runtime` field in `package.json` |
 | pnpm | `packageManager` field in `package.json` |
-| Go | `go.mod` in `apps/cli-go` |
-| golangci-lint | `mise.toml` |
+| Go | `.tool-versions` |
+| golangci-lint | `apps/cli-go/go.mod` |
+
+The Go entry in `.tool-versions` is intentionally temporary while the Go CLI remains in the repo. The canonical Go module metadata still lives in `apps/cli-go/go.mod`; keep the `.tool-versions` Go entry aligned only until the Go code is removed.
 
 Once installed, `mise` activates these versions automatically whenever your shell is inside this repo — no manual `nvm use`, `gvm use`, or similar switching required.
 
 #### Without mise
 
-`mise` is not required. If you already have Bun, Node, pnpm, and Go installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `.nvmrc`, `package.json`, and `apps/cli-go/go.mod`.
+`mise` is not required. If you already have Bun, Node, pnpm, and Go installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `.tool-versions`, `package.json`, and `apps/cli-go/go.mod`.
 
 ### Install dependencies
 
