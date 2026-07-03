@@ -1,5 +1,5 @@
-# Adapted from https://blog.somewhatabstract.com/2021/10/11/setting-up-dependabot-with-github-actions-to-approve-and-merge/
-name: Dependabot auto-merge
+# Approve and queue dependency PRs created by the self-hosted Renovate workflow.
+name: Renovate auto-merge
 
 on: pull_request
 
@@ -7,20 +7,10 @@ permissions:
   contents: read
 
 jobs:
-  dependabot:
+  renovate:
     runs-on: ubuntu-latest
-    # Checking the actor will prevent your Action run failing on non-Dependabot
-    # PRs but also ensures that it only does work for Dependabot PRs.
-    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == github.event.pull_request.head.repo.full_name
+    if: github.repository == github.event.pull_request.head.repo.full_name && startsWith(github.event.pull_request.head.ref, 'renovate/')
     steps:
-      # This first step will fail if there's no metadata and so the approval
-      # will not occur.
-      - name: Dependabot metadata
-        id: meta
-        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
-        with:
-          github-token: "${{ secrets.GITHUB_TOKEN }}"
-
       - name: Generate token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -30,17 +20,29 @@ jobs:
           permission-pull-requests: write
           permission-contents: write
 
-      # Here the PR gets approved.
+      - name: Check Renovate labels
+        id: check
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_EVENT_PULL_REQUEST_HTML_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          has_labels="$(
+            gh pr view "${GITHUB_EVENT_PULL_REQUEST_HTML_URL}" --json labels \
+              --jq '([.labels[].name] | contains(["automerge", "dependencies", "renovate"]))'
+          )"
+          echo "has_labels=${has_labels}" >> "${GITHUB_OUTPUT}"
+
       - name: Approve a PR
+        if: steps.check.outputs.has_labels == 'true'
         run: gh pr review --approve "${GITHUB_EVENT_PULL_REQUEST_HTML_URL}"
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.AUTO_APPROVE_PR_PAT }}
           GITHUB_EVENT_PULL_REQUEST_HTML_URL: ${{ github.event.pull_request.html_url }}
 
-      # Finally, this sets the PR to allow auto-merging once all required
-      # checks pass.
-      - name: Enable auto-merge for Dependabot PRs
+      - name: Enable auto-merge for Renovate PRs
+        if: steps.check.outputs.has_labels == 'true'
         run: gh pr merge --auto --squash "${GITHUB_EVENT_PULL_REQUEST_HTML_URL}"
         env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GITHUB_EVENT_PULL_REQUEST_HTML_URL: ${{ github.event.pull_request.html_url }}
