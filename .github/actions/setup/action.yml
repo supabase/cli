@@ -30,6 +30,7 @@ runs:
         const payload = {
           bun: readFileSync(".bun-version", "utf8").trim(),
           go: readFileSync(".tool-versions", "utf8").trim(),
+          mise: readFileSync("mise.toml", "utf8").trim(),
           node: packageJson.devEngines?.runtime,
           pnpm: packageJson.packageManager,
         };
@@ -41,8 +42,6 @@ runs:
 
     - name: Install toolchains
       uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4
-      env:
-        MISE_IDIOMATIC_VERSION_FILE_ENABLE_TOOLS: node,bun,pnpm
       with:
         version: 2026.7.0
         install: true
@@ -52,8 +51,6 @@ runs:
 
     - name: Add toolchains to PATH
       shell: bash
-      env:
-        MISE_IDIOMATIC_VERSION_FILE_ENABLE_TOOLS: node,bun,pnpm
       run: |
         echo "$(mise where go)/bin" >> "$GITHUB_PATH"
         echo "$(mise where node)/bin" >> "$GITHUB_PATH"

@@ -26,15 +26,13 @@ This repo relies on `mise` support for reading Node and pnpm versions from `pack
 
 #### Installing the pinned tool versions
 
-Enable the idiomatic version files used by this repo once on your machine:
+Trust this repo's `mise.toml` once from the repo root so `mise` can read the project setting that enables idiomatic version files:
 
 ```sh
-mise settings add idiomatic_version_file_enable_tools node
-mise settings add idiomatic_version_file_enable_tools bun
-mise settings add idiomatic_version_file_enable_tools pnpm
+mise trust
 ```
 
-From the repo root:
+Then install the pinned tool versions:
 
 ```sh
 mise install
@@ -52,7 +50,7 @@ Install the Go linter recorded by the Go module:
 
 Make sure `$(go env GOPATH)/bin` is on your `PATH` so `pnpm run check:all` can find `golangci-lint`.
 
-`mise` resolves the versions this repo expects from a handful of files, rather than hardcoding them all in one place:
+After `mise trust`, `mise` resolves the versions this repo expects from a handful of files, rather than hardcoding them all in one place:
 
 | Tool | Version source |
 | --- | --- |
