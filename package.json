@@ -1,6 +1,12 @@
 {
   "name": "@supabase/root",
   "private": true,
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24"
+    }
+  },
   "scripts": {
     "test:core": "nx run-many -t test:unit test:integration --coverage.enabled",
     "test:e2e": "nx run-many -t test:e2e",
