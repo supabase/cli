@@ -12,6 +12,9 @@ const config = {
   includeSeed: Flag.boolean("include-seed").pipe(
     Flag.withDescription("Include seed data from your config."),
   ),
+  skipVault: Flag.boolean("skip-vault").pipe(
+    Flag.withDescription("Skip updating vault secrets from config.toml."),
+  ),
   dryRun: Flag.boolean("dry-run").pipe(
     Flag.withDescription(
       "Print the migrations that would be applied, but don't actually apply them.",

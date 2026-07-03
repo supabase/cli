@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 
 	"github.com/go-errors/errors"
 	"github.com/jackc/pgx/v4"
@@ -22,20 +23,29 @@ type VaultTable struct {
 	Name string
 }
 
-func UpsertVaultSecrets(ctx context.Context, secrets map[string]config.Secret, conn *pgx.Conn) error {
-	var keys []string
-	toInsert := map[string]string{}
-	for k, v := range secrets {
-		if len(v.SHA256) > 0 {
-			keys = append(keys, k)
-			toInsert[k] = v.Value
+// ResolvedSecretNames returns vault secret names from config that would be upserted.
+func ResolvedSecretNames(secrets map[string]config.Secret) []string {
+	var names []string
+	for name, secret := range secrets {
+		if len(secret.SHA256) > 0 {
+			names = append(names, name)
 		}
 	}
-	if len(keys) == 0 {
+	slices.Sort(names)
+	return names
+}
+
+func UpsertVaultSecrets(ctx context.Context, secrets map[string]config.Secret, conn *pgx.Conn) error {
+	names := ResolvedSecretNames(secrets)
+	if len(names) == 0 {
 		return nil
 	}
+	toInsert := map[string]string{}
+	for _, name := range names {
+		toInsert[name] = secrets[name].Value
+	}
 	fmt.Fprintln(os.Stderr, "Updating vault secrets...")
-	rows, err := conn.Query(ctx, READ_VAULT_KV, keys)
+	rows, err := conn.Query(ctx, READ_VAULT_KV, names)
 	if err != nil {
 		return errors.Errorf("failed to read vault: %w", err)
 	}

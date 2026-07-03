@@ -5,9 +5,16 @@
 | Path                             | Format     | When                                              |
 | -------------------------------- | ---------- | ------------------------------------------------- |
 | `~/.supabase/access-token`       | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` |
+| `<workdir>/supabase/config.toml` | TOML       | when pushing migrations with `[db.vault]` entries |
 | `<workdir>/supabase/migrations/` | directory  | always, to list migration files to push           |
 | `<workdir>/supabase/roles.sql`   | SQL        | when `--include-roles` is set                     |
 | seed files from config           | SQL        | when `--include-seed` is set                      |
+
+## Remote Database Side Effects
+
+| Target | Effect | When |
+| ------ | ------ | ---- |
+| `vault.secrets` | upsert secrets from `[db.vault]` in config.toml | after migration confirmation, unless `--skip-vault` is set |
 
 ## Files Written
 
@@ -56,4 +63,5 @@ Not applicable.
 - `--include-all` includes all migrations not found in remote history table.
 - `--include-roles` includes custom roles from the roles file.
 - `--include-seed` includes seed data from config.
+- `--skip-vault` skips updating `[db.vault]` secrets while still applying migrations.
 - `--db-url`, `--linked` (default true), and `--local` are mutually exclusive.

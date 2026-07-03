@@ -18,7 +18,7 @@ import (
 	"github.com/supabase/cli/pkg/vault"
 )
 
-func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, includeSeed bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, includeSeed, skipVault bool, config pgconn.Config, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	if dryRun {
 		fmt.Fprintln(os.Stderr, "DRY RUN: migrations will *not* be pushed to the database.")
 	}
@@ -66,6 +66,14 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 		if len(pending) > 0 {
 			fmt.Fprintln(os.Stderr, "Would push these migrations:")
 			fmt.Fprint(os.Stderr, confirmPushAll(pending))
+			if names := vault.ResolvedSecretNames(utils.Config.Db.Vault); len(names) > 0 {
+				if skipVault {
+					fmt.Fprintln(os.Stderr, "Would skip vault secrets from config.toml:")
+				} else {
+					fmt.Fprintln(os.Stderr, "Would update vault secrets from config.toml:")
+				}
+				fmt.Fprint(os.Stderr, confirmVaultPushAll(names))
+			}
 		}
 		if len(seeds) > 0 {
 			fmt.Fprintln(os.Stderr, "Would seed these files:")
@@ -90,8 +98,12 @@ func Run(ctx context.Context, dryRun, ignoreVersionMismatch bool, includeRoles, 
 			} else if !shouldPush {
 				return errors.New(context.Canceled)
 			}
-			if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
-				return err
+			if !skipVault {
+				if err := vault.UpsertVaultSecrets(ctx, utils.Config.Db.Vault, conn); err != nil {
+					return err
+				}
+			} else if len(vault.ResolvedSecretNames(utils.Config.Db.Vault)) > 0 {
+				fmt.Fprintln(os.Stderr, "Skipping vault secrets.")
 			}
 			if err := migration.ApplyMigrations(ctx, pending, conn, afero.NewIOFS(fsys)); err != nil {
 				return err
@@ -124,6 +136,13 @@ func confirmPushAll(pending []string) (msg string) {
 	for _, path := range pending {
 		filename := filepath.Base(path)
 		msg += fmt.Sprintf(" • %s\n", utils.Bold(filename))
+	}
+	return msg
+}
+
+func confirmVaultPushAll(names []string) (msg string) {
+	for _, name := range names {
+		msg += fmt.Sprintf(" • %s\n", utils.Bold(name))
 	}
 	return msg
 }

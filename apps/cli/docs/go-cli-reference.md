@@ -328,6 +328,7 @@ Flags:
       --include-all       Include all migrations not found on remote history table.
       --include-roles     Include custom roles from supabase/roles.sql.
       --include-seed      Include seed data from your config.
+      --skip-vault        Skip updating vault secrets from config.toml.
       --linked            Pushes to the linked project. (default true)
       --local             Pushes to the local database.
   -p, --password string   Password to your remote Postgres database.

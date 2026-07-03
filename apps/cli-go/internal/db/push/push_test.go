@@ -16,12 +16,22 @@ import (
 	"github.com/supabase/cli/internal/testing/fstest"
 	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/pgtest"
+	"github.com/supabase/cli/pkg/vault"
 )
 
 var dbConfig = pgconn.Config{
 	Host:     "127.0.0.1",
+	Port:     5432,
+	User:     "admin",
+	Password: "password",
+	Database: "postgres",
+}
+
+var remoteDbConfig = pgconn.Config{
+	Host:     "db.supabase.co",
 	Port:     5432,
 	User:     "admin",
 	Password: "password",
@@ -40,7 +50,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), true, false, true, true, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), true, false, true, true, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -54,7 +64,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, false, false, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -63,7 +73,7 @@ func TestMigrationPush(t *testing.T) {
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
 		// Run test
-		err := Run(context.Background(), false, false, false, false, pgconn.Config{}, fsys)
+		err := Run(context.Background(), false, false, false, false, false, pgconn.Config{}, fsys)
 		// Check error
 		assert.ErrorContains(t, err, "invalid port (outside range)")
 	})
@@ -77,7 +87,7 @@ func TestMigrationPush(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			ReplyError(pgerrcode.InvalidCatalogName, `database "target" does not exist`)
 		// Run test
-		err := Run(context.Background(), false, false, false, false, pgconn.Config{
+		err := Run(context.Background(), false, false, false, false, false, pgconn.Config{
 			Host:     "db.supabase.co",
 			Port:     5432,
 			User:     "admin",
@@ -104,7 +114,7 @@ func TestMigrationPush(t *testing.T) {
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Run test
-		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, false, false, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "version" of relation "schema_migrations" (SQLSTATE 23502)`)
 		assert.ErrorContains(t, err, "At statement: 0\n"+migration.INSERT_MIGRATION_VERSION)
@@ -128,7 +138,7 @@ func TestPushAll(t *testing.T) {
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
 			Reply("INSERT 0 1")
 		// Run test
-		err := Run(context.Background(), false, false, true, true, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, true, true, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
 	})
@@ -145,7 +155,7 @@ func TestPushAll(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), false, false, true, true, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, true, true, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, context.Canceled)
 	})
@@ -161,7 +171,7 @@ func TestPushAll(t *testing.T) {
 		conn.Query(migration.LIST_MIGRATION_VERSION).
 			Reply("SELECT 0")
 		// Run test
-		err := Run(context.Background(), false, false, true, false, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, true, false, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorIs(t, err, os.ErrPermission)
 	})
@@ -191,8 +201,60 @@ func TestPushAll(t *testing.T) {
 			Query(migration.UPSERT_SEED_FILE, seedPath, digest).
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "hash" of relation "seed_files"`)
 		// Run test
-		err := Run(context.Background(), false, false, false, true, dbConfig, fsys, conn.Intercept)
+		err := Run(context.Background(), false, false, false, true, false, dbConfig, fsys, conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: null value in column "hash" of relation "seed_files" (SQLSTATE 23502)`)
+	})
+
+	t.Run("skips vault secrets when --skip-vault is set", func(t *testing.T) {
+		originalVault := utils.Config.Db.Vault
+		utils.Config.Db.Vault = map[string]config.Secret{
+			"API_KEY": {Value: "local-dev", SHA256: "hash"},
+		}
+		t.Cleanup(func() {
+			utils.Config.Db.Vault = originalVault
+		})
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(migration.LIST_MIGRATION_VERSION).
+			Reply("SELECT 0")
+		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
+			Reply("INSERT 0 1")
+		err := Run(context.Background(), false, false, false, false, true, remoteDbConfig, fsys, conn.Intercept)
+		assert.NoError(t, err)
+	})
+
+	t.Run("updates vault secrets by default", func(t *testing.T) {
+		originalVault := utils.Config.Db.Vault
+		utils.Config.Db.Vault = map[string]config.Secret{
+			"API_KEY": {Value: "local-dev", SHA256: "hash"},
+		}
+		t.Cleanup(func() {
+			utils.Config.Db.Vault = originalVault
+		})
+		fsys := afero.NewMemMapFs()
+		path := filepath.Join(utils.MigrationsDir, "0_test.sql")
+		require.NoError(t, afero.WriteFile(fsys, path, []byte{}, 0644))
+		conn := pgtest.NewConn()
+		defer conn.Close(t)
+		conn.Query(migration.LIST_MIGRATION_VERSION).
+			Reply("SELECT 0")
+		conn.Query(vault.READ_VAULT_KV, []string{"API_KEY"}).
+			Reply("SELECT 0").
+			Query(vault.CREATE_VAULT_KV, "local-dev", "API_KEY").
+			Reply("SELECT 1")
+		helper.MockMigrationHistory(conn).
+			Query("RESET ALL").
+			Reply("RESET").
+			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
+			Reply("INSERT 0 1")
+		err := Run(context.Background(), false, false, false, false, false, remoteDbConfig, fsys, conn.Intercept)
+		assert.NoError(t, err)
 	})
 }

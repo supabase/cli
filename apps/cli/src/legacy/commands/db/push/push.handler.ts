@@ -8,6 +8,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
   if (flags.includeAll) args.push("--include-all");
   if (flags.includeRoles) args.push("--include-roles");
   if (flags.includeSeed) args.push("--include-seed");
+  if (flags.skipVault) args.push("--skip-vault");
   if (flags.dryRun) args.push("--dry-run");
   if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
   if (flags.linked) args.push("--linked");
