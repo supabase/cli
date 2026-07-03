@@ -6,7 +6,7 @@ Bun monorepo for exploring the next generation of the Supabase CLI and local dev
 
 ### Tool versions
 
-This repo pins the versions of Node, Bun, Go, pnpm, and golangci-lint that contributors are expected to build against, and uses [`mise`](https://mise.jdx.dev/) — a polyglot version manager — to install and activate Node, Bun, Go, and pnpm automatically. If you don't already have these tools installed, `mise` is a great way to get up and running quickly.
+This repo pins the versions of Node, Bun, Go, pnpm, and golangci-lint that contributors are expected to build against, and uses [`mise`](https://mise.jdx.dev/) — a polyglot version manager — to install and activate Node, Bun, Go, pnpm, and golangci-lint automatically. If you don't already have these tools installed, `mise` is a great way to get up and running quickly.
 
 #### Installing mise
 
@@ -38,18 +38,6 @@ Then install the pinned tool versions:
 mise install
 ```
 
-Install the Go linter recorded by the Go module:
-
-```sh
-(
-  cd apps/cli-go
-  version="$(go list -m -f '{{.Version}}' github.com/golangci/golangci-lint/v2)"
-  go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${version}"
-)
-```
-
-Make sure `$(go env GOPATH)/bin` is on your `PATH` so `pnpm run check:all` can find `golangci-lint`.
-
 After `mise trust`, `mise` resolves the versions this repo expects from a handful of files, rather than hardcoding them all in one place:
 
 | Tool | Version source |
@@ -58,9 +46,9 @@ After `mise trust`, `mise` resolves the versions this repo expects from a handfu
 | Node.js | `devEngines.runtime` field in `package.json` |
 | pnpm | `packageManager` field in `package.json` |
 | Go | `mise.toml` |
-| golangci-lint | `apps/cli-go/go.mod` |
+| golangci-lint | `mise.toml` |
 
-The Go entry in `mise.toml` is intentionally temporary while the Go CLI remains in the repo. The canonical Go module metadata still lives in `apps/cli-go/go.mod`; keep the `mise.toml` Go entry aligned only until the Go code is removed.
+The Go and golangci-lint entries in `mise.toml` are intentionally temporary while the Go CLI remains in the repo. The canonical Go module metadata still lives in `apps/cli-go/go.mod`; keep the `mise.toml` entries aligned only until the Go code is removed.
 
 Once installed, `mise` activates these versions automatically whenever your shell is inside this repo — no manual `nvm use`, `gvm use`, or similar switching required.
 

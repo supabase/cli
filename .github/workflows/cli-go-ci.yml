@@ -78,41 +78,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4
         with:
-          go-version-file: apps/cli-go/go.mod
-          # Linter requires no cache
-          cache: false
-
-      - name: Resolve golangci-lint version
-        id: golangci-lint
-        run: echo "version=$(go list -m -f '{{.Version}}' github.com/golangci/golangci-lint/v2)" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve Go environment
-        id: go-env
-        run: |
-          go_bin="$(go env GOBIN)"
-          if [ -z "$go_bin" ]; then
-            go_bin="$(go env GOPATH)/bin"
-          fi
-
-          {
-            echo "bin=${go_bin}"
-            echo "version=$(go env GOVERSION)"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "${go_bin}" >> "$GITHUB_PATH"
-
-      - name: Cache golangci-lint binary
-        id: golangci-lint-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.go-env.outputs.bin }}/golangci-lint
-          key: golangci-lint-${{ runner.os }}-${{ runner.arch }}-${{ steps.go-env.outputs.version }}-${{ steps.golangci-lint.outputs.version }}
-
-      - name: Install golangci-lint
-        if: steps.golangci-lint-cache.outputs.cache-hit != 'true'
-        run: go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@${{ steps.golangci-lint.outputs.version }}"
+          version: 2026.7.0
+          install: true
+          install_args: >-
+            go
+            go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 
       - uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
         with:
