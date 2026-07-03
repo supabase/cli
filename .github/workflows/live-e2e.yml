@@ -113,12 +113,6 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: apps/cli-go/go.mod
-          cache-dependency-path: apps/cli-go/go.sum
-
       # Build the Go binary for every target: `go` runs it directly and
       # `ts-legacy` shells out to it for most commands.
       - name: Build Go CLI
