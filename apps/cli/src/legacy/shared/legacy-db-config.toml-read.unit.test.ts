@@ -2275,6 +2275,12 @@ describe("legacyReadDbToml encrypted secret decryption (Go DecryptSecretHookFunc
       "failed to parse config: missing private key",
     ),
   );
+  it.effect("fails on an undecryptable [edge_runtime.secrets] value (map[string]Secret)", () =>
+    expectFails(
+      ["[edge_runtime.secrets]", 'MY_SECRET = "encrypted:anything"'],
+      "failed to parse config: missing private key",
+    ),
+  );
   it.effect("fails on an undecryptable Secret inside a [remotes.*] block", () =>
     // Go decodes every remote block into the same struct, so an undecryptable secret in any
     // remote (matched or not) aborts the load.

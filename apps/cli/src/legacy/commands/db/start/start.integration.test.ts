@@ -5,7 +5,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
@@ -57,6 +57,8 @@ function setup(
     running?: boolean;
     runningFails?: boolean;
     startFails?: boolean;
+    /** Caller cwd (Go's `CurrentDirAbs`) for relative `--from-backup` resolution. */
+    cwd?: string;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -71,6 +73,7 @@ function setup(
     seam.layer,
     mockLegacyCliConfig({ workdir }),
     telemetry.layer,
+    mockRuntimeInfo({ cwd: opts.cwd ?? workdir }),
     BunServices.layer,
   );
   return { layer, out, seam, telemetry };
@@ -105,13 +108,27 @@ describe("legacy db start", () => {
     });
   });
 
-  it.live("forwards --from-backup to the bootstrap seam", () => {
+  it.live("forwards an absolute --from-backup to the bootstrap seam unchanged", () => {
     const { layer, seam } = setup(tmp.current, { toml: 'project_id = "test"\n' });
     return Effect.gen(function* () {
       yield* legacyDbStart({ fromBackup: Option.some("/tmp/dump.sql") }).pipe(
         Effect.provide(layer),
       );
       expect(seam.startCalls).toEqual([{ fromBackup: "/tmp/dump.sql" }]);
+    });
+  });
+
+  it.live("resolves a relative --from-backup against the caller cwd, not the workdir", () => {
+    // Go resolves a relative fromBackup against `CurrentDirAbs` (the caller cwd, captured
+    // before ChangeWorkDir), so the seam must receive the caller-relative absolute path even
+    // though its Go child runs with cwd = the project workdir.
+    const { layer, seam } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      cwd: "/caller/here",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbStart({ fromBackup: Option.some("dump.sql") }).pipe(Effect.provide(layer));
+      expect(seam.startCalls).toEqual([{ fromBackup: "/caller/here/dump.sql" }]);
     });
   });
 

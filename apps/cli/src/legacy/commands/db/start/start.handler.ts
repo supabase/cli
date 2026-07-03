@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
+import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyCheckDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -27,6 +28,7 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const runtimeInfo = yield* RuntimeInfo;
 
   const body = Effect.gen(function* () {
     // Go's `flags.LoadConfig(fsys)` runs first thing in `start.Run`
@@ -54,7 +56,19 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     // Not running → bootstrap the container (StartDatabase + DockerRemoveAll on
     // failure). The seam tees "Starting database...", "Initialising schema...",
     // etc. to stderr.
-    yield* seam.startDatabase({ fromBackup: Option.getOrUndefined(flags.fromBackup) });
+    //
+    // Resolve a relative `--from-backup` against the CALLER's cwd, mirroring Go's
+    // `StartDatabase` (`filepath.Join(utils.CurrentDirAbs, fromBackup)`, start.go:160-161)
+    // where `CurrentDirAbs` is captured before `ChangeWorkDir`. The seam spawns the Go child
+    // with cwd = the project workdir, so passing a relative path would resolve it against the
+    // project root (wrong file / not found) when `db start` runs from a subdirectory or with
+    // `--workdir`. Passing an absolute path makes the child's resolution a no-op.
+    const fromBackupFlag = Option.getOrUndefined(flags.fromBackup);
+    const fromBackup =
+      fromBackupFlag === undefined || path.isAbsolute(fromBackupFlag)
+        ? fromBackupFlag
+        : path.join(runtimeInfo.cwd, fromBackupFlag);
+    yield* seam.startDatabase({ fromBackup });
 
     if (output.format !== "text") {
       yield* output.success("Started local database.", { status: "started" });

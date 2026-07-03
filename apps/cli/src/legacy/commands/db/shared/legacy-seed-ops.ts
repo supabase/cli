@@ -292,9 +292,11 @@ export const legacyGetPendingSeeds = Effect.fnUntraced(function* (
 
   const applied = yield* readRemoteSeeds(session);
   for (const file of files) {
-    const content = yield* fs.readFileString(
-      path.isAbsolute(file) ? file : path.join(workdir, file),
-    );
+    // Go's `NewSeedFile` hashes the raw file stream (`io.Copy`, `pkg/migration/file.go:184`),
+    // so hash the bytes — not a UTF-8-decoded string, which replaces invalid sequences and
+    // would drift from the Go-recorded `seed_files` hash for a non-UTF-8 seed (SQL_ASCII dump
+    // / binary COPY payload), spuriously re-running it across a Go ↔ native switch.
+    const content = yield* fs.readFile(path.isAbsolute(file) ? file : path.join(workdir, file));
     const hash = createHash("sha256").update(content).digest("hex");
     const appliedHash = applied.get(file);
     if (appliedHash !== undefined) {

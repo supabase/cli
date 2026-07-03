@@ -408,6 +408,25 @@ describe("legacy db push", () => {
     });
   });
 
+  it.live("hashes a non-UTF-8 seed file by its raw bytes (Go's io.Copy parity)", () => {
+    // Go's `NewSeedFile` hashes the raw stream; a UTF-8 string decode would replace the
+    // invalid bytes and change the hash. Write invalid UTF-8 and pre-seed the remote with
+    // the RAW-byte sha256 — the push must treat it as already-applied (byte hash matches),
+    // not re-run it. A string-decoded hash here would differ and mark the seed dirty.
+    const raw = Buffer.from([0x2d, 0x2d, 0x20, 0xff, 0xfe, 0x00, 0x01, 0x0a]);
+    const rawHash = createHash("sha256").update(raw).digest("hex");
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      remoteSeeds: { "supabase/seed.sql": rawHash },
+    });
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "seed.sql"), raw);
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
+      expect(out.stdoutText).toBe("Local database is up to date.\n");
+    });
+  });
+
   it.live("skips seeding when disabled in config", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.seed]\nenabled = false\n',

@@ -780,6 +780,9 @@ const LEGACY_SECRET_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
   ["auth", "sms", "vonage", "api_secret"],
   ["auth", "captcha", "secret"],
   ["studio", "openai_api_key"],
+  // Go decodes `[edge_runtime.secrets]` as `SecretsConfig map[string]Secret` (config.go:283,287),
+  // so every value is decrypted by the hook — `*` spans the arbitrary secret names.
+  ["edge_runtime", "secrets", "*"],
 ];
 
 /** Collects the string leaves reachable from `node` along `segs` (`*` spans map keys). */
