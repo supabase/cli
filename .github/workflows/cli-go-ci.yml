@@ -84,7 +84,7 @@ jobs:
           install: true
           install_args: >-
             go
-            go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+            golangci-lint
 
       - uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
         with:
