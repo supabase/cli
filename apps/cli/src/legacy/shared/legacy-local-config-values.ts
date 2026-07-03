@@ -175,6 +175,11 @@ const decodeLegacyJwks = Schema.decodeUnknownSync(Schema.Array(LegacyJwkSchema))
  * (`"failed to read signing keys: %w"` for an open failure, `"failed to decode
  * signing keys: %w"` for a parse failure) rather than letting `readFileSync`/
  * `JSON.parse`'s raw Node error text through unwrapped.
+ *
+ * Callers must only invoke this when `config.auth.enabled` is true — Go's
+ * `Validate` nests the entire signing-keys read inside `if c.Auth.Enabled`
+ * (`pkg/config/config.go:1036,1059-1065`), so a disabled auth section never
+ * touches `signing_keys_path`, however stale or missing that file is.
  */
 function loadFirstSigningKey(workdir: string, signingKeysPath: string): LegacyJwk | undefined {
   const absolutePath = isAbsolute(signingKeysPath)
@@ -221,8 +226,14 @@ export function legacyResolveLocalConfigValues(
     config.auth.signing_keys_path,
     projectEnvValues,
   );
+  // Gated on `auth.enabled` to match Go's `Validate` (`pkg/config/config.go:1036,1059-1065`):
+  // the signing-keys file read lives entirely inside `if c.Auth.Enabled`, so a
+  // disabled auth section never opens/parses `signing_keys_path`, even a stale
+  // or missing one. JWT-secret validation and anon/service_role key generation
+  // (`generateAPIKeys`, `apikeys.go:43-73`) run unconditionally either way, so
+  // only this file read is gated.
   const signingKey =
-    signingKeysPath !== undefined && signingKeysPath.length > 0
+    config.auth.enabled && signingKeysPath !== undefined && signingKeysPath.length > 0
       ? loadFirstSigningKey(workdir, signingKeysPath)
       : undefined;
 

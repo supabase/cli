@@ -316,5 +316,32 @@ describe("legacyResolveLocalConfigValues", () => {
         "unsupported algorithm: RS512",
       );
     });
+
+    // Go's `Validate` only opens/parses `signing_keys_path` inside
+    // `if c.Auth.Enabled` (`pkg/config/config.go:1036,1059-1065`) — a disabled
+    // auth section never touches the file, however stale or missing it is.
+    it("skips reading a missing signing_keys_path when auth is disabled", () => {
+      const config = baseConfig({
+        auth: { enabled: false, signing_keys_path: "missing.json" },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    it("skips reading a malformed signing_keys_path when auth is disabled", () => {
+      const supabaseDir = join(tempRoot.current, "supabase");
+      mkdirSync(supabaseDir, { recursive: true });
+      writeFileSync(join(supabaseDir, "signing_keys.json"), "not valid json");
+      const config = baseConfig({
+        auth: { enabled: false, signing_keys_path: "signing_keys.json" },
+      });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current);
+      // Falls back to HMAC signing, matching an absent signing key.
+      const [, payload] = values.anonKey.split(".");
+      expect(JSON.parse(Buffer.from(payload ?? "", "base64url").toString())).toMatchObject({
+        iss: "supabase-demo",
+      });
+    });
   });
 });
