@@ -702,6 +702,37 @@ describe("legacy db push", () => {
     );
   });
 
+  it.live("a matched remote block's migrations.enabled beats the shell env override", () => {
+    // Go merges a matched [remotes.<ref>] block at viper's override tier (`v.Set`), which
+    // sits ABOVE AutomaticEnv — so `[remotes.preview.db.migrations] enabled = false` wins
+    // over `SUPABASE_DB_MIGRATIONS_ENABLED=true` and the push skips migrations. (Before the
+    // config-reader convergence, push resolved this gate env-first and wrongly applied.)
+    const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
+    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "true";
+    const { layer, out } = setup(tmp.current, {
+      toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${LEGACY_VALID_REF}"\n\n[remotes.preview.db.migrations]\nenabled = false\n`,
+      files: migrationFile("20240101000000"),
+      args: ["db", "push", "--linked"],
+      isLocal: false,
+      projectRef: LEGACY_VALID_REF,
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
+        Effect.provide(layer),
+      );
+      expect(out.stderrText).toContain("Skipping migrations because it is disabled");
+      expect(out.stderrText).not.toContain("Applying migration 20240101000000");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
+          else process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = previous;
+        }),
+      ),
+    );
+  });
+
   it.live("announces a matching [remotes.*] override on the linked path", () => {
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${LEGACY_VALID_REF}"\n`,
