@@ -394,6 +394,26 @@ describe("legacy stop integration", () => {
     );
   });
 
+  it.live("resolves SUPABASE_PROJECT_ID from a project-root .env file", () => {
+    // Go's loadNestedEnv walks past supabase/ one more level, to the project
+    // root/workdir (pkg/config/config.go:1169-1190) — a project-root-only
+    // dotenv value must override config.toml too, not just supabase/.env.
+    const { layer, child } = setup({ configuredProjectId: "toml-project", route: defaultRoute() });
+    writeFileSync(join(tempRoot.current, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");
+    return Effect.gen(function* () {
+      yield* legacyStop(flags());
+      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      expect(psCall?.args).toEqual([
+        "ps",
+        "--filter",
+        "label=com.supabase.cli.project=root-env-project",
+        "--all",
+        "--format",
+        "{{.ID}}",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("rejects --project-id together with --all", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {

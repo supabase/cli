@@ -96,9 +96,22 @@ const MIN_JWT_SECRET_LENGTH = 16;
  * same higher-than-config.toml precedence Viper gives env vars. An empty env
  * var is treated as unset, matching Viper's default (`AllowEmptyEnv` is never
  * enabled in `config.go`).
+ *
+ * Viper's `AutomaticEnv` binding runs AFTER `Config.Load`'s `loadNestedEnv`
+ * (`config.go:735-738`), which loads `supabase/.env`(.local) and project-root
+ * dotenv files into the process env before any `SUPABASE_*` var is read
+ * (`config.go:1169-1207`) — so a value that lives only in one of those files,
+ * not the ambient shell, must still be visible here. `projectEnvValues` is
+ * that already-resolved map (see `legacyResolveProjectEnvironmentValues`);
+ * falling back to `process.env` covers the "no `supabase/` project found"
+ * case, where `projectEnvValues` is `undefined`.
  */
-function envOverride(name: string, configured: string | undefined): string | undefined {
-  const value = process.env[name];
+function envOverride(
+  name: string,
+  configured: string | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): string | undefined {
+  const value = projectEnvValues?.[name] ?? process.env[name];
   return value !== undefined && value.length > 0 ? value : configured;
 }
 
@@ -197,14 +210,16 @@ export function legacyResolveLocalConfigValues(
   config: ProjectConfig,
   hostname: string,
   workdir: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
 ): LegacyLocalConfigValues {
   const apiExternalUrl = legacyResolveApiExternalUrl(config.api, hostname);
   const jwtSecret = resolveJwtSecret(
-    envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret),
+    envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
   );
   const signingKeysPath = envOverride(
     "SUPABASE_AUTH_SIGNING_KEYS_PATH",
     config.auth.signing_keys_path,
+    projectEnvValues,
   );
   const signingKey =
     signingKeysPath !== undefined && signingKeysPath.length > 0
@@ -221,22 +236,22 @@ export function legacyResolveLocalConfigValues(
     mailpitUrl: `http://${hostname}:${config.local_smtp.port}`,
     dbUrl: `postgresql://postgres:${DEFAULT_DB_PASSWORD}@${hostname}:${config.db.port}/postgres`,
     publishableKey: resolveOpaqueKey(
-      envOverride("SUPABASE_AUTH_PUBLISHABLE_KEY", config.auth.publishable_key),
+      envOverride("SUPABASE_AUTH_PUBLISHABLE_KEY", config.auth.publishable_key, projectEnvValues),
       defaultPublishableKey,
     ),
     secretKey: resolveOpaqueKey(
-      envOverride("SUPABASE_AUTH_SECRET_KEY", config.auth.secret_key),
+      envOverride("SUPABASE_AUTH_SECRET_KEY", config.auth.secret_key, projectEnvValues),
       defaultSecretKey,
     ),
     jwtSecret,
     anonKey: resolveSignedKey(
-      envOverride("SUPABASE_AUTH_ANON_KEY", config.auth.anon_key),
+      envOverride("SUPABASE_AUTH_ANON_KEY", config.auth.anon_key, projectEnvValues),
       jwtSecret,
       signingKey,
       "anon",
     ),
     serviceRoleKey: resolveSignedKey(
-      envOverride("SUPABASE_AUTH_SERVICE_ROLE_KEY", config.auth.service_role_key),
+      envOverride("SUPABASE_AUTH_SERVICE_ROLE_KEY", config.auth.service_role_key, projectEnvValues),
       jwtSecret,
       signingKey,
       "service_role",

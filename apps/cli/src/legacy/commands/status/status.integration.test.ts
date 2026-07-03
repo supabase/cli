@@ -399,6 +399,43 @@ describe("legacy status integration", () => {
     );
   });
 
+  it.live("resolves SUPABASE_PROJECT_ID from a project-root .env file", () => {
+    // Go's loadNestedEnv walks past supabase/ one more level, to the project
+    // root/workdir (pkg/config/config.go:1169-1190) — a project-root-only
+    // dotenv value must override config.toml too, not just supabase/.env.
+    writeFileSync(join(tempRoot.current, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");
+    const { layer, child } = setup({
+      configContents: 'project_id = "toml-project"\n',
+      route: defaultRoute({ runningNames: legacyServiceContainerIds("root-env-project") }),
+    });
+    return Effect.gen(function* () {
+      yield* legacyStatus(flags());
+      const inspectCall = child.spawned.find(
+        (s) => s.args[0] === "container" && s.args[1] === "inspect",
+      );
+      expect(inspectCall?.args).toContain(localDbContainerId("root-env-project"));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("honors SUPABASE_AUTH_JWT_SECRET from supabase/.env, not just the ambient shell", () => {
+    // Go's Config.Load runs loadNestedEnv (supabase/.env(.local) via godotenv)
+    // before AutomaticEnv reads SUPABASE_AUTH_JWT_SECRET (config.go:735-738) —
+    // a dotenv-file-only value must be visible here too, not just an ambient
+    // shell export (see the sibling "-o env" ambient test above).
+    const supabaseDir = join(tempRoot.current, "supabase");
+    mkdirSync(supabaseDir, { recursive: true });
+    writeFileSync(join(supabaseDir, ".env"), `SUPABASE_AUTH_JWT_SECRET=${"c".repeat(32)}\n`);
+    const { layer, out } = setup({
+      goOutput: Option.some("env"),
+      configContents: `project_id = "demo"\n[auth]\njwt_secret = "${"a".repeat(32)}"\n`,
+    });
+    return Effect.gen(function* () {
+      yield* legacyStatus(flags());
+      expect(out.stdoutText).toContain(`JWT_SECRET="${"c".repeat(32)}"`);
+      expect(out.stdoutText).not.toContain("a".repeat(32));
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails when both docker and podman are missing", () => {
     // Neither container runtime can be spawned at all — distinct from a spawned
     // process exiting non-zero (covered by the malformed/unhealthy scenarios

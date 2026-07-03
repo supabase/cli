@@ -25,6 +25,7 @@ import {
   encodeYaml,
 } from "../../shared/legacy-go-output.encoders.ts";
 import { legacyGetHostname } from "../../shared/legacy-hostname.ts";
+import { legacyResolveProjectEnvironmentValues } from "../../shared/legacy-project-environment.ts";
 import type { LegacyStatusFlags } from "./status.command.ts";
 import {
   LegacyStatusConfigLoadError,
@@ -120,20 +121,24 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     );
     const config = loaded?.config ?? Schema.decodeUnknownSync(ProjectConfigSchema)({});
 
+    // `legacyResolveProjectEnvironmentValues` fills the gap between
+    // `loadProjectEnvironment` (supabase/.env(.local) + ambient only) and Go's
+    // `loadNestedEnv`, which also loads project-root and `SUPABASE_ENV`-selected
+    // dotenv files (`pkg/config/config.go:1169-1207`) — see its doc comment for
+    // the full precedence chain. Used below both for `SUPABASE_PROJECT_ID` and
+    // for the `SUPABASE_AUTH_*` overrides `legacyResolveStatusState` reads.
+    const projectEnvValues = legacyResolveProjectEnvironmentValues(projectEnv);
+
     // 2. status has no --project-id flag; resolution is always env → toml →
     // workdir basename, then sanitized to match the singleton Go's
     // `Config.Validate` produces once at config-load time
     // (`pkg/config/config.go:938-944`) — every reader, including the Docker
     // LABEL `start` writes (`internal/utils/docker.go:375`), sees that same
     // sanitized string, so `status` must filter on it too (see
-    // `legacyCliProjectFilterValue`'s doc comment). "env" is Go's
-    // post-`loadNestedEnv` value (`supabase/.env`/`.env.local`, ambient wins) —
-    // see `stop.handler.ts`'s `resolveSearchProjectIdFilter` doc comment for
-    // the full precedence chain and why `loadProjectEnvironment` is used here
-    // instead of reading `process.env` directly.
+    // `legacyCliProjectFilterValue`'s doc comment).
     const projectId = legacySanitizeProjectId(
       legacyResolveLocalProjectId(
-        projectEnv?.values["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
+        projectEnvValues?.["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
         config.project_id,
         cliConfig.workdir,
       ),
@@ -202,7 +207,14 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // service_role JWTs signed only once per invocation, not twice.
     const state = yield* Effect.try({
       try: () =>
-        legacyResolveStatusState(config, containerIds, hostname, excluded, cliConfig.workdir),
+        legacyResolveStatusState(
+          config,
+          containerIds,
+          hostname,
+          excluded,
+          cliConfig.workdir,
+          projectEnvValues,
+        ),
       catch: (cause) =>
         new LegacyStatusInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),

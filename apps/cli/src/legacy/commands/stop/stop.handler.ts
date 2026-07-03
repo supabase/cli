@@ -19,6 +19,7 @@ import {
   legacyListContainersByLabel,
   legacyListVolumesByLabel,
 } from "../../shared/legacy-docker-lifecycle.ts";
+import { legacyResolveProjectEnvironmentValues } from "../../shared/legacy-project-environment.ts";
 import type { LegacyStopFlags } from "./stop.command.ts";
 import {
   LegacyStopConfigLoadError,
@@ -38,17 +39,20 @@ import {
  * `Config.ProjectId` (env → toml → workdir basename) is used.
  *
  * "env" is Go's post-`loadNestedEnv` value, not just the ambient shell
- * environment: `Config.Load` loads `supabase/.env`/`.env.local` into the
- * process env via `godotenv.Load` (`pkg/config/config.go:735-738`; godotenv
- * never overrides an already-set var) *before* Viper's `AutomaticEnv` reads
+ * environment: `Config.Load` loads `supabase/.env`/`.env.local` *and*
+ * project-root/`SUPABASE_ENV`-selected dotenv files into the process env via
+ * `godotenv.Load` (`pkg/config/config.go:735-738,1169-1207`; godotenv never
+ * overrides an already-set var) *before* Viper's `AutomaticEnv` reads
  * `SUPABASE_PROJECT_ID` (`config.go:534-535`) — so an env-file-only value
  * overrides config.toml too, not only an ambient shell export.
- * `loadProjectEnvironment` already implements that exact "ambient wins over
- * .env/.env.local" layering, so it's used here instead of reading
- * `process.env` directly. It resolves to `null` when no `supabase/`
- * config file exists anywhere up the tree, which would otherwise also drop
- * the ambient-only case — falling back to `process.env` directly covers that
- * gap without duplicating the "no config.toml" path's own error handling.
+ * `legacyResolveProjectEnvironmentValues` implements that full precedence
+ * chain (see its doc comment) on top of `loadProjectEnvironment`'s
+ * `supabase/`-dir-only result, so it's used here instead of reading
+ * `process.env` directly. Both resolve to `undefined`/`null` when no
+ * `supabase/` config file exists anywhere up the tree, which would otherwise
+ * also drop the ambient-only case — falling back to `process.env` directly
+ * covers that gap without duplicating the "no config.toml" path's own error
+ * handling.
  *
  * The config/env-derived (default) branch is sanitized with
  * {@link legacySanitizeProjectId} before it's used as a filter value,
@@ -94,8 +98,9 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
           new LegacyStopConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
       ),
     );
+    const projectEnvValues = legacyResolveProjectEnvironmentValues(projectEnv);
     const resolved = legacyResolveLocalProjectId(
-      projectEnv?.values["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
+      projectEnvValues?.["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
       loaded?.config.project_id,
       cliConfig.workdir,
     );

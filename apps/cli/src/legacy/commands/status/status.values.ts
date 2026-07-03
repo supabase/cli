@@ -249,8 +249,9 @@ export function legacyResolveStatusState(
   hostname: string,
   excluded: ReadonlyArray<string>,
   workdir: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
 ): LegacyStatusState {
-  const local = legacyResolveLocalConfigValues(config, hostname, workdir);
+  const local = legacyResolveLocalConfigValues(config, hostname, workdir, projectEnvValues);
   const isExcluded = (id: string) => excluded.includes(id);
 
   const kongEnabled =
@@ -355,7 +356,15 @@ export function legacyStatusValues(
   excluded: ReadonlyArray<string>,
   overrides: ReadonlyMap<string, string>,
   workdir: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
 ): LegacyStatusValuesResult {
-  const state = legacyResolveStatusState(config, containerIds, hostname, excluded, workdir);
+  const state = legacyResolveStatusState(
+    config,
+    containerIds,
+    hostname,
+    excluded,
+    workdir,
+    projectEnvValues,
+  );
   return legacyStatusValuesFromState(state, overrides);
 }
