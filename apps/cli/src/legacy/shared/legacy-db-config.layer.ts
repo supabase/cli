@@ -1,7 +1,6 @@
 import * as net from "node:net";
 import { BunServices } from "@effect/platform-bun";
 import { Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
-import { getDomain } from "tldts";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
@@ -29,6 +28,7 @@ import {
 } from "./legacy-management-api-runtime.layer.ts";
 import * as Errors from "./legacy-db-config.errors.ts";
 import {
+  legacyPoolerConfigFromConnectionString,
   parseLegacyConnectionString,
   redactLegacyConnectionString,
 } from "./legacy-db-config.parse.ts";
@@ -245,57 +245,14 @@ export const legacyDbConfigLayer = Layer.effect(
       connectionString: string,
     ): Effect.Effect<Option.Option<LegacyPgConnInput>> =>
       Effect.gen(function* () {
-        const sanitized = connectionString.replaceAll("[YOUR-PASSWORD]", "");
-        const parsed = parseLegacyConnectionString(sanitized);
-        if (parsed === undefined) {
-          yield* debug.debug("failed to parse pooler URL");
-          return Option.none();
-        }
-        // Preserve the libpq `options` startup param (Go keeps it in
-        // `pgconn.Config.RuntimeParams`): legacy pooler URLs route by tenant via
-        // `?options=reference=<ref>`, so the actual connection must carry it.
-        const optionsParam = parsed.options ?? "";
-        // Username must encode the project ref: either `<user>.<ref>` or the
-        // `?options=reference=<ref>` query param.
-        const dotIndex = parsed.user.indexOf(".");
-        if (dotIndex === -1) {
-          for (const option of optionsParam.split(",")) {
-            const [key, value] = option.split("=");
-            // Mirror Go's `strings.Cut` `found` guard (connect.go:83): only reject
-            // when the `reference` option is present *with* a value that mismatches.
-            // A bare `reference` token (no `=`) or a missing `reference` key is
-            // accepted, exactly as Go does — do not reject on absence.
-            if (key === "reference" && value !== undefined && value !== ref) {
-              yield* debug.debug(`Pooler options does not match project ref: ${ref}`);
-              return Option.none();
-            }
-          }
-        } else if (parsed.user.slice(dotIndex + 1) !== ref) {
-          yield* debug.debug(`Pooler username does not match project ref: ${ref}`);
-          return Option.none();
-        }
-        // MITM guard: the pooler domain must belong to the active profile. The
-        // expected host comes from the resolved profile (built-in table or a YAML
-        // profile's `pooler_host:`), so custom/staging pooler domains are honored.
-        const expectedPoolerHost = cliConfig.poolerHost;
-        const domain = getDomain(parsed.host);
-        if (domain === null) {
-          yield* debug.debug("failed to parse pooler TLD");
-          return Option.none();
-        }
-        if (
-          expectedPoolerHost.length > 0 &&
-          expectedPoolerHost.toLowerCase() !== domain.toLowerCase()
-        ) {
-          yield* debug.debug(`Pooler domain does not belong to current profile: ${domain}`);
-          return Option.none();
-        }
-        // Supavisor transaction mode does not support prepared statements; use port 5432.
-        return Option.some({
-          ...parsed,
-          port: DIRECT_PORT,
-          ...(optionsParam.length > 0 ? { options: optionsParam } : {}),
-        });
+        const result = legacyPoolerConfigFromConnectionString(
+          ref,
+          connectionString,
+          cliConfig.poolerHost,
+        );
+        if (result._tag === "ok") return Option.some(result.conn);
+        yield* debug.debug(result.reason);
+        return Option.none();
       });
 
     // Resolve the DB password with viper's precedence: `--password` flag →

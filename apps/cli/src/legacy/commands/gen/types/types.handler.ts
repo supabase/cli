@@ -14,16 +14,24 @@ import {
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
 import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
-import { legacyIsIPv6ConnectivityError } from "../../../shared/legacy-connect-errors.ts";
+import {
+  legacyIsIPv6ConnectivityError,
+  legacyIsIPv6ConnectivityErrorCause,
+} from "../../../shared/legacy-connect-errors.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConfigFlags } from "../../../shared/legacy-db-config.types.ts";
+import { legacyPoolerConfigFromConnectionString } from "../../../shared/legacy-db-config.parse.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacyTempPaths } from "../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyYellow } from "../../../shared/legacy-colors.ts";
+import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import {
+  legacyIsDirectDbHost,
+  legacyRunWithPoolerFallback,
+} from "../../../shared/legacy-pooler-fallback.ts";
 import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
@@ -36,7 +44,6 @@ import {
   localNetworkId,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
-  probeTlsSupport,
   legacyRootCaBundle,
   resolvePgmetaImage,
 } from "./types.shared.ts";
@@ -70,33 +77,6 @@ const mapBranchDatabaseConfigError = mapLegacyHttpError({
 // the response body, since the Management API's 404 wording is not guaranteed.
 function isProjectNotFound(cause: unknown) {
   return cause instanceof LegacyGenTypesUnexpectedStatusError && cause.status === 404;
-}
-
-function parsePoolerConnectionString(
-  connectionString: string,
-  password: string,
-): Option.Option<LegacyPgConnInput> {
-  try {
-    const url = new URL(connectionString.replace("[YOUR-PASSWORD]", encodeURIComponent(password)));
-    if (url.protocol !== "postgres:" && url.protocol !== "postgresql:") {
-      return Option.none();
-    }
-    if (url.hostname.length === 0 || url.username.length === 0) {
-      return Option.none();
-    }
-    const options = url.searchParams.get("options") ?? undefined;
-    return Option.some({
-      host: url.hostname,
-      // Supavisor transaction mode does not support prepared statements; use port 5432.
-      port: 5432,
-      user: decodeURIComponent(url.username),
-      password,
-      database: decodeURIComponent(url.pathname.replace(/^\//, "")) || "postgres",
-      ...(options !== undefined && options.length > 0 ? { options } : {}),
-    });
-  } catch {
-    return Option.none();
-  }
 }
 
 function ensureMutuallyExclusive(
@@ -236,6 +216,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const projectRef = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const dbConfig = yield* LegacyDbConfigResolver;
+  const sslProbe = yield* LegacyPgDeltaSslProbe;
 
   yield* ensureMutuallyExclusive(
     ["local", "linked", "project-id", "db-url"],
@@ -274,8 +255,14 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     );
   }
   if (hasExplicitLongFlag(rawArgs, "query-timeout") && !usesPgMeta) {
-    return yield* Effect.fail(
-      new Error("--query-timeout can only be used with pg-meta type generation"),
+    if (flags.linked || Option.isSome(flags.projectId)) {
+      return yield* Effect.fail(
+        new Error("--query-timeout can only be used with pg-meta type generation"),
+      );
+    }
+    yield* output.raw(
+      "Warning: --query-timeout is ignored for remote TypeScript type generation.\n",
+      "stderr",
     );
   }
 
@@ -330,6 +317,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           postgrestV9Compat: flags.postgrestV9Compat,
           poolerFallback: {
             directHost: conn.host,
+            eligible: !resolved.isLocal && legacyIsDirectDbHost(conn.host, cliConfig.projectHost),
             resolve: dbConfig.resolvePoolerFallback(resolveFlags),
           },
         });
@@ -362,9 +350,15 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       const poolerFallback = api.v1.getPoolerConfig({ ref: branch.ref }).pipe(
         Effect.map((configs) => {
           const primary = configs.find((config) => config.database_type === "PRIMARY");
-          return primary === undefined
-            ? Option.none<LegacyPgConnInput>()
-            : parsePoolerConnectionString(primary.connection_string, branchPassword);
+          if (primary === undefined) return Option.none<LegacyPgConnInput>();
+          const parsed = legacyPoolerConfigFromConnectionString(
+            branch.ref,
+            primary.connection_string,
+            cliConfig.poolerHost,
+          );
+          return parsed._tag === "ok"
+            ? Option.some({ ...parsed.conn, password: branchPassword })
+            : Option.none<LegacyPgConnInput>();
         }),
         Effect.orElseSucceed(() => Option.none<LegacyPgConnInput>()),
       );
@@ -386,6 +380,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         postgrestV9Compat: flags.postgrestV9Compat,
         poolerFallback: {
           directHost: branch.db_host,
+          eligible: legacyIsDirectDbHost(branch.db_host, cliConfig.projectHost),
           resolve: poolerFallback,
         },
       });
@@ -403,16 +398,12 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     readonly pgmetaVersionOverride?: string;
     readonly poolerFallback?: {
       readonly directHost: string;
+      readonly eligible: boolean;
       readonly resolve: Effect.Effect<Option.Option<LegacyPgConnInput>, unknown>;
     };
   }) =>
     Effect.scoped(
       Effect.gen(function* () {
-        type PgMetaRunResult = {
-          readonly exitCode: number;
-          readonly stderrText: string;
-        };
-
         const buildRun = (target: {
           readonly url: string;
           readonly host: string;
@@ -448,7 +439,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
               );
             }
 
-            const useTls = yield* probeTlsSupport(target.probeHost, target.probePort);
+            const useTls = yield* sslProbe.requireSslForHost(target.probeHost, target.probePort);
             if (useTls && !debug) {
               env.push(`PG_META_DB_SSL_ROOT_CERT=${legacyRootCaBundle()}`);
             }
@@ -497,46 +488,19 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             probePort: conn.port,
           });
 
-        const runPoolerFallback = () =>
-          Effect.gen(function* () {
-            if (input.poolerFallback === undefined) return Option.none<PgMetaRunResult>();
-            const pooler = yield* input.poolerFallback.resolve.pipe(
-              Effect.orElseSucceed(() => Option.none<LegacyPgConnInput>()),
-            );
-            if (Option.isNone(pooler)) return Option.none<PgMetaRunResult>();
-            yield* output.raw(
-              `${legacyYellow(
-                `Warning: Direct connection to ${input.poolerFallback.directHost} is unavailable because this environment does not support IPv6.\nRetrying via the IPv4 connection pooler.`,
-              )}\n`,
-              "stderr",
-            );
-            return Option.some(yield* runTarget(pooler.value));
-          });
-
-        let result = yield* buildRun(input).pipe(
-          Effect.catch((error) => {
-            if (
-              input.poolerFallback === undefined ||
-              !legacyIsIPv6ConnectivityError(error instanceof Error ? error.message : String(error))
-            ) {
-              return Effect.fail(error);
-            }
-            return runPoolerFallback().pipe(
-              Effect.flatMap((fallbackResult) =>
-                Option.isSome(fallbackResult)
-                  ? Effect.succeed(fallbackResult.value)
-                  : Effect.fail(error),
-              ),
-            );
-          }),
-        );
-
-        if (result.exitCode !== 0 && legacyIsIPv6ConnectivityError(result.stderrText)) {
-          const fallbackResult = yield* runPoolerFallback();
-          if (Option.isSome(fallbackResult)) {
-            result = fallbackResult.value;
-          }
-        }
+        const result =
+          input.poolerFallback === undefined
+            ? yield* buildRun(input)
+            : yield* legacyRunWithPoolerFallback({
+                run: buildRun(input),
+                retry: runTarget,
+                directHost: input.poolerFallback.directHost,
+                eligible: input.poolerFallback.eligible,
+                resolveFallback: input.poolerFallback.resolve,
+                classifyError: legacyIsIPv6ConnectivityErrorCause,
+                classifyResult: (result) =>
+                  result.exitCode !== 0 && legacyIsIPv6ConnectivityError(result.stderrText),
+              });
 
         if (result.exitCode !== 0) {
           return yield* Effect.fail(new Error(`error running container: exit ${result.exitCode}`));
