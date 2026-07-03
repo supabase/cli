@@ -1176,8 +1176,112 @@ describe("functions deploy", () => {
 
       expect(api.multiparts[0]?.fileNames).not.toContain(secretPath);
       expect(api.multiparts[0]?.fileNames).not.toContain("access-token.txt");
-      expect(out.stderrText).toContain("WARN: Skipping import path outside project root:");
+      expect(out.stderrText).toContain("WARN: Skipping import path outside source root:");
     }).pipe(Effect.ensuring(Effect.all([cleanupTempDir(tempDir), cleanupTempDir(outsideDir)])));
+  });
+
+  it.live("uploads git-root workspace imports through the API", () => {
+    const repoRoot = makeTempDir();
+    const projectRoot = join(repoRoot, "app");
+    const sharedPath = join(repoRoot, "packages", "shared", "src", "index.ts");
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
+      yield* Effect.promise(() => writeProjectConfig(projectRoot));
+      yield* Effect.promise(() =>
+        writeLocalFunction(
+          projectRoot,
+          "hello-world",
+          [
+            'import { shared } from "@repo/shared"',
+            "Deno.serve(() => new Response(shared))",
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() => mkdir(dirname(sharedPath), { recursive: true }));
+      yield* Effect.promise(() => writeFile(sharedPath, 'export const shared = "ok"\n'));
+      yield* Effect.promise(() =>
+        writeFile(
+          join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
+          JSON.stringify({
+            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
+          }),
+        ),
+      );
+
+      const { out, api, layer } = setup(projectRoot, {
+        projectRoot,
+        rawArgs: ["functions", "deploy", "hello-world"],
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+      }).pipe(Effect.provide(layer));
+
+      expect(api.multiparts[0]?.fileNames).toContain("app/supabase/functions/hello-world/index.ts");
+      expect(api.multiparts[0]?.fileNames).toContain(
+        "app/supabase/functions/hello-world/deno.json",
+      );
+      expect(api.multiparts[0]?.fileNames).toContain("packages/shared/src/index.ts");
+      expect(api.multiparts[0]?.metadata).toContain(
+        '"entrypoint_path":"app/supabase/functions/hello-world/index.ts"',
+      );
+      expect(api.multiparts[0]?.metadata).toContain(
+        '"import_map_path":"app/supabase/functions/hello-world/deno.json"',
+      );
+      expect(out.stderrText).not.toContain("WARN: Skipping import path outside source root:");
+    }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
+  });
+
+  it.live("treats a .git file as the repo root marker for API uploads", () => {
+    const repoRoot = makeTempDir();
+    const projectRoot = join(repoRoot, "app");
+    const sharedPath = join(repoRoot, "packages", "shared", "src", "index.ts");
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeFile(join(repoRoot, ".git"), "gitdir: /tmp/worktree/.git\n"),
+      );
+      yield* Effect.promise(() => writeProjectConfig(projectRoot));
+      yield* Effect.promise(() =>
+        writeLocalFunction(
+          projectRoot,
+          "hello-world",
+          [
+            'import { shared } from "@repo/shared"',
+            "Deno.serve(() => new Response(shared))",
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() => mkdir(dirname(sharedPath), { recursive: true }));
+      yield* Effect.promise(() => writeFile(sharedPath, 'export const shared = "ok"\n'));
+      yield* Effect.promise(() =>
+        writeFile(
+          join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
+          JSON.stringify({
+            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
+          }),
+        ),
+      );
+
+      const { api, layer } = setup(projectRoot, {
+        projectRoot,
+        rawArgs: ["functions", "deploy", "hello-world"],
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+      }).pipe(Effect.provide(layer));
+
+      expect(api.multiparts[0]?.fileNames).toContain("packages/shared/src/index.ts");
+      expect(api.multiparts[0]?.metadata).toContain(
+        '"entrypoint_path":"app/supabase/functions/hello-world/index.ts"',
+      );
+    }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
   });
 
   it.live("falls back to source upload and warns when explicit Docker is not running", () => {
@@ -1214,6 +1318,112 @@ describe("functions deploy", () => {
         `Deployed Functions on project ${PROJECT_REF}: hello-world\n`,
       );
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
+  it.live("binds git-root workspace imports for Docker bundling", () => {
+    const repoRoot = makeTempDir();
+    const projectRoot = join(repoRoot, "app");
+    const sharedPath = join(repoRoot, "packages", "shared", "src", "index.ts");
+    const child = mockChildProcessSpawner({
+      exitCode: 0,
+      onSpawn: (record) => {
+        if (record.command !== "docker" || record.args[0] !== "run") {
+          return;
+        }
+        const outputPath = resolveDockerOutputPath(record.args);
+        mkdirSync(dirname(outputPath), { recursive: true });
+        writeFileSync(outputPath, "eszip-test-output");
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
+      yield* Effect.promise(() => writeProjectConfig(projectRoot));
+      yield* Effect.promise(() =>
+        writeLocalFunction(
+          projectRoot,
+          "hello-world",
+          [
+            'import { shared } from "@repo/shared"',
+            "Deno.serve(() => new Response(shared))",
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() => mkdir(dirname(sharedPath), { recursive: true }));
+      yield* Effect.promise(() => writeFile(sharedPath, 'export const shared = "ok"\n'));
+      yield* Effect.promise(() =>
+        writeFile(
+          join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
+          JSON.stringify({
+            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
+          }),
+        ),
+      );
+
+      const { layer } = setup(projectRoot, {
+        projectRoot,
+        rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
+        childLayer: child.layer,
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+        useDocker: true,
+      }).pipe(Effect.provide(layer));
+
+      expect(child.spawned.at(-1)?.args).toContain(
+        yield* Effect.promise(() => expectedDockerBind(sharedPath)),
+      );
+    }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
+  });
+
+  it.live("keeps the nearest git root as the source boundary", () => {
+    const outerRoot = makeTempDir();
+    const repoRoot = join(outerRoot, "nested-repo");
+    const projectRoot = join(repoRoot, "app");
+    const sharedPath = join(outerRoot, "packages", "shared", "src", "index.ts");
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => mkdir(repoRoot, { recursive: true }));
+      yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
+      yield* Effect.promise(() => writeProjectConfig(projectRoot));
+      yield* Effect.promise(() =>
+        writeLocalFunction(
+          projectRoot,
+          "hello-world",
+          [
+            'import { shared } from "@repo/shared"',
+            "Deno.serve(() => new Response(shared))",
+            "",
+          ].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() => mkdir(dirname(sharedPath), { recursive: true }));
+      yield* Effect.promise(() => writeFile(sharedPath, 'export const shared = "blocked"\n'));
+      yield* Effect.promise(() =>
+        writeFile(
+          join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
+          JSON.stringify({
+            imports: { "@repo/shared": "../../../../../packages/shared/src/index.ts" },
+          }),
+        ),
+      );
+
+      const { out, api, layer } = setup(projectRoot, {
+        projectRoot,
+        rawArgs: ["functions", "deploy", "hello-world"],
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+      }).pipe(Effect.provide(layer));
+
+      expect(api.multiparts[0]?.fileNames).not.toContain("packages/shared/src/index.ts");
+      expect(out.stderrText).toContain("WARN: Skipping import path outside source root:");
+    }).pipe(Effect.ensuring(cleanupTempDir(outerRoot)));
   });
 
   it.live("emits a structured success payload in json mode", () => {

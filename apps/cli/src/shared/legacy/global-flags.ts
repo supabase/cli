@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { Flag, GlobalFlag } from "effect/unstable/cli";
 
+import { CliArgs } from "../cli/cli-args.service.ts";
 import { legacyViperBool, legacyViperEnvBool } from "./legacy-viper-env.ts";
 
 // The Effect CLI hoists global flags out of the token stream before the leaf
@@ -94,16 +95,37 @@ export const LEGACY_GLOBAL_FLAGS = [
   LegacyAgentFlag,
 ] as const;
 
+const PFLAG_FALSE_VALUES = new Set(["0", "f", "F", "false", "FALSE", "False"]);
+
+/**
+ * True when the raw argv contains an explicit `--yes=<false>` (pflag's `ParseBool`
+ * false set). Go binds `--yes` to viper, so a *set* pflag value wins over
+ * `AutomaticEnv`; `LegacyYesFlag` is a plain boolean that can't distinguish an
+ * explicit `--yes=false` from the omitted default, so we scan the raw argv (global
+ * flags are position-independent). Only `--yes=false` needs special handling: for
+ * `--yes` / `--yes=true` the flag is already `true`, so `flag || env` matches Go,
+ * and for an omitted flag the env fallback matches Go. Reading the raw argv also
+ * sidesteps however the CLI parser coerces `--yes=false`.
+ */
+const legacyYesFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
+  args.some(
+    (arg) => arg.startsWith("--yes=") && PFLAG_FALSE_VALUES.has(arg.slice("--yes=".length)),
+  );
+
 /**
  * `--yes` resolved with Go's viper `AutomaticEnv` fallback: when the flag is not
  * passed, `SUPABASE_YES` is honored (`apps/cli-go/cmd/root.go:318-320` binds
  * every persistent flag, so `console.PromptYesNo` reading `viper.GetBool("YES")`
- * picks up the env var). A passed `--yes` wins over the env, matching viper
- * precedence. Prefer this over reading {@link LegacyYesFlag} directly anywhere a
- * command auto-confirms a prompt.
+ * picks up the env var). An explicit `--yes` — including `--yes=false` — wins over
+ * the env, matching viper's bound-pflag precedence. Prefer this over reading
+ * {@link LegacyYesFlag} directly anywhere a command auto-confirms a prompt.
  */
 export const legacyResolveYes = Effect.gen(function* () {
   const flag = yield* LegacyYesFlag;
+  const cliArgs = yield* CliArgs;
+  if (legacyYesFlagExplicitlyFalse(cliArgs.args)) {
+    return false;
+  }
   return flag || legacyViperEnvBool("SUPABASE_YES");
 });
 
@@ -113,12 +135,17 @@ export const legacyResolveYes = Effect.gen(function* () {
  * `loadNestedEnv` — which `os.Setenv`s each project-.env key — inside `ParseDatabaseConfig`
  * before `PromptYesNo` reads `viper.GetBool("YES")` (`pkg/config/config.go:701`,
  * `internal/utils/console.go:71`), so a `SUPABASE_YES` set only in `supabase/.env`
- * auto-confirms. The shell env still wins over the file value. `projectEnv` is the loaded map
- * from `legacyLoadProjectEnv`.
+ * auto-confirms. The shell env still wins over the file value. An explicit `--yes`
+ * (including `--yes=false`) wins over both. `projectEnv` is the loaded map from
+ * `legacyLoadProjectEnv`.
  */
 export const legacyResolveYesWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
     const flag = yield* LegacyYesFlag;
+    const cliArgs = yield* CliArgs;
+    if (legacyYesFlagExplicitlyFalse(cliArgs.args)) {
+      return false;
+    }
     return (
       flag || legacyViperEnvBool("SUPABASE_YES") || legacyViperBool(projectEnv["SUPABASE_YES"])
     );

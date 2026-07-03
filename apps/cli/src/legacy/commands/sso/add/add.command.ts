@@ -3,6 +3,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
+import { legacyParseStringSliceFlag } from "../../../shared/legacy-string-slice-flag.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacySsoAdd } from "./add.handler.ts";
 
@@ -12,6 +13,18 @@ const NAME_ID_FORMATS = [
   "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
   "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
 ] as const;
+
+export const legacySsoAddDomainsFlag = Flag.string("domains").pipe(
+  Flag.atLeast(0),
+  Flag.withDescription(
+    "Comma separated list of email domains to associate with the added identity provider.",
+  ),
+  Flag.mapTryCatch(
+    (rawValues) => legacyParseStringSliceFlag(rawValues),
+    (err) => (err instanceof Error ? err.message : String(err)),
+  ),
+  Flag.withDefault([] as ReadonlyArray<string>),
+);
 
 const config = {
   projectRef: Flag.string("project-ref").pipe(
@@ -24,13 +37,7 @@ const config = {
     Flag.withAlias("t"),
     Flag.withDescription("Type of identity provider (according to supported protocol)."),
   ),
-  domains: Flag.string("domains").pipe(
-    Flag.atLeast(0),
-    Flag.withDescription(
-      "Comma separated list of email domains to associate with the added identity provider.",
-    ),
-    Flag.withDefault([] as ReadonlyArray<string>),
-  ),
+  domains: legacySsoAddDomainsFlag,
   metadataFile: Flag.string("metadata-file").pipe(
     Flag.withDescription(
       "File containing a SAML 2.0 Metadata XML document describing the identity provider.",

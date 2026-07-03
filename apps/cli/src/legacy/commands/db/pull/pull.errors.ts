@@ -49,3 +49,15 @@ export class LegacyDbPullInSyncError extends Data.TaggedError("LegacyDbPullInSyn
 export class LegacyDbPullWriteError extends Data.TaggedError("LegacyDbPullWriteError")<{
   readonly message: string;
 }> {}
+
+/**
+ * The initial-pull pg_dump container exited non-zero. Go's `dumpRemoteSchema`
+ * (`internal/db/pull/pull.go:144-158`) propagates the `dump.RunWithPoolerFallback`
+ * error; byte-matches the dump's `"error running container: exit " + code`. Carries
+ * the same optional IPv6 transaction-pooler hint the dump path attaches, which
+ * `Output.fail` prints bare on stderr after the message.
+ */
+export class LegacyDbPullDumpError extends Data.TaggedError("LegacyDbPullDumpError")<{
+  readonly message: string;
+  readonly suggestion?: string;
+}> {}

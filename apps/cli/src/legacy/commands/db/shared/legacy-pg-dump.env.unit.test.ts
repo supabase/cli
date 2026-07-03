@@ -15,12 +15,12 @@ import {
   legacyQuoteUpperCase,
   legacyToDumpEnv,
   type LegacyDumpOptions,
-} from "./dump.env.ts";
+} from "./legacy-pg-dump.env.ts";
 import {
   legacyDumpDataScript,
   legacyDumpRoleScript,
   legacyDumpSchemaScript,
-} from "./dump.scripts.ts";
+} from "./legacy-pg-dump.scripts.ts";
 
 const CONN: LegacyPgConnInput = {
   host: "db.example.supabase.co",

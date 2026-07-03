@@ -2,9 +2,12 @@
 
 Native Effect port. Pulls the remote schema into either a new timestamped
 migration (diffing a throwaway shadow against the remote, native pg-delta or
-migra) or declarative files (`--declarative`, native pg-delta export). The rare
-`--experimental` structured-dump and initial-pull `pg_dump` (migra) sub-branches
-delegate to the bundled Go binary.
+migra) or declarative files (`--declarative`, native pg-delta export). The
+initial-migra pull (no local migrations) seeds the migration file with a native
+`pg_dump` of the remote schema (a Docker `pg_dump` container, with IPv4
+transaction-pooler fallback) and then appends the migra diff. Only the rare
+`--experimental` structured-dump sub-branch still delegates to the bundled Go
+binary (it needs `format.WriteStructuredSchemas`, which has no TS port yet).
 
 ## Files Read
 
@@ -17,18 +20,20 @@ delegate to the bundled Go binary.
 
 ## Files Written
 
-| Path                                                        | Format | When                                  |
-| ----------------------------------------------------------- | ------ | ------------------------------------- |
-| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql` | SQL    | migration-style pull (non-empty diff) |
-| `<workdir>/supabase/database/**`                            | SQL    | `--declarative`                       |
-| `~/.supabase/<workdir-hash>/linked-project.json`            | JSON   | linked (post-run cache)               |
-| `~/.supabase/telemetry.json`                                | JSON   | every invocation (post-run)           |
+| Path                                                        | Format | When                                                                       |
+| ----------------------------------------------------------- | ------ | -------------------------------------------------------------------------- |
+| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql` | SQL    | migration-style pull (non-empty diff, or the initial-migra `pg_dump` seed) |
+| `<workdir>/supabase/database/**`                            | SQL    | `--declarative`                                                            |
+| `~/.supabase/<workdir-hash>/linked-project.json`            | JSON   | linked (post-run cache)                                                    |
+| `~/.supabase/telemetry.json`                                | JSON   | every invocation (post-run)                                                |
 
 ## Docker
 
 - Edge-runtime container (pg-delta export / pg-delta or migra diff).
 - Shadow Postgres container (provisioned + torn down via the Go `db __shadow` seam).
 - `supabase/migra` container — the migra OOM bash fallback only.
+- `pg_dump` container — the initial-migra pull's native remote-schema dump
+  (`legacyStreamPgDump`, shared with `db dump`).
 
 ## API Routes / DB
 
@@ -47,7 +52,7 @@ delegate to the bundled Go binary.
 | `SUPABASE_ACCESS_TOKEN`          | auth for the linked target                    | no        |
 | `SUPABASE_DB_PASSWORD`           | remote DB password (overridden by `-p`)       | no        |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA` | force pg-delta diff engine                    | no        |
-| `SUPABASE_EXPERIMENTAL`          | structured-dump pull branch (delegates to Go) | no        |
+| `SUPABASE_EXPERIMENTAL`          | structured-dump pull branch (still delegates) | no        |
 | `PGDELTA_NPM_REGISTRY`           | scoped npm registry for edge-runtime          | no        |
 
 ## Exit Codes
@@ -82,7 +87,12 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 - `--declarative` / deprecated `--use-pg-delta` are mutually exclusive with
   `--diff-engine`; `--db-url` / `--linked` (default) / `--local` are a target group.
 - `--use-pg-delta` is hidden and emits the cobra deprecation line to stderr.
-- The `--experimental` structured-dump branch and the initial-pull `pg_dump` (migra,
-  no local migrations) rebuild the argv and exec the bundled Go binary (their side
-  effects are Go's); the Go child's telemetry is disabled so the single
-  `cli_command_executed` event comes from this TS command.
+- The initial-migra pull (no local migrations) is native: it streams a `pg_dump` of
+  the remote schema into the migration file, then appends the migra diff. An empty
+  diff after a non-empty dump is swallowed (Go's `swallowInitialInSync`); an empty
+  dump + empty diff is "No schema changes found".
+- The `--experimental` structured-dump branch still rebuilds the argv and execs the
+  bundled Go binary (its side effects are Go's), because Go's
+  `format.WriteStructuredSchemas` needs a PostgreSQL DDL AST parser that has no TS
+  port yet. The Go child's telemetry is disabled so the single `cli_command_executed`
+  event comes from this TS command.

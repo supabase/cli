@@ -1,14 +1,16 @@
-import { loadProjectConfig } from "@supabase/config";
-import { Effect } from "effect";
+import { findProjectRoot, loadProjectConfig } from "@supabase/config";
+import { Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
+import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
 import { apiSubsetFromConfig, apiToUpdateBody, diffApiWithRemote } from "./config-sync/api.sync.ts";
 import {
   applyRemoteAuthConfig,
@@ -87,8 +89,18 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
-  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
-  const yes = yield* legacyResolveYes;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320). Go's
+  // `config push` runs `flags.LoadConfig`, which imports `supabase/.env` before
+  // `PromptYesNo` reads `viper.GetBool("YES")`, so a `SUPABASE_YES` set only in
+  // `supabase/.env` auto-confirms. Resolve against the project env, not just the
+  // flag + shell env. Load it from the resolved project root (walking up, same as
+  // `loadProjectConfig` below and Go's `ChangeWorkDir` before `LoadConfig`), so a
+  // push from a subdirectory still reads the project root's `supabase/.env`.
+  const projectRoot = (yield* findProjectRoot(runtimeInfo.cwd)) ?? runtimeInfo.cwd;
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, projectRoot);
+  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -154,24 +166,17 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
 
     yield* output.raw(`Pushing config to project: ${projectId}\n`, "stderr");
 
-    // keep(name): Go push.go `keep` + console.PromptYesNo(title, true).
-    const keep = (name: string): Effect.Effect<boolean> =>
+    // keep(name): Go push.go `keep` + console.PromptYesNo(title, true). The shared
+    // helper mirrors Go's prompt across all modes, including scanning piped stdin on
+    // a non-TTY before falling back to the default (`console.go:64-82`).
+    const keep = (name: string) =>
       Effect.gen(function* () {
         const item = cost.get(name);
         const title =
           item === undefined
             ? `Do you want to push ${name} config to remote?`
             : `Enabling ${item.name} will cost you ${item.price}. Keep it enabled?`;
-        if (output.format !== "text") {
-          return true;
-        }
-        if (yes) {
-          yield* output.raw(`${title} [Y/n] y\n`, "stderr");
-          return true;
-        }
-        return yield* output
-          .promptConfirm(title, { defaultValue: true })
-          .pipe(Effect.orElseSucceed(() => true));
+        return yield* legacyPromptYesNo(output, yes, title, true);
       });
 
     const services: Array<LegacyConfigPushServiceResult> = [];

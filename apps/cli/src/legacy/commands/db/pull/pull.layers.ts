@@ -11,6 +11,7 @@ import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitc
 import { legacyLinkedDbResolverRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
 import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyDeclarativeSeamLayer } from "../shared/legacy-pgdelta.seam.layer.ts";
 
 /**
@@ -47,4 +48,5 @@ export const legacyDbPullRuntimeLayer = Layer.mergeAll(
   legacyTelemetryStateLayer,
   legacyLinkedDbResolverRuntimeLayer(["db", "pull"]).pipe(Layer.provide(legacyIdentityStitchLayer)),
   commandRuntimeLayer(["db", "pull"]),
+  stdinLayer,
 );
