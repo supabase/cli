@@ -77,6 +77,11 @@ interface LegacyDbTomlValues {
   readonly seed: LegacyDbSeedTomlConfig;
   /** `[db.vault]` secrets (name → resolved value) — upserted by `up`/`down`. */
   readonly vault: ReadonlyArray<LegacyDbVaultSecretToml>;
+  /**
+   * The matched `[remotes.<name>]` block name when a linked ref merged its override
+   * (Go's `Loading config override: [remotes.<name>]` line), else `undefined`.
+   */
+  readonly appliedRemote: string | undefined;
 }
 
 /** `[db.seed]` config surfaced for `migration down`'s seed step. */
@@ -180,6 +185,12 @@ function deepMergeDoc(base: RawDoc, override: RawDoc): RawDoc {
  */
 interface LegacyRemoteOverride {
   readonly doc: RawDoc | undefined;
+  /**
+   * The name of the matched `[remotes.<name>]` block whose `project_id` equals the
+   * resolved ref, or `undefined` when no block matched. Callers echo Go's
+   * `Loading config override: [remotes.<name>]` stderr line from this.
+   */
+  readonly appliedRemote?: string;
   /**
    * The config keys the matched remote block contributed at viper's OVERRIDE tier. Go's
    * `mergeRemoteConfig` applies every block key via `v.Set(...)` after `AutomaticEnv`
@@ -302,10 +313,11 @@ function applyRemoteOverride(
       if (blockSeed?.["enabled"] === undefined) {
         return {
           doc: deepMergeDoc(merged, { db: { seed: { enabled: false } } }),
+          appliedRemote: name,
           remoteOverrideKeys,
         };
       }
-      return { doc: merged, remoteOverrideKeys };
+      return { doc: merged, appliedRemote: name, remoteOverrideKeys };
     }
   }
   return { doc, remoteOverrideKeys: new Set() };
@@ -475,6 +487,18 @@ function legacyJoinSupabaseSeedPath(pattern: string): string {
   }
   return out.length === 0 ? "." : out.join("/");
 }
+
+/**
+ * Resolves a single seed `sql_paths` entry to Go's config-load form: a relative
+ * pattern is joined under `supabase/` (Go's `path.Join`, `config.go:918-921`); an
+ * absolute (or empty) pattern is returned verbatim. Used by the reader for
+ * `[db.seed].sql_paths` and by `db reset` for its `--sql-paths` override (Go's
+ * `resolveSeedSqlPaths`, `cmd/db.go`) so both feed the glob the same resolved paths.
+ */
+export const legacyResolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string =>
+  pattern.length === 0 || pathSvc.isAbsolute(pattern)
+    ? pattern
+    : legacyJoinSupabaseSeedPath(pattern);
 
 /** `[db]` ports default through the development env unless `SUPABASE_ENV` overrides. */
 const DEFAULT_SUPABASE_ENV = "development";
@@ -1239,6 +1263,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // Config keys a matched remote block contributed at viper's override tier (Go's
   // `v.Set`), so they must beat the matching `SUPABASE_*` env overrides below.
   let remoteOverrideKeys: ReadonlySet<string> = new Set();
+  // The matched `[remotes.<name>]` block name, echoed as Go's config-override line.
+  let appliedRemote: string | undefined;
   if (Option.isSome(maybeContent)) {
     let doc: RawDoc | undefined;
     try {
@@ -1279,6 +1305,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         : applyRemoteOverride(doc, ref, lookup);
     const effectiveDoc = remoteOverride.doc;
     remoteOverrideKeys = remoteOverride.remoteOverrideKeys;
+    appliedRemote = remoteOverride.appliedRemote;
     db = asRecord(effectiveDoc?.["db"]);
     experimentalRaw = asRecord(effectiveDoc?.["experimental"]);
     pgDeltaRaw = asRecord(experimentalRaw?.["pgdelta"]);
@@ -1778,13 +1805,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         : typeof rawSqlPaths === "string"
           ? splitGoSeedPaths(rawSqlPaths)
           : ["seed.sql"];
-  const seedSqlPaths = sqlPathPatterns.map((pattern) => {
-    // Patterns are already env-expanded above (Go's LoadEnvHook runs before the split), so
-    // an absolute path is used verbatim and a relative one is supabase-prefixed via Go's
-    // `path.Join("supabase", pattern)` → `path.Clean` (collapses `.`/`..`).
-    if (pattern.length === 0 || path.isAbsolute(pattern)) return pattern;
-    return legacyJoinSupabaseSeedPath(pattern);
-  });
+  // Patterns are already env-expanded above (Go's LoadEnvHook runs before the split);
+  // resolve each to Go's config-load form (absolute verbatim, relative supabase-joined).
+  const seedSqlPaths = sqlPathPatterns.map((pattern) => legacyResolveSeedSqlPath(path, pattern));
 
   // `[db.vault]` secrets: env-expand each value, then decrypt dotenvx `encrypted:`
   // ciphertext. `resolved` mirrors Go's `len(SHA256) > 0` gate (Go sets SHA256 only
@@ -1868,6 +1891,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     migrationsEnabled,
     seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },
     vault,
+    appliedRemote,
   };
   return values;
 });

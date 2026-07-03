@@ -122,11 +122,12 @@ const legacyGlobSeedFiles = Effect.fnUntraced(function* (
   const errors: Array<string> = [];
 
   for (const rawPattern of patterns) {
-    // Go joins each *relative* pattern under SupabaseDirPath before globbing but
-    // preserves absolute paths as-is (config.go / resolveSeedSqlPaths).
-    const pattern = path.isAbsolute(rawPattern)
-      ? toSlash(rawPattern)
-      : toSlash(path.join("supabase", rawPattern));
+    // Patterns arrive already resolved to Go's config-load form (relative entries
+    // supabase/-joined, absolute preserved) via `legacyResolveSeedSqlPath` — the reader
+    // for `[db.seed].sql_paths`, the caller for `--sql-paths`. Go's `config.Glob.Files`
+    // globs those resolved paths without re-prefixing (`config.go:102-124`), so only
+    // normalize separators here; re-joining `supabase/` would double-prefix.
+    const pattern = toSlash(rawPattern);
     const matches = yield* globOne(fs, path, workdir, pattern);
     if (matches.length === 0) {
       errors.push(`no files matched pattern: ${pattern}`);

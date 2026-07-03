@@ -670,9 +670,36 @@ describe("legacy db push", () => {
       const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to parse supabase/config.toml");
+        // Config now loads through the Go-parity reader (`legacyCheckDbToml`), so a malformed
+        // config aborts with Go's `failed to load config` message (the reader path), same as
+        // the other db commands (diff/dump/pull/migration).
+        expect(JSON.stringify(exit.cause)).toContain("failed to load config");
       }
     });
+  });
+
+  it.live("loads a Go-style env() boolean in config (no ProjectConfigParseError)", () => {
+    // Regression for the strict @supabase/config loader rejecting `enabled = "env(VAR)"`:
+    // Go decodes it via env-expansion + strconv.ParseBool, so the config must load and the
+    // migration proceed. Previously native push aborted before the Go-compatible parse ran.
+    const previous = process.env["SEED_ENABLED"];
+    process.env["SEED_ENABLED"] = "true";
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.seed]\nenabled = "env(SEED_ENABLED)"\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SEED_ENABLED"];
+          else process.env["SEED_ENABLED"] = previous;
+        }),
+      ),
+    );
   });
 
   it.live("announces a matching [remotes.*] override on the linked path", () => {

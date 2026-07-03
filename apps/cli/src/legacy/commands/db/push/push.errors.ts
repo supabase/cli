@@ -41,11 +41,6 @@ export class LegacyDbPushCancelledError extends Data.TaggedError("LegacyDbPushCa
   readonly message: string;
 }> {}
 
-/** `supabase/config.toml` failed to parse. */
-export class LegacyDbPushConfigLoadError extends Data.TaggedError("LegacyDbPushConfigLoadError")<{
-  readonly message: string;
-}> {}
-
 /** Locating `supabase/roles.sql` failed (Go's `failed to find custom roles: %w`). */
 export class LegacyDbPushRolesError extends Data.TaggedError("LegacyDbPushRolesError")<{
   readonly message: string;

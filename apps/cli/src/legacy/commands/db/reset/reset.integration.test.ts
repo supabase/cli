@@ -383,9 +383,35 @@ describe("legacy db reset", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to parse supabase/config.toml");
+        // Config now loads through the Go-parity reader (`legacyCheckDbToml`), so a malformed
+        // config aborts with Go's `failed to load config` message, same as the other db
+        // commands (diff/dump/pull/migration).
+        expect(JSON.stringify(exit.cause)).toContain("failed to load config");
       }
     });
+  });
+
+  it.live("loads a Go-style env() boolean in config for a remote reset", () => {
+    // Regression: `enabled = "env(VAR)"` must load via Go's env-expansion + ParseBool
+    // (`legacyCheckDbToml`) instead of the strict @supabase/config loader rejecting it.
+    const previous = process.env["MIGRATIONS_ENABLED"];
+    process.env["MIGRATIONS_ENABLED"] = "true";
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.migrations]\nenabled = "env(MIGRATIONS_ENABLED)"\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["MIGRATIONS_ENABLED"];
+          else process.env["MIGRATIONS_ENABLED"] = previous;
+        }),
+      ),
+    );
   });
 
   it.live("emits a json result for a local reset", () => {

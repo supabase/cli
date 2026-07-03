@@ -1,9 +1,4 @@
-import {
-  loadProjectConfig,
-  type LoadProjectConfigOptions,
-  ProjectConfigSchema,
-} from "@supabase/config";
-import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -33,10 +28,6 @@ import {
   legacySuggestRevertHistory,
 } from "../shared/legacy-migration-pending.ts";
 import {
-  legacyMigrationsEnabled,
-  legacySeedEnabled,
-} from "../shared/legacy-config-env-override.ts";
-import {
   type LegacySeedFile,
   legacyGetPendingSeeds,
   legacySeedData,
@@ -49,7 +40,6 @@ import type { LegacyDbPushFlags } from "./push.command.ts";
 import {
   LegacyDbPushApplyError,
   LegacyDbPushCancelledError,
-  LegacyDbPushConfigLoadError,
   LegacyDbPushMissingLocalError,
   LegacyDbPushMissingRemoteError,
   LegacyDbPushRolesError,
@@ -57,8 +47,6 @@ import {
 } from "./push.errors.ts";
 
 const CUSTOM_ROLES_PATH = "supabase/roles.sql";
-
-const decodeDefaultConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 
 const toSlash = (p: string): string => p.replaceAll("\\", "/");
 
@@ -120,30 +108,22 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       linkedRefForCache = projectRef;
     }
 
-    const loadOptions: LoadProjectConfigOptions | undefined =
-      projectRef !== "" ? { projectRef } : undefined;
-    const loaded = yield* loadProjectConfig(workdir, loadOptions).pipe(
-      Effect.catchTag(
-        "ProjectConfigParseError",
-        (cause) =>
-          new LegacyDbPushConfigLoadError({
-            message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
-          }),
-      ),
+    // Single Go-parity config load (`flags.LoadConfig` → `config.Load` + `Validate`):
+    // decodes the whole config with Go's env-expansion + `strconv.ParseBool` weak typing
+    // (so `enabled = "env(SEED_ENABLED)"` etc. load like Go), applies `SUPABASE_*`
+    // AutomaticEnv overrides, merges a matching `[remotes.<ref>]` block, and decrypts every
+    // `encrypted:` secret with the shell AND project-`.env` `DOTENV_PRIVATE_KEY*` keys —
+    // aborting here (before connecting or writing) on any undecryptable/invalid config.
+    const toml = yield* legacyCheckDbToml(
+      fs,
+      path,
+      workdir,
+      projectRef !== "" ? projectRef : undefined,
     );
-    const config = loaded === null ? decodeDefaultConfig({}) : loaded.config;
-    if (loaded !== null && loaded.appliedRemote !== undefined) {
-      yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
+    if (toml.appliedRemote !== undefined) {
+      yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
-
-    // Resolve + decrypt `[db.vault]` through Go's config-load path (`legacyCheckDbToml`):
-    // it decrypts every `encrypted:` secret with the shell AND project-`.env`
-    // `DOTENV_PRIVATE_KEY*` keys and aborts here — before connecting or writing — on any
-    // undecryptable secret, exactly like Go's `DecryptSecretHookFunc` inside `LoadConfig`.
-    // The previous point-of-use decryption keyed only on `process.env` and ran inside the
-    // write transaction, so a project-`.env` key silently missed decryption.
-    const vaultSecrets = (yield* legacyCheckDbToml(fs, path, workdir, loadOptions?.projectRef))
-      .vault;
+    const vaultSecrets = toml.vault;
 
     if (flags.dryRun) {
       yield* output.raw("DRY RUN: migrations will *not* be pushed to the database.\n", "stderr");
@@ -168,7 +148,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
 
         // --- Collect pending migrations ---
         let pending: ReadonlyArray<string> = [];
-        if (!legacyMigrationsEnabled(config.db.migrations.enabled)) {
+        if (!toml.migrationsEnabled) {
           yield* output.raw(
             `Skipping migrations because it is disabled in config.toml for project: ${projectRef}\n`,
             "stderr",
@@ -206,19 +186,13 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
         // --- Collect pending seeds ---
         let seeds: ReadonlyArray<LegacySeedFile> = [];
         if (flags.includeSeed) {
-          if (!legacySeedEnabled(config.db.seed.enabled)) {
+          if (!toml.seed.enabled) {
             yield* output.raw(
               `Skipping seed because it is disabled in config.toml for project: ${projectRef}\n`,
               "stderr",
             );
           } else {
-            seeds = yield* legacyGetPendingSeeds(
-              session,
-              fs,
-              path,
-              config.db.seed.sql_paths,
-              workdir,
-            );
+            seeds = yield* legacyGetPendingSeeds(session, fs, path, toml.seed.sqlPaths, workdir);
           }
         }
 

@@ -1,9 +1,4 @@
-import {
-  loadProjectConfig,
-  type LoadProjectConfigOptions,
-  ProjectConfigSchema,
-} from "@supabase/config";
-import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
@@ -18,7 +13,10 @@ import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
-import { legacyCheckDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
+import {
+  legacyCheckDbToml,
+  legacyResolveSeedSqlPath,
+} from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyApplyMigrations } from "../../../shared/legacy-migration-apply.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
@@ -27,10 +25,6 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyDropUserSchemas } from "../shared/legacy-drop-schemas.ts";
 import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
-import {
-  legacyMigrationsEnabled,
-  legacySeedEnabled,
-} from "../shared/legacy-config-env-override.ts";
 import { legacyListLocalMigrations } from "../shared/legacy-pgdelta.cache.ts";
 import {
   legacyGetPendingSeeds,
@@ -43,7 +37,6 @@ import type { LegacyDbResetFlags } from "./reset.command.ts";
 import {
   LegacyDbResetApplyError,
   LegacyDbResetCancelledError,
-  LegacyDbResetConfigLoadError,
   LegacyDbResetInvalidVersionError,
   LegacyDbResetLastFlagError,
   LegacyDbResetMigrationFileError,
@@ -52,8 +45,6 @@ import {
   LegacyDbResetTargetFlagsError,
   LegacyDbResetVersionFlagsError,
 } from "./reset.errors.ts";
-
-const decodeDefaultConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 
 const INTEGER_PATTERN = /^[+-]?\d+$/u;
 const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/u;
@@ -297,31 +288,19 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       return;
     }
 
-    const loadOptions: LoadProjectConfigOptions | undefined =
-      connType === "linked" && linkedRef !== undefined ? { projectRef: linkedRef } : undefined;
-    const loaded = yield* loadProjectConfig(workdir, loadOptions).pipe(
-      Effect.catchTag(
-        "ProjectConfigParseError",
-        (cause) =>
-          new LegacyDbResetConfigLoadError({
-            message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
-          }),
-      ),
-    );
-    const config = loaded === null ? decodeDefaultConfig({}) : loaded.config;
-    if (loaded !== null && loaded.appliedRemote !== undefined) {
-      yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
+    // Single Go-parity config load (`flags.LoadConfig` → `config.Load` + `Validate`):
+    // decodes the whole config with Go's env-expansion + `strconv.ParseBool` weak typing
+    // (so `enabled = "env(SEED_ENABLED)"` etc. load like Go), applies `SUPABASE_*`
+    // AutomaticEnv overrides, merges a matching `[remotes.<ref>]` block, and decrypts every
+    // `encrypted:` secret with the shell AND project-`.env` `DOTENV_PRIVATE_KEY*` keys —
+    // aborting here (before the destructive prompt / `legacyDropUserSchemas`) on any
+    // undecryptable/invalid config, exactly like Go's `LoadConfig` before ResetAll.
+    const configRef = connType === "linked" && linkedRef !== undefined ? linkedRef : undefined;
+    const toml = yield* legacyCheckDbToml(fs, path, workdir, configRef);
+    if (toml.appliedRemote !== undefined) {
+      yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
-
-    // Resolve + decrypt `[db.vault]` through Go's config-load path (`legacyCheckDbToml`):
-    // it decrypts every `encrypted:` secret with the shell AND project-`.env`
-    // `DOTENV_PRIVATE_KEY*` keys and aborts here — before the destructive prompt and
-    // `legacyDropUserSchemas` — on any undecryptable secret, exactly like Go's
-    // `DecryptSecretHookFunc` inside `LoadConfig`. The previous point-of-use decryption
-    // keyed only on `process.env` and ran AFTER the drop, so a project-`.env` key missed
-    // decryption and the reset dropped the schemas before failing.
-    const vaultSecrets = (yield* legacyCheckDbToml(fs, path, workdir, loadOptions?.projectRef))
-      .vault;
+    const vaultSecrets = toml.vault;
 
     // Go's resetRemote: prompt (default false) → cancel, then ResetAll.
     const shouldReset = yield* legacyPromptYesNo(
@@ -343,7 +322,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         yield* legacyDropUserSchemas(session, applyError);
         yield* legacyUpsertVaultSecrets(session, vaultSecrets);
 
-        if (legacyMigrationsEnabled(config.db.migrations.enabled)) {
+        if (toml.migrationsEnabled) {
           const locals = yield* legacyListLocalMigrations(fs, path, migrationsDir);
           // LoadPartialMigrations filter: version === "" || v <= version.
           const pending = locals.filter((p) => {
@@ -356,15 +335,18 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
 
         // `--no-seed` disables seeding; `--sql-paths` overrides [db.seed].sql_paths
         // and force-enables it (Go's applyDbResetSeedFlags). The two are mutually
-        // exclusive (validated above). `--sql-paths` values are supabase-relative,
-        // the same convention `legacyGetPendingSeeds` resolves.
+        // exclusive (validated above).
         const overrideSeed = flags.sqlPaths.length > 0;
         // `--sql-paths` force-enables seeding (Go's applyDbResetSeedFlags); otherwise
-        // honor `db.seed.enabled` WITH Go's `SUPABASE_DB_SEED_ENABLED` viper override.
-        const seedEnabled =
-          overrideSeed || (legacySeedEnabled(config.db.seed.enabled) && !flags.noSeed);
+        // honor `db.seed.enabled` (already `SUPABASE_DB_SEED_ENABLED`-resolved by the reader).
+        const seedEnabled = overrideSeed || (toml.seed.enabled && !flags.noSeed);
         if (seedEnabled) {
-          const seedPaths = overrideSeed ? flags.sqlPaths : config.db.seed.sql_paths;
+          // `[db.seed].sql_paths` is already Go-config-resolved (supabase/-joined) by the
+          // reader; the `--sql-paths` override is resolved here the same way Go's
+          // `resolveSeedSqlPaths` does, so both feed the glob identical paths.
+          const seedPaths = overrideSeed
+            ? flags.sqlPaths.map((p) => legacyResolveSeedSqlPath(path, p))
+            : toml.seed.sqlPaths;
           const seeds = yield* legacyGetPendingSeeds(session, fs, path, seedPaths, workdir);
           yield* legacySeedData(session, fs, workdir, path, seeds, applyError);
         }

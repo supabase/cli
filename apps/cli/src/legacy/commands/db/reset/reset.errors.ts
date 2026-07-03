@@ -49,11 +49,6 @@ export class LegacyDbResetCancelledError extends Data.TaggedError("LegacyDbReset
   readonly message: string;
 }> {}
 
-/** `supabase/config.toml` failed to parse. */
-export class LegacyDbResetConfigLoadError extends Data.TaggedError("LegacyDbResetConfigLoadError")<{
-  readonly message: string;
-}> {}
-
 /** A drop / migrate / seed / vault statement failed during the remote reset. */
 export class LegacyDbResetApplyError extends Data.TaggedError("LegacyDbResetApplyError")<{
   readonly message: string;
