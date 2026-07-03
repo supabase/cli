@@ -35,10 +35,12 @@ project-ref paths, the project endpoint is probed first: a `404` means the ref i
 preview branch (any 404 body), so the branch endpoint supplies the branch database
 host/port and credentials for pg-meta. Otherwise the database connection is resolved
 for the ref and the login-role endpoint supplies temporary credentials for pg-meta.
-On an IPv4-only network where the direct database host is unreachable, an explicit
-`--project-id` ref additionally fetches the primary pooler config for that ref to
-build an IPv4 connection (the saved workdir `.temp/pooler-url` is ignored because the
-ref may differ from the linked workdir).
+On an IPv4-only network where the direct database host is unreachable, project-ref
+pg-meta generation retries once through the IPv4 pooler only when the current target
+host is the project's direct `db.<ref>` host and the pooler URL matches the expected
+tenant and pooler domain. An explicit `--project-id` ref fetches the primary pooler
+config for that ref to build the fallback connection (the saved workdir
+`.temp/pooler-url` is ignored because the ref may differ from the linked workdir).
 `--local` and `--db-url` do not call the Management API.
 
 ## Subprocesses
@@ -49,7 +51,8 @@ ref may differ from the linked workdir).
 | `docker`/`podman run --rm --network <net> --env … <pgmeta> node dist/server/server.js` | `--local`, `--db-url`, project-ref paths with non-TypeScript `--lang` | run pg-meta to generate types from a live database |
 
 A raw TCP `SSLRequest` probe is also opened to the target database host/port to
-detect TLS support before launching pg-meta (mirrors Go's `isRequireSSL`).
+detect TLS support before launching pg-meta (mirrors Go's `isRequireSSL`) with the
+default 10s pg-delta probe timeout.
 
 ## Environment Variables
 
@@ -64,15 +67,15 @@ detect TLS support before launching pg-meta (mirrors Go's `isRequireSSL`).
 
 ## Exit Codes
 
-| Code | Condition                                                        |
-| ---- | ---------------------------------------------------------------- |
-| `0`  | success — types printed to stdout                                |
-| `1`  | no target specified (must use one flag)                          |
-| `1`  | mutually exclusive flags combined                                |
-| `1`  | pg-meta-only flags used with remote TypeScript generation        |
-| `1`  | invalid `--query-timeout` duration or invalid `--db-url`         |
-| `1`  | `supabase start` not running (`--local`) or db inspection failed |
-| `1`  | API error, TLS probe failure, or pg-meta container non-zero exit |
+| Code | Condition                                                                                                                   |
+| ---- | --------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — types printed to stdout                                                                                           |
+| `1`  | no target specified (must use one flag)                                                                                     |
+| `1`  | mutually exclusive flags combined                                                                                           |
+| `1`  | pg-meta-only flags used with remote TypeScript generation, except implicit TypeScript `--query-timeout` warns and continues |
+| `1`  | invalid `--query-timeout` duration or invalid `--db-url`                                                                    |
+| `1`  | `supabase start` not running (`--local`) or db inspection failed                                                            |
+| `1`  | API error, TLS probe failure, or pg-meta container non-zero exit                                                            |
 
 ## Output
 
@@ -96,10 +99,14 @@ Not applicable.
   paths use the Management API for TypeScript, and use a project database host +
   temporary login role + pg-meta for other languages.
 - `--schema` / `-s` accepts a comma-separated list of schemas to include.
-- `--swift-access-control` accepts `internal` (default) or `public`.
+- `--swift-access-control` accepts `internal` (default) or `public`, and requires
+  `--lang swift`.
 - `--postgrest-v9-compat` generates types compatible with PostgREST v9 and below for pg-meta
   generation (`--local`, `--db-url`, or non-TypeScript project-ref paths).
 - `--query-timeout` sets the maximum timeout for pg-meta database queries (default 15s).
+  On remote TypeScript generation, explicit `--linked` or `--project-id` invocations
+  error because pg-meta is not used; the implicit linked TypeScript fallback prints a
+  warning and ignores the flag.
 - The legacy positional language argument (`supabase gen types typescript`) is still accepted;
   any other positional language requires an explicit `--lang` flag.
 - The linked-project telemetry cache is written only when a project ref is resolved

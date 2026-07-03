@@ -5,6 +5,8 @@
  * warrants retrying through the IPv4 transaction pooler.
  */
 
+import { isIPv6 } from "node:net";
+
 import { legacyAqua } from "./legacy-colors.ts";
 
 /**
@@ -44,4 +46,52 @@ export function legacyIsIPv6ConnectivityError(message: string): boolean {
     return IPV6_LITERAL_PATTERN.test(message);
   }
   return false;
+}
+
+function hasStringCode(error: unknown): error is {
+  readonly code: string;
+  readonly address?: unknown;
+} {
+  return (
+    typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+  );
+}
+
+/**
+ * Classifies Node socket/getaddrinfo causes that carry errno-style `code` fields.
+ * `ENOTFOUND` is intentionally broader than Go's text classifier (it can include
+ * typo'd hosts); callers must combine this with a direct `db.<ref>` host gate.
+ */
+export function legacyIsIPv6ConnectivityErrorCause(error: unknown): boolean {
+  if (error instanceof AggregateError) {
+    return error.errors.some((cause) => legacyIsIPv6ConnectivityErrorCause(cause));
+  }
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "cause" in error &&
+    error.cause !== undefined &&
+    legacyIsIPv6ConnectivityErrorCause(error.cause)
+  ) {
+    return true;
+  }
+
+  if (hasStringCode(error)) {
+    switch (error.code) {
+      case "ENETUNREACH":
+      case "ENOTFOUND":
+        return true;
+      case "EHOSTUNREACH":
+      case "EADDRNOTAVAIL":
+        return typeof error.address === "string" && isIPv6(error.address);
+      case "ECONNREFUSED":
+      case "ENOENT":
+      case "ETIMEDOUT":
+        return false;
+      default:
+        break;
+    }
+  }
+
+  return legacyIsIPv6ConnectivityError(error instanceof Error ? error.message : String(error));
 }

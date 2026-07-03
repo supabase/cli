@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
+import { getDomain } from "tldts";
 import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 import { legacyPgpassPassword } from "./legacy-pgpass.ts";
 import { legacyServiceSettings } from "./legacy-pgservicefile.ts";
@@ -397,6 +398,63 @@ export function parseLegacyConnectionString(
     return parseUrlConnectionString(value, env);
   }
   return parseKeywordValueDsn(trimmed, env);
+}
+
+export type LegacyPoolerConfigResult =
+  | { readonly _tag: "ok"; readonly conn: LegacyPgConnInput }
+  | { readonly _tag: "invalid"; readonly reason: string };
+
+/**
+ * Parse + validate a Supabase transaction-pooler URL. Mirrors Go's
+ * `GetPoolerConfig`: strip the dashboard password placeholder, require the
+ * project ref in the tenant user/options, verify the pooler domain belongs to
+ * the active profile, and force transaction-pooler port 5432.
+ */
+export function legacyPoolerConfigFromConnectionString(
+  ref: string,
+  connectionString: string,
+  expectedPoolerHost: string,
+): LegacyPoolerConfigResult {
+  const sanitized = connectionString.replaceAll("[YOUR-PASSWORD]", "");
+  const parsed = parseLegacyConnectionString(sanitized);
+  if (parsed === undefined) {
+    return { _tag: "invalid", reason: "failed to parse pooler URL" };
+  }
+
+  const optionsParam = parsed.options ?? "";
+  const dotIndex = parsed.user.indexOf(".");
+  if (dotIndex === -1) {
+    for (const option of optionsParam.split(",")) {
+      const separatorIndex = option.indexOf("=");
+      const key = separatorIndex === -1 ? option : option.slice(0, separatorIndex);
+      const value = separatorIndex === -1 ? undefined : option.slice(separatorIndex + 1);
+      if (key === "reference" && value !== undefined && value !== ref) {
+        return { _tag: "invalid", reason: `Pooler options does not match project ref: ${ref}` };
+      }
+    }
+  } else if (parsed.user.slice(dotIndex + 1) !== ref) {
+    return { _tag: "invalid", reason: `Pooler username does not match project ref: ${ref}` };
+  }
+
+  const domain = getDomain(parsed.host);
+  if (domain === null) {
+    return { _tag: "invalid", reason: "failed to parse pooler TLD" };
+  }
+  if (expectedPoolerHost.length > 0 && expectedPoolerHost.toLowerCase() !== domain.toLowerCase()) {
+    return {
+      _tag: "invalid",
+      reason: `Pooler domain does not belong to current profile: ${domain}`,
+    };
+  }
+
+  return {
+    _tag: "ok",
+    conn: {
+      ...parsed,
+      port: DIRECT_PORT,
+      ...(optionsParam.length > 0 ? { options: optionsParam } : {}),
+    },
+  };
 }
 
 /** Parse the WHATWG `postgres(ql)://` URL form. */
