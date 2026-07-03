@@ -31,6 +31,13 @@ describe("legacyIsIPv6ConnectivityError", () => {
     expect(legacyIsIPv6ConnectivityError("cannot assign requested address")).toBe(false);
   });
 
+  it("classifies Node ENETUNREACH stderr for IPv6 literals", () => {
+    expect(
+      legacyIsIPv6ConnectivityError("connect ENETUNREACH 2600:1f18::1:5432 - Local (:::0)"),
+    ).toBe(true);
+    expect(legacyIsIPv6ConnectivityError("connect ENETUNREACH 10.0.0.1:5432")).toBe(false);
+  });
+
   it("does not classify unrelated errors", () => {
     expect(legacyIsIPv6ConnectivityError("permission denied for schema public")).toBe(false);
     expect(legacyIsIPv6ConnectivityError("")).toBe(false);

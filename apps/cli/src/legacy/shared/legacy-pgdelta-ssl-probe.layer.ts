@@ -118,6 +118,15 @@ export const legacyPgDeltaSslProbeLayer = Layer.effect(
                 ),
               ),
             );
+            socket.once("close", () =>
+              settle(
+                Effect.fail(
+                  new LegacyPgDeltaSslProbeError({
+                    message: `SSL probe connection to ${target.host}:${target.port} closed before the server responded`,
+                  }),
+                ),
+              ),
+            );
             socket.once("error", (err: Error) =>
               settle(
                 Effect.fail(new LegacyPgDeltaSslProbeError({ message: err.message, cause: err })),

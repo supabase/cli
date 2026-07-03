@@ -1180,6 +1180,61 @@ describe("legacy gen types", () => {
     }),
   );
 
+  it.live("retries remote pg-meta through the IPv4 pooler on Node ENETUNREACH stderr", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          const child = mockSequentialChildProcessSpawner([
+            {
+              exitCode: 1,
+              stderr: ["connect ENETUNREACH 2600:1f18::1:5432 - Local (:::0)"],
+            },
+            { exitCode: 0, stdout: ["type RetriedViaPooler struct {}"] },
+          ]);
+          const poolerConn: LegacyPgConnInput = {
+            host: "127.0.0.1",
+            port,
+            user: `postgres.${LEGACY_VALID_REF}`,
+            password: "pooler-password",
+            database: "postgres",
+          };
+          const { layer, out, dbConfig } = setup({
+            args: ["gen", "types", "--lang", "go", "--project-id", LEGACY_VALID_REF],
+            childLayer: child.layer,
+            sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
+              requireSsl: () => Effect.succeed(false),
+              requireSslForHost: () => Effect.succeed(false),
+            }),
+            dbConfigResolve: () =>
+              Effect.succeed(
+                remoteResolvedConfig({
+                  host: `db.${LEGACY_VALID_REF}.supabase.co`,
+                  port,
+                  user: "postgres",
+                  password: "direct-password",
+                  database: "postgres",
+                }),
+              ),
+            poolerFallback: Option.some(poolerConn),
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(
+              defaultFlags({
+                projectId: Option.some(LEGACY_VALID_REF),
+                lang: "go",
+              }),
+            ).pipe(Effect.provide(layer)),
+          );
+
+          expect(out.stdoutText).toContain("type RetriedViaPooler struct {}");
+          expect(child.spawned).toHaveLength(2);
+          expect(dbConfig.poolerFallbacks).toHaveLength(1);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }),
+  );
+
   it.live("does not retry remote pg-meta when the container failure is not IPv6", () =>
     Effect.tryPromise({
       try: () =>

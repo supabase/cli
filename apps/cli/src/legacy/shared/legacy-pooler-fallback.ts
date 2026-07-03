@@ -62,9 +62,10 @@ export function legacyRunWithPoolerFallback<A, E, R, R2, RF>(
     options.eligible && (options.classifyError?.(error) ?? false);
 
   return options.run.pipe(
-    Effect.flatMap((result) =>
-      shouldRetryResult(result) ? retryOrReturn(result) : Effect.succeed(result),
-    ),
-    Effect.catch((error) => (shouldRetryError(error) ? retryOrFail(error) : Effect.fail(error))),
+    Effect.matchEffect({
+      onFailure: (error) => (shouldRetryError(error) ? retryOrFail(error) : Effect.fail(error)),
+      onSuccess: (result) =>
+        shouldRetryResult(result) ? retryOrReturn(result) : Effect.succeed(result),
+    }),
   );
 }

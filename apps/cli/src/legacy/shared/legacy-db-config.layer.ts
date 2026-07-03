@@ -314,7 +314,20 @@ export const legacyDbConfigLayer = Layer.effect(
           if (primary === undefined) return Option.none();
           connectionString = primary.connection_string;
         }
-        const pooler = yield* poolerConfigFrom(ref, connectionString);
+        let pooler = Option.none<LegacyPgConnInput>();
+        if (connectionString !== undefined) {
+          pooler = yield* poolerConfigFrom(ref, connectionString);
+        }
+        if (Option.isNone(pooler) && fetchFromApi) {
+          const api = yield* (yield* LegacyPlatformApiFactory).make;
+          const configsOpt = yield* api.v1.getPoolerConfig({ ref }).pipe(Effect.option);
+          if (Option.isSome(configsOpt)) {
+            const primary = configsOpt.value.find((config) => config.database_type === "PRIMARY");
+            if (primary !== undefined) {
+              pooler = yield* poolerConfigFrom(ref, primary.connection_string);
+            }
+          }
+        }
         if (Option.isNone(pooler)) return Option.none();
         const poolerConn = pooler.value;
         if (password.length > 0) {

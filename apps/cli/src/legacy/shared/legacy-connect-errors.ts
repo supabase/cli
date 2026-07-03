@@ -29,6 +29,7 @@ export function legacyIpv6Suggestion(): string {
 // Go's `ipv6LiteralPattern` (`connect.go:181`): an IPv6 address in brackets
 // (Go dial form) or parens (libpq form). Run against the original-case message.
 const IPV6_LITERAL_PATTERN = /(?:\[[0-9a-fA-F:]+\]|\([0-9a-fA-F:]+\))/;
+const NODE_ENETUNREACH_PATTERN = /\benetunreach\s+([0-9a-fA-F:]+):\d+(?:\s|$)/i;
 
 /**
  * Port of Go's `isIPv6ConnectivityError` (`connect.go:189-208`). Lower-cases the
@@ -42,6 +43,8 @@ export function legacyIsIPv6ConnectivityError(message: string): boolean {
   if (lower.includes("address family for hostname not supported")) return true;
   if (lower.includes("no address associated with hostname")) return true;
   if (lower.includes("network is unreachable")) return true;
+  const nodeEnetunreachMatch = NODE_ENETUNREACH_PATTERN.exec(message);
+  if (nodeEnetunreachMatch?.[1] !== undefined) return isIPv6(nodeEnetunreachMatch[1]);
   if (lower.includes("no route to host") || lower.includes("cannot assign requested address")) {
     return IPV6_LITERAL_PATTERN.test(message);
   }

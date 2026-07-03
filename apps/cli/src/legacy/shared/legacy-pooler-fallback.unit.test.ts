@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
@@ -100,6 +100,36 @@ describe("legacyRunWithPoolerFallback", () => {
       expect(out.stderrText).toContain(
         "Warning: Direct connection to db.abcdefghijklmnopqrst.supabase.co is unavailable",
       );
+    }).pipe(Effect.provide(out.layer));
+  });
+
+  it.live("propagates a result-path retry failure without retrying a second time", () => {
+    const out = captureOutput();
+    const retryError = new Error("network is unreachable");
+    let fallbackResolutions = 0;
+    let retryRuns = 0;
+
+    return Effect.gen(function* () {
+      const exit = yield* legacyRunWithPoolerFallback({
+        run: Effect.succeed({ exitCode: 1, stderr: "network is unreachable" }),
+        retry: () =>
+          Effect.sync(() => {
+            retryRuns += 1;
+          }).pipe(Effect.andThen(Effect.fail(retryError))),
+        directHost: "db.abcdefghijklmnopqrst.supabase.co",
+        eligible: true,
+        resolveFallback: Effect.sync(() => {
+          fallbackResolutions += 1;
+          return Option.some(poolerConn);
+        }),
+        classifyResult: (result: AttemptResult) => result.exitCode !== 0,
+        classifyError: (error: Error) => error === retryError,
+      }).pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fallbackResolutions).toBe(1);
+      expect(retryRuns).toBe(1);
+      expect(out.stderrText.match(/Retrying via the IPv4 connection pooler/g)).toHaveLength(1);
     }).pipe(Effect.provide(out.layer));
   });
 
