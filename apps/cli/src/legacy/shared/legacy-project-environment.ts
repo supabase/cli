@@ -44,19 +44,29 @@ function candidateDotenvFilenames(env: string): ReadonlyArray<string> {
  * `packages/config/src/project.ts`'s `parseDotEnv` closely enough for the env
  * vars this is used for (`SUPABASE_PROJECT_ID`, `SUPABASE_AUTH_*`), which
  * never need the full dotenv spec (multiline values, `export` re-declares).
+ *
+ * @throws on a line that isn't blank, a comment, or a `KEY=VALUE` assignment —
+ * matching Go's `loadEnvIfExists` (`pkg/config/config.go:1209-1234`), which
+ * propagates `godotenv.Load`'s parse error up through `loadNestedEnv` and fails
+ * `Config.Load` before `stop`/`status` touch Docker, rather than silently
+ * skipping the bad line. Mirrors `packages/config/src/project.ts`'s
+ * `parseDotEnv`, which already fails the same way for `supabase/.env`(.local).
  */
 function readDotEnvFile(path: string): Record<string, string> | undefined {
   if (!existsSync(path)) return undefined;
 
   const contents = readFileSync(path, "utf8");
   const values: Record<string, string> = {};
+  const lines = contents.split(/\r\n?|\n/);
 
-  for (const rawLine of contents.split(/\r\n?|\n/)) {
+  for (const [index, rawLine] of lines.entries()) {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#")) continue;
 
     const match = /^(?:export\s+)?([\w.-]+)\s*=(.*)$/.exec(line);
-    if (match === null) continue;
+    if (match === null) {
+      throw new Error(`failed to parse environment file: ${path} (line ${index + 1})`);
+    }
     const key = match[1];
     if (key === undefined) continue;
 
@@ -80,9 +90,20 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
 
 /**
  * Returns the merged env-var map `stop`/`status` should read `SUPABASE_*`
- * overrides (project id, auth fields) from — `projectEnv.values` (ambient +
- * `supabase/.env`(.local), already correct) layered over the project-root and
- * `SUPABASE_ENV`-selected files `loadProjectEnvironment` doesn't cover.
+ * overrides (project id, auth fields) from — the project-root and
+ * `SUPABASE_ENV`-selected files `loadProjectEnvironment` doesn't cover, layered
+ * under only the truly ambient-sourced entries of `projectEnv.values`.
+ *
+ * Only `projectEnv`'s AMBIENT entries outrank `merged`: `projectEnv.values`
+ * also carries plain `supabase/.env`/`.env.local` values it read itself, and
+ * those are not necessarily higher Go precedence than an env-specific file
+ * (`.env.<env>.local`/`.env.<env>`) `merged` resolved — `loadProjectEnvironment`
+ * has no notion of `SUPABASE_ENV`-selected filenames, so it can't tell the two
+ * apart itself. `merged`'s own walk below already re-derives the full file
+ * precedence, including `supabase/.env`(.local), so only ambient needs to be
+ * layered back on top (`projectEnv.sources[key] === "ambient"` marks exactly
+ * those entries — see `loadProjectEnvironment`'s `ProjectEnvironment` shape).
+ *
  * Returns `undefined` when `projectEnv` is `null` (no `supabase/` project
  * found), matching callers' existing "fall back to `process.env` directly"
  * behavior.
@@ -110,5 +131,12 @@ export function legacyResolveProjectEnvironmentValues(
     }
   }
 
-  return { ...merged, ...projectEnv.values };
+  const ambientOverrides: Record<string, string> = {};
+  for (const [key, value] of Object.entries(projectEnv.values)) {
+    if (projectEnv.sources[key] === "ambient") {
+      ambientOverrides[key] = value;
+    }
+  }
+
+  return { ...merged, ...ambientOverrides };
 }

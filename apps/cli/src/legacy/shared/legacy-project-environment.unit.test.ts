@@ -21,7 +21,10 @@ afterEach(() => {
   delete process.env["SUPABASE_ENV"];
 });
 
-function fakeProjectEnv(values: Record<string, string> = {}): ProjectEnvironment {
+function fakeProjectEnv(
+  values: Record<string, string> = {},
+  sources: Record<string, "ambient" | ".env" | ".env.local"> = {},
+): ProjectEnvironment {
   return {
     paths: {
       projectRoot: root,
@@ -32,7 +35,10 @@ function fakeProjectEnv(values: Record<string, string> = {}): ProjectEnvironment
     },
     values,
     loadedPaths: [],
-    sources: {},
+    // Default every given value to "ambient" unless the caller says otherwise —
+    // matches how most tests use this helper (representing an already-resolved,
+    // highest-precedence value) without forcing every call site to spell it out.
+    sources: Object.fromEntries(Object.keys(values).map((key) => [key, sources[key] ?? "ambient"])),
   };
 }
 
@@ -111,5 +117,44 @@ describe("legacyResolveProjectEnvironmentValues", () => {
     writeFileSync(root + "/.env", "\n# a comment\nSUPABASE_PROJECT_ID=commented-project\n");
     const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
     expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("commented-project");
+  });
+
+  it("prefers an env-specific file over a same-key value projectEnv.values sourced from a bare .env file", () => {
+    // `projectEnv.values` has no notion of SUPABASE_ENV-selected filenames, so
+    // a key it resolved from a plain supabase/.env file is NOT necessarily
+    // higher Go precedence than a same-named key from `.env.<env>.local` —
+    // only an "ambient" source outranks the file precedence computed locally.
+    process.env["SUPABASE_ENV"] = "development";
+    writeFileSync(
+      join(supabaseDir, ".env.development.local"),
+      "SUPABASE_PROJECT_ID=env-specific-project\n",
+    );
+    const projectEnv = fakeProjectEnv(
+      { SUPABASE_PROJECT_ID: "bare-dotenv-project" },
+      { SUPABASE_PROJECT_ID: ".env" },
+    );
+    const merged = legacyResolveProjectEnvironmentValues(projectEnv);
+    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("env-specific-project");
+  });
+
+  it("still lets a truly ambient-sourced value win over any file", () => {
+    process.env["SUPABASE_ENV"] = "development";
+    writeFileSync(
+      join(supabaseDir, ".env.development.local"),
+      "SUPABASE_PROJECT_ID=env-specific-project\n",
+    );
+    const projectEnv = fakeProjectEnv(
+      { SUPABASE_PROJECT_ID: "ambient-project" },
+      { SUPABASE_PROJECT_ID: "ambient" },
+    );
+    const merged = legacyResolveProjectEnvironmentValues(projectEnv);
+    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("ambient-project");
+  });
+
+  it("throws on a malformed line, matching Go's loadEnvIfExists propagating godotenv's parse error", () => {
+    writeFileSync(join(root, ".env"), "not a valid line\n");
+    expect(() => legacyResolveProjectEnvironmentValues(fakeProjectEnv())).toThrow(
+      /failed to parse environment file/,
+    );
   });
 });
