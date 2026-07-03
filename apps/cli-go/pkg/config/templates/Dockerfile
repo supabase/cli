@@ -1,4 +1,4 @@
-# Exposed for updates by .github/dependabot.yml
+# Exposed for updates by .github/renovate.json5
 FROM supabase/postgres:17.6.1.142 AS pg
 # Append to ServiceImages when adding new dependencies below
 FROM library/kong:2.8.1 AS kong
