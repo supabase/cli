@@ -57,16 +57,16 @@ After `mise trust`, `mise` resolves the versions this repo expects from a handfu
 | Bun | `.bun-version` |
 | Node.js | `devEngines.runtime` field in `package.json` |
 | pnpm | `packageManager` field in `package.json` |
-| Go | `.tool-versions` |
+| Go | `mise.toml` |
 | golangci-lint | `apps/cli-go/go.mod` |
 
-The Go entry in `.tool-versions` is intentionally temporary while the Go CLI remains in the repo. The canonical Go module metadata still lives in `apps/cli-go/go.mod`; keep the `.tool-versions` Go entry aligned only until the Go code is removed.
+The Go entry in `mise.toml` is intentionally temporary while the Go CLI remains in the repo. The canonical Go module metadata still lives in `apps/cli-go/go.mod`; keep the `mise.toml` Go entry aligned only until the Go code is removed.
 
 Once installed, `mise` activates these versions automatically whenever your shell is inside this repo — no manual `nvm use`, `gvm use`, or similar switching required.
 
 #### Without mise
 
-`mise` is not required. If you already have Bun, Node, pnpm, and Go installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `.tool-versions`, `package.json`, and `apps/cli-go/go.mod`.
+`mise` is not required. If you already have Bun, Node, pnpm, and Go installed and managed some other way, just make sure your versions match the ones pinned in `.bun-version`, `mise.toml`, `package.json`, and `apps/cli-go/go.mod`.
 
 ### Install dependencies
 

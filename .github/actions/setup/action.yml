@@ -29,7 +29,6 @@ runs:
         const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
         const payload = {
           bun: readFileSync(".bun-version", "utf8").trim(),
-          go: readFileSync(".tool-versions", "utf8").trim(),
           mise: readFileSync("mise.toml", "utf8").trim(),
           node: packageJson.devEngines?.runtime,
           pnpm: packageJson.packageManager,
