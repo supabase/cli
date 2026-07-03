@@ -111,8 +111,31 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
           new LegacyStatusConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
       ),
     );
+
+    // `legacyResolveProjectEnvironmentValues` fills the gap between
+    // `loadProjectEnvironment` (supabase/.env(.local) + ambient only) and Go's
+    // `loadNestedEnv`, which also loads project-root and `SUPABASE_ENV`-selected
+    // dotenv files (`pkg/config/config.go:1169-1207`) — see its doc comment for
+    // the full precedence chain. Resolved BEFORE `loadProjectConfig` decodes
+    // config.toml (not after) because Go's `Config.Load` runs `loadNestedEnv`
+    // before `LoadEnvHook` decodes `env(...)` references (`config.go:735-738`);
+    // an `env(...)` value sourced only from a project-root/`SUPABASE_ENV`-
+    // selected file must already be visible to the decoder, not just to the
+    // `SUPABASE_PROJECT_ID`/`SUPABASE_AUTH_*` overrides read further below.
+    // A malformed extra dotenv file throws here (see `readDotEnvFile`),
+    // matching Go's `loadNestedEnv` propagating `godotenv`'s parse error
+    // instead of silently skipping the bad line.
+    const projectEnvValues = yield* Effect.try({
+      try: () => legacyResolveProjectEnvironmentValues(projectEnv),
+      catch: (cause) =>
+        new LegacyStatusConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
+    });
+
     const loaded = yield* loadProjectConfig(cliConfig.workdir, {
-      projectEnv: projectEnv ?? undefined,
+      projectEnv:
+        projectEnv !== null
+          ? { ...projectEnv, values: projectEnvValues ?? projectEnv.values }
+          : undefined,
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -120,14 +143,6 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       ),
     );
     const config = loaded?.config ?? Schema.decodeUnknownSync(ProjectConfigSchema)({});
-
-    // `legacyResolveProjectEnvironmentValues` fills the gap between
-    // `loadProjectEnvironment` (supabase/.env(.local) + ambient only) and Go's
-    // `loadNestedEnv`, which also loads project-root and `SUPABASE_ENV`-selected
-    // dotenv files (`pkg/config/config.go:1169-1207`) — see its doc comment for
-    // the full precedence chain. Used below both for `SUPABASE_PROJECT_ID` and
-    // for the `SUPABASE_AUTH_*` overrides `legacyResolveStatusState` reads.
-    const projectEnvValues = legacyResolveProjectEnvironmentValues(projectEnv);
 
     // 2. status has no --project-id flag; resolution is always env → toml →
     // workdir basename, then sanitized to match the singleton Go's

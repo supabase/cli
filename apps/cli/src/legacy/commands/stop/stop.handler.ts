@@ -86,19 +86,36 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
       ),
     );
 
+    // Resolved BEFORE `loadProjectConfig` decodes config.toml (not after):
+    // Go's `Config.Load` runs `loadNestedEnv` before `LoadEnvHook` decodes
+    // `env(...)` references (`config.go:735-738`), so an `env(...)`-valued
+    // `project_id` sourced only from a project-root/`SUPABASE_ENV`-selected
+    // file must already be visible to the decoder, not just to the
+    // `SUPABASE_PROJECT_ID` override read below. A malformed extra dotenv
+    // file throws here (see `readDotEnvFile`), matching Go's `loadNestedEnv`
+    // propagating `godotenv`'s parse error instead of silently skipping the
+    // bad line.
+    const projectEnvValues = yield* Effect.try({
+      try: () => legacyResolveProjectEnvironmentValues(projectEnv),
+      catch: (cause) =>
+        new LegacyStopConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
+    });
+
     // An absent config.toml is not a failure — Go's `flags.LoadConfig` still
     // resolves a project id via the workdir basename default. Only a
     // malformed file (`loadProjectConfig` failing rather than returning
     // `null`) is a hard error, matching `gen types`'s `loadConfig()` pattern.
     const loaded = yield* loadProjectConfig(cliConfig.workdir, {
-      projectEnv: projectEnv ?? undefined,
+      projectEnv:
+        projectEnv !== null
+          ? { ...projectEnv, values: projectEnvValues ?? projectEnv.values }
+          : undefined,
     }).pipe(
       Effect.mapError(
         (cause) =>
           new LegacyStopConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
       ),
     );
-    const projectEnvValues = legacyResolveProjectEnvironmentValues(projectEnv);
     const resolved = legacyResolveLocalProjectId(
       projectEnvValues?.["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
       loaded?.config.project_id,
