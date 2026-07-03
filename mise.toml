@@ -1,6 +1,10 @@
+min_version = '2026.6.14'
+
 [tools]
 go = "1.25.11"
 golangci-lint = "2.1.6"
 
 [settings]
 idiomatic_version_file_enable_tools = ["node", "bun", "pnpm"]
+locked = true
+lockfile = true
