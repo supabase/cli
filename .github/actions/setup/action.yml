@@ -9,8 +9,8 @@ inputs:
     default: ""
   dependency-cache:
     description: >-
-      Whether to enable the pnpm dependency cache. Disable this when the job
-      deletes the pnpm store before exiting, otherwise the post-job cache save
+      Whether to enable dependency caches. Disable this when the job deletes a
+      cached dependency path before exiting, otherwise the post-job cache save
       fails with a path validation error.
     required: false
     default: "true"
@@ -18,47 +18,69 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Resolve Bun version
+    - name: Resolve mise cache key
+      id: mise-cache-key
       shell: bash
-      run: echo "BUN_VERSION=1.3.13" >> "$GITHUB_ENV"
+      run: |
+        node <<'JS' >> "$GITHUB_OUTPUT"
+        const { createHash } = require("node:crypto");
+        const { readFileSync } = require("node:fs");
 
-    - name: Install Bun
-      id: install-bun
-      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      continue-on-error: true
+        const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
+        const payload = {
+          bun: readFileSync(".bun-version", "utf8").trim(),
+          mise: readFileSync("mise.toml", "utf8").trim(),
+          node: packageJson.devEngines?.runtime,
+          pnpm: packageJson.packageManager,
+        };
+        const digest = createHash("sha256")
+          .update(JSON.stringify(payload))
+          .digest("hex");
+        console.log(`hash=${digest}`);
+        JS
+
+    - name: Install toolchains
+      uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4
       with:
-        bun-version: ${{ env.BUN_VERSION }}
+        version: 2026.7.0
+        install: true
+        cache_key: >-
+          {{cache_key_prefix}}-{{platform}}-{{version}}-${{
+          steps.mise-cache-key.outputs.hash }}
 
-    - name: Install Bun (fallback with retries)
-      if: steps.install-bun.outcome == 'failure'
-      uses: nick-fields/retry@ce71cc2ab81d554ebbe88c79ab5975992d79ba08 # v3.0.2
-      with:
-        timeout_minutes: 3
-        max_attempts: 5
-        retry_wait_seconds: 30
-        command: |
-          curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}"
-          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
-
-    - name: Verify Bun
-      shell: bash
-      run: bun --version
-
-    - name: Install Node.js
-      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-      with:
-          node-version-file: .nvmrc
-          package-manager-cache: false
-
-    - name: Enable Corepack
-      shell: bash
-      run: npm install --global --force corepack && corepack enable
-
-    - name: Configure dependency cache
+    - name: Resolve pnpm store path
       if: inputs.dependency-cache == 'true'
-      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - name: Configure pnpm dependency cache
+      if: inputs.dependency-cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        cache: pnpm
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-store-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Resolve Go cache paths
+      if: inputs.dependency-cache == 'true'
+      id: go-cache
+      shell: bash
+      run: |
+        echo "mod=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+        echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+
+    - name: Configure Go dependency cache
+      if: inputs.dependency-cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ${{ steps.go-cache.outputs.mod }}
+          ${{ steps.go-cache.outputs.build }}
+        key: go-cache-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
+        restore-keys: |
+          go-cache-${{ runner.os }}-${{ runner.arch }}-
 
     - name: Install dependencies
       shell: bash

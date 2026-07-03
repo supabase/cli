@@ -78,16 +78,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4
         with:
-          go-version-file: apps/cli-go/go.mod
-          # Linter requires no cache
-          cache: false
+          version: 2026.7.0
+          install: true
+          install_args: >-
+            go
+            go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint
 
       - uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
         with:
           args: --timeout 5m --verbose
-          version: latest
+          install-mode: none
           only-new-issues: true
           working-directory: apps/cli-go
 

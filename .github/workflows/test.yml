@@ -43,14 +43,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: apps/cli-go/go.mod
-          cache-dependency-path: apps/cli-go/go.sum
-      - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest &&
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Unlock keyring (for cli-go keyring tests)
         uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae # v1.2.0
 
@@ -74,14 +66,6 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-      - name: Setup Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: apps/cli-go/go.mod
-          cache-dependency-path: apps/cli-go/go.sum
-      - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest &&
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Unlock keyring (for cli-go keyring tests)
         uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae # v1.2.0
 
@@ -143,14 +127,6 @@ jobs:
           path: apps/cli-go/supabase-go
           key: go-cli-${{ runner.os }}-${{ hashFiles('apps/cli-go/**/*.go',
             'apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
-
-      - name: Setup Go
-        if: steps.detect.outputs.cli_e2e == 'true' &&
-          steps.cache-go-binary.outputs.cache-hit != 'true'
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: apps/cli-go/go.mod
-          cache-dependency-path: apps/cli-go/go.sum
 
       - name: Build Go CLI
         if: steps.detect.outputs.cli_e2e == 'true' &&
