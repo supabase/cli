@@ -83,8 +83,8 @@ export function normalize(output: string, options: NormalizeOptions = {}): strin
       .replace(/eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*/g, "<JWT>")
       // 7. Durations (e.g. 1.23s, 123ms, 42s)
       .replace(/\b\d+(?:\.\d+)?(?:ms|s)\b/g, "<DURATION>")
-      // 8. Unix absolute paths (/home/…, /Users/…, /tmp/…, /var/…, /opt/…, /usr/…)
-      .replace(/\/(?:home|Users|tmp|var|opt|usr)\/\S+/g, "<PATH>")
+      // 8. Unix absolute paths (/home/…, /Users/…, /tmp/…, /private/tmp/…, /var/…, /private/var/…, /opt/…, /usr/…)
+      .replace(/\/(?:home|Users|tmp|private\/tmp|var|private\/var|opt|usr)\/\S+/g, "<PATH>")
       // 9. Windows absolute paths (C:\…)
       .replace(/[A-Z]:\\\S+/g, "<PATH>")
       // 10. Go stack frame addresses (0x1a2b3c4d) — vary per run due to ASLR
@@ -102,7 +102,7 @@ export function normalize(output: string, options: NormalizeOptions = {}): strin
       //          \t<funcName>: <source-snippet>
       //      The TS port intentionally doesn't reconstruct these — strip the
       //      frame block plus the trailing blank line so parity comparisons ignore them.
-      .replace(/(?:^<PATH> \(0xADDR\)\n\t[^\n]+\n)+\n?/gm, "")
+      .replace(/(?:^<PATH> \(0xADDR\)(?:\n\t[^\n]+)?\n)+\n?/gm, "")
       // 12c. A go-errors frame glued to a preceding prompt on the same line, e.g.
       //      `Enter a new root key: <PATH> (0xADDR)\n\t<funcName>: …`. Rule 12b
       //      only strips frames that begin at line start, so when a command writes

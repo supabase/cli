@@ -13333,11 +13333,22 @@
             "nullable": true,
             "description": "If `null`, the value is automatically configured based on compute size."
           },
+          "db_pool_acquisition_timeout": {
+            "type": "integer",
+            "nullable": true,
+            "description": "If `null`, the value is automatically configured to 10."
+          },
           "jwt_secret": {
             "type": "string"
           }
         },
-        "required": ["db_schema", "max_rows", "db_extra_search_path", "db_pool"]
+        "required": [
+          "db_schema",
+          "max_rows",
+          "db_extra_search_path",
+          "db_pool",
+          "db_pool_acquisition_timeout"
+        ]
       },
       "V1UpdatePostgrestConfigBody": {
         "type": "object",
@@ -13357,6 +13368,11 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 1000
+          },
+          "db_pool_acquisition_timeout": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 60
           }
         },
         "example": {
@@ -13381,9 +13397,20 @@
             "type": "integer",
             "nullable": true,
             "description": "If `null`, the value is automatically configured based on compute size."
+          },
+          "db_pool_acquisition_timeout": {
+            "type": "integer",
+            "nullable": true,
+            "description": "If `null`, the value is automatically configured to 10."
           }
         },
-        "required": ["db_schema", "max_rows", "db_extra_search_path", "db_pool"]
+        "required": [
+          "db_schema",
+          "max_rows",
+          "db_extra_search_path",
+          "db_pool",
+          "db_pool_acquisition_timeout"
+        ]
       },
       "V1ProjectRefResponse": {
         "type": "object",
@@ -20296,6 +20323,7 @@
                         "integrations.github_connections",
                         "dedicated_pooler",
                         "observability.dashboard_advanced_metrics",
+                        "api.members.invitations",
                         "api.members.roles"
                       ]
                     },

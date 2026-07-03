@@ -691,6 +691,7 @@
         "max_rows": 1000,
         "db_extra_search_path": "public, extensions",
         "db_pool": null,
+        "db_pool_acquisition_timeout": null,
         "jwt_secret": "EH9SYrAOLy4wUwRSts5kU5oZfiqFLy3+v+a1EAwFpKRbqxzPldJ5wMoiySHJiDmyWrMZXL5yK/9V7XkCtRdU0Q=="
       }
     }

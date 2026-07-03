@@ -49,7 +49,7 @@ func applySeedFiles(ctx context.Context, conn *pgx.Conn, fsys afero.Fs) error {
 }
 
 func applySchemaFiles(ctx context.Context, conn *pgx.Conn, fsys fs.FS) error {
-	declared, err := utils.Config.Db.Migrations.SchemaPaths.Files(fsys)
+	declared, err := utils.Config.Db.Migrations.SchemaPaths.SQLFiles(fsys)
 	if len(declared) == 0 {
 		return err
 	}

@@ -57,7 +57,9 @@ describe("normalize", () => {
     expect(normalize("/Users/colum/supabase/cli/config.toml")).toBe("<PATH>");
     expect(normalize("/home/runner/work/config")).toBe("<PATH>");
     expect(normalize("/tmp/cli-e2e-profile-abc.yaml")).toBe("<PATH>");
+    expect(normalize("/private/tmp/cli-e2e-profile-abc.yaml")).toBe("<PATH>");
     expect(normalize("/var/log/app.log")).toBe("<PATH>");
+    expect(normalize("/private/var/folders/app.log")).toBe("<PATH>");
   });
 
   it("normalizes Windows absolute paths", () => {
@@ -72,6 +74,27 @@ describe("normalize", () => {
       "\t/Users/colum/go/src/main.go:10",
     ].join("\n");
     expect(normalize(trace)).toBe("<STACK_TRACE>");
+  });
+
+  it("strips github.com/go-errors stack frames from macOS temp paths", () => {
+    const trace = [
+      "/private/var/folders/xy/cli/cmd.go (0x101234)",
+      "\trunCommand: return err",
+      "/private/tmp/supabase-cli/cmd/root.go (0x105678)",
+      "\tExecute: return err",
+      "",
+      "Cannot find project ref.",
+    ].join("\n");
+    expect(normalize(trace)).toBe("Cannot find project ref.");
+  });
+
+  it("strips standalone github.com/go-errors stack frame lines", () => {
+    const trace = [
+      "/private/var/folders/xy/cli/cmd.go (0x101234)",
+      "/private/tmp/supabase-cli/cmd/root.go (0x105678)",
+      "Cannot find project ref.",
+    ].join("\n");
+    expect(normalize(trace)).toBe("Cannot find project ref.");
   });
 
   it("normalizes Node/Bun stack trace lines", () => {
