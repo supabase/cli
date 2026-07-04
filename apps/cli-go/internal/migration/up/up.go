@@ -47,7 +47,7 @@ func GetPendingMigrations(ctx context.Context, includeAll bool, conn *pgx.Conn, 
 			pending := localMigrations[len(remoteMigrations)+len(diff):]
 			return append(diff, pending...), nil
 		}
-		utils.CmdSuggestion = suggestIgnoreFlag(diff)
+		return diff, fmt.Errorf("%w\n%s", err, suggestIgnoreFlag(diff))
 	}
 	return diff, err
 }

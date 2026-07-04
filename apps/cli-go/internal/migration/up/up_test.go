@@ -86,6 +86,7 @@ func TestPendingMigrations(t *testing.T) {
 		_, err := GetPendingMigrations(context.Background(), false, conn.MockClient(t), fsys)
 		// Check error
 		assert.ErrorIs(t, err, migration.ErrMissingRemote)
+		assert.ErrorContains(t, err, "--include-all")
 	})
 }
 
