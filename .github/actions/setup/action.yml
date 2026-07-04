@@ -18,35 +18,10 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Resolve mise cache key
-      id: mise-cache-key
-      shell: bash
-      run: |
-        node <<'JS' >> "$GITHUB_OUTPUT"
-        const { createHash } = require("node:crypto");
-        const { readFileSync } = require("node:fs");
-
-        const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
-        const payload = {
-          bun: readFileSync(".bun-version", "utf8").trim(),
-          mise: readFileSync("mise.toml", "utf8").trim(),
-          node: packageJson.devEngines?.runtime,
-          pnpm: packageJson.packageManager,
-        };
-        const digest = createHash("sha256")
-          .update(JSON.stringify(payload))
-          .digest("hex");
-        console.log(`hash=${digest}`);
-        JS
-
     - name: Install toolchains
       uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4
       with:
         version: 2026.7.0
-        install: true
-        cache_key: >-
-          {{cache_key_prefix}}-{{platform}}-{{version}}-${{
-          steps.mise-cache-key.outputs.hash }}
 
     - name: Resolve pnpm store path
       if: inputs.dependency-cache == 'true'

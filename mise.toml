@@ -1,6 +1,9 @@
+min_version = '2026.7.0'
+
 [tools]
 go = "1.25.11"
-"go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = "2.1.6"
+golangci-lint = "2.12.2"
 
 [settings]
 idiomatic_version_file_enable_tools = ["node", "bun", "pnpm"]
+lockfile = true
