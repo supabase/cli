@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { DEFAULT_VERSIONS, dockerImageForService } from "@supabase/stack/effect";
 import { describe, expect, test } from "vitest";
 import {
   makeTempHome,
@@ -12,7 +13,7 @@ import { localDbContainerId, localNetworkId } from "../../../shared/legacy-docke
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
 type TypegenLang = (typeof TYPEGEN_LANGS)[number];
 
-const LOCAL_POSTGRES_IMAGE = "public.ecr.aws/supabase/postgres:17.6.1.136";
+const LOCAL_POSTGRES_IMAGE = dockerImageForService("postgres", DEFAULT_VERSIONS.postgres);
 const LOCAL_POSTGRES_TIMEOUT_MS = 120_000;
 const TYPEGEN_TIMEOUT_MS = 90_000;
 const REMOTE_E2E_FLAG = "SUPABASE_TYPEGEN_E2E_REMOTE";
