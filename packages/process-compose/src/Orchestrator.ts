@@ -7,6 +7,7 @@ import {
   FiberMap,
   Layer,
   Context,
+  Semaphore,
   Stream,
   SubscriptionRef,
 } from "effect";
@@ -101,6 +102,10 @@ export class Orchestrator extends Context.Service<
           completed: Deferred.Deferred<number>;
           stopped: Deferred.Deferred<void>;
           stoppedByUser: boolean;
+          /** Serializes startService's per-service step: a second concurrent
+           * start must observe the first's reset state and coalesce on its
+           * fresh run instead of removing it. */
+          readonly startGate: Semaphore.Semaphore;
         }
         const services = new Map<string, ServiceSignals>();
 
@@ -114,6 +119,7 @@ export class Orchestrator extends Context.Service<
             completed: Deferred.makeUnsafe<number>(),
             stopped: Deferred.makeUnsafe<void>(),
             stoppedByUser: false,
+            startGate: Semaphore.makeUnsafe(1),
           });
         }
 
@@ -521,6 +527,30 @@ export class Orchestrator extends Context.Service<
             }
           });
 
+        // The start-path reset. Same state-machine and user-stop reset as
+        // resetService, but a signal Deferred is replaced only when already
+        // resolved: an unresolved signal can have live waiters (a dependent
+        // fiber's dependency await, a waitReady caller) that replacement
+        // would orphan — the re-run resolves the same object instead. A
+        // resolved signal has no waiters by definition and must be replaced
+        // so the fresh life can re-attest it. restartService keeps the
+        // replace-all resetService: its restart closure re-runs every
+        // transitive dependent, so their waits are re-established anyway.
+        const resetForStart = (name: string): Effect.Effect<void> =>
+          Effect.gen(function* () {
+            const svc = services.get(name);
+            if (svc) {
+              yield* SubscriptionRef.set(svc.state, initial(name));
+              if (Deferred.isDoneUnsafe(svc.started)) svc.started = Deferred.makeUnsafe<void>();
+              if (Deferred.isDoneUnsafe(svc.healthy)) svc.healthy = Deferred.makeUnsafe<void>();
+              if (Deferred.isDoneUnsafe(svc.completed)) {
+                svc.completed = Deferred.makeUnsafe<number>();
+              }
+              if (Deferred.isDoneUnsafe(svc.stopped)) svc.stopped = Deferred.makeUnsafe<void>();
+              svc.stoppedByUser = false;
+            }
+          });
+
         const stopForRestart = (name: string): Effect.Effect<void> =>
           Effect.gen(function* () {
             yield* sendEvent(name, { _tag: "StopRequested" });
@@ -613,7 +643,31 @@ export class Orchestrator extends Context.Service<
               }
               const order = graph.startOrderFor(name);
               for (const d of order) {
-                yield* FiberMap.run(fibers, d.name, runServiceSafe(d), { onlyIfMissing: true });
+                // The transition table has no edge out of Stopped/Failed
+                // except RestartTriggered — without a reset the re-run
+                // fiber's events are all dropped by applyEvent, so the
+                // process serves while every state read stays Stopped
+                // forever. The fiber-map entry must go before the reset: a
+                // terminal fiber not yet pruned would make `onlyIfMissing`
+                // skip the re-run, stranding the freshly reset service in
+                // Pending. restartService does the same remove-reset-run
+                // sequence (stopForRestart). Gated on terminal state only:
+                // a service still Stopping under an in-flight stopService
+                // (stoppedByUser already set, its remove not yet run) must
+                // not be reset out from under that stop — the stop
+                // completes to Stopped and a subsequent start heals it.
+                const svc = services.get(d.name);
+                const startStep = Effect.gen(function* () {
+                  if (svc !== undefined) {
+                    const state = yield* SubscriptionRef.get(svc.state);
+                    if (state.status === "Stopped" || state.status === "Failed") {
+                      yield* FiberMap.remove(fibers, d.name);
+                      yield* resetForStart(d.name);
+                    }
+                  }
+                  yield* FiberMap.run(fibers, d.name, runServiceSafe(d), { onlyIfMissing: true });
+                });
+                yield* svc === undefined ? startStep : svc.startGate.withPermits(1)(startStep);
               }
             }),
 

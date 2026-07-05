@@ -410,6 +410,118 @@ describe("Orchestrator", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.live("startService after stopService resets the user-stopped state machine", () => {
+    const { layer, proc } = setupOrchestrator([svc("a")], {
+      exitDelay: "5 seconds",
+    });
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.start();
+      yield* waitForHealthy(orc, "a");
+      yield* orc.stopService("a");
+      const stopped = yield* orc.getState("a");
+      expect(stopped.status).toBe("Stopped");
+      // Without the reset, the re-run fiber's events are all dropped by
+      // the transition table (no edge out of Stopped except
+      // RestartTriggered): the process would serve while every state read
+      // stays Stopped forever.
+      yield* orc.startService("a");
+      yield* proc.waitForSpawnCount(2);
+      yield* waitForHealthy(orc, "a");
+      const healed = yield* orc.getState("a");
+      expect(healed.status).toBe("Healthy");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("startService after terminal failure resets and re-runs", () => {
+    let spawns = 0;
+    const { layer, proc } = setupOrchestrator([svc("a", { restart: "no" })], {
+      getExitCode: () => (++spawns === 1 ? 1 : 0),
+      exitDelay: "200 millis",
+    });
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.start();
+      yield* waitForFailed(orc, "a");
+      // Failed is terminal like Stopped (no edge out except
+      // RestartTriggered), and the failed run's fiber may still occupy
+      // the fiber map: without the remove-and-reset, startService's
+      // onlyIfMissing run would be skipped and the service would strand.
+      yield* orc.startService("a");
+      yield* proc.waitForSpawnCount(2);
+      yield* waitForHealthy(orc, "a");
+      const healed = yield* orc.getState("a");
+      expect(healed.status).toBe("Healthy");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("startService of a failed dependency unblocks a waiting dependent", () => {
+    let dbLives = 0;
+    let dbExits = 0;
+    const { layer } = setupOrchestrator(
+      [
+        svc("db", {
+          restart: "no",
+          healthCheck: {
+            probe: { _tag: "Exec", command: "db-probe", args: [] },
+            periodSeconds: 0.05,
+            successThreshold: 1,
+            failureThreshold: 999,
+          },
+        }),
+        svc("api", { dependencies: [{ service: "db", condition: "healthy" }] }),
+      ],
+      {
+        exitDelay: "5 seconds",
+        onSpawn: (record) => {
+          if (record.command === "db") dbLives++;
+        },
+        perService: {
+          // First life: db exits 1 before its probe ever succeeds, so it
+          // goes Failed with `healthy` UNRESOLVED while api's fiber waits
+          // on that exact Deferred. Second life: serves and probes healthy.
+          db: { exitDelay: "400 millis", getExitCode: () => (++dbExits === 1 ? 1 : 0) },
+          "db-probe": { exitDelay: "1 millis", getExitCode: () => (dbLives >= 2 ? 0 : 1) },
+        },
+      },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.start();
+      yield* waitForFailed(orc, "db");
+      // api is awaiting db's ORIGINAL healthy signal. The start-path reset
+      // must not replace an unresolved signal: db's second life resolves
+      // the same object, or api hangs to its dependency timeout.
+      yield* orc.startService("db");
+      yield* waitForHealthy(orc, "db");
+      yield* waitForHealthy(orc, "api");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("concurrent startService calls coalesce on one fresh run", () => {
+    const { layer, proc } = setupOrchestrator([svc("a")], {
+      exitDelay: "5 seconds",
+    });
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.start();
+      yield* waitForHealthy(orc, "a");
+      yield* orc.stopService("a");
+      const stopped = yield* orc.getState("a");
+      expect(stopped.status).toBe("Stopped");
+      // The per-service start gate serializes the reset-and-run step: the
+      // second caller observes the reset state and coalesces via
+      // onlyIfMissing instead of removing the first caller's fresh fiber.
+      yield* Effect.all([orc.startService("a"), orc.startService("a")], {
+        concurrency: "unbounded",
+      });
+      yield* proc.waitForSpawnCount(2);
+      yield* waitForHealthy(orc, "a");
+      expect(proc.spawned.length).toBe(2);
+      expect(proc.killed.length).toBe(1);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.live("stop() interrupts all service fibers", () => {
     const { layer, proc } = setupOrchestrator([svc("a"), svc("b")], {
       exitDelay: "5 seconds",
