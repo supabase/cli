@@ -40,22 +40,22 @@
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                                                |
-| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--org-id`, `--high-availability` are telemetry-safe) |
+| Event                  | When                                       | Notable properties / groups                                                     |
+| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--org-id` is telemetry-safe, matching Go) |
 
 ## Flags
 
-| Flag                  | Type   | Required (non-interactive) | Description                                     |
-| --------------------- | ------ | -------------------------- | ----------------------------------------------- |
-| `[project name]`      | arg    | yes (non-interactive)      | Name of the project (positional argument)       |
-| `--org-id`            | string | yes (non-interactive)      | Organization ID (slug) to create the project in |
-| `--db-password`       | string | yes (non-interactive)      | Database password for the project               |
-| `--region`            | enum   | yes (non-interactive)      | AWS region for the project                      |
-| `--size`              | enum   | no                         | Desired instance size                           |
-| `--high-availability` | bool   | no                         | Enable high availability for the project        |
-| `--interactive`       | bool   | no (default: true)         | Enable interactive mode (hidden flag)           |
-| `--plan`              | string | no                         | Plan selection (hidden flag)                    |
+| Flag                  | Type   | Required (non-interactive) | Description                                                                  |
+| --------------------- | ------ | -------------------------- | ---------------------------------------------------------------------------- |
+| `[project name]`      | arg    | yes (non-interactive)      | Name of the project (positional argument)                                    |
+| `--org-id`            | string | yes (non-interactive)      | Organization ID (slug) to create the project in                              |
+| `--db-password`       | string | yes (non-interactive)      | Database password for the project                                            |
+| `--region`            | enum   | yes (non-interactive)      | AWS region for the project                                                   |
+| `--size`              | enum   | no                         | Desired instance size                                                        |
+| `--high-availability` | bool   | no                         | Enable high availability for the project (**TS-only, no Go CLI equivalent**) |
+| `--interactive`       | bool   | no (default: true)         | Enable interactive mode (hidden flag)                                        |
+| `--plan`              | string | no                         | Plan selection (hidden flag)                                                 |
 
 ## Output
 
@@ -93,4 +93,7 @@ One `result` event on success.
   flags and the positional project name argument are required.
 - The `--size` flag, when provided, sets the `desired_instance_size` field in the request body.
 - The `--high-availability` flag, when provided, sets the `high_availability` field in the request body.
+  This is a TS-only flag with no Go CLI equivalent (`apps/cli-go/cmd/projects.go:133-143` never sets
+  `HighAvailability`, even though the underlying API field exists) — matching how `--reveal` is disclosed
+  on `projects api-keys`.
 - The `--plan` flag is hidden and reserved.
