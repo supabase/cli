@@ -674,6 +674,85 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("experimental.* (experimental.validate())", () => {
+    // Go's `(e *experimental) validate()` (`pkg/config/config.go:1846-1854`),
+    // called right after the analytics/bigquery block and right before
+    // `Config.Validate` returns — unconditionally, no `enabled` gate of its own.
+    //
+    // The webhooks check hinges on whether `[experimental.webhooks]` is
+    // PRESENT in config.toml, not the decoded `enabled` value — the shared
+    // schema decode-fills `experimental.webhooks = { enabled: false }` even
+    // when the section is entirely absent, so these tests pass the raw
+    // `document` (the 5th param) to simulate what config.toml actually
+    // contained, exactly like `LoadedProjectConfig.document` would.
+    it("rejects a present [experimental.webhooks] section with enabled omitted", () => {
+      const config = baseConfig({ experimental: { webhooks: {} } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          experimental: { webhooks: {} },
+        }),
+      ).toThrow(
+        "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
+      );
+    });
+
+    it("rejects a present [experimental.webhooks] section with enabled = false", () => {
+      const config = baseConfig({ experimental: { webhooks: { enabled: false } } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          experimental: { webhooks: { enabled: false } },
+        }),
+      ).toThrow(
+        "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
+      );
+    });
+
+    it("does not throw when [experimental.webhooks] enabled = true", () => {
+      const config = baseConfig({ experimental: { webhooks: { enabled: true } } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          experimental: { webhooks: { enabled: true } },
+        }),
+      ).not.toThrow();
+    });
+
+    it("does not throw when [experimental.webhooks] is absent entirely", () => {
+      const config = baseConfig();
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {}),
+      ).not.toThrow();
+    });
+
+    it("does not throw a present [experimental.webhooks] section without enabled when no document is provided", () => {
+      // No `document` (5th param) at all — e.g. a caller that hasn't threaded
+      // `LoadedProjectConfig.document` through yet. The presence-only check
+      // can't run without it, so it's skipped rather than guessed at; this
+      // also covers every pre-existing call site/test in this file that
+      // doesn't pass a 5th argument.
+      const config = baseConfig({ experimental: { webhooks: {} } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects invalid JSON in experimental.pgdelta.format_options", () => {
+      const config = baseConfig({ experimental: { pgdelta: { format_options: "{not json" } } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid config for experimental.pgdelta.format_options: must be valid JSON",
+      );
+    });
+
+    it("does not throw for valid JSON in experimental.pgdelta.format_options", () => {
+      const config = baseConfig({
+        experimental: { pgdelta: { format_options: '{"keywordCase":"upper"}' } },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not throw when experimental.pgdelta.format_options is unset", () => {
+      const config = baseConfig({ experimental: { pgdelta: {} } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
   describe("SUPABASE_API_TLS_ENABLED env override", () => {
     // Go applies the Viper-bound `api.tls.enabled` override (config.go:582-586)
     // BEFORE deriving the default `api.external_url` scheme (config.go:799-809),

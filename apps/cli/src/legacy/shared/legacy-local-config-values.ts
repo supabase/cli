@@ -670,6 +670,62 @@ function envOverrideDenoVersion(
   return Number(value);
 }
 
+/** Narrows an unknown value to a plain object, mirroring `legacy-db-config.toml-read.ts`'s `asRecord`. */
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
+ * Go's `(e *experimental) validate()` (`pkg/config/config.go:1846-1854`),
+ * called from `Config.Validate` right after the analytics/bigquery block and
+ * right before `Validate` returns (`config.go:1188-1190`) — unconditionally,
+ * with no `enabled`-style gate of its own.
+ *
+ * The webhooks check is NOT "the user disabled a feature" — Go's bool
+ * zero-value is `false`, so `e.Webhooks != nil && !e.Webhooks.Enabled` rejects
+ * ANY present `[experimental.webhooks]` section whose `enabled` isn't
+ * explicitly `true`, including one where the key is simply omitted; the
+ * section exists only so it can be turned on, never explicitly off. This
+ * hinges on PRESENCE of the TOML section, not the decoded `enabled` value —
+ * unlike the doc comment one might expect from `Schema.optionalKey`,
+ * `@supabase/config`'s decode-time default (`packages/config/src/
+ * experimental.ts`'s `withDecodingDefaultKey(Effect.succeed({}))`) fills in
+ * `experimental.webhooks = { enabled: false }` on the DECODED `ProjectConfig`
+ * even when the TOML section is entirely absent — verified empirically, this
+ * default-fill erases exactly the presence signal this check needs. So this
+ * reads `LoadedProjectConfig.document` (the raw, pre-default TOML) instead,
+ * the same document-based approach {@link validatePasskeyWebauthn} uses for a
+ * field the schema doesn't model at all.
+ */
+function validateExperimentalConfig(
+  experimental: ProjectConfig["experimental"],
+  experimentalDocument: Record<string, unknown> | undefined,
+): void {
+  if (
+    asRecord(experimentalDocument?.["webhooks"]) !== undefined &&
+    experimental.webhooks?.enabled !== true
+  ) {
+    throw new Error(
+      "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
+    );
+  }
+  const formatOptions = experimental.pgdelta?.format_options;
+  if (formatOptions !== undefined && formatOptions.length > 0 && !isValidJson(formatOptions)) {
+    throw new Error("Invalid config for experimental.pgdelta.format_options: must be valid JSON");
+  }
+}
+
+function isValidJson(value: string): boolean {
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * @throws when `project_id` (post-override) is an explicit empty string. Go's
  * `Config.Validate` checks this FIRST, before every other field
@@ -716,12 +772,25 @@ function envOverrideDenoVersion(
  * @throws when `analytics.enabled` (post-override) is true, `analytics.backend`
  * (post-override) is `"bigquery"`, and `analytics.gcp_project_id`,
  * `analytics.gcp_project_number`, or `analytics.gcp_jwt_path` is unset.
+ * @throws when a `[experimental.webhooks]` section is present without an
+ * explicit `enabled = true`, or `experimental.pgdelta.format_options` is set
+ * but isn't valid JSON — see {@link validateExperimentalConfig}.
  */
 export function legacyResolveLocalConfigValues(
   config: ProjectConfig,
   hostname: string,
   workdir: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  /**
+   * `LoadedProjectConfig.document` (`packages/config/src/io.ts`) — the raw,
+   * pre-schema-default TOML document `config` was decoded from. Lets checks
+   * that hinge on TOML-section PRESENCE (not the decoded, always-defaulted
+   * value) inspect the file directly — see {@link validateExperimentalConfig}
+   * and {@link validatePasskeyWebauthn}. `undefined` for callers that haven't
+   * threaded it through yet (e.g. most existing unit tests); those checks are
+   * then simply skipped rather than guessed at.
+   */
+  document: Readonly<Record<string, unknown>> | undefined = undefined,
 ): LegacyLocalConfigValues {
   // Go's `Config.Validate` checks `ProjectId` FIRST, before every other field
   // (`pkg/config/config.go:990-991`) — see this function's `@throws` doc above
@@ -976,6 +1045,11 @@ export function legacyResolveLocalConfigValues(
       );
     }
   }
+
+  // Go's `Config.Validate` calls `c.Experimental.validate()` right after the
+  // analytics/bigquery block and right before returning — see
+  // {@link validateExperimentalConfig}.
+  validateExperimentalConfig(config.experimental, asRecord(document?.["experimental"]));
 
   return {
     apiUrl: apiExternalUrl,
