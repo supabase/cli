@@ -133,6 +133,35 @@ describe("legacyResolveLocalConfigValues", () => {
     );
   });
 
+  it("rejects an explicit empty project_id, matching Go's Config.Validate", () => {
+    // Go's Config.Validate checks ProjectId first, before any other field
+    // (pkg/config/config.go:990-991). The workdir-basename default is merged
+    // in as a viper default BEFORE config.toml is merged, so an explicit
+    // `project_id = ""` in the file overwrites that default with the literal
+    // empty string rather than being treated as absent — Go fails outright.
+    const config = baseConfig({ project_id: "" });
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+      "Missing required field in config: project_id",
+    );
+  });
+
+  it("does not reject an absent project_id (the workdir-basename default applies elsewhere)", () => {
+    const config = Schema.decodeUnknownSync(ProjectConfigSchema)({});
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+  });
+
+  it("lets SUPABASE_PROJECT_ID override an explicit empty project_id", () => {
+    // Viper's AutomaticEnv binds SUPABASE_PROJECT_ID with higher precedence
+    // than config.toml (config.go:529-535), so a non-empty env override must
+    // win even when the file's project_id is explicitly empty.
+    const config = baseConfig({ project_id: "" });
+    expect(() =>
+      legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, {
+        SUPABASE_PROJECT_ID: "env-project",
+      }),
+    ).not.toThrow();
+  });
+
   it("hardcodes the Go-parity local S3 credentials", () => {
     const config = baseConfig();
     const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);

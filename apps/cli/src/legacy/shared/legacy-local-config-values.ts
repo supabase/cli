@@ -467,6 +467,16 @@ function envOverrideDenoVersion(
 }
 
 /**
+ * @throws when `project_id` (post-override) is an explicit empty string. Go's
+ * `Config.Validate` checks this FIRST, before every other field
+ * (`pkg/config/config.go:990-991`): the workdir-basename default is merged in
+ * as a viper default value BEFORE `config.toml` is merged
+ * (`mergeDefaultValues`/`mergeFileConfig`, `config.go:587-593,690-699`), so an
+ * explicit `project_id = ""` in the file overwrites that default with the
+ * literal empty string rather than being treated as absent — Go fails outright
+ * rather than falling back to the basename. A genuinely absent key decodes to
+ * `undefined` (not `""`, see `packages/config/src/base.ts`'s `optionalKey`),
+ * so it never trips this check.
  * @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
  * @throws {LegacyInvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
  * override doesn't parse as a valid port.
@@ -498,6 +508,18 @@ export function legacyResolveLocalConfigValues(
   workdir: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
 ): LegacyLocalConfigValues {
+  // Go's `Config.Validate` checks `ProjectId` FIRST, before every other field
+  // (`pkg/config/config.go:990-991`) — see this function's `@throws` doc above
+  // for why an explicit `project_id = ""` fails here while an absent key does
+  // not. `SUPABASE_PROJECT_ID` is checked via the same `envOverride` precedence
+  // every other field here uses, since Viper's `AutomaticEnv` binds it too
+  // (`config.go:529-535`) and it can turn an explicit-empty file value back
+  // into a valid override.
+  const resolvedProjectId = envOverride("SUPABASE_PROJECT_ID", config.project_id, projectEnvValues);
+  if (resolvedProjectId !== undefined && resolvedProjectId.length === 0) {
+    throw new Error("Missing required field in config: project_id");
+  }
+
   // Go's `status` reads `utils.Config.Api.Port`/`ExternalUrl`/`Tls.Enabled`
   // after Viper's AutomaticEnv has already applied any `SUPABASE_API_PORT`/
   // `SUPABASE_API_EXTERNAL_URL`/`SUPABASE_API_TLS_ENABLED` override
