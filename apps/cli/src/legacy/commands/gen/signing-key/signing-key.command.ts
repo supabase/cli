@@ -3,6 +3,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
@@ -29,6 +30,10 @@ const legacyGenSigningKeyRuntimeLayer = Layer.mergeAll(
   cliConfig,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["gen", "signing-key"]),
+  // The overwrite-confirmation prompt reads piped stdin via `legacyPromptYesNo`
+  // (`stdin.readLine`), same as `config push`, `seed buckets`, `storage rm`, `db pull`,
+  // and `logout` — all of which merge `stdinLayer` alongside their runtime layer.
+  stdinLayer,
 );
 
 export const legacyGenSigningKeyCommand = Command.make("signing-key", config).pipe(
