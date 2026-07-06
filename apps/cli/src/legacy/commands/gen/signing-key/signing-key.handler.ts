@@ -285,14 +285,22 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
           // `--output-format`, but this command has no structured json/stream-json output
           // (SIDE_EFFECTS.md) — that combination only arises from a real interactive TTY
           // explicitly requesting machine output. Fail closed rather than silently
-          // overwriting irrecoverable key material; a non-TTY caller (piped or not) still
-          // goes through `legacyPromptYesNo` unchanged, so piped `y`/`n` answers are honored
-          // regardless of `--output-format`.
+          // overwriting irrecoverable key material.
           const confirmed =
             !yes && tty.stdinIsTty && output.format !== "text"
               ? false
               : yield* legacyPromptYesNo(
-                  output,
+                  // `legacyPromptYesNo` checks `output.format !== "text"` BEFORE it checks
+                  // TTY, so a non-TTY (piped or empty) invocation under `json`/`stream-json`
+                  // would otherwise hit that check first and return the default without
+                  // ever reading stdin. Go's `console.PromptYesNo`
+                  // (apps/cli-go/internal/utils/console.go:64-82) has no concept of output
+                  // format at all — it always reads piped stdin — so a piped `y`/`n` answer
+                  // must be honored here the same as in text mode. Present a text-shaped
+                  // view of `output` to reach that read; `raw`/`promptConfirm` write the
+                  // prompt to stderr under every `Output` layer, so this never touches the
+                  // machine-readable stdout payload.
+                  output.format === "text" ? output : { ...output, format: "text" },
                   yes,
                   `Do you want to overwrite the existing ${emphasize(configured.value.displayPath)} file?`,
                   true,

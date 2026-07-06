@@ -536,6 +536,54 @@ describe("legacy gen signing-key integration", () => {
     },
   );
 
+  // CLI-1865 follow-up: `legacyPromptYesNo` checks `output.format !== "text"` BEFORE it
+  // checks TTY, so a non-TTY invocation under `json`/`stream-json` must not fall into that
+  // early return — this command has no structured json/stream-json payload, so a piped
+  // answer must be honored the same as text mode. Before this fix, a piped "n" here was
+  // silently ignored and the file was overwritten with the default (true).
+  it.live("honors a piped non-tty 'n' even when --output-format is json", () => {
+    const { layer, out } = setup({ format: "json", stdinIsTty: false, pipedAnswer: "n" });
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
+      );
+
+      const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyGenSigningKeyCancelledError");
+      }
+
+      const saved = yield* Effect.tryPromise(() =>
+        readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
+      );
+      expect(JSON.parse(saved)).toEqual([]);
+      expect(out.promptConfirmCalls).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("honors a piped non-tty 'y' when --output-format is stream-json", () => {
+    const { layer } = setup({ format: "stream-json", stdinIsTty: false, pipedAnswer: "y" });
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
+      );
+
+      yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
+
+      const saved = yield* Effect.tryPromise(() =>
+        readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
+      );
+      expect(JSON.parse(saved) as ReadonlyArray<unknown>).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("honors SUPABASE_YES and overwrites even when a piped 'n' is present", () => {
     // Go reads `viper.GetBool("YES")` (incl. the SUPABASE_YES env var) BEFORE scanning
     // stdin (`console.go:71`), so `SUPABASE_YES=1 printf 'n\n' | supabase gen signing-key`
