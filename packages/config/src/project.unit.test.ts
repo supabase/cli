@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, FileSystem, Path, Redacted } from "effect";
 import { findProjectRootFor, loadProjectEnvironmentFor } from "./bun.ts";
-import { ProjectConfigParseError } from "./errors.ts";
+import { ProjectConfigParseError, ProjectEnvParseError } from "./errors.ts";
 import {
   findProjectPaths,
   loadProjectConfig,
@@ -137,6 +137,76 @@ describe("project discovery and lazy env resolution", () => {
       });
 
       expect(fromBun?.paths.projectRoot).toBe(packageRoot);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("parses a multiline double-quoted .env value (godotenv/Go parity)", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "ref_123"\n');
+      await writeFile(
+        join(cwd, "supabase", ".env"),
+        [
+          'PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----',
+          "MIIEpAIBAAKCAQEA1c7+9z5Pad7OejecsQ0bu3aumga",
+          '-----END RSA PRIVATE KEY-----"',
+          "OTHER=value",
+          "",
+        ].join("\n"),
+      );
+
+      const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd }));
+
+      expect(projectEnv).not.toBeNull();
+      expect(projectEnv?.values.PRIVATE_KEY).toBe(
+        [
+          "-----BEGIN RSA PRIVATE KEY-----",
+          "MIIEpAIBAAKCAQEA1c7+9z5Pad7OejecsQ0bu3aumga",
+          "-----END RSA PRIVATE KEY-----",
+        ].join("\n"),
+      );
+      expect(projectEnv?.values.OTHER).toBe("value");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("parses a multiline single-quoted .env value followed by a trailing comment", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "ref_123"\n');
+      await writeFile(
+        join(cwd, "supabase", ".env"),
+        ["MULTI='line one", "line two' # trailing comment", "AFTER=ok", ""].join("\n"),
+      );
+
+      const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd }));
+
+      expect(projectEnv).not.toBeNull();
+      expect(projectEnv?.values.MULTI).toBe(["line one", "line two"].join("\n"));
+      expect(projectEnv?.values.AFTER).toBe("ok");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("still fails a genuinely malformed .env line (not a multiline quote)", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "ref_123"\n');
+      await writeFile(join(cwd, "supabase", ".env"), "!!!not-a-valid-line\n");
+
+      await expect(runConfigEffect(loadProjectEnvironment({ cwd }))).rejects.toBeInstanceOf(
+        ProjectEnvParseError,
+      );
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

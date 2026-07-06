@@ -45,6 +45,41 @@ function normalizeAmbientEnv(
   return values;
 }
 
+// Detects a line of the form `KEY=<quote>...` (or `KEY: <quote>...`) whose
+// quoted value does NOT close on that same physical line — the start of a
+// godotenv-style multiline quoted value (e.g. a PEM block). Returns the quote
+// character and the index of the opening quote within `line`, or `null` if
+// the line doesn't open an unterminated quote (either no quote at all, or one
+// that already closes on this line).
+const dotEnvValueOpenerPattern = /^\s*(?:export\s+)?[\w.-]+(?:\s*=\s*?|:\s+?)(['"`])/;
+
+function findUnescapedQuoteIndex(text: string, quote: string, from: number): number {
+  for (let i = from; i < text.length; i += 1) {
+    if (text[i] === quote && text[i - 1] !== "\\") {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function detectOpenQuoteStart(line: string): { quote: string; openIndex: number } | null {
+  const openerMatch = dotEnvValueOpenerPattern.exec(line);
+  if (openerMatch === null) {
+    return null;
+  }
+  const quote = openerMatch[1];
+  if (quote === undefined) {
+    return null;
+  }
+  const openIndex = openerMatch[0].length - 1;
+  if (findUnescapedQuoteIndex(line, quote, openIndex + 1) !== -1) {
+    // Already closes on this same line — this isn't the multiline case, so
+    // whatever made the outer match fail is a genuine parse error.
+    return null;
+  }
+  return { quote, openIndex };
+}
+
 function parseDotEnvValue(rawValue: string): string {
   let value = rawValue.trim();
   const maybeQuote = value[0];
@@ -78,7 +113,40 @@ function parseDotEnv(
         continue;
       }
 
-      const match = dotEnvLinePattern.exec(line);
+      let candidate = line;
+      let consumedThrough = index;
+
+      // Check for an unterminated quote BEFORE attempting the single-line
+      // match: `dotEnvLinePattern`'s value alternatives fall back to an
+      // unquoted match (`[^#\r\n]+`) when none of the quoted alternatives
+      // close on this line, which would otherwise "succeed" with a truncated,
+      // still-quote-prefixed value instead of signaling a multiline value —
+      // masking the real bug rather than triggering accumulation. This is a
+      // godotenv-style quoted value spanning multiple physical lines (e.g. a
+      // PEM block); Go's `loadNestedEnv` parses this fine (`godotenv@v1.5.1`'s
+      // cursor-based scanner never splits into lines up front; see
+      // `legacy-dotenv.ts` for the Go-compatible reference implementation used
+      // elsewhere in this repo). Accumulate subsequent lines until the opened
+      // quote closes (or EOF), then match the same per-line pattern against
+      // the joined multiline chunk — its quoted-value alternatives use
+      // negated character classes (`[^"]` etc.), which already match embedded
+      // newlines once given the full span.
+      const opener = detectOpenQuoteStart(line);
+      if (opener !== null) {
+        for (let next = index + 1; next < lines.length; next += 1) {
+          const nextLine = lines[next];
+          if (nextLine === undefined) {
+            continue;
+          }
+          candidate += "\n" + nextLine;
+          consumedThrough = next;
+          if (findUnescapedQuoteIndex(candidate, opener.quote, opener.openIndex + 1) !== -1) {
+            break;
+          }
+        }
+      }
+
+      const match = dotEnvLinePattern.exec(candidate);
 
       if (match === null) {
         return yield* Effect.fail(new ProjectEnvParseError({ path, line: index + 1 }));
@@ -92,6 +160,7 @@ function parseDotEnv(
       }
 
       values[key] = parseDotEnvValue(rawValue);
+      index = consumedThrough;
     }
 
     return values;
