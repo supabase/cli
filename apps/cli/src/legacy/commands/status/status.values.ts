@@ -287,8 +287,16 @@ export function legacyResolveStatusLocalState(
   hostname: string,
   workdir: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  /** `LoadedProjectConfig.document` — see {@link legacyResolveLocalConfigValues}'s doc comment. */
+  document: Readonly<Record<string, unknown>> | undefined = undefined,
 ): LegacyStatusLocalState {
-  const local = legacyResolveLocalConfigValues(config, hostname, workdir, projectEnvValues);
+  const local = legacyResolveLocalConfigValues(
+    config,
+    hostname,
+    workdir,
+    projectEnvValues,
+    document,
+  );
 
   const apiEnabled = legacyEnvOverrideBool(
     "SUPABASE_API_ENABLED",
@@ -472,8 +480,16 @@ export function legacyStatusValues(
   overrides: ReadonlyMap<string, string>,
   workdir: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  /** `LoadedProjectConfig.document` — see {@link legacyResolveLocalConfigValues}'s doc comment. */
+  document: Readonly<Record<string, unknown>> | undefined = undefined,
 ): LegacyStatusValuesResult {
-  const localState = legacyResolveStatusLocalState(config, hostname, workdir, projectEnvValues);
+  const localState = legacyResolveStatusLocalState(
+    config,
+    hostname,
+    workdir,
+    projectEnvValues,
+    document,
+  );
   const state = legacyGateStatusState(localState, containerIds, excluded);
   return legacyStatusValuesFromState(state, overrides);
 }

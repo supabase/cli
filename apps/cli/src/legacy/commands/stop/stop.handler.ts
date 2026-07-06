@@ -164,6 +164,7 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
           legacyGetHostname(),
           cliConfig.workdir,
           projectEnvValues,
+          loaded?.document,
         ),
       catch: (cause) =>
         new LegacyStopConfigLoadError({

@@ -450,6 +450,48 @@ function validateFunctionSlugs(functions: ProjectConfig["functions"]): void {
   }
 }
 
+/**
+ * Go's passkey/WebAuthn requirement inside `Config.Validate`
+ * (`pkg/config/config.go:1117-1129`; the trailing `assertEnvLoaded` calls at
+ * `1130-1135` are stderr-only warnings that never fail validation, matching
+ * this file's existing `auth.captcha.secret` precedent, so they have no
+ * throwing equivalent here). Runs right after the signing-keys read and
+ * before `Auth.Hook.validate()`, still inside `if c.Auth.Enabled`.
+ *
+ * `@supabase/config`'s auth schema has no `passkey`/`webauthn` fields at all
+ * (see `config-sync/auth.sync.ts`'s "not in `@supabase/config` schema" note),
+ * so this reads the RAW, post-`env()`-interpolation TOML document
+ * (`LoadedProjectConfig.document`) instead of the decoded `ProjectConfig` —
+ * the same document-based approach already used for the equivalent check on
+ * the `db`/migration config-load path (`legacy-db-config.toml-read.ts`'s
+ * `legacyValidateAuthConfig`, section A6). `authDocument` is `undefined` when
+ * a caller hasn't threaded `document` through yet, in which case this check
+ * is simply skipped rather than guessed at. Deliberately does not resolve a
+ * literal `enabled = "env(VAR)"` string the way
+ * `legacy-db-config.toml-read.ts`'s `gate()` helper does — Go's `Config.Load`
+ * resolves that generically via Viper for every field, but wiring the same
+ * `EnvLookup`/`legacyExpandEnv` machinery into this resolver just for this one
+ * rarely-configured field isn't worth the added surface; a literal TOML
+ * `enabled = true`/`false` (the overwhelmingly common case) is handled.
+ */
+function validatePasskeyWebauthn(authDocument: Record<string, unknown> | undefined): void {
+  const passkey = asRecord(authDocument?.["passkey"]);
+  if (passkey?.["enabled"] !== true) return;
+  const webauthn = asRecord(authDocument?.["webauthn"]);
+  if (webauthn === undefined) {
+    throw new Error(
+      "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
+    );
+  }
+  if (typeof webauthn["rp_id"] !== "string" || webauthn["rp_id"].length === 0) {
+    throw new Error("Missing required field in config: auth.webauthn.rp_id");
+  }
+  const rpOrigins = webauthn["rp_origins"];
+  if (!Array.isArray(rpOrigins) || rpOrigins.length === 0) {
+    throw new Error("Missing required field in config: auth.webauthn.rp_origins");
+  }
+}
+
 /** Go's `hook.validate()` hook-type iteration order (`pkg/config/config.go:1453-1485`). */
 const LEGACY_HOOK_TYPES = [
   "mfa_verification_attempt",
@@ -826,6 +868,9 @@ function isValidJson(value: string): boolean {
  * unsupported — see {@link validateDbMajorVersion}.
  * @throws when a `[storage.buckets.*]` key doesn't match Go's bucket-name pattern —
  * see {@link validateStorageBucketNames}. Unconditional, no `storage.enabled` gate.
+ * @throws when `auth.enabled` is true, `[auth.passkey] enabled` is `true` (per the
+ * raw `document`), and `[auth.webauthn]` is missing or incomplete — see
+ * {@link validatePasskeyWebauthn}. Skipped when `document` isn't provided.
  * @throws when `auth.enabled` is true and an enabled `[auth.hook.*]` entry's `uri`
  * or `secrets` fails Go's scheme/secret-pattern rules — see {@link validateAuthHooks}.
  * @throws when `auth.enabled` is true and an MFA factor's `enroll_enabled` is set
@@ -1071,13 +1116,14 @@ export function legacyResolveLocalConfigValues(
     authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0
       ? loadFirstSigningKey(workdir, signingKeysPath)
       : undefined;
-  // Go's `Config.Validate` runs `Auth.Hook.validate()`, then `Auth.MFA.validate()`,
-  // then `Auth.Email.validate()`, then (skipping the unported Sms/External steps)
-  // `Auth.ThirdParty.validate()`, all right after signing keys/passkey validation and
-  // still inside `if c.Auth.Enabled` (`pkg/config/config.go:1136-1153`). Passkey/webauthn
-  // (`config.go:1117-1135`) sits between signing keys and hooks in Go but isn't ported
-  // by this resolver yet; Sms/External (`config.go:1145-1150`) aren't ported either.
+  // Go's `Config.Validate` runs passkey/webauthn validation, then
+  // `Auth.Hook.validate()`, then `Auth.MFA.validate()`, then
+  // `Auth.Email.validate()`, then (skipping the unported Sms/External steps)
+  // `Auth.ThirdParty.validate()`, all right after the signing-keys read and
+  // still inside `if c.Auth.Enabled` (`pkg/config/config.go:1117-1153`).
+  // Sms/External (`config.go:1145-1150`) aren't ported.
   if (authEnabled) {
+    validatePasskeyWebauthn(asRecord(document?.["auth"]));
     validateAuthHooks(config.auth.hook);
     validateMfaConfig(config.auth.mfa);
     validateAuthEmailTemplates(config.auth.email, workdir);

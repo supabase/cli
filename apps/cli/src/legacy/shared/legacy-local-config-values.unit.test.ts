@@ -1086,6 +1086,77 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("auth.passkey / auth.webauthn (WebAuthn requirement when passkey enabled)", () => {
+    // Go's Config.Validate rejects [auth.passkey] enabled = true without a
+    // complete [auth.webauthn] (pkg/config/config.go:1117-1129), right after
+    // the signing-keys read and before Auth.Hook.validate(). @supabase/config's
+    // schema has no passkey/webauthn fields at all, so this check only runs
+    // when the raw `document` (5th param) is provided.
+    it("rejects passkey.enabled without an [auth.webauthn] section", () => {
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          auth: { passkey: { enabled: true } },
+        }),
+      ).toThrow(
+        "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
+      );
+    });
+
+    it("rejects passkey.enabled with [auth.webauthn] missing rp_id", () => {
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          auth: { passkey: { enabled: true }, webauthn: { rp_origins: ["http://localhost:3000"] } },
+        }),
+      ).toThrow("Missing required field in config: auth.webauthn.rp_id");
+    });
+
+    it("rejects passkey.enabled with [auth.webauthn] missing rp_origins", () => {
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          auth: { passkey: { enabled: true }, webauthn: { rp_id: "localhost" } },
+        }),
+      ).toThrow("Missing required field in config: auth.webauthn.rp_origins");
+    });
+
+    it("does not throw when passkey.enabled has a complete [auth.webauthn] section", () => {
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          auth: {
+            passkey: { enabled: true },
+            webauthn: { rp_id: "localhost", rp_origins: ["http://localhost:3000"] },
+          },
+        }),
+      ).not.toThrow();
+    });
+
+    it("does not throw when passkey is absent from the document", () => {
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, { auth: {} }),
+      ).not.toThrow();
+    });
+
+    it("does not throw passkey.enabled without webauthn when no document is provided", () => {
+      // No `document` (5th param) at all — the same skip-rather-than-guess
+      // behavior every pre-existing call site/test in this file relies on.
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not throw an enabled passkey without webauthn when auth is disabled", () => {
+      const config = baseConfig({ auth: { enabled: false } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          auth: { passkey: { enabled: true } },
+        }),
+      ).not.toThrow();
+    });
+  });
+
   describe("auth.hook.* (URI/secret validation when enabled)", () => {
     // Go's `Config.Validate` runs `Auth.Hook.validate()` right after signing
     // keys/passkey validation, still inside `if c.Auth.Enabled`

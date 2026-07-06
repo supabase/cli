@@ -202,7 +202,13 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     const hostname = legacyGetHostname();
     const localState = yield* Effect.try({
       try: () =>
-        legacyResolveStatusLocalState(config, hostname, cliConfig.workdir, projectEnvValues),
+        legacyResolveStatusLocalState(
+          config,
+          hostname,
+          cliConfig.workdir,
+          projectEnvValues,
+          loaded?.document,
+        ),
       catch: (cause) =>
         new LegacyStatusInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
