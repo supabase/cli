@@ -35,12 +35,13 @@
 
 ## Exit Codes
 
-| Code | Condition                             |
-| ---- | ------------------------------------- |
-| `0`  | success                               |
-| `1`  | API error (non-2xx response)          |
-| `1`  | authentication error (no token found) |
-| `1`  | network / connection failure          |
+| Code | Condition                              |
+| ---- | -------------------------------------- |
+| `0`  | success                                |
+| `1`  | API error (non-2xx response)           |
+| `1`  | authentication error (no token found)  |
+| `1`  | network / connection failure           |
+| `1`  | invalid function slug or flag conflict |
 
 ## Output
 

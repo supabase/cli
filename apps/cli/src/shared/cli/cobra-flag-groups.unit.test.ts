@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { cobraMutuallyExclusiveErrorMessage, hasExplicitLongFlag } from "./functions.shared.ts";
+import { cobraMutuallyExclusiveErrorMessage, hasExplicitLongFlag } from "./cobra-flag-groups.ts";
 
 const COMMAND_PATH = ["functions", "deploy"] as const;
 

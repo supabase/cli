@@ -18,8 +18,10 @@ import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-reg
 import { findGitRootPath } from "../git/git-root.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
-  FUNCTIONS_BUNDLER_MUTEX_GROUP,
   hasExplicitLongFlag,
+} from "../cli/cobra-flag-groups.ts";
+import {
+  FUNCTIONS_BUNDLER_MUTEX_GROUP,
   invalidFunctionSlugDetail,
   validateFunctionSlugMessage,
 } from "./functions.shared.ts";
