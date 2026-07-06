@@ -1,5 +1,5 @@
-import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
 import { Effect } from "effect";
+import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
 import {
   LegacyInvalidGenTypesDatabaseUrlError,
@@ -140,19 +140,23 @@ export function buildPostgresUrl(input: {
 }
 
 export function resolvePgmetaImage(versionOverride?: string) {
-  const version =
-    versionOverride && versionOverride.trim().length > 0
-      ? versionOverride.trim().replace(/^v/i, "")
-      : DEFAULT_VERSIONS.pgmeta;
-  // Resolve through the shared registry helper (a 1:1 port of Go's
-  // `GetRegistryImageUrl`, same path used by `supabase start` / `test db`) so
-  // `SUPABASE_INTERNAL_IMAGE_REGISTRY` is honored for ANY registry, not only
-  // `docker.io`. Previously any other value (e.g. `ghcr.io`, which
-  // `supabase/setup-cli` exports on shared CI runners to dodge ECR rate limits)
-  // fell through to the hardcoded ECR default and still hit `public.ecr.aws`.
-  return legacyGetRegistryImageUrl(`supabase/postgres-meta:v${version}`);
+  const defaultImage = dockerfileServiceImage("pgmeta");
+  if (versionOverride === undefined || versionOverride.trim().length === 0) {
+    return legacyGetRegistryImageUrl(defaultImage);
+  }
+  return legacyGetRegistryImageUrl(
+    replaceImageTag(defaultImage, `v${versionOverride.trim().replace(/^v/i, "")}`),
+  );
 }
 
 export function legacyRootCaBundle() {
   return `${caStaging2021}${caProd2021}${caProd2025}`;
+}
+
+function replaceImageTag(image: string, tag: string): string {
+  const tagSeparator = image.lastIndexOf(":");
+  if (tagSeparator === -1) {
+    return image;
+  }
+  return `${image.slice(0, tagSeparator + 1)}${tag}`;
 }

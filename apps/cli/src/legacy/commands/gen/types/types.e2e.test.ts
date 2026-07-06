@@ -1,19 +1,20 @@
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { DEFAULT_VERSIONS, dockerImageForService } from "@supabase/stack/effect";
 import { describe, expect, test } from "vitest";
 import {
   makeTempHome,
   makeTempStackProject,
   runSupabase,
 } from "../../../../../tests/helpers/cli.ts";
+import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { localDbContainerId, localNetworkId } from "../../../shared/legacy-docker-ids.ts";
+import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
 
 const TYPEGEN_LANGS = ["typescript", "go", "swift", "python"] as const;
 type TypegenLang = (typeof TYPEGEN_LANGS)[number];
 
-const LOCAL_POSTGRES_IMAGE = dockerImageForService("postgres", DEFAULT_VERSIONS.postgres);
+const LOCAL_POSTGRES_IMAGE = legacyGetRegistryImageUrl(dockerfileServiceImage("pg"));
 const LOCAL_POSTGRES_TIMEOUT_MS = 120_000;
 const TYPEGEN_TIMEOUT_MS = 90_000;
 const REMOTE_E2E_FLAG = "SUPABASE_TYPEGEN_E2E_REMOTE";
