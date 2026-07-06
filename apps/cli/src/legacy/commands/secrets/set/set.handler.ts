@@ -40,31 +40,43 @@ const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
  * Best-effort recovery for a schema-decode failure (as opposed to a raw
  * TOML/JSON parse failure) on `supabase/config.toml`. Go's `viper`+
  * `mapstructure` decode (`apps/cli-go/pkg/config/config.go:749`) mutates the
- * target struct field-by-field: an unrelated type error (e.g.
- * `analytics.port`) does not stop `edge_runtime.secrets` from landing in
- * `utils.Config`, because `UnmarshalExact` still populates every field it
- * *can* decode before aggregating errors — confirmed empirically against
- * this repo's actual `pkg/config`. `Schema.decodeUnknownSync` has no such
- * tolerance; a single bad field anywhere discards the whole decode. To keep
- * `secrets set` at parity without loosening `packages/config`'s decode
- * semantics for every caller, re-slice just the `edge_runtime` subtree out of
- * the pre-decode document (`cause.document` — only set when the document
- * itself parsed fine and the *schema* decode is what failed, see
+ * target struct field-by-field: a type error anywhere — an unrelated
+ * top-level table (`analytics.port`) *or* a sibling field inside the same
+ * `edge_runtime` table (`edge_runtime.inspector_port`) — does not stop
+ * `edge_runtime.secrets` from landing in `utils.Config`, because
+ * `UnmarshalExact` still populates every field it *can* decode before
+ * aggregating errors. Confirmed empirically against this repo's actual
+ * `pkg/config`: a TOML with both a malformed `edge_runtime.inspector_port`
+ * and a valid `[edge_runtime.secrets]` block still yields a populated
+ * `EdgeRuntime.Secrets` (`InspectorPort` is left at its zero value).
+ * `Schema.decodeUnknownSync` has no such tolerance; a single bad field
+ * anywhere discards the whole decode — and re-decoding the *entire*
+ * `edge_runtime` subtree (as opposed to just `secrets`) would still fail in
+ * the sibling-field case, since `inspector_port` comes along for the ride. To
+ * keep `secrets set` at parity without loosening `packages/config`'s decode
+ * semantics for every caller, re-slice just `edge_runtime.secrets` out of the
+ * pre-decode document (`cause.document` — only set when the document itself
+ * parsed fine and the *schema* decode is what failed, see
  * `ProjectConfigParseError`) and re-decode it alone against the full schema,
- * where every other field defaults cleanly. A true parse failure
- * (`cause.document` undefined) has no recoverable structure in either
- * implementation — Go's own `viper.MergeConfig` also fails the whole load
- * before `mapstructure` ever runs in that case.
+ * where every other field (including the rest of `edge_runtime`) defaults
+ * cleanly. A true parse failure (`cause.document` undefined) has no
+ * recoverable structure in either implementation — Go's own
+ * `viper.MergeConfig` also fails the whole load before `mapstructure` ever
+ * runs in that case.
  */
 function recoverEdgeRuntimeConfig(cause: ProjectConfigParseError): ProjectConfig | null {
   if (cause.document === undefined) {
     return null;
   }
   const edgeRuntime = cause.document.edge_runtime;
+  const secrets =
+    typeof edgeRuntime === "object" && edgeRuntime !== null
+      ? (edgeRuntime as Record<string, unknown>).secrets
+      : undefined;
   try {
-    return decodeProjectConfig(
-      typeof edgeRuntime === "object" && edgeRuntime !== null ? { edge_runtime: edgeRuntime } : {},
-    );
+    return decodeProjectConfig({
+      edge_runtime: typeof secrets === "object" && secrets !== null ? { secrets } : {},
+    });
   } catch {
     return null;
   }

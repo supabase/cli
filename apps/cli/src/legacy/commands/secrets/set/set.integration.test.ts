@@ -388,6 +388,42 @@ port = "not-a-number"
   );
 
   it.live(
+    "recovers [edge_runtime.secrets] when a sibling field in the same edge_runtime table fails schema decode (CLI-1867 Go parity)",
+    () => {
+      // Valid TOML syntax throughout, but `edge_runtime.inspector_port` has
+      // the wrong type for its schema field — a SIBLING of `secrets` inside
+      // the same `edge_runtime` table, not an unrelated top-level table. Go's
+      // viper+mapstructure decode (`pkg/config/config.go:749`) mutates the
+      // target struct field-by-field even within the same table, so
+      // `EdgeRuntime.Secrets` still lands on `utils.Config` while
+      // `InspectorPort` is left at its zero value — verified empirically
+      // against `pkg/config` directly. The recovery must therefore re-decode
+      // `secrets` on its own rather than the whole `edge_runtime` subtree.
+      writeConfig(
+        `[edge_runtime]
+inspector_port = "not-a-number"
+
+[edge_runtime.secrets]
+FROM_CONFIG = "config-value"
+`,
+      );
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: [],
+        });
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([
+          { name: "FROM_CONFIG", value: "config-value" },
+        ]);
+        expect(debugLogger.messages).toHaveLength(1);
+        expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "does not echo a literal secret value from config.toml into the debug log on a syntax error",
     () => {
       // `smol-toml`'s `TomlError` embeds a source codeblock (the offending line ±1)
