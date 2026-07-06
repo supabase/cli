@@ -96,6 +96,21 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
     expect(protectedHeader).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
   });
 
+  it("signs an RS256 token from an RSA JWK missing CRT exponents (dp/dq/qi), matching Go", async () => {
+    // Go's `jwkToRSAPrivateKey` (`apps/cli-go/pkg/config/apikeys.go:132-168`)
+    // never reads `dp`/`dq`/`qi` — it builds the key from `n`/`e`/`d`/`p`/`q`
+    // alone, and Go's stdlib derives the CRT params itself when absent. A
+    // hand-authored signing-keys file that omits them (common — RFC 7517 marks
+    // them optional) must still sign successfully here.
+    const jwk = generateRsaJwk("rsa-kid");
+    const { dp: _dp, dq: _dq, qi: _qi, ...jwkWithoutCrtParams } = jwk;
+    const token = legacyGenerateAsymmetricGoJwt(jwkWithoutCrtParams, "anon");
+    const publicKey = await importJWK(publicJwkOf(jwk), "RS256");
+    const { payload, protectedHeader } = await jwtVerify(token, publicKey);
+    expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
+    expect(protectedHeader).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+  });
+
   it("signs and verifies an ES256 token from an EC JWK", async () => {
     const jwk = generateEcJwk("ec-kid");
     const token = legacyGenerateAsymmetricGoJwt(jwk, "service_role");

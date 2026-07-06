@@ -67,6 +67,63 @@ export function legacyGenerateGoJwt(secret: string, role: "anon" | "service_role
 /** Go's asymmetric-JWT expiry: `time.Now().Add(time.Hour * 24 * 365 * 10)` (10 years). */
 const GO_JWT_ASYMMETRIC_EXPIRY_SECONDS = 60 * 60 * 24 * 365 * 10;
 
+function base64UrlToBigInt(value: string): bigint {
+  const hex = Buffer.from(value, "base64url").toString("hex");
+  return hex.length === 0 ? 0n : BigInt(`0x${hex}`);
+}
+
+function bigIntToBase64Url(value: bigint): string {
+  let hex = value.toString(16);
+  if (hex.length % 2 === 1) hex = `0${hex}`;
+  return Buffer.from(hex, "hex").toString("base64url");
+}
+
+/** Modular inverse of `a` mod `m` via the extended Euclidean algorithm (`a`/`m` coprime, as `q`/`p` always are for a valid RSA key). */
+function modInverse(a: bigint, m: bigint): bigint {
+  let [oldR, r] = [a, m];
+  let [oldS, s] = [1n, 0n];
+  while (r !== 0n) {
+    const quotient = oldR / r;
+    [oldR, r] = [r, oldR - quotient * r];
+    [oldS, s] = [s, oldS - quotient * s];
+  }
+  return ((oldS % m) + m) % m;
+}
+
+/**
+ * Backfills the RSA CRT parameters (`dp`, `dq`, `qi`) Go's `jwkToRSAPrivateKey`
+ * (`apps/cli-go/pkg/config/apikeys.go:132-168`) never reads — it constructs
+ * `rsa.PrivateKey{N, E, D, Primes: [p, q]}` from `n`/`e`/`d`/`p`/`q` alone, and
+ * Go's stdlib `crypto/rsa` (`SignPKCS1v15` -> `precompute()`) lazily derives
+ * `Dp`/`Dq`/`Qinv` from `p`/`q`/`d` itself when they're absent, so a JWK
+ * missing them still signs successfully in Go. Node's
+ * `createPrivateKey({ format: "jwk" })` has no such fallback — it hard-rejects
+ * an RSA JWK without `dp`/`dq`/`qi` (`The "key.dp" property must be of type
+ * string`) — so this reproduces Go's derivation before handing the key to
+ * Node: `dp = d mod (p-1)`, `dq = d mod (q-1)`, `qi = q^-1 mod p` (RFC 7517
+ * section 6.3.2 / RFC 3447 section 3.2). A key that already has all three (the common case
+ * for a Node/openssl-generated JWK) is returned unchanged; one missing
+ * `d`/`p`/`q` themselves is also returned unchanged — that's a genuinely
+ * invalid key in Go too, and `createPrivateKey` will raise its own error.
+ */
+function ensureRsaCrtParams(jwk: LegacyJwk): LegacyJwk {
+  if (jwk.dp !== undefined && jwk.dq !== undefined && jwk.qi !== undefined) {
+    return jwk;
+  }
+  if (jwk.d === undefined || jwk.p === undefined || jwk.q === undefined) {
+    return jwk;
+  }
+  const d = base64UrlToBigInt(jwk.d);
+  const p = base64UrlToBigInt(jwk.p);
+  const q = base64UrlToBigInt(jwk.q);
+  return {
+    ...jwk,
+    dp: bigIntToBase64Url(d % (p - 1n)),
+    dq: bigIntToBase64Url(d % (q - 1n)),
+    qi: bigIntToBase64Url(modInverse(q, p)),
+  };
+}
+
 /**
  * Go's `GenerateAsymmetricJWT` (`pkg/config/apikeys.go:88-113`), reached from
  * `generateJWT` only when `auth.signing_keys_path` resolves to a non-empty JWK
@@ -124,7 +181,10 @@ export function legacyGenerateAsymmetricGoJwt(
   );
   const data = `${headerEncoded}.${payloadEncoded}`;
 
-  const privateKey = createPrivateKey({ key: jwk, format: "jwk" });
+  const privateKey = createPrivateKey({
+    key: algorithm === "RS256" ? ensureRsaCrtParams(jwk) : jwk,
+    format: "jwk",
+  });
   const signature =
     algorithm === "RS256"
       ? createSign("RSA-SHA256").update(data).end().sign(privateKey)
