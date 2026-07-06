@@ -58,12 +58,19 @@ export const secret = (annotations?: SecretAnnotations) =>
 //     and the value is still a string, coerce it. This mirrors Go's
 //     mapstructure chain where `LoadEnvHook` returns a string and subsequent
 //     hooks convert it to the target type.
-//   - Coercion is only attempted on strings produced by env() substitution.
-//     Pre-existing string literals at non-string paths are left untouched —
-//     they'll surface as schema errors at decode time with their original
-//     value, preserving error clarity.
+//   - Number/boolean coercion is only attempted on strings produced by env()
+//     substitution. Pre-existing string literals at non-string paths are left
+//     untouched — they'll surface as schema errors at decode time with their
+//     original value, preserving error clarity.
+//   - Array coercion is the one exception: if the schema at that path expects
+//     a homogeneous string array, ANY string leaf (substituted or a plain
+//     literal) is split on `,` — mirroring Go's `StringToSliceHookFunc(",")`
+//     (`apps/cli-go/pkg/config/config.go:775-784`), which is wired
+//     unconditionally into the decode hook chain regardless of where the
+//     string came from (e.g. `additional_redirect_urls = "http://a,http://b"`
+//     decodes fine in Go today, not just via `env(...)`).
 
-type ExpectedType = "number" | "boolean" | "string" | "unknown";
+type ExpectedType = "number" | "boolean" | "string" | "array" | "unknown";
 
 // Go decodes an env()-substituted boolean via mapstructure's weakly-typed
 // `decodeBool`, which runs `strconv.ParseBool` on the string — a wider
@@ -85,6 +92,20 @@ function unwrapAst(ast: SchemaAST.AST): SchemaAST.AST {
   return ast;
 }
 
+// A homogeneous `Schema.Array(Schema.String)` compiles to an `Arrays` AST
+// node with no fixed tuple `elements` and a single `rest` spread type. Only
+// this shape (not a fixed string tuple, and not a mixed-type array) is
+// eligible for Go's `StringToSliceHookFunc(",")` coercion below — mirroring
+// that Go itself only wires the hook for `[]string`-kind targets
+// (`apps/cli-go/pkg/config/config.go:775-784`), not fixed-arity tuples.
+function isHomogeneousStringArray(node: SchemaAST.AST): boolean {
+  if (node._tag !== "Arrays" || node.elements.length !== 0 || node.rest.length !== 1) {
+    return false;
+  }
+  const spread = node.rest[0];
+  return spread !== undefined && unwrapAst(spread)._tag === "String";
+}
+
 function leafExpectedType(ast: SchemaAST.AST): ExpectedType {
   const node = unwrapAst(ast);
   switch (node._tag) {
@@ -94,6 +115,8 @@ function leafExpectedType(ast: SchemaAST.AST): ExpectedType {
       return "boolean";
     case "String":
       return "string";
+    case "Arrays":
+      return isHomogeneousStringArray(node) ? "array" : "unknown";
     case "Union": {
       // Walk Union branches in declared order; first concrete primitive wins.
       // For unions like `Schema.Union(Schema.Number, Schema.Null)` this picks
@@ -176,6 +199,13 @@ function coerceLeaf(value: unknown, expected: ExpectedType): unknown {
     if (GO_BOOL_FALSE.has(value)) return false;
     return value;
   }
+  if (expected === "array") {
+    // Go's `mapstructure.StringToSliceHookFunc(",")` (wired in
+    // `apps/cli-go/pkg/config/config.go:775-784`): an empty string decodes to
+    // an empty slice, otherwise the string is split on the separator with no
+    // further trimming of the resulting elements.
+    return value === "" ? [] : value.split(",");
+  }
   return value;
 }
 
@@ -241,18 +271,34 @@ function walk(
     if (ast !== null && isDeferredEnvField(ast)) {
       return document;
     }
+
+    const substituted = substituteEnvLeaf(document, env);
+    const expected = ast === null ? "unknown" : leafExpectedType(ast);
+
+    // Go's `StringToSliceHookFunc(",")` (`apps/cli-go/pkg/config/config.go:
+    // 775-784`) is wired unconditionally into `v.UnmarshalExact`'s decode
+    // hook chain, so it splits ANY string being decoded into a `[]string`
+    // field — a plain TOML literal (`additional_redirect_urls = "a,b"`) just
+    // as much as an `env()`-substituted one. Unlike the number/boolean
+    // coercion below (scoped to substituted values only, since TOML already
+    // decodes literal numbers/booleans to their native type), array coercion
+    // must also apply to literal strings that never went through
+    // `substituteEnvLeaf`.
+    if (expected === "array") {
+      return coerceLeaf(substituted, expected);
+    }
+
     // Substitute env() then coerce based on the schema's expected type at this
     // path. Only the substituted form is fed to coercion — literal strings at
     // non-string paths are left untouched so the decoder can report them with
     // their original value.
-    const substituted = substituteEnvLeaf(document, env);
     if (substituted === document) {
       return document;
     }
     if (ast === null) {
       return substituted;
     }
-    return coerceLeaf(substituted, leafExpectedType(ast));
+    return coerceLeaf(substituted, expected);
   }
 
   return document;

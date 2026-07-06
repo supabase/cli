@@ -814,6 +814,95 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
     },
   );
 
+  test("splits a comma-separated string literal into a slice (Go's StringToSliceHookFunc)", async () => {
+    // Go's `newDecodeHook` (`apps/cli-go/pkg/config/config.go:775-784`) wires
+    // `mapstructure.StringToSliceHookFunc(",")` unconditionally, so a plain
+    // string value for a `[]string` field like `additional_redirect_urls`
+    // decodes fine in Go — not just via `env(...)`.
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+additional_redirect_urls = "http://a,http://b"
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("splits an env()-substituted comma-separated string into a slice", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+additional_redirect_urls = "env(SUPABASE_REDIRECT_URLS)"
+`,
+      );
+      await writeFile(join(cwd, "supabase", ".env"), "SUPABASE_REDIRECT_URLS=http://a,http://b\n");
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("an empty string literal for a slice field decodes to an empty array", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+additional_redirect_urls = ""
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.auth.additional_redirect_urls).toEqual([]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("an actual array value for a slice field is left untouched", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+additional_redirect_urls = ["http://a", "http://b"]
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("preserves env() literals on string fields when the var is unset (Go parity)", async () => {
     const cwd = makeTempProject();
 
