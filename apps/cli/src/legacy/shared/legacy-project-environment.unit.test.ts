@@ -210,10 +210,39 @@ describe("legacyResolveProjectEnvironmentValues", () => {
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("$BASE");
   });
 
-  it("expands an unresolved reference to an empty string, matching Go's map zero-value", () => {
+  it("expands an unresolved bare reference to an empty string, matching Go's map zero-value", () => {
     writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=$NOPE\n");
     const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("");
+  });
+
+  it("expands an unresolved braced reference to an empty string, matching Go's map zero-value", () => {
+    writeFileSync(join(root, ".env"), 'SUPABASE_AUTH_JWT_SECRET="${NOPE}"\n');
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_AUTH_JWT_SECRET"]).toBe("");
+  });
+
+  it("preserves a backslash-escaped $VAR reference as a literal, matching godotenv's escape rule", () => {
+    // godotenv's expandVarRegex captures a leading backslash and strips ONLY
+    // that backslash, returning the rest of the match verbatim instead of
+    // doing a lookup (`godotenv@v1.5.1/parser.go:253,264-265`) — even when
+    // BASE is defined, `demo\$BASE` must stay `demo$BASE`, not become
+    // `demodemo`.
+    writeFileSync(join(root, ".env"), "BASE=demo\nSUPABASE_PROJECT_ID=demo\\$BASE\n");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo$BASE");
+  });
+
+  it("preserves a backslash-escaped ${VAR} reference in a double-quoted value", () => {
+    writeFileSync(join(root, ".env"), 'BASE=demo\nSUPABASE_PROJECT_ID="demo\\${BASE}"\n');
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo${BASE}");
+  });
+
+  it("treats a bare trailing $ with no variable name as a literal", () => {
+    writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=demo$\n");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo$");
   });
 
   describe("when no project was found (projectEnv is null)", () => {

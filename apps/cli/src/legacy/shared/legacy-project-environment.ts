@@ -44,11 +44,30 @@ function candidateDotenvFilenames(env: string): ReadonlyArray<string> {
 // (`parser.go:157,174-178`); single-quoted values never reach this (`parser.go:172-173`). An
 // unresolved reference expands to `""` (Go's zero value for a missing map key), not the
 // literal `$NAME`.
+//
+// A leading `\` before `$` escapes the reference: godotenv's `expandVarRegex` captures that
+// backslash (`parser.go:253`), and its replacer strips ONLY the backslash and returns the rest
+// of the match verbatim — `\$FOO`/`\${FOO}` becomes the literal `$FOO`/`${FOO}`, never looked up
+// in the map, even when `FOO` is defined (`parser.go:264-265`: `if submatch[1] == "\\" ... return
+// submatch[0][1:]`). Verified directly against the real `joho/godotenv@v1.5.1` module (the version
+// `apps/cli-go/go.mod` pins) rather than reasoning from the doc comment alone. The earlier
+// `\n`/`\r` unescape step in {@link readDotEnvFile} only matches backslash+`n`/`r`, so an
+// escaping backslash before `$` survives untouched until this function sees it, matching Go's
+// own `expandEscapes` → `expandVariables` order.
 function expandDotEnvVariable(value: string, values: Readonly<Record<string, string>>): string {
   return value.replace(
-    /\$\{([A-Z0-9_]+)\}|\$([A-Z0-9_]+)/g,
-    (_match, braced: string | undefined, bare: string | undefined) =>
-      values[braced ?? bare ?? ""] ?? "",
+    /(\\)?\$(?:\{([A-Z0-9_]+)\}|([A-Z0-9_]+))?/g,
+    (
+      match,
+      backslash: string | undefined,
+      braced: string | undefined,
+      bare: string | undefined,
+    ) => {
+      if (backslash !== undefined) return match.slice(1);
+      if (braced !== undefined) return values[braced] ?? "";
+      if (bare !== undefined) return values[bare] ?? "";
+      return match;
+    },
   );
 }
 
