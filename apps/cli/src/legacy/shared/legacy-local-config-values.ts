@@ -6,6 +6,7 @@ import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supa
 import { Schema } from "effect";
 
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
+import { legacyParseGoBool } from "./legacy-db-config.toml-read.ts";
 import {
   legacyGenerateAsymmetricGoJwt,
   legacyGenerateGoJwt,
@@ -119,6 +120,29 @@ function envOverride(
   return value !== undefined && value.length > 0 ? value : configured;
 }
 
+/**
+ * Boolean-flavored sibling of {@link envOverride} for `SUPABASE_*` fields Go
+ * decodes as a native bool (`api.tls.enabled`, `auth.enabled`) rather than a
+ * string/number — those are bound by the same generic Viper mechanism
+ * (`ExperimentalBindStruct` + `SetEnvPrefix("SUPABASE")` + `AutomaticEnv()`,
+ * `pkg/config/config.go:582-586`), but the override string must be decoded
+ * with Go's own `strconv.ParseBool` acceptance set ({@link legacyParseGoBool})
+ * instead of used verbatim. A malformed override (not one of Go's accepted
+ * bool spellings) falls back to `configured` — matching this module's
+ * existing leniency for other env-derived fields (e.g. `Number(envOverride(...))`
+ * on ports isn't hard-validated either) rather than hard-failing the whole
+ * `stop`/`status` run over a bad override.
+ */
+function envOverrideBool(
+  name: string,
+  configured: boolean,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): boolean {
+  const value = envOverride(name, undefined, projectEnvValues);
+  if (value === undefined) return configured;
+  return legacyParseGoBool(value) ?? configured;
+}
+
 /** Go's `(a *auth) generateAPIKeys` (`pkg/config/apikeys.go:43-73`). */
 function resolveJwtSecret(configured: string | undefined): string {
   if (configured === undefined || configured.length === 0) return defaultJwtSecret;
@@ -221,11 +245,13 @@ export function legacyResolveLocalConfigValues(
   workdir: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
 ): LegacyLocalConfigValues {
-  // Go's `status` reads `utils.Config.Api.Port`/`ExternalUrl` after Viper's
-  // AutomaticEnv has already applied any `SUPABASE_API_PORT`/
-  // `SUPABASE_API_EXTERNAL_URL` override (`config.go:529-535`), so the port
-  // fed into `legacyResolveApiExternalUrl`'s own `external_url`-wins-else-
-  // `scheme://host:port` derivation must be the overridden one too.
+  // Go's `status` reads `utils.Config.Api.Port`/`ExternalUrl`/`Tls.Enabled`
+  // after Viper's AutomaticEnv has already applied any `SUPABASE_API_PORT`/
+  // `SUPABASE_API_EXTERNAL_URL`/`SUPABASE_API_TLS_ENABLED` override
+  // (`config.go:529-535,799-809`), so the values fed into
+  // `legacyResolveApiExternalUrl`'s own `external_url`-wins-else-
+  // `scheme://host:port` derivation (which picks `https` vs `http` from
+  // `tls.enabled`) must be the overridden ones too.
   const apiExternalUrl = legacyResolveApiExternalUrl(
     {
       external_url: envOverride(
@@ -234,7 +260,13 @@ export function legacyResolveLocalConfigValues(
         projectEnvValues,
       ),
       port: Number(envOverride("SUPABASE_API_PORT", String(config.api.port), projectEnvValues)),
-      tls: config.api.tls,
+      tls: {
+        enabled: envOverrideBool(
+          "SUPABASE_API_TLS_ENABLED",
+          config.api.tls.enabled,
+          projectEnvValues,
+        ),
+      },
     },
     hostname,
   );

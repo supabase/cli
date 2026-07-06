@@ -295,6 +295,51 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("SUPABASE_API_TLS_ENABLED env override", () => {
+    // Go applies the Viper-bound `api.tls.enabled` override (config.go:582-586)
+    // BEFORE deriving the default `api.external_url` scheme (config.go:799-809),
+    // so an ambient/dotenv override flips http/https even when config.toml says
+    // otherwise.
+    afterEach(() => {
+      delete process.env["SUPABASE_API_TLS_ENABLED"];
+    });
+
+    it("overrides api.tls.enabled from false to true", () => {
+      process.env["SUPABASE_API_TLS_ENABLED"] = "true";
+      const config = baseConfig({ api: { tls: { enabled: false }, port: 54321 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.apiUrl).toBe("https://127.0.0.1:54321");
+    });
+
+    it("overrides api.tls.enabled from true to false", () => {
+      process.env["SUPABASE_API_TLS_ENABLED"] = "false";
+      const config = baseConfig({ api: { tls: { enabled: true }, port: 54321 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.apiUrl).toBe("http://127.0.0.1:54321");
+    });
+
+    it("does not override api.tls.enabled once api.external_url is set", () => {
+      process.env["SUPABASE_API_TLS_ENABLED"] = "true";
+      const config = baseConfig({ api: { external_url: "http://config.example" } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.apiUrl).toBe("http://config.example");
+    });
+
+    it("falls back to the configured value for a malformed override, matching this module's leniency", () => {
+      process.env["SUPABASE_API_TLS_ENABLED"] = "not-a-bool";
+      const config = baseConfig({ api: { tls: { enabled: true }, port: 54321 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.apiUrl).toBe("https://127.0.0.1:54321");
+    });
+
+    it("treats an empty override as unset, matching Viper's default", () => {
+      process.env["SUPABASE_API_TLS_ENABLED"] = "";
+      const config = baseConfig({ api: { tls: { enabled: true }, port: 54321 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.apiUrl).toBe("https://127.0.0.1:54321");
+    });
+  });
+
   describe("auth.signing_keys_path (asymmetric JWT signing)", () => {
     const tempRoot = useLegacyTempWorkdir("supabase-signing-keys-test-");
 

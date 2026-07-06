@@ -619,8 +619,12 @@ const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
  * Parse a config bool the way Go does (`strconv.ParseBool` via mapstructure's weakly
  * typed decode). Returns the bool, or `undefined` for a malformed value (which Go
  * surfaces as a `failed to parse config` error).
+ *
+ * Exported for reuse by other `legacy/shared/` bool-flavored `SUPABASE_*` env
+ * overrides (e.g. `legacy-local-config-values.ts`'s `api.tls.enabled`/
+ * `auth.enabled`) that need the same `strconv.ParseBool` acceptance set.
  */
-function legacyParseGoBool(value: string): boolean | undefined {
+export function legacyParseGoBool(value: string): boolean | undefined {
   if (GO_BOOL_TRUE.has(value)) return true;
   if (GO_BOOL_FALSE.has(value)) return false;
   return undefined;
