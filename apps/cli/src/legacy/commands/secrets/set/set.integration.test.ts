@@ -354,6 +354,40 @@ FOO = "literal-foo"
   );
 
   it.live(
+    "recovers [edge_runtime.secrets] when an unrelated field fails schema decode (CLI-1867 Go parity)",
+    () => {
+      // Valid TOML syntax throughout, but `analytics.port` has the wrong type
+      // for its schema field. Go's viper+mapstructure decode
+      // (`pkg/config/config.go:749`) mutates the target struct field-by-field,
+      // so an unrelated type error doesn't stop `EdgeRuntime.Secrets` from
+      // landing on `utils.Config` — `secrets set` still reads it. Effect
+      // Schema's `decodeUnknownSync` is atomic and would otherwise discard the
+      // whole document, silently dropping `FROM_CONFIG` too.
+      writeConfig(
+        `[edge_runtime.secrets]
+FROM_CONFIG = "config-value"
+
+[analytics]
+port = "not-a-number"
+`,
+      );
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: [],
+        });
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([
+          { name: "FROM_CONFIG", value: "config-value" },
+        ]);
+        expect(debugLogger.messages).toHaveLength(1);
+        expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "does not echo a literal secret value from config.toml into the debug log on a syntax error",
     () => {
       // `smol-toml`'s `TomlError` embeds a source codeblock (the offending line ±1)

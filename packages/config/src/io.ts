@@ -333,7 +333,18 @@ function parseProjectConfig(
 ): Effect.Effect<ProjectConfig, ProjectConfigParseError> {
   return Effect.try({
     try: () => decodeProjectConfig(document),
-    catch: (cause) => new ProjectConfigParseError({ path, format, cause }),
+    // `document` always parsed successfully by this point (raw parse failures
+    // are caught earlier, in `loadProjectConfigFile`), so any error here is a
+    // schema-decode failure — attach it so callers can attempt a narrower,
+    // Go-tolerant re-decode of an unaffected subtree. See the field doc on
+    // `ProjectConfigParseError.document`.
+    catch: (cause) =>
+      new ProjectConfigParseError({
+        path,
+        format,
+        cause,
+        document: isObject(document) ? document : undefined,
+      }),
   });
 }
 

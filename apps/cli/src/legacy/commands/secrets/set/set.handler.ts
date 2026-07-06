@@ -1,6 +1,13 @@
-import { loadProjectConfig, loadProjectEnvironment, resolveProjectSubtree } from "@supabase/config";
+import {
+  loadProjectConfig,
+  loadProjectEnvironment,
+  ProjectConfigSchema,
+  resolveProjectSubtree,
+  type ProjectConfig,
+  type ProjectConfigParseError,
+} from "@supabase/config";
 import { parse as parseDotenv } from "dotenv";
-import { Effect, FileSystem, Option, Path, Redacted } from "effect";
+import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -26,6 +33,42 @@ const mapSetError = mapLegacyHttpError({
   networkMessage: (cause) => `failed to set secrets: ${cause}`,
   statusMessage: (_status, body) => `Unexpected error setting project secrets: ${body}`,
 });
+
+const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+
+/**
+ * Best-effort recovery for a schema-decode failure (as opposed to a raw
+ * TOML/JSON parse failure) on `supabase/config.toml`. Go's `viper`+
+ * `mapstructure` decode (`apps/cli-go/pkg/config/config.go:749`) mutates the
+ * target struct field-by-field: an unrelated type error (e.g.
+ * `analytics.port`) does not stop `edge_runtime.secrets` from landing in
+ * `utils.Config`, because `UnmarshalExact` still populates every field it
+ * *can* decode before aggregating errors — confirmed empirically against
+ * this repo's actual `pkg/config`. `Schema.decodeUnknownSync` has no such
+ * tolerance; a single bad field anywhere discards the whole decode. To keep
+ * `secrets set` at parity without loosening `packages/config`'s decode
+ * semantics for every caller, re-slice just the `edge_runtime` subtree out of
+ * the pre-decode document (`cause.document` — only set when the document
+ * itself parsed fine and the *schema* decode is what failed, see
+ * `ProjectConfigParseError`) and re-decode it alone against the full schema,
+ * where every other field defaults cleanly. A true parse failure
+ * (`cause.document` undefined) has no recoverable structure in either
+ * implementation — Go's own `viper.MergeConfig` also fails the whole load
+ * before `mapstructure` ever runs in that case.
+ */
+function recoverEdgeRuntimeConfig(cause: ProjectConfigParseError): ProjectConfig | null {
+  if (cause.document === undefined) {
+    return null;
+  }
+  const edgeRuntime = cause.document.edge_runtime;
+  try {
+    return decodeProjectConfig(
+      typeof edgeRuntime === "object" && edgeRuntime !== null ? { edge_runtime: edgeRuntime } : {},
+    );
+  } catch {
+    return null;
+  }
+}
 
 export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
   flags: LegacySecretsSetFlags,
@@ -60,7 +103,8 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     // `secrets set` has no `--linked`/`--local`/`--db-url` flag, so (unlike most
     // commands) the root `PreRun` never loads the config first either; this is
     // the only load, and it must not be fatal.
-    const loaded = yield* loadProjectConfig(runtimeInfo.cwd).pipe(
+    const loadedConfig = yield* loadProjectConfig(runtimeInfo.cwd).pipe(
+      Effect.map((loaded) => loaded?.config ?? null),
       Effect.catchTag("ProjectConfigParseError", (cause) => {
         // `smol-toml`'s `TomlError` (and some schema-decode errors) embed a
         // source codeblock after a blank-line separator — literal file content,
@@ -73,17 +117,17 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
         const shortMessage = String(cause.cause).split("\n\n")[0];
         return debugLogger
           .debug(`failed to parse supabase/config.toml: ${shortMessage}`)
-          .pipe(Effect.as(null));
+          .pipe(Effect.as(recoverEdgeRuntimeConfig(cause)));
       }),
     );
-    if (loaded !== null) {
+    if (loadedConfig !== null) {
       const projectEnv = yield* loadProjectEnvironment({
         cwd: runtimeInfo.cwd,
         baseEnv: process.env,
       });
       if (projectEnv !== null) {
         const resolved = yield* resolveProjectSubtree(
-          loaded.config.edge_runtime,
+          loadedConfig.edge_runtime,
           projectEnv,
           "edge_runtime",
         );

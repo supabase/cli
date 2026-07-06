@@ -5,6 +5,22 @@ export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigPars
   readonly path: string;
   readonly format: ConfigFormat;
   readonly cause: unknown;
+  /**
+   * The raw, pre-schema-decode document (post env-interpolation and
+   * `[remotes.*]` merge) — present only when the failure happened during
+   * *schema* decode (`Schema.decodeUnknownSync`), not during raw TOML/JSON
+   * parsing. `Schema.decodeUnknownSync` is all-or-nothing: a single invalid
+   * field anywhere in the document discards the entire decode, unlike Go's
+   * `viper`+`mapstructure` decode (`apps/cli-go/pkg/config/config.go:749`),
+   * which mutates the target struct field-by-field and keeps whatever
+   * independently decoded before hitting an unrelated error. Callers that
+   * need Go's tolerance for a single subtree (e.g. `secrets set` recovering
+   * `edge_runtime.secrets` when an unrelated field like `analytics.port` is
+   * malformed) can re-decode a narrowed slice of this document against the
+   * full schema themselves. `undefined` when the document never parsed at
+   * all — that class has no recoverable structure in either implementation.
+   */
+  readonly document?: Record<string, unknown>;
 }> {}
 
 export class ProjectEnvParseError extends Data.TaggedError("ProjectEnvParseError")<{
