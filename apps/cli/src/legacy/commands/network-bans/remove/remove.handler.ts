@@ -33,15 +33,18 @@ export const legacyNetworkBansRemove = Effect.fn("legacy.network-bans.remove")(f
   const telemetryState = yield* LegacyTelemetryState;
 
   yield* Effect.gen(function* () {
-    for (const ip of flags.dbUnbanIp) {
-      if (isIP(ip) === 0) {
-        return yield* new LegacyNetworkBansInvalidIpError({ input: ip });
-      }
-    }
-
+    // Go resolves the project ref in `PersistentPreRunE` (`cmd/root.go:108-114`),
+    // before `RunE`'s `--db-unban-ip` validation (`internal/bans/update/update.go:12-25`)
+    // ever runs — so a bad ref must surface before a bad IP, not after.
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
+      for (const ip of flags.dbUnbanIp) {
+        if (isIP(ip) === 0) {
+          return yield* new LegacyNetworkBansInvalidIpError({ input: ip });
+        }
+      }
+
       yield* api.v1
         .deleteNetworkBans({
           ref,

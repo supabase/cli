@@ -55,8 +55,17 @@ interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unkno
  * is emitted for a rejected flag). `LegacyOutputFlag` is read optionally: it is a
  * root global in production but is absent from focused wrapper tests, where
  * validation is simply skipped.
+ *
+ * Exported so experimental-gated commands can call it explicitly BEFORE
+ * `legacyRequireExperimental`: Go's cobra parses flags (rejecting an
+ * out-of-enum `-o` via `EnumFlag.Set`, `internal/utils/enum.go:21-27`) before
+ * `PersistentPreRunE` ever runs (`cobra@v1.10.2/command.go:919,985`), so an
+ * invalid `-o` value must win over a missing `--experimental` flag, not the
+ * other way around. `withLegacyCommandInstrumentation` below still calls this
+ * too (a harmless redundant check on the success path) so non-gated commands
+ * keep working unchanged.
  */
-const validateLegacyOutputFormat = (allowed: ReadonlyArray<string>) =>
+export const legacyValidateOutputFormat = (allowed: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const flag = yield* Effect.serviceOption(LegacyOutputFlag);
     if (Option.isNone(flag) || Option.isNone(flag.value)) return;
@@ -347,5 +356,5 @@ export function withLegacyCommandInstrumentation<Flags extends Record<string, un
     // Validate the `-o` enum first, before instrumentation runs the handler, so a
     // rejected flag fails without emitting a `cli_command_executed` event — Go
     // rejects it at parse time, before telemetry.
-    Effect.andThen(validateLegacyOutputFormat(allowed), instrument(self));
+    Effect.andThen(legacyValidateOutputFormat(allowed), instrument(self));
 }

@@ -1,4 +1,3 @@
-import { createServer, type Server, type Socket } from "node:net";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
@@ -12,7 +11,6 @@ import {
   localNetworkId,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
-  probeTlsSupport,
   resolvePgmetaImage,
 } from "./types.shared.ts";
 
@@ -31,29 +29,6 @@ function withEnv<T>(key: string, value: string | undefined, run: () => T): T {
     } else {
       process.env[key] = previous;
     }
-  }
-}
-
-async function withTcpServer<T>(
-  handler: (socket: Socket) => void,
-  run: (port: number) => Promise<T>,
-): Promise<T> {
-  const server: Server = createServer(handler);
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => resolve());
-  });
-  const address = server.address();
-  if (address === null || typeof address === "string") {
-    server.close();
-    throw new Error("failed to bind tcp server");
-  }
-  try {
-    return await run(address.port);
-  } finally {
-    await new Promise<void>((resolve, reject) =>
-      server.close((error) => (error ? reject(error) : resolve())),
-    );
   }
 }
 
@@ -238,66 +213,4 @@ describe("schema and id helpers", () => {
   it("bundles the staging and production CA certificates", () => {
     expect(legacyRootCaBundle().length).toBeGreaterThan(0);
   });
-});
-
-describe("probeTlsSupport", () => {
-  it.effect("detects TLS support from an 'S' response", () =>
-    Effect.gen(function* () {
-      const result = yield* Effect.tryPromise(() =>
-        withTcpServer(
-          (socket) =>
-            socket.once("data", () => {
-              socket.write(Buffer.from("S"));
-              socket.end();
-            }),
-          (port) => Effect.runPromise(probeTlsSupport("127.0.0.1", port)),
-        ),
-      );
-      expect(result).toBe(true);
-    }),
-  );
-
-  it.effect("detects a refused TLS connection from an 'N' response", () =>
-    Effect.gen(function* () {
-      const result = yield* Effect.tryPromise(() =>
-        withTcpServer(
-          (socket) =>
-            socket.once("data", () => {
-              socket.write(Buffer.from("N"));
-              socket.end();
-            }),
-          (port) => Effect.runPromise(probeTlsSupport("127.0.0.1", port)),
-        ),
-      );
-      expect(result).toBe(false);
-    }),
-  );
-
-  it.effect("fails on an unexpected probe response", () =>
-    Effect.gen(function* () {
-      const exit = yield* Effect.tryPromise(() =>
-        withTcpServer(
-          (socket) =>
-            socket.once("data", () => {
-              socket.write(Buffer.from("X"));
-              socket.end();
-            }),
-          (port) => Effect.runPromise(probeTlsSupport("127.0.0.1", port)),
-        ),
-      ).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-    }),
-  );
-
-  it.effect("fails when the connection closes before responding", () =>
-    Effect.gen(function* () {
-      const exit = yield* Effect.tryPromise(() =>
-        withTcpServer(
-          (socket) => socket.destroy(),
-          (port) => Effect.runPromise(probeTlsSupport("127.0.0.1", port)),
-        ),
-      ).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-    }),
-  );
 });

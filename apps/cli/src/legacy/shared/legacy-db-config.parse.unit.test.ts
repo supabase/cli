@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  legacyPoolerConfigFromConnectionString,
   parseLegacyConnectionString,
   redactLegacyConnectionString,
 } from "./legacy-db-config.parse.ts";
@@ -1007,5 +1008,82 @@ describe("redactLegacyConnectionString", () => {
     expect(redacted).not.toContain("secret");
     expect(redacted).not.toContain("spaces");
     expect(redacted).not.toContain("bad");
+  });
+});
+
+describe("legacyPoolerConfigFromConnectionString", () => {
+  it("strips the placeholder password, validates the tenant, preserves options, and rewrites to port 5432", () => {
+    expect(
+      legacyPoolerConfigFromConnectionString(
+        "abcdefghijklmnopqrst",
+        "postgres://postgres.abcdefghijklmnopqrst:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres?options=reference%3Dabcdefghijklmnopqrst",
+        "supabase.com",
+      ),
+    ).toEqual({
+      _tag: "ok",
+      conn: {
+        host: "aws-0-us-east-1.pooler.supabase.com",
+        port: 5432,
+        user: "postgres.abcdefghijklmnopqrst",
+        password: "",
+        database: "postgres",
+        options: "reference=abcdefghijklmnopqrst",
+      },
+    });
+  });
+
+  it("rejects a username tenant mismatch", () => {
+    expect(
+      legacyPoolerConfigFromConnectionString(
+        "abcdefghijklmnopqrst",
+        "postgres://postgres.wrongrefabcdefghijkl@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
+        "supabase.com",
+      ),
+    ).toEqual({
+      _tag: "invalid",
+      reason: "Pooler username does not match project ref: abcdefghijklmnopqrst",
+    });
+  });
+
+  it("rejects an options reference mismatch when the username has no tenant suffix", () => {
+    expect(
+      legacyPoolerConfigFromConnectionString(
+        "abcdefghijklmnopqrst",
+        "postgres://postgres@aws-0-us-east-1.pooler.supabase.com:6543/postgres?options=reference%3Dwrongrefabcdefghijkl",
+        "supabase.com",
+      ),
+    ).toEqual({
+      _tag: "invalid",
+      reason: "Pooler options does not match project ref: abcdefghijklmnopqrst",
+    });
+  });
+
+  it("rejects a pooler host outside the expected profile domain", () => {
+    expect(
+      legacyPoolerConfigFromConnectionString(
+        "abcdefghijklmnopqrst",
+        "postgres://postgres.abcdefghijklmnopqrst@aws-0-us-east-1.pooler.example.com:6543/postgres",
+        "supabase.com",
+      ),
+    ).toEqual({
+      _tag: "invalid",
+      reason: "Pooler domain does not belong to current profile: example.com",
+    });
+  });
+
+  it("skips the profile-domain guard when the expected pooler host is empty", () => {
+    expect(
+      legacyPoolerConfigFromConnectionString(
+        "abcdefghijklmnopqrst",
+        "postgres://postgres.abcdefghijklmnopqrst@aws-0-us-east-1.pooler.example.com:6543/postgres",
+        "",
+      ),
+    ).toMatchObject({
+      _tag: "ok",
+      conn: {
+        host: "aws-0-us-east-1.pooler.example.com",
+        port: 5432,
+      },
+    });
   });
 });

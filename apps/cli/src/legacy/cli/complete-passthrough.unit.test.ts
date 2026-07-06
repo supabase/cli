@@ -68,6 +68,17 @@ describe("tryCompletePassthrough", () => {
     expect(exits).toEqual([0]);
   });
 
+  it("forwards verbatim argv to the Go binary on __completeNoDesc (scripts generated with --no-descriptions)", () => {
+    const { deps, spawnCalls, exits } = makeDeps({
+      argv: ["__completeNoDesc", "migration", "li"],
+    });
+    expect(tryCompletePassthrough(deps)).toBe(true);
+    expect(spawnCalls).toEqual([
+      { cmd: "/path/to/supabase-go", args: ["__completeNoDesc", "migration", "li"] },
+    ]);
+    expect(exits).toEqual([0]);
+  });
+
   it("propagates the child's non-zero exit code", () => {
     const spawn = vi.fn(() => spawnResult(7));
     const { deps, exits } = makeDeps({ spawn });

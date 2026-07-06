@@ -49,6 +49,10 @@ export function legacyParseSslProbeTarget(dbUrl: string): LegacySslProbeTarget {
   return { host, port, timeoutMs };
 }
 
+function legacySslProbeTargetForHost(host: string, port: number): LegacySslProbeTarget {
+  return { host, port, timeoutMs: DEFAULT_PROBE_TIMEOUT_MS };
+}
+
 /**
  * Interprets the server's single-byte `SSLRequest` reply: `S` → speaks TLS,
  * `N` → refused TLS (Go's `"server refused TLS connection"`). Any other byte is a
@@ -76,6 +80,64 @@ export const legacyPgDeltaSslProbeLayer = Layer.effect(
     // Go disables SSL in debug mode (`require := !viper.GetBool("DEBUG")`), so a
     // server that speaks TLS still reports "not required" under `--debug`.
     const debug = yield* LegacyDebugFlag;
+    const probeTarget = (target: LegacySslProbeTarget) =>
+      Effect.gen(function* () {
+        const outcome = yield* Effect.callback<"tls" | "refused", LegacyPgDeltaSslProbeError>(
+          (resume) => {
+            const socket = net.connect({ host: target.host, port: target.port });
+            let settled = false;
+            const settle = (
+              effect: Effect.Effect<"tls" | "refused", LegacyPgDeltaSslProbeError>,
+            ) => {
+              if (settled) return;
+              settled = true;
+              socket.destroy();
+              resume(effect);
+            };
+            socket.setTimeout(target.timeoutMs);
+            socket.once("connect", () => socket.write(SSL_REQUEST_PACKET));
+            socket.once("data", (buf: Buffer) => {
+              try {
+                settle(Effect.succeed(legacyInterpretSslProbeByte(buf[0])));
+              } catch (cause) {
+                settle(
+                  Effect.fail(
+                    cause instanceof LegacyPgDeltaSslProbeError
+                      ? cause
+                      : new LegacyPgDeltaSslProbeError({ message: String(cause), cause }),
+                  ),
+                );
+              }
+            });
+            socket.once("timeout", () =>
+              settle(
+                Effect.fail(
+                  new LegacyPgDeltaSslProbeError({
+                    message: `SSL probe timed out connecting to ${target.host}:${target.port}`,
+                  }),
+                ),
+              ),
+            );
+            socket.once("close", () =>
+              settle(
+                Effect.fail(
+                  new LegacyPgDeltaSslProbeError({
+                    message: `SSL probe connection to ${target.host}:${target.port} closed before the server responded`,
+                  }),
+                ),
+              ),
+            );
+            socket.once("error", (err: Error) =>
+              settle(
+                Effect.fail(new LegacyPgDeltaSslProbeError({ message: err.message, cause: err })),
+              ),
+            );
+            return Effect.sync(() => socket.destroy());
+          },
+        );
+        if (outcome === "refused") return false;
+        return !debug;
+      });
     return LegacyPgDeltaSslProbe.of({
       requireSsl: (dbUrl) =>
         Effect.gen(function* () {
@@ -88,51 +150,9 @@ export const legacyPgDeltaSslProbeLayer = Layer.effect(
                 }`,
               }),
           });
-          const outcome = yield* Effect.callback<"tls" | "refused", LegacyPgDeltaSslProbeError>(
-            (resume) => {
-              const socket = net.connect({ host: target.host, port: target.port });
-              let settled = false;
-              const settle = (
-                effect: Effect.Effect<"tls" | "refused", LegacyPgDeltaSslProbeError>,
-              ) => {
-                if (settled) return;
-                settled = true;
-                socket.destroy();
-                resume(effect);
-              };
-              socket.setTimeout(target.timeoutMs);
-              socket.once("connect", () => socket.write(SSL_REQUEST_PACKET));
-              socket.once("data", (buf: Buffer) => {
-                try {
-                  settle(Effect.succeed(legacyInterpretSslProbeByte(buf[0])));
-                } catch (cause) {
-                  settle(
-                    Effect.fail(
-                      cause instanceof LegacyPgDeltaSslProbeError
-                        ? cause
-                        : new LegacyPgDeltaSslProbeError({ message: String(cause) }),
-                    ),
-                  );
-                }
-              });
-              socket.once("timeout", () =>
-                settle(
-                  Effect.fail(
-                    new LegacyPgDeltaSslProbeError({
-                      message: `SSL probe timed out connecting to ${target.host}:${target.port}`,
-                    }),
-                  ),
-                ),
-              );
-              socket.once("error", (err: Error) =>
-                settle(Effect.fail(new LegacyPgDeltaSslProbeError({ message: err.message }))),
-              );
-              return Effect.sync(() => socket.destroy());
-            },
-          );
-          if (outcome === "refused") return false;
-          return !debug;
+          return yield* probeTarget(target);
         }),
+      requireSslForHost: (host, port) => probeTarget(legacySslProbeTargetForHost(host, port)),
     });
   }),
 );
