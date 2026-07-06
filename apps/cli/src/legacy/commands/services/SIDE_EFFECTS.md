@@ -85,5 +85,6 @@ TS-only NDJSON success event with the same `{ services: [...] }` payload.
 
 - Local versions come from the command's baked-in service matrix; the command does not inspect Docker state or local config files.
 - Linked-version checks are best-effort. Remote lookup failures do not change the exit code; they only leave the `LINKED` column empty for unavailable services.
+- A malformed linked ref is the one lookup failure that prints an explicit stderr warning (see API Routes above); every other remote failure (network error, expired token, etc.) still fails silently and just leaves `LINKED` empty. Most real-world malformed refs come from an untrimmed `SUPABASE_PROJECT_ID` env var (e.g. a trailing newline from a secrets manager or `.env` file) rather than actual file tampering — the env var is read raw and unlike the on-disk `project-ref` file is never trimmed, matching Go's own `viper.GetString("PROJECT_ID")` (`internal/utils/flags/project_ref.go:62`).
 - Version mismatches are reported to stderr as a warning.
 - `telemetry.json` is written on every invocation, including `--output env` failures, to match the legacy Go command lifecycle.

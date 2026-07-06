@@ -47,6 +47,7 @@ function setup(
     goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
     workdir?: string;
     accessToken?: string;
+    apiUrl?: string;
   } = {},
 ) {
   const out = mockOutput({
@@ -70,7 +71,7 @@ function setup(
         LegacyCliConfig,
         LegacyCliConfig.of({
           profile: "supabase",
-          apiUrl: "https://api.supabase.com",
+          apiUrl: opts.apiUrl ?? "https://api.supabase.com",
           projectHost: "supabase.co",
           poolerHost: "supabase.com",
           accessToken: Option.none(),
@@ -333,7 +334,10 @@ major_version = 15
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
   });
 
-  it.live("does not attempt the remote lookup for a malformed ref even when logged in", () => {
+  // A token present doesn't bypass the format guard (Go's warning is
+  // unconditional on login too) — same code path as the previous test, so this
+  // isn't new branch coverage, just pinning that login state can't skip it.
+  it.live("still warns on a malformed ref even when logged in", () => {
     const workdir = mkdtempSync(join(tmpdir(), "supabase-services-"));
     writeTempFile(workdir, "project-ref", "not-a-valid-ref");
     const { layer, out } = setup({ workdir, accessToken: "sbp_test-token" });
@@ -344,6 +348,83 @@ major_version = 15
       expect(out.stderrText).toContain(INVALID_PROJECT_REF_MESSAGE);
       expect(out.stdoutText).toContain("supabase/postgres");
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
+  it.live("fetches and merges remote versions for a valid ref when logged in", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-services-"));
+    writeTempFile(workdir, "project-ref", "abcdefghijklmnopqrst");
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/projects/abcdefghijklmnopqrst") {
+          return Response.json({
+            id: "abcdefghijklmnopqrst",
+            ref: "abcdefghijklmnopqrst",
+            organization_id: "org-id",
+            organization_slug: "org",
+            name: "Linked Project",
+            region: "us-east-1",
+            created_at: "2026-03-13T12:00:00.000Z",
+            status: "ACTIVE_HEALTHY",
+            database: {
+              host: "db.supabase.internal",
+              version: "17.6.1.200",
+              postgres_engine: "17",
+              release_channel: "ga",
+            },
+          });
+        }
+
+        if (url.pathname === "/v1/projects/abcdefghijklmnopqrst/api-keys") {
+          // Deliberately no service-role key: this test only needs to prove the
+          // handler wires the fetch+merge branch through, not re-test
+          // `fetchLinkedServiceVersions`'s own tenant-probe logic (already
+          // covered in services.shared.unit.test.ts). Omitting the
+          // service-role key keeps this test free of a second, tenant-gateway
+          // mock without weakening the assertion below.
+          return Response.json([
+            {
+              name: "anon",
+              id: "publishable-id",
+              type: "publishable",
+              api_key: "publishable-key",
+              description: null,
+            },
+          ]);
+        }
+
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    const { layer, out } = setup({
+      workdir,
+      accessToken: "sbp_test-token",
+      apiUrl: server.url.origin,
+      goOutput: Option.some("json"),
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      expect(out.stderrText).not.toContain(INVALID_PROJECT_REF_MESSAGE);
+      const rows = JSON.parse(out.stdoutText) as Array<{
+        name: string;
+        local: string;
+        remote: string;
+      }>;
+      expect(rows).toContainEqual(
+        expect.objectContaining({ name: "supabase/postgres", remote: "17.6.1.200" }),
+      );
+    }).pipe(
+      Effect.ensuring(
+        Effect.promise(() => server.stop(true)).pipe(
+          Effect.andThen(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))),
+        ),
+      ),
+    );
   });
 
   it.live("reports pinned legacy temp service versions", () => {
