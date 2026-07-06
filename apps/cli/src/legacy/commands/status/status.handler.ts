@@ -93,7 +93,18 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   yield* Effect.gen(function* () {
-    // 1. `status` always needs config, unlike `stop` (status.go:99-103). An
+    // 1. `--override-name KEY=VALUE` parsing, FIRST — mirroring Go's Cobra
+    // wiring, where override validation runs in `PreRunE` (`cmd/status.go:
+    // 21-27`) and Cobra's execute loop returns as soon as `PreRunE` errors,
+    // never calling `RunE` (`spf13/cobra@v1.10.2/command.go:999-1015`). So a
+    // malformed `--override-name` entry fails before `status.Run` ever loads
+    // config or touches Docker (`internal/status/status.go:101-116`) — it
+    // must win over a config-load error or a Docker/DB health-check error,
+    // not be masked by either. `overrides` itself is only consumed much
+    // later, by `legacyStatusValuesFromState` below.
+    const overrides = yield* parseOverrides(flags.overrideName);
+
+    // 2. `status` always needs config, unlike `stop` (status.go:99-103). An
     // ABSENT config.toml is not a hard failure in Go: `flags.LoadConfig` ->
     // `Config.Load` -> `loadFromFile` -> `mergeFileConfig` treats a missing
     // file as a no-op (`os.ErrNotExist` -> nil, pkg/config/config.go:655-656)
@@ -157,7 +168,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     );
     const config = loaded?.config ?? Schema.decodeUnknownSync(ProjectConfigSchema)({});
 
-    // 2. status has no --project-id flag; resolution is always env → toml →
+    // 3. status has no --project-id flag; resolution is always env → toml →
     // workdir basename, then sanitized to match the singleton Go's
     // `Config.Validate` produces once at config-load time
     // (`pkg/config/config.go:938-944`) — every reader, including the Docker
@@ -173,7 +184,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     );
     const dbContainerId = localDbContainerId(projectId);
 
-    // 3. Health check, skipped entirely with --ignore-health-check (status.go:104-108).
+    // 4. Health check, skipped entirely with --ignore-health-check (status.go:104-108).
     // Go's `assertContainerHealthy` never special-cases "not found" — an absent
     // container fails `ContainerInspect` itself, which surfaces as the generic
     // inspect error (status.go:147-150), not the "not running" branch (which
@@ -200,7 +211,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       }
     }
 
-    // 4. List running containers, diff against the 13 expected service ids
+    // 5. List running containers, diff against the 13 expected service ids
     // (status.go:125-145), and report any that are stopped.
     const filterValue = legacyCliProjectFilterValue(projectId);
     const runningNames = yield* legacyListContainersByLabel(spawner, {
@@ -215,20 +226,18 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       yield* output.raw(`Stopped services: ${formatGoStringSlice(stopped)}\n`, "stderr");
     }
 
-    // 5. Merge health-derived exclusions with the user's --exclude flag.
+    // 6. Merge health-derived exclusions with the user's --exclude flag.
     const excluded = [...stopped, ...flags.exclude];
 
-    // 6. Build the value map (Go's toValues()).
+    // 7. Build the value map (Go's toValues()).
     const containerIds = legacyStatusContainerIds(projectId);
     const hostname = legacyGetHostname();
 
-    // 7. --override-name KEY=VALUE parsing.
-    const overrides = yield* parseOverrides(flags.overrideName);
-
     // `legacyResolveStatusState` can throw `LegacyInvalidJwtSecretError` (a short
-    // `auth.jwt_secret`), `LegacyInvalidPortEnvOverrideError` (a malformed
-    // `SUPABASE_*_PORT` override), or a signing-keys-file read/parse error —
-    // Go's `Config.Load`/`Validate` reject all three at config-load time,
+    // `auth.jwt_secret`), `LegacyInvalidPortEnvOverrideError`/
+    // `LegacyInvalidBoolEnvOverrideError` (a malformed `SUPABASE_*_PORT`/
+    // `SUPABASE_*_ENABLED` override), or a signing-keys-file read/parse error —
+    // Go's `Config.Load`/`Validate` reject all of these at config-load time,
     // before this command would ever render anything, so they're surfaced
     // here as a hard failure rather than silently falling back to a default/
     // HMAC-signed key or a `NaN`-laced URL. Resolved once and reused for both
