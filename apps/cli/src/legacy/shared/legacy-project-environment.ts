@@ -35,6 +35,21 @@ function candidateDotenvFilenames(env: string): ReadonlyArray<string> {
   return [`.env.${env}.local`, ...(env === "test" ? [] : [".env.local"]), `.env.${env}`, ".env"];
 }
 
+// Mirrors godotenv's `expandVariables` (`godotenv@v1.5.1/parser.go:253,257-271`): substitutes
+// `$VAR`/`${VAR}` using only keys already parsed earlier in *this* file (godotenv re-parses
+// each dotenv file into its own fresh map — it never sees a different file's keys or the
+// ambient shell env, `parser.go:20-45`). Called for unquoted and double-quoted values only
+// (`parser.go:157,174-178`); single-quoted values never reach this (`parser.go:172-173`). An
+// unresolved reference expands to `""` (Go's zero value for a missing map key), not the
+// literal `$NAME`.
+function expandDotEnvVariable(value: string, values: Readonly<Record<string, string>>): string {
+  return value.replace(
+    /\$\{([A-Z0-9_]+)\}|\$([A-Z0-9_]+)/g,
+    (_match, braced: string | undefined, bare: string | undefined) =>
+      values[braced ?? bare ?? ""] ?? "",
+  );
+}
+
 /**
  * Minimal `KEY=VALUE` dotenv reader, intentionally not reusing
  * `@supabase/config`'s Effect-based `FileSystem` parser: this module stays a
@@ -76,10 +91,12 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
       value = value.slice(1, -1);
       if (quote === '"') {
         value = value.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
+        value = expandDotEnvVariable(value, values);
       }
     } else {
       const commentIndex = value.indexOf("#");
       if (commentIndex >= 0) value = value.slice(0, commentIndex).trim();
+      value = expandDotEnvVariable(value, values);
     }
 
     values[key] = value;

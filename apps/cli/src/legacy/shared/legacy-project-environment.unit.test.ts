@@ -157,4 +157,32 @@ describe("legacyResolveProjectEnvironmentValues", () => {
       /failed to parse environment file/,
     );
   });
+
+  it("expands an unquoted $VAR reference to an earlier value in the same file", () => {
+    // godotenv expands unquoted/double-quoted references while loading
+    // (`godotenv@v1.5.1/parser.go:157`), so a later key can reuse an earlier one.
+    writeFileSync(join(root, ".env"), "BASE=demo\nSUPABASE_PROJECT_ID=$BASE\n");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
+    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("demo");
+  });
+
+  it("expands a braced ${VAR} reference in a double-quoted value", () => {
+    writeFileSync(join(root, ".env"), 'SECRET=shh\nSUPABASE_AUTH_JWT_SECRET="${SECRET}"\n');
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
+    expect(merged?.["SUPABASE_AUTH_JWT_SECRET"]).toBe("shh");
+  });
+
+  it("does not expand variable references inside single-quoted values", () => {
+    // godotenv never calls expandVariables for single-quoted values
+    // (`parser.go:172-173`) — they stay byte-literal.
+    writeFileSync(join(root, ".env"), "BASE=demo\nSUPABASE_PROJECT_ID='$BASE'\n");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
+    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("$BASE");
+  });
+
+  it("expands an unresolved reference to an empty string, matching Go's map zero-value", () => {
+    writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=$NOPE\n");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
+    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("");
+  });
 });
