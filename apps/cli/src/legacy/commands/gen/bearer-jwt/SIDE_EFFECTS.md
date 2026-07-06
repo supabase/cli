@@ -38,6 +38,17 @@
 
 Prints the generated Bearer JWT token to stdout.
 
+**Known divergence on a missing `--role`:** TS's own parser now rejects a
+missing `--role` before invoking the Go binary (matching Go's
+`MarkFlagRequired("role")`, `cmd/gen.go:175`), but a pre-existing bug in the
+vendored `effect` CLI library (tracked as CLI-1901, affects every command
+with a required flag or `Flag.choice`, not just this one) makes that
+rejection noisier than Go's own: the full help doc is dumped to **stdout**
+and the error line is printed twice (once from the library, once from this
+repo's Go-parity error renderer). Go's own equivalent failure is a single
+clean stderr line with nothing on stdout. Do not rely on stdout being
+token-only when `--role` is omitted until CLI-1901 is resolved.
+
 ### `--output-format json`
 
 Not applicable.
