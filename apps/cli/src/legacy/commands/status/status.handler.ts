@@ -237,8 +237,26 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     });
     const { values } = legacyStatusValuesFromState(state, overrides);
 
-    // 8. Output branching: Go's -o (env|json|toml|yaml) takes priority over
-    // --output-format; -o pretty/unset falls through to text/json/stream-json.
+    // Go's `PrettyPrint` (`status.go:236-243`) unmarshals a FRESH, empty
+    // `EnvSet{}` into a brand-new `CustomName{}` rather than reusing the
+    // CLI-supplied, override-populated `names` — `--override-name` only ever
+    // affects `printStatus`'s env/json/toml/yaml path, never the pretty table.
+    // Remap names from the already-resolved `state` (empty override map) so the
+    // rendered table matches Go exactly without leaking `--override-name` into
+    // pretty-mode output, and without a second (throwing) state resolution.
+    const renderPretty = Effect.fnUntraced(function* () {
+      yield* output.raw(
+        `${legacyAqua("supabase")} local development setup is running.\n\n`,
+        "stderr",
+      );
+      const pretty = legacyStatusValuesFromState(state, new Map());
+      yield* output.raw(legacyRenderStatusPretty(pretty.values, pretty.names));
+    });
+
+    // 8. Output branching: Go's -o (env|json|toml|yaml|pretty) is a complete
+    // format choice and takes priority over --output-format (root.ts:119-121,
+    // matching functions/list's list.handler.ts:115-118) — only an ABSENT -o
+    // defers to --output-format for json/stream-json.
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
     if (goFmt === "env") {
@@ -257,26 +275,18 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       yield* output.raw(encodeYaml(values));
       return;
     }
+    if (goFmt === "pretty") {
+      yield* renderPretty();
+      return;
+    }
 
-    // goFmt is undefined or "pretty" — defer to TS --output-format for json/stream-json,
+    // goFmt is undefined — defer to TS --output-format for json/stream-json,
     // otherwise render the grouped rounded-table (Go's `-o pretty` default).
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", values);
       return;
     }
 
-    yield* output.raw(
-      `${legacyAqua("supabase")} local development setup is running.\n\n`,
-      "stderr",
-    );
-    // Go's `PrettyPrint` (`status.go:236-243`) unmarshals a FRESH, empty
-    // `EnvSet{}` into a brand-new `CustomName{}` rather than reusing the
-    // CLI-supplied, override-populated `names` — `--override-name` only ever
-    // affects `printStatus`'s env/json/toml/yaml path, never the pretty table.
-    // Remap names from the already-resolved `state` (empty override map) so the
-    // rendered table matches Go exactly without leaking `--override-name` into
-    // pretty-mode output, and without a second (throwing) state resolution.
-    const pretty = legacyStatusValuesFromState(state, new Map());
-    yield* output.raw(legacyRenderStatusPretty(pretty.values, pretty.names));
+    yield* renderPretty();
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

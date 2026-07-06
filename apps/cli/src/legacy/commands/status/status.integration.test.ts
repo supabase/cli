@@ -660,6 +660,19 @@ describe("legacy status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("lets --output pretty win over --output-format json", () => {
+    // Explicit `-o pretty` is a complete Go format choice (root.ts:119-121,
+    // matching functions/list) and must render the table, not defer to the
+    // TS-only --output-format json/stream-json branch.
+    const { layer, out } = setup({ format: "json", goOutput: Option.some("pretty") });
+    return Effect.gen(function* () {
+      yield* legacyStatus(flags());
+      expect(out.stderrText).toContain("local development setup is running.");
+      expect(out.stdoutText).toContain("🌐 APIs");
+      expect(out.messages.find((m) => m.type === "success")).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("flushes telemetry via ensuring even on failure", () => {
     const { layer, telemetry } = setup({
       route: (args) =>
