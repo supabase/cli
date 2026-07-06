@@ -8,6 +8,16 @@ const config = {
     Flag.withDescription("Override specific variable names."),
     Flag.withDefault([] as ReadonlyArray<string>),
   ),
+  exclude: Flag.string("exclude").pipe(
+    Flag.atLeast(0),
+    Flag.withDescription("Names of containers to omit from output."),
+    Flag.withDefault([] as ReadonlyArray<string>),
+    Flag.withHidden,
+  ),
+  ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
+    Flag.withDescription("Ignore unhealthy services and exit 0"),
+    Flag.withHidden,
+  ),
 } as const;
 
 export type LegacyStatusFlags = CliCommand.Command.Config.Infer<typeof config>;

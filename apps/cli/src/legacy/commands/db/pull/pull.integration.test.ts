@@ -242,7 +242,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyNetworkIdFlag, Option.none()),
-    Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
+    Layer.succeed(LegacyPgDeltaSslProbe, {
+      requireSsl: () => Effect.succeed(false),
+      requireSslForHost: () => Effect.succeed(false),
+    }),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     mockRuntimeInfo(),
     BunServices.layer,

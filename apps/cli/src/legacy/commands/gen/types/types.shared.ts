@@ -1,4 +1,3 @@
-import { connect as connectSocket } from "node:net";
 import { DEFAULT_VERSIONS, dockerImageForService } from "@supabase/stack/effect";
 import { Effect } from "effect";
 import {
@@ -153,53 +152,4 @@ export function resolvePgmetaImage(versionOverride?: string) {
 
 export function legacyRootCaBundle() {
   return `${caStaging2021}${caProd2021}${caProd2025}`;
-}
-
-export function probeTlsSupport(host: string, port: number): Effect.Effect<boolean, Error> {
-  return Effect.tryPromise({
-    try: () =>
-      new Promise<boolean>((resolve, reject) => {
-        let settled = false;
-        const socket = connectSocket({ host, port });
-
-        const finish = (result: boolean | Error) => {
-          if (settled) return;
-          settled = true;
-          socket.destroy();
-          if (result instanceof Error) {
-            reject(result);
-            return;
-          }
-          resolve(result);
-        };
-
-        socket.setTimeout(5_000);
-        socket.once("connect", () => {
-          const packet = Buffer.alloc(8);
-          packet.writeInt32BE(8, 0);
-          packet.writeInt32BE(80877103, 4);
-          socket.write(packet);
-        });
-        socket.once("data", (chunk) => {
-          const response = Number(chunk.at(0) ?? 0);
-          if (response === 0x53) {
-            finish(true);
-            return;
-          }
-          if (response === 0x4e) {
-            finish(false);
-            return;
-          }
-          finish(new Error(`unexpected SSL probe response: ${String.fromCharCode(response ?? 0)}`));
-        });
-        socket.once("timeout", () => finish(new Error("i/o timeout")));
-        socket.once("error", (error) => finish(error));
-        socket.once("close", () => {
-          if (!settled) {
-            finish(new Error("connection closed during SSL probe"));
-          }
-        });
-      }),
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-  });
 }

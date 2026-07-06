@@ -1,8 +1,11 @@
 import { Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { LegacyCompletionNoDescriptionsFlagDef } from "../completion.flags.ts";
 import { legacyCompletionZsh } from "./zsh.handler.ts";
 
-const config = {};
+const config = {
+  noDescriptions: LegacyCompletionNoDescriptionsFlagDef,
+} as const;
 export type LegacyCompletionZshFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacyCompletionZshCommand = Command.make("zsh", config).pipe(

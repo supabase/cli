@@ -48,6 +48,7 @@ function fakeEdgeRuntime(outcome: { stdout?: string; stderr?: string; fail?: str
 // "not required" — matching the no-SSL-env passthrough these tests assert.
 const probe = Layer.succeed(LegacyPgDeltaSslProbe, {
   requireSsl: () => Effect.succeed(false),
+  requireSslForHost: () => Effect.succeed(false),
 });
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>

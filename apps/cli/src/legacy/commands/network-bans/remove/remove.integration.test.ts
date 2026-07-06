@@ -165,6 +165,60 @@ describe("legacy network-bans remove integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "surfaces the unresolved-ref error, not the invalid-IP error, when both are wrong",
+    () => {
+      // Go resolves the project ref in PersistentPreRunE, before RunE's IP
+      // validation ever runs (cmd/root.go:108-114 vs internal/bans/update/update.go:12-25),
+      // so a bad ref must win over a bad IP — this is the regression CLI-1856 guards.
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi({ response: { status: 200, body: null } });
+      const cliConfig = mockLegacyCliConfig({
+        workdir: tempRoot.current,
+        projectId: Option.none(),
+      });
+      const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacyNetworkBansRemove({
+            projectRef: Option.none(),
+            dbUnbanIp: ["12.3.4"],
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(api.requests).toHaveLength(0);
+        if (Exit.isFailure(exit)) {
+          const errJson = JSON.stringify(exit.cause);
+          expect(errJson).toContain("LegacyProjectNotLinkedError");
+          expect(errJson).not.toContain("LegacyNetworkBansInvalidIpError");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "surfaces the invalid-project-ref error, not the invalid-IP error, when both are wrong",
+    () => {
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacyNetworkBansRemove({
+            projectRef: Option.some("BADREF"),
+            dbUnbanIp: ["12.3.4"],
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(api.requests).toHaveLength(0);
+        if (Exit.isFailure(exit)) {
+          const errJson = JSON.stringify(exit.cause);
+          expect(errJson).toContain("LegacyInvalidProjectRefError");
+          expect(errJson).not.toContain("LegacyNetworkBansInvalidIpError");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("fails with LegacyNetworkBansRemoveUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503 });
     return Effect.gen(function* () {
