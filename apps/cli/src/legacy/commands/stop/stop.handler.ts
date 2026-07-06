@@ -73,7 +73,10 @@ import {
  */
 const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProjectIdFilter")(
   function* (flags: LegacyStopFlags, cliConfig: LegacyCliConfig["Service"]) {
-    if (flags.all) return "";
+    // `internal/stop/stop.go:17`'s `if !all` reads the resolved value (not
+    // presence), so this branch stays value-based — `Option.getOrElse` mirrors
+    // Cobra's `BoolVar` default of `false` when `--all` was never passed.
+    if (Option.getOrElse(flags.all, () => false)) return "";
     if (Option.isSome(flags.projectId) && flags.projectId.value.length > 0) {
       return flags.projectId.value;
     }
@@ -147,7 +150,10 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   yield* Effect.gen(function* () {
-    if (Option.isSome(flags.projectId) && flags.all) {
+    // Presence-based, matching Cobra's `Changed` check (see the doc comment on
+    // `all`'s flag definition in `stop.command.ts`) — `--project-id x --all=false`
+    // must reject too, not just `--all`/`--all=true`.
+    if (Option.isSome(flags.projectId) && Option.isSome(flags.all)) {
       return yield* Effect.fail(
         new LegacyStopMutuallyExclusiveError({
           // Cobra's `validateExclusiveFlagGroups` (spf13/cobra flag_groups.go):

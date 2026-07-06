@@ -22,7 +22,7 @@ function flags(overrides: Partial<LegacyStopFlags> = {}): LegacyStopFlags {
     projectId: Option.none(),
     backup: true,
     noBackup: false,
-    all: false,
+    all: Option.none(),
     ...overrides,
   };
 }
@@ -288,7 +288,7 @@ describe("legacy stop integration", () => {
   it.live("stops every project's containers with --all without reading config.toml", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ all: true }));
+      yield* legacyStop(flags({ all: Option.some(true) }));
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
       expect(psCall?.args).toEqual([
         "ps",
@@ -317,7 +317,7 @@ describe("legacy stop integration", () => {
       route: defaultRoute({ volumeNames: ["supabase_db_demo"] }),
     });
     return Effect.gen(function* () {
-      yield* legacyStop(flags({ all: true }));
+      yield* legacyStop(flags({ all: Option.some(true) }));
       expect(out.stderrText).toContain(
         "Local data are backed up to docker volume. Use docker to show them:",
       );
@@ -481,7 +481,24 @@ describe("legacy stop integration", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        legacyStop(flags({ projectId: Option.some("other-project"), all: true })),
+        legacyStop(flags({ projectId: Option.some("other-project"), all: Option.some(true) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyStopMutuallyExclusiveError");
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  // Cobra's `MarkFlagsMutuallyExclusive` mutex is presence-based (`Changed`),
+  // not value-based — `--all=false` still counts as "set" alongside
+  // `--project-id`, so this must reject too, not just `--all`/`--all=true`.
+  it.live("rejects --project-id together with an explicit --all=false", () => {
+    const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyStop(flags({ projectId: Option.some("other-project"), all: Option.some(false) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
