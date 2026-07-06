@@ -205,6 +205,33 @@ describe("ApiProxy", () => {
     expect(res.headers.get("access-control-allow-origin")).toBe("*");
   });
 
+  test("preflight echoes the requested headers", async () => {
+    // Browser clients evolve faster than any static allow list
+    // (supabase-js's x-supabase-api-version, PostgREST's Prefer); the
+    // preflight reflects what was asked for — the same default Kong's cors
+    // plugin gives the classic CLI's proxy.
+    const res = await fetch(`${proxyUrl}/rest/v1/users`, {
+      method: "OPTIONS",
+      headers: {
+        "access-control-request-headers": "authorization,prefer,x-supabase-api-version",
+      },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-headers")).toBe(
+      "authorization,prefer,x-supabase-api-version",
+    );
+  });
+
+  test("the echo is preflight-only: non-OPTIONS requests keep the static list", async () => {
+    const res = await fetch(`${proxyUrl}/health`, {
+      headers: {
+        "access-control-request-headers": "x-arbitrary-header",
+      },
+    });
+    expect(res.headers.get("access-control-allow-headers")).toContain("apikey");
+    expect(res.headers.get("access-control-allow-headers")).not.toContain("x-arbitrary-header");
+  });
+
   // ---------------------------------------------------------------------------
   // Auth transformation — publishableKey → anonJwt
   // ---------------------------------------------------------------------------

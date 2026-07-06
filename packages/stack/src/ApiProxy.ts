@@ -98,9 +98,23 @@ const CORS_HEADERS: ReadonlyArray<readonly [string, string]> = [
 
 function addCorsHeaders(
   response: HttpServerResponse.HttpServerResponse,
+  requestedHeaders?: string,
 ): HttpServerResponse.HttpServerResponse {
+  // On a preflight, echo the requested headers: browser clients evolve
+  // faster than any static list (supabase-js added x-supabase-api-version;
+  // PostgREST reads Prefer and the profile headers), and echoing is what
+  // Kong's cors plugin — the classic CLI's proxy — does when no header
+  // list is configured. The static list stays as the fallback for
+  // preflights that name no headers and for non-preflight responses.
   return CORS_HEADERS.reduce(
-    (res, [name, value]) => HttpServerResponse.setHeader(res, name, value),
+    (res, [name, value]) =>
+      HttpServerResponse.setHeader(
+        res,
+        name,
+        name === "access-control-allow-headers" && requestedHeaders !== undefined
+          ? requestedHeaders
+          : value,
+      ),
     response,
   );
 }
@@ -370,7 +384,10 @@ export class ApiProxy extends Context.Service<
           const req = yield* HttpServerRequest.HttpServerRequest;
 
           if (req.method === "OPTIONS") {
-            return addCorsHeaders(HttpServerResponse.empty({ status: 204 }));
+            return addCorsHeaders(
+              HttpServerResponse.empty({ status: 204 }),
+              req.headers["access-control-request-headers"],
+            );
           }
 
           const response = yield* httpEffect;
