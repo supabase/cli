@@ -17,7 +17,8 @@ instead of `~/.supabase/telemetry.json`.
 
 ## API Routes
 
-`enable` is fully local. No network calls are made.
+None called directly. `cli_command_executed` may be sent to PostHog — see
+Telemetry Events Fired below.
 
 ## Environment Variables
 
@@ -34,8 +35,18 @@ instead of `~/.supabase/telemetry.json`.
 
 ## Telemetry Events Fired
 
-None. The command disables analytics capture so toggling telemetry does not emit
-`cli_command_executed`, matching Go.
+| Event                  | When                                                                      |
+| ---------------------- | ------------------------------------------------------------------------- |
+| `cli_command_executed` | when telemetry was **already enabled** before this invocation (see Notes) |
+
+Go parity (`apps/cli-go/cmd/root.go:131-138,171-181`): the event is gated on
+the consent state read at process start, before this command's handler
+rewrites `telemetry.json` — not on the value the command just wrote. In the
+common case (enabling from a disabled state) the pre-toggle snapshot is
+`false`, so nothing fires; running `enable` while telemetry is already
+enabled fires the event, matching Go's uniform, state-based (not
+command-based) gate. See `telemetry/disable/SIDE_EFFECTS.md` for the
+mirror-image case.
 
 ## Output
 

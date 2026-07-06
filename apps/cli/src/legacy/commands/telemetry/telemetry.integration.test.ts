@@ -8,6 +8,7 @@ import { Command } from "effect/unstable/cli";
 
 import { mockAnalytics, mockOutput, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
+import { EventCommandExecuted } from "../../../shared/telemetry/event-catalog.ts";
 import { legacyTelemetryCommand } from "./telemetry.command.ts";
 
 function makeTempDir(): string {
@@ -32,7 +33,7 @@ function setup(dir: string) {
     processControlLayer,
     processEnvLayer({ SUPABASE_HOME: dir }),
   );
-  return { out, layer };
+  return { out, analytics, layer };
 }
 
 function legacyTestRoot() {
@@ -129,6 +130,39 @@ describe("legacy telemetry integration", () => {
       const config = readTelemetryConfig(dir);
       expect(config.enabled).toBe(true);
       expect(config.schema_version).toBe(1);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    ) as Effect.Effect<void>;
+  });
+
+  // Go parity (`cmd/root.go:131-138,171-181`): `cli_command_executed` is gated on
+  // the consent SNAPSHOT taken before the handler runs, not the value the handler
+  // just wrote — a property of Effect's layer-construction-once model, already
+  // covered generally by `legacyAnalyticsLayer`/`telemetryRuntimeLayer`'s own
+  // tests. These two assert the narrower wiring fix: `disable`/`enable` no longer
+  // force-suppress analytics via `analytics: false`, so the shared instrumentation
+  // wrapper actually reaches `Analytics.capture` for `cli_command_executed`.
+  it.live("disable no longer force-suppresses cli_command_executed", () => {
+    const dir = makeTempDir();
+    const { analytics, layer } = setup(dir);
+
+    return Effect.gen(function* () {
+      yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["telemetry", "disable"]);
+      expect(analytics.captured.map((event) => event.event)).toContain(EventCommandExecuted);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    ) as Effect.Effect<void>;
+  });
+
+  it.live("enable no longer force-suppresses cli_command_executed", () => {
+    const dir = makeTempDir();
+    const { analytics, layer } = setup(dir);
+
+    return Effect.gen(function* () {
+      yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["telemetry", "enable"]);
+      expect(analytics.captured.map((event) => event.event)).toContain(EventCommandExecuted);
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
