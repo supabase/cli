@@ -333,6 +333,89 @@ describe("legacyResolveLocalConfigValues", () => {
         "Missing required field in config: db.port",
       );
     });
+
+    // Unlike db.port, Go gates the api.port===0 rejection on api.enabled
+    // (pkg/config/config.go:1006-1008) — api.enabled defaults to true, so a
+    // configured or env-overridden zero port is rejected by default.
+    it("rejects a configured api.port of 0 when api is enabled", () => {
+      const config = baseConfig({ api: { port: 0 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: api.port",
+      );
+    });
+
+    it("rejects a zero SUPABASE_API_PORT override when api is enabled", () => {
+      process.env["SUPABASE_API_PORT"] = "0";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: api.port",
+      );
+    });
+
+    it("does not reject a zero api.port when api is disabled", () => {
+      const config = baseConfig({ api: { enabled: false, port: 0 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  describe("db.major_version (required field in config)", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_DB_MAJOR_VERSION"];
+    });
+
+    it("rejects a configured major_version of 0", () => {
+      const config = baseConfig({ db: { major_version: 0 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: db.major_version",
+      );
+    });
+
+    it("rejects the unsupported Postgres 12.x major_version with Go's dedicated message", () => {
+      const config = baseConfig({ db: { major_version: 12 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Postgres version 12.x is unsupported.",
+      );
+    });
+
+    it.each([13, 14, 15, 17])("accepts the supported major_version %d", (majorVersion) => {
+      const config = baseConfig({ db: { major_version: majorVersion } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects an unsupported major_version with the generic invalid-value message", () => {
+      const config = baseConfig({ db: { major_version: 16 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Failed reading config: Invalid db.major_version: 16.",
+      );
+    });
+
+    it("overrides a valid configured major_version via SUPABASE_DB_MAJOR_VERSION", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "15";
+      const config = baseConfig({ db: { major_version: 17 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects an unsupported SUPABASE_DB_MAJOR_VERSION override", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "16";
+      const config = baseConfig({ db: { major_version: 17 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Failed reading config: Invalid db.major_version: 16.",
+      );
+    });
+
+    it("rejects a non-numeric SUPABASE_DB_MAJOR_VERSION override", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "abc";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Failed reading config: Invalid db.major_version: abc.",
+      );
+    });
+
+    it("treats an empty SUPABASE_DB_MAJOR_VERSION override as unset, matching Viper's default", () => {
+      process.env["SUPABASE_DB_MAJOR_VERSION"] = "";
+      const config = baseConfig({ db: { major_version: 17 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
   });
 
   describe("SUPABASE_API_TLS_ENABLED env override", () => {

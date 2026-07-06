@@ -371,6 +371,63 @@ function validateLocalApiTls(
 }
 
 /**
+ * Go's supported `db.major_version` values (`pkg/config/config.go:1039-1040`, the
+ * `case 13, 14:`/`case 15, 17:` branches — both are no-ops in Go's `Validate`, the
+ * 15/17 sub-branch only rewrites `Db.Image` for OrioleDB, which `status`/`stop`
+ * never read). `12` and `0` get their own dedicated messages below; anything else
+ * falls through to the generic invalid-value message.
+ */
+const SUPPORTED_DB_MAJOR_VERSIONS = new Set([13, 14, 15, 17]);
+
+/**
+ * Go's `Config.Validate`'s `switch c.Db.MajorVersion` (`pkg/config/config.go:
+ * 1034-1061`): `0` is the zero-value/missing case, `12` has a dedicated
+ * unsupported-version message (with a migration-docs link), `13`/`14`/`15`/`17`
+ * are supported (the 15/17 OrioleDB image-rewrite sub-branch is skipped here —
+ * irrelevant to `status`/`stop`, which never read `db.image`), and anything else
+ * is the generic invalid-value message. Mirrors the equivalent check already
+ * ported for the `db query`/`test db` path (`legacy-db-config.toml-read.ts:
+ * 1414-1429`), except this one honors Go's exact `case 0:` message rather than
+ * folding it into the generic "Invalid db.major_version" text.
+ */
+function validateDbMajorVersion(majorVersion: number): void {
+  if (majorVersion === 0) {
+    throw new Error("Missing required field in config: db.major_version");
+  }
+  if (majorVersion === 12) {
+    throw new Error(
+      "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
+    );
+  }
+  if (!SUPPORTED_DB_MAJOR_VERSIONS.has(majorVersion)) {
+    throw new Error(`Failed reading config: Invalid db.major_version: ${majorVersion}.`);
+  }
+}
+
+/**
+ * `SUPABASE_DB_MAJOR_VERSION` sibling of {@link envOverridePort} for the one
+ * numeric field Go decodes as `uint` rather than `uint16` (`pkg/config/db.go:87`)
+ * — same generic Viper `AutomaticEnv` binding (`config.go:576-586`), same
+ * mapstructure hard-fail-on-bad-value semantics as the port/bool overrides, but
+ * with no upper-bound cap. A non-digit override folds into the same generic
+ * "Invalid db.major_version" message {@link validateDbMajorVersion} produces for
+ * an out-of-set numeric value, since Go's own decode failure and `Validate`
+ * failure for this field aren't independently distinguishable from the CLI's
+ * output the way ports/bools are.
+ */
+function envOverrideMajorVersion(
+  configured: number,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): number {
+  const value = envOverride("SUPABASE_DB_MAJOR_VERSION", undefined, projectEnvValues);
+  if (value === undefined) return configured;
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`Failed reading config: Invalid db.major_version: ${value}.`);
+  }
+  return Number(value);
+}
+
+/**
  * @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
  * @throws {LegacyInvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
  * override doesn't parse as a valid port.
@@ -378,6 +435,10 @@ function validateLocalApiTls(
  * override doesn't parse as a valid bool.
  * @throws when `api.tls.enabled` is set with only one of `cert_path`/`key_path`, or a
  * configured file can't be read — see {@link validateLocalApiTls}.
+ * @throws when `api.enabled` is true and `api.port` (post-override) is `0`.
+ * @throws when `db.port` (post-override) is `0`.
+ * @throws when `db.major_version` (post-override) is `0`, `12`, or otherwise
+ * unsupported — see {@link validateDbMajorVersion}.
  * @throws when `auth.enabled` is true and `auth.site_url` is empty.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
  * or its first key uses an unsupported algorithm — see {@link legacyGenerateAsymmetricGoJwt}.
@@ -417,6 +478,20 @@ export function legacyResolveLocalConfigValues(
       envOverride("SUPABASE_API_TLS_KEY_PATH", config.api.tls.key_path, projectEnvValues),
     );
   }
+  // Go's `Config.Validate` rejects `api.port === 0`/`SUPABASE_API_PORT=0` ONLY
+  // when `api.enabled` (`pkg/config/config.go:1006-1008`) — unlike `db.port`
+  // below, which has no `enabled` gate. Resolved once into a named const so the
+  // check and the URL derivation below share the same overridden value instead
+  // of calling `envOverridePort` twice.
+  const apiPort = envOverridePort(
+    "SUPABASE_API_PORT",
+    config.api.port,
+    "api.port",
+    projectEnvValues,
+  );
+  if (apiEnabled && apiPort === 0) {
+    throw new Error("Missing required field in config: api.port");
+  }
   const apiExternalUrl = legacyResolveApiExternalUrl(
     {
       external_url: envOverride(
@@ -424,7 +499,7 @@ export function legacyResolveLocalConfigValues(
         config.api.external_url,
         projectEnvValues,
       ),
-      port: envOverridePort("SUPABASE_API_PORT", config.api.port, "api.port", projectEnvValues),
+      port: apiPort,
       tls: { enabled: apiTlsEnabled },
     },
     hostname,
@@ -444,6 +519,10 @@ export function legacyResolveLocalConfigValues(
   if (dbPort === 0) {
     throw new Error("Missing required field in config: db.port");
   }
+  // Go's `Config.Validate` checks `db.major_version` right after `db.port`
+  // (`pkg/config/config.go:1034-1061`), unconditionally (no `enabled` gate).
+  const majorVersion = envOverrideMajorVersion(config.db.major_version, projectEnvValues);
+  validateDbMajorVersion(majorVersion);
   const studioPort = envOverridePort(
     "SUPABASE_STUDIO_PORT",
     config.studio.port,
