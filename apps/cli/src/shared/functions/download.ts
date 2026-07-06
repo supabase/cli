@@ -786,6 +786,20 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
         ? [flags.functionName.value]
         : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
 
+      // Mirrors the native path's empty-project short-circuit just below:
+      // an empty project has nothing to delegate, so report it the same way
+      // ("No functions found.") instead of still invoking the Go child (an
+      // unnecessary Docker/subprocess round-trip) and reporting a
+      // misleading "Downloaded Edge Function source." success with an
+      // empty slug list.
+      if (slugs.length === 0) {
+        yield* output.success("No functions found.", {
+          function_slugs: [],
+          project_ref: projectRef,
+        });
+        return;
+      }
+
       yield* dependencies.proxyDownload(flags, projectRef, true);
 
       yield* output.success("Downloaded Edge Function source.", {

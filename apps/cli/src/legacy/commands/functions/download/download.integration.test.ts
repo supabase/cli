@@ -379,6 +379,60 @@ describe("legacy functions download", () => {
     },
   );
 
+  it.live(
+    "reports no functions found without delegating when the project is empty in machine mode",
+    () => {
+      const out = mockOutput({ format: "json" });
+      const api = mockLegacyPlatformApi({
+        handler: (request) =>
+          request.url.endsWith("/functions")
+            ? Effect.succeed(legacyJsonResponse(request, 200, []))
+            : Effect.succeed(legacyJsonResponse(request, 200, {})),
+      });
+      const proxy = mockProxy();
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "--project-ref",
+            "abcdefghijklmnopqrst",
+            "--output-format",
+            "json",
+          ]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        // An empty project has nothing to delegate — this must match the
+        // native path's "No functions found." short-circuit instead of
+        // still invoking the Go/Docker child and reporting a misleading
+        // "Downloaded Edge Function source." success with an empty list.
+        yield* legacyFunctionsDownload({
+          ...baseFlags,
+          functionName: Option.none(),
+          useDocker: true,
+        });
+
+        expect(proxy.calls).toEqual([]);
+        expect(proxy.captureCalls).toEqual([]);
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({
+            type: "success",
+            message: "No functions found.",
+            data: { function_slugs: [], project_ref: "abcdefghijklmnopqrst" },
+          }),
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("fails before delegating when the pre-flight function list fails in machine mode", () => {
     const out = mockOutput({ format: "json" });
     const api = mockLegacyPlatformApi({

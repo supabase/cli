@@ -947,6 +947,44 @@ describe("functions download", () => {
     },
   );
 
+  it.live(
+    "reports no functions found without delegating when the project is empty in machine mode",
+    () => {
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        const { out, layer, proxy } = setup(tempDir, {
+          format: "json",
+          list: [],
+          rawArgs: ["functions", "download", "--use-docker"],
+        });
+
+        // An empty project has nothing to delegate — this must match the
+        // native path's "No functions found." short-circuit instead of
+        // still invoking the Go/Docker child and reporting a misleading
+        // "Downloaded Edge Function source." success with an empty list.
+        yield* functionsDownload({
+          ...BASE_FLAGS,
+          functionName: Option.none(),
+          useDocker: true,
+        }).pipe(Effect.provide(layer));
+
+        expect(proxy.calls).toEqual([]);
+        expect(proxy.captureCalls).toEqual([]);
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({
+            type: "success",
+            message: "No functions found.",
+            data: { function_slugs: [], project_ref: PROJECT_REF },
+          }),
+        );
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      );
+    },
+  );
+
   it.live("fails before delegating when the pre-flight function list fails in machine mode", () => {
     const tempDir = makeTempDir();
 
