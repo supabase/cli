@@ -168,10 +168,12 @@ interface SetupOpts {
   readonly failSpawnFor?: (args: ReadonlyArray<string>) => boolean;
   readonly skipConfig?: boolean;
   readonly configContents?: string;
+  /** Defaults to `tempRoot.current` — override for `--workdir`-resolution tests. */
+  readonly workdir?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
-  const workdir = tempRoot.current;
+  const workdir = opts.workdir ?? tempRoot.current;
   if (opts.skipConfig !== true) {
     writeConfig(workdir, opts.configContents);
   }
@@ -435,6 +437,35 @@ describe("legacy status integration", () => {
       expect(inspectCall?.args).toContain(localDbContainerId("root-env-project"));
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "does not climb to an ancestor project's config.toml when workdir has none of its own",
+    () => {
+      // Go's ChangeWorkDir uses an explicit/defaulted workdir exactly, with no
+      // ancestor search (apps/cli-go/internal/utils/misc.go:231-247) — mirrored
+      // here by `search: false`. A workdir with no supabase/config.toml of its
+      // own must fall back to defaults (workdir-basename project id), not an
+      // ancestor project's config.toml, even though `cliConfig.workdir` sits
+      // right inside one.
+      const nestedWorkdir = join(tempRoot.current, "nested");
+      mkdirSync(nestedWorkdir, { recursive: true });
+      writeConfig(tempRoot.current, 'project_id = "ancestor-project"\n');
+      const projectId = basename(nestedWorkdir);
+      const { layer, child } = setup({
+        workdir: nestedWorkdir,
+        skipConfig: true,
+        route: defaultRoute({ runningNames: legacyServiceContainerIds(projectId) }),
+      });
+      return Effect.gen(function* () {
+        yield* legacyStatus(flags());
+        const inspectCall = child.spawned.find(
+          (s) => s.args[0] === "container" && s.args[1] === "inspect",
+        );
+        expect(inspectCall?.args).toContain(localDbContainerId(projectId));
+        expect(inspectCall?.args).not.toContain(localDbContainerId("ancestor-project"));
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("resolves SUPABASE_PROJECT_ID from supabase/.env even when config.toml is absent", () => {
     // Go's loadNestedEnv runs unconditionally, before config.toml is ever

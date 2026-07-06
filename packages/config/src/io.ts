@@ -51,6 +51,8 @@ export interface LoadProjectConfigOptions {
    * so loading does not re-read those files or depend on `process.env` mutation.
    */
   readonly projectEnv?: ProjectEnvironment;
+  /** See {@link FindProjectPathsOptions.search}. */
+  readonly search?: boolean;
 }
 
 export interface SaveProjectConfigOptions {
@@ -405,6 +407,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     (yield* loadProjectEnvironment({
       cwd: projectRoot,
       baseEnv: process.env,
+      search: options?.search,
     }));
   const interpolated = interpolateEnvReferencesAgainstSchema(
     normalized,
@@ -441,7 +444,7 @@ export const loadProjectConfig = Effect.fnUntraced(function* (
   options?: LoadProjectConfigOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const project = yield* findProjectPaths(cwd);
+  const project = yield* findProjectPaths(cwd, { search: options?.search });
 
   if (project === null) {
     return null;

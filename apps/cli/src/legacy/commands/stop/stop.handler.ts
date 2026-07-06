@@ -78,9 +78,20 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
       return flags.projectId.value;
     }
 
+    // `search: false`: `cliConfig.workdir` already IS Go's fully-resolved chdir
+    // target (`legacy-cli-config.layer.ts`'s `resolveWorkdir` mirrors
+    // `ChangeWorkDir`'s explicit-exact-vs-default-searched resolution,
+    // `apps/cli-go/internal/utils/misc.go:231-247`), so letting
+    // `@supabase/config`'s `findProjectPaths` climb ancestors again on top of
+    // that would let an unrelated ancestor project's config.toml win when
+    // `--workdir`/`SUPABASE_WORKDIR` points at a subdirectory with no
+    // `supabase/config.toml` of its own — Go never searches past the exact
+    // (explicit or defaulted) workdir (`NewPathBuilder`, `pkg/config/utils.go:
+    // 43-48`).
     const projectEnv = yield* loadProjectEnvironment({
       cwd: cliConfig.workdir,
       baseEnv: process.env,
+      search: false,
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -113,6 +124,7 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
     // `null`) is a hard error, matching `gen types`'s `loadConfig()` pattern.
     const loaded = yield* loadProjectConfig(cliConfig.workdir, {
       projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
+      search: false,
     }).pipe(
       Effect.mapError(
         (cause) =>

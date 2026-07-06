@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -171,10 +171,12 @@ interface SetupOpts {
   readonly failSpawnFor?: (args: ReadonlyArray<string>) => boolean;
   readonly configuredProjectId?: string;
   readonly skipConfig?: boolean;
+  /** Defaults to `tempRoot.current` — override for `--workdir`-resolution tests. */
+  readonly workdir?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
-  const workdir = tempRoot.current;
+  const workdir = opts.workdir ?? tempRoot.current;
   if (opts.skipConfig !== true) {
     writeConfig(workdir, opts.configuredProjectId ?? "demo");
   }
@@ -400,6 +402,39 @@ describe("legacy stop integration", () => {
       Effect.ensuring(Effect.sync(() => delete process.env["SUPABASE_PROJECT_ID"])),
     );
   });
+
+  it.live(
+    "does not climb to an ancestor project's config.toml when workdir has none of its own",
+    () => {
+      // Go's ChangeWorkDir uses an explicit/defaulted workdir exactly, with no
+      // ancestor search (apps/cli-go/internal/utils/misc.go:231-247) — mirrored
+      // here by `search: false`. A workdir with no supabase/config.toml of its
+      // own must fall back to defaults (workdir-basename project id), not an
+      // ancestor project's config.toml, even though `cliConfig.workdir` sits
+      // right inside one.
+      const nestedWorkdir = join(tempRoot.current, "nested");
+      mkdirSync(nestedWorkdir, { recursive: true });
+      writeConfig(tempRoot.current, "ancestor-project");
+      const projectId = basename(nestedWorkdir);
+      const { layer, child } = setup({
+        workdir: nestedWorkdir,
+        skipConfig: true,
+        route: defaultRoute(),
+      });
+      return Effect.gen(function* () {
+        yield* legacyStop(flags());
+        const psCall = child.spawned.find((s) => s.args[0] === "ps");
+        expect(psCall?.args).toEqual([
+          "ps",
+          "--filter",
+          `label=com.supabase.cli.project=${projectId}`,
+          "--all",
+          "--format",
+          "{{.ID}}",
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("resolves SUPABASE_PROJECT_ID from supabase/.env even when config.toml is absent", () => {
     // Go's loadNestedEnv runs unconditionally, before config.toml is ever

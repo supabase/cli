@@ -113,13 +113,15 @@ function applySource(
 export interface LoadProjectEnvironmentOptions {
   readonly cwd: string;
   readonly baseEnv?: Readonly<Record<string, string | undefined>>;
+  /** See {@link FindProjectPathsOptions.search}. */
+  readonly search?: boolean;
 }
 
 export const loadProjectEnvironment = Effect.fnUntraced(function* (
   options: LoadProjectEnvironmentOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const paths = yield* findProjectPaths(options.cwd);
+  const paths = yield* findProjectPaths(options.cwd, { search: options.search });
 
   if (paths === null) {
     return null;

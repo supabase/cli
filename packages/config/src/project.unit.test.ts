@@ -50,6 +50,41 @@ describe("project discovery and lazy env resolution", () => {
     }
   });
 
+  test("search: false only checks cwd itself, matching Go's exact-workdir resolution", async () => {
+    // Mirrors Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-247`):
+    // an explicit workdir is used exactly as given, with no ancestor climb —
+    // callers that already hold a Go-equivalent project root (e.g. the legacy
+    // `stop`/`status` ports' `cliConfig.workdir`) pass `search: false` to avoid
+    // picking up an unrelated ancestor project.
+    const cwd = makeTempProject();
+    const repoRoot = join(cwd, "repo");
+    const packageRoot = join(repoRoot, "apps", "web");
+    const nestedCwd = join(packageRoot, "src", "components");
+
+    try {
+      await mkdir(join(repoRoot, "supabase"), { recursive: true });
+      await mkdir(nestedCwd, { recursive: true });
+      await writeFile(join(repoRoot, "supabase", "config.toml"), 'project_id = "repo"\n');
+
+      // nestedCwd has no supabase/ of its own; only an ancestor (repoRoot) does.
+      const searched = await runConfigEffect(findProjectPaths(nestedCwd));
+      expect(searched?.projectRoot).toBe(repoRoot);
+
+      const unsearched = await runConfigEffect(findProjectPaths(nestedCwd, { search: false }));
+      expect(unsearched).toBeNull();
+
+      const configAtRepoRoot = await runConfigEffect(findProjectPaths(repoRoot, { search: false }));
+      expect(configAtRepoRoot?.projectRoot).toBe(repoRoot);
+
+      expect(await runConfigEffect(loadProjectConfig(nestedCwd, { search: false }))).toBeNull();
+      expect(
+        await runConfigEffect(loadProjectEnvironment({ cwd: nestedCwd, search: false })),
+      ).toBeNull();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("loads env from the discovered supabase directory with the right precedence", async () => {
     const cwd = makeTempProject();
     const repoRoot = join(cwd, "repo");
