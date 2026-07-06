@@ -428,6 +428,45 @@ function envOverrideMajorVersion(
 }
 
 /**
+ * Go's `Config.Validate`'s `switch c.EdgeRuntime.DenoVersion` (`pkg/config/
+ * config.go:1164-1173`): `0` is the zero-value/missing case, `1`/`2` are
+ * supported (the `1` sub-branch only rewrites `EdgeRuntime.Image` to the
+ * `deno1` tag, which `status`/`stop` never read), and anything else is the
+ * generic invalid-value message. Unlike `studio.port`/`local_smtp.port`, this
+ * switch is NOT nested inside an `edge_runtime.enabled` gate — it runs
+ * unconditionally, so a disabled edge runtime with an invalid `deno_version`
+ * still fails config loading. Mirrors the equivalent check already ported for
+ * the `db diff`/pg-delta path (`legacy-db-config.toml-read.ts:1482-1499`).
+ */
+function validateDenoVersion(denoVersion: number): void {
+  if (denoVersion === 0) {
+    throw new Error("Missing required field in config: edge_runtime.deno_version");
+  }
+  if (denoVersion !== 1 && denoVersion !== 2) {
+    throw new Error(`Failed reading config: Invalid edge_runtime.deno_version: ${denoVersion}.`);
+  }
+}
+
+/**
+ * `SUPABASE_EDGE_RUNTIME_DENO_VERSION` sibling of {@link envOverrideMajorVersion}
+ * — same generic Viper `AutomaticEnv` binding, same mapstructure
+ * hard-fail-on-bad-value semantics, no upper-bound cap. A non-digit override
+ * folds into the same generic "Invalid edge_runtime.deno_version" message
+ * {@link validateDenoVersion} produces for an out-of-set numeric value.
+ */
+function envOverrideDenoVersion(
+  configured: number,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): number {
+  const value = envOverride("SUPABASE_EDGE_RUNTIME_DENO_VERSION", undefined, projectEnvValues);
+  if (value === undefined) return configured;
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`Failed reading config: Invalid edge_runtime.deno_version: ${value}.`);
+  }
+  return Number(value);
+}
+
+/**
  * @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
  * @throws {LegacyInvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
  * override doesn't parse as a valid port.
@@ -439,6 +478,11 @@ function envOverrideMajorVersion(
  * @throws when `db.port` (post-override) is `0`.
  * @throws when `db.major_version` (post-override) is `0`, `12`, or otherwise
  * unsupported — see {@link validateDbMajorVersion}.
+ * @throws when `edge_runtime.deno_version` (post-override) is `0` or otherwise
+ * not `1`/`2` — see {@link validateDenoVersion}. Unconditional, not gated on
+ * `edge_runtime.enabled`.
+ * @throws when `studio.enabled` is true and `studio.port` (post-override) is `0`.
+ * @throws when `local_smtp.enabled` is true and `local_smtp.port` (post-override) is `0`.
  * @throws when `auth.enabled` is true and `auth.site_url` is empty.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
  * or its first key uses an unsupported algorithm — see {@link legacyGenerateAsymmetricGoJwt}.
@@ -523,10 +567,34 @@ export function legacyResolveLocalConfigValues(
   // (`pkg/config/config.go:1034-1061`), unconditionally (no `enabled` gate).
   const majorVersion = envOverrideMajorVersion(config.db.major_version, projectEnvValues);
   validateDbMajorVersion(majorVersion);
+  // Go's `Config.Validate` rejects `studio.port === 0`/`SUPABASE_STUDIO_PORT=0`
+  // ONLY when `studio.enabled` (`pkg/config/config.go:1070-1073`) — same
+  // enabled-gated pattern as `api.port` above.
+  const studioEnabled = legacyEnvOverrideBool(
+    "SUPABASE_STUDIO_ENABLED",
+    config.studio.enabled,
+    "studio.enabled",
+    projectEnvValues,
+  );
   const studioPort = envOverridePort(
     "SUPABASE_STUDIO_PORT",
     config.studio.port,
     "studio.port",
+    projectEnvValues,
+  );
+  if (studioEnabled && studioPort === 0) {
+    throw new Error("Missing required field in config: studio.port");
+  }
+  // Go's `Config.Validate` rejects `local_smtp.port === 0`/
+  // `SUPABASE_LOCAL_SMTP_PORT=0` ONLY when `local_smtp.enabled` — Go's struct
+  // field is still named `Inbucket` for the `[local_smtp]` TOML section
+  // (`pkg/config/config.go:235,1081-1083`), so `local_smtp.enabled` and the
+  // deprecated `inbucket.enabled` alias are the same underlying flag, not two
+  // independent ones.
+  const mailpitEnabled = legacyEnvOverrideBool(
+    "SUPABASE_LOCAL_SMTP_ENABLED",
+    config.local_smtp.enabled,
+    "local_smtp.enabled",
     projectEnvValues,
   );
   const mailpitPort = envOverridePort(
@@ -535,6 +603,9 @@ export function legacyResolveLocalConfigValues(
     "local_smtp.port",
     projectEnvValues,
   );
+  if (mailpitEnabled && mailpitPort === 0) {
+    throw new Error("Missing required field in config: local_smtp.port");
+  }
   const jwtSecret = resolveJwtSecret(
     envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
   );
@@ -571,6 +642,12 @@ export function legacyResolveLocalConfigValues(
     authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0
       ? loadFirstSigningKey(workdir, signingKeysPath)
       : undefined;
+  // Go's `Config.Validate` checks `edge_runtime.deno_version` after the auth
+  // block and the functions loop (`pkg/config/config.go:1158-1173`), and —
+  // unlike `studio.port`/`local_smtp.port` above — unconditionally, with no
+  // `edge_runtime.enabled` gate.
+  const denoVersion = envOverrideDenoVersion(config.edge_runtime.deno_version, projectEnvValues);
+  validateDenoVersion(denoVersion);
 
   return {
     apiUrl: apiExternalUrl,

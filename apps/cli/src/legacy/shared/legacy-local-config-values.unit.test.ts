@@ -356,6 +356,55 @@ describe("legacyResolveLocalConfigValues", () => {
       const config = baseConfig({ api: { enabled: false, port: 0 } });
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
+
+    // Go gates the studio.port===0 rejection on studio.enabled
+    // (pkg/config/config.go:1070-1073), same pattern as api.port above.
+    // studio.enabled defaults to true, so a configured or env-overridden zero
+    // port is rejected by default.
+    it("rejects a configured studio.port of 0 when studio is enabled", () => {
+      const config = baseConfig({ studio: { port: 0 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: studio.port",
+      );
+    });
+
+    it("rejects a zero SUPABASE_STUDIO_PORT override when studio is enabled", () => {
+      process.env["SUPABASE_STUDIO_PORT"] = "0";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: studio.port",
+      );
+    });
+
+    it("does not reject a zero studio.port when studio is disabled", () => {
+      const config = baseConfig({ studio: { enabled: false, port: 0 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    // Go gates the local_smtp.port===0 rejection on local_smtp.enabled (Go's
+    // struct field is still named `Inbucket` for the `[local_smtp]` TOML
+    // section, pkg/config/config.go:235,1081-1083), same pattern as api.port/
+    // studio.port above. local_smtp.enabled defaults to true, so a configured
+    // or env-overridden zero port is rejected by default.
+    it("rejects a configured local_smtp.port of 0 when local_smtp is enabled", () => {
+      const config = baseConfig({ local_smtp: { port: 0 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: local_smtp.port",
+      );
+    });
+
+    it("rejects a zero SUPABASE_LOCAL_SMTP_PORT override when local_smtp is enabled", () => {
+      process.env["SUPABASE_LOCAL_SMTP_PORT"] = "0";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: local_smtp.port",
+      );
+    });
+
+    it("does not reject a zero local_smtp.port when local_smtp is disabled", () => {
+      const config = baseConfig({ local_smtp: { enabled: false, port: 0 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
   });
 
   describe("db.major_version (required field in config)", () => {
@@ -415,6 +464,71 @@ describe("legacyResolveLocalConfigValues", () => {
       process.env["SUPABASE_DB_MAJOR_VERSION"] = "";
       const config = baseConfig({ db: { major_version: 17 } });
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  // Go's Config.Validate rejects an invalid edge_runtime.deno_version
+  // unconditionally — NOT gated on edge_runtime.enabled
+  // (pkg/config/config.go:1164-1173).
+  describe("edge_runtime.deno_version (required field in config)", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+    });
+
+    it("rejects a configured deno_version of 0", () => {
+      const config = baseConfig({ edge_runtime: { deno_version: 0 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: edge_runtime.deno_version",
+      );
+    });
+
+    it.each([1, 2])("accepts the supported deno_version %d", (denoVersion) => {
+      const config = baseConfig({ edge_runtime: { deno_version: denoVersion } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects an unsupported deno_version with the generic invalid-value message", () => {
+      const config = baseConfig({ edge_runtime: { deno_version: 3 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Failed reading config: Invalid edge_runtime.deno_version: 3.",
+      );
+    });
+
+    it("rejects a zero SUPABASE_EDGE_RUNTIME_DENO_VERSION override", () => {
+      process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "0";
+      const config = baseConfig({ edge_runtime: { deno_version: 2 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: edge_runtime.deno_version",
+      );
+    });
+
+    it("rejects an unsupported SUPABASE_EDGE_RUNTIME_DENO_VERSION override", () => {
+      process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "3";
+      const config = baseConfig({ edge_runtime: { deno_version: 2 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Failed reading config: Invalid edge_runtime.deno_version: 3.",
+      );
+    });
+
+    it("rejects a non-numeric SUPABASE_EDGE_RUNTIME_DENO_VERSION override", () => {
+      process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "abc";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Failed reading config: Invalid edge_runtime.deno_version: abc.",
+      );
+    });
+
+    it("treats an empty SUPABASE_EDGE_RUNTIME_DENO_VERSION override as unset, matching Viper's default", () => {
+      process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "";
+      const config = baseConfig({ edge_runtime: { deno_version: 2 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects an invalid deno_version even when edge_runtime is disabled", () => {
+      const config = baseConfig({ edge_runtime: { enabled: false, deno_version: 0 } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: edge_runtime.deno_version",
+      );
     });
   });
 
