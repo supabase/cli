@@ -44,8 +44,11 @@ brew-managed `_supabase` files in their `fpath`, or analogous bash/fish/powershe
 artifacts. Drift would break tab completion for those users.
 
 The generated scripts call back to `supabase __complete <args>` on every tab press to
-fetch dynamic completion candidates — see `apps/cli/src/legacy/commands/__complete/`,
-which provides the matching hidden command.
+fetch dynamic completion candidates, or `supabase __completeNoDesc <args>` when the
+script was generated with `--no-descriptions` (cobra's alias for the same hidden
+command) — see `apps/cli/src/legacy/cli/complete-passthrough.ts`, which intercepts
+both `__complete` and `__completeNoDesc` before Effect's argv parser and proxies them
+straight to the Go binary.
 
 ## Notes
 
@@ -58,3 +61,7 @@ which provides the matching hidden command.
 - The Go CLI exits non-zero when called without a shell subcommand (e.g.
   `supabase completion`). Effect CLI surfaces the same condition through its usual
   "missing subcommand" help-with-exit-1 behavior.
+- Each of `bash`/`zsh`/`fish`/`powershell` declares `--no-descriptions` (cobra's
+  auto-registered flag, `completions.go` in `spf13/cobra`) and forwards it to the
+  Go binary, so the emitted script omits completion descriptions exactly as it
+  would with the Go CLI.
