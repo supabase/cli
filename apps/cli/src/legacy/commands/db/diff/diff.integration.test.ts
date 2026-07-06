@@ -157,7 +157,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       LegacyNetworkIdFlag,
       opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
     ),
-    Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
+    Layer.succeed(LegacyPgDeltaSslProbe, {
+      requireSsl: () => Effect.succeed(false),
+      requireSslForHost: () => Effect.succeed(false),
+    }),
     mockRuntimeInfo(),
     BunServices.layer,
   );

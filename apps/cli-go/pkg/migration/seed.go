@@ -32,7 +32,7 @@ func getRemoteSeeds(ctx context.Context, conn *pgx.Conn) (map[string]string, err
 }
 
 func GetPendingSeeds(ctx context.Context, locals config.Glob, conn *pgx.Conn, fsys fs.FS) ([]SeedFile, error) {
-	locals, err := locals.Files(fsys)
+	locals, err := locals.SQLFiles(fsys)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "WARN:", err)
 	}

@@ -32,6 +32,29 @@ export interface LegacyDbConfigFlags {
    * flag (e.g. `test db`) omit it; the resolver then falls back to env only.
    */
   readonly password?: Option.Option<string>;
+  /**
+   * Optional explicit linked project ref override. Commands such as
+   * `gen types --project-id <ref>` need the linked DB resolver's temp-role and
+   * pooler fallback behavior without requiring the current workdir to be linked.
+   * Absent for the normal `--linked` path, which still reads `.temp/project-ref`.
+   */
+  readonly linkedProjectRef?: Option.Option<string>;
+  /**
+   * Marks `linkedProjectRef` as an ad-hoc remote target supplied explicitly
+   * (e.g. `gen types --project-id <ref>`) rather than the current linked
+   * workdir. The ref may belong to a different project than the cwd, so the
+   * resolver must NOT inherit workdir-scoped credentials or cached state:
+   *   - it ignores the ambient `SUPABASE_DB_PASSWORD` (shell / `.env*`) so it
+   *     always mints a temporary login role instead of handing pg-meta an
+   *     unrelated password, and
+   *   - on an IPv4-only network it skips the saved `.temp/pooler-url` (which
+   *     belongs to the linked workdir) and fetches the primary pooler config
+   *     for `ref` from the Management API instead of failing with the IPv6
+   *     "run supabase link" suggestion.
+   * Absent / false for the normal `--linked` path, which is the workdir's own
+   * project and may legitimately reuse those env vars and saved files.
+   */
+  readonly adHocProjectRef?: boolean;
 }
 
 /**

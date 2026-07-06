@@ -23,11 +23,16 @@ export interface LegacyPgDeltaSslProbeShape {
    * debug mode). Fails for any other connection error, matching Go's `return false, err`.
    */
   readonly requireSsl: (dbUrl: string) => Effect.Effect<boolean, LegacyPgDeltaSslProbeError>;
+  readonly requireSslForHost: (
+    host: string,
+    port: number,
+  ) => Effect.Effect<boolean, LegacyPgDeltaSslProbeError>;
 }
 
 /** A non-TLS-refusal connection failure during the SSL probe (Go's propagated `err`). */
 export class LegacyPgDeltaSslProbeError extends Data.TaggedError("LegacyPgDeltaSslProbeError")<{
   readonly message: string;
+  readonly cause?: unknown;
 }> {}
 
 export class LegacyPgDeltaSslProbe extends Context.Service<

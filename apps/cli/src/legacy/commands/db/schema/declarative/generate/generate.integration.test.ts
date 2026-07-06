@@ -151,7 +151,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     // The remote ref is a non-Supabase host that refuses TLS → no SSL env.
-    Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
+    Layer.succeed(LegacyPgDeltaSslProbe, {
+      requireSsl: () => Effect.succeed(false),
+      requireSslForHost: () => Effect.succeed(false),
+    }),
     BunServices.layer,
   );
   return {

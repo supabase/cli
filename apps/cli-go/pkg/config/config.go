@@ -116,9 +116,22 @@ func WithErrorOnAllSkippedGlobs() GlobOption {
 	}
 }
 
+func (g Glob) Files(fsys fs.FS, options ...GlobOption) ([]string, error) {
+	return g.files(fsys, nil, options...)
+}
+
+// SQLFiles matches glob patterns and expands directory matches recursively to
+// SQL files. Pattern order is preserved, and directory contents are sorted for
+// deterministic application.
+func (g Glob) SQLFiles(fsys fs.FS, options ...GlobOption) ([]string, error) {
+	return g.files(fsys, func(path string, entry fs.DirEntry) bool {
+		return entry.Type().IsRegular() && filepath.Ext(path) == ".sql"
+	}, options...)
+}
+
 // Match the glob patterns in the given FS to get a deduplicated
 // array of all migrations files to apply in the declared order.
-func (g Glob) Files(fsys fs.FS, options ...GlobOption) ([]string, error) {
+func (g Glob) files(fsys fs.FS, expandDir func(string, fs.DirEntry) bool, options ...GlobOption) ([]string, error) {
 	opts := globOptions{}
 	for _, apply := range options {
 		apply(&opts)
@@ -143,6 +156,27 @@ func (g Glob) Files(fsys fs.FS, options ...GlobOption) ([]string, error) {
 		// Remove duplicates
 		for _, item := range matches {
 			fp := filepath.ToSlash(item)
+			if expandDir != nil {
+				info, err := fs.Stat(fsys, fp)
+				if err != nil {
+					allErrors = append(allErrors, errors.Errorf("failed to stat matched file: %w", err))
+					continue
+				}
+				if info.IsDir() {
+					files, err := walkMatchedDir(fsys, fp, expandDir)
+					if err != nil {
+						allErrors = append(allErrors, err)
+						continue
+					}
+					for _, file := range files {
+						if _, exists := set[file]; !exists {
+							set[file] = struct{}{}
+							result = append(result, file)
+						}
+					}
+					continue
+				}
+			}
 			if _, exists := set[fp]; !exists {
 				set[fp] = struct{}{}
 				result = append(result, fp)
@@ -155,6 +189,23 @@ func (g Glob) Files(fsys fs.FS, options ...GlobOption) ([]string, error) {
 		}
 	}
 	return result, errors.Join(allErrors...)
+}
+
+func walkMatchedDir(fsys fs.FS, dir string, include func(string, fs.DirEntry) bool) ([]string, error) {
+	var files []string
+	if err := fs.WalkDir(fsys, dir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if include(path, entry) {
+			files = append(files, filepath.ToSlash(path))
+		}
+		return nil
+	}); err != nil {
+		return nil, errors.Errorf("failed to walk matched directory: %w", err)
+	}
+	sort.Strings(files)
+	return files, nil
 }
 
 func hasGlobMeta(pattern string) bool {

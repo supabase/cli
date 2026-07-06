@@ -706,6 +706,50 @@ func TestGlobFiles(t *testing.T) {
 	})
 }
 
+func TestGlobSQLFiles(t *testing.T) {
+	t.Run("expands directory entries in declared order", func(t *testing.T) {
+		fsys := fs.MapFS{
+			"supabase/schemas/z_function.sql":            &fs.MapFile{Data: []byte("select 1;")},
+			"supabase/schemas/tables/a_table.sql":        &fs.MapFile{Data: []byte("select 2;")},
+			"supabase/schemas/tables/nested/b_table.sql": &fs.MapFile{Data: []byte("select 3;")},
+			"supabase/schemas/tables/readme.md":          &fs.MapFile{Data: []byte("ignored")},
+		}
+		g := Glob{
+			"supabase/schemas/z_function.sql",
+			"supabase/schemas/tables",
+		}
+
+		files, err := g.SQLFiles(fsys)
+
+		assert.NoError(t, err)
+		assert.Equal(t, []string{
+			"supabase/schemas/z_function.sql",
+			"supabase/schemas/tables/a_table.sql",
+			"supabase/schemas/tables/nested/b_table.sql",
+		}, files)
+	})
+
+	t.Run("deduplicates explicit files and directory matches", func(t *testing.T) {
+		fsys := fs.MapFS{
+			"supabase/database/a.sql": &fs.MapFile{Data: []byte("select 1;")},
+			"supabase/database/b.sql": &fs.MapFile{Data: []byte("select 2;")},
+		}
+		g := Glob{
+			"supabase/database/a.sql",
+			"supabase/database",
+			"supabase/database/*.sql",
+		}
+
+		files, err := g.SQLFiles(fsys)
+
+		assert.NoError(t, err)
+		assert.Equal(t, []string{
+			"supabase/database/a.sql",
+			"supabase/database/b.sql",
+		}, files)
+	})
+}
+
 func TestLoadFunctionImportMap(t *testing.T) {
 	t.Run("uses deno.json as import map when present", func(t *testing.T) {
 		config := NewConfig()

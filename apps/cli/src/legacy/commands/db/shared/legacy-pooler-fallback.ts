@@ -1,10 +1,15 @@
 import { Effect, Option } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
-import { legacyYellow } from "../../../shared/legacy-colors.ts";
 import { legacyIsIPv6ConnectivityError } from "../../../shared/legacy-connect-errors.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
+import {
+  legacyIsDirectDbHost,
+  legacyRunWithPoolerFallback as legacyRunWithSharedPoolerFallback,
+} from "../../../shared/legacy-pooler-fallback.ts";
+
+export { legacyEmitPoolerFallbackWarning } from "../../../shared/legacy-pooler-fallback.ts";
 
 /** The exit/stderr pair a dump attempt surfaces for pooler-fallback classification. */
 interface LegacyPoolerFallbackResult {
@@ -30,24 +35,7 @@ export const legacyIsDirectLinkedHost = (params: {
 }): boolean =>
   params.connType === "linked" &&
   !params.isLocal &&
-  params.host.startsWith("db.") &&
-  params.host.endsWith(`.${params.projectHost}`);
-
-/**
- * Go's IPv6 pooler-fallback warning (`internal/utils/connect.go:283-289`), to stderr,
- * `Yellow`-wrapped, byte-for-byte. Emitted just before the IPv4 pooler retry by every
- * pooler-fallback path.
- */
-export const legacyEmitPoolerFallbackWarning = (host: string): Effect.Effect<void, never, Output> =>
-  Effect.gen(function* () {
-    const output = yield* Output;
-    yield* output.raw(
-      `${legacyYellow(
-        `Warning: Direct connection to ${host} is unavailable because this environment does not support IPv6.\nRetrying via the IPv4 connection pooler.`,
-      )}\n`,
-      "stderr",
-    );
-  });
+  legacyIsDirectDbHost(params.host, params.projectHost);
 
 /**
  * Container-level IPv6 → IPv4-pooler retry shared by `db dump` and `db pull`'s initial
@@ -96,23 +84,18 @@ export const legacyRunWithPoolerFallback = Effect.fnUntraced(function* <E, RRun>
   /** `db dump` re-prints "Dumping ..." on retry; `db pull` passes `Effect.void`. */
   readonly reprintOnRetry: Effect.Effect<void, never, Output>;
 }) {
-  const eligible =
-    params.result.exitCode !== 0 &&
-    legacyIsDirectLinkedHost({
+  return yield* legacyRunWithSharedPoolerFallback({
+    run: Effect.succeed(params.result),
+    retry: (pooler) => params.reprintOnRetry.pipe(Effect.andThen(params.runWithConn(pooler))),
+    directHost: params.host,
+    eligible: legacyIsDirectLinkedHost({
       connType: params.connType,
       host: params.host,
       isLocal: params.isLocal,
       projectHost: params.projectHost,
-    }) &&
-    legacyIsIPv6ConnectivityError(params.result.stderr);
-  if (!eligible) {
-    return params.result;
-  }
-  const pooler = yield* params.resolvePooler();
-  if (Option.isNone(pooler)) {
-    return params.result;
-  }
-  yield* legacyEmitPoolerFallbackWarning(params.host);
-  yield* params.reprintOnRetry;
-  return yield* params.runWithConn(pooler.value);
+    }),
+    resolveFallback: Effect.suspend(params.resolvePooler),
+    classifyResult: (result) =>
+      result.exitCode !== 0 && legacyIsIPv6ConnectivityError(result.stderr),
+  });
 });
