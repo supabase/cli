@@ -4,21 +4,20 @@ import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { makeTempHome, runSupabase } from "../../../../../tests/helpers/cli.ts";
 
-// Argument-validation negatives for `functions deploy`. This validation lives in
-// the Go CLI today (the legacy TS command proxies to it); a black-box subprocess
-// test keeps these assertions valid through the eventual native TS port — it
-// guards behavior, not implementation. Asserting the SPECIFIC error text also
-// avoids a false pass from an unrelated non-zero exit (e.g. a missing Go binary).
+// Argument-validation negatives for `functions deploy`. This validation is native TS
+// (`shared/functions/deploy.ts`'s mutual-exclusivity and `--jobs` guards) ported from
+// Go's cobra flag-group validation — a black-box subprocess test keeps these
+// assertions valid across the shell boundary. Asserting the SPECIFIC error text also
+// avoids a false pass from an unrelated non-zero exit.
 //
-// All cases fail before any network call (cobra flag parsing / pre-resolution),
-// so no auth or linked project is required.
+// All cases fail before any network call (the guards run before project-ref/config
+// resolution), so no auth or linked project is required.
 
 const E2E_TIMEOUT_MS = 30_000;
 const SLUG = "deploy-e2e-basic";
 // Valid-format token + ref to clear the auth and project-ref gates (both checked
-// before the Go bundler-flag validation under test). These cases all fail before
-// any network call (cobra flag-group validation / the jobs check at the top of
-// RunE), so neither value is ever used against a real API.
+// before the bundler-flag validation under test). These cases all fail before any
+// network call, so neither value is ever used against a real API.
 const FAKE_TOKEN = `sbp_${"0".repeat(40)}`;
 const FAKE_REF = "a".repeat(20);
 

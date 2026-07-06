@@ -2175,4 +2175,48 @@ describe("functions deploy", () => {
       expect(error.message).toContain("--use-docker");
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
+
+  describe("--jobs validation (Go parity: cmd/functions.go:79-82)", () => {
+    it.live("rejects --jobs > 1 without --use-api", () => {
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        const { layer } = setup(tempDir, {
+          rawArgs: ["functions", "deploy", "--jobs", "2"],
+        });
+
+        const error = yield* functionsDeploy({
+          ...BASE_FLAGS,
+          useApi: false,
+          jobs: Option.some(2),
+        }).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe("--jobs must be used together with --use-api");
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+    });
+
+    it.live("allows --jobs > 1 together with --use-api", () => {
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+        const { out, layer } = setup(tempDir, {
+          rawArgs: ["functions", "deploy", "hello-world", "--use-api", "--jobs", "2"],
+        });
+
+        yield* functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world"],
+          useApi: true,
+          jobs: Option.some(2),
+        }).pipe(Effect.provide(layer));
+
+        expect(out.stdoutText).toContain(`Deployed Functions on project ${PROJECT_REF}`);
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+    });
+  });
 });
