@@ -37,7 +37,7 @@ Telemetry Events Fired below.
 
 | Event                  | When                                                                      |
 | ---------------------- | ------------------------------------------------------------------------- |
-| `cli_command_executed` | when telemetry was **already enabled** before this invocation (see Notes) |
+| `cli_command_executed` | when telemetry was **already enabled** before this invocation (see below) |
 
 Go parity (`apps/cli-go/cmd/root.go:131-138,171-181`): the event is gated on
 the consent state read at process start, before this command's handler
@@ -47,6 +47,15 @@ common case (enabling from a disabled state) the pre-toggle snapshot is
 enabled fires the event, matching Go's uniform, state-based (not
 command-based) gate. See `telemetry/disable/SIDE_EFFECTS.md` for the
 mirror-image case.
+
+When the event fires, the process waits (bounded, up to ~5s) for a PostHog
+flush attempt to complete or time out before exiting, since the analytics
+client's shutdown is a finalizer around the whole command run. Previously
+`disable`/`enable` never queued an event and returned immediately; on a
+slow or fully offline network, this invocation can now take noticeably
+longer than before, though the `Telemetry is enabled.` stdout line is
+still written before that wait (it comes from the handler, which completes
+before the surrounding instrumentation's post-run capture/flush step).
 
 ## Output
 
