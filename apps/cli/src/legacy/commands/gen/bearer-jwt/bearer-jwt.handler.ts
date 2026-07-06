@@ -6,7 +6,8 @@ export const legacyGenBearerJwt = Effect.fn("legacy.gen.bearer-jwt")(function* (
   flags: LegacyGenBearerJwtFlags,
 ) {
   const proxy = yield* LegacyGoProxy;
-  const args: string[] = ["gen", "bearer-jwt", "--role", flags.role];
+  const args: string[] = ["gen", "bearer-jwt"];
+  if (Option.isSome(flags.role)) args.push("--role", flags.role.value);
   if (Option.isSome(flags.sub)) args.push("--sub", flags.sub.value);
   if (Option.isSome(flags.exp)) args.push("--exp", flags.exp.value);
   if (Option.isSome(flags.validFor)) args.push("--valid-for", flags.validFor.value);

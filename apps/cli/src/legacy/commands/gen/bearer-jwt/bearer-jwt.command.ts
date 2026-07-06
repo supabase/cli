@@ -3,7 +3,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { legacyGenBearerJwt } from "./bearer-jwt.handler.ts";
 
 const config = {
-  role: Flag.string("role").pipe(Flag.withDescription("Postgres role to use.")),
+  role: Flag.string("role").pipe(Flag.withDescription("Postgres role to use."), Flag.optional),
   sub: Flag.string("sub").pipe(Flag.withDescription("User ID to impersonate."), Flag.optional),
   exp: Flag.string("exp").pipe(
     Flag.withDescription("Expiry timestamp for this token (RFC3339 format)."),
