@@ -36,6 +36,10 @@ const mapSetError = mapLegacyHttpError({
 
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 /**
  * Best-effort recovery for a schema-decode failure (as opposed to a raw
  * TOML/JSON parse failure) on `supabase/config.toml`. Go's `viper`+
@@ -69,13 +73,10 @@ function recoverEdgeRuntimeConfig(cause: ProjectConfigParseError): ProjectConfig
     return null;
   }
   const edgeRuntime = cause.document.edge_runtime;
-  const secrets =
-    typeof edgeRuntime === "object" && edgeRuntime !== null
-      ? (edgeRuntime as Record<string, unknown>).secrets
-      : undefined;
+  const secrets = isRecord(edgeRuntime) ? edgeRuntime.secrets : undefined;
   try {
     return decodeProjectConfig({
-      edge_runtime: typeof secrets === "object" && secrets !== null ? { secrets } : {},
+      edge_runtime: isRecord(secrets) ? { secrets } : {},
     });
   } catch {
     return null;
