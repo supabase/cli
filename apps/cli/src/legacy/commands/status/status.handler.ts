@@ -6,5 +6,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
   const proxy = yield* LegacyGoProxy;
   const args: string[] = ["status"];
   for (const override of flags.overrideName) args.push("--override-name", override);
+  for (const name of flags.exclude) args.push("--exclude", name);
+  if (flags.ignoreHealthCheck) args.push("--ignore-health-check");
   yield* proxy.exec(args);
 });

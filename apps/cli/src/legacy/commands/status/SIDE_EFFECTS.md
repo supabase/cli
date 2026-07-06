@@ -80,3 +80,5 @@ Not applicable.
 - `-o env` output format uses KEY=VALUE pairs.
 - `-o json` output format uses a JSON object.
 - `-o pretty` (default) uses the human-readable table format.
+- `--exclude` (hidden, repeatable) omits named containers from the output; matches Go's `cmd/status.go:39-40`.
+- `--ignore-health-check` (hidden, boolean) exits `0` even when a service is unhealthy; matches Go's `cmd/status.go:41-42`.

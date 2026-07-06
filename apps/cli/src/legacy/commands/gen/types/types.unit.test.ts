@@ -157,6 +157,29 @@ describe("resolvePgmetaImage", () => {
     expect(image).not.toBe("supabase/postgres-meta:v1.2.3");
     expect(image).toContain("postgres-meta:v1.2.3");
   });
+
+  it("defaults to the ECR mirror when no registry override is set", () => {
+    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
+      resolvePgmetaImage("1.2.3"),
+    );
+    expect(image).toBe("public.ecr.aws/supabase/postgres-meta:v1.2.3");
+  });
+
+  it("honors SUPABASE_INTERNAL_IMAGE_REGISTRY for a non docker.io registry (e.g. ghcr.io)", () => {
+    // Regression: setup-cli exports `ghcr.io` on shared CI runners to dodge ECR
+    // rate limits, but gen types used to ignore it and still pull from ECR.
+    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "ghcr.io", () =>
+      resolvePgmetaImage("1.2.3"),
+    );
+    expect(image).toBe("ghcr.io/supabase/postgres-meta:v1.2.3");
+  });
+
+  it("rewrites to an arbitrary configured mirror registry", () => {
+    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "my.registry.example", () =>
+      resolvePgmetaImage("1.2.3"),
+    );
+    expect(image).toBe("my.registry.example/supabase/postgres-meta:v1.2.3");
+  });
 });
 
 describe("schema and id helpers", () => {
