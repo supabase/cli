@@ -1,8 +1,10 @@
 import type { OrganizationResponseV1, V1CreateAProjectOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Cause, Effect, Exit, Option } from "effect";
+import { Command } from "effect/unstable/cli";
 
 import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { LEGACY_GLOBAL_FLAGS } from "../../../../shared/legacy/global-flags.ts";
 import {
   type LegacyApiResponse,
   type LegacyHttpMethod,
@@ -13,7 +15,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import type { LegacyProjectsCreateFlags } from "./create.command.ts";
+import { legacyProjectsCreateCommand, type LegacyProjectsCreateFlags } from "./create.command.ts";
 import { legacyProjectsCreate } from "./create.handler.ts";
 
 const CREATED: typeof V1CreateAProjectOutput.Type = {
@@ -451,4 +453,54 @@ describe("legacy projects create integration", () => {
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
+
+  // Go parity (`apps/cli-go/cmd/projects.go:34-55`): Go's --size EnumFlag is an
+  // 18-value list that does not include "nano" (or "pico") and rejects any other
+  // value at flag-parse time. TS previously listed "nano" as a valid choice,
+  // silently succeeding where Go errors.
+  it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
+    const root = Command.make("supabase").pipe(
+      Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
+      Command.withSubcommands([legacyProjectsCreateCommand]),
+    );
+
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        Command.runWith(root, { version: "0.0.0-test" })([
+          "create",
+          "alpha",
+          "--org-id",
+          "acme",
+          "--db-password",
+          "s3cret-pass",
+          "--region",
+          "us-east-1",
+          "--size",
+          "nano",
+        ]),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(rejectsInvalidSizeChoice(Cause.squash(exit.cause))).toBe(true);
+      }
+    }) as Effect.Effect<void>;
+  });
 });
+
+// Distinguishes "the --size flag itself was rejected at parse time" from any
+// other failure (e.g. a missing runtime service in this minimal test setup),
+// so the regression test above can't pass for the wrong reason.
+function rejectsInvalidSizeChoice(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("errors" in error)) return false;
+  const { errors } = error;
+  if (!Array.isArray(errors)) return false;
+  return errors.some(
+    (candidate: unknown) =>
+      typeof candidate === "object" &&
+      candidate !== null &&
+      "_tag" in candidate &&
+      candidate._tag === "InvalidValue" &&
+      "option" in candidate &&
+      candidate.option === "size",
+  );
+}

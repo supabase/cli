@@ -27,7 +27,6 @@ const AWS_REGIONS = [
 ] as const;
 
 const INSTANCE_SIZES = [
-  "nano",
   "micro",
   "small",
   "medium",
