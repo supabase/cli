@@ -436,6 +436,27 @@ describe("legacy status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("resolves SUPABASE_PROJECT_ID from supabase/.env even when config.toml is absent", () => {
+    // Go's loadNestedEnv runs unconditionally, before config.toml is ever
+    // opened (pkg/config/config.go:786-793) — a supabase/.env-only project id
+    // must still be honored even when there's no config.toml to fall back to
+    // template defaults from.
+    const supabaseDir = join(tempRoot.current, "supabase");
+    mkdirSync(supabaseDir, { recursive: true });
+    writeFileSync(join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=no-config-project\n");
+    const { layer, child } = setup({
+      skipConfig: true,
+      route: defaultRoute({ runningNames: legacyServiceContainerIds("no-config-project") }),
+    });
+    return Effect.gen(function* () {
+      yield* legacyStatus(flags());
+      const inspectCall = child.spawned.find(
+        (s) => s.args[0] === "container" && s.args[1] === "inspect",
+      );
+      expect(inspectCall?.args).toContain(localDbContainerId("no-config-project"));
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("honors SUPABASE_AUTH_JWT_SECRET from supabase/.env, not just the ambient shell", () => {
     // Go's Config.Load runs loadNestedEnv (supabase/.env(.local) via godotenv)
     // before AutomaticEnv reads SUPABASE_AUTH_JWT_SECRET (config.go:735-738) —

@@ -146,24 +146,35 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
  * layered back on top (`projectEnv.sources[key] === "ambient"` marks exactly
  * those entries — see `loadProjectEnvironment`'s `ProjectEnvironment` shape).
  *
- * Returns `undefined` when `projectEnv` is `null` (no `supabase/` project
- * found), matching callers' existing "fall back to `process.env` directly"
- * behavior.
+ * `projectEnv` is `null` whenever `@supabase/config` found no
+ * `supabase/config.toml`/`config.json` (searching ancestors, or at exactly
+ * `workdir` when the caller passed `search: false`) — but Go's dotenv loading
+ * doesn't share that precondition: `Config.Load` calls
+ * `loadNestedEnv(builder.SupabaseDirPath)` BEFORE it ever opens `config.toml`
+ * (`pkg/config/config.go:786-793`), and `SupabaseDirPath` is a pure string
+ * join with no existence check (`NewPathBuilder`, `pkg/config/utils.go:43-48`).
+ * So a missing/absent config file must not skip dotenv loading — fall back to
+ * deriving the same two directories directly from `workdir`
+ * (`<workdir>/supabase` and `workdir` itself) and read `process.env` itself as
+ * the ambient layer, since there's no `loadProjectEnvironment` result to
+ * consult for it in this branch.
  */
 export function legacyResolveProjectEnvironmentValues(
   projectEnv: ProjectEnvironment | null,
-): Record<string, string> | undefined {
-  if (projectEnv === null) return undefined;
-
+  workdir: string,
+): Record<string, string> {
   const env = process.env["SUPABASE_ENV"] || "development";
   const filenames = candidateDotenvFilenames(env);
   const merged: Record<string, string> = {};
+
+  const supabaseDir = projectEnv?.paths.supabaseDir ?? join(workdir, "supabase");
+  const projectRoot = projectEnv?.paths.projectRoot ?? workdir;
 
   // supabase/ dir first, then its parent (the project root) — matching Go's
   // directory walk order. Within a directory, `godotenv.Load`'s "never
   // override an already-set var" means first-processed-wins, so the plain
   // merge below (skip keys already present) reproduces both orderings at once.
-  for (const dir of [projectEnv.paths.supabaseDir, projectEnv.paths.projectRoot]) {
+  for (const dir of [supabaseDir, projectRoot]) {
     for (const filename of filenames) {
       const parsed = readDotEnvFile(join(dir, filename));
       if (parsed === undefined) continue;
@@ -174,9 +185,17 @@ export function legacyResolveProjectEnvironmentValues(
   }
 
   const ambientOverrides: Record<string, string> = {};
-  for (const [key, value] of Object.entries(projectEnv.values)) {
-    if (projectEnv.sources[key] === "ambient") {
-      ambientOverrides[key] = value;
+  if (projectEnv !== null) {
+    for (const [key, value] of Object.entries(projectEnv.values)) {
+      if (projectEnv.sources[key] === "ambient") {
+        ambientOverrides[key] = value;
+      }
+    }
+  } else {
+    for (const [key, value] of Object.entries(process.env)) {
+      if (value !== undefined) {
+        ambientOverrides[key] = value;
+      }
     }
   }
 

@@ -49,11 +49,12 @@ import {
  * `legacyResolveProjectEnvironmentValues` implements that full precedence
  * chain (see its doc comment) on top of `loadProjectEnvironment`'s
  * `supabase/`-dir-only result, so it's used here instead of reading
- * `process.env` directly. Both resolve to `undefined`/`null` when no
- * `supabase/` config file exists anywhere up the tree, which would otherwise
- * also drop the ambient-only case — falling back to `process.env` directly
- * covers that gap without duplicating the "no config.toml" path's own error
- * handling.
+ * `process.env` directly. It still returns a usable map (falling back to
+ * `<workdir>/supabase`/`workdir` and `process.env` itself) even when no
+ * `supabase/` config file exists at `workdir`, matching Go's `loadNestedEnv`
+ * running unconditionally before `config.toml` is ever opened
+ * (`pkg/config/config.go:786-793`) — the `?? process.env[...]` fallback below
+ * only still matters for keys neither source produced.
  *
  * The config/env-derived (default) branch is sanitized with
  * {@link legacySanitizeProjectId} before it's used as a filter value,
@@ -95,9 +96,13 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
     // `SUPABASE_PROJECT_ID` override read below. A malformed extra dotenv
     // file throws here (see `readDotEnvFile`), matching Go's `loadNestedEnv`
     // propagating `godotenv`'s parse error instead of silently skipping the
-    // bad line.
+    // bad line. `workdir` is passed through so dotenv files under
+    // `<workdir>/supabase`/`workdir` are still discovered even when
+    // `projectEnv` is `null` (no config.toml there) — Go's own `loadNestedEnv`
+    // runs unconditionally, before `config.toml` is ever opened
+    // (`pkg/config/config.go:786-793`).
     const projectEnvValues = yield* Effect.try({
-      try: () => legacyResolveProjectEnvironmentValues(projectEnv),
+      try: () => legacyResolveProjectEnvironmentValues(projectEnv, cliConfig.workdir),
       catch: (cause) =>
         new LegacyStopConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
     });
@@ -107,10 +112,7 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
     // malformed file (`loadProjectConfig` failing rather than returning
     // `null`) is a hard error, matching `gen types`'s `loadConfig()` pattern.
     const loaded = yield* loadProjectConfig(cliConfig.workdir, {
-      projectEnv:
-        projectEnv !== null
-          ? { ...projectEnv, values: projectEnvValues ?? projectEnv.values }
-          : undefined,
+      projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -118,7 +120,7 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
       ),
     );
     const resolved = legacyResolveLocalProjectId(
-      projectEnvValues?.["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
+      projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
       loaded?.config.project_id,
       cliConfig.workdir,
     );

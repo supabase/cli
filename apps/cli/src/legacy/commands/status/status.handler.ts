@@ -124,18 +124,19 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // `SUPABASE_PROJECT_ID`/`SUPABASE_AUTH_*` overrides read further below.
     // A malformed extra dotenv file throws here (see `readDotEnvFile`),
     // matching Go's `loadNestedEnv` propagating `godotenv`'s parse error
-    // instead of silently skipping the bad line.
+    // instead of silently skipping the bad line. `workdir` is passed through so
+    // dotenv files under `<workdir>/supabase`/`workdir` are still discovered
+    // even when `projectEnv` is `null` (no config.toml there) — Go's own
+    // `loadNestedEnv` runs unconditionally, before `config.toml` is ever
+    // opened (`pkg/config/config.go:786-793`).
     const projectEnvValues = yield* Effect.try({
-      try: () => legacyResolveProjectEnvironmentValues(projectEnv),
+      try: () => legacyResolveProjectEnvironmentValues(projectEnv, cliConfig.workdir),
       catch: (cause) =>
         new LegacyStatusConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
     });
 
     const loaded = yield* loadProjectConfig(cliConfig.workdir, {
-      projectEnv:
-        projectEnv !== null
-          ? { ...projectEnv, values: projectEnvValues ?? projectEnv.values }
-          : undefined,
+      projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
     }).pipe(
       Effect.mapError(
         (cause) =>
@@ -153,7 +154,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // `legacyCliProjectFilterValue`'s doc comment).
     const projectId = legacySanitizeProjectId(
       legacyResolveLocalProjectId(
-        projectEnvValues?.["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
+        projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
         config.project_id,
         cliConfig.workdir,
       ),

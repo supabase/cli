@@ -19,6 +19,7 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
   delete process.env["SUPABASE_ENV"];
+  delete process.env["SUPABASE_PROJECT_ID"];
 });
 
 function fakeProjectEnv(
@@ -43,28 +44,24 @@ function fakeProjectEnv(
 }
 
 describe("legacyResolveProjectEnvironmentValues", () => {
-  it("returns undefined when no project was found", () => {
-    expect(legacyResolveProjectEnvironmentValues(null)).toBeUndefined();
-  });
-
   it("returns just the already-loaded values when no extra dotenv files exist", () => {
     const projectEnv = fakeProjectEnv({ SUPABASE_PROJECT_ID: "from-loader" });
-    expect(legacyResolveProjectEnvironmentValues(projectEnv)).toEqual({
+    expect(legacyResolveProjectEnvironmentValues(projectEnv, root)).toEqual({
       SUPABASE_PROJECT_ID: "from-loader",
     });
   });
 
   it("fills in a value from a project-root .env file Go's loadNestedEnv would load", () => {
     writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("root-env-project");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("root-env-project");
   });
 
   it("prefers a supabase/-dir dotenv file over the same key in a project-root file", () => {
     writeFileSync(join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=supabase-dir-project\n");
     writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=root-dir-project\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("supabase-dir-project");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("supabase-dir-project");
   });
 
   it("lets already-resolved projectEnv.values win over anything discovered locally", () => {
@@ -73,64 +70,64 @@ describe("legacyResolveProjectEnvironmentValues", () => {
     // entry for the same key must never override it.
     writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");
     const projectEnv = fakeProjectEnv({ SUPABASE_PROJECT_ID: "ambient-project" });
-    const merged = legacyResolveProjectEnvironmentValues(projectEnv);
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("ambient-project");
+    const merged = legacyResolveProjectEnvironmentValues(projectEnv, root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("ambient-project");
   });
 
   it("defaults SUPABASE_ENV to development when unset", () => {
     writeFileSync(join(root, ".env.development"), "SUPABASE_PROJECT_ID=dev-project\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("dev-project");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("dev-project");
   });
 
   it("selects the SUPABASE_ENV-named file over the bare .env file", () => {
     process.env["SUPABASE_ENV"] = "production";
     writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=bare-env-project\n");
     writeFileSync(join(root, ".env.production"), "SUPABASE_PROJECT_ID=prod-project\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("prod-project");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("prod-project");
   });
 
   it("prefers the .local variant of the SUPABASE_ENV file over the non-local one", () => {
     process.env["SUPABASE_ENV"] = "production";
     writeFileSync(join(root, ".env.production"), "SUPABASE_PROJECT_ID=prod-project\n");
     writeFileSync(join(root, ".env.production.local"), "SUPABASE_PROJECT_ID=prod-local-project\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("prod-local-project");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("prod-local-project");
   });
 
   it("skips .env.local when SUPABASE_ENV=test, matching Go's loadDefaultEnv", () => {
     process.env["SUPABASE_ENV"] = "test";
     writeFileSync(join(root, ".env.local"), "SUPABASE_PROJECT_ID=local-project\n");
     writeFileSync(join(root, ".env.test"), "SUPABASE_PROJECT_ID=test-project\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("test-project");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("test-project");
   });
 
   it("strips quotes the same way the shared dotenv parser does", () => {
     writeFileSync(join(root, ".env"), 'SUPABASE_AUTH_JWT_SECRET="a quoted value"\n');
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_AUTH_JWT_SECRET"]).toBe("a quoted value");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_AUTH_JWT_SECRET"]).toBe("a quoted value");
   });
 
   it("ignores blank lines and comments", () => {
     writeFileSync(root + "/.env", "\n# a comment\nSUPABASE_PROJECT_ID=commented-project\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("commented-project");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("commented-project");
   });
 
   it("preserves a literal # in an unquoted value with no leading whitespace, matching godotenv", () => {
     // godotenv only starts an inline comment at a `#` preceded by whitespace
     // (`godotenv@v1.5.1/parser.go:144-153`); `foo#bar` keeps the `#` verbatim.
     writeFileSync(root + "/.env", "SUPABASE_AUTH_JWT_SECRET=long#secret\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_AUTH_JWT_SECRET"]).toBe("long#secret");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_AUTH_JWT_SECRET"]).toBe("long#secret");
   });
 
   it("still truncates an unquoted value at a whitespace-preceded inline comment", () => {
     writeFileSync(root + "/.env", "SUPABASE_PROJECT_ID=54323 # local\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("54323");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("54323");
   });
 
   it("strips a trailing comment after a quoted value, matching godotenv", () => {
@@ -139,8 +136,8 @@ describe("legacyResolveProjectEnvironmentValues", () => {
     // it as a comment — the value is `demo`, not the literal `"demo"` a check that
     // requires the whole trimmed remainder to end with a quote would produce.
     writeFileSync(root + "/.env", 'SUPABASE_PROJECT_ID="demo" # local\n');
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("demo");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo");
   });
 
   it("accepts a colon-separated assignment, matching godotenv's YAML-style key/value form", () => {
@@ -148,8 +145,8 @@ describe("legacyResolveProjectEnvironmentValues", () => {
     // (`godotenv@v1.5.1/parser.go:90-95`), and the repo's other dotenv parser
     // (`packages/config/src/project.ts`'s `parseDotEnv`) already accepts both.
     writeFileSync(root + "/.env", "SUPABASE_PROJECT_ID: colon-project\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("colon-project");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("colon-project");
   });
 
   it("prefers an env-specific file over a same-key value projectEnv.values sourced from a bare .env file", () => {
@@ -166,8 +163,8 @@ describe("legacyResolveProjectEnvironmentValues", () => {
       { SUPABASE_PROJECT_ID: "bare-dotenv-project" },
       { SUPABASE_PROJECT_ID: ".env" },
     );
-    const merged = legacyResolveProjectEnvironmentValues(projectEnv);
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("env-specific-project");
+    const merged = legacyResolveProjectEnvironmentValues(projectEnv, root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("env-specific-project");
   });
 
   it("still lets a truly ambient-sourced value win over any file", () => {
@@ -180,13 +177,13 @@ describe("legacyResolveProjectEnvironmentValues", () => {
       { SUPABASE_PROJECT_ID: "ambient-project" },
       { SUPABASE_PROJECT_ID: "ambient" },
     );
-    const merged = legacyResolveProjectEnvironmentValues(projectEnv);
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("ambient-project");
+    const merged = legacyResolveProjectEnvironmentValues(projectEnv, root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("ambient-project");
   });
 
   it("throws on a malformed line, matching Go's loadEnvIfExists propagating godotenv's parse error", () => {
     writeFileSync(join(root, ".env"), "not a valid line\n");
-    expect(() => legacyResolveProjectEnvironmentValues(fakeProjectEnv())).toThrow(
+    expect(() => legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root)).toThrow(
       /failed to parse environment file/,
     );
   });
@@ -195,27 +192,65 @@ describe("legacyResolveProjectEnvironmentValues", () => {
     // godotenv expands unquoted/double-quoted references while loading
     // (`godotenv@v1.5.1/parser.go:157`), so a later key can reuse an earlier one.
     writeFileSync(join(root, ".env"), "BASE=demo\nSUPABASE_PROJECT_ID=$BASE\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("demo");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo");
   });
 
   it("expands a braced ${VAR} reference in a double-quoted value", () => {
     writeFileSync(join(root, ".env"), 'SECRET=shh\nSUPABASE_AUTH_JWT_SECRET="${SECRET}"\n');
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_AUTH_JWT_SECRET"]).toBe("shh");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_AUTH_JWT_SECRET"]).toBe("shh");
   });
 
   it("does not expand variable references inside single-quoted values", () => {
     // godotenv never calls expandVariables for single-quoted values
     // (`parser.go:172-173`) — they stay byte-literal.
     writeFileSync(join(root, ".env"), "BASE=demo\nSUPABASE_PROJECT_ID='$BASE'\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("$BASE");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("$BASE");
   });
 
   it("expands an unresolved reference to an empty string, matching Go's map zero-value", () => {
     writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=$NOPE\n");
-    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
-    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("");
+  });
+
+  describe("when no project was found (projectEnv is null)", () => {
+    // Go's `loadNestedEnv` runs unconditionally before `config.toml` is ever
+    // opened (`pkg/config/config.go:786-793`), so a missing config file must
+    // not skip dotenv loading — these cover the local fallback that derives
+    // `<workdir>/supabase`/`workdir` directly instead of giving up.
+
+    it("still reads a supabase/-dir dotenv file directly under workdir", () => {
+      writeFileSync(join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=fallback-project\n");
+      const merged = legacyResolveProjectEnvironmentValues(null, root);
+      expect(merged["SUPABASE_PROJECT_ID"]).toBe("fallback-project");
+    });
+
+    it("still reads a project-root dotenv file directly under workdir", () => {
+      writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=root-fallback-project\n");
+      const merged = legacyResolveProjectEnvironmentValues(null, root);
+      expect(merged["SUPABASE_PROJECT_ID"]).toBe("root-fallback-project");
+    });
+
+    it("prefers the supabase/-dir file over the project-root file, same as the non-null case", () => {
+      writeFileSync(join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=supabase-dir-project\n");
+      writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=root-dir-project\n");
+      const merged = legacyResolveProjectEnvironmentValues(null, root);
+      expect(merged["SUPABASE_PROJECT_ID"]).toBe("supabase-dir-project");
+    });
+
+    it("lets an ambient shell var win over a dotenv value, using process.env directly", () => {
+      process.env["SUPABASE_PROJECT_ID"] = "ambient-fallback-project";
+      writeFileSync(join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=dotenv-fallback-project\n");
+      const merged = legacyResolveProjectEnvironmentValues(null, root);
+      expect(merged["SUPABASE_PROJECT_ID"]).toBe("ambient-fallback-project");
+    });
+
+    it("returns an empty object when workdir has no dotenv files and no ambient value", () => {
+      const merged = legacyResolveProjectEnvironmentValues(null, root);
+      expect(merged["SUPABASE_PROJECT_ID"]).toBeUndefined();
+    });
   });
 });

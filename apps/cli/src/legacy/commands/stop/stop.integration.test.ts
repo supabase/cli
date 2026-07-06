@@ -401,6 +401,27 @@ describe("legacy stop integration", () => {
     );
   });
 
+  it.live("resolves SUPABASE_PROJECT_ID from supabase/.env even when config.toml is absent", () => {
+    // Go's loadNestedEnv runs unconditionally, before config.toml is ever
+    // opened (pkg/config/config.go:786-793) — a supabase/.env-only project id
+    // must still be honored even when there's no config.toml to fall back to
+    // template defaults from.
+    const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
+    writeEnvFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=no-config-project\n");
+    return Effect.gen(function* () {
+      yield* legacyStop(flags());
+      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      expect(psCall?.args).toEqual([
+        "ps",
+        "--filter",
+        "label=com.supabase.cli.project=no-config-project",
+        "--all",
+        "--format",
+        "{{.ID}}",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("resolves SUPABASE_PROJECT_ID from a project-root .env file", () => {
     // Go's loadNestedEnv walks past supabase/ one more level, to the project
     // root/workdir (pkg/config/config.go:1169-1190) — a project-root-only
