@@ -119,6 +119,20 @@ describe("legacyResolveProjectEnvironmentValues", () => {
     expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("commented-project");
   });
 
+  it("preserves a literal # in an unquoted value with no leading whitespace, matching godotenv", () => {
+    // godotenv only starts an inline comment at a `#` preceded by whitespace
+    // (`godotenv@v1.5.1/parser.go:144-153`); `foo#bar` keeps the `#` verbatim.
+    writeFileSync(root + "/.env", "SUPABASE_AUTH_JWT_SECRET=long#secret\n");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
+    expect(merged?.["SUPABASE_AUTH_JWT_SECRET"]).toBe("long#secret");
+  });
+
+  it("still truncates an unquoted value at a whitespace-preceded inline comment", () => {
+    writeFileSync(root + "/.env", "SUPABASE_PROJECT_ID=54323 # local\n");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
+    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("54323");
+  });
+
   it("prefers an env-specific file over a same-key value projectEnv.values sourced from a bare .env file", () => {
     // `projectEnv.values` has no notion of SUPABASE_ENV-selected filenames, so
     // a key it resolved from a plain supabase/.env file is NOT necessarily

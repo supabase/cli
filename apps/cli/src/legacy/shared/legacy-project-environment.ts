@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import type { ProjectEnvironment } from "@supabase/config";
 
+import { stripInlineComment } from "./legacy-dotenv.ts";
+
 /**
  * Fills the gap between `@supabase/config`'s `loadProjectEnvironment` and Go's
  * `loadNestedEnv` (`apps/cli-go/pkg/config/config.go:1169-1190`). Go's version
@@ -94,8 +96,10 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
         value = expandDotEnvVariable(value, values);
       }
     } else {
-      const commentIndex = value.indexOf("#");
-      if (commentIndex >= 0) value = value.slice(0, commentIndex).trim();
+      // godotenv only starts a comment at a `#` preceded by whitespace (see
+      // `stripInlineComment`'s doc comment); an unquoted `#bar` with no leading
+      // space is part of the value, e.g. `SUPABASE_PROJECT_ID=foo#bar`.
+      value = stripInlineComment(value).trim();
       value = expandDotEnvVariable(value, values);
     }
 

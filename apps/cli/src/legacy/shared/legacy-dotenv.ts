@@ -174,8 +174,12 @@ function extractVarValue(
  * Strip an unquoted inline comment, matching godotenv: scanning from the right,
  * a `#` preceded by whitespace begins a comment (`54323 # local` → `54323`),
  * while a `#` with no leading whitespace is part of the value (`foo#bar`).
+ *
+ * Exported for reuse by `legacy-project-environment.ts`'s `readDotEnvFile`, which
+ * needs the same whitespace-aware rule for the project-root + `SUPABASE_ENV`-selected
+ * dotenv files it reads (see that module's doc comment).
  */
-function stripInlineComment(value: string): string {
+export function stripInlineComment(value: string): string {
   for (let i = value.length - 1; i > 0; i--) {
     if (value[i] === "#" && (value[i - 1] === " " || value[i - 1] === "\t")) {
       return value.slice(0, i);
