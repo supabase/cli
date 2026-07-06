@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -276,6 +276,7 @@ function setup(
     format?: "text" | "json" | "stream-json";
     linked?: boolean;
     projectRoot?: string;
+    rawArgs?: ReadonlyArray<string>;
   } = {},
 ) {
   const out = mockOutput({ format: opts.format ?? "text", interactive: false });
@@ -289,6 +290,7 @@ function setup(
     mockRuntimeInfo({ cwd }),
     mockProjectLinkState(opts.linked === false ? undefined : LINK_STATE),
     mockProjectHome(opts.projectRoot ?? cwd),
+    Stdio.layerTest({ args: Effect.succeed(opts.rawArgs ?? []) }),
   );
 
   return { out, api, layer, proxy };
@@ -803,6 +805,7 @@ describe("functions download", () => {
         bodyBySlug: {
           "hello-world": multipart,
         },
+        rawArgs: ["functions", "download", "hello-world", "--use-api"],
       });
 
       yield* functionsDownload({
@@ -821,7 +824,9 @@ describe("functions download", () => {
 
     return Effect.gen(function* () {
       yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
-      const { layer, proxy } = setup(tempDir);
+      const { layer, proxy } = setup(tempDir, {
+        rawArgs: ["functions", "download", "hello-world", "--legacy-bundle"],
+      });
 
       yield* functionsDownload({
         ...BASE_FLAGS,
@@ -841,7 +846,9 @@ describe("functions download", () => {
 
     return Effect.gen(function* () {
       yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
-      const { layer, proxy } = setup(tempDir);
+      const { layer, proxy } = setup(tempDir, {
+        rawArgs: ["functions", "download", "hello-world", "--use-docker"],
+      });
 
       yield* functionsDownload({
         ...BASE_FLAGS,
@@ -860,7 +867,9 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      const { api, layer, proxy } = setup(tempDir);
+      const { api, layer, proxy } = setup(tempDir, {
+        rawArgs: ["functions", "download", "hello-world", "--use-api", "--legacy-bundle"],
+      });
 
       const error = yield* functionsDownload({
         ...BASE_FLAGS,

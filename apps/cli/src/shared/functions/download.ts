@@ -7,7 +7,11 @@ import { Effect, FileSystem, Option } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { Output } from "../output/output.service.ts";
-import { invalidFunctionSlugDetail, validateFunctionSlugMessage } from "./functions.shared.ts";
+import {
+  hasExplicitLongFlag,
+  invalidFunctionSlugDetail,
+  validateFunctionSlugMessage,
+} from "./functions.shared.ts";
 import {
   ConflictingFunctionDownloadFlagsError,
   FunctionDownloadNotFoundError,
@@ -34,6 +38,7 @@ export interface DownloadFunctionsDependencies<
 > {
   readonly api: ApiClient;
   readonly projectRoot: string;
+  readonly rawArgs: ReadonlyArray<string>;
   readonly resolveProjectRef: (
     projectRef: Option.Option<string>,
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
@@ -57,11 +62,14 @@ export function makeGoProxyDownloadArgs(
     args.push(flags.functionName.value);
   }
   args.push("--project-ref", projectRef);
-  if (flags.useDocker) {
-    args.push("--use-docker");
-  }
+  // At most one of these may reach the Go binary — it re-parses this argv
+  // fresh and enforces the same mutual exclusivity itself. `legacyBundle`
+  // takes priority since `useDocker` now defaults to `true` (CLI-1862) and
+  // would otherwise ride along on every `--legacy-bundle` invocation.
   if (flags.legacyBundle) {
     args.push("--legacy-bundle");
+  } else if (flags.useDocker) {
+    args.push("--use-docker");
   }
   return args;
 }
@@ -107,13 +115,17 @@ function validateSlug(slug: string): Effect.Effect<void, InvalidFunctionSlugErro
   return Effect.fail(new InvalidFunctionSlugError({ message: invalidFunctionSlugDetail }));
 }
 
+const downloadCommandPath = ["functions", "download"] as const;
+
 function validateDownloadFlags(
-  flags: DownloadFunctionsOptions,
+  rawArgs: ReadonlyArray<string>,
 ): Effect.Effect<void, ConflictingFunctionDownloadFlagsError> {
   const selected = [
-    flags.useApi ? "--use-api" : undefined,
-    flags.useDocker ? "--use-docker" : undefined,
-    flags.legacyBundle ? "--legacy-bundle" : undefined,
+    hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-api") ? "--use-api" : undefined,
+    hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-docker") ? "--use-docker" : undefined,
+    hasExplicitLongFlag(rawArgs, downloadCommandPath, "legacy-bundle")
+      ? "--legacy-bundle"
+      : undefined,
   ].filter((flag) => flag !== undefined);
 
   return selected.length <= 1
@@ -734,15 +746,20 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
   return Effect.gen(function* () {
     const output = yield* Output;
 
-    yield* validateDownloadFlags(flags);
-
-    if (flags.useDocker || flags.legacyBundle) {
-      const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
-      return yield* dependencies.proxyDownload(flags, projectRef);
-    }
+    yield* validateDownloadFlags(dependencies.rawArgs);
 
     if (Option.isSome(flags.functionName)) {
       yield* validateSlug(flags.functionName.value);
+    }
+
+    const explicitUseApi = hasExplicitLongFlag(
+      dependencies.rawArgs,
+      downloadCommandPath,
+      "use-api",
+    );
+    if (!explicitUseApi && (flags.useDocker || flags.legacyBundle)) {
+      const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
+      return yield* dependencies.proxyDownload(flags, projectRef);
     }
 
     const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);

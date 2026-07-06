@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option, Stdio } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
@@ -86,6 +86,15 @@ describe("legacy functions download", () => {
         telemetry: telemetry.layer,
       }),
       proxy.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+        ]),
+      }),
     );
 
     return Effect.gen(function* () {
@@ -108,7 +117,7 @@ describe("legacy functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("keeps hidden Docker compatibility mode behind the Go proxy", () => {
+  it.live("proxies to Docker by default (Go parity), with no flags passed", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi();
     const proxy = mockProxy();
@@ -119,9 +128,20 @@ describe("legacy functions download", () => {
         cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
       }),
       proxy.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+        ]),
+      }),
     );
 
     return Effect.gen(function* () {
+      // `useDocker: true` mirrors what the CLI parser now resolves to by
+      // default (CLI-1862) — no `--use-docker` flag appears in argv above.
       yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
 
       expect(api.requests).toEqual([]);
@@ -135,6 +155,136 @@ describe("legacy functions download", () => {
           "--use-docker",
         ],
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "does not treat the --use-docker default as conflicting with an explicit --use-api",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi({
+        handler: (request) =>
+          request.url.endsWith("/body")
+            ? Effect.succeed(multipartResponse(request))
+            : Effect.succeed(legacyJsonResponse(request, 200, {})),
+      });
+      const proxy = mockProxy();
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--use-api",
+            "--project-ref",
+            "abcdefghijklmnopqrst",
+          ]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        // The CLI parser resolves `useDocker: true` here too (its default),
+        // even though only `--use-api` was passed explicitly. Neither the
+        // mutex check nor the routing decision should treat that default as
+        // if the user had asked for Docker.
+        yield* legacyFunctionsDownload({ ...baseFlags, useApi: true, useDocker: true });
+
+        expect(proxy.calls).toEqual([]);
+        expect(
+          yield* Effect.tryPromise(() =>
+            readFile(
+              join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
+              "utf8",
+            ),
+          ),
+        ).toBe("console.log('legacy native')");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("forwards only --legacy-bundle to the Go proxy, not the --use-docker default too", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--legacy-bundle",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      // `useDocker: true` mirrors the CLI parser's default (CLI-1862) even
+      // though only `--legacy-bundle` was passed explicitly. The Go proxy
+      // call must not forward both, or the Go binary's own
+      // MarkFlagsMutuallyExclusive rejects the combination.
+      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true, legacyBundle: true });
+
+      expect(proxy.calls).toEqual([
+        [
+          "functions",
+          "download",
+          "hello-world",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+          "--legacy-bundle",
+        ],
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects an invalid slug before ever reaching the Go proxy", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "../../etc",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      // `useDocker: true` is the real default (CLI-1862). Before this fix,
+      // slug validation only ran on the native path, so a malformed slug
+      // would sail past it and straight into the Go proxy argv.
+      const exit = yield* legacyFunctionsDownload({
+        ...baseFlags,
+        functionName: Option.some("../../etc"),
+        useDocker: true,
+      }).pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(proxy.calls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 });

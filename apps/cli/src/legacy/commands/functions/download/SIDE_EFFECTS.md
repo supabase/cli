@@ -22,9 +22,9 @@
 
 ## Subprocesses
 
-| Command                              | When                                | Purpose                             |
-| ------------------------------------ | ----------------------------------- | ----------------------------------- |
-| `supabase-go functions download ...` | `--use-docker` or `--legacy-bundle` | preserve hidden compatibility modes |
+| Command                              | When                                                              | Purpose                             |
+| ------------------------------------ | ----------------------------------------------------------------- | ----------------------------------- |
+| `supabase-go functions download ...` | `--use-docker` (default) or `--legacy-bundle`, unless `--use-api` | preserve hidden compatibility modes |
 
 ## Environment Variables
 
@@ -62,4 +62,7 @@ Prints a structured success result with the downloaded function slugs and projec
 - Requires a linked project (`--project-ref` or linked project config).
 - Native downloads reject path traversal and symlink escapes before writing source files.
 - `--use-docker` and `--legacy-bundle` are hidden flags forwarded to the Go binary for backward compatibility; they are mutually exclusive with `--use-api`.
+- `--use-docker` defaults to `true` (Go parity), so a bare `supabase functions download` proxies to the Go binary's Docker-based unbundler unless `--use-api` is explicitly passed, which forces the native server-side download path instead.
+- If Docker is not running, the Go binary itself prints `WARNING: Docker is not running` to stderr and falls back to its own server-side unbundler — the command still exits `0` without Docker installed or running.
+- The mutual-exclusivity check only counts flags the user explicitly passed on the command line, not `--use-docker`'s default value — so `--use-api` alone never trips the "mutually exclusive" error. The Go proxy call itself also only ever forwards one of `--use-docker`/`--legacy-bundle`, never both, even though `--use-docker` defaults to `true`.
 - Refreshes the linked-project telemetry cache and flushes telemetry state after resolving a project ref.
