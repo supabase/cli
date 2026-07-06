@@ -781,6 +781,39 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
     }
   });
 
+  test.each([
+    ["1", true],
+    ["TRUE", true],
+    ["T", true],
+    ["True", true],
+    ["0", false],
+    ["f", false],
+    ["FALSE", false],
+  ] as const)(
+    "resolves env() on boolean fields using Go's strconv.ParseBool acceptance set (%s -> %s)",
+    async (envValue, expected) => {
+      const cwd = makeTempProject();
+
+      try {
+        await mkdir(join(cwd, "supabase"), { recursive: true });
+        await writeFile(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
+
+[analytics]
+enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
+`,
+        );
+        await writeFile(join(cwd, "supabase", ".env"), `SUPABASE_ANALYTICS_ENABLED=${envValue}\n`);
+
+        const loaded = await runConfigEffect(loadProjectConfig(cwd));
+        expect(loaded!.config.analytics.enabled).toBe(expected);
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("preserves env() literals on string fields when the var is unset (Go parity)", async () => {
     const cwd = makeTempProject();
 

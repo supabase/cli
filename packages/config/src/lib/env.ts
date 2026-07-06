@@ -65,6 +65,16 @@ export const secret = (annotations?: SecretAnnotations) =>
 
 type ExpectedType = "number" | "boolean" | "string" | "unknown";
 
+// Go decodes an env()-substituted boolean via mapstructure's weakly-typed
+// `decodeBool`, which runs `strconv.ParseBool` on the string — a wider
+// acceptance set than the literal `"true"`/`"false"` this module used to
+// require. Mirrors `legacyParseGoBool`'s `GO_BOOL_TRUE`/`GO_BOOL_FALSE`
+// (`apps/cli/src/legacy/shared/legacy-db-config.toml-read.ts:615-616`);
+// duplicated here (not imported) so `packages/config` doesn't depend on
+// `apps/cli`.
+const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
+
 // Unwrap Suspend (lazy AST refs from recursive schemas). Other transformation
 // wrappers expose the target type via `.ast` directly, so no additional
 // unwrapping is needed at this layer.
@@ -162,8 +172,8 @@ function coerceLeaf(value: unknown, expected: ExpectedType): unknown {
     return value;
   }
   if (expected === "boolean") {
-    if (value === "true") return true;
-    if (value === "false") return false;
+    if (GO_BOOL_TRUE.has(value)) return true;
+    if (GO_BOOL_FALSE.has(value)) return false;
     return value;
   }
   return value;
