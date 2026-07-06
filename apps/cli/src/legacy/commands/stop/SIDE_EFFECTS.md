@@ -102,14 +102,17 @@ Same payload as `json`, delivered as a `result` NDJSON event.
   regardless of `--backup`. The TS port matches this exactly: `deleteVolumes =
 flags.noBackup`. `--backup=false` alone does **not** delete volumes; only
   `--no-backup` does.
-- Volume prune always passes `--all` on Docker. Go gates that flag on Docker engine >=
-  1.42 (`docker.go:120-124`, since named-volume pruning requires it); the TS port skips
-  the version check and always passes `--all` because every currently supported Docker
-  version is far past 1.42. On the Podman fallback, `--all` is omitted instead: no
-  released Podman `volume prune` (checked v4.3 through the current v5.7) accepts that
-  flag, and Podman already prunes every unused volume by default, so dropping it there
-  is lossless. Podman itself is a TS-only fallback (Go never shells out to a
-  `docker`/`podman` binary), so this has no Go-parity implication either way.
+- Volume prune gates `--all` on the Docker daemon's API version (`legacy-container-cli.ts`'s
+  `legacyDockerSupportsVolumePruneAllFlag`, checked via `docker version --format
+'{{.Server.APIVersion}}'`), matching Go's `Docker.ClientVersion() >= "1.42"` check
+  (`docker.go:126-133`) exactly. This isn't cosmetic: Docker CLI's own `--all` flag on
+  `volume prune` is annotated `version: "1.42"` and enforced by Cobra's `Args` validator
+  _before_ pruning runs, so sending it unconditionally on a pre-1.42 daemon hard-fails the
+  whole call instead of just pruning a narrower set. On the Podman fallback, `--all` is
+  omitted unconditionally instead: no released Podman `volume prune` (checked v4.3 through
+  the current v5.7) accepts that flag, and Podman already prunes every unused volume by
+  default, so dropping it there is lossless. Podman itself is a TS-only fallback (Go never
+  shells out to a `docker`/`podman` binary), so this has no Go-parity implication either way.
 - Containers are stopped concurrently (`Effect.all(..., { concurrency: "unbounded" })`),
   mirroring Go's `WaitAll` goroutine fan-out. Every container's failure is checked before
   failing the command (rather than stopping at the first failure), matching Go's

@@ -1,4 +1,4 @@
-import { Data, Effect } from "effect";
+import { Data, Effect, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
@@ -100,3 +100,70 @@ export const containerCliExitCode = (
           ),
       ),
     );
+
+function collectDockerCliText(stream: Stream.Stream<Uint8Array, unknown>) {
+  const decoder = new TextDecoder();
+  return Stream.runFold(
+    stream,
+    () => "",
+    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
+  ).pipe(Effect.map((text) => text + decoder.decode()));
+}
+
+/**
+ * Mirrors Go's `versions.GreaterThanOrEqualTo` (`docker/api/types/versions`,
+ * used by `apps/cli-go/internal/utils/docker.go:128`): splits each version on
+ * `.` and compares the parts numerically, component by component — not a
+ * naive string/float compare, which would misorder e.g. `"1.9"` vs `"1.10"`.
+ */
+function isDockerApiVersionAtLeast(version: string, minVersion: string): boolean {
+  const parts = version.split(".").map((part) => Number.parseInt(part, 10));
+  const minParts = minVersion.split(".").map((part) => Number.parseInt(part, 10));
+  for (let index = 0; index < Math.max(parts.length, minParts.length); index++) {
+    const part = parts[index] ?? 0;
+    const minPart = minParts[index] ?? 0;
+    if (part !== minPart) return part > minPart;
+  }
+  return true;
+}
+
+/**
+ * Docker CLI's own `volume prune --all` flag is annotated `version: "1.42"`
+ * (vendored `docker/cli@v28.5.2` `cli/command/volume/prune.go:53`) and
+ * enforced by Cobra's `Args` validator *before* `RunE` runs
+ * (`cmd/docker/docker.go:659-660`): against a daemon with a lower negotiated
+ * API version, `docker volume prune --all ...` exits nonzero without pruning
+ * anything at all, rather than degrading gracefully. Go avoids ever hitting
+ * that by gating the equivalent `all=true` filter on
+ * `Docker.ClientVersion() >= "1.42"` (`docker.go:126-133`); there is no
+ * persistent Engine API client here to ask, so this asks the `docker` CLI
+ * itself via `docker version`.
+ *
+ * Deliberately does not fall back to Podman like {@link containerCliExitCode}
+ * does: Podman's `volume prune` never has an `--all` flag to gate in the
+ * first place (callers already omit it from their Podman argv
+ * unconditionally), so this check is meaningless on that path. Resolves to
+ * `false` (omit `--all`, matching how a pre-1.42 daemon's own `volume prune`
+ * already prunes every unused volume without it) whenever `docker` can't be
+ * spawned, its `version` call fails, or the reported version can't be read —
+ * the side that can never turn into a hard failure of the prune call itself.
+ */
+export const legacyDockerSupportsVolumePruneAllFlag = (spawner: Spawner) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawner.spawn(
+        ChildProcess.make("docker", ["version", "--format", "{{.Server.APIVersion}}"], {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+        }),
+      );
+      const [exitCode, stdout] = yield* Effect.all(
+        [child.exitCode.pipe(Effect.map(Number)), collectDockerCliText(child.stdout)],
+        { concurrency: "unbounded" },
+      );
+      if (exitCode !== 0) return false;
+      const version = stdout.trim();
+      return version.length > 0 && isDockerApiVersionAtLeast(version, "1.42");
+    }),
+  ).pipe(Effect.orElseSucceed(() => false));

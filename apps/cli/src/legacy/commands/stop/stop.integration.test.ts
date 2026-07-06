@@ -141,18 +141,25 @@ function mockRoutedContainerCliSpawner(
   };
 }
 
-/** Default happy-path router: `ps` lists one container, everything else succeeds empty. */
+/**
+ * Default happy-path router: `ps` lists one container, `docker version` reports
+ * an API version comfortably at/above the `volume prune --all` gate (1.42, see
+ * `legacyDockerSupportsVolumePruneAllFlag`), everything else succeeds empty.
+ */
 function defaultRoute(
   opts: {
     readonly containerIds?: ReadonlyArray<string>;
     readonly volumeNames?: ReadonlyArray<string>;
+    readonly dockerApiVersion?: string;
   } = {},
 ) {
   const containerIds = opts.containerIds ?? ["c1"];
   const volumeNames = opts.volumeNames ?? [];
+  const dockerApiVersion = opts.dockerApiVersion ?? "1.45";
   return (args: ReadonlyArray<string>): RouteResult => {
     if (args[0] === "ps") return { stdout: containerIds };
     if (args[0] === "volume" && args[1] === "ls") return { stdout: volumeNames };
+    if (args[0] === "version") return { stdout: [dockerApiVersion] };
     return { exitCode: 0 };
   };
 }
@@ -434,6 +441,54 @@ describe("legacy stop integration", () => {
       yield* legacyStop(flags({ noBackup: true }));
       const volumePrune = child.spawned.find(
         (s) => s.args[0] === "volume" && s.args[1] === "prune",
+      );
+      expect(volumePrune?.args).toEqual([
+        "volume",
+        "prune",
+        "--force",
+        "--all",
+        "--filter",
+        "label=com.supabase.cli.project=demo",
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "omits --all from docker's volume prune on a pre-1.42 API host, matching Go's gate",
+    () => {
+      // Docker CLI's own `volume prune --all` flag requires API >= 1.42 and
+      // hard-fails (pruning nothing) on an older daemon — Go avoids ever
+      // sending it by checking `Docker.ClientVersion() >= "1.42"`
+      // (docker.go:126-133). This mirrors that gate via `docker version`.
+      const { layer, child } = setup({
+        configuredProjectId: "demo",
+        route: defaultRoute({ dockerApiVersion: "1.41" }),
+      });
+      return Effect.gen(function* () {
+        yield* legacyStop(flags({ noBackup: true }));
+        const volumePrune = child.spawned.find(
+          (s) => s.command === "docker" && s.args[0] === "volume" && s.args[1] === "prune",
+        );
+        expect(volumePrune?.args).toEqual([
+          "volume",
+          "prune",
+          "--force",
+          "--filter",
+          "label=com.supabase.cli.project=demo",
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("includes --all in docker's volume prune when the API is exactly 1.42", () => {
+    const { layer, child } = setup({
+      configuredProjectId: "demo",
+      route: defaultRoute({ dockerApiVersion: "1.42" }),
+    });
+    return Effect.gen(function* () {
+      yield* legacyStop(flags({ noBackup: true }));
+      const volumePrune = child.spawned.find(
+        (s) => s.command === "docker" && s.args[0] === "volume" && s.args[1] === "prune",
       );
       expect(volumePrune?.args).toEqual([
         "volume",

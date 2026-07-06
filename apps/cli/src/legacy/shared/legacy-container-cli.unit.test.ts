@@ -5,6 +5,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   containerCliExitCode,
   legacyDescribeContainerCliFailure,
+  legacyDockerSupportsVolumePruneAllFlag,
   spawnContainerCli,
 } from "./legacy-container-cli.ts";
 
@@ -13,6 +14,7 @@ function mockSpawner(
     readonly dockerMissing?: boolean;
     readonly bothMissing?: boolean;
     readonly exitCode?: number;
+    readonly stdout?: string;
   } = {},
 ) {
   const spawned: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
@@ -39,7 +41,10 @@ function mockSpawner(
 
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
-        stdout: Stream.empty,
+        stdout:
+          opts.stdout !== undefined
+            ? Stream.fromIterable([new TextEncoder().encode(opts.stdout)])
+            : Stream.empty,
         stderr: Stream.empty,
         all: Stream.empty,
         exitCode: Deferred.await(exitDeferred),
@@ -117,6 +122,77 @@ describe("containerCliExitCode", () => {
         expect(legacyDescribeContainerCliFailure(error)).toBe(
           "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH",
         );
+      }),
+    );
+  });
+});
+
+describe("legacyDockerSupportsVolumePruneAllFlag", () => {
+  it.live("returns true when the daemon reports an API version at or above 1.42", () => {
+    const mock = mockSpawner({ stdout: "1.42" });
+    return legacyDockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
+      Effect.map((supportsAll) => {
+        expect(supportsAll).toBe(true);
+        expect(mock.spawned).toEqual([
+          { command: "docker", args: ["version", "--format", "{{.Server.APIVersion}}"] },
+        ]);
+      }),
+    );
+  });
+
+  it.live("returns true for a version comfortably above 1.42", () => {
+    const mock = mockSpawner({ stdout: "1.51" });
+    return legacyDockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
+      Effect.map((supportsAll) => {
+        expect(supportsAll).toBe(true);
+      }),
+    );
+  });
+
+  it.live("returns false when the daemon reports an API version below 1.42", () => {
+    const mock = mockSpawner({ stdout: "1.41" });
+    return legacyDockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
+      Effect.map((supportsAll) => {
+        expect(supportsAll).toBe(false);
+      }),
+    );
+  });
+
+  it.live("compares version components numerically, not lexicographically", () => {
+    // A naive string compare would misorder "1.9" as greater than "1.42" — this
+    // guards the numeric, component-by-component comparison instead.
+    const mock = mockSpawner({ stdout: "1.9" });
+    return legacyDockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
+      Effect.map((supportsAll) => {
+        expect(supportsAll).toBe(false);
+      }),
+    );
+  });
+
+  it.live("returns false when the version command exits non-zero", () => {
+    const mock = mockSpawner({ exitCode: 1, stdout: "1.51" });
+    return legacyDockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
+      Effect.map((supportsAll) => {
+        expect(supportsAll).toBe(false);
+      }),
+    );
+  });
+
+  it.live("returns false when the reported version is empty", () => {
+    const mock = mockSpawner({ stdout: "" });
+    return legacyDockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
+      Effect.map((supportsAll) => {
+        expect(supportsAll).toBe(false);
+      }),
+    );
+  });
+
+  it.live("returns false without falling back to podman when docker cannot be spawned", () => {
+    const mock = mockSpawner({ dockerMissing: true });
+    return legacyDockerSupportsVolumePruneAllFlag(mock.spawner).pipe(
+      Effect.map((supportsAll) => {
+        expect(supportsAll).toBe(false);
+        expect(mock.spawned.map((entry) => entry.command)).toEqual(["docker"]);
       }),
     );
   });

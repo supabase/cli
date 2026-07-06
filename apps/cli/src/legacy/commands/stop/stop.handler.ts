@@ -9,6 +9,7 @@ import { legacyAqua } from "../../shared/legacy-colors.ts";
 import {
   containerCliExitCode,
   legacyDescribeContainerCliFailure,
+  legacyDockerSupportsVolumePruneAllFlag,
 } from "../../shared/legacy-container-cli.ts";
 import {
   legacyCliProjectFilterValue,
@@ -176,8 +177,23 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
 
       // Go stops containers concurrently via `WaitAll`, joining every failure
       // rather than short-circuiting on the first one (`docker.go:96-146`).
+      //
+      // `stdout`/`stderr: "ignore"` on every exit-code-only call below: none of
+      // these read the child's own output, and the default `"pipe"` stdio
+      // otherwise leaves an OS pipe unread — once `docker`/`podman` write
+      // enough to it (e.g. `container prune`'s "Deleted Containers" ID list on
+      // a host with many stale containers, most likely under `stop --all`),
+      // the child blocks on write() and `stop` hangs. Matches the existing
+      // `stdio: "ignore"` precedent for the same "exit-code-only" shape in
+      // `legacy-pgdelta.seam.layer.ts`.
       const stopResults = yield* Effect.all(
-        containerIds.map((id) => containerCliExitCode(spawner, ["stop", id]).pipe(Effect.result)),
+        containerIds.map((id) =>
+          containerCliExitCode(spawner, ["stop", id], {
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+          }).pipe(Effect.result),
+        ),
         { concurrency: "unbounded" },
       );
       const failedStop = stopResults.find(
@@ -195,13 +211,11 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
         );
       }
 
-      const containerPruneExitCode = yield* containerCliExitCode(spawner, [
-        "container",
-        "prune",
-        "--force",
-        "--filter",
-        `label=${filterValue}`,
-      ]).pipe(
+      const containerPruneExitCode = yield* containerCliExitCode(
+        spawner,
+        ["container", "prune", "--force", "--filter", `label=${filterValue}`],
+        { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+      ).pipe(
         Effect.mapError(
           (cause) =>
             new LegacyStopContainerPruneError({
@@ -216,22 +230,38 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
       }
 
       if (deleteVolumes) {
-        // Go gates the `--all` filter arg on Docker engine >= 1.42 (`docker.go:120-124`).
-        // All currently supported Docker versions are well past 1.42, so the TS port
-        // always passes `--all` — documented divergence, see SIDE_EFFECTS.md Notes.
+        // Go gates the `--all` filter arg on Docker API >= 1.42
+        // (`docker.go:126-133`, `Docker.ClientVersion() >= "1.42"`): Docker
+        // CLI's own `volume prune --all` flag is annotated `version: "1.42"`
+        // (`docker/cli@v28.5.2` `cli/command/volume/prune.go:53`) and enforced
+        // by Cobra's `Args` validator *before* `RunE` runs
+        // (`cmd/docker/docker.go:659-660`) — on an older daemon, passing
+        // `--all` unconditionally would hard-fail this whole call and prune
+        // nothing, not just prune a narrower set. There's no persistent
+        // Engine API client here to ask the negotiated version directly (Go
+        // talks to the Docker Engine API, never a `docker` binary), so
+        // {@link legacyDockerSupportsVolumePruneAllFlag} asks the `docker` CLI
+        // itself via `docker version` and mirrors Go's gate exactly.
         //
         // Podman is a Docker-CLI-compatible fallback this port adds, not something
-        // Go itself has (Go talks to the Docker Engine API directly, never a
-        // `docker`/`podman` binary), so there's no Go behavior to match here — but
+        // Go itself has, so there's no Go behavior to match on that path — but
         // `--all` isn't a real flag on any released Podman `volume prune` (only
         // `--filter`/`--force`/`--help`, checked v4.3 through the current v5.7;
         // `--all` only exists in unreleased dev docs), so it hard-fails on a real
         // Podman-only host. Podman already prunes every unused volume by default,
         // so omitting `--all` on the Podman fallback is a lossless fix.
+        const dockerSupportsAll = yield* legacyDockerSupportsVolumePruneAllFlag(spawner);
         const volumePruneExitCode = yield* containerCliExitCode(
           spawner,
-          ["volume", "prune", "--force", "--all", "--filter", `label=${filterValue}`],
-          undefined,
+          [
+            "volume",
+            "prune",
+            "--force",
+            ...(dockerSupportsAll ? ["--all"] : []),
+            "--filter",
+            `label=${filterValue}`,
+          ],
+          { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
           ["volume", "prune", "--force", "--filter", `label=${filterValue}`],
         ).pipe(
           Effect.mapError(
@@ -248,13 +278,11 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
         }
       }
 
-      const networkPruneExitCode = yield* containerCliExitCode(spawner, [
-        "network",
-        "prune",
-        "--force",
-        "--filter",
-        `label=${filterValue}`,
-      ]).pipe(
+      const networkPruneExitCode = yield* containerCliExitCode(
+        spawner,
+        ["network", "prune", "--force", "--filter", `label=${filterValue}`],
+        { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+      ).pipe(
         Effect.mapError(
           (cause) =>
             new LegacyStopNetworkPruneError({
