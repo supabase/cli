@@ -231,15 +231,38 @@ export interface LegacyStatusState {
 }
 
 /**
- * Port of the non-override-dependent half of Go's `(*CustomName).toValues(exclude...)`
- * (`internal/status/status.go:50-97`): resolves local config values (URLs, keys —
- * can throw, see {@link legacyResolveLocalConfigValues}) and the per-service gating
- * booleans. `excluded` matches each gated service by its container id
- * (`legacyStatusContainerIds`) OR its default Docker image short name
- * (`legacyShortContainerImageName` above) — the 6 relevant Go config fields
- * (`Api.KongImage`, `Api.Image`, `Studio.Image`, `Auth.Image`, `Inbucket.Image`,
- * `Storage.Image`, `EdgeRuntime.Image`) all carry `toml:"-"`, so they're never
- * user-overridable and the default image is always the one to check.
+ * The config-load/`Validate`-equivalent half of {@link LegacyStatusState} —
+ * everything that can THROW, and none of it depends on `excluded`/
+ * `containerIds`. Split out so `status.handler.ts` can resolve and validate
+ * this before any Docker call, matching Go's `flags.LoadConfig` (config load
+ * + `Validate`, `internal/utils/flags/config_path.go:12` ->
+ * `pkg/config/config.go:882`) running entirely before `assertContainerHealthy`/
+ * container listing (`internal/status/status.go:101-116`) — a bad
+ * `auth.jwt_secret` or malformed `SUPABASE_*_PORT`/`SUPABASE_*_ENABLED`
+ * override must fail here, not be masked by a Docker/DB error when the local
+ * stack happens to be unavailable.
+ */
+export interface LegacyStatusLocalState {
+  readonly config: ProjectConfig;
+  readonly local: LegacyLocalConfigValues;
+  readonly apiEnabled: boolean;
+  readonly studioSectionEnabled: boolean;
+  readonly authSectionEnabled: boolean;
+  readonly inbucketSectionEnabled: boolean;
+  readonly storageSectionEnabled: boolean;
+  readonly edgeRuntimeEnabled: boolean;
+  readonly storageS3ProtocolEnabled: boolean;
+}
+
+/**
+ * Port of the throwing, non-Docker-dependent half of Go's
+ * `(*CustomName).toValues(exclude...)` (`internal/status/status.go:50-97`):
+ * resolves local config values (URLs, keys — can throw, see
+ * {@link legacyResolveLocalConfigValues}) and the per-service `.enabled` gates,
+ * with NO reference to `excluded`/`containerIds` — see {@link legacyGateStatusState}
+ * for the Docker-dependent, non-throwing half this composes with (in
+ * `status.handler.ts`, or via {@link legacyStatusValues} for callers that
+ * don't need to run validation before Docker calls).
  *
  * Each `.enabled` gate is read through {@link legacyEnvOverrideBool}, not the
  * raw decoded `config.<section>.enabled`, because Go's `status.toValues()`
@@ -259,16 +282,13 @@ export interface LegacyStatusState {
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
  * or its first key is unsupported — see {@link legacyGenerateAsymmetricGoJwt}.
  */
-export function legacyResolveStatusState(
+export function legacyResolveStatusLocalState(
   config: ProjectConfig,
-  containerIds: LegacyStatusContainerIds,
   hostname: string,
-  excluded: ReadonlyArray<string>,
   workdir: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
-): LegacyStatusState {
+): LegacyStatusLocalState {
   const local = legacyResolveLocalConfigValues(config, hostname, workdir, projectEnvValues);
-  const isExcluded = (id: string) => excluded.includes(id);
 
   const apiEnabled = legacyEnvOverrideBool(
     "SUPABASE_API_ENABLED",
@@ -313,6 +333,41 @@ export function legacyResolveStatusState(
     projectEnvValues,
   );
 
+  return {
+    config,
+    local,
+    apiEnabled,
+    studioSectionEnabled,
+    authSectionEnabled,
+    inbucketSectionEnabled,
+    storageSectionEnabled,
+    edgeRuntimeEnabled,
+    storageS3ProtocolEnabled,
+  };
+}
+
+/**
+ * The Docker-dependent, non-throwing half of Go's `toValues()`: applies
+ * `excluded` (matching each gated service by its container id
+ * (`legacyStatusContainerIds`) OR its default Docker image short name
+ * (`legacyShortContainerImageName` above) — the 6 relevant Go config fields
+ * (`Api.KongImage`, `Api.Image`, `Studio.Image`, `Auth.Image`, `Inbucket.Image`,
+ * `Storage.Image`, `EdgeRuntime.Image`) all carry `toml:"-"`, so they're never
+ * user-overridable and the default image is always the one to check) on top of
+ * an already-resolved {@link LegacyStatusLocalState}. Pure: every throwing
+ * concern already ran in {@link legacyResolveStatusLocalState}.
+ */
+export function legacyGateStatusState(
+  localState: LegacyStatusLocalState,
+  containerIds: LegacyStatusContainerIds,
+  excluded: ReadonlyArray<string>,
+): LegacyStatusState {
+  const { config, local } = localState;
+  const { apiEnabled, studioSectionEnabled, authSectionEnabled } = localState;
+  const { inbucketSectionEnabled, storageSectionEnabled } = localState;
+  const { edgeRuntimeEnabled, storageS3ProtocolEnabled } = localState;
+  const isExcluded = (id: string) => excluded.includes(id);
+
   const kongEnabled = apiEnabled && !isExcluded(containerIds.kong) && !isExcluded(KONG_IMAGE_NAME);
   const postgrestEnabled =
     kongEnabled && !isExcluded(containerIds.rest) && !isExcluded(POSTGREST_IMAGE_NAME);
@@ -346,7 +401,7 @@ export function legacyResolveStatusState(
 /**
  * Applies `--override-name` remapping to an already-resolved {@link LegacyStatusState}.
  * Pure and non-throwing — every failure mode of `toValues()` lives in
- * {@link legacyResolveStatusState}, which runs once per `status` invocation.
+ * {@link legacyResolveStatusLocalState}, which runs once per `status` invocation.
  */
 export function legacyStatusValuesFromState(
   state: LegacyStatusState,
@@ -400,11 +455,14 @@ export function legacyStatusValuesFromState(
 }
 
 /**
- * Convenience wrapper combining {@link legacyResolveStatusState} +
- * {@link legacyStatusValuesFromState} in one call — used directly by tests that
- * only need a single override map. `status.handler.ts` calls the two halves
- * separately so it can resolve state once and reuse it for both the real and
- * pretty-mode (empty-override) value maps without recomputing `local`.
+ * Convenience wrapper combining {@link legacyResolveStatusLocalState} +
+ * {@link legacyGateStatusState} + {@link legacyStatusValuesFromState} in one
+ * call — used directly by tests that only need a single override map.
+ * `status.handler.ts` calls the three separately instead, so it can resolve +
+ * validate `localState` before any Docker call (see
+ * {@link legacyResolveStatusLocalState}'s doc comment), and reuse the gated
+ * `state` for both the real and pretty-mode (empty-override) value maps
+ * without recomputing `local`.
  */
 export function legacyStatusValues(
   config: ProjectConfig,
@@ -415,13 +473,7 @@ export function legacyStatusValues(
   workdir: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
 ): LegacyStatusValuesResult {
-  const state = legacyResolveStatusState(
-    config,
-    containerIds,
-    hostname,
-    excluded,
-    workdir,
-    projectEnvValues,
-  );
+  const localState = legacyResolveStatusLocalState(config, hostname, workdir, projectEnvValues);
+  const state = legacyGateStatusState(localState, containerIds, excluded);
   return legacyStatusValuesFromState(state, overrides);
 }

@@ -500,8 +500,8 @@ describe("legacyStatusValues", () => {
     // AFTER Viper's `SetEnvPrefix("SUPABASE")` + `AutomaticEnv()` binding
     // (`pkg/config/config.go:580-586`) has already applied any
     // `SUPABASE_<SECTION>_ENABLED` override — generically, not just for auth.
-    // `legacyResolveStatusState` must read the same post-override value for
-    // every gate, not the raw decoded `config.<section>.enabled`.
+    // `legacyResolveStatusLocalState` must read the same post-override value
+    // for every gate, not the raw decoded `config.<section>.enabled`.
 
     it("includes API_URL/REST_URL when SUPABASE_API_ENABLED overrides a disabled api.enabled", () => {
       const config = baseConfig({ api: { enabled: false } });

@@ -309,7 +309,9 @@ describe("legacy status integration", () => {
 
   it.live("fails when auth.jwt_secret is configured but shorter than 16 characters", () => {
     // Go's Config.Validate rejects this at config-load time
-    // (pkg/config/apikeys.go:45-47), before any command can render output.
+    // (pkg/config/apikeys.go:45-47), entirely before assertContainerHealthy/
+    // container listing (internal/status/status.go:101-116) — so no Docker
+    // call happens, same as the malformed config.toml case above.
     const { layer, child } = setup({
       configContents: 'project_id = "demo"\n[auth]\njwt_secret = "too-short"\n',
     });
@@ -322,7 +324,7 @@ describe("legacy status integration", () => {
           "Invalid config for auth.jwt_secret. Must be at least 16 characters",
         );
       }
-      expect(child.spawned.some((s) => s.args[0] === "ps")).toBe(true);
+      expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 

@@ -39,7 +39,8 @@ import {
 import { legacyRenderStatusPretty } from "./status.pretty.ts";
 import {
   LEGACY_STATUS_FIELDS,
-  legacyResolveStatusState,
+  legacyGateStatusState,
+  legacyResolveStatusLocalState,
   legacyStatusContainerIds,
   legacyStatusValuesFromState,
 } from "./status.values.ts";
@@ -168,7 +169,29 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     );
     const config = loaded?.config ?? Schema.decodeUnknownSync(ProjectConfigSchema)({});
 
-    // 3. status has no --project-id flag; resolution is always env → toml →
+    // 3. Resolve + VALIDATE config-derived state before any Docker call —
+    // matching Go's `flags.LoadConfig` (config load + `Validate`,
+    // `internal/utils/flags/config_path.go:12` -> `pkg/config/config.go:882`),
+    // which runs entirely before `assertContainerHealthy`/container listing
+    // (`internal/status/status.go:101-116`). `legacyResolveStatusLocalState`
+    // can throw `LegacyInvalidJwtSecretError` (a short `auth.jwt_secret`),
+    // `LegacyInvalidPortEnvOverrideError`/`LegacyInvalidBoolEnvOverrideError`
+    // (a malformed `SUPABASE_*_PORT`/`SUPABASE_*_ENABLED` override), or a
+    // signing-keys-file read/parse error — all of these must fail here, not
+    // be masked by a Docker/DB error when the local stack happens to be
+    // unavailable. `hostname` has no Docker dependency either, so it's
+    // resolved here rather than later.
+    const hostname = legacyGetHostname();
+    const localState = yield* Effect.try({
+      try: () =>
+        legacyResolveStatusLocalState(config, hostname, cliConfig.workdir, projectEnvValues),
+      catch: (cause) =>
+        new LegacyStatusInvalidConfigError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+
+    // 4. status has no --project-id flag; resolution is always env → toml →
     // workdir basename, then sanitized to match the singleton Go's
     // `Config.Validate` produces once at config-load time
     // (`pkg/config/config.go:938-944`) — every reader, including the Docker
@@ -184,7 +207,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     );
     const dbContainerId = localDbContainerId(projectId);
 
-    // 4. Health check, skipped entirely with --ignore-health-check (status.go:104-108).
+    // 5. Health check, skipped entirely with --ignore-health-check (status.go:104-108).
     // Go's `assertContainerHealthy` never special-cases "not found" — an absent
     // container fails `ContainerInspect` itself, which surfaces as the generic
     // inspect error (status.go:147-150), not the "not running" branch (which
@@ -211,7 +234,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       }
     }
 
-    // 5. List running containers, diff against the 13 expected service ids
+    // 6. List running containers, diff against the 13 expected service ids
     // (status.go:125-145), and report any that are stopped.
     const filterValue = legacyCliProjectFilterValue(projectId);
     const runningNames = yield* legacyListContainersByLabel(spawner, {
@@ -226,39 +249,16 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       yield* output.raw(`Stopped services: ${formatGoStringSlice(stopped)}\n`, "stderr");
     }
 
-    // 6. Merge health-derived exclusions with the user's --exclude flag.
+    // 7. Merge health-derived exclusions with the user's --exclude flag.
     const excluded = [...stopped, ...flags.exclude];
 
-    // 7. Build the value map (Go's toValues()).
+    // 8. Apply the exclude-based gating on top of the already-validated
+    // `localState` (Go's `toValues()` exclude filtering, `status.go:55-61`).
+    // Pure/non-throwing — see `legacyGateStatusState`'s doc comment. Reused
+    // for both the real and pretty-mode (empty-override) value maps below,
+    // matching this handler's pre-split behavior.
     const containerIds = legacyStatusContainerIds(projectId);
-    const hostname = legacyGetHostname();
-
-    // `legacyResolveStatusState` can throw `LegacyInvalidJwtSecretError` (a short
-    // `auth.jwt_secret`), `LegacyInvalidPortEnvOverrideError`/
-    // `LegacyInvalidBoolEnvOverrideError` (a malformed `SUPABASE_*_PORT`/
-    // `SUPABASE_*_ENABLED` override), or a signing-keys-file read/parse error —
-    // Go's `Config.Load`/`Validate` reject all of these at config-load time,
-    // before this command would ever render anything, so they're surfaced
-    // here as a hard failure rather than silently falling back to a default/
-    // HMAC-signed key or a `NaN`-laced URL. Resolved once and reused for both
-    // the real and pretty-mode (empty-override) value maps below, so a
-    // configured `signing_keys_path` is read and the anon/service_role JWTs
-    // signed only once per invocation, not twice.
-    const state = yield* Effect.try({
-      try: () =>
-        legacyResolveStatusState(
-          config,
-          containerIds,
-          hostname,
-          excluded,
-          cliConfig.workdir,
-          projectEnvValues,
-        ),
-      catch: (cause) =>
-        new LegacyStatusInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const state = legacyGateStatusState(localState, containerIds, excluded);
     const { values } = legacyStatusValuesFromState(state, overrides);
 
     // Go's `PrettyPrint` (`status.go:236-243`) unmarshals a FRESH, empty
@@ -277,7 +277,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       yield* output.raw(legacyRenderStatusPretty(pretty.values, pretty.names));
     });
 
-    // 8. Output branching: Go's -o (env|json|toml|yaml|pretty) is a complete
+    // 9. Output branching: Go's -o (env|json|toml|yaml|pretty) is a complete
     // format choice and takes priority over --output-format (root.ts:119-121,
     // matching functions/list's list.handler.ts:115-118) — only an ABSENT -o
     // defers to --output-format for json/stream-json.
