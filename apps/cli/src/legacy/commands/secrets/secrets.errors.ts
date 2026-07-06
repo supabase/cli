@@ -82,9 +82,3 @@ export class LegacySecretsUnsetCancelledError extends Data.TaggedError(
 )<{
   readonly message: string;
 }> {}
-
-export class LegacySecretsConfigParseError extends Data.TaggedError(
-  "LegacySecretsConfigParseError",
-)<{
-  readonly message: string;
-}> {}

@@ -16,7 +16,22 @@ import {
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { legacySecretsSet } from "./set.handler.ts";
+
+function mockLegacyDebugLoggerTracked() {
+  const messages: Array<string> = [];
+  return {
+    messages,
+    layer: Layer.succeed(LegacyDebugLogger, {
+      debug: (message) =>
+        Effect.sync(() => {
+          messages.push(message);
+        }),
+      http: () => Effect.void,
+    }),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -40,6 +55,7 @@ function setup(opts: SetupOpts = {}) {
     network: opts.network,
   });
   const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const debugLogger = mockLegacyDebugLoggerTracked();
   const layer = Layer.mergeAll(
     buildLegacyTestRuntime({
       out,
@@ -49,8 +65,9 @@ function setup(opts: SetupOpts = {}) {
     }),
     mockRuntimeInfo({ cwd: tempRoot.current }),
     processEnvLayer(opts.env ?? {}),
+    debugLogger.layer,
   );
-  return { layer, out, api };
+  return { layer, out, api, debugLogger };
 }
 
 function writeConfig(content: string) {
@@ -317,23 +334,73 @@ FOO = "literal-foo"
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("fails with LegacySecretsConfigParseError when config.toml is malformed", () => {
-    writeConfig("this is not valid = = toml [[[\n");
-    const { layer } = setup();
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacySecretsSet({
+  it.live(
+    "tolerates a malformed config.toml, logs it to the debug logger, and still sets CLI-arg secrets",
+    () => {
+      writeConfig("this is not valid = = toml [[[\n");
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
           secrets: ["FOO=bar"],
-        }),
+        });
+        expect(api.requests).toHaveLength(1);
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([{ name: "FOO", value: "bar" }]);
+        expect(debugLogger.messages).toHaveLength(1);
+        expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "does not echo a literal secret value from config.toml into the debug log on a syntax error",
+    () => {
+      // `smol-toml`'s `TomlError` embeds a source codeblock (the offending line ±1)
+      // in its message; the planted secret sits directly above the syntax error so
+      // it would land inside that codeblock if the handler logged the raw message.
+      writeConfig(
+        [
+          "[edge_runtime.secrets]",
+          'PLANTED_SECRET = "sk_live_TOTALLY_REAL_SECRET_VALUE"',
+          "BROKEN = = invalid[[[",
+        ].join("\n"),
       );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySecretsConfigParseError");
-      }
-    }).pipe(Effect.provide(layer));
-  });
+      const { layer, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: ["FOO=bar"],
+        });
+        expect(debugLogger.messages).toHaveLength(1);
+        expect(debugLogger.messages[0]).not.toContain("PLANTED_SECRET");
+        expect(debugLogger.messages[0]).not.toContain("sk_live_TOTALLY_REAL_SECRET_VALUE");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "still fails with LegacySecretsNoArgumentsError when a malformed config leaves zero secret sources",
+    () => {
+      writeConfig("this is not valid = = toml [[[\n");
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySecretsSet({
+            projectRef: Option.none(),
+            envFile: Option.none(),
+            secrets: [],
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("LegacySecretsNoArgumentsError");
+        }
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("fails with LegacySecretsSetNetworkError on transport failure", () => {
     const { layer } = setup({ network: "fail" });

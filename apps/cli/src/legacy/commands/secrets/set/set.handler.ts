@@ -4,6 +4,7 @@ import { Effect, FileSystem, Option, Path, Redacted } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -11,7 +12,6 @@ import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts"
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import {
   LegacyInvalidSecretPairError,
-  LegacySecretsConfigParseError,
   LegacySecretsEnvFileOpenError,
   LegacySecretsEnvFileParseError,
   LegacySecretsNoArgumentsError,
@@ -33,6 +33,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
   const resolver = yield* LegacyProjectRefResolver;
+  const debugLogger = yield* LegacyDebugLogger;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
@@ -53,14 +54,27 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     // literals stay as plain strings, so `Redacted.isRedacted(...)` is the
     // equivalent guard.
     const merged = new Map<string, string>();
+    // Go swallows a malformed config.toml here (`internal/secrets/set/set.go:20-24`:
+    // `fmt.Fprintln(utils.GetDebugLogger(), err)`) and proceeds with an empty
+    // `EdgeRuntime.Secrets` — env-file and positional-arg secrets still work.
+    // `secrets set` has no `--linked`/`--local`/`--db-url` flag, so (unlike most
+    // commands) the root `PreRun` never loads the config first either; this is
+    // the only load, and it must not be fatal.
     const loaded = yield* loadProjectConfig(runtimeInfo.cwd).pipe(
-      Effect.catchTag("ProjectConfigParseError", (cause) =>
-        Effect.fail(
-          new LegacySecretsConfigParseError({
-            message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
-          }),
-        ),
-      ),
+      Effect.catchTag("ProjectConfigParseError", (cause) => {
+        // `smol-toml`'s `TomlError` (and some schema-decode errors) embed a
+        // source codeblock after a blank-line separator — literal file content,
+        // which for this file's `[edge_runtime.secrets]` section can include
+        // real secret values. Go's equivalent log line (`DecodeError.Error()`)
+        // is a short, content-free message; only its unused `.String()` method
+        // includes a snippet, and Go's `set.go:20-24` never calls it. Truncate
+        // before the separator so a syntax error next to a secret line can't
+        // echo that secret to `--debug` output.
+        const shortMessage = String(cause.cause).split("\n\n")[0];
+        return debugLogger
+          .debug(`failed to parse supabase/config.toml: ${shortMessage}`)
+          .pipe(Effect.as(null));
+      }),
     );
     if (loaded !== null) {
       const projectEnv = yield* loadProjectEnvironment({
