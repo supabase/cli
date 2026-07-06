@@ -1053,6 +1053,28 @@ enabled = true
     }
   });
 
+  test("resolves env() on a lowercase-named variable, matching Go's case-agnostic matcher", async () => {
+    // Go's `LoadEnvHook` (`apps/cli-go/pkg/config/decode_hooks.go:11`) is
+    // `^env\((.*)\)$` — it doesn't restrict the captured name's case, so
+    // `project_id = "env(project_id)"` resolves against a same-case env var
+    // in the Go CLI. This isn't specific to `project_id`; any string field
+    // goes through the same pre-decode walk.
+    const previous = process.env.project_id;
+    process.env.project_id = "lowercase-ref";
+    const cwd = await writeTomlProject(`project_id = "env(project_id)"\n`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.project_id).toBe("lowercase-ref");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.project_id;
+      } else {
+        process.env.project_id = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("resolves env() references inside the matching remote before merge", async () => {
     const previous = process.env.SUPABASE_REMOTE_MAX_ROWS_TEST;
     process.env.SUPABASE_REMOTE_MAX_ROWS_TEST = "777";

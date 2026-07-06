@@ -1,7 +1,13 @@
 import { Schema, SchemaAST } from "effect";
 
-export const ENV_PATTERN = "^env\\([A-Z_][A-Z0-9_]*\\)$";
-export const ENV_CAPTURE_REGEX = /^env\(([A-Z_][A-Z0-9_]*)\)$/;
+// Go's `LoadEnvHook` matcher (`apps/cli-go/pkg/config/decode_hooks.go:11`) is
+// `^env\((.*)\)$` — permissive on the captured name's case/content, and
+// reused verbatim for secrets (`secret.go:99`) and the unset-var warning
+// (`config.go:1195`). Matching that exactly (not an uppercase-only
+// restriction) so e.g. `project_id = "env(project_id)"` substitutes the same
+// way it does in the Go CLI.
+export const ENV_PATTERN = "^env\\((.*)\\)$";
+export const ENV_CAPTURE_REGEX = /^env\((.*)\)$/;
 const envRegex = new RegExp(ENV_PATTERN);
 
 export function isEnvReference(value: string): boolean {
