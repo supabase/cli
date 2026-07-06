@@ -132,6 +132,19 @@ describe("legacy db start", () => {
     });
   });
 
+  it.live("treats an empty --from-backup as a normal no-backup start", () => {
+    // Go's StartDatabase sees `len(fromBackup) == 0` and starts without a backup; an empty
+    // string must not be joined to the caller cwd and passed as a directory path.
+    const { layer, seam } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      cwd: "/caller/here",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbStart({ fromBackup: Option.some("") }).pipe(Effect.provide(layer));
+      expect(seam.startCalls).toEqual([{ fromBackup: undefined }]);
+    });
+  });
+
   it.live("proceeds with no config file (missing config is tolerated)", () => {
     const { layer, seam } = setup(tmp.current, { running: false });
     return Effect.gen(function* () {

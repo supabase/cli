@@ -428,6 +428,40 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live(
+    "prunes a stale vector bucket when the caller passes yes (db reset project-env path)",
+    () => {
+      // `db reset` resolves `yes` with the nested project `.env` and passes it into the runner
+      // with `interactive: false`; the pre-resolved `yes` must drive pruning even though no
+      // prompt is answered and the runner's own shell-only resolveYes would default to false.
+      const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: "[storage.vector]\nenabled = true\n[storage.vector.buckets.keep-vec]\n",
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          {
+            method: "POST",
+            match: VECTOR_LIST,
+            body: {
+              vectorBuckets: [{ vectorBucketName: "keep-vec" }, { vectorBucketName: "stale-vec" }],
+            },
+          },
+          { method: "POST", match: VECTOR_DELETE, body: {} },
+        ],
+        // No `confirm` and no `--yes` flag — pruning is driven solely by the passed `yes`.
+      });
+      return Effect.gen(function* () {
+        yield* legacySeedBucketsRun({
+          projectRef: "",
+          emitSummary: false,
+          interactive: false,
+          yes: true,
+        }).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Pruning vector bucket: stale-vec");
+        expect(requests.some((r) => r.url.includes(VECTOR_DELETE))).toBe(true);
+      });
+    },
+  );
+
   it.live("warns and continues when vector buckets are unavailable in the region", () => {
     const { layer, out } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.vector]\nenabled = true\n[storage.vector.buckets.documents-openai]\n",

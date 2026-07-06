@@ -64,10 +64,14 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     // project root (wrong file / not found) when `db start` runs from a subdirectory or with
     // `--workdir`. Passing an absolute path makes the child's resolution a no-op.
     const fromBackupFlag = Option.getOrUndefined(flags.fromBackup);
+    // An empty `--from-backup ""` is a normal no-backup start in Go (`len(fromBackup) == 0`),
+    // so treat it as absent rather than joining it to a directory path.
     const fromBackup =
-      fromBackupFlag === undefined || path.isAbsolute(fromBackupFlag)
-        ? fromBackupFlag
-        : path.join(runtimeInfo.cwd, fromBackupFlag);
+      fromBackupFlag === undefined || fromBackupFlag === ""
+        ? undefined
+        : path.isAbsolute(fromBackupFlag)
+          ? fromBackupFlag
+          : path.join(runtimeInfo.cwd, fromBackupFlag);
     yield* seam.startDatabase({ fromBackup });
 
     if (output.format !== "text") {

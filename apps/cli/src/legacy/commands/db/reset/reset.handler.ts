@@ -4,7 +4,7 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
-  legacyResolveExperimental,
+  legacyResolveExperimentalWithProjectEnv,
   legacyResolveYesWithProjectEnv,
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
@@ -21,7 +21,10 @@ import {
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyApplyMigrations } from "../../../shared/legacy-migration-apply.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
-import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
+import {
+  type LegacyDbConnType,
+  resolveLegacyDbTargetFlags,
+} from "../../../shared/legacy-db-target-flags.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyDropUserSchemas } from "../shared/legacy-drop-schemas.ts";
@@ -63,11 +66,17 @@ const toLogMessage = (version: string): string =>
  * `--version`/`--last` resolves a non-empty version which disables the experimental
  * delegation (a degenerate `--last 0` resolves to "" and is behaviourally identical
  * whether or not it is forwarded, so it is omitted).
+ *
+ * The target selector is forwarded from the RESOLVED `connType`, not the raw `--linked`
+ * boolean: the parent's `resolveLegacyDbTargetFlags` follows Cobra's `Changed` semantics, so
+ * `--linked=false` selects the linked/remote target (this path is remote-only). Forwarding
+ * only when `flags.linked === true` would drop the selector for `--linked=false` and let the
+ * Go child fall back to its local default — resetting the wrong database.
  */
-const buildResetArgs = (flags: LegacyDbResetFlags): Array<string> => {
+const buildResetArgs = (flags: LegacyDbResetFlags, connType: LegacyDbConnType): Array<string> => {
   const args = ["db", "reset"];
   if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
-  if (flags.linked) args.push("--linked");
+  else if (connType === "linked") args.push("--linked");
   if (flags.noSeed) args.push("--no-seed");
   for (const p of flags.sqlPaths) args.push("--sql-paths", p);
   return args;
@@ -94,17 +103,16 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
   const path = yield* Path.Path;
   const cliArgs = yield* CliArgs;
   const dnsResolver = yield* LegacyDnsResolverFlag;
-  // Env-aware (honors `SUPABASE_EXPERIMENTAL`, not just `--experimental`), matching
-  // Go's `viper.GetBool("EXPERIMENTAL")`.
-  const experimental = yield* legacyResolveExperimental;
 
   const workdir = cliConfig.workdir;
   const migrationsDir = path.join(workdir, "supabase", "migrations");
-  // Go's `ParseDatabaseConfig` runs `loadNestedEnv` before `PromptYesNo` reads
-  // `viper.GetBool("YES")`, so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
-  // the reset prompt. Resolve `yes` with that project env, as `db pull` does.
+  // Go's `ParseDatabaseConfig` runs `loadNestedEnv` (which `os.Setenv`s each project-.env key)
+  // before `reset.Run` reads `viper.GetBool("YES")` / `viper.GetBool("EXPERIMENTAL")`, so a
+  // `SUPABASE_YES` / `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` is honored. Load the
+  // project env first and resolve both gates against it, as `db pull` does for `yes`.
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+  const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {
@@ -143,6 +151,9 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       return yield* Effect.fail(
         new LegacyDbResetSeedFlagsError({
           message: "--no-seed cannot be used with --sql-paths",
+          suggestion: `Use either ${legacyAqua("--no-seed")} to skip seeding or ${legacyAqua(
+            "--sql-paths",
+          )} to override seed files, not both.`,
         }),
       );
     }
@@ -150,6 +161,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       return yield* Effect.fail(
         new LegacyDbResetSeedFlagsError({
           message: "--sql-paths requires a non-empty path or glob pattern",
+          suggestion: `Pass a non-empty file path or glob pattern to ${legacyAqua("--sql-paths")}.`,
         }),
       );
     }
@@ -256,6 +268,10 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
           projectRef: "",
           emitSummary: false,
           interactive: false,
+          // Go loads nested env before `buckets.Run`, so `SUPABASE_YES` in `supabase/.env`
+          // auto-confirms bucket/vector/analytics prune prompts. Pass the project-env-resolved
+          // `yes` (the shared runner's own `legacyResolveYes` only sees the shell env).
+          yes,
         }).pipe(
           Effect.catchTag("LegacySeedConfigLoadError", (error) =>
             output.raw(
@@ -297,13 +313,13 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     if (experimental && resolvedVersion === "") {
       const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
       if (output.format === "text") {
-        yield* proxy.exec(buildResetArgs(flags), { env });
+        yield* proxy.exec(buildResetArgs(flags, connType), { env });
       } else {
         // Machine-output mode is non-interactive: give the Go child a non-TTY stdin
         // (`stdin: "ignore"`) so it can't block on (or be answered at) Go's
         // destructive reset prompt — it takes the default `false`, matching the
         // native reset path which suppresses prompts under json/stream-json.
-        yield* proxy.execCapture(buildResetArgs(flags), { env, stdin: "ignore" });
+        yield* proxy.execCapture(buildResetArgs(flags, connType), { env, stdin: "ignore" });
         yield* output.success("Reset remote database.", {
           target: "remote",
           version: resolvedVersion,

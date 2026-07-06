@@ -124,13 +124,21 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   readonly projectRef: string;
   readonly emitSummary: boolean;
   readonly interactive?: boolean;
+  /**
+   * Pre-resolved auto-confirm value. `db reset` resolves `yes` with the nested project
+   * `.env` loaded (Go's `loadNestedEnv` runs before `buckets.Run`), so pass it through here
+   * — the internal `legacyResolveYes` only sees the shell env and would skip the
+   * bucket/vector/analytics prune that a `SUPABASE_YES` in `supabase/.env` should confirm.
+   * When omitted (the standalone `seed buckets` command), fall back to `legacyResolveYes`.
+   */
+  readonly yes?: boolean;
 }) {
   const output = yield* Output;
   const cliConfig = yield* LegacyCliConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
-  const yes = yield* legacyResolveYes;
+  const yes = opts.yes ?? (yield* legacyResolveYes);
   const { projectRef, emitSummary } = opts;
   const interactive = opts.interactive ?? true;
 

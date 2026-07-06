@@ -694,6 +694,67 @@ describe("legacy db reset", () => {
     });
   });
 
+  it.live("forwards the linked selector to the delegate even for --linked=false", () => {
+    // Cobra `Changed` semantics: `--linked=false` still selects the linked/remote target in
+    // the parent, so the delegated argv must carry `--linked` — otherwise the Go child falls
+    // back to its local default and resets the wrong database.
+    const { layer, proxy } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      experimental: true,
+      args: ["db", "reset", "--linked=false"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: false }).pipe(Effect.provide(layer));
+      expect(proxy.calls).toHaveLength(1);
+      expect(proxy.calls[0]!.args).toEqual(["db", "reset", "--linked"]);
+    });
+  });
+
+  it.live(
+    "takes the experimental delegate path via SUPABASE_EXPERIMENTAL in the project .env",
+    () => {
+      // Go loads nested env before reset.Run reads viper EXPERIMENTAL, so the versionless remote
+      // reset delegates to the Go binary rather than replaying migrations natively.
+      const previous = process.env["SUPABASE_EXPERIMENTAL"];
+      delete process.env["SUPABASE_EXPERIMENTAL"];
+      const { layer, proxy, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        files: { "supabase/.env": "SUPABASE_EXPERIMENTAL=true\n" },
+        // No experimental flag / shell env — only the project .env sets it.
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        expect(proxy.calls).toHaveLength(1);
+        // Delegated, so the native remote path never dropped schemas.
+        expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(false);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
+            else process.env["SUPABASE_EXPERIMENTAL"] = previous;
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live("attaches the Go seed-flag conflict suggestion to --no-seed + --sql-paths", () => {
+    const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset({
+        ...DEFAULT_FLAGS,
+        noSeed: true,
+        sqlPaths: ["seed.sql"],
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
+        // Go's validateDbResetSeedFlags CmdSuggestion, rendered as a Suggestion: line.
+        expect(JSON.stringify(exit.cause)).toContain("Use either");
+      }
+    });
+  });
+
   it.live("forwards --db-url and --no-seed on an experimental remote db-url reset", () => {
     const { layer, proxy } = setup(tmp.current, {
       toml: 'project_id = "test"\n',

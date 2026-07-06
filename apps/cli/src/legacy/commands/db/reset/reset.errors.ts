@@ -80,4 +80,9 @@ export class LegacyDbResetLastFlagError extends Data.TaggedError("LegacyDbResetL
  */
 export class LegacyDbResetSeedFlagsError extends Data.TaggedError("LegacyDbResetSeedFlagsError")<{
   readonly message: string;
+  /**
+   * Actionable hint rendered as a `Suggestion:` line, mirroring Go's
+   * `validateDbResetSeedFlags` `utils.CmdSuggestion` (`cmd/db.go`).
+   */
+  readonly suggestion?: string;
 }> {}
