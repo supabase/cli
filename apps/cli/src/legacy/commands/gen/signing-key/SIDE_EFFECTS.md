@@ -22,9 +22,9 @@
 
 ## Environment Variables
 
-| Variable | Purpose | Required? |
-| -------- | ------- | --------- |
-| -        | -       | -         |
+| Variable       | Purpose                                                                            | Required? |
+| -------------- | ---------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_YES` | Auto-confirms the overwrite prompt, same as `--yes` (Go's `viper.GetBool("YES")`). | No        |
 
 ## Exit Codes
 
