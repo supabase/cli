@@ -252,6 +252,25 @@ describe("legacy status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "succeeds against an unhealthy db when --ignore-health-check is set (status.go:104-108)",
+    () => {
+      // Pairs with "fails when the db container is unhealthy" below (ignoreHealthCheck: false,
+      // the default) to cover both sides of Go's `if !ignoreHealthCheck { assertContainerHealthy }`.
+      const { layer, child } = setup({
+        route: defaultRoute({
+          dbInspectStdout: JSON.stringify({ Status: "running", Health: { Status: "starting" } }),
+        }),
+      });
+      return Effect.gen(function* () {
+        yield* legacyStatus(flags({ ignoreHealthCheck: true }));
+        expect(
+          child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "inspect"),
+        ).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("reports stopped services on stderr", () => {
     const { layer, out } = setup({
       route: defaultRoute({ runningNames: ALL_RUNNING_NAMES.slice(1) }),
@@ -575,6 +594,38 @@ describe("legacy status integration", () => {
       const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
       expect(parsed.STORAGE_S3_URL).toBeUndefined();
       expect(parsed.API_URL).toBeDefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("omits every service named across multiple --exclude entries", () => {
+    const { layer, out } = setup({ goOutput: Option.some("json") });
+    return Effect.gen(function* () {
+      const authId = legacyServiceContainerIds("demo")[1]!;
+      const storageId = legacyServiceContainerIds("demo")[5]!;
+      yield* legacyStatus(flags({ exclude: [authId, storageId] }));
+      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      expect(parsed.PUBLISHABLE_KEY).toBeUndefined();
+      expect(parsed.STORAGE_S3_URL).toBeUndefined();
+      expect(parsed.API_URL).toBeDefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("merges an auto-detected stopped service with a --exclude entry (status.go:116)", () => {
+    // Go's `excluded := append(stopped, exclude...)` merges the health-derived
+    // stopped list with the user-supplied --exclude list — both must take effect
+    // together, not just whichever one the command would have applied alone.
+    const { layer, out } = setup({
+      goOutput: Option.some("json"),
+      // kong (index 0) is absent from the running set, so it's auto-detected as stopped.
+      route: defaultRoute({ runningNames: ALL_RUNNING_NAMES.slice(1) }),
+    });
+    return Effect.gen(function* () {
+      const authId = legacyServiceContainerIds("demo")[1]!;
+      yield* legacyStatus(flags({ exclude: [authId] }));
+      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      expect(parsed.API_URL).toBeUndefined(); // excluded via the auto-detected stopped kong
+      expect(parsed.PUBLISHABLE_KEY).toBeUndefined(); // excluded via --exclude
+      expect(parsed.DB_URL).toBeDefined(); // db.url is set unconditionally, before any gating
     }).pipe(Effect.provide(layer));
   });
 
