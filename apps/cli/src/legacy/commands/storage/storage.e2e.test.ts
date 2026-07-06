@@ -39,10 +39,12 @@ describe("supabase storage (legacy)", () => {
   });
 
   test("rejects passing both --local and --linked", { timeout: E2E_TIMEOUT_MS }, async () => {
-    // Go validates flag groups (mutual exclusivity) BEFORE the experimental gate
-    // in PersistentPreRunE, so this fails on the mutex even without --experimental.
+    // Go's PersistentPreRunE runs the experimental gate BEFORE cobra's
+    // ValidateFlagGroups() mutex check (cobra@v1.10.2/command.go:985,1010), so
+    // --experimental must be set here to reach the mutex check at all —
+    // otherwise the experimental-gate error wins (see the next test).
     const { exitCode, stdout, stderr } = await runSupabase(
-      ["storage", "ls", "--local", "--linked", "ss:///"],
+      ["storage", "ls", "--local", "--linked", "ss:///", "--experimental"],
       { entrypoint: "legacy", cwd: projectDir },
     );
     expect(exitCode).toBe(1);

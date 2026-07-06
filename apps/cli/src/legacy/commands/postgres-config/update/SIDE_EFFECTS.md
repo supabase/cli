@@ -9,10 +9,10 @@
 
 ## Files Written
 
-| Path                                             | Format | When                                                                          |
-| ------------------------------------------------ | ------ | ----------------------------------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (after ref resolution), via `Effect.ensuring` - on success and failure |
-| `~/.supabase/telemetry.json`                     | JSON   | always, via `Effect.ensuring` - on success and failure                        |
+| Path                                             | Format | When                                                                                                                       |
+| ------------------------------------------------ | ------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | once the `--experimental` gate is open, after ref resolution, via `Effect.ensuring` - on success and failure               |
+| `~/.supabase/telemetry.json`                     | JSON   | once the `--experimental` gate is open, via `Effect.ensuring` - on success and failure. Not written if the gate is closed. |
 
 ## API Routes
 
@@ -25,25 +25,27 @@ The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwi
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                 |
-| ----------------------- | ---------------------------------------------------- | --------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring -> `~/.supabase/access-token`)  |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)               |
-| `PROJECT_ID`            | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref` -> prompt) |
+| Variable                | Purpose                                                  | Required?                                                      |
+| ----------------------- | -------------------------------------------------------- | -------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring -> `~/.supabase/access-token`)       |
+| `SUPABASE_API_URL`      | override Management API base URL                         | no (defaults to `https://api.supabase.com`)                    |
+| `PROJECT_ID`            | project ref fallback when `--project-ref` is unset       | no (falls back to `supabase/.temp/project-ref` -> prompt)      |
+| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag | no (pass `--experimental` instead; one of the two is required) |
 
 ## Exit Codes
 
-| Code | Condition                                                                                                    |
-| ---- | ------------------------------------------------------------------------------------------------------------ |
-| `0`  | success - Postgres config updated                                                                            |
-| `1`  | malformed `--config` (`LegacyPostgresConfigInvalidConfigValueError`)                                         |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                      |
-| `1`  | initial GET non-2xx (`LegacyPostgresConfigGetUnexpectedStatusError`)                                         |
-| `1`  | initial GET transport failure (`LegacyPostgresConfigGetNetworkError`)                                        |
-| `1`  | PUT non-2xx (`LegacyPostgresConfigUpdateUnexpectedStatusError`)                                              |
-| `1`  | PUT transport failure (`LegacyPostgresConfigUpdateNetworkError`)                                             |
-| `1`  | request serialization failure (`LegacyPostgresConfigUpdateSerializeError`)                                   |
-| `1`  | invalid JSON response (`LegacyPostgresConfigGetUnmarshalError` / `LegacyPostgresConfigUpdateUnmarshalError`) |
+| Code | Condition                                                                                                                                       |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success - Postgres config updated                                                                                                               |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) - checked before ref resolution/API/telemetry |
+| `1`  | malformed `--config` (`LegacyPostgresConfigInvalidConfigValueError`)                                                                            |
+| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                         |
+| `1`  | initial GET non-2xx (`LegacyPostgresConfigGetUnexpectedStatusError`)                                                                            |
+| `1`  | initial GET transport failure (`LegacyPostgresConfigGetNetworkError`)                                                                           |
+| `1`  | PUT non-2xx (`LegacyPostgresConfigUpdateUnexpectedStatusError`)                                                                                 |
+| `1`  | PUT transport failure (`LegacyPostgresConfigUpdateNetworkError`)                                                                                |
+| `1`  | request serialization failure (`LegacyPostgresConfigUpdateSerializeError`)                                                                      |
+| `1`  | invalid JSON response (`LegacyPostgresConfigGetUnmarshalError` / `LegacyPostgresConfigUpdateUnmarshalError`)                                    |
 
 ## Telemetry Events Fired
 
@@ -100,4 +102,9 @@ One `result` event on success.
 - Keys ending in `_timeout` are always stringified before the `PUT`, matching the Go timeout-normalization branch.
 - `--no-restart` injects `restart_database = false` into the final request body.
 - `linked-project.json` is written after the project ref resolves, regardless of whether the fetch or update succeeds.
-- `telemetry.json` is written on every invocation, including failures.
+- `telemetry.json` is written on every invocation, including failures, but only once the `--experimental` gate is open.
+- `postgres-config` is an experimental command (Go `root.go:63`): `update` requires `--experimental`
+  (or `SUPABASE_EXPERIMENTAL`), matching Go's root-level `PersistentPreRunE` gate (`root.go:91-96`),
+  which runs before the `IsManagementAPI` login check (`root.go:105-109`). A closed gate exits 1
+  before project-ref resolution, the API calls, the `linked-project.json` write, the
+  `telemetry.json` write, and the `cli_command_executed` event.
