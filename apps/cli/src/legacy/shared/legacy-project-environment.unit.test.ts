@@ -133,6 +133,25 @@ describe("legacyResolveProjectEnvironmentValues", () => {
     expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("54323");
   });
 
+  it("strips a trailing comment after a quoted value, matching godotenv", () => {
+    // godotenv's `extractVarValue` locates the quoted span by scanning forward for the
+    // closing quote (`godotenv@v1.5.1/parser.go:160-180`) and discards anything after
+    // it as a comment — the value is `demo`, not the literal `"demo"` a check that
+    // requires the whole trimmed remainder to end with a quote would produce.
+    writeFileSync(root + "/.env", 'SUPABASE_PROJECT_ID="demo" # local\n');
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
+    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("demo");
+  });
+
+  it("accepts a colon-separated assignment, matching godotenv's YAML-style key/value form", () => {
+    // godotenv's `locateKeyName` treats `=` and `:` as interchangeable separators
+    // (`godotenv@v1.5.1/parser.go:90-95`), and the repo's other dotenv parser
+    // (`packages/config/src/project.ts`'s `parseDotEnv`) already accepts both.
+    writeFileSync(root + "/.env", "SUPABASE_PROJECT_ID: colon-project\n");
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv());
+    expect(merged?.["SUPABASE_PROJECT_ID"]).toBe("colon-project");
+  });
+
   it("prefers an env-specific file over a same-key value projectEnv.values sourced from a bare .env file", () => {
     // `projectEnv.values` has no notion of SUPABASE_ENV-selected filenames, so
     // a key it resolved from a plain supabase/.env file is NOT necessarily

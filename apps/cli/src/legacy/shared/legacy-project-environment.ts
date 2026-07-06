@@ -62,10 +62,15 @@ function expandDotEnvVariable(value: string, values: Readonly<Record<string, str
  * vars this is used for (`SUPABASE_PROJECT_ID`, `SUPABASE_AUTH_*`), which
  * never need the full dotenv spec (multiline values, `export` re-declares).
  *
- * @throws on a line that isn't blank, a comment, or a `KEY=VALUE` assignment —
- * matching Go's `loadEnvIfExists` (`pkg/config/config.go:1209-1234`), which
- * propagates `godotenv.Load`'s parse error up through `loadNestedEnv` and fails
- * `Config.Load` before `stop`/`status` touch Docker, rather than silently
+ * Accepts godotenv's `KEY: VALUE` YAML-style separator as well as `KEY=VALUE`
+ * (`joho/godotenv@v1.5.1/parser.go:90-95`'s `locateKeyName` treats `=` and `:`
+ * as interchangeable) — matching `packages/config/src/project.ts`'s
+ * `parseDotEnv`, which already accepts both forms.
+ *
+ * @throws on a line that isn't blank, a comment, or a `KEY=VALUE`/`KEY: VALUE`
+ * assignment — matching Go's `loadEnvIfExists` (`pkg/config/config.go:1209-1234`),
+ * which propagates `godotenv.Load`'s parse error up through `loadNestedEnv` and
+ * fails `Config.Load` before `stop`/`status` touch Docker, rather than silently
  * skipping the bad line. Mirrors `packages/config/src/project.ts`'s
  * `parseDotEnv`, which already fails the same way for `supabase/.env`(.local).
  */
@@ -80,7 +85,7 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#")) continue;
 
-    const match = /^(?:export\s+)?([\w.-]+)\s*=(.*)$/.exec(line);
+    const match = /^(?:export\s+)?([\w.-]+)\s*(?:=|:\s+)(.*)$/.exec(line);
     if (match === null) {
       throw new Error(`failed to parse environment file: ${path} (line ${index + 1})`);
     }
@@ -89,8 +94,24 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
 
     let value = (match[2] ?? "").trim();
     const quote = value[0];
-    if ((quote === '"' || quote === "'") && value.length >= 2 && value.endsWith(quote)) {
-      value = value.slice(1, -1);
+    // A value is quoted iff it STARTS with a quote — matching godotenv's
+    // `extractVarValue` (`joho/godotenv@v1.5.1/parser.go:160-180`), which locates the
+    // quoted span by scanning forward for the first unescaped matching quote, not by
+    // requiring the whole (trimmed) remainder to end with one. Anything after that
+    // closing quote (e.g. a trailing `# comment`) is discarded, so `"demo" # local`
+    // parses as `demo`, not the literal `"demo"` a naive `endsWith(quote)` check would
+    // produce by falling through to the unquoted branch below.
+    let quoteEnd = -1;
+    if (quote === '"' || quote === "'") {
+      for (let i = 1; i < value.length; i++) {
+        if (value[i] === quote && value[i - 1] !== "\\") {
+          quoteEnd = i;
+          break;
+        }
+      }
+    }
+    if (quoteEnd !== -1) {
+      value = value.slice(1, quoteEnd);
       if (quote === '"') {
         value = value.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
         value = expandDotEnvVariable(value, values);
