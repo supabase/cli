@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 import {
   LegacyInvalidJwtSecretError,
+  LegacyInvalidPortEnvOverrideError,
   legacyResolveLocalConfigValues,
 } from "./legacy-local-config-values.ts";
 
@@ -292,6 +293,31 @@ describe("legacyResolveLocalConfigValues", () => {
       const config = baseConfig({ db: { port: 54322 } });
       const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:54322/postgres");
+    });
+
+    // Go's Config.Load decodes `SUPABASE_*_PORT` overrides as `uint16` via
+    // Viper's UnmarshalExact (pkg/config/config.go:749-756, WeaklyTypedInput
+    // decodes the override string with strconv.ParseUint and hard-fails on a
+    // malformed value) rather than silently producing a `NaN`-laced URL.
+    it.each([
+      "SUPABASE_DB_PORT",
+      "SUPABASE_STUDIO_PORT",
+      "SUPABASE_LOCAL_SMTP_PORT",
+      "SUPABASE_API_PORT",
+    ] as const)("rejects a malformed %s override instead of producing NaN", (envKey) => {
+      process.env[envKey] = "abc";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        LegacyInvalidPortEnvOverrideError,
+      );
+    });
+
+    it("rejects a SUPABASE_DB_PORT override above the uint16 range", () => {
+      process.env["SUPABASE_DB_PORT"] = "99999";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        LegacyInvalidPortEnvOverrideError,
+      );
     });
   });
 

@@ -90,6 +90,55 @@ export class LegacyInvalidJwtSecretError extends Error {
 const MIN_JWT_SECRET_LENGTH = 16;
 
 /**
+ * Thrown by {@link envOverridePort} when a `SUPABASE_*_PORT` env/dotenv
+ * override doesn't parse as a valid port, mirroring Go's `Config.Load`
+ * (`pkg/config/config.go:749-756`): `v.UnmarshalExact` decodes with
+ * `WeaklyTypedInput` on (viper's `defaultDecoderConfig`, never reset by our
+ * decoder options), so mapstructure's `decodeUint` runs `strconv.ParseUint`
+ * on the override string and hard-fails config loading on a bad value —
+ * there is no Go code path that reaches `status`/`stop` with a malformed
+ * port override. The message text isn't a byte-match for mapstructure's
+ * internal error (that's viper/mapstructure library text, not a Go-authored
+ * string), but the parity-relevant part — hard-fail, same field name — is.
+ */
+export class LegacyInvalidPortEnvOverrideError extends Error {
+  constructor(dottedFieldPath: string, value: string) {
+    super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a port`);
+    this.name = "LegacyInvalidPortEnvOverrideError";
+  }
+}
+
+/** Go's `uint16` port fields' valid range (`pkg/config/db.go:84`, `pkg/config/api.go:29`, etc). */
+const MAX_PORT = 65535;
+
+/**
+ * Port-flavored sibling of {@link envOverride}/{@link legacyEnvOverrideBool}
+ * for `SUPABASE_*_PORT` fields Go decodes as `uint16` rather than a plain
+ * string. Unlike the boolean sibling — which intentionally falls back to
+ * `configured` on a malformed override — a bad port override is a genuine
+ * Go-parity hard failure (see {@link LegacyInvalidPortEnvOverrideError}), not
+ * a leniency case: Go never proceeds with the pre-override value on a decode
+ * error, it fails config loading outright.
+ */
+function envOverridePort(
+  name: string,
+  configuredPort: number,
+  dottedFieldPath: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): number {
+  const value = envOverride(name, undefined, projectEnvValues);
+  if (value === undefined) return configuredPort;
+  if (!/^\d+$/.test(value)) {
+    throw new LegacyInvalidPortEnvOverrideError(dottedFieldPath, value);
+  }
+  const port = Number(value);
+  if (port > MAX_PORT) {
+    throw new LegacyInvalidPortEnvOverrideError(dottedFieldPath, value);
+  }
+  return port;
+}
+
+/**
  * Go's `Config.Load` binds Viper with `SetEnvPrefix("SUPABASE")` +
  * `AutomaticEnv()` + a `.`→`_` key replacer (`pkg/config/config.go:529-535`),
  * so ANY config field can be overridden by a `SUPABASE_<DOTTED_KEY>` env var,
@@ -122,18 +171,24 @@ function envOverride(
 
 /**
  * Boolean-flavored sibling of {@link envOverride} for `SUPABASE_*` fields Go
- * decodes as a native bool (`api.tls.enabled`, `auth.enabled`) rather than a
- * string/number — those are bound by the same generic Viper mechanism
- * (`ExperimentalBindStruct` + `SetEnvPrefix("SUPABASE")` + `AutomaticEnv()`,
- * `pkg/config/config.go:582-586`), but the override string must be decoded
- * with Go's own `strconv.ParseBool` acceptance set ({@link legacyParseGoBool})
- * instead of used verbatim. A malformed override (not one of Go's accepted
- * bool spellings) falls back to `configured` — matching this module's
- * existing leniency for other env-derived fields (e.g. `Number(envOverride(...))`
- * on ports isn't hard-validated either) rather than hard-failing the whole
- * `stop`/`status` run over a bad override.
+ * decodes as a native bool (`api.tls.enabled`, `auth.enabled`, and every other
+ * `<section>.enabled` gate `status`/`stop` read — see `status.values.ts`)
+ * rather than a string/number — those are bound by the same generic Viper
+ * mechanism (`ExperimentalBindStruct` + `SetEnvPrefix("SUPABASE")` +
+ * `AutomaticEnv()`, `pkg/config/config.go:582-586`), but the override string
+ * must be decoded with Go's own `strconv.ParseBool` acceptance set
+ * ({@link legacyParseGoBool}) instead of used verbatim. A malformed override
+ * (not one of Go's accepted bool spellings) falls back to `configured` —
+ * matching this module's existing leniency for other env-derived fields (e.g.
+ * `Number(envOverride(...))` on ports isn't hard-validated either) rather
+ * than hard-failing the whole `stop`/`status` run over a bad override.
+ *
+ * Exported (not just used internally) because `status.values.ts`'s own
+ * `<section>.enabled` gates need this same override treatment — Go's
+ * `status.toValues()` reads `utils.Config.*.Enabled` post-Viper-override for
+ * every gated service, not only auth.
  */
-function envOverrideBool(
+export function legacyEnvOverrideBool(
   name: string,
   configured: boolean,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
@@ -206,7 +261,7 @@ const decodeLegacyJwks = Schema.decodeUnknownSync(Schema.Array(LegacyJwkSchema))
  *
  * Callers must only invoke this when auth is enabled (the `SUPABASE_AUTH_ENABLED`-
  * overridden value, not necessarily raw `config.auth.enabled` — see
- * {@link envOverrideBool}) — Go's `Validate` nests the entire signing-keys read
+ * {@link legacyEnvOverrideBool}) — Go's `Validate` nests the entire signing-keys read
  * inside `if c.Auth.Enabled` (`pkg/config/config.go:1036,1059-1065`), reading
  * that same post-override value, so a disabled auth section never touches
  * `signing_keys_path`, however stale or missing that file is.
@@ -238,6 +293,8 @@ function loadFirstSigningKey(workdir: string, signingKeysPath: string): LegacyJw
 
 /**
  * @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
+ * @throws {LegacyInvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
+ * override doesn't parse as a valid port.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
  * or its first key uses an unsupported algorithm — see {@link legacyGenerateAsymmetricGoJwt}.
  */
@@ -261,9 +318,9 @@ export function legacyResolveLocalConfigValues(
         config.api.external_url,
         projectEnvValues,
       ),
-      port: Number(envOverride("SUPABASE_API_PORT", String(config.api.port), projectEnvValues)),
+      port: envOverridePort("SUPABASE_API_PORT", config.api.port, "api.port", projectEnvValues),
       tls: {
-        enabled: envOverrideBool(
+        enabled: legacyEnvOverrideBool(
           "SUPABASE_API_TLS_ENABLED",
           config.api.tls.enabled,
           projectEnvValues,
@@ -272,12 +329,18 @@ export function legacyResolveLocalConfigValues(
     },
     hostname,
   );
-  const dbPort = Number(envOverride("SUPABASE_DB_PORT", String(config.db.port), projectEnvValues));
-  const studioPort = Number(
-    envOverride("SUPABASE_STUDIO_PORT", String(config.studio.port), projectEnvValues),
+  const dbPort = envOverridePort("SUPABASE_DB_PORT", config.db.port, "db.port", projectEnvValues);
+  const studioPort = envOverridePort(
+    "SUPABASE_STUDIO_PORT",
+    config.studio.port,
+    "studio.port",
+    projectEnvValues,
   );
-  const mailpitPort = Number(
-    envOverride("SUPABASE_LOCAL_SMTP_PORT", String(config.local_smtp.port), projectEnvValues),
+  const mailpitPort = envOverridePort(
+    "SUPABASE_LOCAL_SMTP_PORT",
+    config.local_smtp.port,
+    "local_smtp.port",
+    projectEnvValues,
   );
   const jwtSecret = resolveJwtSecret(
     envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
@@ -295,8 +358,8 @@ export function legacyResolveLocalConfigValues(
   // only this file read is gated. `c.Auth.Enabled` is itself Viper-bound like
   // any other field (`config.go:582-586`), so `Validate`'s gate reads the
   // POST-`SUPABASE_AUTH_ENABLED`-override value, not the raw TOML one — hence
-  // `envOverrideBool` here instead of `config.auth.enabled` directly.
-  const authEnabled = envOverrideBool(
+  // `legacyEnvOverrideBool` here instead of `config.auth.enabled` directly.
+  const authEnabled = legacyEnvOverrideBool(
     "SUPABASE_AUTH_ENABLED",
     config.auth.enabled,
     projectEnvValues,

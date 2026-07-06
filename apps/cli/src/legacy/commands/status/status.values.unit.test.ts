@@ -495,6 +495,173 @@ describe("legacyStatusValues", () => {
     });
   });
 
+  describe("SUPABASE_*_ENABLED env overrides", () => {
+    // Go's `status.toValues()` (`status.go:55-61`) reads `utils.Config.*.Enabled`
+    // AFTER Viper's `SetEnvPrefix("SUPABASE")` + `AutomaticEnv()` binding
+    // (`pkg/config/config.go:580-586`) has already applied any
+    // `SUPABASE_<SECTION>_ENABLED` override — generically, not just for auth.
+    // `legacyResolveStatusState` must read the same post-override value for
+    // every gate, not the raw decoded `config.<section>.enabled`.
+
+    it("includes API_URL/REST_URL when SUPABASE_API_ENABLED overrides a disabled api.enabled", () => {
+      const config = baseConfig({ api: { enabled: false } });
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+        {
+          SUPABASE_API_ENABLED: "true",
+        },
+      );
+      expect(values.API_URL).toBeDefined();
+      expect(values.REST_URL).toBeDefined();
+    });
+
+    it("omits API_URL when SUPABASE_API_ENABLED=false overrides an enabled api.enabled", () => {
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+        { SUPABASE_API_ENABLED: "false" },
+      );
+      expect(values.API_URL).toBeUndefined();
+    });
+
+    it("includes STUDIO_URL when SUPABASE_STUDIO_ENABLED overrides a disabled studio.enabled", () => {
+      const config = baseConfig({ studio: { enabled: false } });
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+        {
+          SUPABASE_STUDIO_ENABLED: "true",
+        },
+      );
+      expect(values.STUDIO_URL).toBeDefined();
+    });
+
+    it("includes the 5 auth fields when SUPABASE_AUTH_ENABLED overrides a disabled auth.enabled", () => {
+      // Reproduces the exact scenario a Go-started stack can hit: TOML says
+      // auth is disabled, but the running stack was actually started with
+      // SUPABASE_AUTH_ENABLED=true from the shell/dotenv, so Auth is up and
+      // status must still print its credentials.
+      const config = baseConfig({ auth: { enabled: false } });
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+        {
+          SUPABASE_AUTH_ENABLED: "true",
+        },
+      );
+      expect(values.PUBLISHABLE_KEY).toBeDefined();
+      expect(values.ANON_KEY).toBeDefined();
+      expect(values.SERVICE_ROLE_KEY).toBeDefined();
+    });
+
+    it("omits the 5 auth fields when SUPABASE_AUTH_ENABLED=false overrides an enabled auth.enabled", () => {
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+        { SUPABASE_AUTH_ENABLED: "false" },
+      );
+      expect(values.PUBLISHABLE_KEY).toBeUndefined();
+    });
+
+    it("includes MAILPIT_URL when SUPABASE_LOCAL_SMTP_ENABLED overrides a disabled local_smtp.enabled", () => {
+      const config = baseConfig({ local_smtp: { enabled: false } });
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+        {
+          SUPABASE_LOCAL_SMTP_ENABLED: "true",
+        },
+      );
+      expect(values.MAILPIT_URL).toBeDefined();
+    });
+
+    it("includes storage S3 fields when SUPABASE_STORAGE_ENABLED overrides a disabled storage.enabled", () => {
+      const config = baseConfig({ storage: { enabled: false } });
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+        {
+          SUPABASE_STORAGE_ENABLED: "true",
+        },
+      );
+      expect(values.STORAGE_S3_URL).toBeDefined();
+    });
+
+    it("includes FUNCTIONS_URL when SUPABASE_EDGE_RUNTIME_ENABLED overrides a disabled edge_runtime.enabled", () => {
+      const config = baseConfig({ edge_runtime: { enabled: false } });
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+        {
+          SUPABASE_EDGE_RUNTIME_ENABLED: "true",
+        },
+      );
+      expect(values.FUNCTIONS_URL).toBeDefined();
+    });
+
+    it("includes storage S3 fields when SUPABASE_STORAGE_S3_PROTOCOL_ENABLED overrides a disabled s3_protocol.enabled", () => {
+      const config = baseConfig({ storage: { s3_protocol: { enabled: false } } });
+      const { values } = legacyStatusValues(
+        config,
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+        {
+          SUPABASE_STORAGE_S3_PROTOCOL_ENABLED: "true",
+        },
+      );
+      expect(values.STORAGE_S3_URL).toBeDefined();
+    });
+
+    it("omits storage S3 fields when SUPABASE_STORAGE_S3_PROTOCOL_ENABLED=false overrides an enabled s3_protocol.enabled", () => {
+      const { values } = legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        NONE,
+        NO_OVERRIDES,
+        WORKDIR,
+        { SUPABASE_STORAGE_S3_PROTOCOL_ENABLED: "false" },
+      );
+      expect(values.STORAGE_S3_URL).toBeUndefined();
+    });
+  });
+
   describe("--override-name remapping", () => {
     it("remaps a field's output KEY while leaving the value unchanged", () => {
       const overrides = new Map([["api.url", "NEXT_PUBLIC_SUPABASE_URL"]]);

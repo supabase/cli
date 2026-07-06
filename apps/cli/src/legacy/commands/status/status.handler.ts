@@ -226,13 +226,15 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     const overrides = yield* parseOverrides(flags.overrideName);
 
     // `legacyResolveStatusState` can throw `LegacyInvalidJwtSecretError` (a short
-    // `auth.jwt_secret`) or a signing-keys-file read/parse error — Go's
-    // `Config.Validate` rejects both at config-load time, before this command
-    // would ever render anything, so they're surfaced here as a hard failure
-    // rather than silently falling back to a default/HMAC-signed key. Resolved
-    // once and reused for both the real and pretty-mode (empty-override) value
-    // maps below, so a configured `signing_keys_path` is read and the anon/
-    // service_role JWTs signed only once per invocation, not twice.
+    // `auth.jwt_secret`), `LegacyInvalidPortEnvOverrideError` (a malformed
+    // `SUPABASE_*_PORT` override), or a signing-keys-file read/parse error —
+    // Go's `Config.Load`/`Validate` reject all three at config-load time,
+    // before this command would ever render anything, so they're surfaced
+    // here as a hard failure rather than silently falling back to a default/
+    // HMAC-signed key or a `NaN`-laced URL. Resolved once and reused for both
+    // the real and pretty-mode (empty-override) value maps below, so a
+    // configured `signing_keys_path` is read and the anon/service_role JWTs
+    // signed only once per invocation, not twice.
     const state = yield* Effect.try({
       try: () =>
         legacyResolveStatusState(

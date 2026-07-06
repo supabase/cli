@@ -3,6 +3,7 @@ import type { ProjectConfig } from "@supabase/config";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { legacyServiceContainerIds } from "../../shared/legacy-docker-ids.ts";
 import {
+  legacyEnvOverrideBool,
   legacyResolveLocalConfigValues,
   type LegacyLocalConfigValues,
 } from "../../shared/legacy-local-config-values.ts";
@@ -226,6 +227,7 @@ export interface LegacyStatusState {
   readonly inbucketEnabled: boolean;
   readonly storageEnabled: boolean;
   readonly functionsEnabled: boolean;
+  readonly storageS3ProtocolEnabled: boolean;
 }
 
 /**
@@ -239,7 +241,19 @@ export interface LegacyStatusState {
  * `Storage.Image`, `EdgeRuntime.Image`) all carry `toml:"-"`, so they're never
  * user-overridable and the default image is always the one to check.
  *
+ * Each `.enabled` gate is read through {@link legacyEnvOverrideBool}, not the
+ * raw decoded `config.<section>.enabled`, because Go's `status.toValues()`
+ * (`status.go:55-61`) reads `utils.Config.*.Enabled` — a package-level struct
+ * Viper has already applied any `SUPABASE_<SECTION>_ENABLED` env/dotenv
+ * override to (`SetEnvPrefix("SUPABASE")` + `AutomaticEnv()` +
+ * `ExperimentalBindStruct()`, `pkg/config/config.go:580-586`) — generically,
+ * not just for `auth.enabled`. Skipping this would mean a stack Go started
+ * with e.g. `SUPABASE_API_ENABLED=true` over a `false` TOML value has Kong/
+ * PostgREST running while native `status` omits them entirely.
+ *
  * @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
+ * @throws {LegacyInvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
+ * override doesn't parse as a valid port.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
  * or its first key is unsupported — see {@link legacyGenerateAsymmetricGoJwt}.
  */
@@ -254,22 +268,55 @@ export function legacyResolveStatusState(
   const local = legacyResolveLocalConfigValues(config, hostname, workdir, projectEnvValues);
   const isExcluded = (id: string) => excluded.includes(id);
 
-  const kongEnabled =
-    config.api.enabled && !isExcluded(containerIds.kong) && !isExcluded(KONG_IMAGE_NAME);
+  const apiEnabled = legacyEnvOverrideBool(
+    "SUPABASE_API_ENABLED",
+    config.api.enabled,
+    projectEnvValues,
+  );
+  const studioSectionEnabled = legacyEnvOverrideBool(
+    "SUPABASE_STUDIO_ENABLED",
+    config.studio.enabled,
+    projectEnvValues,
+  );
+  const authSectionEnabled = legacyEnvOverrideBool(
+    "SUPABASE_AUTH_ENABLED",
+    config.auth.enabled,
+    projectEnvValues,
+  );
+  const inbucketSectionEnabled = legacyEnvOverrideBool(
+    "SUPABASE_LOCAL_SMTP_ENABLED",
+    config.local_smtp.enabled,
+    projectEnvValues,
+  );
+  const storageSectionEnabled = legacyEnvOverrideBool(
+    "SUPABASE_STORAGE_ENABLED",
+    config.storage.enabled,
+    projectEnvValues,
+  );
+  const edgeRuntimeEnabled = legacyEnvOverrideBool(
+    "SUPABASE_EDGE_RUNTIME_ENABLED",
+    config.edge_runtime.enabled,
+    projectEnvValues,
+  );
+  const storageS3ProtocolEnabled = legacyEnvOverrideBool(
+    "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
+    config.storage.s3_protocol.enabled,
+    projectEnvValues,
+  );
+
+  const kongEnabled = apiEnabled && !isExcluded(containerIds.kong) && !isExcluded(KONG_IMAGE_NAME);
   const postgrestEnabled =
     kongEnabled && !isExcluded(containerIds.rest) && !isExcluded(POSTGREST_IMAGE_NAME);
   const studioEnabled =
-    config.studio.enabled && !isExcluded(containerIds.studio) && !isExcluded(STUDIO_IMAGE_NAME);
+    studioSectionEnabled && !isExcluded(containerIds.studio) && !isExcluded(STUDIO_IMAGE_NAME);
   const authEnabled =
-    config.auth.enabled && !isExcluded(containerIds.auth) && !isExcluded(GOTRUE_IMAGE_NAME);
+    authSectionEnabled && !isExcluded(containerIds.auth) && !isExcluded(GOTRUE_IMAGE_NAME);
   const inbucketEnabled =
-    config.local_smtp.enabled &&
-    !isExcluded(containerIds.inbucket) &&
-    !isExcluded(MAILPIT_IMAGE_NAME);
+    inbucketSectionEnabled && !isExcluded(containerIds.inbucket) && !isExcluded(MAILPIT_IMAGE_NAME);
   const storageEnabled =
-    config.storage.enabled && !isExcluded(containerIds.storage) && !isExcluded(STORAGE_IMAGE_NAME);
+    storageSectionEnabled && !isExcluded(containerIds.storage) && !isExcluded(STORAGE_IMAGE_NAME);
   const functionsEnabled =
-    config.edge_runtime.enabled &&
+    edgeRuntimeEnabled &&
     !isExcluded(containerIds.edgeRuntime) &&
     !isExcluded(EDGE_RUNTIME_IMAGE_NAME);
 
@@ -283,6 +330,7 @@ export function legacyResolveStatusState(
     inbucketEnabled,
     storageEnabled,
     functionsEnabled,
+    storageS3ProtocolEnabled,
   };
 }
 
@@ -295,8 +343,8 @@ export function legacyStatusValuesFromState(
   state: LegacyStatusState,
   overrides: ReadonlyMap<string, string>,
 ): LegacyStatusValuesResult {
-  const { config, local, kongEnabled, postgrestEnabled, studioEnabled, authEnabled } = state;
-  const { inbucketEnabled, storageEnabled, functionsEnabled } = state;
+  const { local, kongEnabled, postgrestEnabled, studioEnabled, authEnabled } = state;
+  const { inbucketEnabled, storageEnabled, functionsEnabled, storageS3ProtocolEnabled } = state;
   const names = resolveOutputNames(overrides);
 
   // Go always sets db.url unconditionally, before any gating (status.go:52).
@@ -332,7 +380,7 @@ export function legacyStatusValuesFromState(
     values[names.mailpitUrl] = local.mailpitUrl;
     values[overrides.get(INBUCKET_URL.fieldKey) ?? INBUCKET_URL.defaultName] = local.mailpitUrl;
   }
-  if (storageEnabled && config.storage.s3_protocol.enabled) {
+  if (storageEnabled && storageS3ProtocolEnabled) {
     values[names.storageS3Url] = local.storageS3Url;
     values[names.storageS3AccessKeyId] = local.storageS3AccessKeyId;
     values[names.storageS3SecretAccessKey] = local.storageS3SecretAccessKey;
