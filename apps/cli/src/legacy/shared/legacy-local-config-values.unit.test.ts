@@ -537,6 +537,55 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("auth.site_url (required field in config)", () => {
+    it("rejects an explicit empty site_url when auth is enabled", () => {
+      const config = baseConfig({ auth: { enabled: true, site_url: "" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: auth.site_url",
+      );
+    });
+
+    it("does not throw when site_url is set and auth is enabled", () => {
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    // Go's `Validate` nests this check inside `if c.Auth.Enabled`
+    // (`pkg/config/config.go:1086-1090`) — a disabled auth section never
+    // requires site_url, however empty it is.
+    it("does not throw an explicit empty site_url when auth is disabled", () => {
+      const config = baseConfig({ auth: { enabled: false, site_url: "" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    describe("SUPABASE_AUTH_ENABLED / SUPABASE_AUTH_SITE_URL env overrides", () => {
+      afterEach(() => {
+        delete process.env["SUPABASE_AUTH_ENABLED"];
+        delete process.env["SUPABASE_AUTH_SITE_URL"];
+      });
+
+      it("rejects an empty site_url when auth is enabled only via env", () => {
+        process.env["SUPABASE_AUTH_ENABLED"] = "true";
+        const config = baseConfig({ auth: { enabled: false, site_url: "" } });
+        expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+          "Missing required field in config: auth.site_url",
+        );
+      });
+
+      it("does not throw when auth is disabled only via env, however empty site_url is", () => {
+        process.env["SUPABASE_AUTH_ENABLED"] = "false";
+        const config = baseConfig({ auth: { enabled: true, site_url: "" } });
+        expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+      });
+
+      it("accepts an env-provided site_url overriding an empty config.toml value", () => {
+        process.env["SUPABASE_AUTH_SITE_URL"] = "http://localhost:4000";
+        const config = baseConfig({ auth: { enabled: true, site_url: "" } });
+        expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+      });
+    });
+  });
+
   describe("api.tls (cert/key validation)", () => {
     const tempRoot = useLegacyTempWorkdir("supabase-api-tls-test-");
 

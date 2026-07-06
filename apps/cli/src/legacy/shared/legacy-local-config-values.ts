@@ -378,6 +378,7 @@ function validateLocalApiTls(
  * override doesn't parse as a valid bool.
  * @throws when `api.tls.enabled` is set with only one of `cert_path`/`key_path`, or a
  * configured file can't be read — see {@link validateLocalApiTls}.
+ * @throws when `auth.enabled` is true and `auth.site_url` is empty.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
  * or its first key uses an unsupported algorithm — see {@link legacyGenerateAsymmetricGoJwt}.
  */
@@ -478,6 +479,15 @@ export function legacyResolveLocalConfigValues(
     "auth.enabled",
     projectEnvValues,
   );
+  // Go's `Config.Validate` checks `auth.site_url` first inside `if c.Auth.Enabled`
+  // (`pkg/config/config.go:1086-1090`), before the signing-keys read below —
+  // `@supabase/config`'s schema only defaults `site_url` when the key is ABSENT
+  // (`Schema.withDecodingDefaultKey`), so an explicit `site_url = ""` decodes as
+  // `""` with no schema-level error, same gap as `db.port === 0` above.
+  const siteUrl = envOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues);
+  if (authEnabled && (siteUrl === undefined || siteUrl.length === 0)) {
+    throw new Error("Missing required field in config: auth.site_url");
+  }
   const signingKey =
     authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0
       ? loadFirstSigningKey(workdir, signingKeysPath)
