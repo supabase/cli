@@ -130,6 +130,12 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
     const loaded = yield* loadProjectConfig(cliConfig.workdir, {
       projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
       search: false,
+      // Go's `NewPathBuilder`/`Config.Load` (`pkg/config/utils.go:43-48`) only
+      // ever resolves `supabase/config.toml` — it has no concept of a JSON
+      // project config file. Without this, a workdir with a stray
+      // `config.json` would make `loadProjectConfig` prefer it over
+      // `config.toml`, potentially stopping containers for the wrong project.
+      tomlOnly: true,
     }).pipe(
       Effect.mapError(
         (cause) =>

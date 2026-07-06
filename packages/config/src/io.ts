@@ -53,6 +53,16 @@ export interface LoadProjectConfigOptions {
   readonly projectEnv?: ProjectEnvironment;
   /** See {@link FindProjectPathsOptions.search}. */
   readonly search?: boolean;
+  /**
+   * Skip the `config.json`-over-`config.toml` preference below and only ever
+   * load `config.toml`. Go's `Config.Load`/`NewPathBuilder`
+   * (`apps/cli-go/pkg/config/utils.go:43-48`) has no concept of a JSON project
+   * config file — it always resolves `supabase/config.toml` and treats a
+   * missing file as defaults — so Go-parity callers (the legacy `status`/`stop`
+   * ports) must set this to avoid picking up a stray `config.json` that Go
+   * would never see.
+   */
+  readonly tomlOnly?: boolean;
 }
 
 export interface SaveProjectConfigOptions {
@@ -457,7 +467,7 @@ export const loadProjectConfig = Effect.fnUntraced(function* (
     ? project.configPath
     : project.configPath.replace(/config\.json$/, "config.toml");
 
-  if (yield* fs.exists(jsonPath)) {
+  if (!options?.tomlOnly && (yield* fs.exists(jsonPath))) {
     const json = yield* loadProjectConfigFile(jsonPath, options);
 
     return {

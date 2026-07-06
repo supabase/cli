@@ -323,6 +323,50 @@ major_version = 16
     }
   });
 
+  // Go's `NewPathBuilder`/`Config.Load` (`apps/cli-go/pkg/config/utils.go:
+  // 43-48`) only ever resolves `supabase/config.toml` — it has no concept of a
+  // JSON project config file. Go-parity callers (legacy `status`/`stop`) pass
+  // `tomlOnly: true` so a stray `config.json` never wins over `config.toml`.
+  test("loads TOML instead of JSON when tomlOnly is set, even if JSON exists", async () => {
+    const cwd = makeTempProject();
+    const jsonPath = await runConfigEffect(configJsonPath(cwd));
+    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(jsonPath, encodeProjectConfigToJson(sampleConfig));
+      await writeFile(
+        tomlPath,
+        `project_id = "toml-ref"
+
+[db]
+major_version = 16
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { tomlOnly: true }));
+      expect(loaded?.format).toBe("toml");
+      expect(loaded?.config.project_id).toBe("toml-ref");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("returns null when tomlOnly is set and only JSON exists", async () => {
+    const cwd = makeTempProject();
+    const jsonPath = await runConfigEffect(configJsonPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(jsonPath, encodeProjectConfigToJson(sampleConfig));
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { tomlOnly: true }));
+      expect(loaded).toBeNull();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("loads TOML when JSON is absent", async () => {
     const cwd = makeTempProject();
     const tomlPath = await runConfigEffect(configTomlPath(cwd));
