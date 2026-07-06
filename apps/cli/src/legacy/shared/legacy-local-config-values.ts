@@ -584,6 +584,57 @@ function validateThirdPartyAuth(thirdParty: ProjectConfig["auth"]["third_party"]
 }
 
 /**
+ * Go's `(e *email) validate(fsys)` template/notification file-existence
+ * checks (`pkg/config/config.go:1293-1313`), called from `Config.Validate`
+ * right after `Auth.MFA.validate()`, still inside `if c.Auth.Enabled`
+ * (`config.go:1142`). Every template's `content_path` is checked
+ * unconditionally; a notification's only when that notification is itself
+ * enabled (`config.go:1308`). Uses the same `readFileSync`-based pattern as
+ * {@link loadFirstSigningKey}/{@link validateLocalApiTls} in this file, not an
+ * Effect `FileSystem` service.
+ *
+ * Relative paths resolve against different bases, per Go's `(c *baseConfig)
+ * resolve` (`config.go:900-916`, flagged there with a `// FIXME: only email
+ * template is relative to repo directory`): TEMPLATE paths resolve against
+ * the project root (`workdir`), NOTIFICATION paths resolve against
+ * `<workdir>/supabase` — this asymmetry is intentional Go behavior to match,
+ * not a bug to fix.
+ *
+ * Go's `content`-vs-`content_path` mutual-exclusivity check (`config.go:1296-
+ * 1298,1313-1315`) isn't reproduced: `@supabase/config`'s `template`/
+ * `notification` schema (`packages/config/src/auth/email.ts`) has no
+ * `content` field at all, so that branch can never trigger through the
+ * decoded config — the same documented-gap style already used for the
+ * analytics-backend-enum note above.
+ */
+function validateAuthEmailTemplates(email: ProjectConfig["auth"]["email"], workdir: string): void {
+  for (const [name, tmpl] of Object.entries(email.template)) {
+    if (tmpl.content_path.length === 0) continue;
+    readEmailContentPath("template", name, tmpl.content_path, workdir);
+  }
+  for (const [name, tmpl] of Object.entries(email.notification)) {
+    if (!tmpl.enabled || tmpl.content_path.length === 0) continue;
+    readEmailContentPath("notification", name, tmpl.content_path, join(workdir, "supabase"));
+  }
+}
+
+function readEmailContentPath(
+  section: "template" | "notification",
+  name: string,
+  contentPath: string,
+  base: string,
+): void {
+  const absolutePath = isAbsolute(contentPath) ? contentPath : join(base, contentPath);
+  try {
+    readFileSync(absolutePath, "utf8");
+  } catch (cause) {
+    throw new Error(
+      `Invalid config for auth.email.${section}.${name}.content_path: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
+}
+
+/**
  * Go's `Config.Validate`'s `switch c.Db.MajorVersion` (`pkg/config/config.go:
  * 1034-1061`): `0` is the zero-value/missing case, `12` has a dedicated
  * unsupported-version message (with a migration-docs link), `13`/`14`/`15`/`17`
@@ -754,6 +805,9 @@ function isValidJson(value: string): boolean {
  * or `secrets` fails Go's scheme/secret-pattern rules — see {@link validateAuthHooks}.
  * @throws when `auth.enabled` is true and an MFA factor's `enroll_enabled` is set
  * without `verify_enabled` — see {@link validateMfaConfig}.
+ * @throws when `auth.enabled` is true and an email template's `content_path`
+ * (or an enabled notification's) can't be read — see
+ * {@link validateAuthEmailTemplates}.
  * @throws when `auth.enabled` is true and an enabled `[auth.third_party.*]`
  * provider is missing its required field, or more than one provider is enabled
  * at once — see {@link validateThirdPartyAuth}.
@@ -978,13 +1032,16 @@ export function legacyResolveLocalConfigValues(
     authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0
       ? loadFirstSigningKey(workdir, signingKeysPath)
       : undefined;
-  // Go's `Config.Validate` runs `Auth.Hook.validate()` then `Auth.MFA.validate()`
-  // right after signing keys/passkey validation, still inside `if c.Auth.Enabled`
-  // (`pkg/config/config.go:1136-1139`). Passkey/webauthn (`config.go:1117-1135`) sits
-  // between signing keys and hooks in Go but isn't ported by this resolver yet.
+  // Go's `Config.Validate` runs `Auth.Hook.validate()`, then `Auth.MFA.validate()`,
+  // then `Auth.Email.validate()`, then (skipping the unported Sms/External steps)
+  // `Auth.ThirdParty.validate()`, all right after signing keys/passkey validation and
+  // still inside `if c.Auth.Enabled` (`pkg/config/config.go:1136-1153`). Passkey/webauthn
+  // (`config.go:1117-1135`) sits between signing keys and hooks in Go but isn't ported
+  // by this resolver yet; Sms/External (`config.go:1145-1150`) aren't ported either.
   if (authEnabled) {
     validateAuthHooks(config.auth.hook);
     validateMfaConfig(config.auth.mfa);
+    validateAuthEmailTemplates(config.auth.email, workdir);
     validateThirdPartyAuth(config.auth.third_party);
   }
   // Go's `Config.Validate` runs `ValidateFunctionSlug` over every `[functions.*]`

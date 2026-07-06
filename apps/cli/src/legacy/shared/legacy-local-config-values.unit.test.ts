@@ -1226,6 +1226,113 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("auth.email.template/notification (content_path validation)", () => {
+    // Go's `(e *email) validate(fsys)` (`pkg/config/config.go:1293-1313`),
+    // called right after `Auth.MFA.validate()`, still inside `if c.Auth.Enabled`.
+    const tempRoot = useLegacyTempWorkdir("supabase-email-templates-test-");
+
+    it("rejects a template content_path pointing at a missing file", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { template: { invite: { content_path: "missing-invite.html" } } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "Invalid config for auth.email.template.invite.content_path: ",
+      );
+    });
+
+    it("resolves a relative template content_path against the workdir itself, not <workdir>/supabase", () => {
+      writeFileSync(join(tempRoot.current, "invite.html"), "<html></html>");
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { template: { invite: { content_path: "invite.html" } } },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    it("does not throw a template with no content_path configured", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { template: { invite: {} } },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    it("rejects an enabled notification content_path pointing at a missing file", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: {
+            notification: { password_changed: { enabled: true, content_path: "missing.html" } },
+          },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "Invalid config for auth.email.notification.password_changed.content_path: ",
+      );
+    });
+
+    it("resolves a relative notification content_path against <workdir>/supabase", () => {
+      const supabaseDir = join(tempRoot.current, "supabase");
+      mkdirSync(supabaseDir, { recursive: true });
+      writeFileSync(join(supabaseDir, "pw-changed.html"), "<html></html>");
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: {
+            notification: {
+              password_changed: { enabled: true, content_path: "pw-changed.html" },
+            },
+          },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    it("does not throw a disabled notification's missing content_path", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: {
+            notification: {
+              password_changed: { enabled: false, content_path: "missing.html" },
+            },
+          },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    it("does not throw a missing template content_path when auth is disabled", () => {
+      const config = baseConfig({
+        auth: { enabled: false, email: { template: { invite: { content_path: "missing.html" } } } },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+  });
+
   describe("auth.third_party.* (thirdParty.validate())", () => {
     // Go's `(tpa *thirdParty) validate()` (`pkg/config/config.go:1635-1683`), called
     // right after `Auth.MFA.validate()`, still inside `if c.Auth.Enabled`.
