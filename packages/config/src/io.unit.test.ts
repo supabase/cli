@@ -982,13 +982,46 @@ enabled = false
     }
   });
 
-  test("does not merge remotes when no projectRef is requested", async () => {
+  test("does not merge remotes when no projectRef is requested and none has an empty project_id", async () => {
+    // `projectRef` defaults to "" (Go's own `Config.ProjectId` default for
+    // commands with no `--project-ref` flag), so this only stays unmerged
+    // because neither remote's `project_id` is empty.
     const cwd = await writeTomlProject(BASE_WITH_REMOTES);
     try {
       const loaded = await runConfigEffect(loadProjectConfig(cwd));
       expect(loaded!.appliedRemote).toBeUndefined();
       expect(loaded!.config.api.max_rows).toBe(123);
       expect(Object.keys(loaded!.config.remotes)).toEqual(["preview", "staging"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects duplicate project_id across remotes even when no projectRef is requested", async () => {
+    // Go's duplicate-project_id check (config.go:594-602) runs unconditionally
+    // on every config load, inside the same loop that resolves the [remotes.*]
+    // override — it is not gated on a caller actually selecting a remote.
+    // status/stop (internal/utils/flags/config_path.go:11) never bind a
+    // `--project-ref` flag, so they hit this check with `Config.ProjectId == ""`,
+    // and it must still fail on a config-wide duplicate.
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.a]
+project_id = "dupref"
+
+[remotes.b]
+project_id = "dupref"
+`);
+    try {
+      const message = await Effect.runPromise(
+        loadProjectConfig(cwd).pipe(
+          Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
+            Effect.succeed(error.message),
+          ),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

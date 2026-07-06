@@ -34,11 +34,15 @@ export interface LoadedProjectConfig {
 }
 
 /**
- * When `projectRef` is set, the matching `[remotes.<name>]` block (the one whose
- * `project_id` equals it) is merged over the base config before decode, mirroring
- * Go's `config.Load` with `Config.ProjectId` set
- * (`apps/cli-go/pkg/config/config.go:503-562`). Omitting it loads the base config
- * verbatim, so existing callers are unaffected.
+ * When `projectRef` is set, the matching `[remotes.<name>]` block (the one
+ * whose `project_id` equals it) is merged over the base config before decode,
+ * mirroring Go's `config.Load` with `Config.ProjectId` set
+ * (`apps/cli-go/pkg/config/config.go:503-562`). Omitting it loads the base
+ * config verbatim (no merge), so existing callers are unaffected — but Go's
+ * duplicate-`project_id` check across every `[remotes.*]` block
+ * (`config.go:594-602`) runs unconditionally on every config load, not only
+ * when a caller ends up selecting a remote, so that check always runs here
+ * too, even for callers that don't pass a `projectRef`.
  */
 export interface LoadProjectConfigOptions {
   readonly projectRef?: string;
@@ -136,28 +140,19 @@ function withDbSeedDisabled(document: Record<string, unknown>): Record<string, u
 }
 
 /**
- * Applies the `[remotes.<name>]` override whose `project_id` matches `projectRef`
- * to `document`, mirroring Go's `loadFromFile` remote resolution
- * (`config.go:503-518`). Returns the merged document (with `remotes` stripped) and
- * the matched remote name.
- *
- * Like Go, duplicate `project_id`s are detected across *all* `[remotes.*]` blocks —
- * not just the ones matching `projectRef` — before the matching override is applied.
- * A missing `project_id` reads as `""` (Go's `viper.GetString`), so two remotes that
- * both omit it collide on the empty key and fail just as in Go.
+ * Builds a `project_id -> "[remotes.<name>]"` map across every `[remotes.*]`
+ * block, failing on the first duplicate. Mirrors Go's `loadFromFile`
+ * (`config.go:594-602`): that loop runs unconditionally on every config load,
+ * regardless of whether any remote's `project_id` ends up matching
+ * `Config.ProjectId` — so this always runs too, even for callers that don't
+ * request a specific `projectRef`. A missing `project_id` reads as `""`
+ * (Go's `viper.GetString`), so two remotes that both omit it collide on the
+ * empty key and fail just as in Go.
  */
-const applyRemoteOverride = Effect.fnUntraced(function* (
-  document: Record<string, unknown>,
-  projectRef: string,
+const checkDuplicateRemoteProjectIds = Effect.fnUntraced(function* (
+  remotes: Record<string, unknown>,
 ) {
-  const remotes = document["remotes"];
-  if (!isObject(remotes)) {
-    return { document, appliedRemote: undefined as string | undefined };
-  }
-  // Build a project_id -> "[remotes.<name>]" map over every remote, failing on the
-  // first duplicate, then resolve the single block matching projectRef.
   const idToName = new Map<string, string>();
-  let name: string | undefined;
   for (const [remoteName, remote] of Object.entries(remotes)) {
     const projectId =
       isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
@@ -168,10 +163,32 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
       });
     }
     idToName.set(projectId, `[remotes.${remoteName}]`);
-    if (projectId === projectRef) {
-      name = remoteName;
-    }
   }
+});
+
+/**
+ * Applies the `[remotes.<name>]` override whose `project_id` matches `projectRef`
+ * to `document`, mirroring Go's `loadFromFile` remote resolution
+ * (`config.go:503-518`). Returns the merged document (with `remotes` stripped) and
+ * the matched remote name. `projectRef` of `undefined` never matches any remote
+ * (including one that itself omits `project_id`, which reads as `""`) — callers
+ * that don't request a specific remote get the duplicate check below without
+ * the merge, so the base document loads verbatim as before.
+ */
+const applyRemoteOverride = Effect.fnUntraced(function* (
+  document: Record<string, unknown>,
+  projectRef: string | undefined,
+) {
+  const remotes = document["remotes"];
+  if (!isObject(remotes)) {
+    return { document, appliedRemote: undefined as string | undefined };
+  }
+  yield* checkDuplicateRemoteProjectIds(remotes);
+  const name = Object.entries(remotes).find(([, remote]) => {
+    const projectId =
+      isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
+    return projectRef !== undefined && projectId === projectRef;
+  })?.[0];
   if (name === undefined) {
     return { document, appliedRemote: undefined as string | undefined };
   }
@@ -426,12 +443,15 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   );
 
   // Merge the matching `[remotes.*]` override over the base document before
-  // decode (Go's `loadFromFile` with `Config.ProjectId` set). Only requested
-  // when a `projectRef` is supplied, so other callers load the base verbatim.
+  // decode (Go's `loadFromFile` with `Config.ProjectId` set). Runs
+  // unconditionally so the duplicate-`project_id` check always applies, like
+  // Go's own loop (`config.go:594-602`), even for callers that don't request
+  // a `projectRef` — those just never match a remote, so the base document
+  // still loads verbatim, only now with the duplicate check applied too.
   let documentForDecode: unknown = interpolated;
   let appliedRemote: string | undefined;
-  if (options?.projectRef !== undefined && isObject(interpolated)) {
-    const resolved = yield* applyRemoteOverride(interpolated, options.projectRef);
+  if (isObject(interpolated)) {
+    const resolved = yield* applyRemoteOverride(interpolated, options?.projectRef);
     documentForDecode = resolved.document;
     appliedRemote = resolved.appliedRemote;
   }
