@@ -1377,3 +1377,122 @@ port = 54324
     expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
   });
 });
+
+describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", () => {
+  let warnings: Array<string> = [];
+  let errorSpy: ReturnType<typeof vi.spyOn> | undefined;
+
+  function captureWarnings() {
+    warnings = [];
+    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    });
+  }
+
+  afterEach(() => {
+    errorSpy?.mockRestore();
+    errorSpy = undefined;
+  });
+
+  async function loadToml(contents: string) {
+    const cwd = makeTempProject();
+    const path = await runConfigEffect(configTomlPath(cwd));
+    await mkdir(join(cwd, "supabase"), { recursive: true });
+    await writeFile(path, contents);
+    try {
+      return await runConfigEffect(loadProjectConfigFile(path));
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+
+  test("loads a bare [auth.external.slack] block without required fields", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[auth.external.slack]
+enabled = true
+`,
+    );
+
+    expect("slack" in loaded.config.auth.external).toBe(false);
+    expect(loaded.document).not.toHaveProperty("auth.external.slack");
+    expect(
+      warnings.some((m) =>
+        m.includes(
+          'WARN: disabling deprecated "slack" provider. Please use [auth.external.slack_oidc] instead',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("loads a bare [auth.external.linkedin] block without required fields", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[auth.external.linkedin]
+enabled = true
+`,
+    );
+
+    expect("linkedin" in loaded.config.auth.external).toBe(false);
+    expect(
+      warnings.some((m) =>
+        m.includes(
+          'WARN: disabling deprecated "linkedin" provider. Please use [auth.external.linkedin_oidc] instead',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("does not warn when the deprecated section is present but disabled", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[auth.external.slack]
+enabled = false
+`,
+    );
+
+    expect("slack" in loaded.config.auth.external).toBe(false);
+    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+  });
+
+  test("does not warn when only [auth.external.slack_oidc] is used", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[auth.external.slack_oidc]
+enabled = true
+client_id = "abc"
+secret = "shh"
+`,
+    );
+
+    expect(loaded.config.auth.external.slack_oidc.enabled).toBe(true);
+    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+  });
+
+  test("strips a deprecated [remotes.*.auth.external.slack] block without warning for an unselected remote", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[remotes.staging]
+project_id = "stagingrefaaaaaaaaaa"
+
+[remotes.staging.auth.external.slack]
+enabled = true
+`,
+    );
+
+    // Not requesting `projectRef` means no remote is selected, so `remotes` survives
+    // decode verbatim (minus the deprecated key) rather than being merged/dropped.
+    expect(loaded.config.remotes.staging?.auth.external).not.toHaveProperty("slack");
+    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+  });
+});

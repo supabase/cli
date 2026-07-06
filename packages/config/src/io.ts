@@ -373,6 +373,78 @@ function normalizeDeprecatedSMTPSections(document: unknown): NormalizedSMTPDocum
   return { document: normalized, deprecatedSections };
 }
 
+interface NormalizedExternalProvidersDocument {
+  readonly document: unknown;
+  /** Provider ids (`"linkedin"` | `"slack"`) whose deprecated top-level block was `enabled` — drives the WARN. */
+  readonly deprecatedProviders: ReadonlyArray<string>;
+}
+
+const DEPRECATED_EXTERNAL_PROVIDERS = ["linkedin", "slack"] as const;
+
+/**
+ * Go's `(e external) validate()` deprecated-provider handling
+ * (`apps/cli-go/pkg/config/config.go:1418-1423`): `linkedin`/`slack` are
+ * unconditionally deleted from `auth.external` before the required-field loop
+ * runs, so a bare `[auth.external.slack] enabled = true` with no
+ * `client_id`/`secret` loads fine in Go — a warning prints to stderr only
+ * when the deleted provider was `enabled`, never a hard failure.
+ *
+ * Unlike {@link normalizeDeprecatedSMTPSections}'s `[inbucket]` rename — which
+ * Go's own `normalizeDeprecatedSMTPConfig` runs BEFORE remote selection, over
+ * every `[remotes.*]` entry unconditionally (`config.go:594,614-640`) — Go's
+ * `external.validate()` runs from `Config.Validate()`, exactly ONCE on the
+ * final post-remote-merge struct (`config.go:882,1148`). A non-selected
+ * remote's own `auth.external.slack` block is never even looked at by Go. So
+ * this must run on the POST-merge document (`documentForDecode`, after
+ * `applyRemoteOverride`), not the pre-merge one:
+ *  - the top-level `auth.external.{linkedin,slack}` is always stripped, and
+ *    reported (for the caller to warn on) only when it was `enabled`,
+ *    matching Go's single `external.validate()` call.
+ *  - any `remotes.*.auth.external.{linkedin,slack}` still present (only
+ *    possible when no remote matched `projectRef`, so `applyRemoteOverride`
+ *    left `remotes` in place) is also stripped, but never reported — purely
+ *    so `remoteProjectConfig`'s eager, whole-map schema decode
+ *    (`packages/config/src/base.ts`) doesn't reject an unselected remote's
+ *    deprecated block over a field Go itself never struct-decodes at all for
+ *    a remote that isn't in effect.
+ */
+function normalizeDeprecatedExternalProviders(
+  document: unknown,
+): NormalizedExternalProvidersDocument {
+  if (!isObject(document)) {
+    return { document, deprecatedProviders: [] };
+  }
+  const normalized = { ...document };
+  const deprecatedProviders: Array<string> = [];
+  if (isObject(normalized.auth) && isObject(normalized.auth.external)) {
+    const external = { ...normalized.auth.external };
+    for (const ext of DEPRECATED_EXTERNAL_PROVIDERS) {
+      const provider = external[ext];
+      if (provider === undefined) continue;
+      if (isObject(provider) && provider.enabled === true) {
+        deprecatedProviders.push(ext);
+      }
+      delete external[ext];
+    }
+    normalized.auth = { ...normalized.auth, external };
+  }
+  if (isObject(normalized.remotes)) {
+    normalized.remotes = Object.fromEntries(
+      Object.entries(normalized.remotes).map(([name, remote]) => {
+        if (!isObject(remote) || !isObject(remote.auth) || !isObject(remote.auth.external)) {
+          return [name, remote];
+        }
+        const external = { ...remote.auth.external };
+        for (const ext of DEPRECATED_EXTERNAL_PROVIDERS) {
+          delete external[ext];
+        }
+        return [name, { ...remote, auth: { ...remote.auth, external } }];
+      }),
+    );
+  }
+  return { document: normalized, deprecatedProviders };
+}
+
 function getSchemaRef(document: unknown): string | undefined {
   if (!isObject(document)) {
     return undefined;
@@ -483,7 +555,26 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     appliedRemote = resolved.appliedRemote;
   }
 
-  const config = yield* parseProjectConfig(documentForDecode, format, filePath);
+  // Strip Go's deprecated `auth.external.{linkedin,slack}` provider ids from
+  // the POST-remote-merge document, matching `external.validate()` running
+  // once on the final effective config (see `normalizeDeprecatedExternalProviders`).
+  const { document: normalizedForDecode, deprecatedProviders } =
+    normalizeDeprecatedExternalProviders(documentForDecode);
+  // Warn on stderr, matching Go's `external.validate()` (`config.go:1418-1423`).
+  // Go's own format string is a raw string literal ending in a literal
+  // backslash-n (raw string literals never process escapes, and `Fprintf`
+  // doesn't append a newline the way `Fprintln` does), so Go's actual stderr
+  // bytes have no real line break after this message — a library-internal
+  // artifact, not the parity-relevant part, same call already made for
+  // `LegacyInvalidPortEnvOverrideError` in the legacy shell. Not reproduced
+  // byte-for-byte; `Console.error` supplies a normal trailing newline instead.
+  for (const ext of deprecatedProviders) {
+    yield* Console.error(
+      `WARN: disabling deprecated "${ext}" provider. Please use [auth.external.${ext}_oidc] instead`,
+    );
+  }
+
+  const config = yield* parseProjectConfig(normalizedForDecode, format, filePath);
 
   return {
     path: filePath,
@@ -491,7 +582,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     config,
     schemaRef: getSchemaRef(document),
     ignoredPaths: [],
-    document: isObject(documentForDecode) ? documentForDecode : undefined,
+    document: isObject(normalizedForDecode) ? normalizedForDecode : undefined,
     appliedRemote,
   } satisfies LoadedProjectConfig;
 });
