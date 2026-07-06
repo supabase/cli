@@ -9,10 +9,10 @@
 
 ## Files Written
 
-| Path                                             | Format | When                                                                                      |
-| ------------------------------------------------ | ------ | ----------------------------------------------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | after the project ref is resolved (only if flag validation passes), via `Effect.ensuring` |
-| `~/.supabase/telemetry.json`                     | JSON   | always, via `Effect.ensuring` — including flag-validation failures                        |
+| Path                                             | Format | When                                                                                                                                   |
+| ------------------------------------------------ | ------ | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | once the `--experimental` gate is open, after the project ref is resolved (only if flag validation passes), via `Effect.ensuring`      |
+| `~/.supabase/telemetry.json`                     | JSON   | once the `--experimental` gate is open, via `Effect.ensuring` — including flag-validation failures. Not written if the gate is closed. |
 
 ## API Routes
 
@@ -22,22 +22,24 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                                |
-| ----------------------- | ---------------------------------------------------- | -------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)  |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)              |
-| `PROJECT_ID`            | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref` → prompt) |
+| Variable                | Purpose                                                  | Required?                                                      |
+| ----------------------- | -------------------------------------------------------- | -------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring → `~/.supabase/access-token`)        |
+| `SUPABASE_API_URL`      | override Management API base URL                         | no (defaults to `https://api.supabase.com`)                    |
+| `PROJECT_ID`            | project ref fallback when `--project-ref` is unset       | no (falls back to `supabase/.temp/project-ref` → prompt)       |
+| `SUPABASE_EXPERIMENTAL` | enables `--experimental`-gated commands without the flag | no (pass `--experimental` instead; one of the two is required) |
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                     |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — SSL enforcement status (post-update) printed to stdout                                                              |
-| `1`  | neither `--enable-db-ssl-enforcement` nor `--disable-db-ssl-enforcement` set (`LegacySslEnforcementNoEnableDisableFlagError`) |
-| `1`  | both `--enable-db-ssl-enforcement` and `--disable-db-ssl-enforcement` set (`LegacySslEnforcementMutuallyExclusiveFlagsError`) |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                       |
-| `1`  | API non-200 (`LegacySslEnforcementUpdateUnexpectedStatusError`)                                                               |
-| `1`  | transport failure (`LegacySslEnforcementUpdateNetworkError`)                                                                  |
+| Code | Condition                                                                                                                                                                                      |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — SSL enforcement status (post-update) printed to stdout                                                                                                                               |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked in `.command.ts`, before the handler (and its flag validation/telemetry) ever runs |
+| `1`  | neither `--enable-db-ssl-enforcement` nor `--disable-db-ssl-enforcement` set (`LegacySslEnforcementNoEnableDisableFlagError`)                                                                  |
+| `1`  | both `--enable-db-ssl-enforcement` and `--disable-db-ssl-enforcement` set (`LegacySslEnforcementMutuallyExclusiveFlagsError`)                                                                  |
+| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                                                                        |
+| `1`  | API non-200 (`LegacySslEnforcementUpdateUnexpectedStatusError`)                                                                                                                                |
+| `1`  | transport failure (`LegacySslEnforcementUpdateNetworkError`)                                                                                                                                   |
 
 ## Telemetry Events Fired
 
@@ -96,5 +98,12 @@ One `result` event:
   `--disable-db-ssl-enforcement` is the user-facing way to send `database: false`.
 - `linked-project.json` is **not** written if flag validation fails (no ref is
   resolved). `telemetry.json` is written regardless, matching Go's
-  `PersistentPostRun` semantics.
+  `PersistentPostRun` semantics — but only once the `--experimental` gate is open, since
+  the flag-validation/telemetry-writing handler never runs at all when the gate is closed.
 - The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
+- `ssl-enforcement` is an experimental command (Go `root.go:63`): `update` requires
+  `--experimental` (or `SUPABASE_EXPERIMENTAL`), matching Go's root-level `PersistentPreRunE`
+  gate (`root.go:91-96`), which runs before the `IsManagementAPI` login check
+  (`root.go:105-109`). A closed gate exits 1 before the enable/disable mutex check, project-ref
+  resolution, the API call, the `linked-project.json` write, the `telemetry.json` write, and the
+  `cli_command_executed` event.

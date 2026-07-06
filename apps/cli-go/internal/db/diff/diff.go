@@ -50,6 +50,13 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 }
 
 func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
+	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
+		return schemas.SQLFiles(
+			afero.NewIOFS(fsys),
+			configpkg.WithSkipEmptyGlobs(),
+			configpkg.WithErrorOnAllSkippedGlobs(),
+		)
+	}
 	// When pg-delta is enabled, declarative path is the source of truth (config or default).
 	if utils.IsPgDeltaEnabled() {
 		declDir := utils.GetDeclarativeDir()
@@ -69,13 +76,6 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 			sort.Strings(declared)
 			return declared, nil
 		}
-	}
-	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
-		return schemas.Files(
-			afero.NewIOFS(fsys),
-			configpkg.WithSkipEmptyGlobs(),
-			configpkg.WithErrorOnAllSkippedGlobs(),
-		)
 	}
 	if exists, err := afero.DirExists(fsys, utils.SchemasDir); err != nil {
 		return nil, errors.Errorf("failed to check schemas: %w", err)
@@ -98,6 +98,24 @@ func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
 	// filesystems and operating systems. This is only if no schema paths in config are set.
 	sort.Strings(declared)
 	return declared, nil
+}
+
+func shouldApplyDeclarativeWithPgDelta(usePgDelta bool) bool {
+	if !usePgDelta {
+		return false
+	}
+	schemas := utils.Config.Db.Migrations.SchemaPaths
+	if len(schemas) == 0 {
+		return true
+	}
+	if len(schemas) != 1 {
+		return false
+	}
+	return cleanSchemaPath(schemas[0]) == cleanSchemaPath(utils.GetDeclarativeDir())
+}
+
+func cleanSchemaPath(path string) string {
+	return filepath.ToSlash(filepath.Clean(path))
 }
 
 // https://github.com/djrobstep/migra/blob/master/migra/statements.py#L6

@@ -163,7 +163,7 @@ describe("legacy services", () => {
           CliOutput.layer(textCliOutputFormatter()),
           out.layer,
           analytics.layer,
-          processEnvLayer({ SUPABASE_HOME: workdir }),
+          processEnvLayer({ SUPABASE_HOME: workdir, SUPABASE_NO_KEYRING: "1" }),
           mockRuntimeInfo({ cwd: workdir, homeDir: workdir }),
           mockTty({ stdinIsTty: false, stdoutIsTty: false }),
           Stdio.layerTest({ args: Effect.succeed(args) }),

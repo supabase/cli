@@ -16,9 +16,13 @@ export interface CompletePassthroughDeps {
 
 /**
  * Cobra-generated completion scripts (`supabase completion {bash,zsh,fish,powershell}`)
- * call back into `supabase __complete <args>` on every tab press. The args may
- * include partial flag tokens (e.g. `--de` while the user is mid-completion of a
- * flag name) that Effect's structured parser would reject. Bypass Effect entirely
+ * call back into `supabase __complete <args>` on every tab press — or
+ * `supabase __completeNoDesc <args>` when the script was generated with
+ * `--no-descriptions` (`__completeNoDesc` is cobra's alias for the same hidden
+ * command, `ShellCompNoDescRequestCmd` in `spf13/cobra@v1.10.2/completions.go`,
+ * baked into the generated script at generation time). The args may include
+ * partial flag tokens (e.g. `--de` while the user is mid-completion of a flag
+ * name) that Effect's structured parser would reject. Bypass Effect entirely
  * for this code path and proxy the raw argv to the bundled Go binary, which is
  * the authority on completion behavior for the legacy shell.
  *
@@ -26,7 +30,7 @@ export interface CompletePassthroughDeps {
  * otherwise.
  */
 export function tryCompletePassthrough(deps: CompletePassthroughDeps): boolean {
-  if (deps.argv[0] !== "__complete") return false;
+  if (deps.argv[0] !== "__complete" && deps.argv[0] !== "__completeNoDesc") return false;
 
   const resolved = deps.resolveBinary();
   if (!("found" in resolved)) {

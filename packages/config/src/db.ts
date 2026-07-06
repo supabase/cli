@@ -132,13 +132,14 @@ export const db = Schema.Struct({
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMigrationsEnabled))),
     schema_paths: Schema.Array(
       Schema.String.annotate({
-        description: "Schema file path or glob relative to the supabase directory.",
+        description: "Schema file path, directory, or glob relative to the supabase directory.",
         tags,
       }),
     )
       .annotate({
         default: defaultSchemaPaths,
-        description: "Ordered list of schema files that describe your database.",
+        description:
+          "Ordered list of schema files, directories, or glob patterns that describe your database.",
         tags,
       })
       .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultSchemaPaths]))),

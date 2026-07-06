@@ -2539,6 +2539,7 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
           "integrations.github_connections",
           "dedicated_pooler",
           "observability.dashboard_advanced_metrics",
+          "api.members.invitations",
           "api.members.roles",
         ]),
         type: Schema.Literals(["boolean", "numeric", "set"]),
@@ -2903,6 +2904,12 @@ export const V1GetPostgrestServiceConfigOutput = Schema.Struct({
   db_pool: Schema.Union([
     Schema.Number.annotate({
       description: "If `null`, the value is automatically configured based on compute size.",
+    }).check(Schema.isInt()),
+    Schema.Null,
+  ]),
+  db_pool_acquisition_timeout: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 10.",
     }).check(Schema.isInt()),
     Schema.Null,
   ]),
@@ -5789,6 +5796,11 @@ export const V1UpdatePostgrestServiceConfigInput = Schema.Struct({
       .check(Schema.isGreaterThanOrEqualTo(0))
       .check(Schema.isLessThanOrEqualTo(1000)),
   ),
+  db_pool_acquisition_timeout: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(0))
+      .check(Schema.isLessThanOrEqualTo(60)),
+  ),
 });
 export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
   db_schema: Schema.String,
@@ -5797,6 +5809,12 @@ export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
   db_pool: Schema.Union([
     Schema.Number.annotate({
       description: "If `null`, the value is automatically configured based on compute size.",
+    }).check(Schema.isInt()),
+    Schema.Null,
+  ]),
+  db_pool_acquisition_timeout: Schema.Union([
+    Schema.Number.annotate({
+      description: "If `null`, the value is automatically configured to 10.",
     }).check(Schema.isInt()),
     Schema.Null,
   ]),
@@ -8792,7 +8810,13 @@ export const operationDefinitions = {
     requestBody: {
       kind: "json",
       contentType: "application/json",
-      fields: ["db_extra_search_path", "db_schema", "max_rows", "db_pool"],
+      fields: [
+        "db_extra_search_path",
+        "db_schema",
+        "max_rows",
+        "db_pool",
+        "db_pool_acquisition_timeout",
+      ],
     },
     response: { kind: "json" },
     inputSchema: V1UpdatePostgrestServiceConfigInput,

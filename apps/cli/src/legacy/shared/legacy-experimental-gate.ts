@@ -18,8 +18,10 @@ import { legacyResolveExperimental } from "../../shared/legacy/global-flags.ts";
  * `ValidateFlagGroups()` (mutual-exclusivity checks) and `RunE`/`PersistentPostRun`
  * (`cobra@v1.10.2/command.go:985,1010,1014`) — so a closed gate must NOT run
  * mutual-exclusivity checks, emit `cli_command_executed`, or write the
- * telemetry/linked-project files. Each native experimental leaf therefore calls
- * this in its `.command.ts` before any mutual-exclusivity check and before
+ * telemetry/linked-project files. (Cobra's positional-argument count/type
+ * validation, `ValidateArgs`, runs even earlier, at `command.go:968` — the gate
+ * does not preempt that.) Each native experimental leaf therefore calls this in
+ * its `.command.ts` before any mutual-exclusivity check and before
  * `withLegacyCommandInstrumentation`.
  *
  * The message byte-matches Go's `errors.New(...)`; the value is resolved with the

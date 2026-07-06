@@ -82,7 +82,7 @@ jobs:
       # Checkout the PR head so any reviewer edits made in the GitHub UI before
       # approval are captured. apply-release-notes.ts reads from the working
       # tree.
-      - uses: useblacksmith/checkout@41cdeedae8edb2e684ba22896a5fd2a3cb85db6b # v1
+      - uses: useblacksmith/checkout@c9796daa2a4bdebdab5bd16be2c09a70cd4e1121 # v1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1

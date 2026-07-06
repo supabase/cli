@@ -37,6 +37,7 @@ const POSTGREST_DISABLED = {
   db_extra_search_path: "",
   max_rows: 0,
   db_pool: null,
+  db_pool_acquisition_timeout: null,
 };
 
 /** Routes mock HTTP responses by URL path so a single handler serves every endpoint. */
@@ -259,6 +260,7 @@ project_id = "abcdefghijklmnopqrst"
             db_extra_search_path: "public,extensions",
             max_rows: 1000,
             db_pool: null,
+            db_pool_acquisition_timeout: null,
             jwt_secret: "x",
           },
         },
