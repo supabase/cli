@@ -232,6 +232,69 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("non-auth SUPABASE_* env overrides", () => {
+    // Go's Config.Load binds Viper with SetEnvPrefix("SUPABASE") + AutomaticEnv()
+    // generically across the whole config struct (pkg/config/config.go:529-535),
+    // not just auth fields — config_test.go:351,1061 exercise this against
+    // auth.site_url, and status.go's toValues() reads the already-overridden
+    // utils.Config.* directly, so every port/URL status derives must honor the
+    // same override.
+    const ENV_KEYS = [
+      "SUPABASE_DB_PORT",
+      "SUPABASE_STUDIO_PORT",
+      "SUPABASE_LOCAL_SMTP_PORT",
+      "SUPABASE_API_PORT",
+      "SUPABASE_API_EXTERNAL_URL",
+    ] as const;
+
+    afterEach(() => {
+      for (const key of ENV_KEYS) delete process.env[key];
+    });
+
+    it("overrides db.port for the derived DB URL", () => {
+      process.env["SUPABASE_DB_PORT"] = "54329";
+      const config = baseConfig({ db: { port: 54322 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:54329/postgres");
+    });
+
+    it("overrides studio.port for the derived Studio URL", () => {
+      process.env["SUPABASE_STUDIO_PORT"] = "54330";
+      const config = baseConfig({ studio: { port: 54323 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.studioUrl).toBe("http://127.0.0.1:54330");
+    });
+
+    it("overrides local_smtp.port for the derived Mailpit URL", () => {
+      process.env["SUPABASE_LOCAL_SMTP_PORT"] = "54331";
+      const config = baseConfig({ local_smtp: { port: 54324 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.mailpitUrl).toBe("http://127.0.0.1:54331");
+    });
+
+    it("overrides api.port for every API-derived URL", () => {
+      process.env["SUPABASE_API_PORT"] = "54332";
+      const config = baseConfig({ api: { port: 54321 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.apiUrl).toBe("http://127.0.0.1:54332");
+      expect(values.restUrl).toBe("http://127.0.0.1:54332/rest/v1");
+    });
+
+    it("overrides api.external_url even when config.toml sets one", () => {
+      process.env["SUPABASE_API_EXTERNAL_URL"] = "https://env-override.example";
+      const config = baseConfig({ api: { external_url: "https://config.example" } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.apiUrl).toBe("https://env-override.example");
+    });
+
+    it("treats an empty non-auth env var as unset, matching Viper's default", () => {
+      process.env["SUPABASE_DB_PORT"] = "";
+      const config = baseConfig({ db: { port: 54322 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:54322/postgres");
+    });
+  });
+
   describe("auth.signing_keys_path (asymmetric JWT signing)", () => {
     const tempRoot = useLegacyTempWorkdir("supabase-signing-keys-test-");
 

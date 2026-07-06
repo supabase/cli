@@ -91,11 +91,15 @@ const MIN_JWT_SECRET_LENGTH = 16;
 /**
  * Go's `Config.Load` binds Viper with `SetEnvPrefix("SUPABASE")` +
  * `AutomaticEnv()` + a `.`→`_` key replacer (`pkg/config/config.go:529-535`),
- * so any config field can be overridden by a `SUPABASE_<DOTTED_KEY>` env var —
- * this resolves it for exactly the 6 auth fields this module reads, at the
- * same higher-than-config.toml precedence Viper gives env vars. An empty env
- * var is treated as unset, matching Viper's default (`AllowEmptyEnv` is never
- * enabled in `config.go`).
+ * so ANY config field can be overridden by a `SUPABASE_<DOTTED_KEY>` env var,
+ * generically across the whole struct — not just auth fields
+ * (`config_test.go:351,1061` exercise this against `auth.site_url`, and
+ * `internal/status/status.go:52-95`'s `toValues()` reads `utils.Config.*`
+ * directly, so every already-overridden field is automatically reflected in
+ * `status`'s output). This resolves it for every field this module derives a
+ * URL/port from, at the same higher-than-config.toml precedence Viper gives
+ * env vars. An empty env var is treated as unset, matching Viper's default
+ * (`AllowEmptyEnv` is never enabled in `config.go`).
  *
  * Viper's `AutomaticEnv` binding runs AFTER `Config.Load`'s `loadNestedEnv`
  * (`config.go:735-738`), which loads `supabase/.env`(.local) and project-root
@@ -217,7 +221,30 @@ export function legacyResolveLocalConfigValues(
   workdir: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
 ): LegacyLocalConfigValues {
-  const apiExternalUrl = legacyResolveApiExternalUrl(config.api, hostname);
+  // Go's `status` reads `utils.Config.Api.Port`/`ExternalUrl` after Viper's
+  // AutomaticEnv has already applied any `SUPABASE_API_PORT`/
+  // `SUPABASE_API_EXTERNAL_URL` override (`config.go:529-535`), so the port
+  // fed into `legacyResolveApiExternalUrl`'s own `external_url`-wins-else-
+  // `scheme://host:port` derivation must be the overridden one too.
+  const apiExternalUrl = legacyResolveApiExternalUrl(
+    {
+      external_url: envOverride(
+        "SUPABASE_API_EXTERNAL_URL",
+        config.api.external_url,
+        projectEnvValues,
+      ),
+      port: Number(envOverride("SUPABASE_API_PORT", String(config.api.port), projectEnvValues)),
+      tls: config.api.tls,
+    },
+    hostname,
+  );
+  const dbPort = Number(envOverride("SUPABASE_DB_PORT", String(config.db.port), projectEnvValues));
+  const studioPort = Number(
+    envOverride("SUPABASE_STUDIO_PORT", String(config.studio.port), projectEnvValues),
+  );
+  const mailpitPort = Number(
+    envOverride("SUPABASE_LOCAL_SMTP_PORT", String(config.local_smtp.port), projectEnvValues),
+  );
   const jwtSecret = resolveJwtSecret(
     envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
   );
@@ -243,9 +270,9 @@ export function legacyResolveLocalConfigValues(
     graphqlUrl: apiUrlWithPath(apiExternalUrl, "/graphql/v1"),
     functionsUrl: apiUrlWithPath(apiExternalUrl, "/functions/v1"),
     mcpUrl: apiUrlWithPath(apiExternalUrl, "/mcp"),
-    studioUrl: `http://${hostname}:${config.studio.port}`,
-    mailpitUrl: `http://${hostname}:${config.local_smtp.port}`,
-    dbUrl: `postgresql://postgres:${DEFAULT_DB_PASSWORD}@${hostname}:${config.db.port}/postgres`,
+    studioUrl: `http://${hostname}:${studioPort}`,
+    mailpitUrl: `http://${hostname}:${mailpitPort}`,
+    dbUrl: `postgresql://postgres:${DEFAULT_DB_PASSWORD}@${hostname}:${dbPort}/postgres`,
     publishableKey: resolveOpaqueKey(
       envOverride("SUPABASE_AUTH_PUBLISHABLE_KEY", config.auth.publishable_key, projectEnvValues),
       defaultPublishableKey,
