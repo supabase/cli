@@ -319,6 +319,9 @@ jwt_secret = "env(AUTH_JWT_SECRET)"
 [edge_runtime.secrets]
 api_key = "env(EDGE_API_KEY)"
 
+[remotes.preview]
+project_id = "previewrefaaaaaaaaaa"
+
 [remotes.preview.auth]
 jwt_secret = "env(PREVIEW_JWT_SECRET)"
 `,

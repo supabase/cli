@@ -1695,7 +1695,7 @@ describe("legacy functions serve integration", () => {
               "verify_jwt = true",
               "",
               "[remotes.override]",
-              'project_id = "override-project"',
+              'project_id = "overrideprojectaaaaa"',
               "",
               "[remotes.override.functions.hello]",
               "verify_jwt = false",
@@ -1710,7 +1710,7 @@ describe("legacy functions serve integration", () => {
 
         const { layer } = setupServe({
           childSpawner,
-          projectId: Option.some("override-project"),
+          projectId: Option.some("overrideprojectaaaaa"),
         });
         const error = yield* legacyFunctionsServe(baseFlags()).pipe(
           Effect.provide(layer),
@@ -1724,20 +1724,20 @@ describe("legacy functions serve integration", () => {
 
         expect(deployMockState.volumeCalls).toEqual([
           {
-            volumeName: "supabase_edge_runtime_override-project",
-            projectId: "override-project",
+            volumeName: "supabase_edge_runtime_overrideprojectaaaaa",
+            projectId: "overrideprojectaaaaa",
           },
         ]);
         expect(deployMockState.networkCalls).toEqual([
           {
-            networkMode: "supabase_network_override-project",
-            projectId: "override-project",
+            networkMode: "supabase_network_overrideprojectaaaaa",
+            projectId: "overrideprojectaaaaa",
           },
         ]);
         expect(deployMockState.runCalls).toContainEqual(
           expect.objectContaining({
             command: "docker",
-            args: ["container", "inspect", "supabase_db_override-project"],
+            args: ["container", "inspect", "supabase_db_overrideprojectaaaaa"],
           }),
         );
 

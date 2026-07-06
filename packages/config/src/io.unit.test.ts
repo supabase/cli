@@ -925,6 +925,14 @@ describe("config io [remotes.*] merge", () => {
     return cwd;
   }
 
+  // Remote `project_id`s below are valid 20-lowercase-letter refs (Go's
+  // `refPattern`, `config.go:558`) — `Config.Validate` rejects every
+  // `[remotes.*].project_id` against that pattern unconditionally on every
+  // config load (`config.go:996-1001`), so test fixtures must satisfy it too,
+  // even for scenarios that don't care about the ref's specific value.
+  const PREVIEW_REF = "previewrefaaaaaaaaaa";
+  const STAGING_REF = "stagingrefaaaaaaaaaa";
+
   const BASE_WITH_REMOTES = `project_id = "baseref"
 
 [api]
@@ -936,13 +944,13 @@ max_rows = 123
 major_version = 15
 
 [remotes.preview]
-project_id = "previewref"
+project_id = "${PREVIEW_REF}"
 [remotes.preview.api]
 schemas = ["remote_only"]
 max_rows = 999
 
 [remotes.staging]
-project_id = "stagingref"
+project_id = "${STAGING_REF}"
 [remotes.staging.api]
 enabled = false
 `;
@@ -950,10 +958,10 @@ enabled = false
   test("merges the matching remote subtree over the base before decode", async () => {
     const cwd = await writeTomlProject(BASE_WITH_REMOTES);
     try {
-      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
       expect(loaded!.appliedRemote).toBe("preview");
       // remote block's project_id overrides the base
-      expect(loaded!.config.project_id).toBe("previewref");
+      expect(loaded!.config.project_id).toBe(PREVIEW_REF);
       // remote scalar wins
       expect(loaded!.config.api.max_rows).toBe(999);
       // array replaced wholesale (not element-merged)
@@ -1109,16 +1117,41 @@ max_rows = 2
     }
   });
 
+  test("rejects a remote project_id that is not a valid 20-letter ref, even with no projectRef requested", async () => {
+    // Go's Config.Validate (config.go:996-1001) checks every [remotes.*].project_id
+    // against refPattern unconditionally on every config load — not only the one
+    // that ends up selected — so this must fail closed before status/stop reach
+    // Docker, exactly like Go, even when the caller never selects a remote.
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.bad]
+project_id = "not-a-ref"
+`);
+    try {
+      const message = await Effect.runPromise(
+        loadProjectConfig(cwd).pipe(
+          Effect.catchTag("InvalidRemoteProjectIdError", (error) => Effect.succeed(error.message)),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(message).toBe(
+        "Invalid config for remotes.bad.project_id. Must be like: abcdefghijklmnopqrst",
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("the merged document carries pointer sections introduced by the remote", async () => {
     const cwd = await writeTomlProject(`project_id = "baseref"
 
 [remotes.preview]
-project_id = "previewref"
+project_id = "${PREVIEW_REF}"
 [remotes.preview.db.ssl_enforcement]
 enabled = true
 `);
     try {
-      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
       // `legacyPresenceIn` reads `document` to detect optional pointer sections;
       // a remote-introduced `db.ssl_enforcement` must be present there.
       const db = loaded!.document?.db;
@@ -1135,12 +1168,12 @@ enabled = true
 enabled = true
 
 [remotes.preview]
-project_id = "previewref"
+project_id = "${PREVIEW_REF}"
 [remotes.preview.api]
 max_rows = 5
 `);
     try {
-      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
       expect(loaded!.config.db.seed.enabled).toBe(false);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -1151,12 +1184,12 @@ max_rows = 5
     const cwd = await writeTomlProject(`project_id = "baseref"
 
 [remotes.preview]
-project_id = "previewref"
+project_id = "${PREVIEW_REF}"
 [remotes.preview.db.seed]
 enabled = true
 `);
     try {
-      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
       expect(loaded!.config.db.seed.enabled).toBe(true);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -1194,12 +1227,12 @@ enabled = true
 max_rows = 1
 
 [remotes.preview]
-project_id = "previewref"
+project_id = "${PREVIEW_REF}"
 [remotes.preview.api]
 max_rows = "env(SUPABASE_REMOTE_MAX_ROWS_TEST)"
 `);
     try {
-      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
       expect(loaded!.config.api.max_rows).toBe(777);
     } finally {
       if (previous === undefined) {
@@ -1309,7 +1342,7 @@ port = 22222
       `project_id = "abc123"
 
 [remotes.staging]
-project_id = "stagingref"
+project_id = "stagingrefaaaaaaaaaa"
 
 [remotes.staging.inbucket]
 enabled = true

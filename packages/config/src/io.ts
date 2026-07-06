@@ -1,7 +1,11 @@
 import { Console, Effect, FileSystem, Path, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
-import { DuplicateRemoteProjectIdError, ProjectConfigParseError } from "./errors.ts";
+import {
+  DuplicateRemoteProjectIdError,
+  InvalidRemoteProjectIdError,
+  ProjectConfigParseError,
+} from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { findProjectPaths } from "./paths.ts";
 import { loadProjectEnvironment, type ProjectEnvironment } from "./project.ts";
@@ -166,6 +170,28 @@ const checkDuplicateRemoteProjectIds = Effect.fnUntraced(function* (
   }
 });
 
+/** Go's project-ref pattern (`apps/cli-go/pkg/config/config.go:558`): exactly 20
+ * lowercase ASCII letters. */
+const REMOTE_PROJECT_ID_PATTERN = /^[a-z]{20}$/;
+
+/**
+ * Rejects the first `[remotes.*]` block whose `project_id` is not a valid
+ * project ref, mirroring Go's `Config.Validate` (`config.go:996-1001`) — that
+ * loop runs unconditionally over every remote on every config load, not only
+ * the one that ends up selected/merged, so this always runs too.
+ */
+const checkRemoteProjectIdFormat = Effect.fnUntraced(function* (remotes: Record<string, unknown>) {
+  for (const [remoteName, remote] of Object.entries(remotes)) {
+    const projectId =
+      isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
+    if (!REMOTE_PROJECT_ID_PATTERN.test(projectId)) {
+      return yield* new InvalidRemoteProjectIdError({
+        message: `Invalid config for remotes.${remoteName}.project_id. Must be like: abcdefghijklmnopqrst`,
+      });
+    }
+  }
+});
+
 /**
  * Applies the `[remotes.<name>]` override whose `project_id` matches `projectRef`
  * to `document`, mirroring Go's `loadFromFile` remote resolution
@@ -184,6 +210,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
     return { document, appliedRemote: undefined as string | undefined };
   }
   yield* checkDuplicateRemoteProjectIds(remotes);
+  yield* checkRemoteProjectIdFormat(remotes);
   const name = Object.entries(remotes).find(([, remote]) => {
     const projectId =
       isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
