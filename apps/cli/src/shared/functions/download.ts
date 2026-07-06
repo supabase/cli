@@ -766,20 +766,28 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
     // Docker/legacy-bundle proxy, matching Go.
     if (!flags.useApi && (flags.useDocker || flags.legacyBundle)) {
       const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
-      yield* dependencies.proxyDownload(flags, projectRef, output.format !== "text");
 
       if (output.format === "text") {
+        yield* dependencies.proxyDownload(flags, projectRef, false);
         return;
       }
 
-      // The delegated Go child never emits the TS `Output` envelope itself
+      // Resolve the slug list *before* delegating, mirroring Go's own
+      // `downloadAll` (which also lists before looping through downloads,
+      // `apps/cli-go/internal/functions/download/download.go`). The
+      // delegated Go child never emits the TS `Output` envelope itself
       // (CLI-1546: stdout is payload-only in machine mode, so its raw text
-      // was captured/discarded above, not inherited). A non-zero exit fails
-      // this effect before we get here, so success means every requested
-      // slug (or, with none named, every remote function) came down.
+      // is captured/discarded below, not inherited) — this list is purely
+      // for the JSON payload. Resolving it first means a transient listing
+      // failure is reported before any download side effect, instead of
+      // masking an already-successful delegated download with a later,
+      // unrelated listing failure.
       const slugs = Option.isSome(flags.functionName)
         ? [flags.functionName.value]
         : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
+
+      yield* dependencies.proxyDownload(flags, projectRef, true);
+
       yield* output.success("Downloaded Edge Function source.", {
         function_slugs: slugs,
         project_ref: projectRef,

@@ -320,6 +320,110 @@ describe("legacy functions download", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "lists remote functions before delegating when no function name is given in machine mode",
+    () => {
+      const out = mockOutput({ format: "json" });
+      const api = mockLegacyPlatformApi({
+        handler: (request) =>
+          request.url.endsWith("/functions")
+            ? Effect.succeed(
+                legacyJsonResponse(request, 200, [
+                  { slug: "hello-world" },
+                  { slug: "goodbye-world" },
+                ]),
+              )
+            : Effect.succeed(legacyJsonResponse(request, 200, {})),
+      });
+      const proxy = mockProxy();
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "--project-ref",
+            "abcdefghijklmnopqrst",
+            "--output-format",
+            "json",
+          ]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* legacyFunctionsDownload({
+          ...baseFlags,
+          functionName: Option.none(),
+          useDocker: true,
+        });
+
+        expect(proxy.calls).toEqual([]);
+        expect(proxy.captureCalls).toEqual([
+          ["functions", "download", "--project-ref", "abcdefghijklmnopqrst", "--use-docker"],
+        ]);
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({
+            type: "success",
+            data: {
+              function_slugs: ["hello-world", "goodbye-world"],
+              project_ref: "abcdefghijklmnopqrst",
+            },
+          }),
+        );
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("fails before delegating when the pre-flight function list fails in machine mode", () => {
+    const out = mockOutput({ format: "json" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) =>
+        request.url.endsWith("/functions")
+          ? Effect.succeed(legacyJsonResponse(request, 500, { message: "unavailable" }))
+          : Effect.succeed(legacyJsonResponse(request, 200, {})),
+    });
+    const proxy = mockProxy();
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+          "--output-format",
+          "json",
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      // The pre-flight list failure must be reported before any download
+      // side effect — the delegated proxy must never be invoked (CLI-1862
+      // review: a listing failure after a successful delegated download
+      // must not mask that success).
+      const exit = yield* legacyFunctionsDownload({
+        ...baseFlags,
+        functionName: Option.none(),
+        useDocker: true,
+      }).pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(proxy.calls).toEqual([]);
+      expect(proxy.captureCalls).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("forwards only --legacy-bundle to the Go proxy, not the --use-docker default too", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi();

@@ -42,23 +42,13 @@ describe("supabase functions download (legacy) — argument validation", () => {
   // CLI-1862: `--use-docker` now defaults to `true` (Go parity). Before the
   // fix, that default was counted as "explicitly selected" by the mutex
   // check, so passing `--use-api` alone was incorrectly rejected as
-  // conflicting with the (unpassed) `--use-docker` default.
-  test(
-    "does not reject --use-api alone despite the --use-docker default",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      using home = makeTempHome();
-      const { stderr } = await runSupabase(
-        ["functions", "download", SLUG, "--project-ref", FAKE_REF, "--use-api"],
-        {
-          entrypoint: "legacy",
-          home: home.dir,
-          env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
-        },
-      );
-      expect(stderr).not.toMatch(/none of the others can be|mutually exclusive/i);
-    },
-  );
+  // conflicting with the (unpassed) `--use-docker` default. Covered in
+  // `download.integration.test.ts` ("does not treat the --use-docker default
+  // as conflicting with an explicit --use-api") via a mocked platform API
+  // instead of here: now that the mutex check is fixed, `--use-api` alone
+  // passes validation and proceeds to the native downloader, which calls the
+  // real Management API with the fake token/ref — an argument-validation
+  // test shouldn't depend on that network round-trip.
 
   // CLI-1862: the TS→Go proxy call must not forward the now-defaulted
   // `--use-docker` alongside an explicit `--legacy-bundle` — the Go binary

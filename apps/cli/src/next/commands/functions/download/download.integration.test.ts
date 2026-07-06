@@ -908,6 +908,75 @@ describe("functions download", () => {
     );
   });
 
+  it.live(
+    "lists remote functions before delegating when no function name is given in machine mode",
+    () => {
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        const { out, layer, proxy } = setup(tempDir, {
+          format: "json",
+          list: [makeFunction({ slug: "hello-world" }), makeFunction({ slug: "goodbye-world" })],
+          rawArgs: ["functions", "download", "--use-docker"],
+        });
+
+        yield* functionsDownload({
+          ...BASE_FLAGS,
+          functionName: Option.none(),
+          useDocker: true,
+        }).pipe(Effect.provide(layer));
+
+        expect(proxy.calls).toEqual([]);
+        expect(proxy.captureCalls).toEqual([
+          ["functions", "download", "--project-ref", PROJECT_REF, "--use-docker"],
+        ]);
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({
+            type: "success",
+            message: "Downloaded Edge Function source.",
+            data: {
+              function_slugs: ["hello-world", "goodbye-world"],
+              project_ref: PROJECT_REF,
+            },
+          }),
+        );
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      );
+    },
+  );
+
+  it.live("fails before delegating when the pre-flight function list fails in machine mode", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      const { layer, proxy } = setup(tempDir, {
+        format: "json",
+        listStatus: 503,
+        listBody: { message: "unavailable" },
+        rawArgs: ["functions", "download", "--use-docker"],
+      });
+
+      // The pre-flight list failure must be reported before any download
+      // side effect — the delegated proxy must never be invoked (CLI-1862
+      // review: a listing failure after a successful delegated download
+      // must not mask that success).
+      const error = yield* functionsDownload({
+        ...BASE_FLAGS,
+        functionName: Option.none(),
+        useDocker: true,
+      }).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toBeInstanceOf(Error);
+      expect(proxy.calls).toEqual([]);
+      expect(proxy.captureCalls).toEqual([]);
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
   it.live("rejects mutually exclusive compatibility flags", () => {
     const tempDir = makeTempDir();
 
