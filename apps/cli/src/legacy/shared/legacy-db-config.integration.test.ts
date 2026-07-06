@@ -12,7 +12,7 @@ import {
   mockTelemetryRuntime,
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
-import { mockLegacyCliConfig } from "../../../tests/helpers/legacy-mocks.ts";
+import { LEGACY_VALID_TOKEN, mockLegacyCliConfig } from "../../../tests/helpers/legacy-mocks.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
@@ -25,7 +25,11 @@ import { legacyIdentityStitchLayer } from "./legacy-identity-stitch.ts";
 import { legacyDbConfigLayer } from "./legacy-db-config.layer.ts";
 import { LegacyDbConfigResolver } from "./legacy-db-config.service.ts";
 import type { LegacyDbConfigFlags } from "./legacy-db-config.types.ts";
-import { LegacyDbConnection } from "./legacy-db-connection.service.ts";
+import {
+  LegacyDbConnection,
+  type LegacyDbSession,
+  type LegacyPgConnInput,
+} from "./legacy-db-connection.service.ts";
 
 // `--local` / `--db-url` never touch the Management API stack, so the resolver
 // builds with simple ambient stubs. The `--linked` sub-flow (login-role,
@@ -40,10 +44,22 @@ const mockDbConnection = Layer.succeed(LegacyDbConnection, {
   connect: () => Effect.die("unexpected connect() in --local/--db-url resolver test"),
 });
 
-function buildResolver(workdir: string) {
+function buildResolver(
+  workdir: string,
+  opts: {
+    readonly projectHost?: string;
+    readonly poolerHost?: string;
+    readonly dbConnection?: Layer.Layer<LegacyDbConnection>;
+  } = {},
+) {
   const deps = Layer.mergeAll(
-    mockLegacyCliConfig({ workdir, projectHost: "supabase.co", projectId: Option.none() }),
-    mockDbConnection,
+    mockLegacyCliConfig({
+      workdir,
+      projectHost: opts.projectHost ?? "supabase.co",
+      poolerHost: opts.poolerHost,
+      projectId: Option.none(),
+    }),
+    opts.dbConnection ?? mockDbConnection,
     mockDebugLogger,
     mockOutput().layer,
     mockAnalytics().layer,
@@ -76,11 +92,25 @@ function withWorkdir(toml?: string) {
   return dir;
 }
 
-const resolve = (workdir: string, flags: LegacyDbConfigFlags) =>
+const resolve = (
+  workdir: string,
+  flags: LegacyDbConfigFlags,
+  opts?: Parameters<typeof buildResolver>[1],
+) =>
   Effect.gen(function* () {
     const resolver = yield* LegacyDbConfigResolver;
     return yield* resolver.resolve(flags);
-  }).pipe(Effect.provide(buildResolver(workdir)));
+  }).pipe(Effect.provide(buildResolver(workdir, opts)));
+
+const resolvePoolerFallback = (
+  workdir: string,
+  flags: LegacyDbConfigFlags,
+  opts?: Parameters<typeof buildResolver>[1],
+) =>
+  Effect.gen(function* () {
+    const resolver = yield* LegacyDbConfigResolver;
+    return yield* resolver.resolvePoolerFallback(flags);
+  }).pipe(Effect.provide(buildResolver(workdir, opts)));
 
 const localFlags: LegacyDbConfigFlags = {
   dbUrl: Option.none(),
@@ -352,6 +382,427 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
             expect(json).toContain("failed to load project ref");
             expect(json).not.toContain("Cannot find project ref");
           }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("ad-hoc project refs ignore the linked workdir password and saved pooler URL", () => {
+    const linkedRef = "abcdefghijklmnopqrst";
+    const adHocRef = "qrstabcdefghijklmnop";
+    const dir = withWorkdir(
+      [`project_id = "${linkedRef}"`, "[db]", "major_version = 15", ""].join("\n"),
+    );
+    mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
+    writeFileSync(join(dir, "supabase", ".temp", "project-ref"), linkedRef);
+    writeFileSync(
+      join(dir, "supabase", ".temp", "pooler-url"),
+      `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
+    );
+
+    const previousAccessToken = process.env["SUPABASE_ACCESS_TOKEN"];
+    const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
+    const previousFetch = globalThis.fetch;
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    const connections: Array<{
+      readonly conn: LegacyPgConnInput;
+      readonly dnsResolver: "native" | "https";
+      readonly isLocal: boolean;
+    }> = [];
+    const session: LegacyDbSession = {
+      exec: () => Effect.void,
+      query: () => Effect.succeed([]),
+      extensionExists: () => Effect.succeed(false),
+      copyToCsv: () => Effect.succeed(new Uint8Array()),
+      queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
+    };
+    const dbConnection = Layer.succeed(LegacyDbConnection, {
+      connect: (conn, options) =>
+        Effect.sync(() => {
+          connections.push({ conn, ...options });
+          return session;
+        }),
+    });
+    const fetchMock = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+        const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+        requests.push({ method, path: url.pathname });
+
+        if (
+          method === "GET" &&
+          url.pathname === `/v1/projects/${adHocRef}/config/database/pooler`
+        ) {
+          return new Response(
+            JSON.stringify([
+              {
+                identifier: "primary",
+                database_type: "PRIMARY",
+                is_using_scram_auth: true,
+                db_user: "postgres",
+                db_host: "db.example",
+                db_port: 5432,
+                db_name: "postgres",
+                connection_string: `postgres://postgres.${adHocRef}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                connectionString: `postgres://postgres.${adHocRef}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                default_pool_size: null,
+                max_client_conn: null,
+                pool_mode: "transaction",
+              },
+            ]),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        if (method === "POST" && url.pathname === `/v1/projects/${adHocRef}/cli/login-role`) {
+          return new Response(
+            JSON.stringify({
+              role: "cli_login_role",
+              password: "temporary-role-password",
+              ttl_seconds: 3600,
+            }),
+            { status: 201, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        return new Response(JSON.stringify({ message: "unexpected request" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    process.env["SUPABASE_ACCESS_TOKEN"] = LEGACY_VALID_TOKEN;
+    process.env["SUPABASE_DB_PASSWORD"] = "ambient-linked-password";
+    globalThis.fetch = fetchMock;
+
+    return resolve(
+      dir,
+      {
+        ...linkedFlags,
+        linkedProjectRef: Option.some(adHocRef),
+        adHocProjectRef: true,
+      },
+      { projectHost: "invalid", dbConnection },
+    ).pipe(
+      Effect.tap((r) =>
+        Effect.sync(() => {
+          expect(r.conn).toEqual({
+            host: "aws-0-us-east-1.pooler.supabase.com",
+            port: 5432,
+            user: `cli_login_role.${adHocRef}`,
+            password: "temporary-role-password",
+            database: "postgres",
+          });
+          expect(r.ref).toEqual(Option.some(adHocRef));
+          expect(requests).toEqual([
+            {
+              method: "GET",
+              path: `/v1/projects/${adHocRef}/config/database/pooler`,
+            },
+            {
+              method: "POST",
+              path: `/v1/projects/${adHocRef}/cli/login-role`,
+            },
+          ]);
+          expect(connections).toEqual([
+            {
+              conn: {
+                host: "aws-0-us-east-1.pooler.supabase.com",
+                port: 5432,
+                user: `cli_login_role.${adHocRef}`,
+                password: "temporary-role-password",
+                database: "postgres",
+              },
+              isLocal: false,
+              dnsResolver: "native",
+            },
+          ]);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          globalThis.fetch = previousFetch;
+          if (previousAccessToken === undefined) delete process.env["SUPABASE_ACCESS_TOKEN"];
+          else process.env["SUPABASE_ACCESS_TOKEN"] = previousAccessToken;
+          if (previousPassword === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
+          else process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "ad-hoc pooler fallback ignores the linked workdir password and saved pooler URL",
+    () => {
+      const linkedRef = "abcdefghijklmnopqrst";
+      const adHocRef = "qrstabcdefghijklmnop";
+      const dir = withWorkdir(
+        [`project_id = "${linkedRef}"`, "[db]", "major_version = 15", ""].join("\n"),
+      );
+      mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
+      writeFileSync(join(dir, "supabase", ".temp", "project-ref"), linkedRef);
+      writeFileSync(
+        join(dir, "supabase", ".temp", "pooler-url"),
+        `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
+      );
+
+      const previousAccessToken = process.env["SUPABASE_ACCESS_TOKEN"];
+      const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
+      const previousFetch = globalThis.fetch;
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const connections: Array<{
+        readonly conn: LegacyPgConnInput;
+        readonly dnsResolver: "native" | "https";
+        readonly isLocal: boolean;
+      }> = [];
+      const session: LegacyDbSession = {
+        exec: () => Effect.void,
+        query: () => Effect.succeed([]),
+        extensionExists: () => Effect.succeed(false),
+        copyToCsv: () => Effect.succeed(new Uint8Array()),
+        queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
+      };
+      const dbConnection = Layer.succeed(LegacyDbConnection, {
+        connect: (conn, options) =>
+          Effect.sync(() => {
+            connections.push({ conn, ...options });
+            return session;
+          }),
+      });
+      const fetchMock = Object.assign(
+        async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+          const url = new URL(
+            typeof input === "string" || input instanceof URL ? input : input.url,
+          );
+          const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+          requests.push({ method, path: url.pathname });
+
+          if (
+            method === "GET" &&
+            url.pathname === `/v1/projects/${adHocRef}/config/database/pooler`
+          ) {
+            return new Response(
+              JSON.stringify([
+                {
+                  identifier: "primary",
+                  database_type: "PRIMARY",
+                  is_using_scram_auth: true,
+                  db_user: "postgres",
+                  db_host: "db.example",
+                  db_port: 5432,
+                  db_name: "postgres",
+                  connection_string: `postgres://postgres.${adHocRef}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                  connectionString: `postgres://postgres.${adHocRef}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                  default_pool_size: null,
+                  max_client_conn: null,
+                  pool_mode: "transaction",
+                },
+              ]),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }
+
+          if (method === "POST" && url.pathname === `/v1/projects/${adHocRef}/cli/login-role`) {
+            return new Response(
+              JSON.stringify({
+                role: "cli_login_role",
+                password: "temporary-role-password",
+                ttl_seconds: 3600,
+              }),
+              { status: 201, headers: { "content-type": "application/json" } },
+            );
+          }
+
+          return new Response(JSON.stringify({ message: "unexpected request" }), {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          });
+        },
+        { preconnect: previousFetch.preconnect },
+      );
+
+      process.env["SUPABASE_ACCESS_TOKEN"] = LEGACY_VALID_TOKEN;
+      process.env["SUPABASE_DB_PASSWORD"] = "ambient-linked-password";
+      globalThis.fetch = fetchMock;
+
+      return resolvePoolerFallback(
+        dir,
+        {
+          ...linkedFlags,
+          linkedProjectRef: Option.some(adHocRef),
+          adHocProjectRef: true,
+        },
+        { dbConnection },
+      ).pipe(
+        Effect.tap((connOpt) =>
+          Effect.sync(() => {
+            expect(Option.isSome(connOpt)).toBe(true);
+            if (Option.isSome(connOpt)) {
+              expect(connOpt.value).toEqual({
+                host: "aws-0-us-east-1.pooler.supabase.com",
+                port: 5432,
+                user: `cli_login_role.${adHocRef}`,
+                password: "temporary-role-password",
+                database: "postgres",
+              });
+            }
+            expect(requests).toEqual([
+              {
+                method: "GET",
+                path: `/v1/projects/${adHocRef}/config/database/pooler`,
+              },
+              {
+                method: "POST",
+                path: `/v1/projects/${adHocRef}/cli/login-role`,
+              },
+            ]);
+            expect(connections).toEqual([
+              {
+                conn: {
+                  host: "aws-0-us-east-1.pooler.supabase.com",
+                  port: 5432,
+                  user: `cli_login_role.${adHocRef}`,
+                  password: "temporary-role-password",
+                  database: "postgres",
+                },
+                isLocal: false,
+                dnsResolver: "native",
+              },
+            ]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            globalThis.fetch = previousFetch;
+            if (previousAccessToken === undefined) delete process.env["SUPABASE_ACCESS_TOKEN"];
+            else process.env["SUPABASE_ACCESS_TOKEN"] = previousAccessToken;
+            if (previousPassword === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
+            else process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("linked pooler fallback fetches API config when the saved pooler URL is stale", () => {
+    const linkedRef = "abcdefghijklmnopqrst";
+    const dir = withWorkdir(
+      [`project_id = "${linkedRef}"`, "[db]", "major_version = 15", ""].join("\n"),
+    );
+    mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
+    writeFileSync(join(dir, "supabase", ".temp", "project-ref"), linkedRef);
+    writeFileSync(
+      join(dir, "supabase", ".temp", "pooler-url"),
+      "postgres://postgres.qrstabcdefghijklmnop:saved-workdir-password@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
+    );
+
+    const previousAccessToken = process.env["SUPABASE_ACCESS_TOKEN"];
+    const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
+    const previousFetch = globalThis.fetch;
+    const requests: Array<{ readonly method: string; readonly path: string }> = [];
+    const connections: Array<{
+      readonly conn: LegacyPgConnInput;
+      readonly dnsResolver: "native" | "https";
+      readonly isLocal: boolean;
+    }> = [];
+    const session: LegacyDbSession = {
+      exec: () => Effect.void,
+      query: () => Effect.succeed([]),
+      extensionExists: () => Effect.succeed(false),
+      copyToCsv: () => Effect.succeed(new Uint8Array()),
+      queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "SELECT 1" }),
+    };
+    const dbConnection = Layer.succeed(LegacyDbConnection, {
+      connect: (conn, options) =>
+        Effect.sync(() => {
+          connections.push({ conn, ...options });
+          return session;
+        }),
+    });
+    const fetchMock = Object.assign(
+      async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+        const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+        requests.push({ method, path: url.pathname });
+
+        if (
+          method === "GET" &&
+          url.pathname === `/v1/projects/${linkedRef}/config/database/pooler`
+        ) {
+          return new Response(
+            JSON.stringify([
+              {
+                identifier: "primary",
+                database_type: "PRIMARY",
+                is_using_scram_auth: true,
+                db_user: "postgres",
+                db_host: "db.example",
+                db_port: 5432,
+                db_name: "postgres",
+                connection_string: `postgres://postgres.${linkedRef}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                connectionString: `postgres://postgres.${linkedRef}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                default_pool_size: null,
+                max_client_conn: null,
+                pool_mode: "transaction",
+              },
+            ]),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+
+        return new Response(JSON.stringify({ message: "unexpected request" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      },
+      { preconnect: previousFetch.preconnect },
+    );
+
+    process.env["SUPABASE_ACCESS_TOKEN"] = LEGACY_VALID_TOKEN;
+    process.env["SUPABASE_DB_PASSWORD"] = "linked-password";
+    globalThis.fetch = fetchMock;
+
+    return resolvePoolerFallback(
+      dir,
+      {
+        ...linkedFlags,
+        linkedProjectRef: Option.some(linkedRef),
+      },
+      { projectHost: "supabase.co", dbConnection },
+    ).pipe(
+      Effect.tap((connOpt) =>
+        Effect.sync(() => {
+          expect(Option.isSome(connOpt)).toBe(true);
+          if (Option.isSome(connOpt)) {
+            expect(connOpt.value).toEqual({
+              host: "aws-0-us-east-1.pooler.supabase.com",
+              port: 5432,
+              user: `postgres.${linkedRef}`,
+              password: "linked-password",
+              database: "postgres",
+            });
+          }
+          expect(requests).toEqual([
+            {
+              method: "GET",
+              path: `/v1/projects/${linkedRef}/config/database/pooler`,
+            },
+          ]);
+          expect(connections).toEqual([]);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          globalThis.fetch = previousFetch;
+          if (previousAccessToken === undefined) delete process.env["SUPABASE_ACCESS_TOKEN"];
+          else process.env["SUPABASE_ACCESS_TOKEN"] = previousAccessToken;
+          if (previousPassword === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
+          else process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

@@ -111,6 +111,9 @@ export type PoolerParseResult =
  * error message (e.g. `failed to parse pooler URL: parse "...": invalid port`),
  * never the URL itself. Returning the URL would leak the pooler username,
  * host, and port into stderr logs.
+ *
+ * This display-only parser intentionally does not enforce the profile-domain or
+ * tenant-ref guards used by `legacyPoolerConfigFromConnectionString`.
  */
 export function parsePoolerConnectionString(connString: string): PoolerParseResult {
   const sanitized = connString.replaceAll(POOLER_PASSWORD_PLACEHOLDER, "");

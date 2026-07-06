@@ -7,7 +7,12 @@ import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
+import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
+import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
+import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import {
   LegacyIdentityStitch,
   legacyIdentityStitchLayer,
@@ -43,8 +48,16 @@ export const legacyGenTypesRuntimeLayer = (() => {
     Layer.provide(legacyDebugLoggerLayer),
     Layer.provide(legacyIdentityStitchLayer),
   );
+  const dbConfig = legacyDbConfigLayer.pipe(
+    Layer.provide(cliConfig),
+    Layer.provide(legacyDbConnectionLayer),
+    Layer.provide(legacyDebugLoggerLayer),
+    Layer.provide(legacyIdentityStitchLayer),
+  );
 
   const built = Layer.mergeAll(
+    dbConfig,
+    legacyDbConnectionLayer,
     cliConfig,
     platformApiFactory,
     legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
@@ -54,6 +67,7 @@ export const legacyGenTypesRuntimeLayer = (() => {
       Layer.provide(httpClient),
       Layer.provide(legacyIdentityStitchLayer),
     ),
+    legacyPgDeltaSslProbeLayer,
     legacyTelemetryStateLayer,
     // The one per-command identity stitcher (Go's single root-context `sync.Once`),
     // exposed at top level so `withLegacyCommandInstrumentation` can read
@@ -77,6 +91,8 @@ type LegacyGenTypesServices =
   | LegacyPlatformApiFactory
   | LegacyCliConfig
   | LegacyProjectRefResolver
+  | LegacyDbConfigResolver
+  | LegacyPgDeltaSslProbe
   | LegacyLinkedProjectCache
   | LegacyTelemetryState
   | LegacyIdentityStitch

@@ -2420,9 +2420,9 @@
               "type": "array",
               "items": {
                 "type": "string",
-                "description": "Schema file path or glob relative to the supabase directory."
+                "description": "Schema file path, directory, or glob relative to the supabase directory."
               },
-              "description": "Ordered list of schema files that describe your database.",
+              "description": "Ordered list of schema files, directories, or glob patterns that describe your database.",
               "default": []
             }
           },
@@ -5965,9 +5965,9 @@
                             "type": "array",
                             "items": {
                               "type": "string",
-                              "description": "Schema file path or glob relative to the supabase directory."
+                              "description": "Schema file path, directory, or glob relative to the supabase directory."
                             },
-                            "description": "Ordered list of schema files that describe your database.",
+                            "description": "Ordered list of schema files, directories, or glob patterns that describe your database.",
                             "default": []
                           }
                         },

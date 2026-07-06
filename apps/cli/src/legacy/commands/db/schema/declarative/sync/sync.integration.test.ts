@@ -158,7 +158,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     ),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     // Sync diffs against the local DB, which refuses TLS → no SSL env injected.
-    Layer.succeed(LegacyPgDeltaSslProbe, { requireSsl: () => Effect.succeed(false) }),
+    Layer.succeed(LegacyPgDeltaSslProbe, {
+      requireSsl: () => Effect.succeed(false),
+      requireSslForHost: () => Effect.succeed(false),
+    }),
     BunServices.layer,
   );
   return { layer, out, execInheritCalls, dbExec, cache, localPostgresImageChecks };

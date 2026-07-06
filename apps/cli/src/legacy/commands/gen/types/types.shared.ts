@@ -1,6 +1,6 @@
-import { connect as connectSocket } from "node:net";
-import { DEFAULT_VERSIONS, dockerImageForService } from "@supabase/stack/effect";
 import { Effect } from "effect";
+import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
+import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
 import {
   LegacyInvalidGenTypesDatabaseUrlError,
   LegacyInvalidGenTypesDurationError,
@@ -140,66 +140,23 @@ export function buildPostgresUrl(input: {
 }
 
 export function resolvePgmetaImage(versionOverride?: string) {
-  const version =
-    versionOverride && versionOverride.trim().length > 0
-      ? versionOverride.trim().replace(/^v/i, "")
-      : DEFAULT_VERSIONS.pgmeta;
-  const registry = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]?.toLowerCase();
-  if (registry === "docker.io") {
-    return `supabase/postgres-meta:v${version}`;
+  const defaultImage = dockerfileServiceImage("pgmeta");
+  if (versionOverride === undefined || versionOverride.trim().length === 0) {
+    return legacyGetRegistryImageUrl(defaultImage);
   }
-  return dockerImageForService("pgmeta", version);
+  return legacyGetRegistryImageUrl(
+    replaceImageTag(defaultImage, `v${versionOverride.trim().replace(/^v/i, "")}`),
+  );
 }
 
 export function legacyRootCaBundle() {
   return `${caStaging2021}${caProd2021}${caProd2025}`;
 }
 
-export function probeTlsSupport(host: string, port: number): Effect.Effect<boolean, Error> {
-  return Effect.tryPromise({
-    try: () =>
-      new Promise<boolean>((resolve, reject) => {
-        let settled = false;
-        const socket = connectSocket({ host, port });
-
-        const finish = (result: boolean | Error) => {
-          if (settled) return;
-          settled = true;
-          socket.destroy();
-          if (result instanceof Error) {
-            reject(result);
-            return;
-          }
-          resolve(result);
-        };
-
-        socket.setTimeout(5_000);
-        socket.once("connect", () => {
-          const packet = Buffer.alloc(8);
-          packet.writeInt32BE(8, 0);
-          packet.writeInt32BE(80877103, 4);
-          socket.write(packet);
-        });
-        socket.once("data", (chunk) => {
-          const response = Number(chunk.at(0) ?? 0);
-          if (response === 0x53) {
-            finish(true);
-            return;
-          }
-          if (response === 0x4e) {
-            finish(false);
-            return;
-          }
-          finish(new Error(`unexpected SSL probe response: ${String.fromCharCode(response ?? 0)}`));
-        });
-        socket.once("timeout", () => finish(new Error("i/o timeout")));
-        socket.once("error", (error) => finish(error));
-        socket.once("close", () => {
-          if (!settled) {
-            finish(new Error("connection closed during SSL probe"));
-          }
-        });
-      }),
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-  });
+function replaceImageTag(image: string, tag: string): string {
+  const tagSeparator = image.lastIndexOf(":");
+  if (tagSeparator === -1) {
+    return image;
+  }
+  return `${image.slice(0, tagSeparator + 1)}${tag}`;
 }

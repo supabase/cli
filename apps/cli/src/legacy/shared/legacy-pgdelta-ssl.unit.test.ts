@@ -69,6 +69,10 @@ const probeLayer = (requireSsl: boolean | "error") =>
       requireSsl === "error"
         ? Effect.fail(new LegacyPgDeltaSslProbeError({ message: "connection refused" }))
         : Effect.succeed(requireSsl),
+    requireSslForHost: () =>
+      requireSsl === "error"
+        ? Effect.fail(new LegacyPgDeltaSslProbeError({ message: "connection refused" }))
+        : Effect.succeed(requireSsl),
   });
 
 const prepare = (cwd: string, ref: string, requireSsl: boolean | "error" = false) =>

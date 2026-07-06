@@ -67,7 +67,7 @@ func PrepareShadowSource(ctx context.Context, schema []string, targetLocal bool,
 		if len(declared) > 0 {
 			override := shadowConfig
 			override.Database = "contrib_regression"
-			if usePgDelta {
+			if shouldApplyDeclarativeWithPgDelta(usePgDelta) {
 				declDir := utils.GetDeclarativeDir()
 				if exists, _ := afero.DirExists(fsys, declDir); exists {
 					if err := pgdelta.ApplyDeclarative(ctx, override, fsys); err != nil {

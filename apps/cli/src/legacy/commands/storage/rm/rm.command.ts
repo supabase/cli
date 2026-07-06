@@ -42,11 +42,11 @@ export const legacyStorageRmCommand = Command.make("rm", config).pipe(
   ]),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
+      // Gate before the mutex check below — order matters; see
+      // legacyRequireExperimental's doc comment for why.
+      yield* legacyRequireExperimental;
       const cliArgs = yield* CliArgs;
       yield* legacyAssertStorageTargetsExclusive(cliArgs.args);
-      // Go gates `storageCmd` behind `--experimental` in PersistentPreRunE
-      // (root.go:91-96), after flag-group validation and before RunE/PostRun.
-      yield* legacyRequireExperimental;
       const telemetryFlags = {
         recursive: flags.recursive,
         linked: flags.linked,

@@ -40,14 +40,11 @@ export const legacyStorageLsCommand = Command.make("ls", config).pipe(
   ]),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
-      // Enforce --linked/--local mutual exclusivity BEFORE instrumentation, so a
-      // flag-validation rejection doesn't emit `cli_command_executed` (Go rejects
-      // it at cobra flag validation, before RunE/PostRun).
+      // Gate before the mutex check below — order matters; see
+      // legacyRequireExperimental's doc comment for why.
+      yield* legacyRequireExperimental;
       const cliArgs = yield* CliArgs;
       yield* legacyAssertStorageTargetsExclusive(cliArgs.args);
-      // Go gates `storageCmd` behind `--experimental` in PersistentPreRunE
-      // (root.go:91-96), after flag-group validation and before RunE/PostRun.
-      yield* legacyRequireExperimental;
       const telemetryFlags = {
         recursive: flags.recursive,
         linked: flags.linked,

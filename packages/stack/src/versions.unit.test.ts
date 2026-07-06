@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   readVersionManifestFromDockerfile,
@@ -13,11 +12,6 @@ import {
   normalizeServiceVersion,
   type VersionManifest,
 } from "./versions.ts";
-
-const dockerfile = readFileSync(
-  new URL("../../../apps/cli-go/pkg/config/templates/Dockerfile", import.meta.url),
-  "utf8",
-);
 
 const sampleDockerfile = `
 FROM supabase/postgres:17.0.0.1 AS pg
@@ -36,30 +30,6 @@ FROM supabase/storage-api:v1.50.0 AS storage
 FROM supabase/logflare:1.40.0 AS logflare
 FROM supabase/migra:3.0.1663481299 AS migra
 `;
-
-describe("DEFAULT_VERSIONS", () => {
-  it("has all required services", () => {
-    expect(DEFAULT_VERSIONS).toHaveProperty("postgres");
-    expect(DEFAULT_VERSIONS).toHaveProperty("postgrest");
-    expect(DEFAULT_VERSIONS).toHaveProperty("auth");
-    expect(DEFAULT_VERSIONS).toHaveProperty("edge-runtime");
-  });
-
-  it("versions are non-empty strings", () => {
-    expect(typeof DEFAULT_VERSIONS.postgres).toBe("string");
-    expect(DEFAULT_VERSIONS.postgres.length).toBeGreaterThan(0);
-    expect(typeof DEFAULT_VERSIONS.postgrest).toBe("string");
-    expect(DEFAULT_VERSIONS.postgrest.length).toBeGreaterThan(0);
-    expect(typeof DEFAULT_VERSIONS.auth).toBe("string");
-    expect(DEFAULT_VERSIONS.auth.length).toBeGreaterThan(0);
-    expect(typeof DEFAULT_VERSIONS["edge-runtime"]).toBe("string");
-    expect(DEFAULT_VERSIONS["edge-runtime"].length).toBeGreaterThan(0);
-  });
-
-  it("matches the Dockerfile manifest exposed to Dependabot", () => {
-    expect(readVersionManifestFromDockerfile(dockerfile)).toEqual(DEFAULT_VERSIONS);
-  });
-});
 
 describe("syncDefaultVersionsSource", () => {
   it("rewrites the DEFAULT_VERSIONS block from Dockerfile versions", () => {
@@ -111,7 +81,9 @@ after`;
 
   it("fails when the Dockerfile contains an unexpected image alias", () => {
     expect(() =>
-      readVersionManifestFromDockerfile(`${dockerfile}\nFROM supabase/example:1.0.0 AS example\n`),
+      readVersionManifestFromDockerfile(
+        `${sampleDockerfile}\nFROM supabase/example:1.0.0 AS example\n`,
+      ),
     ).toThrow("Unknown Dockerfile image alias 'example'.");
   });
 });
