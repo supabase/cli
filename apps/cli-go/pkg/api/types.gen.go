@@ -3459,6 +3459,7 @@ type PostgresConfigResponse struct {
 	MaintenanceWorkMem            *string                                       `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                          `json:"max_connections,omitempty"`
 	MaxLocksPerTransaction        *int                                          `json:"max_locks_per_transaction,omitempty"`
+	MaxLogicalReplicationWorkers  *int                                          `json:"max_logical_replication_workers,omitempty"`
 	MaxParallelMaintenanceWorkers *int                                          `json:"max_parallel_maintenance_workers,omitempty"`
 	MaxParallelWorkers            *int                                          `json:"max_parallel_workers,omitempty"`
 	MaxParallelWorkersPerGather   *int                                          `json:"max_parallel_workers_per_gather,omitempty"`
@@ -3466,6 +3467,7 @@ type PostgresConfigResponse struct {
 	MaxSlotWalKeepSize            *string                                       `json:"max_slot_wal_keep_size,omitempty"`
 	MaxStandbyArchiveDelay        *string                                       `json:"max_standby_archive_delay,omitempty"`
 	MaxStandbyStreamingDelay      *string                                       `json:"max_standby_streaming_delay,omitempty"`
+	MaxSyncWorkersPerSubscription *int                                          `json:"max_sync_workers_per_subscription,omitempty"`
 	MaxWalSenders                 *int                                          `json:"max_wal_senders,omitempty"`
 	MaxWalSize                    *string                                       `json:"max_wal_size,omitempty"`
 	MaxWorkerProcesses            *int                                          `json:"max_worker_processes,omitempty"`
@@ -4398,6 +4400,7 @@ type UpdatePostgresConfigBody struct {
 	MaintenanceWorkMem            *string                                         `json:"maintenance_work_mem,omitempty"`
 	MaxConnections                *int                                            `json:"max_connections,omitempty"`
 	MaxLocksPerTransaction        *int                                            `json:"max_locks_per_transaction,omitempty"`
+	MaxLogicalReplicationWorkers  *int                                            `json:"max_logical_replication_workers,omitempty"`
 	MaxParallelMaintenanceWorkers *int                                            `json:"max_parallel_maintenance_workers,omitempty"`
 	MaxParallelWorkers            *int                                            `json:"max_parallel_workers,omitempty"`
 	MaxParallelWorkersPerGather   *int                                            `json:"max_parallel_workers_per_gather,omitempty"`
@@ -4405,6 +4408,7 @@ type UpdatePostgresConfigBody struct {
 	MaxSlotWalKeepSize            *string                                         `json:"max_slot_wal_keep_size,omitempty"`
 	MaxStandbyArchiveDelay        *string                                         `json:"max_standby_archive_delay,omitempty"`
 	MaxStandbyStreamingDelay      *string                                         `json:"max_standby_streaming_delay,omitempty"`
+	MaxSyncWorkersPerSubscription *int                                            `json:"max_sync_workers_per_subscription,omitempty"`
 	MaxWalSenders                 *int                                            `json:"max_wal_senders,omitempty"`
 	MaxWalSize                    *string                                         `json:"max_wal_size,omitempty"`
 	MaxWorkerProcesses            *int                                            `json:"max_worker_processes,omitempty"`
