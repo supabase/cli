@@ -632,6 +632,69 @@ describe("legacy stop integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "fails and never spawns docker when config.toml has an unsupported db.major_version",
+    () => {
+      // Matches Go's default `stop` path, which runs `flags.LoadConfig` (config
+      // load + `Validate`) entirely before any Docker call
+      // (`internal/stop/stop.go:15-25` -> `pkg/config/config.go:882`) — a config
+      // Go rejects must fail `stop` before it touches containers, not just when
+      // reading `project_id`.
+      const workdir = tempRoot.current;
+      mkdirSync(join(workdir, "supabase"), { recursive: true });
+      writeFileSync(
+        join(workdir, "supabase", "config.toml"),
+        'project_id = "demo"\n[db]\nmajor_version = 12\n',
+      );
+      const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyStop(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("LegacyStopConfigLoadError");
+          expect(JSON.stringify(exit.cause)).toContain("Postgres version 12.x is unsupported");
+        }
+        expect(child.spawned).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("does not run config Validate for --all (bypasses config entirely)", () => {
+    // `internal/stop/stop.go:15-25`: the `--all` branch never calls
+    // `flags.LoadConfig`, so an otherwise-invalid config.toml must not block it.
+    const workdir = tempRoot.current;
+    mkdirSync(join(workdir, "supabase"), { recursive: true });
+    writeFileSync(
+      join(workdir, "supabase", "config.toml"),
+      'project_id = "demo"\n[db]\nmajor_version = 12\n',
+    );
+    const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyStop(flags({ all: Option.some(true) })));
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      expect(psCall?.args).toContain("label=com.supabase.cli.project");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("does not run config Validate for --project-id (bypasses config entirely)", () => {
+    // `internal/stop/stop.go:15-25`: an explicit `--project-id` sets
+    // `Config.ProjectId` directly and never calls `flags.LoadConfig`.
+    const workdir = tempRoot.current;
+    mkdirSync(join(workdir, "supabase"), { recursive: true });
+    writeFileSync(
+      join(workdir, "supabase", "config.toml"),
+      'project_id = "demo"\n[db]\nmajor_version = 12\n',
+    );
+    const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyStop(flags({ projectId: Option.some("explicit") })));
+      expect(Exit.isSuccess(exit)).toBe(true);
+      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      expect(psCall?.args).toContain("label=com.supabase.cli.project=explicit");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails when stopping a container errors", () => {
     const { layer } = setup({
       configuredProjectId: "demo",

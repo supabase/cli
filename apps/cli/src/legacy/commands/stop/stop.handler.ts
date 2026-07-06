@@ -1,6 +1,6 @@
-import { loadProjectConfig, loadProjectEnvironment } from "@supabase/config";
+import { loadProjectConfig, loadProjectEnvironment, ProjectConfigSchema } from "@supabase/config";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, Option, Result } from "effect";
+import { Effect, Option, Result, Schema } from "effect";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
@@ -20,6 +20,8 @@ import {
   legacyListContainersByLabel,
   legacyListVolumesByLabel,
 } from "../../shared/legacy-docker-lifecycle.ts";
+import { legacyGetHostname } from "../../shared/legacy-hostname.ts";
+import { legacyResolveLocalConfigValues } from "../../shared/legacy-local-config-values.ts";
 import { legacyResolveProjectEnvironmentValues } from "../../shared/legacy-project-environment.ts";
 import type { LegacyStopFlags } from "./stop.command.ts";
 import {
@@ -134,9 +136,36 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
           new LegacyStopConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
       ),
     );
+    const config = loaded?.config ?? Schema.decodeUnknownSync(ProjectConfigSchema)({});
+
+    // VALIDATE config before any Docker call, matching Go's `flags.LoadConfig`
+    // (config load + `Validate`, `internal/utils/flags/config_path.go:10-14` ->
+    // `pkg/config/config.go:882`), which the default `stop` path runs in full
+    // (`internal/stop/stop.go:15-25`) before ever touching Docker — unlike the
+    // `--all`/`--project-id` branches above, which bypass config loading
+    // entirely and so must NOT run this. `legacyResolveLocalConfigValues` is
+    // reused purely for its throwing side effects (its resolved URLs/keys are
+    // discarded); it gives `stop` the same partial-but-growing `Config.Validate`
+    // parity `status` already has (`status.handler.ts`), rather than a one-off
+    // re-implementation. `legacyGetHostname` has no Docker dependency, so it's
+    // safe to call speculatively here too.
+    yield* Effect.try({
+      try: () =>
+        legacyResolveLocalConfigValues(
+          config,
+          legacyGetHostname(),
+          cliConfig.workdir,
+          projectEnvValues,
+        ),
+      catch: (cause) =>
+        new LegacyStopConfigLoadError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
+
     const resolved = legacyResolveLocalProjectId(
       projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
-      loaded?.config.project_id,
+      config.project_id,
       cliConfig.workdir,
     );
     return legacySanitizeProjectId(resolved);
