@@ -5,10 +5,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { Stdio } from "effect";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { INVALID_PROJECT_REF_MESSAGE } from "../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LEGACY_GLOBAL_FLAGS, LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import {
@@ -45,6 +46,7 @@ function setup(
     format?: "text" | "json" | "stream-json";
     goOutput?: Option.Option<"env" | "pretty" | "json" | "toml" | "yaml">;
     workdir?: string;
+    accessToken?: string;
   } = {},
 ) {
   const out = mockOutput({
@@ -77,7 +79,10 @@ function setup(
           userAgent: "SupabaseCLI/test",
         }),
       ),
-      Layer.succeed(LegacyCredentials, LegacyCredentials.of(legacyCredentialsMock)),
+      Layer.succeed(
+        LegacyCredentials,
+        LegacyCredentials.of(legacyCredentialsMock(opts.accessToken)),
+      ),
       Layer.succeed(
         LegacyLinkedProjectCache,
         LegacyLinkedProjectCache.of({
@@ -91,13 +96,19 @@ function setup(
   };
 }
 
-const legacyCredentialsMock = {
-  getAccessToken: Effect.succeed(Option.none()),
-  saveAccessToken: () => Effect.die("unexpected saveAccessToken"),
-  deleteAccessToken: Effect.die("unexpected deleteAccessToken"),
-  deleteAllProjectCredentials: Effect.void,
-  deleteProjectCredential: () => Effect.succeed(false),
-};
+function legacyCredentialsMock(accessToken?: string) {
+  return {
+    getAccessToken: Effect.succeed(
+      accessToken === undefined
+        ? Option.none()
+        : Option.some(Redacted.make(accessToken, { label: "SUPABASE_ACCESS_TOKEN" })),
+    ),
+    saveAccessToken: () => Effect.die("unexpected saveAccessToken"),
+    deleteAccessToken: Effect.die("unexpected deleteAccessToken"),
+    deleteAllProjectCredentials: Effect.void,
+    deleteProjectCredential: () => Effect.succeed(false),
+  };
+}
 
 const legacyTestRoot = Command.make("supabase").pipe(
   Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
@@ -306,6 +317,32 @@ major_version = 15
           local: postgresVersionForDbMajorVersion(15),
         }),
       );
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
+  it.live("warns and skips the remote lookup for a malformed linked project ref", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-services-"));
+    writeTempFile(workdir, "project-ref", "not-a-valid-ref");
+    const { layer, out } = setup({ workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      expect(out.stderrText).toContain(INVALID_PROJECT_REF_MESSAGE);
+      expect(out.stdoutText).toContain("supabase/postgres");
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
+  });
+
+  it.live("does not attempt the remote lookup for a malformed ref even when logged in", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-services-"));
+    writeTempFile(workdir, "project-ref", "not-a-valid-ref");
+    const { layer, out } = setup({ workdir, accessToken: "sbp_test-token" });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      expect(out.stderrText).toContain(INVALID_PROJECT_REF_MESSAGE);
+      expect(out.stdoutText).toContain("supabase/postgres");
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
   });
 

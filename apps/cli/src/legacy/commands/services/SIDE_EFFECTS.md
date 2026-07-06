@@ -16,12 +16,22 @@
 
 ## API Routes
 
-The resolved project ref must match `^[a-z]{20}$` (Go's `utils.ProjectRefPattern`)
-before any remote lookup runs; a malformed ref skips the linked-version checks
-and only the local matrix is printed. Tenant calls send `apikey: <serviceKey>`
-and additionally `Authorization: Bearer <serviceKey>` unless the key is a
-new-style `sb_…` key (which authenticates via the `apikey` header alone),
-matching `apps/cli-go/pkg/fetcher/gateway.go`.
+**Divergence from Go on a malformed ref:** Go validates the resolved ref against
+`utils.ProjectRefPattern` (`^[a-z]{20}$`) but only warns on failure
+(`cmd/services.go`'s `Run` prints the validation error to stderr) and still
+calls `listRemoteImages` with the malformed ref anyway (`services.go:61-62`).
+TS prints the same warning ("Invalid project ref format. Must be like
+`abcdefghijklmnopqrst`.") but deliberately skips the remote lookup instead of
+reproducing Go's behavior — the ref is embedded unescaped into the tenant
+gateway hostname below, so proceeding with a malformed value would let it
+redirect the service-role key to an attacker-controlled host. Only the local
+matrix is printed in this case. This is intentional TS-only hardening, not a
+parity bug.
+
+Tenant calls send `apikey: <serviceKey>` and additionally
+`Authorization: Bearer <serviceKey>` unless the key is a new-style `sb_…` key
+(which authenticates via the `apikey` header alone), matching
+`apps/cli-go/pkg/fetcher/gateway.go`.
 
 | Method | Path                                           | Auth                           | Request body | Response (used fields)                                             |
 | ------ | ---------------------------------------------- | ------------------------------ | ------------ | ------------------------------------------------------------------ |
