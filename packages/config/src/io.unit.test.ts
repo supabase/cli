@@ -758,6 +758,28 @@ jwt_secret = "env(MISSING_SECRET)"
     }
   });
 
+  test("preserves env() literals on string fields when the var is set but empty (Go parity)", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+jwt_secret = "env(MISSING_SECRET)"
+`,
+      );
+      await writeFile(join(cwd, "supabase", ".env"), "MISSING_SECRET=\n");
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.auth.jwt_secret).toBe("env(MISSING_SECRET)");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("fails to decode a numeric field when env var is unset", async () => {
     const cwd = makeTempProject();
 
