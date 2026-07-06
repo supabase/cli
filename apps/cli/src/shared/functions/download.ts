@@ -42,9 +42,17 @@ export interface DownloadFunctionsDependencies<
   readonly resolveProjectRef: (
     projectRef: Option.Option<string>,
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
+  /**
+   * `captureOutput` is `true` whenever `output.format !== "text"`: the Go
+   * child's raw stdout must not reach the terminal (it would corrupt the
+   * JSON/NDJSON envelope, CLI-1546's "stdout is payload-only in machine
+   * mode" invariant), so the dependency must capture/discard it (e.g. via
+   * `LegacyGoProxy.execCapture`) instead of inheriting stdio.
+   */
   readonly proxyDownload: (
     flags: DownloadFunctionsOptions,
     projectRef: string,
+    captureOutput: boolean,
   ) => Effect.Effect<void, ProxyError, ProxyRequirements>;
 }
 
@@ -752,14 +760,31 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
       yield* validateSlug(flags.functionName.value);
     }
 
-    const explicitUseApi = hasExplicitLongFlag(
-      dependencies.rawArgs,
-      downloadCommandPath,
-      "use-api",
-    );
-    if (!explicitUseApi && (flags.useDocker || flags.legacyBundle)) {
+    // Mirrors Go's `if useApi { useDocker = false }` (apps/cli-go/cmd/functions.go:51-53),
+    // which reads the resolved flag value, not `pflag.Changed`. Gate on
+    // `flags.useApi` directly so `--use-api=false` still routes through the
+    // Docker/legacy-bundle proxy, matching Go.
+    if (!flags.useApi && (flags.useDocker || flags.legacyBundle)) {
       const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
-      return yield* dependencies.proxyDownload(flags, projectRef);
+      yield* dependencies.proxyDownload(flags, projectRef, output.format !== "text");
+
+      if (output.format === "text") {
+        return;
+      }
+
+      // The delegated Go child never emits the TS `Output` envelope itself
+      // (CLI-1546: stdout is payload-only in machine mode, so its raw text
+      // was captured/discarded above, not inherited). A non-zero exit fails
+      // this effect before we get here, so success means every requested
+      // slug (or, with none named, every remote function) came down.
+      const slugs = Option.isSome(flags.functionName)
+        ? [flags.functionName.value]
+        : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
+      yield* output.success("Downloaded Edge Function source.", {
+        function_slugs: slugs,
+        project_ref: projectRef,
+      });
+      return;
     }
 
     const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);

@@ -36,8 +36,23 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
           }),
         ),
       ),
-    proxyDownload: (proxyFlags, projectRef) =>
-      proxy.exec(makeGoProxyDownloadArgs(proxyFlags, projectRef)),
+    // The delegated Go binary runs its own `Execute()` and would otherwise
+    // fire its own `cli_command_executed` on top of this command's own
+    // `withLegacyCommandInstrumentation` wrapper. Suppress it so proxied
+    // invocations record exactly one event, matching Go (mirrors `db pull` /
+    // `db diff`'s delegated-call pattern).
+    //
+    // In machine-output mode the child's stdout is captured and discarded
+    // instead of inherited, matching `db pull`/`db diff`'s delegated-call
+    // pattern for the CLI-1546 "stdout is payload-only in machine mode"
+    // invariant — `downloadFunctions` emits the `Output` envelope itself.
+    proxyDownload: (proxyFlags, projectRef, captureOutput) => {
+      const args = makeGoProxyDownloadArgs(proxyFlags, projectRef);
+      const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
+      return captureOutput
+        ? Effect.asVoid(proxy.execCapture(args, { env, stdin: "ignore" }))
+        : proxy.exec(args, { env });
+    },
   }).pipe(
     Effect.ensuring(
       Effect.suspend(() =>

@@ -21,7 +21,15 @@ export const functionsDownload = Effect.fnUntraced(function* (flags: FunctionsDo
     projectRoot: projectHome.projectRoot,
     rawArgs,
     resolveProjectRef,
-    proxyDownload: (proxyFlags, projectRef) =>
-      proxy.exec(makeGoProxyDownloadArgs(proxyFlags, projectRef), { cwd: projectHome.projectRoot }),
+    // In machine-output mode the child's stdout is captured and discarded
+    // instead of inherited (CLI-1546: stdout is payload-only in machine
+    // mode) — `downloadFunctions` emits the `Output` envelope itself.
+    proxyDownload: (proxyFlags, projectRef, captureOutput) => {
+      const args = makeGoProxyDownloadArgs(proxyFlags, projectRef);
+      const cwd = projectHome.projectRoot;
+      return captureOutput
+        ? Effect.asVoid(proxy.execCapture(args, { cwd, stdin: "ignore" }))
+        : proxy.exec(args, { cwd });
+    },
   });
 });

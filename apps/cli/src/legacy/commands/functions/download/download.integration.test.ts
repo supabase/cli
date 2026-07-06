@@ -53,14 +53,26 @@ function multipartResponse(request: Parameters<typeof HttpClientResponse.fromWeb
 
 function mockProxy() {
   const calls: Array<ReadonlyArray<string>> = [];
+  const envs: Array<Record<string, string> | undefined> = [];
+  const captureCalls: Array<ReadonlyArray<string>> = [];
+  const captureEnvs: Array<Record<string, string> | undefined> = [];
   return {
     calls,
+    envs,
+    captureCalls,
+    captureEnvs,
     layer: Layer.succeed(LegacyGoProxy, {
-      exec: (args) =>
+      exec: (args, opts) =>
         Effect.sync(() => {
           calls.push([...args]);
+          envs.push(opts?.env);
         }),
-      execCapture: () => Effect.succeed(""),
+      execCapture: (args, opts) =>
+        Effect.sync(() => {
+          captureCalls.push([...args]);
+          captureEnvs.push(opts?.env);
+          return "";
+        }),
     }),
   };
 }
@@ -155,6 +167,9 @@ describe("legacy functions download", () => {
           "--use-docker",
         ],
       ]);
+      // The delegated Go binary must not also fire its own
+      // `cli_command_executed` on top of this command's own instrumentation.
+      expect(proxy.envs).toEqual([{ SUPABASE_TELEMETRY_DISABLED: "1" }]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -208,6 +223,103 @@ describe("legacy functions download", () => {
     },
   );
 
+  it.live("still proxies to Docker when --use-api=false is passed explicitly", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--use-api=false",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      // Go's override is value-based (`if useApi { useDocker = false }`,
+      // apps/cli-go/cmd/functions.go:51-53), not presence-based. An explicit
+      // `--use-api=false` must not be treated like `--use-api` — it should
+      // leave the `--use-docker` default (true) in effect and still proxy.
+      yield* legacyFunctionsDownload({ ...baseFlags, useApi: false, useDocker: true });
+
+      expect(api.requests).toEqual([]);
+      expect(proxy.calls).toEqual([
+        [
+          "functions",
+          "download",
+          "hello-world",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+          "--use-docker",
+        ],
+      ]);
+      expect(proxy.envs).toEqual([{ SUPABASE_TELEMETRY_DISABLED: "1" }]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("emits a JSON success envelope when proxying to Docker in machine-output mode", () => {
+    const out = mockOutput({ format: "json" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+          "--output-format",
+          "json",
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      // CLI-1546: stdout is payload-only in machine mode, so the Go child's
+      // raw output must be captured/discarded (not inherited) and this
+      // command must emit the `Output` envelope itself, matching the native
+      // path's shape.
+      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+      expect(proxy.calls).toEqual([]);
+      expect(proxy.captureCalls).toEqual([
+        [
+          "functions",
+          "download",
+          "hello-world",
+          "--project-ref",
+          "abcdefghijklmnopqrst",
+          "--use-docker",
+        ],
+      ]);
+      expect(proxy.captureEnvs).toEqual([{ SUPABASE_TELEMETRY_DISABLED: "1" }]);
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          data: { function_slugs: ["hello-world"], project_ref: "abcdefghijklmnopqrst" },
+        }),
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("forwards only --legacy-bundle to the Go proxy, not the --use-docker default too", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi();
@@ -248,6 +360,7 @@ describe("legacy functions download", () => {
           "--legacy-bundle",
         ],
       ]);
+      expect(proxy.envs).toEqual([{ SUPABASE_TELEMETRY_DISABLED: "1" }]);
     }).pipe(Effect.provide(layer));
   });
 

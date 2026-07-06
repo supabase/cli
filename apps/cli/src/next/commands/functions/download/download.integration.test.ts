@@ -298,16 +298,24 @@ function setup(
 
 function mockLegacyGoProxy() {
   const calls: string[][] = [];
+  const captureCalls: string[][] = [];
   return {
     layer: Layer.succeed(LegacyGoProxy, {
       exec: (args: ReadonlyArray<string>) =>
         Effect.sync(() => {
           calls.push([...args]);
         }),
-      execCapture: () => Effect.succeed(""),
+      execCapture: (args: ReadonlyArray<string>) =>
+        Effect.sync(() => {
+          captureCalls.push([...args]);
+          return "";
+        }),
     }),
     get calls() {
       return calls;
+    },
+    get captureCalls() {
+      return captureCalls;
     },
   };
 }
@@ -858,6 +866,43 @@ describe("functions download", () => {
       expect(proxy.calls).toEqual([
         ["functions", "download", "hello-world", "--project-ref", PROJECT_REF, "--use-docker"],
       ]);
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("captures the Go proxy's output and emits a JSON envelope in machine mode", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      const { out, layer, proxy } = setup(tempDir, {
+        format: "json",
+        rawArgs: ["functions", "download", "hello-world", "--use-docker"],
+      });
+
+      // CLI-1546: stdout is payload-only in machine mode, so the delegated
+      // Go child's raw output must be captured/discarded (not inherited),
+      // and this command must emit the `Output` envelope itself.
+      yield* functionsDownload({
+        ...BASE_FLAGS,
+        useDocker: true,
+      }).pipe(Effect.provide(layer));
+
+      expect(proxy.calls).toEqual([]);
+      expect(proxy.captureCalls).toEqual([
+        ["functions", "download", "hello-world", "--project-ref", PROJECT_REF, "--use-docker"],
+      ]);
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: "Downloaded Edge Function source.",
+          data: {
+            function_slugs: ["hello-world"],
+            project_ref: PROJECT_REF,
+          },
+        }),
+      );
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );

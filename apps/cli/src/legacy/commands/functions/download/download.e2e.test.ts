@@ -8,8 +8,8 @@ import { makeTempHome, runSupabase } from "../../../../../tests/helpers/cli.ts";
 // `deploy.e2e.test.ts`'s coverage for the sibling `--use-docker` default bug
 // (CLI-1862).
 //
-// All cases fail before any network call (flag parsing / mutex validation),
-// so no auth or linked project is required.
+// The mutex-conflict cases below fail before any network call (flag parsing
+// / mutex validation), so no auth or linked project is required.
 
 const E2E_TIMEOUT_MS = 30_000;
 const SLUG = "download-e2e-basic";
@@ -62,22 +62,15 @@ describe("supabase functions download (legacy) — argument validation", () => {
 
   // CLI-1862: the TS→Go proxy call must not forward the now-defaulted
   // `--use-docker` alongside an explicit `--legacy-bundle` — the Go binary
-  // re-parses this argv itself and enforces the same mutual exclusivity,
-  // so forwarding both breaks `--legacy-bundle` outright.
-  test(
-    "does not reject --legacy-bundle alone despite the --use-docker default",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      using home = makeTempHome();
-      const { stderr } = await runSupabase(
-        ["functions", "download", SLUG, "--project-ref", FAKE_REF, "--legacy-bundle"],
-        {
-          entrypoint: "legacy",
-          home: home.dir,
-          env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
-        },
-      );
-      expect(stderr).not.toMatch(/none of the others can be|mutually exclusive/i);
-    },
-  );
+  // re-parses this argv itself and enforces the same mutual exclusivity, so
+  // forwarding both breaks `--legacy-bundle` outright. Covered in
+  // `download.integration.test.ts` ("forwards only --legacy-bundle to the Go
+  // proxy...") via a mocked `LegacyGoProxy` instead of here: unlike
+  // `--use-api`, `--legacy-bundle` routes to the Go binary's `RunLegacy`
+  // downloader, which calls `InstallOrUpgradeDeno` before any network call
+  // (`apps/cli-go/internal/functions/download/download.go`). Each e2e run
+  // gets a fresh `SUPABASE_HOME`, so this would trigger a real, uncached
+  // Deno download from GitHub on every run — a real cross-boundary
+  // dependency this suite shouldn't take on to prove a pure TS-side routing
+  // decision.
 });
