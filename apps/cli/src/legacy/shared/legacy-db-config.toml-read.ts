@@ -777,8 +777,10 @@ const DEFAULT_AUTH_SITE_URL = "http://127.0.0.1:3000";
 // `legacy-local-config-values.ts`'s `status`/`stop` resolver — hoisted rather than
 // duplicated per this package's "hoist before you duplicate" rule.
 export const LEGACY_HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
-// Go's `clerkDomainPattern` (`pkg/config/config.go:1553`).
-const LEGACY_CLERK_DOMAIN_PATTERN =
+// Go's `clerkDomainPattern` (`pkg/config/config.go:1553`). Exported: also used by
+// `legacy-local-config-values.ts`'s `status`/`stop` resolver — hoisted rather than
+// duplicated per this package's "hoist before you duplicate" rule.
+export const LEGACY_CLERK_DOMAIN_PATTERN =
   /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/u;
 
 /**

@@ -1147,6 +1147,142 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("auth.third_party.* (thirdParty.validate())", () => {
+    // Go's `(tpa *thirdParty) validate()` (`pkg/config/config.go:1635-1683`), called
+    // right after `Auth.MFA.validate()`, still inside `if c.Auth.Enabled`.
+    it("rejects firebase enabled without a project_id", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          third_party: { firebase: { enabled: true } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
+      );
+    });
+
+    it("rejects auth0 enabled without a tenant", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          third_party: { auth0: { enabled: true } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid config: auth.third_party.auth0 is enabled but without a tenant.",
+      );
+    });
+
+    it("rejects aws_cognito enabled without a user_pool_id", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          third_party: { aws_cognito: { enabled: true } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.",
+      );
+    });
+
+    it("rejects aws_cognito enabled with a user_pool_id but no user_pool_region", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          third_party: { aws_cognito: { enabled: true, user_pool_id: "pool-1" } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.",
+      );
+    });
+
+    it("rejects clerk enabled without a domain", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          third_party: { clerk: { enabled: true } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid config: auth.third_party.clerk is enabled but without a domain.",
+      );
+    });
+
+    it("rejects clerk enabled with a domain that doesn't match Go's clerkDomainPattern", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          third_party: { clerk: { enabled: true, domain: "not-a-clerk-domain" } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid config: auth.third_party.clerk has invalid domain",
+      );
+    });
+
+    it("does not throw for a valid clerk.example.com domain", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          third_party: { clerk: { enabled: true, domain: "clerk.example.com" } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects workos enabled without an issuer_url", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          third_party: { workos: { enabled: true } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid config: auth.third_party.workos is enabled but without a issuer_url.",
+      );
+    });
+
+    it("rejects more than one third_party provider enabled at once", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          third_party: {
+            firebase: { enabled: true, project_id: "proj" },
+            auth0: { enabled: true, tenant: "tenant" },
+          },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid config: Only one third_party provider allowed to be enabled at a time.",
+      );
+    });
+
+    it("does not throw when no third_party provider is enabled", () => {
+      const config = baseConfig({
+        auth: { enabled: true, site_url: "http://localhost:3000" },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not throw an enabled third_party provider missing its required field when auth is disabled", () => {
+      const config = baseConfig({
+        auth: { enabled: false, third_party: { firebase: { enabled: true } } },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
   // Go's Config.Validate runs ValidateFunctionSlug over every [functions.*] key
   // right after the auth block/generateAPIKeys, unconditionally — NOT gated on
   // auth.enabled (pkg/config/config.go:1155-1163).

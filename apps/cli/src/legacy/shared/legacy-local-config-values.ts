@@ -8,6 +8,7 @@ import { Schema } from "effect";
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
 import {
   LEGACY_BUCKET_NAME_PATTERN,
+  LEGACY_CLERK_DOMAIN_PATTERN,
   LEGACY_FUNCTION_SLUG_PATTERN,
   LEGACY_HOOK_SECRET_PATTERN,
   legacyParseGoBool,
@@ -503,6 +504,86 @@ function validateMfaConfig(mfa: ProjectConfig["auth"]["mfa"]): void {
 }
 
 /**
+ * Go's `(tpa *thirdParty) validate()` (`pkg/config/config.go:1635-1683`), called
+ * from `Config.Validate` right after `Auth.Email.validate()` (`config.go:1151-
+ * 1153`, itself right after `Auth.MFA.validate()`) — all inside `if
+ * c.Auth.Enabled`. Sms/External sit between Email and ThirdParty in Go
+ * (`config.go:1145-1150`) but aren't ported by this resolver yet, matching the
+ * existing pattern of documented-but-unported gaps in this file. Each provider
+ * enabled without its required field fails immediately (Go checks each
+ * provider's fields before moving to the next); only once every enabled
+ * provider individually validates does the "more than one enabled" check run.
+ * `assertEnvLoaded` WARN-only calls (`config.go:1567-1602`) aren't ported, same
+ * as this file's existing `auth.captcha.secret` precedent.
+ */
+function validateThirdPartyAuth(thirdParty: ProjectConfig["auth"]["third_party"]): void {
+  let enabledCount = 0;
+
+  if (thirdParty.firebase.enabled) {
+    enabledCount += 1;
+    if (
+      thirdParty.firebase.project_id === undefined ||
+      thirdParty.firebase.project_id.length === 0
+    ) {
+      throw new Error(
+        "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
+      );
+    }
+  }
+  if (thirdParty.auth0.enabled) {
+    enabledCount += 1;
+    if (thirdParty.auth0.tenant === undefined || thirdParty.auth0.tenant.length === 0) {
+      throw new Error("Invalid config: auth.third_party.auth0 is enabled but without a tenant.");
+    }
+  }
+  if (thirdParty.aws_cognito.enabled) {
+    enabledCount += 1;
+    if (
+      thirdParty.aws_cognito.user_pool_id === undefined ||
+      thirdParty.aws_cognito.user_pool_id.length === 0
+    ) {
+      throw new Error(
+        "Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.",
+      );
+    }
+    if (
+      thirdParty.aws_cognito.user_pool_region === undefined ||
+      thirdParty.aws_cognito.user_pool_region.length === 0
+    ) {
+      throw new Error(
+        "Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.",
+      );
+    }
+  }
+  if (thirdParty.clerk.enabled) {
+    enabledCount += 1;
+    const domain = thirdParty.clerk.domain;
+    if (domain === undefined || domain.length === 0) {
+      throw new Error("Invalid config: auth.third_party.clerk is enabled but without a domain.");
+    }
+    if (!LEGACY_CLERK_DOMAIN_PATTERN.test(domain)) {
+      throw new Error(
+        "Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev. Check https://clerk.com/setup/supabase on how to find the correct value.",
+      );
+    }
+  }
+  if (thirdParty.workos.enabled) {
+    enabledCount += 1;
+    if (thirdParty.workos.issuer_url === undefined || thirdParty.workos.issuer_url.length === 0) {
+      throw new Error(
+        "Invalid config: auth.third_party.workos is enabled but without a issuer_url.",
+      );
+    }
+  }
+
+  if (enabledCount > 1) {
+    throw new Error(
+      "Invalid config: Only one third_party provider allowed to be enabled at a time.",
+    );
+  }
+}
+
+/**
  * Go's `Config.Validate`'s `switch c.Db.MajorVersion` (`pkg/config/config.go:
  * 1034-1061`): `0` is the zero-value/missing case, `12` has a dedicated
  * unsupported-version message (with a migration-docs link), `13`/`14`/`15`/`17`
@@ -617,6 +698,9 @@ function envOverrideDenoVersion(
  * or `secrets` fails Go's scheme/secret-pattern rules — see {@link validateAuthHooks}.
  * @throws when `auth.enabled` is true and an MFA factor's `enroll_enabled` is set
  * without `verify_enabled` — see {@link validateMfaConfig}.
+ * @throws when `auth.enabled` is true and an enabled `[auth.third_party.*]`
+ * provider is missing its required field, or more than one provider is enabled
+ * at once — see {@link validateThirdPartyAuth}.
  * @throws when a `[functions.*]` key doesn't match Go's function-slug pattern —
  * see {@link validateFunctionSlugs}. Unconditional, not gated on `auth.enabled`.
  * @throws when `edge_runtime.deno_version` (post-override) is `0` or otherwise
@@ -832,6 +916,7 @@ export function legacyResolveLocalConfigValues(
   if (authEnabled) {
     validateAuthHooks(config.auth.hook);
     validateMfaConfig(config.auth.mfa);
+    validateThirdPartyAuth(config.auth.third_party);
   }
   // Go's `Config.Validate` runs `ValidateFunctionSlug` over every `[functions.*]`
   // key right after the auth block/`generateAPIKeys`, unconditionally — see
