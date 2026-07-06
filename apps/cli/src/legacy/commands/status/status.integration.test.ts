@@ -132,7 +132,11 @@ function mockRoutedContainerCliSpawner(
 }
 
 const ALL_RUNNING_NAMES = legacyServiceContainerIds("demo");
-const HEALTHY_DB_STATE = JSON.stringify({ Status: "running", Health: { Status: "healthy" } });
+const HEALTHY_DB_STATE = JSON.stringify({
+  Status: "running",
+  Running: true,
+  Health: { Status: "healthy" },
+});
 
 /**
  * Default happy-path router: db container inspect reports healthy+running, `ps`
@@ -261,7 +265,11 @@ describe("legacy status integration", () => {
       // the default) to cover both sides of Go's `if !ignoreHealthCheck { assertContainerHealthy }`.
       const { layer, child } = setup({
         route: defaultRoute({
-          dbInspectStdout: JSON.stringify({ Status: "running", Health: { Status: "starting" } }),
+          dbInspectStdout: JSON.stringify({
+            Status: "running",
+            Running: true,
+            Health: { Status: "starting" },
+          }),
         }),
       });
       return Effect.gen(function* () {
@@ -555,7 +563,9 @@ describe("legacy status integration", () => {
 
   it.live("fails when the db container is not running", () => {
     const { layer } = setup({
-      route: defaultRoute({ dbInspectStdout: JSON.stringify({ Status: "exited" }) }),
+      route: defaultRoute({
+        dbInspectStdout: JSON.stringify({ Status: "exited", Running: false }),
+      }),
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyStatus(flags()));
@@ -567,6 +577,28 @@ describe("legacy status integration", () => {
       }
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "succeeds against a paused-but-healthy db, matching Go's boolean-based running gate",
+    () => {
+      // Go's `assertContainerHealthy` (`status.go:150`) gates on the boolean
+      // `resp.State.Running`, not the status string — a paused container can
+      // report `Running: true` alongside `Status: "paused"`, and Go continues
+      // past the not-running branch to the health check in that case.
+      const { layer } = setup({
+        route: defaultRoute({
+          dbInspectStdout: JSON.stringify({
+            Status: "paused",
+            Running: true,
+            Health: { Status: "healthy" },
+          }),
+        }),
+      });
+      return Effect.gen(function* () {
+        yield* legacyStatus(flags());
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("fails when the db container is absent, preserving the real Docker stderr text", () => {
     // Go's `assertContainerHealthy` never special-cases "not found" — it wraps
@@ -594,7 +626,11 @@ describe("legacy status integration", () => {
   it.live("fails when the db container is unhealthy", () => {
     const { layer } = setup({
       route: defaultRoute({
-        dbInspectStdout: JSON.stringify({ Status: "running", Health: { Status: "starting" } }),
+        dbInspectStdout: JSON.stringify({
+          Status: "running",
+          Running: true,
+          Health: { Status: "starting" },
+        }),
       }),
     });
     return Effect.gen(function* () {

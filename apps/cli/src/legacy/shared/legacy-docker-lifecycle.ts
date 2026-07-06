@@ -182,8 +182,15 @@ function parseContainerState(stdout: string): {
     parsed = {};
   }
   const state = isJsonRecord(parsed) ? parsed : {};
+  // Go's `assertContainerHealthy` (`internal/status/status.go:147-156`) gates
+  // on the boolean `resp.State.Running`, not the status string — Docker's
+  // inspect `State` struct exposes both independently, and a paused or
+  // restarting container reports `Running: true` alongside a non-"running"
+  // `Status` (`"paused"`/`"restarting"`). `status` is kept as-is for the
+  // "container is not running: <status>" message text (`status.go:151`),
+  // which still reads the string, but the gate itself must read the boolean.
   const status = typeof state["Status"] === "string" ? state["Status"] : "";
-  const running = status === "running";
+  const running = state["Running"] === true;
   const health = state["Health"];
   const healthStatus =
     isJsonRecord(health) && typeof health["Status"] === "string" ? health["Status"] : undefined;

@@ -167,7 +167,11 @@ describe("legacyListContainersByLabel", () => {
 describe("legacyInspectContainerState", () => {
   it.live("parses a running, healthy container's state", () => {
     const mock = mockSpawner({
-      stdout: JSON.stringify({ Status: "running", Health: { Status: "healthy" } }),
+      stdout: JSON.stringify({
+        Status: "running",
+        Running: true,
+        Health: { Status: "healthy" },
+      }),
     });
     return legacyInspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
       Effect.map((state) => {
@@ -183,7 +187,7 @@ describe("legacyInspectContainerState", () => {
   });
 
   it.live("parses a running container with no health check configured", () => {
-    const mock = mockSpawner({ stdout: JSON.stringify({ Status: "running" }) });
+    const mock = mockSpawner({ stdout: JSON.stringify({ Status: "running", Running: true }) });
     return legacyInspectContainerState(mock.spawner, "supabase_kong_my-app").pipe(
       Effect.map((state) => {
         expect(state).toEqual({ running: true, status: "running" });
@@ -192,13 +196,29 @@ describe("legacyInspectContainerState", () => {
   });
 
   it.live("parses a stopped/exited container", () => {
-    const mock = mockSpawner({ stdout: JSON.stringify({ Status: "exited" }) });
+    const mock = mockSpawner({ stdout: JSON.stringify({ Status: "exited", Running: false }) });
     return legacyInspectContainerState(mock.spawner, "supabase_kong_my-app").pipe(
       Effect.map((state) => {
         expect(state).toEqual({ running: false, status: "exited" });
       }),
     );
   });
+
+  it.live(
+    "treats a paused/restarting container as running, matching Go's boolean-based gate",
+    () => {
+      // Go's `assertContainerHealthy` (`status.go:150`) checks `resp.State.Running`,
+      // not `resp.State.Status` — a paused or restarting container reports
+      // `Running: true` alongside a non-"running" status string, and Go
+      // continues past the not-running branch in that case.
+      const mock = mockSpawner({ stdout: JSON.stringify({ Status: "paused", Running: true }) });
+      return legacyInspectContainerState(mock.spawner, "supabase_db_my-app").pipe(
+        Effect.map((state) => {
+          expect(state).toEqual({ running: true, status: "paused" });
+        }),
+      );
+    },
+  );
 
   it.live(
     "fails with LegacyDockerLifecycleInspectError, preserving the real stderr, when the container does not exist",
