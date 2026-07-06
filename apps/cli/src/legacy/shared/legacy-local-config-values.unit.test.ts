@@ -451,5 +451,48 @@ describe("legacyResolveLocalConfigValues", () => {
         iss: "supabase-demo",
       });
     });
+
+    describe("SUPABASE_AUTH_ENABLED env override", () => {
+      // `c.Auth.Enabled` is Viper-bound like any other field
+      // (config.go:582-586), so `Validate`'s `if c.Auth.Enabled` gate
+      // (config.go:1036,1059-1065) reads the POST-override value, not raw
+      // TOML — a stale/missing signing_keys_path must be skipped when auth is
+      // disabled only via env/dotenv, and read when auth is enabled only via
+      // env/dotenv despite TOML saying otherwise.
+      afterEach(() => {
+        delete process.env["SUPABASE_AUTH_ENABLED"];
+      });
+
+      it("skips reading a missing signing_keys_path when auth is disabled only via env", () => {
+        process.env["SUPABASE_AUTH_ENABLED"] = "false";
+        const config = baseConfig({
+          auth: { enabled: true, signing_keys_path: "missing.json" },
+        });
+        expect(() =>
+          legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+        ).not.toThrow();
+      });
+
+      it("reads signing_keys_path when auth is enabled only via env despite TOML saying disabled", async () => {
+        process.env["SUPABASE_AUTH_ENABLED"] = "true";
+        const jwk = generateRsaJwk();
+        writeSigningKeys(tempRoot.current, [jwk]);
+        const config = baseConfig({
+          auth: { enabled: false, signing_keys_path: "signing_keys.json" },
+        });
+        const values = legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current);
+        expect(values.anonKey.split(".")).toHaveLength(3);
+      });
+
+      it("falls back to the configured value for a malformed override", () => {
+        process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
+        const config = baseConfig({
+          auth: { enabled: false, signing_keys_path: "missing.json" },
+        });
+        expect(() =>
+          legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+        ).not.toThrow();
+      });
+    });
   });
 });

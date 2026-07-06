@@ -204,10 +204,12 @@ const decodeLegacyJwks = Schema.decodeUnknownSync(Schema.Array(LegacyJwkSchema))
  * signing keys: %w"` for a parse failure) rather than letting `readFileSync`/
  * `JSON.parse`'s raw Node error text through unwrapped.
  *
- * Callers must only invoke this when `config.auth.enabled` is true — Go's
- * `Validate` nests the entire signing-keys read inside `if c.Auth.Enabled`
- * (`pkg/config/config.go:1036,1059-1065`), so a disabled auth section never
- * touches `signing_keys_path`, however stale or missing that file is.
+ * Callers must only invoke this when auth is enabled (the `SUPABASE_AUTH_ENABLED`-
+ * overridden value, not necessarily raw `config.auth.enabled` — see
+ * {@link envOverrideBool}) — Go's `Validate` nests the entire signing-keys read
+ * inside `if c.Auth.Enabled` (`pkg/config/config.go:1036,1059-1065`), reading
+ * that same post-override value, so a disabled auth section never touches
+ * `signing_keys_path`, however stale or missing that file is.
  */
 function loadFirstSigningKey(workdir: string, signingKeysPath: string): LegacyJwk | undefined {
   const absolutePath = isAbsolute(signingKeysPath)
@@ -290,9 +292,17 @@ export function legacyResolveLocalConfigValues(
   // disabled auth section never opens/parses `signing_keys_path`, even a stale
   // or missing one. JWT-secret validation and anon/service_role key generation
   // (`generateAPIKeys`, `apikeys.go:43-73`) run unconditionally either way, so
-  // only this file read is gated.
+  // only this file read is gated. `c.Auth.Enabled` is itself Viper-bound like
+  // any other field (`config.go:582-586`), so `Validate`'s gate reads the
+  // POST-`SUPABASE_AUTH_ENABLED`-override value, not the raw TOML one — hence
+  // `envOverrideBool` here instead of `config.auth.enabled` directly.
+  const authEnabled = envOverrideBool(
+    "SUPABASE_AUTH_ENABLED",
+    config.auth.enabled,
+    projectEnvValues,
+  );
   const signingKey =
-    config.auth.enabled && signingKeysPath !== undefined && signingKeysPath.length > 0
+    authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0
       ? loadFirstSigningKey(workdir, signingKeysPath)
       : undefined;
 
