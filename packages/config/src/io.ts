@@ -179,6 +179,15 @@ const REMOTE_PROJECT_ID_PATTERN = /^[a-z]{20}$/;
  * project ref, mirroring Go's `Config.Validate` (`config.go:996-1001`) — that
  * loop runs unconditionally over every remote on every config load, not only
  * the one that ends up selected/merged, so this always runs too.
+ *
+ * Unlike {@link checkDuplicateRemoteProjectIds}/the match below (which read
+ * viper's raw, pre-`LoadEnvHook` values — see {@link applyRemoteOverride}'s
+ * doc comment), `Config.Validate` runs entirely AFTER the struct decode
+ * (`config.go:882`), by which point `LoadEnvHook` has already resolved every
+ * `env(...)` reference (`config.go:749-753`). So this check must see the
+ * already-interpolated `project_id`, not the literal `env(REF)` form — an
+ * `[remotes.x] project_id = "env(REF)"` that resolves to a valid 20-letter ref
+ * passes here even though the raw string doesn't match the pattern itself.
  */
 const checkRemoteProjectIdFormat = Effect.fnUntraced(function* (remotes: Record<string, unknown>) {
   for (const [remoteName, remote] of Object.entries(remotes)) {
@@ -194,35 +203,51 @@ const checkRemoteProjectIdFormat = Effect.fnUntraced(function* (remotes: Record<
 
 /**
  * Applies the `[remotes.<name>]` override whose `project_id` matches `projectRef`
- * to `document`, mirroring Go's `loadFromFile` remote resolution
- * (`config.go:503-518`). Returns the merged document (with `remotes` stripped) and
+ * to `rawDocument`, mirroring Go's `loadFromFile` remote resolution
+ * (`config.go:503-518`). Returns the merged document (with `remotes` stripped,
+ * still pre-`env()`-interpolation — the caller re-interpolates the result) and
  * the matched remote name. `projectRef` of `undefined` never matches any remote
  * (including one that itself omits `project_id`, which reads as `""`) — callers
- * that don't request a specific remote get the duplicate check below without
- * the merge, so the base document loads verbatim as before.
+ * that don't request a specific remote get the duplicate/format checks below
+ * without the merge, so the base document loads verbatim as before.
+ *
+ * `rawDocument`'s `remotes` block is the PRE-interpolation document: Go's
+ * duplicate-check/selection loop in `loadFromFile` reads directly off viper's
+ * raw config values (`v.GetString(fmt.Sprintf("remotes.%s.project_id", name))`,
+ * `config.go:596-610`) and only calls `c.load(v)` — which resolves `env(...)`
+ * via `LoadEnvHook` during the struct decode (`config.go:749-753`,
+ * `decode_hooks.go:13-26`) — afterward (`config.go:611`). So a
+ * `[remotes.prod] project_id = "env(REF)"` is matched/deduped against the
+ * LITERAL `env(REF)` string in Go, never against `REF`'s resolved value; this
+ * mirrors that exactly rather than matching post-interpolation, which would
+ * merge a remote Go itself would never select. `interpolatedRemotes` (Go's
+ * post-decode `c.Remotes`, mirrored here as the already-interpolated
+ * `remotes` subtree) is used only for {@link checkRemoteProjectIdFormat} — see
+ * its doc comment for why that check needs the resolved value instead.
  */
 const applyRemoteOverride = Effect.fnUntraced(function* (
-  document: Record<string, unknown>,
+  rawDocument: Record<string, unknown>,
+  interpolatedRemotes: Record<string, unknown> | undefined,
   projectRef: string | undefined,
 ) {
-  const remotes = document["remotes"];
+  const remotes = rawDocument["remotes"];
   if (!isObject(remotes)) {
-    return { document, appliedRemote: undefined as string | undefined };
+    return { document: rawDocument, appliedRemote: undefined as string | undefined };
   }
   yield* checkDuplicateRemoteProjectIds(remotes);
-  yield* checkRemoteProjectIdFormat(remotes);
+  yield* checkRemoteProjectIdFormat(interpolatedRemotes ?? remotes);
   const name = Object.entries(remotes).find(([, remote]) => {
     const projectId =
       isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
     return projectRef !== undefined && projectId === projectRef;
   })?.[0];
   if (name === undefined) {
-    return { document, appliedRemote: undefined as string | undefined };
+    return { document: rawDocument, appliedRemote: undefined as string | undefined };
   }
   const remoteSubtree = remotes[name];
   let merged = isObject(remoteSubtree)
-    ? mergeRemoteSubtree(document, remoteSubtree)
-    : { ...document };
+    ? mergeRemoteSubtree(rawDocument, remoteSubtree)
+    : { ...rawDocument };
   if (!(isObject(remoteSubtree) && remoteSetsDbSeedEnabled(remoteSubtree))) {
     merged = withDbSeedDisabled(merged);
   }
@@ -535,25 +560,50 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
       baseEnv: process.env,
       search: options?.search,
     }));
-  const interpolated = interpolateEnvReferencesAgainstSchema(
-    normalized,
-    projectEnv?.values ?? {},
-    ProjectConfigSchema,
-  );
+  const interpolateDocument = (document: unknown): unknown =>
+    interpolateEnvReferencesAgainstSchema(document, projectEnv?.values ?? {}, ProjectConfigSchema);
 
-  // Merge the matching `[remotes.*]` override over the base document before
-  // decode (Go's `loadFromFile` with `Config.ProjectId` set). Runs
-  // unconditionally so the duplicate-`project_id` check always applies, like
-  // Go's own loop (`config.go:594-602`), even for callers that don't request
-  // a `projectRef` — those just never match a remote, so the base document
-  // still loads verbatim, only now with the duplicate check applied too.
-  let documentForDecode: unknown = interpolated;
+  // Interpolated once here purely to give `applyRemoteOverride`'s FORMAT check
+  // (not its match/merge — see that function's doc comment) the resolved
+  // `remotes.*.project_id`, matching Go's post-decode `Config.Validate`.
+  const interpolatedForValidation = interpolateDocument(normalized);
+  const interpolatedRemotes =
+    isObject(interpolatedForValidation) && isObject(interpolatedForValidation["remotes"])
+      ? interpolatedForValidation["remotes"]
+      : undefined;
+
+  // Merge the matching `[remotes.*]` override over the RAW (pre-`env()`-
+  // interpolation) document — Go's `loadFromFile` duplicate-check/selection
+  // loop runs on viper's raw string values, before `LoadEnvHook` ever resolves
+  // `env(...)` (`config.go:594-611`, `decode_hooks.go:13-26`); see
+  // `applyRemoteOverride`'s doc comment. Runs unconditionally so the
+  // duplicate-`project_id` check always applies, like Go's own loop, even for
+  // callers that don't request a `projectRef` — those just never match a
+  // remote, so the base document still loads verbatim, only now with the
+  // duplicate check applied too.
+  let documentForDecode: unknown = normalized;
   let appliedRemote: string | undefined;
-  if (isObject(interpolated)) {
-    const resolved = yield* applyRemoteOverride(interpolated, options?.projectRef);
+  if (isObject(normalized)) {
+    const resolved = yield* applyRemoteOverride(
+      normalized,
+      interpolatedRemotes,
+      options?.projectRef,
+    );
     documentForDecode = resolved.document;
     appliedRemote = resolved.appliedRemote;
   }
+
+  // The merge above ran on the raw document, so any `env(...)` reference in
+  // the winning remote's subtree (or elsewhere in the base) still needs
+  // resolving before decode — mirrors Go's `LoadEnvHook` running on the
+  // post-merge viper store inside `c.load(v)`. When no remote matched, this
+  // recomputes the same substitutions `interpolatedForValidation` already
+  // made (documentForDecode is just `normalized` again) — a redundant walk on
+  // that path, but correctness on the match+`env()` path matters more than
+  // avoiding it.
+  documentForDecode = isObject(documentForDecode)
+    ? interpolateDocument(documentForDecode)
+    : documentForDecode;
 
   // Strip Go's deprecated `auth.external.{linkedin,slack}` provider ids from
   // the POST-remote-merge document, matching `external.validate()` running

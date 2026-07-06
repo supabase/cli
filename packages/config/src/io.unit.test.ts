@@ -1218,6 +1218,66 @@ enabled = true
     }
   });
 
+  test("does not match a remote whose project_id is env(REF) against the resolved ref (Go parity)", async () => {
+    // Go's `loadFromFile` duplicate-check/selection loop reads viper's RAW
+    // string values (`config.go:596-610`) and only calls `c.load(v)` — which
+    // resolves `env(...)` via `LoadEnvHook` — afterward (`config.go:611`,
+    // `decode_hooks.go:13-26`). So a `[remotes.x] project_id = "env(REF)"`
+    // never matches a caller-supplied, already-resolved `REF`: Go compares the
+    // literal `env(REF)` string, not what it resolves to.
+    const previous = process.env.SUPABASE_REMOTE_ENV_REF_TEST;
+    process.env.SUPABASE_REMOTE_ENV_REF_TEST = PREVIEW_REF;
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[api]
+max_rows = 1
+
+[remotes.preview]
+project_id = "env(SUPABASE_REMOTE_ENV_REF_TEST)"
+[remotes.preview.api]
+max_rows = 999
+`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
+      expect(loaded!.appliedRemote).toBeUndefined();
+      expect(loaded!.config.api.max_rows).toBe(1);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SUPABASE_REMOTE_ENV_REF_TEST;
+      } else {
+        process.env.SUPABASE_REMOTE_ENV_REF_TEST = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("validates a remote's env(REF) project_id format against its resolved value, not the literal", async () => {
+    // Go's `Config.Validate` (`config.go:989-1001`) runs entirely after the
+    // struct decode, by which point `LoadEnvHook` has already resolved
+    // `env(...)` — so it validates the RESOLVED project_id against the
+    // 20-lowercase-letter pattern, not the literal `env(REF)` string (which
+    // would never match the pattern itself).
+    const previous = process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST;
+    process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST = PREVIEW_REF;
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.preview]
+project_id = "env(SUPABASE_REMOTE_ENV_REF_FORMAT_TEST)"
+`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.appliedRemote).toBeUndefined();
+      expect(loaded!.config.project_id).toBe("baseref");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST;
+      } else {
+        process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("resolves env() references inside the matching remote before merge", async () => {
     const previous = process.env.SUPABASE_REMOTE_MAX_ROWS_TEST;
     process.env.SUPABASE_REMOTE_MAX_ROWS_TEST = "777";
