@@ -5,7 +5,7 @@ import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
   legacyResolveExperimental,
-  legacyResolveYes,
+  legacyResolveYesWithProjectEnv,
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -15,6 +15,7 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
   legacyCheckDbToml,
+  legacyLoadProjectEnv,
   legacyResolveSeedSqlPath,
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
@@ -96,10 +97,14 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
   // Env-aware (honors `SUPABASE_EXPERIMENTAL`, not just `--experimental`), matching
   // Go's `viper.GetBool("EXPERIMENTAL")`.
   const experimental = yield* legacyResolveExperimental;
-  const yes = yield* legacyResolveYes;
 
   const workdir = cliConfig.workdir;
   const migrationsDir = path.join(workdir, "supabase", "migrations");
+  // Go's `ParseDatabaseConfig` runs `loadNestedEnv` before `PromptYesNo` reads
+  // `viper.GetBool("YES")`, so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
+  // the reset prompt. Resolve `yes` with that project env, as `db pull` does.
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
+  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {

@@ -704,6 +704,20 @@ describe("legacy db push", () => {
     });
   });
 
+  it.live("auto-confirms pending migrations via SUPABASE_YES set only in the project .env", () => {
+    // Go's loadNestedEnv sets project-.env keys before PromptYesNo reads viper YES, so a
+    // `SUPABASE_YES` in supabase/.env auto-confirms without any interactive answer.
+    const { layer, out } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { ...migrationFile("20240101000000"), "supabase/.env": "SUPABASE_YES=true\n" },
+      // Deliberately no `confirm` responses — the prompt must be auto-confirmed.
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
+    });
+  });
+
   it.live("fails when config.toml cannot be parsed", () => {
     const { layer } = setup(tmp.current, { toml: "this is = = not [[[ valid toml" });
     return Effect.gen(function* () {

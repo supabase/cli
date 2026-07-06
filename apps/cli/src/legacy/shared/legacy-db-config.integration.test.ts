@@ -507,6 +507,11 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
             user: `cli_login_role.${adHocRef}`,
             password: "temporary-role-password",
             database: "postgres",
+            suggestionContext: {
+              dashboardUrl: "https://supabase.com/dashboard",
+              profileName: "supabase",
+              debug: false,
+            },
           });
           expect(r.ref).toEqual(Option.some(adHocRef));
           expect(requests).toEqual([
@@ -660,6 +665,11 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
                 user: `cli_login_role.${adHocRef}`,
                 password: "temporary-role-password",
                 database: "postgres",
+                suggestionContext: {
+                  dashboardUrl: "https://supabase.com/dashboard",
+                  profileName: "supabase",
+                  debug: false,
+                },
               });
             }
             expect(requests).toEqual([
@@ -797,6 +807,11 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
               user: `postgres.${linkedRef}`,
               password: "linked-password",
               database: "postgres",
+              suggestionContext: {
+                dashboardUrl: "https://supabase.com/dashboard",
+                profileName: "supabase",
+                debug: false,
+              },
             });
           }
           expect(requests).toEqual([

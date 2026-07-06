@@ -2,13 +2,16 @@ import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
-import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
+import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
-import { legacyCheckDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
+import {
+  legacyCheckDbToml,
+  legacyLoadProjectEnv,
+} from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import {
   legacyApplyMigrations,
@@ -79,9 +82,13 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
   const path = yield* Path.Path;
   const cliArgs = yield* CliArgs;
   const dnsResolver = yield* LegacyDnsResolverFlag;
-  const yes = yield* legacyResolveYes;
 
   const workdir = cliConfig.workdir;
+  // Go's `ParseDatabaseConfig` runs `loadNestedEnv` (which `os.Setenv`s each project-`.env`
+  // key) before `PromptYesNo` reads `viper.GetBool("YES")`, so a `SUPABASE_YES` set only in
+  // `supabase/.env` auto-confirms. Resolve `yes` with that project env, as `db pull` does.
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
+  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {

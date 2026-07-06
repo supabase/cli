@@ -575,6 +575,20 @@ describe("legacy db reset", () => {
     });
   });
 
+  it.live("auto-confirms a remote reset via SUPABASE_YES set only in the project .env", () => {
+    // Go's loadNestedEnv sets project-.env keys before the reset prompt reads viper YES, so
+    // a `SUPABASE_YES` in supabase/.env auto-confirms the destructive prompt (default false).
+    const { layer, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { "supabase/.env": "SUPABASE_YES=true\n" },
+      // Deliberately no `confirm` responses — the prompt must be auto-confirmed.
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+      expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+    });
+  });
+
   it.live("still caches the linked ref when DB-config resolution fails", () => {
     // Go's Execute() runs ensureProjectGroupsCached after ExecuteC returns even on
     // error (root.go:171-181), and ParseDatabaseConfig sets ProjectRef via
