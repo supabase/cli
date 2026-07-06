@@ -536,4 +536,128 @@ describe("legacyResolveLocalConfigValues", () => {
       });
     });
   });
+
+  describe("api.tls (cert/key validation)", () => {
+    const tempRoot = useLegacyTempWorkdir("supabase-api-tls-test-");
+
+    function writeTlsFile(workdir: string, name: string, contents = "dummy") {
+      const supabaseDir = join(workdir, "supabase");
+      mkdirSync(supabaseDir, { recursive: true });
+      writeFileSync(join(supabaseDir, name), contents);
+    }
+
+    it("does not throw when tls.enabled with neither cert_path nor key_path set", () => {
+      // Go's Validate only rejects the "exactly one set" case (config.go:1010-1027);
+      // tls.enabled with nothing configured still loads.
+      const config = baseConfig({ api: { tls: { enabled: true } } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    it("rejects cert_path set without key_path", () => {
+      writeTlsFile(tempRoot.current, "cert.pem");
+      const config = baseConfig({ api: { tls: { enabled: true, cert_path: "cert.pem" } } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "Missing required field in config: api.tls.key_path",
+      );
+    });
+
+    it("rejects key_path set without cert_path", () => {
+      writeTlsFile(tempRoot.current, "key.pem");
+      const config = baseConfig({ api: { tls: { enabled: true, key_path: "key.pem" } } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "Missing required field in config: api.tls.cert_path",
+      );
+    });
+
+    it("throws a Go-worded error when the configured cert file does not exist", () => {
+      writeTlsFile(tempRoot.current, "key.pem");
+      const config = baseConfig({
+        api: { tls: { enabled: true, cert_path: "missing-cert.pem", key_path: "key.pem" } },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "failed to read TLS cert: ",
+      );
+    });
+
+    it("throws a Go-worded error when the configured key file does not exist", () => {
+      writeTlsFile(tempRoot.current, "cert.pem");
+      const config = baseConfig({
+        api: { tls: { enabled: true, cert_path: "cert.pem", key_path: "missing-key.pem" } },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "failed to read TLS key: ",
+      );
+    });
+
+    it("succeeds when both cert_path and key_path are readable", () => {
+      writeTlsFile(tempRoot.current, "cert.pem");
+      writeTlsFile(tempRoot.current, "key.pem");
+      const config = baseConfig({
+        api: { tls: { enabled: true, cert_path: "cert.pem", key_path: "key.pem" } },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    it("resolves cert_path/key_path against <workdir>/supabase unconditionally, no isAbsolute guard", () => {
+      // Go's `path.Join` (config.go:961-965) absorbs a leading "/" — unlike
+      // signing_keys_path, which Go DOES guard with filepath.IsAbs.
+      writeTlsFile(tempRoot.current, "cert.pem");
+      writeTlsFile(tempRoot.current, "key.pem");
+      const config = baseConfig({
+        api: {
+          tls: {
+            enabled: true,
+            cert_path: "/cert.pem",
+            key_path: "/key.pem",
+          },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    // Go's `Validate` nests the whole TLS branch inside `if c.Api.Enabled`
+    // (config.go:1006,1010) — a disabled api section never validates cert/key,
+    // however invalid the pairing.
+    it("skips TLS validation entirely when api is disabled", () => {
+      const config = baseConfig({
+        api: { enabled: false, tls: { enabled: true, cert_path: "missing-cert.pem" } },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    describe("SUPABASE_API_ENABLED / SUPABASE_API_TLS_ENABLED env overrides", () => {
+      afterEach(() => {
+        delete process.env["SUPABASE_API_ENABLED"];
+        delete process.env["SUPABASE_API_TLS_ENABLED"];
+      });
+
+      it("skips TLS validation when api is disabled only via env", () => {
+        process.env["SUPABASE_API_ENABLED"] = "false";
+        const config = baseConfig({
+          api: { enabled: true, tls: { enabled: true, cert_path: "missing-cert.pem" } },
+        });
+        expect(() =>
+          legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+        ).not.toThrow();
+      });
+
+      it("validates TLS when enabled only via env despite TOML saying tls.enabled = false", () => {
+        process.env["SUPABASE_API_TLS_ENABLED"] = "true";
+        const config = baseConfig({
+          api: { tls: { enabled: false, cert_path: "missing-cert.pem" } },
+        });
+        expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+          "Missing required field in config: api.tls.key_path",
+        );
+      });
+    });
+  });
 });

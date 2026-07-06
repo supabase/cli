@@ -316,11 +316,68 @@ function loadFirstSigningKey(workdir: string, signingKeysPath: string): LegacyJw
 }
 
 /**
+ * Go's `Config.Validate` TLS branch (`pkg/config/config.go:1006-1027`), gated
+ * on `api.enabled` same as the caller: a cert path with no key path (or vice
+ * versa) is a hard config error; when both are set, each file is read to
+ * confirm it's actually reachable, matching Go's `fs.ReadFile` calls (Go
+ * caches the bytes for `start` to serve as `CertContent`/`KeyContent` —
+ * `status` has no use for the bytes, only the same validation outcome, so
+ * they're discarded here). Neither path set is NOT an error in Go — `Validate`
+ * only rejects the "exactly one set" case, so `tls.enabled = true` with no
+ * cert/key configured at all still loads (it just can't serve TLS at `start`
+ * time), mirrored here by returning without throwing.
+ *
+ * Go joins both paths unconditionally with the `supabase/` dir — no
+ * `filepath.IsAbs` guard (`config.go:961-965` uses `path.Join`, which absorbs
+ * a leading `/`) — unlike {@link loadFirstSigningKey}'s `signing_keys_path`,
+ * which Go does guard with `filepath.IsAbs` (`config.go:928-929`). Matches the
+ * identical Kong-side validation already ported for `seed buckets`/`storage`
+ * in `legacy-storage-credentials.ts`'s `validateLocalKongTls`.
+ *
+ * Uses `node:fs` directly for the same reason as {@link loadFirstSigningKey}:
+ * this stays a plain synchronous resolver rather than threading the Effect
+ * `FileSystem` service through `legacyStatusValues`/`status.handler.ts`.
+ */
+function validateLocalApiTls(
+  workdir: string,
+  certPath: string | undefined,
+  keyPath: string | undefined,
+): void {
+  const hasCert = certPath !== undefined && certPath.length > 0;
+  const hasKey = keyPath !== undefined && keyPath.length > 0;
+
+  if (hasCert && !hasKey) {
+    throw new Error("Missing required field in config: api.tls.key_path");
+  }
+  if (hasKey && !hasCert) {
+    throw new Error("Missing required field in config: api.tls.cert_path");
+  }
+  if (!hasCert) return;
+
+  try {
+    readFileSync(join(workdir, "supabase", certPath), "utf8");
+  } catch (cause) {
+    throw new Error(
+      `failed to read TLS cert: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
+  try {
+    readFileSync(join(workdir, "supabase", keyPath!), "utf8");
+  } catch (cause) {
+    throw new Error(
+      `failed to read TLS key: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
+  }
+}
+
+/**
  * @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
  * @throws {LegacyInvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
  * override doesn't parse as a valid port.
  * @throws {LegacyInvalidBoolEnvOverrideError} when a `SUPABASE_*_ENABLED` env/dotenv
  * override doesn't parse as a valid bool.
+ * @throws when `api.tls.enabled` is set with only one of `cert_path`/`key_path`, or a
+ * configured file can't be read — see {@link validateLocalApiTls}.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
  * or its first key uses an unsupported algorithm — see {@link legacyGenerateAsymmetricGoJwt}.
  */
@@ -337,6 +394,28 @@ export function legacyResolveLocalConfigValues(
   // `legacyResolveApiExternalUrl`'s own `external_url`-wins-else-
   // `scheme://host:port` derivation (which picks `https` vs `http` from
   // `tls.enabled`) must be the overridden ones too.
+  const apiTlsEnabled = legacyEnvOverrideBool(
+    "SUPABASE_API_TLS_ENABLED",
+    config.api.tls.enabled,
+    "api.tls.enabled",
+    projectEnvValues,
+  );
+  // Go's TLS cert/key validation nests entirely inside `if c.Api.Enabled`
+  // (`config.go:1006,1010`) — mirroring `authEnabled` below, gate on the
+  // POST-`SUPABASE_API_ENABLED`-override value, not raw `config.api.enabled`.
+  const apiEnabled = legacyEnvOverrideBool(
+    "SUPABASE_API_ENABLED",
+    config.api.enabled,
+    "api.enabled",
+    projectEnvValues,
+  );
+  if (apiEnabled && apiTlsEnabled) {
+    validateLocalApiTls(
+      workdir,
+      envOverride("SUPABASE_API_TLS_CERT_PATH", config.api.tls.cert_path, projectEnvValues),
+      envOverride("SUPABASE_API_TLS_KEY_PATH", config.api.tls.key_path, projectEnvValues),
+    );
+  }
   const apiExternalUrl = legacyResolveApiExternalUrl(
     {
       external_url: envOverride(
@@ -345,14 +424,7 @@ export function legacyResolveLocalConfigValues(
         projectEnvValues,
       ),
       port: envOverridePort("SUPABASE_API_PORT", config.api.port, "api.port", projectEnvValues),
-      tls: {
-        enabled: legacyEnvOverrideBool(
-          "SUPABASE_API_TLS_ENABLED",
-          config.api.tls.enabled,
-          "api.tls.enabled",
-          projectEnvValues,
-        ),
-      },
+      tls: { enabled: apiTlsEnabled },
     },
     hostname,
   );

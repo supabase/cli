@@ -2,10 +2,11 @@
 
 ## Files Read
 
-| Path                                                   | Format | When                                                     |
-| ------------------------------------------------------ | ------ | -------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                       | TOML   | always, to resolve project configuration                 |
-| `auth.signing_keys_path` (config-relative or absolute) | JSON   | only when `auth.signing_keys_path` is set in config.toml |
+| Path                                                                                                                | Format    | When                                                                          |
+| ------------------------------------------------------------------------------------------------------------------- | --------- | ----------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                                                                    | TOML      | always, to resolve project configuration                                      |
+| `auth.signing_keys_path` (config-relative or absolute)                                                              | JSON      | only when `auth.signing_keys_path` is set in config.toml                      |
+| `api.tls.cert_path` / `api.tls.key_path` (unconditionally joined with `<workdir>/supabase`, no absolute-path guard) | raw bytes | only when `api.enabled` and `api.tls.enabled`, and the respective path is set |
 
 ## Files Written
 
@@ -43,18 +44,20 @@ The `SUPABASE_AUTH_*` vars mirror Go's Viper `AutomaticEnv` (`SetEnvPrefix("SUPA
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                              |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — status displayed                                                                                                             |
-| `0`  | **`--ignore-health-check` is set** — skips the health assertion below entirely, so an unhealthy/not-running db never fails the command |
-| `1`  | `supabase/config.toml` missing or malformed                                                                                            |
-| `1`  | a malformed `--override-name` entry                                                                                                    |
-| `1`  | listing running containers failed (Docker daemon unreachable, etc.)                                                                    |
-| `1`  | the db container inspect call failed (including "not found") — health assertion, skipped by `--ignore-health-check` above              |
-| `1`  | the db container is present but not in the `running` state — health assertion, skipped by `--ignore-health-check` above                |
-| `1`  | the db container is running but its Docker health check isn't `healthy` — health assertion, skipped by `--ignore-health-check` above   |
-| `1`  | `auth.jwt_secret` is configured but shorter than 16 characters (Go's `Config.Validate` rejects this at config-load time)               |
-| `1`  | `auth.signing_keys_path` is configured but the file is missing/malformed, or its first key's algorithm is not `RS256`/`ES256`          |
+| Code | Condition                                                                                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `0`  | success — status displayed                                                                                                                                   |
+| `0`  | **`--ignore-health-check` is set** — skips the health assertion below entirely, so an unhealthy/not-running db never fails the command                       |
+| `1`  | `supabase/config.toml` missing or malformed                                                                                                                  |
+| `1`  | a malformed `--override-name` entry                                                                                                                          |
+| `1`  | listing running containers failed (Docker daemon unreachable, etc.)                                                                                          |
+| `1`  | the db container inspect call failed (including "not found") — health assertion, skipped by `--ignore-health-check` above                                    |
+| `1`  | the db container is present but not in the `running` state — health assertion, skipped by `--ignore-health-check` above                                      |
+| `1`  | the db container is running but its Docker health check isn't `healthy` — health assertion, skipped by `--ignore-health-check` above                         |
+| `1`  | `auth.jwt_secret` is configured but shorter than 16 characters (Go's `Config.Validate` rejects this at config-load time)                                     |
+| `1`  | `auth.signing_keys_path` is configured but the file is missing/malformed, or its first key's algorithm is not `RS256`/`ES256`                                |
+| `1`  | `api.enabled` and `api.tls.enabled` are true and only one of `api.tls.cert_path`/`key_path` is set (Go's `Config.Validate` rejects this at config-load time) |
+| `1`  | `api.enabled` and `api.tls.enabled` are true, both `cert_path` and `key_path` are set, but one of the files can't be read                                    |
 
 ## Telemetry Events Fired
 
