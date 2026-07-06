@@ -1335,6 +1335,11 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   let functionsRaw: RawDoc | undefined;
   let analyticsRaw: RawDoc | undefined;
   let projectId = Option.none<string>();
+  // Whether `config.toml` set a top-level `project_id` string that env-expanded to empty
+  // (`project_id = ""`). Go keeps that empty override and `config.Validate` fails with
+  // `Missing required field in config: project_id` (config.go:991); tracked here so the
+  // check can run after the `SUPABASE_PROJECT_ID` env override below may still rescue it.
+  let projectIdExplicitEmpty = false;
   // Config keys a matched remote block contributed at viper's override tier (Go's
   // `v.Set`), so they must beat the matching `SUPABASE_*` env overrides below.
   let remoteOverrideKeys: ReadonlySet<string> = new Set();
@@ -1399,6 +1404,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     projectId = nonEmptyString(
       typeof rawProjectId === "string" ? legacyExpandEnv(rawProjectId, lookup) : rawProjectId,
     );
+    // A present `project_id` string that resolves to empty is Go's "kept empty override".
+    projectIdExplicitEmpty = typeof rawProjectId === "string" && Option.isNone(projectId);
 
     // Go's `DecryptSecretHookFunc` is a global decode hook (config.go:730) that decrypts
     // EVERY `config.Secret` field during `UnmarshalExact`, so an `encrypted:` secret anywhere
@@ -1452,6 +1459,16 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const projectIdEnv = envOverride("SUPABASE_PROJECT_ID");
   if (projectIdEnv !== undefined) {
     projectId = nonEmptyString(legacyExpandEnv(projectIdEnv, lookup));
+  }
+
+  // Go's `config.Validate` rejects an empty top-level `project_id` (config.go:991). An
+  // absent field is tolerated here (deferred), but a present `project_id = ""` that the
+  // `SUPABASE_PROJECT_ID` override did not rescue is a load error, so a destructive command
+  // (e.g. remote `db reset`) fails fast rather than dropping schemas on a config Go rejects.
+  if (projectIdExplicitEmpty && Option.isNone(projectId)) {
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({ message: "Missing required field in config: project_id" }),
+    );
   }
 
   // A present-but-unmarshalable port aborts in Go rather than defaulting; mirror

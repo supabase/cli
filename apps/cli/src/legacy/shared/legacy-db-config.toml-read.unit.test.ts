@@ -2318,6 +2318,40 @@ describe("legacyReadDbToml non-scalar config booleans (Go UnmarshalExact parity)
   );
 });
 
+describe("legacyReadDbToml empty project_id (Go config.Validate parity)", () => {
+  it.effect("rejects a present-but-empty top-level project_id", () => {
+    // Go keeps the empty override and `config.Validate` fails "Missing required field in
+    // config: project_id" (config.go:991) before any destructive command runs.
+    const dir = withConfig('project_id = ""\n');
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Missing required field in config: project_id",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("still tolerates an absent project_id (deferred broader requirement)", () => {
+    const dir = withConfig("[db]\nmajor_version = 15\n");
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.baseline).toBeDefined();
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+});
+
 describe("legacyReadDbToml [analytics] validation (Go config.Validate parity)", () => {
   const failsWith = (lines: ReadonlyArray<string>, message: string) =>
     Effect.gen(function* () {

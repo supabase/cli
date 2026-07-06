@@ -575,6 +575,28 @@ describe("legacy db reset", () => {
     });
   });
 
+  it.live("fails a remote reset before dropping schemas on an empty project_id", () => {
+    // Go's config.Validate rejects an explicit `project_id = ""` before the reset prompt, so
+    // the native remote reset must abort before `legacyDropUserSchemas`.
+    const { layer, conn } = setup(tmp.current, {
+      toml: 'project_id = ""\n',
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "Missing required field in config: project_id",
+        );
+      }
+      expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(false);
+    });
+  });
+
   it.live("auto-confirms a remote reset via SUPABASE_YES set only in the project .env", () => {
     // Go's loadNestedEnv sets project-.env keys before the reset prompt reads viper YES, so
     // a `SUPABASE_YES` in supabase/.env auto-confirms the destructive prompt (default false).
@@ -689,7 +711,7 @@ describe("legacy db reset", () => {
     return Effect.gen(function* () {
       yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
       expect(proxy.calls).toHaveLength(1);
-      expect(proxy.calls[0]!.args).toEqual(["db", "reset", "--linked"]);
+      expect(proxy.calls[0]!.args).toEqual(["db", "reset", "--linked", "--yes=false"]);
       expect(proxy.calls[0]!.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
     });
   });
@@ -706,7 +728,44 @@ describe("legacy db reset", () => {
     return Effect.gen(function* () {
       yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: false }).pipe(Effect.provide(layer));
       expect(proxy.calls).toHaveLength(1);
-      expect(proxy.calls[0]!.args).toEqual(["db", "reset", "--linked"]);
+      expect(proxy.calls[0]!.args).toEqual(["db", "reset", "--linked", "--yes=false"]);
+    });
+  });
+
+  it.live("forwards --yes=false to the delegate even when SUPABASE_YES is set", () => {
+    // Explicit `--yes=false` beats `AutomaticEnv` in Go; the delegated child must receive the
+    // bound false flag so an inherited `SUPABASE_YES=true` doesn't auto-confirm the reset and
+    // drop the remote schemas the user tried to protect.
+    const previous = process.env["SUPABASE_YES"];
+    process.env["SUPABASE_YES"] = "true";
+    const { layer, proxy } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      experimental: true,
+      args: ["db", "reset", "--linked", "--yes=false"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+      expect(proxy.calls[0]!.args).toContain("--yes=false");
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_YES"];
+          else process.env["SUPABASE_YES"] = previous;
+        }),
+      ),
+    );
+  });
+
+  it.live("forwards --yes=true to the delegate when --yes is set", () => {
+    const { layer, proxy } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      experimental: true,
+      args: ["db", "reset", "--linked", "--yes"],
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+      expect(proxy.calls[0]!.args).toContain("--yes=true");
     });
   });
 
@@ -773,6 +832,7 @@ describe("legacy db reset", () => {
         "--db-url",
         "postgresql://db.example.com:5432/postgres",
         "--no-seed",
+        "--yes=false",
       ]);
     });
   });
@@ -1027,6 +1087,7 @@ describe("legacy db reset", () => {
         "--linked",
         "--sql-paths",
         "custom-seed.sql",
+        "--yes=false",
       ]);
     });
   });

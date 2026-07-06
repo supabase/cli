@@ -73,12 +73,23 @@ const toLogMessage = (version: string): string =>
  * only when `flags.linked === true` would drop the selector for `--linked=false` and let the
  * Go child fall back to its local default — resetting the wrong database.
  */
-const buildResetArgs = (flags: LegacyDbResetFlags, connType: LegacyDbConnType): Array<string> => {
+const buildResetArgs = (
+  flags: LegacyDbResetFlags,
+  connType: LegacyDbConnType,
+  yes: boolean,
+): Array<string> => {
   const args = ["db", "reset"];
   if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
   else if (connType === "linked") args.push("--linked");
   if (flags.noSeed) args.push("--no-seed");
   for (const p of flags.sqlPaths) args.push("--sql-paths", p);
+  // Forward the parent's RESOLVED `yes` as a bound flag. Go's `--yes` beats `AutomaticEnv`,
+  // so `--yes=false` overrides an inherited `SUPABASE_YES=true` (the child no longer
+  // auto-confirms a reset the user protected with `--yes=false`), while `--yes=true` honors
+  // an explicit `--yes` / env even in machine mode where the child's stdin is ignored.
+  // `--yes=false` still prompts on a TTY (Go's PromptYesNo only short-circuits on true), so
+  // this matches the default behavior when neither flag nor env is set.
+  args.push(`--yes=${yes}`);
   return args;
 };
 
@@ -313,13 +324,13 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     if (experimental && resolvedVersion === "") {
       const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
       if (output.format === "text") {
-        yield* proxy.exec(buildResetArgs(flags, connType), { env });
+        yield* proxy.exec(buildResetArgs(flags, connType, yes), { env });
       } else {
         // Machine-output mode is non-interactive: give the Go child a non-TTY stdin
         // (`stdin: "ignore"`) so it can't block on (or be answered at) Go's
         // destructive reset prompt — it takes the default `false`, matching the
         // native reset path which suppresses prompts under json/stream-json.
-        yield* proxy.execCapture(buildResetArgs(flags, connType), { env, stdin: "ignore" });
+        yield* proxy.execCapture(buildResetArgs(flags, connType, yes), { env, stdin: "ignore" });
         yield* output.success("Reset remote database.", {
           target: "remote",
           version: resolvedVersion,
