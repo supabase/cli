@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Stdio } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
@@ -15,6 +15,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
+import { ConflictingFunctionDownloadFlagsError } from "../../../../shared/functions/download.errors.ts";
 import type { LegacyFunctionsDownloadFlags } from "./download.command.ts";
 import { legacyFunctionsDownload } from "./download.handler.ts";
 
@@ -135,6 +136,40 @@ describe("legacy functions download", () => {
           "--use-docker",
         ],
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects the bundler mutex with cobra's exact error text", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "download", "--use-api", "--use-docker"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* legacyFunctionsDownload({
+        ...baseFlags,
+        useApi: true,
+        useDocker: true,
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(ConflictingFunctionDownloadFlagsError);
+      if (!(error instanceof ConflictingFunctionDownloadFlagsError)) {
+        throw new Error(`unexpected error: ${String(error)}`);
+      }
+      expect(error.message).toBe(
+        "if any flags in the group [use-api use-docker legacy-bundle] are set none of the others can be; [use-api use-docker] were all set",
+      );
+      expect(proxy.calls).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 });

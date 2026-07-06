@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Stdio } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import {
@@ -13,10 +13,13 @@ export const functionsDownload = Effect.fnUntraced(function* (flags: FunctionsDo
   const api = yield* PlatformApi;
   const projectHome = yield* ProjectHome;
   const proxy = yield* LegacyGoProxy;
+  const stdio = yield* Stdio.Stdio;
+  const rawArgs = yield* stdio.args;
 
   yield* downloadFunctions(flags, {
     api,
     projectRoot: projectHome.projectRoot,
+    rawArgs,
     resolveProjectRef,
     proxyDownload: (proxyFlags, projectRef) =>
       proxy.exec(makeGoProxyDownloadArgs(proxyFlags, projectRef), { cwd: projectHome.projectRoot }),
