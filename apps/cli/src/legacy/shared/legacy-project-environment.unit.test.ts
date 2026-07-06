@@ -245,6 +245,21 @@ describe("legacyResolveProjectEnvironmentValues", () => {
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo$");
   });
 
+  it("preserves a multiline quoted value alongside an unrelated SUPABASE_* key (godotenv parity)", () => {
+    // godotenv's parser scans the whole buffer with a cursor, not line-by-line
+    // (`godotenv@v1.5.1/parser.go:20-45`), so a quoted value spanning physical
+    // lines — e.g. a pasted PEM private key — doesn't break parsing of the rest
+    // of the file. A naive line-by-line reader would see the continuation line
+    // as malformed and abort before SUPABASE_PROJECT_ID is ever read.
+    const pem = "-----BEGIN PRIVATE KEY-----\nMIIBogIBAAJ\n-----END PRIVATE KEY-----";
+    writeFileSync(
+      join(root, ".env"),
+      `PRIVATE_KEY="${pem}"\nSUPABASE_PROJECT_ID=multiline-safe-project\n`,
+    );
+    const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
+    expect(merged["SUPABASE_PROJECT_ID"]).toBe("multiline-safe-project");
+  });
+
   describe("when no project was found (projectEnv is null)", () => {
     // Go's `loadNestedEnv` runs unconditionally before `config.toml` is ever
     // opened (`pkg/config/config.go:786-793`), so a missing config file must
