@@ -484,8 +484,13 @@ function envOverrideDenoVersion(
  * @throws when `studio.enabled` is true and `studio.port` (post-override) is `0`.
  * @throws when `local_smtp.enabled` is true and `local_smtp.port` (post-override) is `0`.
  * @throws when `auth.enabled` is true and `auth.site_url` is empty.
+ * @throws when `auth.enabled` is true, `auth.captcha.enabled` (post-override) is true,
+ * and `auth.captcha.provider` or `auth.captcha.secret` is unset.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
  * or its first key uses an unsupported algorithm — see {@link legacyGenerateAsymmetricGoJwt}.
+ * @throws when `analytics.enabled` (post-override) is true, `analytics.backend`
+ * (post-override) is `"bigquery"`, and `analytics.gcp_project_id`,
+ * `analytics.gcp_project_number`, or `analytics.gcp_jwt_path` is unset.
  */
 export function legacyResolveLocalConfigValues(
   config: ProjectConfig,
@@ -638,6 +643,27 @@ export function legacyResolveLocalConfigValues(
   if (authEnabled && (siteUrl === undefined || siteUrl.length === 0)) {
     throw new Error("Missing required field in config: auth.site_url");
   }
+  // Go's `Config.Validate` checks `auth.captcha` right after `auth.site_url`,
+  // still inside `if c.Auth.Enabled` (`pkg/config/config.go:1099-1109`): an
+  // enabled CAPTCHA section requires both `provider` and `secret`. Read
+  // directly off `config.auth.captcha` (not through `envOverride`) — unlike
+  // the flat `auth.site_url`/`auth.signing_keys_path` fields, there's no
+  // established `SUPABASE_AUTH_CAPTCHA_*` env-override precedent elsewhere in
+  // this file for this nested optional auth sub-section. `config.auth.captcha`
+  // is genuinely `undefined` when `[auth.captcha]` is absent from config.toml
+  // (`Schema.optionalKey` in `packages/config/src/auth/index.ts`), matching
+  // Go's `*Captcha` pointer being nil — `?.enabled` is falsy in that case, same
+  // as Go's `c.Auth.Captcha != nil && c.Auth.Captcha.Enabled` guard. Go's own
+  // `assertEnvLoaded` warning on the secret (`config.go:1106-1108`) never fails
+  // validation, so it has no throwing equivalent here.
+  if (authEnabled && config.auth.captcha?.enabled) {
+    if (config.auth.captcha.provider === undefined) {
+      throw new Error("Missing required field in config: auth.captcha.provider");
+    }
+    if (config.auth.captcha.secret === undefined || config.auth.captcha.secret.length === 0) {
+      throw new Error("Missing required field in config: auth.captcha.secret");
+    }
+  }
   const signingKey =
     authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0
       ? loadFirstSigningKey(workdir, signingKeysPath)
@@ -648,6 +674,54 @@ export function legacyResolveLocalConfigValues(
   // `edge_runtime.enabled` gate.
   const denoVersion = envOverrideDenoVersion(config.edge_runtime.deno_version, projectEnvValues);
   validateDenoVersion(denoVersion);
+
+  // Go's `Config.Validate` validates `[analytics]` right after
+  // `edge_runtime.deno_version` (`pkg/config/config.go:1174-1187`, inside
+  // `func (c *config) Validate` at `config.go:989`): when `analytics.enabled`
+  // and `analytics.backend == "bigquery"`, all three GCP fields are required,
+  // checked in that order, each with its own message. Backend-enum
+  // validation (rejecting a non-postgres/bigquery value) is already covered
+  // at decode time by `@supabase/config`'s `stringEnum`
+  // (`packages/config/src/analytics.ts:17-41`), so it isn't reproduced here.
+  const analyticsEnabled = legacyEnvOverrideBool(
+    "SUPABASE_ANALYTICS_ENABLED",
+    config.analytics.enabled,
+    "analytics.enabled",
+    projectEnvValues,
+  );
+  const analyticsBackend = envOverride(
+    "SUPABASE_ANALYTICS_BACKEND",
+    config.analytics.backend,
+    projectEnvValues,
+  );
+  if (analyticsEnabled && analyticsBackend === "bigquery") {
+    const gcpProjectId = envOverride(
+      "SUPABASE_ANALYTICS_GCP_PROJECT_ID",
+      config.analytics.gcp_project_id,
+      projectEnvValues,
+    );
+    if (gcpProjectId === undefined || gcpProjectId.length === 0) {
+      throw new Error("Missing required field in config: analytics.gcp_project_id");
+    }
+    const gcpProjectNumber = envOverride(
+      "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
+      config.analytics.gcp_project_number,
+      projectEnvValues,
+    );
+    if (gcpProjectNumber === undefined || gcpProjectNumber.length === 0) {
+      throw new Error("Missing required field in config: analytics.gcp_project_number");
+    }
+    const gcpJwtPath = envOverride(
+      "SUPABASE_ANALYTICS_GCP_JWT_PATH",
+      config.analytics.gcp_jwt_path,
+      projectEnvValues,
+    );
+    if (gcpJwtPath === undefined || gcpJwtPath.length === 0) {
+      throw new Error(
+        "Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path",
+      );
+    }
+  }
 
   return {
     apiUrl: apiExternalUrl,

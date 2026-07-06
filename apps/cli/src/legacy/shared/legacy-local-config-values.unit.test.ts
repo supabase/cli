@@ -532,6 +532,97 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("analytics (BigQuery backend required fields)", () => {
+    // Go's `Config.Validate` validates `[analytics]` right after
+    // `edge_runtime.deno_version` (`pkg/config/config.go:1174-1187`): when
+    // `analytics.enabled` and `analytics.backend == "bigquery"`, all three GCP
+    // fields are required, checked in that order.
+    afterEach(() => {
+      delete process.env["SUPABASE_ANALYTICS_ENABLED"];
+      delete process.env["SUPABASE_ANALYTICS_BACKEND"];
+      delete process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"];
+      delete process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"];
+      delete process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"];
+    });
+
+    it("rejects an enabled bigquery backend without gcp_project_id", () => {
+      const config = baseConfig({ analytics: { enabled: true, backend: "bigquery" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: analytics.gcp_project_id",
+      );
+    });
+
+    it("rejects an enabled bigquery backend without gcp_project_number", () => {
+      const config = baseConfig({
+        analytics: { enabled: true, backend: "bigquery", gcp_project_id: "proj" },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: analytics.gcp_project_number",
+      );
+    });
+
+    it("rejects an enabled bigquery backend without gcp_jwt_path", () => {
+      const config = baseConfig({
+        analytics: {
+          enabled: true,
+          backend: "bigquery",
+          gcp_project_id: "proj",
+          gcp_project_number: "123",
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path",
+      );
+    });
+
+    it("does not throw when an enabled bigquery backend has all three GCP fields", () => {
+      const config = baseConfig({
+        analytics: {
+          enabled: true,
+          backend: "bigquery",
+          gcp_project_id: "proj",
+          gcp_project_number: "123",
+          gcp_jwt_path: "gcp.json",
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not throw for the postgres backend, however incomplete the GCP fields are", () => {
+      const config = baseConfig({ analytics: { enabled: true, backend: "postgres" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not throw when analytics is disabled, however incomplete the GCP fields are", () => {
+      const config = baseConfig({ analytics: { enabled: false, backend: "bigquery" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects a bigquery backend enabled only via SUPABASE_ANALYTICS_ENABLED", () => {
+      process.env["SUPABASE_ANALYTICS_ENABLED"] = "true";
+      const config = baseConfig({ analytics: { enabled: false, backend: "bigquery" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: analytics.gcp_project_id",
+      );
+    });
+
+    it("rejects a bigquery backend selected only via SUPABASE_ANALYTICS_BACKEND", () => {
+      process.env["SUPABASE_ANALYTICS_BACKEND"] = "bigquery";
+      const config = baseConfig({ analytics: { enabled: true, backend: "postgres" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: analytics.gcp_project_id",
+      );
+    });
+
+    it("accepts env-provided GCP fields overriding empty config.toml values", () => {
+      process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"] = "proj";
+      process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"] = "123";
+      process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"] = "gcp.json";
+      const config = baseConfig({ analytics: { enabled: true, backend: "bigquery" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
   describe("SUPABASE_API_TLS_ENABLED env override", () => {
     // Go applies the Viper-bound `api.tls.enabled` override (config.go:582-586)
     // BEFORE deriving the default `api.external_url` scheme (config.go:799-809),
@@ -780,6 +871,59 @@ describe("legacyResolveLocalConfigValues", () => {
         const config = baseConfig({ auth: { enabled: true, site_url: "" } });
         expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
       });
+    });
+  });
+
+  describe("auth.captcha (required fields when enabled)", () => {
+    // Go's `Config.Validate` checks `auth.captcha` right after `auth.site_url`,
+    // still inside `if c.Auth.Enabled` (`pkg/config/config.go:1099-1109`).
+    it("rejects an enabled captcha without a provider", () => {
+      const config = baseConfig({
+        auth: { enabled: true, site_url: "http://localhost:3000", captcha: { enabled: true } },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: auth.captcha.provider",
+      );
+    });
+
+    it("rejects an enabled captcha with a provider but no secret", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          captcha: { enabled: true, provider: "hcaptcha" },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: auth.captcha.secret",
+      );
+    });
+
+    it("does not throw when an enabled captcha has both provider and secret", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          captcha: { enabled: true, provider: "hcaptcha", secret: "shh" },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not throw when captcha is disabled, however incomplete", () => {
+      const config = baseConfig({
+        auth: { enabled: true, site_url: "http://localhost:3000", captcha: { enabled: false } },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    // A disabled auth section never requires captcha fields, however
+    // incomplete the captcha config is.
+    it("does not throw an enabled captcha without provider/secret when auth is disabled", () => {
+      const config = baseConfig({
+        auth: { enabled: false, captcha: { enabled: true } },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
   });
 
