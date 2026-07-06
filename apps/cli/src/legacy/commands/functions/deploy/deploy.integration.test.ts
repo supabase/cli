@@ -482,4 +482,124 @@ describe("legacy functions deploy", () => {
       ),
     );
   });
+
+  describe("--jobs validation (Go parity: cmd/functions.go:79-82)", () => {
+    function setupJobsTest(rawArgs: ReadonlyArray<string>) {
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi({
+        handler: (request) => Effect.succeed(legacyJsonResponse(request, 200, [])),
+      });
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(LegacyYesFlag, false),
+        Stdio.layerTest({ args: Effect.succeed(rawArgs) }),
+      );
+      return { out, api, layer };
+    }
+
+    it.live("rejects --jobs > 1 without --use-api, even with default --use-docker", () => {
+      const { layer } = setupJobsTest(["functions", "deploy", "hello-world", "--jobs", "2"]);
+
+      return Effect.gen(function* () {
+        const error = yield* legacyFunctionsDeploy({
+          ...baseFlags,
+          useApi: false,
+          useDocker: true,
+          jobs: Option.some(2),
+        }).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe("--jobs must be used together with --use-api");
+      });
+    });
+
+    it.live("rejects --jobs > 1 with --use-docker=false and no --use-api (Go parity gap)", () => {
+      // Divergence this test guards: previously the guard only fired when local
+      // bundling (Docker/legacy-bundle) was active, so `--use-docker=false --jobs 2`
+      // (no --use-api) silently passed in TS while Go rejected it.
+      const { layer } = setupJobsTest([
+        "functions",
+        "deploy",
+        "hello-world",
+        "--use-docker=false",
+        "--jobs",
+        "2",
+      ]);
+
+      return Effect.gen(function* () {
+        const error = yield* legacyFunctionsDeploy({
+          ...baseFlags,
+          useApi: false,
+          useDocker: false,
+          jobs: Option.some(2),
+        }).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe("--jobs must be used together with --use-api");
+      });
+    });
+
+    it.live("allows --jobs > 1 together with --use-api", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi({
+        handler: (request) => {
+          if (request.method === "GET") {
+            return Effect.succeed(legacyJsonResponse(request, 200, []));
+          }
+          return Effect.succeed(
+            legacyJsonResponse(request, 201, {
+              id: "function-id",
+              slug: "hello-world",
+              name: "hello-world",
+              status: "ACTIVE",
+              version: 2,
+              created_at: 1_687_423_025_152,
+              updated_at: 1_687_423_025_152,
+              verify_jwt: true,
+              import_map: true,
+              entrypoint_path: "functions/hello-world/index.ts",
+              import_map_path: "functions/hello-world/deno.json",
+            }),
+          );
+        },
+      });
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(LegacyYesFlag, false),
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api", "--jobs", "2"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+
+        yield* legacyFunctionsDeploy({
+          ...baseFlags,
+          useApi: true,
+          jobs: Option.some(2),
+        });
+
+        expect(out.stdoutText).toContain(
+          "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
+        );
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+        ),
+      );
+    });
+  });
 });

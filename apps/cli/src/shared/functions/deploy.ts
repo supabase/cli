@@ -2128,8 +2128,11 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     const useLocalBundler = !explicitUseApi && (flags.useDocker || flags.legacyBundle);
     const configuredJobs = Option.getOrElse(flags.jobs, () => 1);
     const jobs = configuredJobs === 0 ? 1 : configuredJobs;
-    if (useLocalBundler && jobs > 1) {
-      return yield* Effect.fail(new Error("--jobs cannot be used with local bundling"));
+    // Go parity (`cmd/functions.go:79-82`): the guard is `if useApi { ... } else if
+    // maxJobs > 1 { error }` — keyed on the resolved `--use-api` value alone, not on
+    // whether local bundling (Docker/legacy-bundle) is in play.
+    if (!flags.useApi && jobs > 1) {
+      return yield* Effect.fail(new Error("--jobs must be used together with --use-api"));
     }
 
     const preResolvedProjectRef =

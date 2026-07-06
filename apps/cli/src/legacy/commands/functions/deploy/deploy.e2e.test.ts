@@ -56,11 +56,35 @@ describe("supabase functions deploy (legacy) — argument validation", () => {
       },
     );
     expect(exitCode).not.toBe(0);
-    // The Go CLI phrases this as either "must be used together with --use-api"
-    // or "cannot be used with local bundling" depending on version — both mean
-    // --jobs is rejected without server-side (--use-api) bundling.
-    expect(stderr).toMatch(/--jobs\b.*(--use-api|local bundling)/i);
+    expect(stderr).toContain("--jobs must be used together with --use-api");
   });
+
+  test(
+    "rejects --jobs without --use-api even with --use-docker=false (Go parity gap)",
+    { timeout: E2E_TIMEOUT_MS },
+    async () => {
+      using home = makeTempHome();
+      const { exitCode, stderr } = await runSupabase(
+        [
+          "functions",
+          "deploy",
+          SLUG,
+          "--project-ref",
+          FAKE_REF,
+          "--use-docker=false",
+          "--jobs",
+          "2",
+        ],
+        {
+          entrypoint: "legacy",
+          home: home.dir,
+          env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
+        },
+      );
+      expect(exitCode).not.toBe(0);
+      expect(stderr).toContain("--jobs must be used together with --use-api");
+    },
+  );
 
   test("fails without a linked project or --project-ref", { timeout: E2E_TIMEOUT_MS }, async () => {
     using home = makeTempHome();
