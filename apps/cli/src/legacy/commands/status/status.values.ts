@@ -254,6 +254,8 @@ export interface LegacyStatusState {
  * @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
  * @throws {LegacyInvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
  * override doesn't parse as a valid port.
+ * @throws {LegacyInvalidBoolEnvOverrideError} when a `SUPABASE_*_ENABLED` env/dotenv
+ * override doesn't parse as a valid bool.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
  * or its first key is unsupported — see {@link legacyGenerateAsymmetricGoJwt}.
  */
@@ -271,36 +273,43 @@ export function legacyResolveStatusState(
   const apiEnabled = legacyEnvOverrideBool(
     "SUPABASE_API_ENABLED",
     config.api.enabled,
+    "api.enabled",
     projectEnvValues,
   );
   const studioSectionEnabled = legacyEnvOverrideBool(
     "SUPABASE_STUDIO_ENABLED",
     config.studio.enabled,
+    "studio.enabled",
     projectEnvValues,
   );
   const authSectionEnabled = legacyEnvOverrideBool(
     "SUPABASE_AUTH_ENABLED",
     config.auth.enabled,
+    "auth.enabled",
     projectEnvValues,
   );
   const inbucketSectionEnabled = legacyEnvOverrideBool(
     "SUPABASE_LOCAL_SMTP_ENABLED",
     config.local_smtp.enabled,
+    "local_smtp.enabled",
     projectEnvValues,
   );
   const storageSectionEnabled = legacyEnvOverrideBool(
     "SUPABASE_STORAGE_ENABLED",
     config.storage.enabled,
+    "storage.enabled",
     projectEnvValues,
   );
   const edgeRuntimeEnabled = legacyEnvOverrideBool(
     "SUPABASE_EDGE_RUNTIME_ENABLED",
     config.edge_runtime.enabled,
+    "edge_runtime.enabled",
     projectEnvValues,
   );
   const storageS3ProtocolEnabled = legacyEnvOverrideBool(
     "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
     config.storage.s3_protocol.enabled,
+    "storage.s3_protocol.enabled",
     projectEnvValues,
   );
 

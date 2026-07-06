@@ -170,6 +170,24 @@ function envOverride(
 }
 
 /**
+ * Thrown by {@link legacyEnvOverrideBool} when a `SUPABASE_*_ENABLED` (or other
+ * bool-typed) env/dotenv override doesn't parse as one of Go's accepted bool
+ * spellings, mirroring Go's `Config.Load` (`pkg/config/config.go:749-756`):
+ * `v.UnmarshalExact` decodes with `WeaklyTypedInput` on (viper's
+ * `defaultDecoderConfig`, never reset by our decoder options — same mechanism
+ * as {@link LegacyInvalidPortEnvOverrideError}), so mapstructure's `decodeBool`
+ * runs `strconv.ParseBool` on the override string and hard-fails config
+ * loading on a bad value — there is no Go code path that reaches `status`/
+ * `stop` with a malformed bool override.
+ */
+export class LegacyInvalidBoolEnvOverrideError extends Error {
+  constructor(dottedFieldPath: string, value: string) {
+    super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a bool`);
+    this.name = "LegacyInvalidBoolEnvOverrideError";
+  }
+}
+
+/**
  * Boolean-flavored sibling of {@link envOverride} for `SUPABASE_*` fields Go
  * decodes as a native bool (`api.tls.enabled`, `auth.enabled`, and every other
  * `<section>.enabled` gate `status`/`stop` read — see `status.values.ts`)
@@ -177,11 +195,12 @@ function envOverride(
  * mechanism (`ExperimentalBindStruct` + `SetEnvPrefix("SUPABASE")` +
  * `AutomaticEnv()`, `pkg/config/config.go:582-586`), but the override string
  * must be decoded with Go's own `strconv.ParseBool` acceptance set
- * ({@link legacyParseGoBool}) instead of used verbatim. A malformed override
- * (not one of Go's accepted bool spellings) falls back to `configured` —
- * matching this module's existing leniency for other env-derived fields (e.g.
- * `Number(envOverride(...))` on ports isn't hard-validated either) rather
- * than hard-failing the whole `stop`/`status` run over a bad override.
+ * ({@link legacyParseGoBool}) instead of used verbatim. Unlike a plain string
+ * override — where an unparsed value has no Go-observable failure mode — a
+ * malformed bool override is a genuine Go-parity hard failure (see
+ * {@link LegacyInvalidBoolEnvOverrideError}), same as
+ * {@link LegacyInvalidPortEnvOverrideError} for ports: Go never proceeds with
+ * the pre-override value on a decode error, it fails config loading outright.
  *
  * Exported (not just used internally) because `status.values.ts`'s own
  * `<section>.enabled` gates need this same override treatment — Go's
@@ -191,11 +210,16 @@ function envOverride(
 export function legacyEnvOverrideBool(
   name: string,
   configured: boolean,
+  dottedFieldPath: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): boolean {
   const value = envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
-  return legacyParseGoBool(value) ?? configured;
+  const parsed = legacyParseGoBool(value);
+  if (parsed === undefined) {
+    throw new LegacyInvalidBoolEnvOverrideError(dottedFieldPath, value);
+  }
+  return parsed;
 }
 
 /** Go's `(a *auth) generateAPIKeys` (`pkg/config/apikeys.go:43-73`). */
@@ -295,6 +319,8 @@ function loadFirstSigningKey(workdir: string, signingKeysPath: string): LegacyJw
  * @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
  * @throws {LegacyInvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
  * override doesn't parse as a valid port.
+ * @throws {LegacyInvalidBoolEnvOverrideError} when a `SUPABASE_*_ENABLED` env/dotenv
+ * override doesn't parse as a valid bool.
  * @throws when `auth.signing_keys_path` is set but the file is missing, malformed,
  * or its first key uses an unsupported algorithm — see {@link legacyGenerateAsymmetricGoJwt}.
  */
@@ -323,6 +349,7 @@ export function legacyResolveLocalConfigValues(
         enabled: legacyEnvOverrideBool(
           "SUPABASE_API_TLS_ENABLED",
           config.api.tls.enabled,
+          "api.tls.enabled",
           projectEnvValues,
         ),
       },
@@ -362,6 +389,7 @@ export function legacyResolveLocalConfigValues(
   const authEnabled = legacyEnvOverrideBool(
     "SUPABASE_AUTH_ENABLED",
     config.auth.enabled,
+    "auth.enabled",
     projectEnvValues,
   );
   const signingKey =

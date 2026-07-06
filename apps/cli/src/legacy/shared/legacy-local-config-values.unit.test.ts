@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 import {
+  LegacyInvalidBoolEnvOverrideError,
   LegacyInvalidJwtSecretError,
   LegacyInvalidPortEnvOverrideError,
   legacyResolveLocalConfigValues,
@@ -351,11 +352,12 @@ describe("legacyResolveLocalConfigValues", () => {
       expect(values.apiUrl).toBe("http://config.example");
     });
 
-    it("falls back to the configured value for a malformed override, matching this module's leniency", () => {
+    it("rejects a malformed override instead of falling back to the configured value", () => {
       process.env["SUPABASE_API_TLS_ENABLED"] = "not-a-bool";
       const config = baseConfig({ api: { tls: { enabled: true }, port: 54321 } });
-      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
-      expect(values.apiUrl).toBe("https://127.0.0.1:54321");
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        LegacyInvalidBoolEnvOverrideError,
+      );
     });
 
     it("treats an empty override as unset, matching Viper's default", () => {
@@ -510,14 +512,14 @@ describe("legacyResolveLocalConfigValues", () => {
         expect(values.anonKey.split(".")).toHaveLength(3);
       });
 
-      it("falls back to the configured value for a malformed override", () => {
+      it("rejects a malformed override instead of falling back to the configured value", () => {
         process.env["SUPABASE_AUTH_ENABLED"] = "not-a-bool";
         const config = baseConfig({
           auth: { enabled: false, signing_keys_path: "missing.json" },
         });
-        expect(() =>
-          legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
-        ).not.toThrow();
+        expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+          LegacyInvalidBoolEnvOverrideError,
+        );
       });
     });
   });
