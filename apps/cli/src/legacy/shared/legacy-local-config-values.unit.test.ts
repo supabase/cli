@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 import {
+  LegacyInvalidAnalyticsBackendEnvOverrideError,
   LegacyInvalidBoolEnvOverrideError,
   LegacyInvalidJwtSecretError,
   LegacyInvalidPortEnvOverrideError,
@@ -701,6 +702,22 @@ describe("legacyResolveLocalConfigValues", () => {
       const config = baseConfig({ analytics: { enabled: true, backend: "bigquery" } });
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
+
+    // Go's `LogflareBackend.UnmarshalText` (`config.go:60-65`) hard-rejects any
+    // `analytics.backend` value outside `postgres`/`bigquery` during the same
+    // `UnmarshalExact` decode every `SUPABASE_*` override goes through
+    // (`config.go:749-756`) — a malformed `SUPABASE_ANALYTICS_BACKEND` fails
+    // config loading outright, same mechanism as the port/bool overrides below.
+    it("rejects an invalid SUPABASE_ANALYTICS_BACKEND override", () => {
+      process.env["SUPABASE_ANALYTICS_BACKEND"] = "mysql";
+      const config = baseConfig({ analytics: { enabled: true, backend: "postgres" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        LegacyInvalidAnalyticsBackendEnvOverrideError,
+      );
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        'Invalid config for analytics.backend: cannot parse "mysql" as one of "postgres", "bigquery"',
+      );
+    });
   });
 
   describe("experimental.* (experimental.validate())", () => {
@@ -1152,6 +1169,85 @@ describe("legacyResolveLocalConfigValues", () => {
       expect(() =>
         legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
           auth: { passkey: { enabled: true } },
+        }),
+      ).not.toThrow();
+    });
+  });
+
+  describe("auth.email.smtp (present-table-implies-enabled)", () => {
+    // Go defaults `auth.email.smtp.enabled = true` when the `[auth.email.smtp]`
+    // table is present but omits `enabled` (`pkg/config/config.go:743-748`), a
+    // presence-based default set on the raw viper map BEFORE the struct
+    // decodes — not a struct-tag default (Go's own zero-value is `false`).
+    // `@supabase/config`'s schema always decodes `smtp.enabled` to `false` when
+    // the key is absent, erasing that presence signal, so this check only runs
+    // when the raw `document` (5th param) is provided — same shape as the
+    // passkey/webauthn checks above.
+    it("rejects a present [auth.email.smtp] table with no fields", () => {
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          auth: { email: { smtp: {} } },
+        }),
+      ).toThrow("Missing required field in config: auth.email.smtp.host");
+    });
+
+    it("rejects a present [auth.email.smtp] table missing port/user/pass/admin_email", () => {
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          auth: { email: { smtp: { host: "smtp.example.com" } } },
+        }),
+      ).toThrow("Missing required field in config: auth.email.smtp.port");
+    });
+
+    it("does not throw when [auth.email.smtp] explicitly sets enabled = false", () => {
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          auth: { email: { smtp: { enabled: false, host: "smtp.example.com" } } },
+        }),
+      ).not.toThrow();
+    });
+
+    it("does not throw when [auth.email.smtp] is a complete table", () => {
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          auth: {
+            email: {
+              smtp: {
+                host: "smtp.example.com",
+                port: 587,
+                user: "user",
+                pass: "pass",
+                admin_email: "admin@example.com",
+              },
+            },
+          },
+        }),
+      ).not.toThrow();
+    });
+
+    it("does not throw when [auth.email.smtp] is absent from the document", () => {
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, { auth: {} }),
+      ).not.toThrow();
+    });
+
+    it("does not throw a present [auth.email.smtp] table when no document is provided", () => {
+      // No `document` (5th param) at all — the same skip-rather-than-guess
+      // behavior every pre-existing call site/test in this file relies on.
+      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not throw a present but incomplete [auth.email.smtp] table when auth is disabled", () => {
+      const config = baseConfig({ auth: { enabled: false } });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
+          auth: { email: { smtp: { host: "smtp.example.com" } } },
         }),
       ).not.toThrow();
     });

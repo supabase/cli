@@ -229,6 +229,53 @@ export function legacyEnvOverrideBool(
   return parsed;
 }
 
+/**
+ * Thrown by {@link envOverrideAnalyticsBackend} when `SUPABASE_ANALYTICS_BACKEND`
+ * doesn't match one of Go's `LogflareBackend` values. `Analytics.Backend` is
+ * typed `LogflareBackend` (`pkg/config/config.go:303`), and
+ * `LogflareBackend.UnmarshalText` (`config.go:60-65`) hard-rejects anything
+ * outside `{postgres, bigquery}` — that runs inside the same
+ * `v.UnmarshalExact` decode call (`config.go:749-756`) every other
+ * `SUPABASE_*` override goes through, so a malformed override fails config
+ * loading outright, same mechanism as {@link LegacyInvalidPortEnvOverrideError}/
+ * {@link LegacyInvalidBoolEnvOverrideError}.
+ */
+export class LegacyInvalidAnalyticsBackendEnvOverrideError extends Error {
+  constructor(dottedFieldPath: string, value: string) {
+    super(
+      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "postgres", "bigquery"`,
+    );
+    this.name = "LegacyInvalidAnalyticsBackendEnvOverrideError";
+  }
+}
+
+/**
+ * `analytics.backend`-flavored sibling of {@link envOverridePort}/
+ * {@link legacyEnvOverrideBool} for the one `SUPABASE_*` override this file
+ * decodes as a Go text-unmarshalled enum rather than a string/number/bool —
+ * see {@link LegacyInvalidAnalyticsBackendEnvOverrideError}. Validates the
+ * override-or-configured value with a SINGLE check (rather than only
+ * validating the override, trusting the schema for the configured value),
+ * matching Go more closely: viper merges the config.toml value and any env
+ * override into one string BEFORE `UnmarshalExact` calls `UnmarshalText`
+ * exactly once on the resolved value (`config.go:749-756`), not once per
+ * source. `@supabase/config`'s `stringEnum` (`packages/config/src/
+ * analytics.ts:31-39`) already guards the `config.toml`-sourced value at
+ * decode time, so this is belt-and-suspenders for that source and the sole
+ * guard for the env-override one, which bypasses that schema entirely.
+ */
+function envOverrideAnalyticsBackend(
+  configured: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): "postgres" | "bigquery" {
+  const value =
+    envOverride("SUPABASE_ANALYTICS_BACKEND", undefined, projectEnvValues) ?? configured;
+  if (value !== "postgres" && value !== "bigquery") {
+    throw new LegacyInvalidAnalyticsBackendEnvOverrideError("analytics.backend", value);
+  }
+  return value;
+}
+
 /** Go's `(a *auth) generateAPIKeys` (`pkg/config/apikeys.go:43-73`). */
 function resolveJwtSecret(configured: string | undefined): string {
   if (configured === undefined || configured.length === 0) return defaultJwtSecret;
@@ -671,8 +718,8 @@ function validateThirdPartyAuth(thirdParty: ProjectConfig["auth"]["third_party"]
  * 1298,1313-1315`) isn't reproduced: `@supabase/config`'s `template`/
  * `notification` schema (`packages/config/src/auth/email.ts`) has no
  * `content` field at all, so that branch can never trigger through the
- * decoded config — the same documented-gap style already used for the
- * analytics-backend-enum note above.
+ * decoded config — a documented, deliberate gap (unlike the SMTP/analytics
+ * checks elsewhere in this file, which are actively ported).
  */
 function validateAuthEmailTemplates(email: ProjectConfig["auth"]["email"], workdir: string): void {
   for (const [name, tmpl] of Object.entries(email.template)) {
@@ -698,6 +745,46 @@ function readEmailContentPath(
     throw new Error(
       `Invalid config for auth.email.${section}.${name}.content_path: ${cause instanceof Error ? cause.message : String(cause)}`,
     );
+  }
+}
+
+/**
+ * Go's `[auth.email.smtp]` presence-based `enabled` default
+ * (`pkg/config/config.go:743-748`): when the TOML table is present but omits
+ * an `enabled` key, Go sets `auth.email.smtp.enabled = true` on the raw viper
+ * map BEFORE the struct is decoded — a genuinely presence-based default, not
+ * a struct-tag one (the Go struct's own zero-value is `false`). That defaulted
+ * value then gates the required-field check in `(e *email) validate(fsys)`
+ * (`config.go:1325-1341`), called from `Auth.Email.validate()`
+ * (`config.go:1142`), still inside `if c.Auth.Enabled`.
+ *
+ * `@supabase/config`'s schema (`packages/config/src/auth/email.ts`) defaults
+ * `smtp.enabled` to `false` at DECODE time regardless of whether the table is
+ * present, which erases exactly the presence signal this check needs — same
+ * shape of gap as {@link validatePasskeyWebauthn}/{@link validateExperimentalConfig},
+ * so this reads the raw `document` instead of the decoded `ProjectConfig`.
+ * Mirrors the equivalent, already-correct check on the `db`/migration
+ * config-load path (`legacy-db-config.toml-read.ts`, section B3).
+ */
+function validateAuthEmailSmtp(emailDocument: Record<string, unknown> | undefined): void {
+  const smtp = asRecord(emailDocument?.["smtp"]);
+  if (smtp === undefined) return;
+  const smtpEnabled = smtp["enabled"] === undefined ? true : smtp["enabled"] === true;
+  if (!smtpEnabled) return;
+  if (typeof smtp["host"] !== "string" || smtp["host"].length === 0) {
+    throw new Error("Missing required field in config: auth.email.smtp.host");
+  }
+  if (typeof smtp["port"] !== "number" || smtp["port"] === 0) {
+    throw new Error("Missing required field in config: auth.email.smtp.port");
+  }
+  if (typeof smtp["user"] !== "string" || smtp["user"].length === 0) {
+    throw new Error("Missing required field in config: auth.email.smtp.user");
+  }
+  if (typeof smtp["pass"] !== "string" || smtp["pass"].length === 0) {
+    throw new Error("Missing required field in config: auth.email.smtp.pass");
+  }
+  if (typeof smtp["admin_email"] !== "string" || smtp["admin_email"].length === 0) {
+    throw new Error("Missing required field in config: auth.email.smtp.admin_email");
   }
 }
 
@@ -878,6 +965,10 @@ function isValidJson(value: string): boolean {
  * @throws when `auth.enabled` is true and an email template's `content_path`
  * (or an enabled notification's) can't be read — see
  * {@link validateAuthEmailTemplates}.
+ * @throws when `auth.enabled` is true, `[auth.email.smtp]` is present (per the
+ * raw `document`) and not explicitly disabled, and `host`/`port`/`user`/`pass`/
+ * `admin_email` isn't set — see {@link validateAuthEmailSmtp}. Skipped when
+ * `document` isn't provided.
  * @throws when `auth.enabled` is true and an enabled `[auth.third_party.*]`
  * provider is missing its required field, or more than one provider is enabled
  * at once — see {@link validateThirdPartyAuth}.
@@ -1123,10 +1214,12 @@ export function legacyResolveLocalConfigValues(
   // still inside `if c.Auth.Enabled` (`pkg/config/config.go:1117-1153`).
   // Sms/External (`config.go:1145-1150`) aren't ported.
   if (authEnabled) {
-    validatePasskeyWebauthn(asRecord(document?.["auth"]));
+    const authDocument = asRecord(document?.["auth"]);
+    validatePasskeyWebauthn(authDocument);
     validateAuthHooks(config.auth.hook);
     validateMfaConfig(config.auth.mfa);
     validateAuthEmailTemplates(config.auth.email, workdir);
+    validateAuthEmailSmtp(asRecord(authDocument?.["email"]));
     validateThirdPartyAuth(config.auth.third_party);
   }
   // Go's `Config.Validate` runs `ValidateFunctionSlug` over every `[functions.*]`
@@ -1144,21 +1237,19 @@ export function legacyResolveLocalConfigValues(
   // `edge_runtime.deno_version` (`pkg/config/config.go:1174-1187`, inside
   // `func (c *config) Validate` at `config.go:989`): when `analytics.enabled`
   // and `analytics.backend == "bigquery"`, all three GCP fields are required,
-  // checked in that order, each with its own message. Backend-enum
-  // validation (rejecting a non-postgres/bigquery value) is already covered
-  // at decode time by `@supabase/config`'s `stringEnum`
-  // (`packages/config/src/analytics.ts:17-41`), so it isn't reproduced here.
+  // checked in that order, each with its own message. Backend-enum validation
+  // (rejecting a non-postgres/bigquery value) is covered at decode time for
+  // the `config.toml`-sourced value by `@supabase/config`'s `stringEnum`
+  // (`packages/config/src/analytics.ts:17-41`), but that schema doesn't see
+  // the `SUPABASE_ANALYTICS_BACKEND` env-override path — see
+  // {@link envOverrideAnalyticsBackend} for that case.
   const analyticsEnabled = legacyEnvOverrideBool(
     "SUPABASE_ANALYTICS_ENABLED",
     config.analytics.enabled,
     "analytics.enabled",
     projectEnvValues,
   );
-  const analyticsBackend = envOverride(
-    "SUPABASE_ANALYTICS_BACKEND",
-    config.analytics.backend,
-    projectEnvValues,
-  );
+  const analyticsBackend = envOverrideAnalyticsBackend(config.analytics.backend, projectEnvValues);
   if (analyticsEnabled && analyticsBackend === "bigquery") {
     const gcpProjectId = envOverride(
       "SUPABASE_ANALYTICS_GCP_PROJECT_ID",
