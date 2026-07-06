@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
-import type { ProjectConfig } from "@supabase/config";
+import { ENV_CAPTURE_REGEX, type ProjectConfig } from "@supabase/config";
 import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
 import { Schema } from "effect";
 
@@ -166,6 +166,19 @@ function envOverridePort(
  * that already-resolved map (see `legacyResolveProjectEnvironmentValues`);
  * falling back to `process.env` covers the "no `supabase/` project found"
  * case, where `projectEnvValues` is `undefined`.
+ *
+ * The resolved override string itself can be a further `env(VAR)` indirection
+ * (e.g. `SUPABASE_API_ENABLED=env(API_ENABLED)`) — Go's `LoadEnvHook`
+ * (`decode_hooks.go:15-23`) is the first mapstructure decode hook composed
+ * into `v.UnmarshalExact` (`config.go:749-753,769-772`), so it resolves
+ * `env(...)` on every string mapstructure decodes into the struct, regardless
+ * of whether Viper sourced that string from `config.toml` or a `SUPABASE_*`
+ * `AutomaticEnv` override (`config.go:582-586`) — Viper's `Get()` just returns
+ * a string; the hook chain doesn't know or care where it came from. Resolved
+ * with the same `projectEnvValues ?? process.env` precedence and non-empty
+ * gate as the outer lookup (mirroring `decode_hooks.go:19-24`'s `len(env) > 0`
+ * check); an unresolved/empty indirection leaves the `env(VAR)` literal
+ * untouched, same as Go.
  */
 function envOverride(
   name: string,
@@ -173,7 +186,11 @@ function envOverride(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): string | undefined {
   const value = projectEnvValues?.[name] ?? process.env[name];
-  return value !== undefined && value.length > 0 ? value : configured;
+  if (value === undefined || value.length === 0) return configured;
+  const indirection = ENV_CAPTURE_REGEX.exec(value)?.[1];
+  if (indirection === undefined) return value;
+  const resolved = projectEnvValues?.[indirection] ?? process.env[indirection];
+  return resolved !== undefined && resolved.length > 0 ? resolved : value;
 }
 
 /**

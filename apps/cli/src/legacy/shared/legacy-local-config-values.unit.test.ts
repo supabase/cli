@@ -264,6 +264,64 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("SUPABASE_* env(VAR) indirection (Go's LoadEnvHook)", () => {
+    // Go's `LoadEnvHook` (`apps/cli-go/pkg/config/decode_hooks.go:15-23`) is
+    // the first mapstructure decode hook composed into `v.UnmarshalExact`
+    // (`config.go:749-753,769-772`), so it resolves a nested `env(VAR)`
+    // reference on ANY string mapstructure decodes into the struct — including
+    // a `SUPABASE_*` env-override value itself, not just a `config.toml`
+    // literal. `envOverride`'s callers (string/port/bool fields) must all see
+    // that same resolution.
+    const ENV_KEYS = ["SUPABASE_AUTH_JWT_SECRET", "SUPABASE_DB_PORT", "SUPABASE_API_ENABLED"];
+
+    afterEach(() => {
+      for (const key of ENV_KEYS) delete process.env[key];
+      delete process.env["INDIRECT_JWT_SECRET"];
+      delete process.env["INDIRECT_DB_PORT"];
+      delete process.env["INDIRECT_API_ENABLED"];
+    });
+
+    it("resolves a string override's env(VAR) indirection", () => {
+      process.env["SUPABASE_AUTH_JWT_SECRET"] = "env(INDIRECT_JWT_SECRET)";
+      process.env["INDIRECT_JWT_SECRET"] = "c".repeat(32);
+      const config = baseConfig({ auth: { jwt_secret: "a".repeat(32) } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.jwtSecret).toBe("c".repeat(32));
+    });
+
+    it("resolves a port override's env(VAR) indirection", () => {
+      process.env["SUPABASE_DB_PORT"] = "env(INDIRECT_DB_PORT)";
+      process.env["INDIRECT_DB_PORT"] = "54329";
+      const config = baseConfig({ db: { port: 54322 } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:54329/postgres");
+    });
+
+    it("resolves a bool override's env(VAR) indirection", () => {
+      process.env["SUPABASE_API_ENABLED"] = "env(INDIRECT_API_ENABLED)";
+      process.env["INDIRECT_API_ENABLED"] = "false";
+      const config = baseConfig({
+        api: { enabled: true, tls: { enabled: true, cert_path: "missing-cert.pem" } },
+      });
+      // If the bool override weren't resolved through the indirection, the
+      // literal "env(INDIRECT_API_ENABLED)" string would fail Go's
+      // strconv.ParseBool acceptance set and throw LegacyInvalidBoolEnvOverrideError;
+      // resolving it to "false" disables api.enabled and skips the TLS check
+      // that would otherwise throw on the missing cert file.
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("preserves the env(VAR) literal when the indirected var is unset, matching Go", () => {
+      process.env["SUPABASE_AUTH_JWT_SECRET"] = "env(INDIRECT_JWT_SECRET)";
+      const config = baseConfig({ auth: { jwt_secret: "a".repeat(32) } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      // Go's LoadEnvHook only substitutes when the target var is non-empty
+      // (`decode_hooks.go:19-24`) — an unset indirection leaves the literal
+      // `env(VAR)` string, same as an unresolved config.toml-level reference.
+      expect(values.jwtSecret).toBe("env(INDIRECT_JWT_SECRET)");
+    });
+  });
+
   describe("non-auth SUPABASE_* env overrides", () => {
     // Go's Config.Load binds Viper with SetEnvPrefix("SUPABASE") + AutomaticEnv()
     // generically across the whole config struct (pkg/config/config.go:529-535),

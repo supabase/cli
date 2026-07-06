@@ -40,3 +40,4 @@ export { projectConfigStoreLayer } from "./project-config.layer.ts";
 export { ProjectConfigStore } from "./project-config.service.ts";
 export { PROJECT_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 export { KONG_LOCAL_CA_CERT } from "./tls.ts";
+export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
