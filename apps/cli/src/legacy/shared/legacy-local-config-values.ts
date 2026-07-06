@@ -6,7 +6,12 @@ import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supa
 import { Schema } from "effect";
 
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
-import { legacyParseGoBool } from "./legacy-db-config.toml-read.ts";
+import {
+  LEGACY_BUCKET_NAME_PATTERN,
+  LEGACY_FUNCTION_SLUG_PATTERN,
+  LEGACY_HOOK_SECRET_PATTERN,
+  legacyParseGoBool,
+} from "./legacy-db-config.toml-read.ts";
 import {
   legacyGenerateAsymmetricGoJwt,
   legacyGenerateGoJwt,
@@ -380,6 +385,124 @@ function validateLocalApiTls(
 const SUPPORTED_DB_MAJOR_VERSIONS = new Set([13, 14, 15, 17]);
 
 /**
+ * Go's `Config.Validate` runs `ValidateBucketName` over every `[storage.buckets.*]`
+ * key right after the `db.major_version` switch, unconditionally
+ * (`pkg/config/config.go:1063-1068`) — unlike `studio.port`/`local_smtp.port` below,
+ * there is no `storage.enabled`-style gate to check first. Reuses the pattern/message
+ * already ported for the `db`/migration config-load path
+ * (`legacy-db-config.toml-read.ts`) and `seed buckets`
+ * (`commands/seed/buckets/buckets.handler.ts`) rather than duplicating them.
+ */
+function validateStorageBucketNames(buckets: ProjectConfig["storage"]["buckets"]): void {
+  if (buckets === undefined) return;
+  for (const name of Object.keys(buckets)) {
+    if (!LEGACY_BUCKET_NAME_PATTERN.test(name)) {
+      throw new Error(
+        `Invalid Bucket name: ${name}. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (${LEGACY_BUCKET_NAME_PATTERN.source})`,
+      );
+    }
+  }
+}
+
+/**
+ * Go's `Config.Validate` runs `ValidateFunctionSlug` over every `[functions.*]` key
+ * right after the auth block/`generateAPIKeys`, before `edge_runtime.deno_version`
+ * (`pkg/config/config.go:1155-1163`), unconditionally — not gated on `auth.enabled`.
+ * `@supabase/config`'s own `functions` schema key pattern
+ * (`packages/config/src/functions.ts`, `/^[a-zA-Z0-9_-]+$/`) is looser than Go's (it
+ * allows a digit-leading slug Go rejects), so this isn't redundant with decode-time
+ * validation. Reuses the pattern/message already ported for the `db`/migration
+ * config-load path (`legacy-db-config.toml-read.ts`).
+ */
+function validateFunctionSlugs(functions: ProjectConfig["functions"]): void {
+  for (const name of Object.keys(functions)) {
+    if (!LEGACY_FUNCTION_SLUG_PATTERN.test(name)) {
+      throw new Error(
+        `Invalid Function name: ${name}. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (${LEGACY_FUNCTION_SLUG_PATTERN.source})`,
+      );
+    }
+  }
+}
+
+/** Go's `hook.validate()` hook-type iteration order (`pkg/config/config.go:1453-1485`). */
+const LEGACY_HOOK_TYPES = [
+  "mfa_verification_attempt",
+  "password_verification_attempt",
+  "custom_access_token",
+  "send_sms",
+  "send_email",
+  "before_user_created",
+] as const;
+
+/**
+ * Go's `(h *hook) validate()` / `(h *hookConfig) validate(hookType)`
+ * (`pkg/config/config.go:1453-1521`), called from `Config.Validate` right after the
+ * signing-keys/passkey checks and before `Auth.MFA.validate()` — all inside
+ * `if c.Auth.Enabled` (`config.go:1136-1139`). Each enabled hook requires a `uri`;
+ * an http(s) scheme requires non-empty `secrets` matching Go's `hookSecretPattern`
+ * (one or more `|`-separated values), while `pg-functions` forbids secrets outright
+ * and any other scheme is rejected. Scheme extraction mirrors Go's lenient
+ * `net/url.Parse` (which, unlike `new URL`, doesn't throw on a schemeless URI).
+ * Reuses the secret pattern already ported for the `db`/migration config-load path
+ * (`legacy-db-config.toml-read.ts`) rather than duplicating it.
+ */
+function validateAuthHooks(hook: ProjectConfig["auth"]["hook"]): void {
+  for (const hookType of LEGACY_HOOK_TYPES) {
+    const h = hook[hookType];
+    if (!h.enabled) continue;
+    if (h.uri === undefined || h.uri.length === 0) {
+      throw new Error(`Missing required field in config: auth.hook.${hookType}.uri`);
+    }
+    const scheme = (/^([a-zA-Z][a-zA-Z0-9+.-]*):/u.exec(h.uri)?.[1] ?? "").toLowerCase();
+    if (scheme === "http" || scheme === "https") {
+      if (h.secrets === undefined || h.secrets.length === 0) {
+        throw new Error(`Missing required field in config: auth.hook.${hookType}.secrets`);
+      }
+      for (const secret of h.secrets.split("|")) {
+        if (!LEGACY_HOOK_SECRET_PATTERN.test(secret)) {
+          throw new Error(
+            `Invalid hook config: auth.hook.${hookType}.secrets must be formatted as "v1,whsec_<base64_encoded_secret>" with a minimum length of 32 characters.`,
+          );
+        }
+      }
+    } else if (scheme === "pg-functions") {
+      if (h.secrets !== undefined && h.secrets.length > 0) {
+        throw new Error(
+          `Invalid hook config: auth.hook.${hookType}.secrets is unsupported for pg-functions URI`,
+        );
+      }
+    } else {
+      throw new Error(
+        `Invalid hook config: auth.hook.${hookType}.uri should be a HTTP, HTTPS, or pg-functions URI`,
+      );
+    }
+  }
+}
+
+/**
+ * Go's `(m *mfa) validate()` (`pkg/config/config.go:1523-1534`), called from
+ * `Config.Validate` right after `Auth.Hook.validate()` and before
+ * `Auth.Email`/`Auth.Sms`/`Auth.External`/`Auth.ThirdParty` (`config.go:1139`) — all
+ * inside `if c.Auth.Enabled`. Each of the three MFA factors independently requires
+ * `verify_enabled` whenever `enroll_enabled` is set; `@supabase/config`'s `mfa`
+ * schema (`packages/config/src/auth/mfa.ts`) has no cross-field refinement, so
+ * nothing catches this at decode time either.
+ */
+function validateMfaConfig(mfa: ProjectConfig["auth"]["mfa"]): void {
+  if (mfa.totp.enroll_enabled && !mfa.totp.verify_enabled) {
+    throw new Error("Invalid MFA config: auth.mfa.totp.enroll_enabled requires verify_enabled");
+  }
+  if (mfa.phone.enroll_enabled && !mfa.phone.verify_enabled) {
+    throw new Error("Invalid MFA config: auth.mfa.phone.enroll_enabled requires verify_enabled");
+  }
+  if (mfa.web_authn.enroll_enabled && !mfa.web_authn.verify_enabled) {
+    throw new Error(
+      "Invalid MFA config: auth.mfa.web_authn.enroll_enabled requires verify_enabled",
+    );
+  }
+}
+
+/**
  * Go's `Config.Validate`'s `switch c.Db.MajorVersion` (`pkg/config/config.go:
  * 1034-1061`): `0` is the zero-value/missing case, `12` has a dedicated
  * unsupported-version message (with a migration-docs link), `13`/`14`/`15`/`17`
@@ -488,6 +611,14 @@ function envOverrideDenoVersion(
  * @throws when `db.port` (post-override) is `0`.
  * @throws when `db.major_version` (post-override) is `0`, `12`, or otherwise
  * unsupported — see {@link validateDbMajorVersion}.
+ * @throws when a `[storage.buckets.*]` key doesn't match Go's bucket-name pattern —
+ * see {@link validateStorageBucketNames}. Unconditional, no `storage.enabled` gate.
+ * @throws when `auth.enabled` is true and an enabled `[auth.hook.*]` entry's `uri`
+ * or `secrets` fails Go's scheme/secret-pattern rules — see {@link validateAuthHooks}.
+ * @throws when `auth.enabled` is true and an MFA factor's `enroll_enabled` is set
+ * without `verify_enabled` — see {@link validateMfaConfig}.
+ * @throws when a `[functions.*]` key doesn't match Go's function-slug pattern —
+ * see {@link validateFunctionSlugs}. Unconditional, not gated on `auth.enabled`.
  * @throws when `edge_runtime.deno_version` (post-override) is `0` or otherwise
  * not `1`/`2` — see {@link validateDenoVersion}. Unconditional, not gated on
  * `edge_runtime.enabled`.
@@ -594,6 +725,10 @@ export function legacyResolveLocalConfigValues(
   // (`pkg/config/config.go:1034-1061`), unconditionally (no `enabled` gate).
   const majorVersion = envOverrideMajorVersion(config.db.major_version, projectEnvValues);
   validateDbMajorVersion(majorVersion);
+  // Go's `Config.Validate` runs `ValidateBucketName` over every `[storage.buckets.*]`
+  // key right after `db.major_version`, unconditionally — see
+  // {@link validateStorageBucketNames}.
+  validateStorageBucketNames(config.storage.buckets);
   // Go's `Config.Validate` rejects `studio.port === 0`/`SUPABASE_STUDIO_PORT=0`
   // ONLY when `studio.enabled` (`pkg/config/config.go:1070-1073`) — same
   // enabled-gated pattern as `api.port` above.
@@ -690,6 +825,18 @@ export function legacyResolveLocalConfigValues(
     authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0
       ? loadFirstSigningKey(workdir, signingKeysPath)
       : undefined;
+  // Go's `Config.Validate` runs `Auth.Hook.validate()` then `Auth.MFA.validate()`
+  // right after signing keys/passkey validation, still inside `if c.Auth.Enabled`
+  // (`pkg/config/config.go:1136-1139`). Passkey/webauthn (`config.go:1117-1135`) sits
+  // between signing keys and hooks in Go but isn't ported by this resolver yet.
+  if (authEnabled) {
+    validateAuthHooks(config.auth.hook);
+    validateMfaConfig(config.auth.mfa);
+  }
+  // Go's `Config.Validate` runs `ValidateFunctionSlug` over every `[functions.*]`
+  // key right after the auth block/`generateAPIKeys`, unconditionally — see
+  // {@link validateFunctionSlugs}.
+  validateFunctionSlugs(config.functions);
   // Go's `Config.Validate` checks `edge_runtime.deno_version` after the auth
   // block and the functions loop (`pkg/config/config.go:1158-1173`), and —
   // unlike `studio.port`/`local_smtp.port` above — unconditionally, with no

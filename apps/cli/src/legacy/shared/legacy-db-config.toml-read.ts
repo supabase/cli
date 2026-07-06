@@ -344,14 +344,18 @@ const LEGACY_PROJECT_REF_PATTERN = /^[a-z]{20}$/;
 // `config.Validate` runs `ValidateBucketName` over every `[storage.buckets.*]` key
 // during config load (`config.go:898-903`), aborting before any db command when a
 // name does not match. The source string is reused verbatim in the error message via
-// `.source` so it byte-matches Go's `bucketNamePattern.String()`.
-const LEGACY_BUCKET_NAME_PATTERN = /^(\w|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
+// `.source` so it byte-matches Go's `bucketNamePattern.String()`. Exported: also used
+// by `legacy-local-config-values.ts`'s `status`/`stop` resolver, which needs the
+// identical unconditional check Go's `Config.Validate` runs — hoisted rather than
+// duplicated per this package's "hoist before you duplicate" rule.
+export const LEGACY_BUCKET_NAME_PATTERN = /^(\w|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
 
 // Go's function-slug pattern (`apps/cli-go/pkg/config/config.go:1372`). `config.Validate`
 // runs `ValidateFunctionSlug` over every `[functions.*]` key during config load
 // (`config.go:993-998`), rejecting the config before any db command. `.source` is reused
-// in the message so it byte-matches Go's `funcSlugPattern.String()`.
-const LEGACY_FUNCTION_SLUG_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
+// in the message so it byte-matches Go's `funcSlugPattern.String()`. Exported for the
+// same reason as {@link LEGACY_BUCKET_NAME_PATTERN} above.
+export const LEGACY_FUNCTION_SLUG_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
 /**
  * Go's `config.Validate` rejects any `[remotes.<name>]` whose `project_id` is not a
@@ -769,8 +773,10 @@ const legacyAssertDecryptableSecrets = (
 // Go merges the template default before Validate (`templates/config.toml`), so an absent
 // `auth.site_url` is non-empty; only an explicit empty string fails A1 (`config.go:1037`).
 const DEFAULT_AUTH_SITE_URL = "http://127.0.0.1:3000";
-// Go's `hookSecretPattern` (`pkg/config/config.go:1436`).
-const LEGACY_HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
+// Go's `hookSecretPattern` (`pkg/config/config.go:1436`). Exported: also used by
+// `legacy-local-config-values.ts`'s `status`/`stop` resolver — hoisted rather than
+// duplicated per this package's "hoist before you duplicate" rule.
+export const LEGACY_HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
 // Go's `clerkDomainPattern` (`pkg/config/config.go:1553`).
 const LEGACY_CLERK_DOMAIN_PATTERN =
   /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/u;

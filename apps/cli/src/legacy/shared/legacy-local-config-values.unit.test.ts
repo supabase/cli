@@ -496,6 +496,28 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  // Go's Config.Validate runs ValidateBucketName over every [storage.buckets.*]
+  // key right after db.major_version, unconditionally — there is no
+  // storage.enabled-style gate (pkg/config/config.go:1063-1068).
+  describe("storage.buckets (bucket-name validation)", () => {
+    it("rejects a bucket name Go's ValidateBucketName refuses", () => {
+      const config = baseConfig({ storage: { buckets: { "bad/name": {} } } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid Bucket name: bad/name.",
+      );
+    });
+
+    it("does not throw for a valid bucket name", () => {
+      const config = baseConfig({ storage: { buckets: { "avatars.public": {} } } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not throw when no buckets are configured", () => {
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
   // Go's Config.Validate rejects an invalid edge_runtime.deno_version
   // unconditionally — NOT gated on edge_runtime.enabled
   // (pkg/config/config.go:1164-1173).
@@ -953,6 +975,204 @@ describe("legacyResolveLocalConfigValues", () => {
         auth: { enabled: false, captcha: { enabled: true } },
       });
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  describe("auth.hook.* (URI/secret validation when enabled)", () => {
+    // Go's `Config.Validate` runs `Auth.Hook.validate()` right after signing
+    // keys/passkey validation, still inside `if c.Auth.Enabled`
+    // (`pkg/config/config.go:1136-1139`).
+    it("rejects an enabled hook without a uri", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          hook: { custom_access_token: { enabled: true } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: auth.hook.custom_access_token.uri",
+      );
+    });
+
+    it("rejects an http(s) hook uri without secrets", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          hook: {
+            custom_access_token: { enabled: true, uri: "https://example.test/hook" },
+          },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: auth.hook.custom_access_token.secrets",
+      );
+    });
+
+    it("rejects an http(s) hook secret that doesn't match Go's hookSecretPattern", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          hook: {
+            custom_access_token: {
+              enabled: true,
+              uri: "https://example.test/hook",
+              secrets: "not-a-valid-secret",
+            },
+          },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        'auth.hook.custom_access_token.secrets must be formatted as "v1,whsec_<base64_encoded_secret>"',
+      );
+    });
+
+    it("does not throw for a valid http(s) hook secret", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          hook: {
+            custom_access_token: {
+              enabled: true,
+              uri: "https://example.test/hook",
+              secrets: `v1,whsec_${"a".repeat(32)}`,
+            },
+          },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects a pg-functions hook uri with secrets set", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          hook: {
+            custom_access_token: {
+              enabled: true,
+              uri: "pg-functions://postgres/public/hook",
+              secrets: `v1,whsec_${"a".repeat(32)}`,
+            },
+          },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "auth.hook.custom_access_token.secrets is unsupported for pg-functions URI",
+      );
+    });
+
+    it("does not throw for a pg-functions hook uri without secrets", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          hook: {
+            custom_access_token: { enabled: true, uri: "pg-functions://postgres/public/hook" },
+          },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects a hook uri with an unsupported scheme", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          hook: { custom_access_token: { enabled: true, uri: "ftp://example.test/hook" } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "auth.hook.custom_access_token.uri should be a HTTP, HTTPS, or pg-functions URI",
+      );
+    });
+
+    it("does not throw for a disabled hook, however incomplete", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          hook: { custom_access_token: { enabled: false } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not throw an enabled hook without a uri when auth is disabled", () => {
+      const config = baseConfig({
+        auth: { enabled: false, hook: { custom_access_token: { enabled: true } } },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  describe("auth.mfa.* (enroll_enabled requires verify_enabled)", () => {
+    // Go's `(m *mfa) validate()` (`pkg/config/config.go:1523-1534`), called right
+    // after `Auth.Hook.validate()`, still inside `if c.Auth.Enabled`.
+    it.each([
+      ["totp", "auth.mfa.totp.enroll_enabled requires verify_enabled"],
+      ["phone", "auth.mfa.phone.enroll_enabled requires verify_enabled"],
+      ["web_authn", "auth.mfa.web_authn.enroll_enabled requires verify_enabled"],
+    ] as const)("rejects %s enroll_enabled without verify_enabled", (factor, message) => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          mfa: { [factor]: { enroll_enabled: true, verify_enabled: false } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(message);
+    });
+
+    it("does not throw when enroll_enabled and verify_enabled are both true", () => {
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          mfa: { totp: { enroll_enabled: true, verify_enabled: true } },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not throw an enroll_enabled MFA factor without verify_enabled when auth is disabled", () => {
+      const config = baseConfig({
+        auth: { enabled: false, mfa: { totp: { enroll_enabled: true, verify_enabled: false } } },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  // Go's Config.Validate runs ValidateFunctionSlug over every [functions.*] key
+  // right after the auth block/generateAPIKeys, unconditionally — NOT gated on
+  // auth.enabled (pkg/config/config.go:1155-1163).
+  describe("functions.* (function-slug validation)", () => {
+    it("rejects a function slug Go's ValidateFunctionSlug refuses", () => {
+      const config = baseConfig({ functions: { "1bad": {} } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid Function name: 1bad.",
+      );
+    });
+
+    it("does not throw for a valid function slug", () => {
+      const config = baseConfig({ functions: { "hello-world_v2": {} } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not throw when no functions are configured", () => {
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects an invalid function slug even when auth is disabled", () => {
+      const config = baseConfig({ auth: { enabled: false }, functions: { "1bad": {} } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid Function name: 1bad.",
+      );
     });
   });
 
