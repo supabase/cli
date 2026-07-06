@@ -317,6 +317,44 @@ jwt_secret = "env(MISSING_SECRET)"
     }
   });
 
+  // Go's `LoadEnvHook` (`apps/cli-go/pkg/config/decode_hooks.go:19-24`) only
+  // substitutes a non-empty env var (`len(env) > 0`) — a present-but-empty
+  // dotenv line (`EMPTY_SECRET=`) is treated the same as an unset var, so the
+  // literal `env(...)` reference is preserved rather than resolved to `""`.
+  test("resolveProjectValue preserves env() literal when the env var is present but empty (Go parity)", async () => {
+    const cwd = makeTempProject();
+    const projectRoot = join(cwd, "repo");
+
+    try {
+      await mkdir(join(projectRoot, "supabase"), { recursive: true });
+      await writeFile(
+        join(projectRoot, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[edge_runtime.secrets]
+foo = "env(EMPTY_SECRET)"
+`,
+      );
+      await writeFile(join(projectRoot, "supabase", ".env"), "EMPTY_SECRET=\n");
+
+      const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
+
+      const resolved = await runConfigEffect(
+        resolveProjectValue(
+          loaded!.config.edge_runtime.secrets!.foo,
+          projectEnv!,
+          "edge_runtime.secrets.foo",
+        ),
+      );
+
+      expect(Redacted.isRedacted(resolved)).toBe(false);
+      expect(resolved).toBe("env(EMPTY_SECRET)");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("resolveProjectSubtree preserves env() literals nested inside the selected subtree", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");

@@ -226,13 +226,21 @@ function interpolateLeafValue(value: string, env: Readonly<Record<string, string
     return value;
   }
 
-  // Preserve the literal `env(VAR)` verbatim when VAR is unset. Matches Go's
-  // `apps/cli-go/pkg/config/decode_hooks.go:14-21` (LoadEnvHook).
-  if (!Object.prototype.hasOwnProperty.call(env, envName)) {
+  const resolved = env[envName];
+  // Preserve the literal `env(VAR)` verbatim when VAR is unset OR present but
+  // empty (e.g. a dotenv `KEY=` line). Matches Go's `LoadEnvHook`
+  // (`apps/cli-go/pkg/config/decode_hooks.go:19-24`: `len(env) > 0`), which
+  // only substitutes a non-empty value — same gate as `substituteEnvLeaf` in
+  // `lib/env.ts`. Without this, a present-but-empty `env(...)` secret (e.g.
+  // `edge_runtime.secrets.FOO = "env(EMPTY)"`) resolves to `""` here, gets
+  // redacted by `redactValue` as a real value instead of skipped as an
+  // unresolved literal, and `secrets set` uploads a blank secret Go would
+  // never send.
+  if (resolved === undefined || resolved === "") {
     return value;
   }
 
-  return env[envName] ?? value;
+  return resolved;
 }
 
 function toPathSegments(path: string): ReadonlyArray<string> {
