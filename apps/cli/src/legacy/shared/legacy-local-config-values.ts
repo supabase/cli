@@ -356,7 +356,21 @@ export function legacyResolveLocalConfigValues(
     },
     hostname,
   );
+  // Unlike `api.port`/`studio.port`/`local_smtp.port` below, `db.port` has no
+  // `enabled` gate in Go's `Config.Validate` — it's unconditionally required,
+  // and a decoded `0` (e.g. `SUPABASE_DB_PORT=0`) fails validation with this
+  // exact message (`pkg/config/config.go:1031-1032`) before `status`/`stop`
+  // render anything, same wording already used for the `db query`/`test db`
+  // path (`legacy-db-config.toml-read.ts:1380`). This check is intentionally
+  // NOT inside `envOverridePort` itself: that helper is generic across all
+  // four port fields, and Go's zero-rejection for the other three is
+  // conditional on their section's `enabled` flag (`config.go:1006-1009,
+  // 1070-1073,1081-1084`), so adding it there would wrongly reject e.g.
+  // `SUPABASE_STUDIO_PORT=0` even when `studio.enabled` is `false`.
   const dbPort = envOverridePort("SUPABASE_DB_PORT", config.db.port, "db.port", projectEnvValues);
+  if (dbPort === 0) {
+    throw new Error("Missing required field in config: db.port");
+  }
   const studioPort = envOverridePort(
     "SUPABASE_STUDIO_PORT",
     config.studio.port,

@@ -320,6 +320,19 @@ describe("legacyResolveLocalConfigValues", () => {
         LegacyInvalidPortEnvOverrideError,
       );
     });
+
+    // Unlike the malformed/out-of-range cases above (a decode-time hard-fail,
+    // uniform across all four SUPABASE_*_PORT fields), db.port=0 is a
+    // Config.Validate-time hard-fail specific to db.port: it has no `enabled`
+    // gate in Go, unlike api.port/studio.port/local_smtp.port
+    // (pkg/config/config.go:1006-1009,1031-1032,1070-1073,1081-1084).
+    it("rejects a zero SUPABASE_DB_PORT override, matching Go's required-field check", () => {
+      process.env["SUPABASE_DB_PORT"] = "0";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Missing required field in config: db.port",
+      );
+    });
   });
 
   describe("SUPABASE_API_TLS_ENABLED env override", () => {
