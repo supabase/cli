@@ -18,6 +18,7 @@ import {
   legacyGenerateGoJwt,
   type LegacyJwk,
 } from "./legacy-go-jwt.ts";
+import { legacyGoUrlParse } from "./legacy-storage-url.ts";
 
 /**
  * Go-parity derived local-dev config values, ported from `utils.Config`'s
@@ -402,6 +403,30 @@ function validateStorageBucketNames(buckets: ProjectConfig["storage"]["buckets"]
         `Invalid Bucket name: ${name}. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (${LEGACY_BUCKET_NAME_PATTERN.source})`,
       );
     }
+  }
+}
+
+/**
+ * Go's `Config.Validate` studio.api_url check (`pkg/config/config.go:1074-
+ * 1078`), gated on the same `studio.enabled` check as the port validation
+ * right above it in Go's source. Reuses {@link legacyGoUrlParse}'s
+ * `net/url.Parse` port (already used by the storage commands) rather than a
+ * TS-only URL/regex check, since Go's own parser is what decides pass/fail
+ * here — e.g. `http://[::1` (an unterminated IPv6 literal) is a genuine
+ * `net/url.Parse` failure, not something Go's usual scheme/path leniency
+ * would let through. Go's success branch also mutates `Studio.ApiUrl` in some
+ * cases (`config.go:1076-1077`), but neither `status` nor `stop` ever read it
+ * afterwards (Go's own `status.go` derives `StudioURL` from `Hostname`+`Port`
+ * directly, matching this resolver's own `studioUrl` field below), so only
+ * the validation gate — not the mutation — is reproduced.
+ */
+function validateStudioApiUrl(apiUrl: string): void {
+  try {
+    legacyGoUrlParse(apiUrl);
+  } catch (cause) {
+    throw new Error(
+      `Invalid config for studio.api_url: ${cause instanceof Error ? cause.message : String(cause)}`,
+    );
   }
 }
 
@@ -816,7 +841,9 @@ function isValidJson(value: string): boolean {
  * @throws when `edge_runtime.deno_version` (post-override) is `0` or otherwise
  * not `1`/`2` — see {@link validateDenoVersion}. Unconditional, not gated on
  * `edge_runtime.enabled`.
- * @throws when `studio.enabled` is true and `studio.port` (post-override) is `0`.
+ * @throws when `studio.enabled` is true and `studio.port` (post-override) is `0`,
+ * or `studio.api_url` (post-override) fails Go's `net/url.Parse` — see
+ * {@link validateStudioApiUrl}.
  * @throws when `local_smtp.enabled` is true and `local_smtp.port` (post-override) is `0`.
  * @throws when `auth.enabled` is true and `auth.site_url` is empty.
  * @throws when `auth.enabled` is true, `auth.captcha.enabled` (post-override) is true,
@@ -951,8 +978,20 @@ export function legacyResolveLocalConfigValues(
     "studio.port",
     projectEnvValues,
   );
-  if (studioEnabled && studioPort === 0) {
-    throw new Error("Missing required field in config: studio.port");
+  if (studioEnabled) {
+    if (studioPort === 0) {
+      throw new Error("Missing required field in config: studio.port");
+    }
+    // Go's `Config.Validate` parses `studio.api_url` with `net/url.Parse`
+    // right after the port check, still inside `if c.Studio.Enabled`
+    // (`pkg/config/config.go:1074-1078`) — see {@link validateStudioApiUrl}.
+    // `config.studio.api_url` is a required (defaulted) field, so `envOverride`
+    // can only return `undefined` here if that default itself were somehow
+    // undefined — the `??` fallback just satisfies that generic signature.
+    validateStudioApiUrl(
+      envOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
+        config.studio.api_url,
+    );
   }
   // Go's `Config.Validate` rejects `local_smtp.port === 0`/
   // `SUPABASE_LOCAL_SMTP_PORT=0` ONLY when `local_smtp.enabled` — Go's struct

@@ -155,6 +155,62 @@ function hostFromAuthority(authority: string): string {
   return at === -1 ? authority : authority.slice(at + 1);
 }
 
+/** Go `net/url.validOptionalPort` (`url.go:761-774`): `""`, or `:` followed by only digits. */
+function isValidOptionalPort(port: string): boolean {
+  if (port.length === 0) return true;
+  if (port.charCodeAt(0) !== 0x3a /* : */) return false;
+  for (let i = 1; i < port.length; i++) {
+    if (!isDigit(port.charCodeAt(i))) return false;
+  }
+  return true;
+}
+
+/**
+ * Go `net/url.parseHost`, restricted to the branches this module's callers
+ * can actually hit (`net/url/url.go:544-608` in the Go stdlib `apps/cli-go`
+ * builds against): IP-literal (`[...]`) bracket/port validation, and the bare
+ * `host[:port]` port-digit check. Deliberately does NOT implement IPv6
+ * zone-identifier percent-decoding or `netip.ParseAddr` address validation
+ * (Go additionally requires a bracketed literal to parse as a valid,
+ * non-IPv4 IP address) — callers only need to know whether validation
+ * THROWS, and a config author writing a bogus-but-bracket-balanced IPv6
+ * literal is exotic enough that the narrower `netip.ParseAddr` check isn't
+ * worth the added surface; the common bracket-mismatch/invalid-port mistakes
+ * Go actually raises for realistic input (e.g. `http://[::1`, a truncated
+ * IPv6 literal) are still reproduced byte-for-byte. Also skips Go's
+ * `GODEBUG=urlstrictcolons=0` legacy multi-colon opt-out (`url.go:596-604`) —
+ * an explicit, non-default env var this codebase's bundled Go binary doesn't
+ * set, so the http/https "first colon is the port separator" behavior always
+ * applies for those schemes; other schemes use the last colon, matching Go's
+ * unconditional `else` branch for non-http(s) schemes.
+ */
+function validateGoUrlHost(scheme: string, host: string): void {
+  if (host.length === 0) return;
+  const openBracketIdx = host.indexOf("[");
+  if (openBracketIdx > 0) {
+    throw new Error("invalid IP-literal");
+  }
+  if (openBracketIdx === 0) {
+    const closeBracketIdx = host.lastIndexOf("]");
+    if (closeBracketIdx < 0) {
+      throw new Error("missing ']' in host");
+    }
+    const colonPort = host.slice(closeBracketIdx + 1);
+    if (!isValidOptionalPort(colonPort)) {
+      throw new Error(`invalid port ${JSON.stringify(colonPort)} after host`);
+    }
+    return;
+  }
+  const colonIdx =
+    scheme === "http" || scheme === "https" ? host.indexOf(":") : host.lastIndexOf(":");
+  if (colonIdx !== -1) {
+    const colonPort = host.slice(colonIdx);
+    if (!isValidOptionalPort(colonPort)) {
+      throw new Error(`invalid port ${JSON.stringify(colonPort)} after host`);
+    }
+  }
+}
+
 /**
  * Port of Go's `url.Parse` restricted to `Scheme`/`Host`/`Path`. Throws
  * `LegacyGoUrlParseError` (Go's `*url.Error`) on the failures the storage
@@ -208,6 +264,11 @@ export function legacyGoUrlParse(rawURL: string): LegacyGoUrl {
     const authority = slash === -1 ? afterSlashes : afterSlashes.slice(0, slash);
     rest = slash === -1 ? "" : afterSlashes.slice(slash);
     host = hostFromAuthority(authority);
+    try {
+      validateGoUrlHost(scheme, host);
+    } catch (cause) {
+      throw new LegacyGoUrlParseError(u, cause instanceof Error ? cause.message : String(cause));
+    }
   }
 
   let path: string;

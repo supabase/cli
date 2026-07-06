@@ -276,6 +276,7 @@ describe("legacyResolveLocalConfigValues", () => {
       "SUPABASE_LOCAL_SMTP_PORT",
       "SUPABASE_API_PORT",
       "SUPABASE_API_EXTERNAL_URL",
+      "SUPABASE_STUDIO_API_URL",
     ] as const;
 
     afterEach(() => {
@@ -408,6 +409,34 @@ describe("legacyResolveLocalConfigValues", () => {
     it("does not reject a zero studio.port when studio is disabled", () => {
       const config = baseConfig({ studio: { enabled: false, port: 0 } });
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    // Go's Config.Validate parses studio.api_url with net/url.Parse right
+    // after the port check, still inside `if c.Studio.Enabled`
+    // (pkg/config/config.go:1074-1078).
+    it("rejects a malformed studio.api_url (unterminated IPv6 literal) when studio is enabled", () => {
+      const config = baseConfig({ studio: { api_url: "http://[::1" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        `Invalid config for studio.api_url: parse "http://[::1": missing ']' in host`,
+      );
+    });
+
+    it("does not reject a malformed studio.api_url when studio is disabled", () => {
+      const config = baseConfig({ studio: { enabled: false, api_url: "http://[::1" } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not throw for the default studio.api_url", () => {
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects a malformed SUPABASE_STUDIO_API_URL override", () => {
+      process.env["SUPABASE_STUDIO_API_URL"] = "http://[::1";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        `Invalid config for studio.api_url: parse "http://[::1": missing ']' in host`,
+      );
     });
 
     // Go gates the local_smtp.port===0 rejection on local_smtp.enabled (Go's
