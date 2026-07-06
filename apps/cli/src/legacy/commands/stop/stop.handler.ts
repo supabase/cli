@@ -99,6 +99,15 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
       cwd: cliConfig.workdir,
       baseEnv: process.env,
       search: false,
+      // Go's `loadDefaultEnv` (`apps/cli-go/pkg/config/config.go:1243-1250`)
+      // omits `.env.local` from its candidate list whenever
+      // `SUPABASE_ENV=test` — a malformed or intentionally non-test
+      // `supabase/.env.local` is then invisible to Go and must not fail
+      // config loading here either. `legacyResolveProjectEnvironmentValues`
+      // below already applies this same gate for the project-root pass (see
+      // its `candidateDotenvFilenames`); this mirrors it for the
+      // `supabase/`-dir pass `loadProjectEnvironment` itself performs.
+      skipEnvLocal: (process.env["SUPABASE_ENV"] || "development") === "test",
     }).pipe(
       Effect.mapError(
         (cause) =>

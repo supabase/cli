@@ -184,6 +184,17 @@ export interface LoadProjectEnvironmentOptions {
   readonly baseEnv?: Readonly<Record<string, string | undefined>>;
   /** See {@link FindProjectPathsOptions.search}. */
   readonly search?: boolean;
+  /**
+   * Skip reading/parsing `paths.envLocalPath` (`supabase/.env.local`)
+   * entirely. Mirrors Go's `loadDefaultEnv` (`apps/cli-go/pkg/config/
+   * config.go:1243-1250`), which omits `.env.local` from its candidate
+   * filename list whenever `SUPABASE_ENV=test` — so a malformed or
+   * intentionally non-test `.env.local` is invisible to Go in that mode and
+   * must not fail config loading here either. Defaults to `false` so
+   * existing callers that don't have a `SUPABASE_ENV` gate of their own
+   * (`next/`, `secrets set`) are unaffected.
+   */
+  readonly skipEnvLocal?: boolean;
 }
 
 export const loadProjectEnvironment = Effect.fnUntraced(function* (
@@ -207,7 +218,7 @@ export const loadProjectEnvironment = Effect.fnUntraced(function* (
     loadedPaths.push(paths.envPath);
   }
 
-  if (yield* fs.exists(paths.envLocalPath)) {
+  if (!options.skipEnvLocal && (yield* fs.exists(paths.envLocalPath))) {
     const contents = yield* fs.readFileString(paths.envLocalPath);
     const parsed = yield* parseDotEnv(paths.envLocalPath, contents);
     applySource(values, sources, parsed, ".env.local");

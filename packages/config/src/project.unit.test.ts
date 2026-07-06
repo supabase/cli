@@ -212,6 +212,35 @@ describe("project discovery and lazy env resolution", () => {
     }
   });
 
+  test("skipEnvLocal ignores .env.local entirely, matching Go's SUPABASE_ENV=test gate", async () => {
+    // Go's `loadDefaultEnv` (`apps/cli-go/pkg/config/config.go:1243-1250`) omits
+    // `.env.local` from its candidate filename list whenever `SUPABASE_ENV=test`,
+    // so a malformed `.env.local` is invisible to Go in that mode. Callers that
+    // reproduce this gate (`status`/`stop` handlers) pass `skipEnvLocal: true`.
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "ref_123"\n');
+      await writeFile(join(cwd, "supabase", ".env"), "FROM_ENV=1\n");
+      // Malformed — would normally throw ProjectEnvParseError.
+      await writeFile(join(cwd, "supabase", ".env.local"), "!!!not-a-valid-line\n");
+
+      const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd, skipEnvLocal: true }));
+
+      expect(projectEnv).not.toBeNull();
+      expect(projectEnv?.values.FROM_ENV).toBe("1");
+      expect(projectEnv?.loadedPaths).toEqual([join(cwd, "supabase", ".env")]);
+
+      // Without the flag, the same malformed file still fails as before.
+      await expect(runConfigEffect(loadProjectEnvironment({ cwd }))).rejects.toBeInstanceOf(
+        ProjectEnvParseError,
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("leaves [api].auto_expose_new_tables unset by default and round-trips an explicit value", async () => {
     const cwd = makeTempProject();
     const projectRoot = join(cwd, "repo");
