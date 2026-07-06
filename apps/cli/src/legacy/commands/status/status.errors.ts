@@ -1,5 +1,17 @@
 import { Data } from "effect";
 
+/**
+ * An explicit `--workdir`/`SUPABASE_WORKDIR` path doesn't exist or isn't a
+ * directory. Mirrors Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:
+ * 231-250`), which unconditionally `os.Chdir(workdir)`s in `PersistentPreRunE`
+ * (`apps/cli-go/cmd/root.go:93-105`) — before `status`'s own `PreRunE`
+ * (override-name parsing) or `RunE`, so a bad explicit workdir must fail here
+ * first, before config load or any Docker access.
+ */
+export class LegacyStatusWorkdirError extends Data.TaggedError("LegacyStatusWorkdirError")<{
+  readonly message: string;
+}> {}
+
 /** `loadProjectConfig` rejected `supabase/config.toml` (malformed TOML/JSON). */
 export class LegacyStatusConfigLoadError extends Data.TaggedError("LegacyStatusConfigLoadError")<{
   readonly message: string;

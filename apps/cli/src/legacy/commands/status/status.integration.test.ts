@@ -307,6 +307,43 @@ describe("legacy status integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () => {
+    // Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`)
+    // `os.Chdir`s the explicit workdir in `PersistentPreRunE`, before config
+    // load or any Docker call — a missing path must fail immediately, not
+    // fall through to the workdir-basename default and inspect Docker.
+    const missingWorkdir = join(tempRoot.current, "does-not-exist");
+    const { layer, child } = setup({ workdir: missingWorkdir, skipConfig: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyStatus(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusWorkdirError");
+        expect(JSON.stringify(exit.cause)).toContain(
+          `failed to change workdir: chdir ${missingWorkdir}: no such file or directory`,
+        );
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails when --workdir/SUPABASE_WORKDIR points at a file, not a directory", () => {
+    const filePath = join(tempRoot.current, "not-a-directory");
+    writeFileSync(filePath, "");
+    const { layer, child } = setup({ workdir: filePath, skipConfig: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyStatus(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusWorkdirError");
+        expect(JSON.stringify(exit.cause)).toContain(
+          `failed to change workdir: chdir ${filePath}: not a directory`,
+        );
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails when auth.jwt_secret is configured but shorter than 16 characters", () => {
     // Go's Config.Validate rejects this at config-load time
     // (pkg/config/apikeys.go:45-47), entirely before assertContainerHealthy/

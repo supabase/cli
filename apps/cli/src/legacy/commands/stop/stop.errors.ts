@@ -1,6 +1,18 @@
 import { Data } from "effect";
 
 /**
+ * An explicit `--workdir`/`SUPABASE_WORKDIR` path doesn't exist or isn't a
+ * directory. Mirrors Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:
+ * 231-250`), which unconditionally `os.Chdir(workdir)`s in `PersistentPreRunE`
+ * (`apps/cli-go/cmd/root.go:93-105`) — before `stop`'s own flag validation or
+ * `RunE`, so a bad explicit workdir must fail here first, before config load
+ * or any Docker access.
+ */
+export class LegacyStopWorkdirError extends Data.TaggedError("LegacyStopWorkdirError")<{
+  readonly message: string;
+}> {}
+
+/**
  * `--project-id` and `--all` were both set. Best-effort match of cobra's
  * `MarkFlagsMutuallyExclusive` message shape (`stopCmd.MarkFlagsMutuallyExclusive("project-id",
  * "all")`, `apps/cli-go/cmd/stop.go`). Cobra isn't vendored in this repo, so the exact

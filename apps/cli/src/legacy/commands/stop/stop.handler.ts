@@ -1,6 +1,6 @@
 import { loadProjectConfig, loadProjectEnvironment, ProjectConfigSchema } from "@supabase/config";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, Option, Result, Schema } from "effect";
+import { Effect, FileSystem, Option, Result, Schema } from "effect";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
@@ -23,6 +23,7 @@ import {
 import { legacyGetHostname } from "../../shared/legacy-hostname.ts";
 import { legacyResolveLocalConfigValues } from "../../shared/legacy-local-config-values.ts";
 import { legacyResolveProjectEnvironmentValues } from "../../shared/legacy-project-environment.ts";
+import { legacyValidateWorkdirIsDirectory } from "../../shared/legacy-workdir-validation.ts";
 import type { LegacyStopFlags } from "./stop.command.ts";
 import {
   LegacyStopConfigLoadError,
@@ -32,6 +33,7 @@ import {
   LegacyStopMutuallyExclusiveError,
   LegacyStopNetworkPruneError,
   LegacyStopVolumePruneError,
+  LegacyStopWorkdirError,
 } from "./stop.errors.ts";
 
 /**
@@ -183,8 +185,19 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
   const cliConfig = yield* LegacyCliConfig;
   const telemetryState = yield* LegacyTelemetryState;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fs = yield* FileSystem.FileSystem;
 
   yield* Effect.gen(function* () {
+    // Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`)
+    // unconditionally `os.Chdir`s the resolved `--workdir`/`SUPABASE_WORKDIR`
+    // in `PersistentPreRunE` (`cmd/root.go:93-105`) — before any of `stop`'s
+    // own flag validation or `RunE`. A missing or non-directory path fails
+    // immediately, so this must win over every later error, including the
+    // `--project-id`/`--all` mutual-exclusivity check below.
+    yield* legacyValidateWorkdirIsDirectory(cliConfig.workdir, fs).pipe(
+      Effect.mapError((error) => new LegacyStopWorkdirError({ message: error.message })),
+    );
+
     // Presence-based, matching Cobra's `Changed` check (see the doc comment on
     // `all`'s flag definition in `stop.command.ts`) — `--project-id x --all=false`
     // must reject too, not just `--all`/`--all=true`.

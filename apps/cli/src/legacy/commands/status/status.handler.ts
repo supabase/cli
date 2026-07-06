@@ -1,6 +1,6 @@
 import { loadProjectConfig, loadProjectEnvironment, ProjectConfigSchema } from "@supabase/config";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, Option, Schema } from "effect";
+import { Effect, FileSystem, Option, Schema } from "effect";
 
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
@@ -26,6 +26,7 @@ import {
 } from "../../shared/legacy-go-output.encoders.ts";
 import { legacyGetHostname } from "../../shared/legacy-hostname.ts";
 import { legacyResolveProjectEnvironmentValues } from "../../shared/legacy-project-environment.ts";
+import { legacyValidateWorkdirIsDirectory } from "../../shared/legacy-workdir-validation.ts";
 import type { LegacyStatusFlags } from "./status.command.ts";
 import {
   LegacyStatusConfigLoadError,
@@ -35,6 +36,7 @@ import {
   LegacyStatusInvalidConfigError,
   LegacyStatusListError,
   LegacyStatusOverrideParseError,
+  LegacyStatusWorkdirError,
 } from "./status.errors.ts";
 import { legacyRenderStatusPretty } from "./status.pretty.ts";
 import {
@@ -92,17 +94,27 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
   const cliConfig = yield* LegacyCliConfig;
   const telemetryState = yield* LegacyTelemetryState;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const fs = yield* FileSystem.FileSystem;
 
   yield* Effect.gen(function* () {
-    // 1. `--override-name KEY=VALUE` parsing, FIRST — mirroring Go's Cobra
-    // wiring, where override validation runs in `PreRunE` (`cmd/status.go:
-    // 21-27`) and Cobra's execute loop returns as soon as `PreRunE` errors,
-    // never calling `RunE` (`spf13/cobra@v1.10.2/command.go:999-1015`). So a
-    // malformed `--override-name` entry fails before `status.Run` ever loads
-    // config or touches Docker (`internal/status/status.go:101-116`) — it
-    // must win over a config-load error or a Docker/DB health-check error,
-    // not be masked by either. `overrides` itself is only consumed much
-    // later, by `legacyStatusValuesFromState` below.
+    // 0. Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`)
+    // unconditionally `os.Chdir`s the resolved `--workdir`/`SUPABASE_WORKDIR`
+    // in `PersistentPreRunE` (`cmd/root.go:93-105`) — before `status`'s own
+    // `PreRunE` (override-name parsing) or `RunE`. A missing or non-directory
+    // path fails immediately, so this must win over every later error.
+    yield* legacyValidateWorkdirIsDirectory(cliConfig.workdir, fs).pipe(
+      Effect.mapError((error) => new LegacyStatusWorkdirError({ message: error.message })),
+    );
+
+    // 1. `--override-name KEY=VALUE` parsing — mirroring Go's Cobra wiring,
+    // where override validation runs in `PreRunE` (`cmd/status.go:21-27`) and
+    // Cobra's execute loop returns as soon as `PreRunE` errors, never calling
+    // `RunE` (`spf13/cobra@v1.10.2/command.go:999-1015`). So a malformed
+    // `--override-name` entry fails before `status.Run` ever loads config or
+    // touches Docker (`internal/status/status.go:101-116`) — it must win over
+    // a config-load error or a Docker/DB health-check error, not be masked by
+    // either. `overrides` itself is only consumed much later, by
+    // `legacyStatusValuesFromState` below.
     const overrides = yield* parseOverrides(flags.overrideName);
 
     // 2. `status` always needs config, unlike `stop` (status.go:99-103). An
