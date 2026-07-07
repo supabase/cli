@@ -337,12 +337,16 @@ function redactEdgeRuntimeSecrets(edgeRuntime: unknown): unknown {
   }
   return {
     ...edgeRuntime,
+    // Wrap the whole entry, not just string values: a malformed
+    // `[edge_runtime.secrets]` entry (e.g. a TOML array `FOO = ["actual-secret"]`
+    // or inline table) still carries the secret in its structure, and
+    // `Redacted.make` accepts any value — `toString`/`toJSON` always render
+    // `<redacted:...>` regardless of the wrapped type, so this can't leak a
+    // non-string entry either.
     secrets: Object.fromEntries(
       Object.entries(edgeRuntime.secrets).map(([name, value]) => [
         name,
-        typeof value === "string"
-          ? Redacted.make(value, { label: `edge_runtime.secrets.${name}` })
-          : value,
+        Redacted.make(value, { label: `edge_runtime.secrets.${name}` }),
       ]),
     ),
   };

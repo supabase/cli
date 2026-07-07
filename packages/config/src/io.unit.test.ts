@@ -484,6 +484,55 @@ FOO = "MY_SUPER_SECRET_VALUE"
     }
   });
 
+  test("redacts a non-string edge_runtime.secrets value on the ProjectConfigParseError document", async () => {
+    const cwd = makeTempProject();
+    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      // `FOO` is a TOML array, not a string — the schema decode for this
+      // entry fails, but the raw pre-decode value still carries
+      // `MY_SUPER_SECRET_VALUE` in plaintext. `redactEdgeRuntimeSecrets` must
+      // wrap the entry regardless of its shape, not just string entries.
+      await writeFile(
+        tomlPath,
+        `[analytics]
+port = "not-a-number"
+
+[edge_runtime.secrets]
+FOO = ["MY_SUPER_SECRET_VALUE"]
+`,
+      );
+
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfigFile(tomlPath).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) {
+        return;
+      }
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (!Option.isSome(error) || error.value._tag !== "ProjectConfigParseError") {
+        return;
+      }
+
+      const edgeRuntime = error.value.document?.edge_runtime;
+      const secrets =
+        edgeRuntime !== null && typeof edgeRuntime === "object" && edgeRuntime !== undefined
+          ? (edgeRuntime as Record<string, unknown>).secrets
+          : undefined;
+      expect(secrets).toBeDefined();
+      const foo = (secrets as Record<string, unknown>).FOO;
+      expect(Redacted.isRedacted(foo)).toBe(true);
+      expect(Redacted.value(foo as Redacted.Redacted<unknown>)).toEqual(["MY_SUPER_SECRET_VALUE"]);
+      expect(JSON.stringify(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("preserves TOML as the active format on save", async () => {
     const cwd = makeTempProject();
     const tomlPath = await runConfigEffect(configTomlPath(cwd));
