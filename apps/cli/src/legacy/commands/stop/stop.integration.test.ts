@@ -5,6 +5,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { vi } from "vitest";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -668,6 +669,120 @@ describe("legacy stop integration", () => {
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails when [remotes.*] has a duplicate project_id, even with no projectRef", () => {
+    // Go's Config.Validate builds the duplicate map across all [remotes.*]
+    // blocks unconditionally (config.go:503-518), so this must fail before
+    // stop ever selects a remote or touches Docker — not just when a
+    // matching --project-ref is requested.
+    const workdir = tempRoot.current;
+    mkdirSync(join(workdir, "supabase"), { recursive: true });
+    writeFileSync(
+      join(workdir, "supabase", "config.toml"),
+      `project_id = "baseref"
+
+[remotes.a]
+project_id = "aaaaaaaaaaaaaaaaaaaa"
+
+[remotes.b]
+project_id = "aaaaaaaaaaaaaaaaaaaa"
+`,
+    );
+    const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyStop(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyStopConfigLoadError");
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails when a [remotes.*] project_id is not a valid 20-letter ref", () => {
+    // Go's Config.Validate (config.go:996-1001) checks every [remotes.*].project_id
+    // against refPattern unconditionally on every config load, so an invalid
+    // format must fail closed before stop reaches Docker.
+    const workdir = tempRoot.current;
+    mkdirSync(join(workdir, "supabase"), { recursive: true });
+    writeFileSync(
+      join(workdir, "supabase", "config.toml"),
+      `project_id = "baseref"
+
+[remotes.bad]
+project_id = "short"
+`,
+    );
+    const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyStop(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyStopConfigLoadError");
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "decodes a comma-separated string into an array field ([]string) for stop to proceed",
+    () => {
+      // Go's `newDecodeHook` wires `mapstructure.StringToSliceHookFunc(",")`
+      // unconditionally, so a plain string value for a `[]string` field like
+      // `additional_redirect_urls` decodes fine and must not block stop from
+      // reaching Docker.
+      const workdir = tempRoot.current;
+      mkdirSync(join(workdir, "supabase"), { recursive: true });
+      writeFileSync(
+        join(workdir, "supabase", "config.toml"),
+        `project_id = "demo"
+
+[auth]
+additional_redirect_urls = "http://a,http://b"
+`,
+      );
+      const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
+      return Effect.gen(function* () {
+        yield* legacyStop(flags());
+        const psCall = child.spawned.find((s) => s.args[0] === "ps");
+        expect(psCall?.args).toEqual([
+          "ps",
+          "--filter",
+          "label=com.supabase.cli.project=demo",
+          "--all",
+          "--format",
+          "{{.ID}}",
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("warns on stderr for a deprecated auth.external provider", () => {
+    // `normalizeDeprecatedExternalProviders` (packages/config/src/io.ts) emits
+    // this WARN via `Console.error` only when `goViperCompat` is set — verify
+    // legacy stop keeps that Go-parity behavior wired on.
+    const workdir = tempRoot.current;
+    mkdirSync(join(workdir, "supabase"), { recursive: true });
+    writeFileSync(
+      join(workdir, "supabase", "config.toml"),
+      `project_id = "demo"
+
+[auth.external.slack]
+enabled = true
+`,
+    );
+    const { layer } = setup({ skipConfig: true, route: defaultRoute() });
+    const warnings: Array<string> = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    });
+    return Effect.gen(function* () {
+      yield* legacyStop(flags());
+      expect(warnings.some((m) => m.includes('WARN: disabling deprecated "slack" provider'))).toBe(
+        true,
+      );
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
   });
 
   it.live(

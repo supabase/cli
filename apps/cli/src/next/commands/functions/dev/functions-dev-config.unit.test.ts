@@ -4,7 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option } from "effect";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import {
@@ -142,6 +142,81 @@ literal = "literal-secret"
       const error = yield* resolveFunctionsDevEdgeRuntimeConfig().pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(FunctionsDevEdgeRuntimeDisabledError);
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(cwd, { recursive: true, force: true }))),
+      Effect.provide(projectLayer(cwd)),
+    );
+  });
+
+  it.live("does not resolve a lowercase-named env() reference in edge runtime secrets", () => {
+    const cwd = makeTempProject();
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(cwd, "supabase"), { recursive: true }));
+      yield* Effect.tryPromise(() =>
+        writeFile(join(cwd, "supabase", ".env"), "lowercase_env_var=should-not-resolve\n"),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "test"
+
+[edge_runtime]
+policy = "oneshot"
+inspector_port = 8123
+
+[edge_runtime.secrets]
+lowercase_secret = "env(lowercase_env_var)"
+`,
+        ),
+      );
+
+      const result = yield* resolveFunctionsDevEdgeRuntimeConfig();
+
+      expect(result.config).toEqual({
+        enabled: true,
+        inspectorPort: 8123,
+        policy: "oneshot",
+        env: {
+          LOWERCASE_SECRET: "env(lowercase_env_var)",
+        },
+      });
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(cwd, { recursive: true, force: true }))),
+      Effect.provide(projectLayer(cwd)),
+    );
+  });
+
+  it.live("does not split a comma-separated string literal for an array field", () => {
+    const cwd = makeTempProject();
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(cwd, "supabase"), { recursive: true }));
+      yield* Effect.tryPromise(() =>
+        writeFile(join(cwd, "supabase", ".env"), "EDGE_API_KEY=edge-secret\n"),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "test"
+
+[auth]
+additional_redirect_urls = "http://a,http://b"
+
+[edge_runtime]
+policy = "oneshot"
+inspector_port = 8123
+
+[edge_runtime.secrets]
+api_key = "env(EDGE_API_KEY)"
+literal = "literal-secret"
+`,
+        ),
+      );
+
+      const exit = yield* resolveFunctionsDevEdgeRuntimeConfig().pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(cwd, { recursive: true, force: true }))),
       Effect.provide(projectLayer(cwd)),

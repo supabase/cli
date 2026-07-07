@@ -1,7 +1,12 @@
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Exit, Fiber, Layer } from "effect";
 import type { StackServiceStatus } from "@supabase/stack";
 import { DEFAULT_VERSIONS, stackMetadata, type StackInfo } from "@supabase/stack/effect";
+import { loadProjectConfig } from "@supabase/config";
 import { start } from "./start.handler.ts";
 import { StartVersionState } from "./start.command.ts";
 import { startForegroundWithStopSignal } from "./flows/foreground.flow.ts";
@@ -530,5 +535,70 @@ describe("start", () => {
         }),
       );
     }).pipe(Effect.provide(layer));
+  });
+});
+
+describe("next start config-load path (goViperCompat default-off regression)", () => {
+  // start.command.ts's `Command.provide` factory calls
+  // `loadProjectConfig(projectHome.projectRoot)` with no options (line ~183) —
+  // deeply inside `Layer.unwrap`/`StateManager`/daemon-layer construction that
+  // this file's `start()`-from-handler harness (StartVersionState provided
+  // directly) never reaches and can't be extended to reach without
+  // reproducing that machinery. This test instead exercises the exact
+  // zero-options `loadProjectConfig` call directly against a real temp
+  // project, pinning that `next start` still loads successfully when a
+  // config.toml has a duplicate or malformed `[remotes.*]` block — the
+  // regression that motivated gating these Go-viper checks behind
+  // `goViperCompat` (packages/config/src/io.unit.test.ts has the
+  // authoritative, broader coverage of this default-off behavior).
+  it("loads successfully despite a duplicate [remotes.*] project_id", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "supabase-next-start-config-"));
+    try {
+      await mkdir(join(tempDir, "supabase"), { recursive: true });
+      await writeFile(
+        join(tempDir, "supabase", "config.toml"),
+        `project_id = "baseref"
+
+[remotes.a]
+project_id = "dupref"
+
+[remotes.b]
+project_id = "dupref"
+`,
+      );
+
+      const result = await Effect.runPromise(
+        loadProjectConfig(tempDir).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(result).not.toBeNull();
+      expect(result?.config.project_id).toBe("baseref");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("loads successfully despite a malformed [remotes.*] project_id", async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), "supabase-next-start-config-"));
+    try {
+      await mkdir(join(tempDir, "supabase"), { recursive: true });
+      await writeFile(
+        join(tempDir, "supabase", "config.toml"),
+        `project_id = "baseref"
+
+[remotes.bad]
+project_id = "not-a-ref"
+`,
+      );
+
+      const result = await Effect.runPromise(
+        loadProjectConfig(tempDir).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(result).not.toBeNull();
+      expect(result?.config.project_id).toBe("baseref");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });

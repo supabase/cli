@@ -6,7 +6,7 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -305,6 +305,100 @@ describe("legacy status integration", () => {
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails when [remotes.*] has a duplicate project_id, even with no projectRef", () => {
+    // Go's duplicate-project_id check (config.go:594-602) runs unconditionally
+    // on every config load, inside the same loop that resolves the [remotes.*]
+    // override — it is not gated on a caller actually selecting a remote.
+    // `status` never binds a --project-ref flag, so it must still fail on a
+    // config-wide duplicate, before ever reaching Docker.
+    const workdir = tempRoot.current;
+    mkdirSync(join(workdir, "supabase"), { recursive: true });
+    writeFileSync(
+      join(workdir, "supabase", "config.toml"),
+      `project_id = "baseref"
+
+[remotes.a]
+project_id = "previewrefaaaaaaaaaa"
+
+[remotes.b]
+project_id = "previewrefaaaaaaaaaa"
+`,
+    );
+    const { layer, child } = setup({ skipConfig: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyStatus(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusConfigLoadError");
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails when a [remotes.*] project_id is not a valid 20-letter ref", () => {
+    // Go's Config.Validate (config.go:996-1001) checks every [remotes.*].project_id
+    // against refPattern unconditionally on every config load — not only a
+    // remote that ends up selected — so this must fail closed before status
+    // reaches Docker, even with no --project-ref requested.
+    const workdir = tempRoot.current;
+    mkdirSync(join(workdir, "supabase"), { recursive: true });
+    writeFileSync(
+      join(workdir, "supabase", "config.toml"),
+      `project_id = "baseref"
+
+[remotes.bad]
+project_id = "short"
+`,
+    );
+    const { layer, child } = setup({ skipConfig: true });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyStatus(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusConfigLoadError");
+      }
+      expect(child.spawned).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "decodes a comma-separated string into an array field ([]string) for status to proceed",
+    () => {
+      // Go's StringToSliceHookFunc (mapstructure) splits a plain string literal
+      // into a []string for a []string field like additional_redirect_urls —
+      // this only runs when goViperCompat is on. Pin that status still proceeds
+      // past config load (and on to a successful Docker inspect/list) rather
+      // than treating the string literal as a decode error.
+      const { layer } = setup({
+        configContents:
+          'project_id = "demo"\n[auth]\nadditional_redirect_urls = "http://a,http://b"\n',
+      });
+      return Effect.gen(function* () {
+        yield* legacyStatus(flags());
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("warns on stderr for a deprecated auth.external provider", () => {
+    // Go's `external.validate()` (config.go:1418-1423) disables a bare
+    // [auth.external.slack] block and warns — mirrored by
+    // `normalizeDeprecatedExternalProviders` in packages/config's io.ts, gated
+    // on `goViperCompat` (confirmed already wired in status.handler.ts). The
+    // WARN goes out via Effect's `Console.error`, not this file's `Output`
+    // service, so it must be observed with a raw console.error spy — same
+    // idiom as packages/config/src/io.unit.test.ts's deprecated-provider tests.
+    const { layer } = setup({
+      configContents: 'project_id = "demo"\n[auth.external.slack]\nenabled = true\n',
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    return Effect.gen(function* () {
+      yield* legacyStatus(flags());
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('WARN: disabling deprecated "slack" provider'),
+      );
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
   });
 
   it.live("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () => {

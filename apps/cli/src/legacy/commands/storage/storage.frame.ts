@@ -50,8 +50,8 @@ export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
   workdir: string,
   projectRef: string,
 ) {
-  const loadOptions: LoadProjectConfigOptions | undefined =
-    projectRef !== "" ? { projectRef } : undefined;
+  const loadOptions: LoadProjectConfigOptions =
+    projectRef !== "" ? { projectRef, goViperCompat: true } : { goViperCompat: true };
   const loaded = yield* loadProjectConfig(workdir, loadOptions).pipe(
     Effect.catchTag(
       "ProjectConfigParseError",

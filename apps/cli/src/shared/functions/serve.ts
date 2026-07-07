@@ -127,6 +127,7 @@ export interface FunctionsServeDependencies {
   readonly debug: boolean;
   readonly networkId: Option.Option<string>;
   readonly projectIdOverride: Option.Option<string>;
+  readonly goViperCompat: boolean;
 }
 
 interface PlainServeAuthConfig {
@@ -616,6 +617,7 @@ const resolveAuthArtifacts = Effect.fnUntraced(function* (
 const resolveServeConfig = Effect.fnUntraced(function* (
   projectRoot: string,
   projectIdOverride: Option.Option<string>,
+  goViperCompat: boolean,
 ) {
   const projectEnv = yield* loadServeProjectEnvironment(projectRoot);
   const projectRef = Option.match(projectIdOverride, {
@@ -632,28 +634,35 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   const loadedConfig = yield* loadProjectConfig(projectRoot, {
     ...(projectRef === undefined ? {} : { projectRef }),
     ...(projectEnv === null ? {} : { projectEnv }),
+    goViperCompat,
   });
   const baseConfig = loadedConfig?.config ?? defaultProjectConfig;
 
   const auth =
     projectEnv === null
       ? toPlainAuthConfig(baseConfig.auth)
-      : toPlainAuthConfig(yield* resolveProjectSubtree(baseConfig.auth, projectEnv, "auth"));
+      : toPlainAuthConfig(
+          yield* resolveProjectSubtree(baseConfig.auth, projectEnv, "auth", { goViperCompat }),
+        );
   const edgeRuntime =
     projectEnv === null
       ? toPlainEdgeRuntimeConfig(baseConfig.edge_runtime)
       : toPlainEdgeRuntimeConfig(
-          yield* resolveProjectSubtree(baseConfig.edge_runtime, projectEnv, "edge_runtime"),
+          yield* resolveProjectSubtree(baseConfig.edge_runtime, projectEnv, "edge_runtime", {
+            goViperCompat,
+          }),
         );
   const apiPort =
     projectEnv === null
       ? baseConfig.api.port
-      : (yield* resolveProjectSubtree(baseConfig.api, projectEnv, "api")).port;
+      : (yield* resolveProjectSubtree(baseConfig.api, projectEnv, "api", { goViperCompat })).port;
   const configDeclaredFunctions =
     projectEnv === null
       ? toPlainFunctionRecord(baseConfig.functions)
       : toPlainFunctionRecord(
-          yield* resolveProjectSubtree(baseConfig.functions, projectEnv, "functions"),
+          yield* resolveProjectSubtree(baseConfig.functions, projectEnv, "functions", {
+            goViperCompat,
+          }),
         );
   const configForManifest: ProjectConfig = {
     ...baseConfig,
@@ -667,7 +676,9 @@ const resolveServeConfig = Effect.fnUntraced(function* (
     projectEnv === null
       ? (baseConfig.project_id ?? "")
       : (reveal(
-          yield* resolveProjectValue(baseConfig.project_id ?? "", projectEnv, "project_id"),
+          yield* resolveProjectValue(baseConfig.project_id ?? "", projectEnv, "project_id", {
+            goViperCompat,
+          }),
         ) ?? "");
   const rawProjectId = Option.getOrElse(projectIdOverride, () => configProjectId).trim();
   const fallbackProjectId = basename(resolve(projectRoot));
@@ -1296,6 +1307,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
   const resolved = yield* resolveServeConfig(
     input.dependencies.projectRoot,
     input.dependencies.projectIdOverride,
+    input.dependencies.goViperCompat,
   );
   const projectId = resolved.projectId;
   const containerId = localDockerId("edge_runtime", projectId);

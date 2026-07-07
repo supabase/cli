@@ -188,6 +188,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       // `config.json` would make `loadProjectConfig` prefer it over
       // `config.toml`, reporting ports/keys for a config Go never reads.
       tomlOnly: true,
+      goViperCompat: true,
     }).pipe(
       Effect.mapError(
         (cause) =>

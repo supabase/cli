@@ -155,8 +155,8 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
 
     // 2. Load config.toml, passing projectRef so `[remotes.*]` overrides are
     // merged for --linked. A parse failure aborts before any network call.
-    const loadOptions: LoadProjectConfigOptions | undefined =
-      projectRef !== "" ? { projectRef } : undefined;
+    const loadOptions: LoadProjectConfigOptions =
+      projectRef !== "" ? { projectRef, goViperCompat: true } : { goViperCompat: true };
     const loaded = yield* loadProjectConfig(cliConfig.workdir, loadOptions).pipe(
       Effect.catchTag(
         "ProjectConfigParseError",

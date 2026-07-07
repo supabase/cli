@@ -147,6 +147,7 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
       // `config.json` would make `loadProjectConfig` prefer it over
       // `config.toml`, potentially stopping containers for the wrong project.
       tomlOnly: true,
+      goViperCompat: true,
     }).pipe(
       Effect.mapError(
         (cause) =>

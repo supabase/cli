@@ -41,6 +41,7 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
     projectRoot: cliConfig.workdir,
     supabaseDir: join(cliConfig.workdir, "supabase"),
     dashboardUrl: legacyDashboardUrl(cliConfig.profile),
+    goViperCompat: true,
     yes,
     rawArgs,
     edgeRuntimeVersion,

@@ -53,7 +53,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     // literals stay as plain strings, so `Redacted.isRedacted(...)` is the
     // equivalent guard.
     const merged = new Map<string, string>();
-    const loaded = yield* loadProjectConfig(runtimeInfo.cwd).pipe(
+    const loaded = yield* loadProjectConfig(runtimeInfo.cwd, { goViperCompat: true }).pipe(
       Effect.catchTag("ProjectConfigParseError", (cause) =>
         Effect.fail(
           new LegacySecretsConfigParseError({
@@ -72,6 +72,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
           loaded.config.edge_runtime,
           projectEnv,
           "edge_runtime",
+          { goViperCompat: true },
         );
         for (const [name, value] of Object.entries(resolved.secrets ?? {})) {
           if (Redacted.isRedacted(value)) {
