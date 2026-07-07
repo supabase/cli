@@ -467,6 +467,40 @@ describe("withLegacyCommandInstrumentation", () => {
     );
   });
 
+  it.live(
+    "passes a Flag.withDefault-wrapped Flag.choice value through verbatim (Map(Optional(Single)))",
+    () => {
+      const analytics = mockContextualAnalytics();
+      // Mirrors gen signing-key's real `algorithm` flag construction exactly —
+      // `.pipe(Flag.withDefault(...))` composes as `Map(Optional(Single))`.
+      const config = {
+        algorithm: Flag.choice("algorithm", ["RS256", "ES256"] as const).pipe(
+          Flag.withDefault("ES256" as const),
+        ),
+      };
+
+      return Effect.void.pipe(
+        withLegacyCommandInstrumentation({
+          flags: { algorithm: "RS256" },
+          config,
+        }),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(
+          Stdio.layerTest({ args: Effect.succeed(["gen", "signing-key", "--algorithm", "RS256"]) }),
+        ),
+        Effect.provide(commandRuntimeLayer(["gen", "signing-key"])),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const event = analytics.captured[0];
+            expect(event?.properties.flags).toEqual({ algorithm: "RS256" });
+          }),
+        ),
+      );
+    },
+  );
+
   it.live("passes an Optional-wrapped Flag.choice value through verbatim", () => {
     const analytics = mockContextualAnalytics();
     const config = {

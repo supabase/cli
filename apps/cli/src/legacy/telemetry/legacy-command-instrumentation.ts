@@ -206,11 +206,19 @@ function normalizeFlagValue(value: unknown): unknown | undefined {
 }
 
 // A `Map`/`Transform`/`Optional`/`Variadic` param wraps an inner `param` of the
-// same shape (e.g. `.pipe(Flag.optional)`, `.pipe(Flag.withDescription(...))`).
-// `effect/unstable/cli` only publishes `Param.isSingle` for narrowing to the
-// base case, not the reverse (there's no public `isWrapped`), so this predicate
-// recreates it: true whenever the runtime object actually carries a `param`
-// field, which every non-`Single` param variant does per their own interfaces.
+// same shape (e.g. `.pipe(Flag.optional)`, `.pipe(Flag.withDefault(...))`, which
+// composes as `Map(Optional(Single))`). `effect/unstable/cli` already ships the
+// exact unwrap this needs — `Param.extractSingleParams`, the same function
+// `--help` rendering uses — but it (and `Primitive.getChoiceKeys`) are
+// `@internal`-tagged and confirmed absent from this package's published `.d.ts`
+// (present in the compiled `.js`, so calling them would only type-check via an
+// `as` cast, which this repo forbids). This predicate reimplements the
+// `isSingle`-or-has-a-`.param`-field check using only type-visible public
+// fields; every non-`Single` variant publicly declares `.param` per its own
+// interface, and the variant union is closed as of this effect version, so an
+// unrecognized future variant fails *closed* (silently not detected as a
+// choice flag, i.e. stays redacted) rather than open. Delete this in favor of
+// `Param.extractSingleParams` if effect ever publishes it.
 interface WrappedParam {
   readonly param: Param.Any;
 }
@@ -222,14 +230,16 @@ function isWrappedParam(param: Param.Any): param is Param.Any & WrappedParam {
 // `flag.Value.(*utils.EnumFlag)` unconditionally — every enum flag is
 // telemetry-safe, no per-flag annotation needed. Unwraps down to the
 // underlying `Single` param the same way `--help` rendering does, then checks
-// its primitive's `_tag` for `Flag.choice`/`Flag.choiceWithValue`.
+// its primitive's `_tag` for `Flag.choice`/`Flag.choiceWithValue`. Restricted to
+// `kind === Param.flagKind` so a same-named `Argument.choice` positional (none
+// exist today) can never be mistaken for a `--flag`.
 function getChoiceFlagNames(config: Record<string, Param.Any> | undefined): ReadonlySet<string> {
   const names = new Set<string>();
   if (config === undefined) return names;
 
   const visit = (param: Param.Any): void => {
     if (Param.isSingle(param)) {
-      if (param.primitiveType._tag === "Choice") {
+      if (param.kind === Param.flagKind && param.primitiveType._tag === "Choice") {
         names.add(param.name);
       }
       return;
