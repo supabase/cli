@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Layer, Option, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -276,6 +276,7 @@ function setup(
     format?: "text" | "json" | "stream-json";
     linked?: boolean;
     projectRoot?: string;
+    rawArgs?: ReadonlyArray<string>;
   } = {},
 ) {
   const out = mockOutput({ format: opts.format ?? "text", interactive: false });
@@ -289,6 +290,9 @@ function setup(
     mockRuntimeInfo({ cwd }),
     mockProjectLinkState(opts.linked === false ? undefined : LINK_STATE),
     mockProjectHome(opts.projectRoot ?? cwd),
+    Stdio.layerTest({
+      args: Effect.succeed(opts.rawArgs ?? ["functions", "download"]),
+    }),
   );
 
   return { out, api, layer, proxy };
@@ -860,7 +864,9 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      const { api, layer, proxy } = setup(tempDir);
+      const { api, layer, proxy } = setup(tempDir, {
+        rawArgs: ["functions", "download", "--use-api", "--legacy-bundle"],
+      });
 
       const error = yield* functionsDownload({
         ...BASE_FLAGS,
@@ -869,6 +875,46 @@ describe("functions download", () => {
       }).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(ConflictingFunctionDownloadFlagsError);
+      if (!(error instanceof ConflictingFunctionDownloadFlagsError)) {
+        throw new Error(`unexpected error: ${String(error)}`);
+      }
+      // Byte-matches cobra's validateExclusiveFlagGroups (flag_groups.go:204):
+      // full group in registration order, changed subset sorted alphabetically.
+      expect(error.message).toBe(
+        "if any flags in the group [use-api use-docker legacy-bundle] are set none of the others can be; [legacy-bundle use-api] were all set",
+      );
+      expect(api.requests).toHaveLength(0);
+      expect(proxy.calls).toHaveLength(0);
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("still rejects the bundler mutex when --use-docker=false is explicit", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      const { api, layer, proxy } = setup(tempDir, {
+        rawArgs: ["functions", "download", "--use-api", "--use-docker=false"],
+      });
+
+      const error = yield* functionsDownload({
+        ...BASE_FLAGS,
+        useApi: true,
+        useDocker: false,
+      }).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toBeInstanceOf(ConflictingFunctionDownloadFlagsError);
+      if (!(error instanceof ConflictingFunctionDownloadFlagsError)) {
+        throw new Error(`unexpected error: ${String(error)}`);
+      }
+      // cobra tracks pflag.Changed, not the resolved boolean value — an
+      // explicit --use-docker=false still counts as "set" for the mutex.
+      // Regression case: download previously branched on flag truthiness,
+      // so --use-docker=false (falsy) was silently excluded from the check.
+      expect(error.message).toBe(
+        "if any flags in the group [use-api use-docker legacy-bundle] are set none of the others can be; [use-api use-docker] were all set",
+      );
       expect(api.requests).toHaveLength(0);
       expect(proxy.calls).toHaveLength(0);
     }).pipe(

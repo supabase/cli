@@ -1,4 +1,5 @@
 import { Clock, Effect, Exit, Option, Stdio } from "effect";
+import { Param } from "effect/unstable/cli";
 import {
   CommandRuntime,
   getCommandRuntimeCommand,
@@ -34,6 +35,14 @@ interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unkno
   // Go's `markFlagTelemetrySafe` annotation in cmd/root_analytics.go. Boolean
   // flag values are always passed through, matching Go's isBooleanFlag branch.
   readonly safeFlags?: ReadonlyArray<string>;
+  // A command's flag config record (the object passed to `Command.make`).
+  // Any flag built with `Flag.choice`/`Flag.choiceWithValue` is treated as
+  // telemetry-safe automatically, mirroring Go's `isEnumFlag` branch
+  // (`cmd/root_analytics.go:110-116`, which checks `flag.Value.(*utils.EnumFlag)`
+  // unconditionally — no per-flag annotation required). Passing `config` here
+  // covers every current and future enum flag on the command without having to
+  // hand-list each one in `safeFlags`.
+  readonly config?: Record<string, Param.Any>;
   // The `-o`/`--output` values this command accepts, mirroring Go's per-command
   // `--output` enum (`internal/utils/enum.go`). Defaults to the resource-command
   // set; `db query` overrides with `json|table|csv`. The shared global
@@ -196,10 +205,61 @@ function normalizeFlagValue(value: unknown): unknown | undefined {
   return normalizeFlagValue(value.value);
 }
 
+// A `Map`/`Transform`/`Optional`/`Variadic` param wraps an inner `param` of the
+// same shape (e.g. `.pipe(Flag.optional)`, `.pipe(Flag.withDefault(...))`, which
+// composes as `Map(Optional(Single))`). `effect/unstable/cli` already ships the
+// exact unwrap this needs — `Param.extractSingleParams`, the same function
+// `--help` rendering uses — but it (and `Primitive.getChoiceKeys`) are
+// `@internal`-tagged and confirmed absent from this package's published `.d.ts`
+// (present in the compiled `.js`, so calling them would only type-check via an
+// `as` cast, which this repo forbids). This predicate reimplements the
+// `isSingle`-or-has-a-`.param`-field check using only type-visible public
+// fields; every non-`Single` variant publicly declares `.param` per its own
+// interface, and the variant union is closed as of this effect version, so an
+// unrecognized future variant fails *closed* (silently not detected as a
+// choice flag, i.e. stays redacted) rather than open. Delete this in favor of
+// `Param.extractSingleParams` if effect ever publishes it.
+interface WrappedParam {
+  readonly param: Param.Any;
+}
+function isWrappedParam(param: Param.Any): param is Param.Any & WrappedParam {
+  return "param" in param;
+}
+
+// Mirrors Go's `isEnumFlag` (`cmd/root_analytics.go:110-116`), which checks
+// `flag.Value.(*utils.EnumFlag)` unconditionally — every enum flag is
+// telemetry-safe, no per-flag annotation needed. Unwraps down to the
+// underlying `Single` param the same way `--help` rendering does, then checks
+// its primitive's `_tag` for `Flag.choice`/`Flag.choiceWithValue`. Restricted to
+// `kind === Param.flagKind` so a same-named `Argument.choice` positional (none
+// exist today) can never be mistaken for a `--flag`.
+function getChoiceFlagNames(config: Record<string, Param.Any> | undefined): ReadonlySet<string> {
+  const names = new Set<string>();
+  if (config === undefined) return names;
+
+  const visit = (param: Param.Any): void => {
+    if (Param.isSingle(param)) {
+      if (param.kind === Param.flagKind && param.primitiveType._tag === "Choice") {
+        names.add(param.name);
+      }
+      return;
+    }
+    if (isWrappedParam(param)) {
+      visit(param.param);
+    }
+  };
+
+  for (const param of Object.values(config)) {
+    visit(param);
+  }
+  return names;
+}
+
 function buildFlagsMap<Flags extends Record<string, unknown>>(
   flags: Flags | undefined,
   safeFlagSet: ReadonlySet<string>,
   changedFlagNames: ReadonlyArray<string>,
+  choiceFlagNames: ReadonlySet<string>,
 ): Record<string, unknown> | undefined {
   if (changedFlagNames.length === 0) return undefined;
 
@@ -215,7 +275,7 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(
     const rawValue = handlerFlagsByCliName.get(cliName);
     const value = normalizeFlagValue(rawValue);
 
-    if (safeFlagSet.has(cliName) || typeof value === "boolean") {
+    if (safeFlagSet.has(cliName) || choiceFlagNames.has(cliName) || typeof value === "boolean") {
       result[cliName] = value ?? REDACTED_VALUE;
       continue;
     }
@@ -246,6 +306,7 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
   options?: LegacyCommandInstrumentationOptions<Flags>,
 ) {
   const safeFlagSet = new Set(options?.safeFlags ?? []);
+  const choiceFlagNames = getChoiceFlagNames(options?.config);
   return <A, E, R>(self: Effect.Effect<A, E, R>) =>
     Effect.gen(function* () {
       const commandRuntime = yield* CommandRuntime;
@@ -264,7 +325,7 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
         const args = yield* stdio.args;
         const startedAt = yield* Clock.currentTimeMillis;
         const changedFlagNames = extractChangedFlagNames(args, options?.aliases);
-        const flags = buildFlagsMap(options?.flags, safeFlagSet, changedFlagNames);
+        const flags = buildFlagsMap(options?.flags, safeFlagSet, changedFlagNames, choiceFlagNames);
         const analyticsContext = {
           command_run_id: commandRuntime.commandRunId,
           command,

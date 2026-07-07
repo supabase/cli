@@ -60,7 +60,7 @@ export const legacyGenSigningKeyCommand = Command.make("signing-key", config).pi
   ]),
   Command.withHandler((flags) =>
     legacyGenSigningKey(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
+      withLegacyCommandInstrumentation({ flags, config }),
       withJsonErrorHandling,
     ),
   ),

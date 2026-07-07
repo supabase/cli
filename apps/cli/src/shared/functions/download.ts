@@ -7,7 +7,15 @@ import { Effect, FileSystem, Option } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { Output } from "../output/output.service.ts";
-import { invalidFunctionSlugDetail, validateFunctionSlugMessage } from "./functions.shared.ts";
+import {
+  cobraMutuallyExclusiveErrorMessage,
+  hasExplicitLongFlag,
+} from "../cli/cobra-flag-groups.ts";
+import {
+  FUNCTIONS_BUNDLER_MUTEX_GROUP,
+  invalidFunctionSlugDetail,
+  validateFunctionSlugMessage,
+} from "./functions.shared.ts";
 import {
   ConflictingFunctionDownloadFlagsError,
   FunctionDownloadNotFoundError,
@@ -34,6 +42,7 @@ export interface DownloadFunctionsDependencies<
 > {
   readonly api: ApiClient;
   readonly projectRoot: string;
+  readonly rawArgs: ReadonlyArray<string>;
   readonly resolveProjectRef: (
     projectRef: Option.Option<string>,
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
@@ -108,19 +117,20 @@ function validateSlug(slug: string): Effect.Effect<void, InvalidFunctionSlugErro
 }
 
 function validateDownloadFlags(
-  flags: DownloadFunctionsOptions,
+  rawArgs: ReadonlyArray<string>,
 ): Effect.Effect<void, ConflictingFunctionDownloadFlagsError> {
-  const selected = [
-    flags.useApi ? "--use-api" : undefined,
-    flags.useDocker ? "--use-docker" : undefined,
-    flags.legacyBundle ? "--legacy-bundle" : undefined,
-  ].filter((flag) => flag !== undefined);
+  const commandPath = ["functions", "download"] as const;
+  const changed = [
+    hasExplicitLongFlag(rawArgs, commandPath, "use-api") ? "use-api" : undefined,
+    hasExplicitLongFlag(rawArgs, commandPath, "use-docker") ? "use-docker" : undefined,
+    hasExplicitLongFlag(rawArgs, commandPath, "legacy-bundle") ? "legacy-bundle" : undefined,
+  ].filter((flag): flag is string => flag !== undefined);
 
-  return selected.length <= 1
+  return changed.length <= 1
     ? Effect.void
     : Effect.fail(
         new ConflictingFunctionDownloadFlagsError({
-          message: `flags ${selected.join(", ")} are mutually exclusive`,
+          message: cobraMutuallyExclusiveErrorMessage(FUNCTIONS_BUNDLER_MUTEX_GROUP, changed),
         }),
       );
 }
@@ -734,7 +744,7 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
   return Effect.gen(function* () {
     const output = yield* Output;
 
-    yield* validateDownloadFlags(flags);
+    yield* validateDownloadFlags(dependencies.rawArgs);
 
     if (flags.useDocker || flags.legacyBundle) {
       const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);

@@ -230,4 +230,25 @@ describe("normalize", () => {
     const tsLegacy = `Dumping schemas from local database...\n${tail}`;
     expect(normalize(go)).toBe(normalize(tsLegacy));
   });
+
+  it("canonicalizes the postgres connection-error suffix (pgconn vs @effect/sql)", () => {
+    // Reproduces the `db push --local` / `--dry-run` parity divergence: Go wraps
+    // pgconn's driver detail while the ts-legacy port surfaces the @effect/sql
+    // SqlError. Both share the `failed to connect to postgres: ` prefix, so after
+    // normalization the connection-refused stderr compares equal on both sides.
+    const goLocal =
+      "Connecting to local database...\nfailed to connect to postgres: failed to connect to `host=127.0.0.1 user=postgres database=postgres`: dial error (dial tcp 127.0.0.1:54322: connect: connection refused)";
+    const goPooler =
+      "Connecting to remote database...\nfailed to connect to postgres: failed to connect to `host=aws-0-eu-central-1.pooler.supabase.com user=postgres.aaaaaaaaaaaaaaaaaaaa database=postgres`: server error (FATAL: (ENOTFOUND) tenant/user postgres.aaaaaaaaaaaaaaaaaaaa not found (SQLSTATE XX000))";
+    const tsLegacy =
+      "failed to connect to postgres: effect/sql/SqlError: PgClient: Failed to connect";
+
+    expect(normalize(goLocal)).toBe(
+      "Connecting to local database...\nfailed to connect to postgres: <CONNECTION_ERROR>",
+    );
+    expect(normalize(goPooler)).toBe(
+      "Connecting to remote database...\nfailed to connect to postgres: <CONNECTION_ERROR>",
+    );
+    expect(normalize(tsLegacy)).toBe("failed to connect to postgres: <CONNECTION_ERROR>");
+  });
 });

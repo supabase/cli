@@ -36,7 +36,7 @@ export const legacyFunctionsNewCommand = Command.make("new", config).pipe(
   Command.withShortDescription("Create a new Function locally"),
   Command.withHandler((flags) =>
     legacyFunctionsNew(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
+      withLegacyCommandInstrumentation({ flags, config }),
       withJsonErrorHandling,
     ),
   ),

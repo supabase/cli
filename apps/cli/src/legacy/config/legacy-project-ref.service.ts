@@ -41,9 +41,14 @@ interface LegacyProjectRefResolverShape {
    * `projects list` (`list.go:31-33`), which ignores `ErrNotLinked` and only
    * uses the value as a "linked" marker. Returns `None` when nothing resolves.
    *
-   * Unlike `resolve`, the returned value is **not** format-validated — Go's
-   * soft load also skips validation here, and the value is only used as a
-   * display marker, never injected into an API path.
+   * Unlike `resolve`, the returned value is **not** format-validated. Note this
+   * is a caller-side simplification, not a Go behavior match: Go's
+   * `LoadProjectRef` still validates and warns to stderr on a malformed ref
+   * (see `services`'s equivalent handling, CLI-1872), it just doesn't fail the
+   * command. `resolveOptional` skips the warning too, which is safe only
+   * because every current caller uses the value purely as a display marker,
+   * never injected into an API path — a caller that needs the Go-parity
+   * warning should validate and warn itself rather than assume this does it.
    */
   readonly resolveOptional: (
     flagValue: Option.Option<string>,

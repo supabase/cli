@@ -11,3 +11,8 @@ export function validateFunctionSlugMessage(slug: string): string | undefined {
 // `functionsDeployCmd`, and `functionsDownloadCmd`
 // (`cmd/functions.go:151,153,165,178`).
 export const FUNCTIONS_PROJECT_REF_SAFE_FLAGS = ["project-ref"] as const;
+
+// Registration order matches Go's `functionsDeployCmd`/`functionsDownloadCmd`
+// `MarkFlagsMutuallyExclusive("use-api", "use-docker", "legacy-bundle")`
+// (`cmd/functions.go:158,182`).
+export const FUNCTIONS_BUNDLER_MUTEX_GROUP = ["use-api", "use-docker", "legacy-bundle"] as const;
