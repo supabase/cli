@@ -76,6 +76,12 @@ function mockStack() {
         : Effect.sync(() => {
             serviceCalls.push(`restart:${name}`);
           }),
+    enableExtension: (name: string) =>
+      name === "unknown"
+        ? Effect.fail(new ServiceNotFoundError({ name }))
+        : Effect.sync(() => {
+            serviceCalls.push(`enable-extension:${name}`);
+          }),
     reloadFunctions: () =>
       Effect.sync(() => {
         serviceCalls.push("reload-functions");

@@ -67,6 +67,9 @@ export class Stack extends Context.Service<
     readonly restartService: (
       name: string,
     ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
+    readonly enableExtension: (
+      name: string,
+    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
     readonly reloadFunctions: (
       opts?: FunctionsConfig,
     ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
@@ -107,6 +110,7 @@ export class Stack extends Context.Service<
           startService: coordinator.startService,
           stopService: coordinator.stopService,
           restartService: coordinator.restartService,
+          enableExtension: coordinator.enableExtension,
           reloadFunctions: coordinator.reloadFunctions,
           reloadEdgeRuntime: coordinator.reloadEdgeRuntime,
           getState: coordinator.getState,

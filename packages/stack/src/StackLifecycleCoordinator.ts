@@ -15,9 +15,11 @@ import {
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { cleanupLocalStackResources } from "./cleanup.ts";
+import { planEnableExtension } from "./enableExtension.ts";
 import { StackBuildError } from "./errors.ts";
 import { configureFunctionsRuntime, type FunctionsConfig } from "./functions.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
+import { readPreloadLibraries, writePreloadLibraries } from "./pgconf.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { PreparedStackArtifacts } from "./StackPreparation.ts";
@@ -145,6 +147,9 @@ export class StackLifecycleCoordinator extends Context.Service<
     readonly restartService: (
       name: string,
     ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
+    readonly enableExtension: (
+      name: string,
+    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
     readonly reloadFunctions: (
       opts?: FunctionsConfig,
     ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
@@ -553,6 +558,23 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* requireKnownService(name);
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.restartService(name);
+            }),
+          enableExtension: (name) =>
+            Effect.gen(function* () {
+              const currentLibraries = yield* Effect.promise(() =>
+                readPreloadLibraries(config.postgres.dataDir),
+              );
+              const plan = planEnableExtension(name, currentLibraries);
+              if (plan.action === "none") {
+                return;
+              }
+              yield* Effect.promise(() =>
+                writePreloadLibraries(config.postgres.dataDir, plan.libraries),
+              );
+              yield* requireKnownService("postgres");
+              const runtime = yield* ensureRuntime;
+              yield* runtime.orchestrator.restartService("postgres");
+              yield* runtime.orchestrator.waitReady("postgres");
             }),
           reloadFunctions: (opts) =>
             Effect.gen(function* () {

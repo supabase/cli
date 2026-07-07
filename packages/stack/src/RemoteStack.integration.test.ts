@@ -86,6 +86,12 @@ function mockStack() {
         : Effect.sync(() => {
             serviceCalls.push(`restart:${name}`);
           }),
+    enableExtension: (name: string) =>
+      name === "unknown"
+        ? Effect.fail(new ServiceNotFoundError({ name }))
+        : Effect.sync(() => {
+            serviceCalls.push(`enable-extension:${name}`);
+          }),
     reloadFunctions: () =>
       Effect.sync(() => {
         serviceCalls.push("reload-functions");
@@ -225,6 +231,13 @@ describe("RemoteStack integration", () => {
           Effect.gen(function* () {
             const res = yield* Effect.promise(() =>
               fetch(`${url}/services/${name}/restart`, { method: "POST" }),
+            );
+            if (res.status === 404) return yield* new ServiceNotFoundError({ name });
+          }),
+        enableExtension: (name: string) =>
+          Effect.gen(function* () {
+            const res = yield* Effect.promise(() =>
+              fetch(`${url}/extensions/${name}/enable`, { method: "POST" }),
             );
             if (res.status === 404) return yield* new ServiceNotFoundError({ name });
           }),

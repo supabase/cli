@@ -278,6 +278,25 @@ export const RemoteStack = {
               }),
             ),
 
+          enableExtension: (name: string) =>
+            withUnixHttpClient(
+              Effect.gen(function* () {
+                const response = yield* unixResponse(socketPath, `/extensions/${name}/enable`, {
+                  method: "POST",
+                });
+                if (response.status === 404) {
+                  return yield* new ServiceNotFoundError({ name });
+                }
+                if (response.status === 500) {
+                  const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
+                    response,
+                  ).pipe(Effect.orDie);
+                  return yield* new ServiceReadyError({ name, reason: body.error });
+                }
+                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+              }),
+            ),
+
           reloadFunctions: (opts) =>
             withUnixHttpClient(
               Effect.gen(function* () {

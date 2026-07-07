@@ -98,6 +98,7 @@ export interface StackHandle extends AsyncDisposable {
   startService(name: string): Promise<void>;
   stopService(name: string): Promise<void>;
   restartService(name: string): Promise<void>;
+  enableExtension(name: string): Promise<void>;
   reloadFunctions(opts?: FunctionsConfig): Promise<void>;
   reloadEdgeRuntime(opts: EdgeRuntimeReloadConfig): Promise<void>;
   ready(opts?: ReadyOptions): Promise<void>;
@@ -730,6 +731,7 @@ export async function createStack(
       startService: (name) => run(localStack.startService(name)),
       stopService: (name) => run(localStack.stopService(name)),
       restartService: (name) => run(localStack.restartService(name)),
+      enableExtension: (name) => run(localStack.enableExtension(name)),
       reloadFunctions: (opts) => run(localStack.reloadFunctions(opts)),
       reloadEdgeRuntime: (opts) => run(localStack.reloadEdgeRuntime(opts)),
       ready: (opts) => {
