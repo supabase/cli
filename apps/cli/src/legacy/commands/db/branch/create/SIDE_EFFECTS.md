@@ -8,9 +8,9 @@
 
 ## Files Written
 
-| Path                                             | Format    | When   |
-| ------------------------------------------------ | --------- | ------ |
-| `<workdir>/.branches/<branch-name>/` (directory) | directory | always |
+| Path                                                      | Format    | When   |
+| --------------------------------------------------------- | --------- | ------ |
+| `<workdir>/supabase/.branches/<branch-name>/` (directory) | directory | always |
 
 ## API Routes
 
