@@ -23,6 +23,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-units"
 	"github.com/go-errors/errors"
+	"github.com/google/uuid"
 	"github.com/spf13/afero"
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/utils"
@@ -34,6 +35,15 @@ var (
 	legacyEntrypointPath = "file:///src/index.ts"
 	legacyImportMapPath  = "file:///src/import_map.json"
 )
+
+// ErrUnsafeDownloadPath is returned when a downloaded Function file's path,
+// as reported by the server via the Supabase-Path header or the
+// Content-Disposition filename, would resolve outside utils.FunctionsDir
+// once joined and cleaned, or would require following an existing symlink
+// to get there. The server response is not trusted input, so any path that
+// looks like it's trying to escape the functions directory is rejected
+// rather than sanitized.
+var ErrUnsafeDownloadPath = errors.New("invalid path in server response")
 
 func RunLegacy(ctx context.Context, slug string, projectRef string, fsys afero.Fs) error {
 	// 1. Sanity checks.
@@ -406,12 +416,126 @@ func saveFile(file *multipart.FileHeader, entrypointPath, funcDir string, fsys a
 		relPath = filepath.FromSlash(path.Join("..", partPath))
 	}
 
+	// partPath (and therefore relPath and dstPath) is derived from
+	// server-controlled multipart metadata (Supabase-Path header or
+	// Content-Disposition filename), so it must be validated before it
+	// touches the filesystem below.
 	dstPath := filepath.Join(funcDir, path.Base(entrypointPath), relPath)
+
+	// Containment is enforced against the shared functions directory
+	// rather than funcDir: the entrypoint-mismatch fallback above can
+	// legitimately resolve one level above funcDir (into a sibling
+	// function's directory), but must never resolve outside
+	// utils.FunctionsDir entirely, e.g. via a "../../../etc/passwd" style
+	// payload.
+	root := utils.FunctionsDir
+	if err := validateDownloadPath(root, dstPath); err != nil {
+		return err
+	}
+
+	// A previous part could have planted a symlink at an intermediate
+	// directory component, which would otherwise let MkdirAll/OpenFile
+	// silently follow it out of root even though dstPath itself looks
+	// clean. Check before creating the directory, and again after the
+	// write lands in case a symlink was swapped in between the two checks.
+	dstDir := filepath.Dir(dstPath)
+	if err := ensureNoSymlinkInPath(fsys, root, dstDir); err != nil {
+		return err
+	}
+	if err := utils.MkdirIfNotExistFS(fsys, dstDir); err != nil {
+		return err
+	}
+
 	fmt.Fprintln(os.Stderr, "Extracting file:", dstPath)
-	if err := afero.WriteReader(fsys, dstPath, part); err != nil {
+	if err := writeFileNoFollowSymlink(fsys, dstPath, part); err != nil {
+		return err
+	}
+
+	return ensureNoSymlinkInPath(fsys, root, dstPath)
+}
+
+// validateDownloadPath rejects dstPath if, once lexically cleaned, it does
+// not resolve inside root. This is the primary defense against a hostile
+// "../../etc/passwd" style Supabase-Path/filename escaping the functions
+// directory: filepath.Join already cleans ".." segments away, so this
+// check must run against the cleaned result rather than by scanning the
+// raw, attacker-controlled path for "..".
+func validateDownloadPath(root, dstPath string) error {
+	rel, err := filepath.Rel(root, filepath.Clean(dstPath))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return errors.Errorf("failed to save file: %w", ErrUnsafeDownloadPath)
+	}
+	return nil
+}
+
+// ensureNoSymlinkInPath rejects dir if it, or any existing ancestor of it
+// down to (but excluding) root, is a symlink.
+//
+// This only has an effect on filesystems that expose real symlink
+// semantics through afero.Lstater, i.e. afero.NewOsFs in production. The
+// in-memory filesystem used in tests has no notion of symlinks, so
+// LstatIfPossible never reports the symlink bit there and this check is
+// effectively a no-op -- there is nothing to protect against on a
+// filesystem that cannot contain symlinks in the first place.
+func ensureNoSymlinkInPath(fsys afero.Fs, root, dir string) error {
+	lstater, ok := fsys.(afero.Lstater)
+	if !ok {
+		return nil
+	}
+
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == "." || rel == "" {
+		return nil
+	}
+
+	current := root
+	for _, segment := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, segment)
+		info, _, err := lstater.LstatIfPossible(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// Nothing here yet, and therefore nothing further down
+				// this branch either: MkdirAll will create plain
+				// directories from this point on.
+				break
+			}
+			return errors.Errorf("failed to inspect extraction path: %w", err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return errors.Errorf("failed to save file: %w", ErrUnsafeDownloadPath)
+		}
+	}
+	return nil
+}
+
+// writeFileNoFollowSymlink writes r to dstPath without following a symlink
+// that might already occupy that path. It creates a randomly named
+// temporary file next to dstPath with O_EXCL, refusing to write through
+// anything already there, then atomically renames it onto dstPath.
+// Rename replaces whatever directory entry currently exists at dstPath --
+// including a symlink -- rather than dereferencing it, which is exactly
+// what a plain fs.Create/afero.WriteReader would otherwise do.
+func writeFileNoFollowSymlink(fsys afero.Fs, dstPath string, r io.Reader) error {
+	tmpPath := filepath.Join(filepath.Dir(dstPath), fmt.Sprintf(".supabase-download-%s.tmp", uuid.NewString()))
+	tmp, err := fsys.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
 		return errors.Errorf("failed to save file: %w", err)
 	}
 
+	if _, err := io.Copy(tmp, r); err != nil {
+		_ = tmp.Close()
+		_ = fsys.Remove(tmpPath)
+		return errors.Errorf("failed to save file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = fsys.Remove(tmpPath)
+		return errors.Errorf("failed to save file: %w", err)
+	}
+
+	if err := fsys.Rename(tmpPath, dstPath); err != nil {
+		_ = fsys.Remove(tmpPath)
+		return errors.Errorf("failed to save file: %w", err)
+	}
 	return nil
 }
 

@@ -453,6 +453,106 @@ func TestRunServerSideUnbundle(t *testing.T) {
 
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
+
+	t.Run("rejects a path traversal payload in Supabase-Path", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+
+		defer gock.OffAll()
+		mockMultipartBody(t, project, slug, bundleMetadata{EntrypointPath: "source/index.ts"}, []multipartPart{
+			{filename: "source/index.ts", contents: "console.log('hello')"},
+			{filename: "leftover.ts", supabasePath: "../../../../../../etc/passwd", contents: "root:x:0:0::/root:/bin/bash"},
+		})
+
+		err := Run(context.Background(), slug, project, false, false, fsys)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrUnsafeDownloadPath)
+
+		// Nothing should have escaped the functions directory.
+		exists, err := afero.Exists(fsys, "/etc/passwd")
+		require.NoError(t, err)
+		assert.False(t, exists, "path traversal payload must not be written outside the functions directory")
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("writes deeply nested legitimate paths", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+
+		defer gock.OffAll()
+		mockMultipartBody(t, project, slug, bundleMetadata{EntrypointPath: "source/index.ts"}, []multipartPart{
+			{filename: "source/index.ts", contents: "console.log('hello')"},
+			{filename: "source/a/b/c/d/deep.ts", contents: "export const deep = true;"},
+		})
+
+		err := Run(context.Background(), slug, project, false, false, fsys)
+		require.NoError(t, err)
+
+		root := filepath.Join(utils.FunctionsDir, slug)
+		data, err := afero.ReadFile(fsys, filepath.Join(root, "index.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, "console.log('hello')", string(data))
+
+		data, err = afero.ReadFile(fsys, filepath.Join(root, "a", "b", "c", "d", "deep.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, "export const deep = true;", string(data))
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("does not write through a pre-existing symlink at the destination", func(t *testing.T) {
+		// Symlink semantics only exist on a real filesystem, so this test
+		// exercises afero.NewOsFs against an isolated temp directory rather
+		// than the in-memory fs used elsewhere in this file.
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+		fsys := afero.NewOsFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+
+		// A file living outside the sandboxed functions directory that must
+		// never be touched by the download.
+		outsideDir := filepath.Join(tmpDir, "outside")
+		require.NoError(t, os.MkdirAll(outsideDir, 0o755))
+		secretPath := filepath.Join(outsideDir, "secret.txt")
+		require.NoError(t, os.WriteFile(secretPath, []byte("original"), 0o600))
+
+		// Plant a symlink inside the function directory, before the
+		// download runs, pointing at the file outside the sandbox. A
+		// server response that resolves to this exact path must not be
+		// allowed to write through it.
+		funcDir := filepath.Join(utils.FunctionsDir, slug)
+		require.NoError(t, os.MkdirAll(funcDir, 0o755))
+		linkPath := filepath.Join(funcDir, "evil.ts")
+		require.NoError(t, os.Symlink(secretPath, linkPath))
+
+		defer gock.OffAll()
+		mockMultipartBody(t, project, slug, bundleMetadata{EntrypointPath: "source/index.ts"}, []multipartPart{
+			{filename: "source/index.ts", contents: "console.log('hello')"},
+			{filename: "source/evil.ts", contents: "overwritten"},
+		})
+
+		err := Run(context.Background(), slug, project, false, false, fsys)
+		require.NoError(t, err)
+
+		// The symlink target outside the sandbox must be untouched.
+		data, err := os.ReadFile(secretPath)
+		require.NoError(t, err)
+		assert.Equal(t, "original", string(data), "file outside the functions directory must not be modified")
+
+		// The destination itself should now be a plain file with the
+		// downloaded contents: the atomic rename replaces the symlink
+		// directory entry rather than following it.
+		info, err := os.Lstat(linkPath)
+		require.NoError(t, err)
+		assert.Zero(t, info.Mode()&os.ModeSymlink, "planted symlink should have been replaced, not written through")
+
+		data, err = os.ReadFile(linkPath)
+		require.NoError(t, err)
+		assert.Equal(t, "overwritten", string(data))
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
 }
 
 func TestDownloadFunction(t *testing.T) {
