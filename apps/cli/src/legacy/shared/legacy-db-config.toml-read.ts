@@ -1,5 +1,13 @@
 import { Effect, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
+import {
+  LEGACY_BUCKET_NAME_PATTERN,
+  LEGACY_CLERK_DOMAIN_PATTERN,
+  LEGACY_FUNCTION_SLUG_PATTERN,
+  LEGACY_HOOK_SECRET_PATTERN,
+  LEGACY_PROJECT_REF_PATTERN,
+  legacyParseGoBool,
+} from "./legacy-config-validate.ts";
 import { LegacyDbConfigLoadError } from "./legacy-db-config.errors.ts";
 import { parseDotEnv } from "./legacy-dotenv.ts";
 import {
@@ -336,27 +344,6 @@ function findDuplicateRemoteProjectId(
   return undefined;
 }
 
-// Go's project-ref pattern (`apps/cli-go/pkg/config/config.go:470`): exactly 20
-// lowercase ASCII letters.
-const LEGACY_PROJECT_REF_PATTERN = /^[a-z]{20}$/;
-
-// Go's storage bucket-name pattern (`apps/cli-go/pkg/config/config.go:1382`).
-// `config.Validate` runs `ValidateBucketName` over every `[storage.buckets.*]` key
-// during config load (`config.go:898-903`), aborting before any db command when a
-// name does not match. The source string is reused verbatim in the error message via
-// `.source` so it byte-matches Go's `bucketNamePattern.String()`. Exported: also used
-// by `legacy-local-config-values.ts`'s `status`/`stop` resolver, which needs the
-// identical unconditional check Go's `Config.Validate` runs — hoisted rather than
-// duplicated per this package's "hoist before you duplicate" rule.
-export const LEGACY_BUCKET_NAME_PATTERN = /^(\w|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
-
-// Go's function-slug pattern (`apps/cli-go/pkg/config/config.go:1372`). `config.Validate`
-// runs `ValidateFunctionSlug` over every `[functions.*]` key during config load
-// (`config.go:993-998`), rejecting the config before any db command. `.source` is reused
-// in the message so it byte-matches Go's `funcSlugPattern.String()`. Exported for the
-// same reason as {@link LEGACY_BUCKET_NAME_PATTERN} above.
-export const LEGACY_FUNCTION_SLUG_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
-
 /**
  * Go's `config.Validate` rejects any `[remotes.<name>]` whose `project_id` is not a
  * valid project ref (`config.go:832-836`), on every config load — so a malformed or
@@ -613,27 +600,6 @@ function legacyIsValidJson(value: string): boolean {
   }
 }
 
-// Go's `strconv.ParseBool` accepted forms (`go-viper/mapstructure` `decodeBool` under
-// viper's forced `WeaklyTypedInput`): a string decodes to bool via ParseBool, an empty
-// string is `false`, and any other value is a parse error.
-const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
-const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
-
-/**
- * Parse a config bool the way Go does (`strconv.ParseBool` via mapstructure's weakly
- * typed decode). Returns the bool, or `undefined` for a malformed value (which Go
- * surfaces as a `failed to parse config` error).
- *
- * Exported for reuse by other `legacy/shared/` bool-flavored `SUPABASE_*` env
- * overrides (e.g. `legacy-local-config-values.ts`'s `api.tls.enabled`/
- * `auth.enabled`) that need the same `strconv.ParseBool` acceptance set.
- */
-export function legacyParseGoBool(value: string): boolean | undefined {
-  if (GO_BOOL_TRUE.has(value)) return true;
-  if (GO_BOOL_FALSE.has(value)) return false;
-  return undefined;
-}
-
 /**
  * Resolve a `[section] enabled` style bool. Go decodes a TOML bool natively and a
  * string (incl. an `env(VAR)` reference) via `strconv.ParseBool` — so `"1"`/`"t"`/etc.
@@ -773,15 +739,6 @@ const legacyAssertDecryptableSecrets = (
 // Go merges the template default before Validate (`templates/config.toml`), so an absent
 // `auth.site_url` is non-empty; only an explicit empty string fails A1 (`config.go:1037`).
 const DEFAULT_AUTH_SITE_URL = "http://127.0.0.1:3000";
-// Go's `hookSecretPattern` (`pkg/config/config.go:1436`). Exported: also used by
-// `legacy-local-config-values.ts`'s `status`/`stop` resolver — hoisted rather than
-// duplicated per this package's "hoist before you duplicate" rule.
-export const LEGACY_HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
-// Go's `clerkDomainPattern` (`pkg/config/config.go:1553`). Exported: also used by
-// `legacy-local-config-values.ts`'s `status`/`stop` resolver — hoisted rather than
-// duplicated per this package's "hoist before you duplicate" rule.
-export const LEGACY_CLERK_DOMAIN_PATTERN =
-  /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/u;
 
 /**
  * Ports the FATAL validations Go runs inside `if c.Auth.Enabled { … }` during

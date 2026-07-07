@@ -12,7 +12,7 @@ import {
   LEGACY_FUNCTION_SLUG_PATTERN,
   LEGACY_HOOK_SECRET_PATTERN,
   legacyParseGoBool,
-} from "./legacy-db-config.toml-read.ts";
+} from "./legacy-config-validate.ts";
 import {
   legacyGenerateAsymmetricGoJwt,
   legacyGenerateGoJwt,
