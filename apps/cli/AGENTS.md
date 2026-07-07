@@ -237,6 +237,10 @@ Concrete examples worth watching for as more commands land:
 
 This rule is consistent with the repo-wide **Refactoring Policy** ("delete obsolete helpers, shims, and parallel code paths as part of the refactor") — it just makes the policy concrete for the legacy-port workflow.
 
+### `Config.Validate` parity has one home
+
+Go's `Config.Validate` (`apps/cli-go/pkg/config/config.go:989-1190`) is ported exactly once: `src/legacy/shared/legacy-config-validate.ts` (`legacyValidateResolvedConfig`). Both the db/migration loader (`legacy-db-config.toml-read.ts`) and the status/stop resolver (`legacy-local-config-values.ts`) build a `LegacyConfigValidationInput` from their own pipelines and call it — do not add per-command reimplementations of these checks. When a Go validation branch or message changes, change it there. `legacy-config-validate.parity.unit.test.ts` feeds the same broken configs through both real pipelines and asserts identical error strings; extend it when adding a branch both callers share.
+
 ---
 
 ## Legacy Port: Go CLI Output Parity
