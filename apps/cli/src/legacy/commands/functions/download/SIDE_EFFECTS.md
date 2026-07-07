@@ -8,9 +8,11 @@
 
 ## Files Written
 
-| Path                                                | Format | When                                     |
-| --------------------------------------------------- | ------ | ---------------------------------------- |
-| `<workdir>/supabase/functions/<slug>/<remote path>` | bytes  | for each source file returned by the API |
+| Path                                                | Format | When                                                                    |
+| --------------------------------------------------- | ------ | ----------------------------------------------------------------------- |
+| `<workdir>/supabase/functions/<slug>/<remote path>` | bytes  | for each source file returned by the API                                |
+| `<workdir>/supabase/.temp/linked-project.json`      | JSON   | after resolving a project ref, cached on both success and failure paths |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json`     | JSON   | after command completion, flushed on both success and failure paths     |
 
 ## API Routes
 
@@ -28,10 +30,10 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
+| Variable                | Purpose                                                      | Required?                                               |
+| ----------------------- | ------------------------------------------------------------ | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)         | no (falls back to keyring → `~/.supabase/access-token`) |
+| ~~`SUPABASE_API_URL`~~  | **not honored** — Go parity. Use `SUPABASE_PROFILE` instead. | -                                                       |
 
 ## Exit Codes
 
@@ -41,6 +43,12 @@
 | `1`  | API error (non-2xx response)          |
 | `1`  | authentication error (no token found) |
 | `1`  | network / connection failure          |
+
+## Telemetry Events Fired
+
+| Event                  | When                                       | Notable properties / groups                                                                                                          |
+| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`project-ref` recorded verbatim, matching `functions list`/`delete`; every other flag redacted) |
 
 ## Output
 

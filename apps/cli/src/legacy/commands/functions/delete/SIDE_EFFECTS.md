@@ -2,9 +2,13 @@
 
 ## Files Read
 
-| Path                       | Format     | When                                                       |
-| -------------------------- | ---------- | ---------------------------------------------------------- |
-| `~/.supabase/access-token` | plain text | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
+| Path                                            | Format     | When                                                          |
+| ----------------------------------------------- | ---------- | ------------------------------------------------------------- |
+| `~/.supabase/access-token`                      | plain text | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable    |
+| `~/.supabase/profile`                           | plain text | when `--profile` and `SUPABASE_PROFILE` are both unset        |
+| `<profile>.yaml`                                | YAML       | when `SUPABASE_PROFILE` or `--profile` points to a file       |
+| `<workdir>/supabase/.temp/project-ref`          | plain text | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON       | when present, before post-run telemetry state is refreshed    |
 
 ## Files Written
 
@@ -15,16 +19,21 @@
 
 ## API Routes
 
-| Method   | Path                                  | Auth         | Request body | Response (used fields) |
-| -------- | ------------------------------------- | ------------ | ------------ | ---------------------- |
-| `DELETE` | `/v1/projects/{ref}/functions/{slug}` | Bearer token | none         | none                   |
+| Method   | Path                                  | Auth         | Request body | Response (used fields)                             |
+| -------- | ------------------------------------- | ------------ | ------------ | -------------------------------------------------- |
+| `DELETE` | `/v1/projects/{ref}/functions/{slug}` | Bearer token | none         | none                                               |
+| `GET`    | `/v1/projects/{ref}`                  | Bearer token | none         | linked project metadata used by the post-run cache |
 
 ## Environment Variables
 
-| Variable                | Purpose                                                      | Required?                                               |
-| ----------------------- | ------------------------------------------------------------ | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)         | no (falls back to keyring → `~/.supabase/access-token`) |
-| ~~`SUPABASE_API_URL`~~  | **not honored** — Go parity. Use `SUPABASE_PROFILE` instead. | -                                                       |
+| Variable                | Purpose                                                        | Required?                                                 |
+| ----------------------- | -------------------------------------------------------------- | --------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)           | no (falls back to keyring → `~/.supabase/access-token`)   |
+| `SUPABASE_HOME`         | overrides where `telemetry.json` is read and written           | no (defaults to `~/.supabase`)                            |
+| `SUPABASE_PROFILE`      | select a built-in profile or YAML profile file with `api_url:` | no (falls back to `~/.supabase/profile` -> `supabase`)    |
+| `SUPABASE_PROJECT_ID`   | provides the project ref when `--project-ref` is unset         | no (falls back to `<workdir>/supabase/.temp/project-ref`) |
+| `SUPABASE_WORKDIR`      | sets `<workdir>` for local Supabase temp files                 | no (falls back to `--workdir` -> current working dir)     |
+| ~~`SUPABASE_API_URL`~~  | **not honored** — Go parity. Use `SUPABASE_PROFILE` instead.   | -                                                         |
 
 ## Exit Codes
 

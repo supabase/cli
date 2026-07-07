@@ -1,5 +1,6 @@
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { FUNCTIONS_PROJECT_REF_SAFE_FLAGS } from "../../../../shared/functions/functions.shared.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
@@ -17,9 +18,13 @@ const config = {
 
 export type LegacyFunctionsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// Go marks `--project-ref` telemetry-safe on both `functionsListCmd` and
-// `functionsDeleteCmd` (`cmd/functions.go:150-153`). Matches `list.command.ts`.
-export const LEGACY_FUNCTIONS_DELETE_SAFE_FLAGS = ["project-ref"] as const;
+// Exported so integration tests can drive the exact wiring `Command.withHandler`
+// uses below, instead of re-asserting the generic instrumentation mechanism.
+export const legacyFunctionsDeleteHandler = (flags: LegacyFunctionsDeleteFlags) =>
+  legacyFunctionsDelete(flags).pipe(
+    withLegacyCommandInstrumentation({ flags, safeFlags: FUNCTIONS_PROJECT_REF_SAFE_FLAGS }),
+    withJsonErrorHandling,
+  );
 
 export const legacyFunctionsDeleteCommand = Command.make("delete", config).pipe(
   Command.withDescription(
@@ -36,11 +41,6 @@ export const legacyFunctionsDeleteCommand = Command.make("delete", config).pipe(
       description: "Delete a deployed function from a specific project",
     },
   ]),
-  Command.withHandler((flags) =>
-    legacyFunctionsDelete(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: LEGACY_FUNCTIONS_DELETE_SAFE_FLAGS }),
-      withJsonErrorHandling,
-    ),
-  ),
+  Command.withHandler(legacyFunctionsDeleteHandler),
   Command.provide(legacyManagementApiRuntimeLayer(["functions", "delete"])),
 );
