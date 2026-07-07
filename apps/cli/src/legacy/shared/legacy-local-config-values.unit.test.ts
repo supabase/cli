@@ -525,34 +525,11 @@ describe("legacyResolveLocalConfigValues", () => {
   });
 
   describe("db.major_version (required field in config)", () => {
+    // The pure 0/12/13-17/generic-invalid assertions moved to
+    // `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig` calls) —
+    // only the SUPABASE_DB_MAJOR_VERSION env-override mechanics stay here.
     afterEach(() => {
       delete process.env["SUPABASE_DB_MAJOR_VERSION"];
-    });
-
-    it("rejects a configured major_version of 0", () => {
-      const config = baseConfig({ db: { major_version: 0 } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Missing required field in config: db.major_version",
-      );
-    });
-
-    it("rejects the unsupported Postgres 12.x major_version with Go's dedicated message", () => {
-      const config = baseConfig({ db: { major_version: 12 } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Postgres version 12.x is unsupported.",
-      );
-    });
-
-    it.each([13, 14, 15, 17])("accepts the supported major_version %d", (majorVersion) => {
-      const config = baseConfig({ db: { major_version: majorVersion } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("rejects an unsupported major_version with the generic invalid-value message", () => {
-      const config = baseConfig({ db: { major_version: 16 } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Failed reading config: Invalid db.major_version: 16.",
-      );
     });
 
     it("overrides a valid configured major_version via SUPABASE_DB_MAJOR_VERSION", () => {
@@ -587,50 +564,19 @@ describe("legacyResolveLocalConfigValues", () => {
   // Go's Config.Validate runs ValidateBucketName over every [storage.buckets.*]
   // key right after db.major_version, unconditionally — there is no
   // storage.enabled-style gate (pkg/config/config.go:1063-1068).
-  describe("storage.buckets (bucket-name validation)", () => {
-    it("rejects a bucket name Go's ValidateBucketName refuses", () => {
-      const config = baseConfig({ storage: { buckets: { "bad/name": {} } } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Invalid Bucket name: bad/name.",
-      );
-    });
-
-    it("does not throw for a valid bucket name", () => {
-      const config = baseConfig({ storage: { buckets: { "avatars.public": {} } } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("does not throw when no buckets are configured", () => {
-      const config = baseConfig();
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-  });
+  //
+  // Moved to `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig`
+  // calls) — this section has no L-specific derivation or env-override mechanics of its own.
 
   // Go's Config.Validate rejects an invalid edge_runtime.deno_version
   // unconditionally — NOT gated on edge_runtime.enabled
   // (pkg/config/config.go:1164-1173).
   describe("edge_runtime.deno_version (required field in config)", () => {
+    // The pure 0/1/2/generic-invalid/disabled assertions moved to
+    // `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig` calls) —
+    // only the SUPABASE_EDGE_RUNTIME_DENO_VERSION env-override mechanics stay here.
     afterEach(() => {
       delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-    });
-
-    it("rejects a configured deno_version of 0", () => {
-      const config = baseConfig({ edge_runtime: { deno_version: 0 } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Missing required field in config: edge_runtime.deno_version",
-      );
-    });
-
-    it.each([1, 2])("accepts the supported deno_version %d", (denoVersion) => {
-      const config = baseConfig({ edge_runtime: { deno_version: denoVersion } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("rejects an unsupported deno_version with the generic invalid-value message", () => {
-      const config = baseConfig({ edge_runtime: { deno_version: 3 } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Failed reading config: Invalid edge_runtime.deno_version: 3.",
-      );
     });
 
     it("rejects a zero SUPABASE_EDGE_RUNTIME_DENO_VERSION override", () => {
@@ -662,13 +608,6 @@ describe("legacyResolveLocalConfigValues", () => {
       const config = baseConfig({ edge_runtime: { deno_version: 2 } });
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
-
-    it("rejects an invalid deno_version even when edge_runtime is disabled", () => {
-      const config = baseConfig({ edge_runtime: { enabled: false, deno_version: 0 } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Missing required field in config: edge_runtime.deno_version",
-      );
-    });
   });
 
   describe("analytics (BigQuery backend required fields)", () => {
@@ -676,65 +615,16 @@ describe("legacyResolveLocalConfigValues", () => {
     // `edge_runtime.deno_version` (`pkg/config/config.go:1174-1187`): when
     // `analytics.enabled` and `analytics.backend == "bigquery"`, all three GCP
     // fields are required, checked in that order.
+    //
+    // The pure required-field/complete/disabled assertions moved to
+    // `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig` calls) —
+    // only the SUPABASE_ANALYTICS_* env-override mechanics stay here.
     afterEach(() => {
       delete process.env["SUPABASE_ANALYTICS_ENABLED"];
       delete process.env["SUPABASE_ANALYTICS_BACKEND"];
       delete process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"];
       delete process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"];
       delete process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"];
-    });
-
-    it("rejects an enabled bigquery backend without gcp_project_id", () => {
-      const config = baseConfig({ analytics: { enabled: true, backend: "bigquery" } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Missing required field in config: analytics.gcp_project_id",
-      );
-    });
-
-    it("rejects an enabled bigquery backend without gcp_project_number", () => {
-      const config = baseConfig({
-        analytics: { enabled: true, backend: "bigquery", gcp_project_id: "proj" },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Missing required field in config: analytics.gcp_project_number",
-      );
-    });
-
-    it("rejects an enabled bigquery backend without gcp_jwt_path", () => {
-      const config = baseConfig({
-        analytics: {
-          enabled: true,
-          backend: "bigquery",
-          gcp_project_id: "proj",
-          gcp_project_number: "123",
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path",
-      );
-    });
-
-    it("does not throw when an enabled bigquery backend has all three GCP fields", () => {
-      const config = baseConfig({
-        analytics: {
-          enabled: true,
-          backend: "bigquery",
-          gcp_project_id: "proj",
-          gcp_project_number: "123",
-          gcp_jwt_path: "gcp.json",
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("does not throw for the postgres backend, however incomplete the GCP fields are", () => {
-      const config = baseConfig({ analytics: { enabled: true, backend: "postgres" } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("does not throw when analytics is disabled, however incomplete the GCP fields are", () => {
-      const config = baseConfig({ analytics: { enabled: false, backend: "bigquery" } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
 
     it("rejects a bigquery backend enabled only via SUPABASE_ANALYTICS_ENABLED", () => {
@@ -783,50 +673,12 @@ describe("legacyResolveLocalConfigValues", () => {
     // called right after the analytics/bigquery block and right before
     // `Config.Validate` returns — unconditionally, no `enabled` gate of its own.
     //
-    // The webhooks check hinges on whether `[experimental.webhooks]` is
-    // PRESENT in config.toml, not the decoded `enabled` value — the shared
-    // schema decode-fills `experimental.webhooks = { enabled: false }` even
-    // when the section is entirely absent, so these tests pass the raw
-    // `document` (the 5th param) to simulate what config.toml actually
-    // contained, exactly like `LoadedProjectConfig.document` would.
-    it("rejects a present [experimental.webhooks] section with enabled omitted", () => {
-      const config = baseConfig({ experimental: { webhooks: {} } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          experimental: { webhooks: {} },
-        }),
-      ).toThrow(
-        "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
-      );
-    });
-
-    it("rejects a present [experimental.webhooks] section with enabled = false", () => {
-      const config = baseConfig({ experimental: { webhooks: { enabled: false } } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          experimental: { webhooks: { enabled: false } },
-        }),
-      ).toThrow(
-        "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
-      );
-    });
-
-    it("does not throw when [experimental.webhooks] enabled = true", () => {
-      const config = baseConfig({ experimental: { webhooks: { enabled: true } } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          experimental: { webhooks: { enabled: true } },
-        }),
-      ).not.toThrow();
-    });
-
-    it("does not throw when [experimental.webhooks] is absent entirely", () => {
-      const config = baseConfig();
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {}),
-      ).not.toThrow();
-    });
-
+    // Every webhooks-presence/enabled combination and the pgdelta format_options JSON checks
+    // moved to `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig`
+    // calls, setting `experimental.webhooksPresent`/`webhooksEnabled` directly instead of
+    // deriving them from a raw `document`) — only this document-THREADING-specific case stays
+    // here, since it exercises this function's own "no document provided" fallback rather than
+    // a check `legacyValidateResolvedConfig` itself owns.
     it("does not throw a present [experimental.webhooks] section without enabled when no document is provided", () => {
       // No `document` (5th param) at all — e.g. a caller that hasn't threaded
       // `LoadedProjectConfig.document` through yet. The presence-only check
@@ -834,25 +686,6 @@ describe("legacyResolveLocalConfigValues", () => {
       // also covers every pre-existing call site/test in this file that
       // doesn't pass a 5th argument.
       const config = baseConfig({ experimental: { webhooks: {} } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("rejects invalid JSON in experimental.pgdelta.format_options", () => {
-      const config = baseConfig({ experimental: { pgdelta: { format_options: "{not json" } } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Invalid config for experimental.pgdelta.format_options: must be valid JSON",
-      );
-    });
-
-    it("does not throw for valid JSON in experimental.pgdelta.format_options", () => {
-      const config = baseConfig({
-        experimental: { pgdelta: { format_options: '{"keywordCase":"upper"}' } },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("does not throw when experimental.pgdelta.format_options is unset", () => {
-      const config = baseConfig({ experimental: { pgdelta: {} } });
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
   });
@@ -1060,26 +893,9 @@ describe("legacyResolveLocalConfigValues", () => {
   });
 
   describe("auth.site_url (required field in config)", () => {
-    it("rejects an explicit empty site_url when auth is enabled", () => {
-      const config = baseConfig({ auth: { enabled: true, site_url: "" } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Missing required field in config: auth.site_url",
-      );
-    });
-
-    it("does not throw when site_url is set and auth is enabled", () => {
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    // Go's `Validate` nests this check inside `if c.Auth.Enabled`
-    // (`pkg/config/config.go:1086-1090`) — a disabled auth section never
-    // requires site_url, however empty it is.
-    it("does not throw an explicit empty site_url when auth is disabled", () => {
-      const config = baseConfig({ auth: { enabled: false, site_url: "" } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
+    // The pure empty/set/disabled assertions moved to `legacy-config-validate.unit.test.ts`
+    // (direct `legacyValidateResolvedConfig` calls) — only the SUPABASE_AUTH_ENABLED /
+    // SUPABASE_AUTH_SITE_URL env-override mechanics stay here.
     describe("SUPABASE_AUTH_ENABLED / SUPABASE_AUTH_SITE_URL env overrides", () => {
       afterEach(() => {
         delete process.env["SUPABASE_AUTH_ENABLED"];
@@ -1108,377 +924,20 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
-  describe("auth.captcha (required fields when enabled)", () => {
-    // Go's `Config.Validate` checks `auth.captcha` right after `auth.site_url`,
-    // still inside `if c.Auth.Enabled` (`pkg/config/config.go:1099-1109`).
-    it("rejects an enabled captcha without a provider", () => {
-      const config = baseConfig({
-        auth: { enabled: true, site_url: "http://localhost:3000", captcha: { enabled: true } },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Missing required field in config: auth.captcha.provider",
-      );
-    });
+  // auth.captcha (required fields when enabled) moved entirely to
+  // `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig` calls) — L
+  // reads `config.auth.captcha` directly with no env-override mechanics of its own.
 
-    it("rejects an enabled captcha with a provider but no secret", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          captcha: { enabled: true, provider: "hcaptcha" },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Missing required field in config: auth.captcha.secret",
-      );
-    });
+  // auth.passkey / auth.webauthn (WebAuthn requirement when passkey enabled) and
+  // auth.email.smtp (present-table-implies-enabled) moved entirely to
+  // `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig` calls,
+  // setting `auth.passkey`/`auth.smtp` directly instead of deriving them from a raw
+  // `document`) — both are pure, document-presence-based checks with no env-override variant.
 
-    it("does not throw when an enabled captcha has both provider and secret", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          captcha: { enabled: true, provider: "hcaptcha", secret: "shh" },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("does not throw when captcha is disabled, however incomplete", () => {
-      const config = baseConfig({
-        auth: { enabled: true, site_url: "http://localhost:3000", captcha: { enabled: false } },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    // A disabled auth section never requires captcha fields, however
-    // incomplete the captcha config is.
-    it("does not throw an enabled captcha without provider/secret when auth is disabled", () => {
-      const config = baseConfig({
-        auth: { enabled: false, captcha: { enabled: true } },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-  });
-
-  describe("auth.passkey / auth.webauthn (WebAuthn requirement when passkey enabled)", () => {
-    // Go's Config.Validate rejects [auth.passkey] enabled = true without a
-    // complete [auth.webauthn] (pkg/config/config.go:1117-1129), right after
-    // the signing-keys read and before Auth.Hook.validate(). @supabase/config's
-    // schema has no passkey/webauthn fields at all, so this check only runs
-    // when the raw `document` (5th param) is provided.
-    it("rejects passkey.enabled without an [auth.webauthn] section", () => {
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          auth: { passkey: { enabled: true } },
-        }),
-      ).toThrow(
-        "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
-      );
-    });
-
-    it("rejects passkey.enabled with [auth.webauthn] missing rp_id", () => {
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          auth: { passkey: { enabled: true }, webauthn: { rp_origins: ["http://localhost:3000"] } },
-        }),
-      ).toThrow("Missing required field in config: auth.webauthn.rp_id");
-    });
-
-    it("rejects passkey.enabled with [auth.webauthn] missing rp_origins", () => {
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          auth: { passkey: { enabled: true }, webauthn: { rp_id: "localhost" } },
-        }),
-      ).toThrow("Missing required field in config: auth.webauthn.rp_origins");
-    });
-
-    it("does not throw when passkey.enabled has a complete [auth.webauthn] section", () => {
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          auth: {
-            passkey: { enabled: true },
-            webauthn: { rp_id: "localhost", rp_origins: ["http://localhost:3000"] },
-          },
-        }),
-      ).not.toThrow();
-    });
-
-    it("does not throw when passkey is absent from the document", () => {
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, { auth: {} }),
-      ).not.toThrow();
-    });
-
-    it("does not throw passkey.enabled without webauthn when no document is provided", () => {
-      // No `document` (5th param) at all — the same skip-rather-than-guess
-      // behavior every pre-existing call site/test in this file relies on.
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("does not throw an enabled passkey without webauthn when auth is disabled", () => {
-      const config = baseConfig({ auth: { enabled: false } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          auth: { passkey: { enabled: true } },
-        }),
-      ).not.toThrow();
-    });
-  });
-
-  describe("auth.email.smtp (present-table-implies-enabled)", () => {
-    // Go defaults `auth.email.smtp.enabled = true` when the `[auth.email.smtp]`
-    // table is present but omits `enabled` (`pkg/config/config.go:743-748`), a
-    // presence-based default set on the raw viper map BEFORE the struct
-    // decodes — not a struct-tag default (Go's own zero-value is `false`).
-    // `@supabase/config`'s schema always decodes `smtp.enabled` to `false` when
-    // the key is absent, erasing that presence signal, so this check only runs
-    // when the raw `document` (5th param) is provided — same shape as the
-    // passkey/webauthn checks above.
-    it("rejects a present [auth.email.smtp] table with no fields", () => {
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          auth: { email: { smtp: {} } },
-        }),
-      ).toThrow("Missing required field in config: auth.email.smtp.host");
-    });
-
-    it("rejects a present [auth.email.smtp] table missing port/user/pass/admin_email", () => {
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          auth: { email: { smtp: { host: "smtp.example.com" } } },
-        }),
-      ).toThrow("Missing required field in config: auth.email.smtp.port");
-    });
-
-    it("does not throw when [auth.email.smtp] explicitly sets enabled = false", () => {
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          auth: { email: { smtp: { enabled: false, host: "smtp.example.com" } } },
-        }),
-      ).not.toThrow();
-    });
-
-    it("does not throw when [auth.email.smtp] is a complete table", () => {
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          auth: {
-            email: {
-              smtp: {
-                host: "smtp.example.com",
-                port: 587,
-                user: "user",
-                pass: "pass",
-                admin_email: "admin@example.com",
-              },
-            },
-          },
-        }),
-      ).not.toThrow();
-    });
-
-    it("does not throw when [auth.email.smtp] is absent from the document", () => {
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, { auth: {} }),
-      ).not.toThrow();
-    });
-
-    it("does not throw a present [auth.email.smtp] table when no document is provided", () => {
-      // No `document` (5th param) at all — the same skip-rather-than-guess
-      // behavior every pre-existing call site/test in this file relies on.
-      const config = baseConfig({ auth: { enabled: true, site_url: "http://localhost:3000" } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("does not throw a present but incomplete [auth.email.smtp] table when auth is disabled", () => {
-      const config = baseConfig({ auth: { enabled: false } });
-      expect(() =>
-        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, {
-          auth: { email: { smtp: { host: "smtp.example.com" } } },
-        }),
-      ).not.toThrow();
-    });
-  });
-
-  describe("auth.hook.* (URI/secret validation when enabled)", () => {
-    // Go's `Config.Validate` runs `Auth.Hook.validate()` right after signing
-    // keys/passkey validation, still inside `if c.Auth.Enabled`
-    // (`pkg/config/config.go:1136-1139`).
-    it("rejects an enabled hook without a uri", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          hook: { custom_access_token: { enabled: true } },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Missing required field in config: auth.hook.custom_access_token.uri",
-      );
-    });
-
-    it("rejects an http(s) hook uri without secrets", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          hook: {
-            custom_access_token: { enabled: true, uri: "https://example.test/hook" },
-          },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Missing required field in config: auth.hook.custom_access_token.secrets",
-      );
-    });
-
-    it("rejects an http(s) hook secret that doesn't match Go's hookSecretPattern", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          hook: {
-            custom_access_token: {
-              enabled: true,
-              uri: "https://example.test/hook",
-              secrets: "not-a-valid-secret",
-            },
-          },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        'auth.hook.custom_access_token.secrets must be formatted as "v1,whsec_<base64_encoded_secret>"',
-      );
-    });
-
-    it("does not throw for a valid http(s) hook secret", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          hook: {
-            custom_access_token: {
-              enabled: true,
-              uri: "https://example.test/hook",
-              secrets: `v1,whsec_${"a".repeat(32)}`,
-            },
-          },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("rejects a pg-functions hook uri with secrets set", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          hook: {
-            custom_access_token: {
-              enabled: true,
-              uri: "pg-functions://postgres/public/hook",
-              secrets: `v1,whsec_${"a".repeat(32)}`,
-            },
-          },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "auth.hook.custom_access_token.secrets is unsupported for pg-functions URI",
-      );
-    });
-
-    it("does not throw for a pg-functions hook uri without secrets", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          hook: {
-            custom_access_token: { enabled: true, uri: "pg-functions://postgres/public/hook" },
-          },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("rejects a hook uri with an unsupported scheme", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          hook: { custom_access_token: { enabled: true, uri: "ftp://example.test/hook" } },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "auth.hook.custom_access_token.uri should be a HTTP, HTTPS, or pg-functions URI",
-      );
-    });
-
-    it("does not throw for a disabled hook, however incomplete", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          hook: { custom_access_token: { enabled: false } },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("does not throw an enabled hook without a uri when auth is disabled", () => {
-      const config = baseConfig({
-        auth: { enabled: false, hook: { custom_access_token: { enabled: true } } },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-  });
-
-  describe("auth.mfa.* (enroll_enabled requires verify_enabled)", () => {
-    // Go's `(m *mfa) validate()` (`pkg/config/config.go:1523-1534`), called right
-    // after `Auth.Hook.validate()`, still inside `if c.Auth.Enabled`.
-    it.each([
-      ["totp", "auth.mfa.totp.enroll_enabled requires verify_enabled"],
-      ["phone", "auth.mfa.phone.enroll_enabled requires verify_enabled"],
-      ["web_authn", "auth.mfa.web_authn.enroll_enabled requires verify_enabled"],
-    ] as const)("rejects %s enroll_enabled without verify_enabled", (factor, message) => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          mfa: { [factor]: { enroll_enabled: true, verify_enabled: false } },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(message);
-    });
-
-    it("does not throw when enroll_enabled and verify_enabled are both true", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          mfa: { totp: { enroll_enabled: true, verify_enabled: true } },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("does not throw an enroll_enabled MFA factor without verify_enabled when auth is disabled", () => {
-      const config = baseConfig({
-        auth: { enabled: false, mfa: { totp: { enroll_enabled: true, verify_enabled: false } } },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-  });
+  // auth.hook.* (URI/secret validation when enabled) and auth.mfa.* (enroll_enabled requires
+  // verify_enabled) moved entirely to `legacy-config-validate.unit.test.ts` (direct
+  // `legacyValidateResolvedConfig` calls) — L pre-filters to enabled-only hooks/derives mfa
+  // directly off `config.auth.*` with no env-override mechanics of its own for these checks.
 
   describe("auth.email.template/notification (content_path validation)", () => {
     // Go's `(e *email) validate(fsys)` (`pkg/config/config.go:1293-1313`),
@@ -1585,172 +1044,33 @@ describe("legacyResolveLocalConfigValues", () => {
         legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
       ).not.toThrow();
     });
-  });
 
-  describe("auth.third_party.* (thirdParty.validate())", () => {
-    // Go's `(tpa *thirdParty) validate()` (`pkg/config/config.go:1635-1683`), called
-    // right after `Auth.MFA.validate()`, still inside `if c.Auth.Enabled`.
-    it("rejects firebase enabled without a project_id", () => {
+    // Divergence #2 (see `legacy-config-validate.ts`'s port-plan notes): Go's asymmetric
+    // content-vs-content_path exclusivity (`config.go:1293-1313`) — a raw `content` key present
+    // with no `content_path` is an error, not a silent no-op. `@supabase/config`'s schema has no
+    // `content` field to see, so this only fires when the raw `document` (5th param) carries it.
+    it("rejects a template content key present without content_path", () => {
       const config = baseConfig({
         auth: {
           enabled: true,
           site_url: "http://localhost:3000",
-          third_party: { firebase: { enabled: true } },
+          email: { template: { invite: {} } },
         },
       });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current, undefined, {
+          auth: { email: { template: { invite: { content: "<html>Hi</html>" } } } },
+        }),
+      ).toThrow(
+        "Invalid config for auth.email.template.invite.content: please use content_path instead",
       );
-    });
-
-    it("rejects auth0 enabled without a tenant", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          third_party: { auth0: { enabled: true } },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Invalid config: auth.third_party.auth0 is enabled but without a tenant.",
-      );
-    });
-
-    it("rejects aws_cognito enabled without a user_pool_id", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          third_party: { aws_cognito: { enabled: true } },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.",
-      );
-    });
-
-    it("rejects aws_cognito enabled with a user_pool_id but no user_pool_region", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          third_party: { aws_cognito: { enabled: true, user_pool_id: "pool-1" } },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.",
-      );
-    });
-
-    it("rejects clerk enabled without a domain", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          third_party: { clerk: { enabled: true } },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Invalid config: auth.third_party.clerk is enabled but without a domain.",
-      );
-    });
-
-    it("rejects clerk enabled with a domain that doesn't match Go's clerkDomainPattern", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          third_party: { clerk: { enabled: true, domain: "not-a-clerk-domain" } },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Invalid config: auth.third_party.clerk has invalid domain",
-      );
-    });
-
-    it("does not throw for a valid clerk.example.com domain", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          third_party: { clerk: { enabled: true, domain: "clerk.example.com" } },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("rejects workos enabled without an issuer_url", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          third_party: { workos: { enabled: true } },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Invalid config: auth.third_party.workos is enabled but without a issuer_url.",
-      );
-    });
-
-    it("rejects more than one third_party provider enabled at once", () => {
-      const config = baseConfig({
-        auth: {
-          enabled: true,
-          site_url: "http://localhost:3000",
-          third_party: {
-            firebase: { enabled: true, project_id: "proj" },
-            auth0: { enabled: true, tenant: "tenant" },
-          },
-        },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Invalid config: Only one third_party provider allowed to be enabled at a time.",
-      );
-    });
-
-    it("does not throw when no third_party provider is enabled", () => {
-      const config = baseConfig({
-        auth: { enabled: true, site_url: "http://localhost:3000" },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("does not throw an enabled third_party provider missing its required field when auth is disabled", () => {
-      const config = baseConfig({
-        auth: { enabled: false, third_party: { firebase: { enabled: true } } },
-      });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
   });
 
-  // Go's Config.Validate runs ValidateFunctionSlug over every [functions.*] key
-  // right after the auth block/generateAPIKeys, unconditionally — NOT gated on
-  // auth.enabled (pkg/config/config.go:1155-1163).
-  describe("functions.* (function-slug validation)", () => {
-    it("rejects a function slug Go's ValidateFunctionSlug refuses", () => {
-      const config = baseConfig({ functions: { "1bad": {} } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Invalid Function name: 1bad.",
-      );
-    });
-
-    it("does not throw for a valid function slug", () => {
-      const config = baseConfig({ functions: { "hello-world_v2": {} } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("does not throw when no functions are configured", () => {
-      const config = baseConfig();
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
-    });
-
-    it("rejects an invalid function slug even when auth is disabled", () => {
-      const config = baseConfig({ auth: { enabled: false }, functions: { "1bad": {} } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
-        "Invalid Function name: 1bad.",
-      );
-    });
-  });
+  // auth.third_party.* (thirdParty.validate()) and functions.* (function-slug validation)
+  // moved entirely to `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig`
+  // calls) — L pre-filters to enabled-only third_party providers and derives function slugs
+  // directly off `config.functions` with no env-override mechanics of its own for these checks.
 
   describe("api.tls (cert/key validation)", () => {
     const tempRoot = useLegacyTempWorkdir("supabase-api-tls-test-");
@@ -1770,21 +1090,9 @@ describe("legacyResolveLocalConfigValues", () => {
       ).not.toThrow();
     });
 
-    it("rejects cert_path set without key_path", () => {
-      writeTlsFile(tempRoot.current, "cert.pem");
-      const config = baseConfig({ api: { tls: { enabled: true, cert_path: "cert.pem" } } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
-        "Missing required field in config: api.tls.key_path",
-      );
-    });
-
-    it("rejects key_path set without cert_path", () => {
-      writeTlsFile(tempRoot.current, "key.pem");
-      const config = baseConfig({ api: { tls: { enabled: true, key_path: "key.pem" } } });
-      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
-        "Missing required field in config: api.tls.cert_path",
-      );
-    });
+    // The "exactly one of cert/key set" presence-only assertions moved to
+    // `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig` calls) —
+    // the actual file reads below stay here, since I/O is per-caller.
 
     it("throws a Go-worded error when the configured cert file does not exist", () => {
       writeTlsFile(tempRoot.current, "key.pem");

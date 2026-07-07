@@ -19,12 +19,15 @@ import { legacyGoUrlParse } from "./legacy-storage-url.ts";
  *
  * ## Status of this commit
  *
- * {@link legacyValidateResolvedConfig} is now IMPLEMENTED and wired into L
- * (`legacy-local-config-values.ts`'s `legacyResolveLocalConfigValues`) — see that file for how
- * it builds a {@link LegacyConfigValidationInput} from a decoded `ProjectConfig` + raw
- * `document`. D (`legacy-db-config.toml-read.ts`) still runs its own inline copy of this same
- * logic; wiring D through this module (and fixing D's `db.major_version === 0` divergence in
- * the process) lands in a follow-up commit.
+ * {@link legacyValidateResolvedConfig} is now IMPLEMENTED and fully wired into BOTH callers: L
+ * (`legacy-local-config-values.ts`'s `legacyResolveLocalConfigValues`) and D
+ * (`legacy-db-config.toml-read.ts`'s `legacyReadDbToml`) each build a
+ * {@link LegacyConfigValidationInput} from their own decoded config (a `ProjectConfig` + raw
+ * `document` for L, a raw smol-toml document + `EnvLookup` for D) and call this function once,
+ * at the correct Go position. Wiring D through this module also fixed D's `db.major_version
+ * === 0` divergence (D used to fall through to the generic invalid-value message; it now
+ * throws the same "Missing required field in config: db.major_version" as Go and as L already
+ * did).
  *
  * ## Full eventual scope: every `Config.Validate` branch this module owns
  *
