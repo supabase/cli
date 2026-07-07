@@ -31,6 +31,7 @@ export {
   type LoadProjectEnvironmentOptions,
   type ProjectEnvironment,
   type ResolvedProjectValue,
+  type ResolveProjectOptions,
   loadProjectEnvironment,
   resolveProjectSubtree,
   resolveProjectValue,

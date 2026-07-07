@@ -16,6 +16,7 @@ import {
   loadProjectConfig,
   loadProjectConfigFile,
   saveProjectConfig,
+  type LoadProjectConfigOptions,
 } from "./io.ts";
 import { loadProjectConfig as loadProjectConfigFromNode } from "./node.ts";
 import { projectConfigStoreLayer } from "./project-config.layer.ts";
@@ -832,7 +833,7 @@ additional_redirect_urls = "http://a,http://b"
 `,
       );
 
-      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { goViperCompat: true }));
       expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -854,7 +855,7 @@ additional_redirect_urls = "env(SUPABASE_REDIRECT_URLS)"
       );
       await writeFile(join(cwd, "supabase", ".env"), "SUPABASE_REDIRECT_URLS=http://a,http://b\n");
 
-      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { goViperCompat: true }));
       expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -875,7 +876,7 @@ additional_redirect_urls = ""
 `,
       );
 
-      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { goViperCompat: true }));
       expect(loaded!.config.auth.additional_redirect_urls).toEqual([]);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -1004,6 +1005,163 @@ port = "env(SUPABASE_DB_PORT_TEST)"
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  // Regression coverage for the default-off (`goViperCompat` omitted) path —
+  // these pin pre-PR-#5765 behavior so `next/`, `packages/stack`, and the
+  // functions manifest (none of which pass `goViperCompat`) don't inherit the
+  // Go-parity legacy shell's stricter/wider semantics.
+  test("loads successfully with a duplicate [remotes.*] project_id when goViperCompat is omitted", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "baseref"
+
+[remotes.a]
+project_id = "dupref"
+
+[remotes.b]
+project_id = "dupref"
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded).not.toBeNull();
+      expect(loaded!.config.project_id).toBe("baseref");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("loads successfully with an invalid [remotes.*] project_id format when goViperCompat is omitted", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "baseref"
+
+[remotes.bad]
+project_id = "not-a-ref"
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded).not.toBeNull();
+      expect(loaded!.config.project_id).toBe("baseref");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("does not split a comma-separated string literal for an array field when goViperCompat is omitted", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+additional_redirect_urls = "http://a,http://b"
+`,
+      );
+
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfig(cwd).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect((error.value as { _tag: string })._tag).toBe("ProjectConfigParseError");
+        }
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("does not warn on a deprecated provider (but still strips it) when goViperCompat is omitted", async () => {
+    const cwd = makeTempProject();
+    const warnings: Array<string> = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    });
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "abc123"
+
+[auth.external.slack]
+enabled = true
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect("slack" in loaded!.config.auth.external).toBe(false);
+      expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("does not resolve a lowercase-named env() reference when goViperCompat is omitted", async () => {
+    const previous = process.env.lowercase_ref_default_off_test;
+    process.env.lowercase_ref_default_off_test = "lowercase-ref-value";
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "env(lowercase_ref_default_off_test)"\n`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.project_id).toBe("env(lowercase_ref_default_off_test)");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.lowercase_ref_default_off_test;
+      } else {
+        process.env.lowercase_ref_default_off_test = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves a lowercase-named env() reference when goViperCompat is true", async () => {
+    const previous = process.env.lowercase_ref_default_on_test;
+    process.env.lowercase_ref_default_on_test = "lowercase-ref-value";
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "env(lowercase_ref_default_on_test)"\n`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { goViperCompat: true }));
+      expect(loaded!.config.project_id).toBe("lowercase-ref-value");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.lowercase_ref_default_on_test;
+      } else {
+        process.env.lowercase_ref_default_on_test = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("config io [remotes.*] merge", () => {
@@ -1111,7 +1269,7 @@ project_id = "dupref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadProjectConfig(cwd).pipe(
+        loadProjectConfig(cwd, { goViperCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -1124,6 +1282,12 @@ project_id = "dupref"
     }
   });
 
+  // `goViperCompat` is required even though a `projectRef` is passed: the
+  // duplicate/format checks in `applyRemoteOverride` are gated solely on
+  // `goViperCompat`, not on whether a remote is being selected — the remote
+  // match/merge itself stays unconditional, but pre-PR-#5765 callers that
+  // pass a `projectRef` without opting into Go parity no longer get these
+  // checks for free.
   test("rejects duplicate project_id across remotes with Go's message", async () => {
     const cwd = await writeTomlProject(`project_id = "baseref"
 
@@ -1135,7 +1299,7 @@ project_id = "dupref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadProjectConfig(cwd, { projectRef: "dupref" }).pipe(
+        loadProjectConfig(cwd, { projectRef: "dupref", goViperCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -1165,7 +1329,7 @@ project_id = "dupref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
+        loadProjectConfig(cwd, { projectRef: "previewref", goViperCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -1193,7 +1357,7 @@ max_rows = 2
 `);
     try {
       const message = await Effect.runPromise(
-        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
+        loadProjectConfig(cwd, { projectRef: "previewref", goViperCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -1218,7 +1382,7 @@ project_id = "not-a-ref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadProjectConfig(cwd).pipe(
+        loadProjectConfig(cwd, { goViperCompat: true }).pipe(
           Effect.catchTag("InvalidRemoteProjectIdError", (error) => Effect.succeed(error.message)),
           Effect.provide(BunServices.layer),
         ),
@@ -1290,12 +1454,15 @@ enabled = true
     // `^env\((.*)\)$` — it doesn't restrict the captured name's case, so
     // `project_id = "env(project_id)"` resolves against a same-case env var
     // in the Go CLI. This isn't specific to `project_id`; any string field
-    // goes through the same pre-decode walk.
+    // goes through the same pre-decode walk. This case-agnostic matching is
+    // itself one of the four Go-viper-parity behaviors gated by
+    // `goViperCompat` — without it, the strict SCREAMING_SNAKE_CASE matcher
+    // wouldn't match this lowercase name at all.
     const previous = process.env.project_id;
     process.env.project_id = "lowercase-ref";
     const cwd = await writeTomlProject(`project_id = "env(project_id)"\n`);
     try {
-      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { goViperCompat: true }));
       expect(loaded!.config.project_id).toBe("lowercase-ref");
     } finally {
       if (previous === undefined) {
@@ -1543,13 +1710,13 @@ describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", ()
     errorSpy = undefined;
   });
 
-  async function loadToml(contents: string) {
+  async function loadToml(contents: string, options?: LoadProjectConfigOptions) {
     const cwd = makeTempProject();
     const path = await runConfigEffect(configTomlPath(cwd));
     await mkdir(join(cwd, "supabase"), { recursive: true });
     await writeFile(path, contents);
     try {
-      return await runConfigEffect(loadProjectConfigFile(path));
+      return await runConfigEffect(loadProjectConfigFile(path, options));
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -1563,6 +1730,7 @@ describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", ()
 [auth.external.slack]
 enabled = true
 `,
+      { goViperCompat: true },
     );
 
     expect("slack" in loaded.config.auth.external).toBe(false);
@@ -1584,6 +1752,7 @@ enabled = true
 [auth.external.linkedin]
 enabled = true
 `,
+      { goViperCompat: true },
     );
 
     expect("linkedin" in loaded.config.auth.external).toBe(false);

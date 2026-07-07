@@ -8,10 +8,15 @@ import { Schema, SchemaAST } from "effect";
 // way it does in the Go CLI.
 export const ENV_PATTERN = "^env\\((.*)\\)$";
 export const ENV_CAPTURE_REGEX = /^env\((.*)\)$/;
+// Pre-PR-#5765 strict matcher: SCREAMING_SNAKE_CASE names only. Selected when
+// `goViperCompat` is off so non-Go-parity surfaces (next/, packages/stack, the
+// functions manifest) keep the narrower matching they had before PR #5765
+// widened env() resolution to Go's case-agnostic `^env\((.*)\)$`.
+export const ENV_CAPTURE_REGEX_STRICT = /^env\(([A-Z_][A-Z0-9_]*)\)$/;
 const envRegex = new RegExp(ENV_PATTERN);
 
-export function isEnvReference(value: string): boolean {
-  return envRegex.test(value);
+export function isEnvReference(value: string, goViperCompat: boolean): boolean {
+  return (goViperCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).test(value);
 }
 
 interface EnvAnnotations extends Schema.Annotations.Documentation<string> {
@@ -209,8 +214,12 @@ function coerceLeaf(value: unknown, expected: ExpectedType): unknown {
   return value;
 }
 
-function substituteEnvLeaf(value: string, env: Readonly<Record<string, string>>): string {
-  const match = ENV_CAPTURE_REGEX.exec(value);
+function substituteEnvLeaf(
+  value: string,
+  env: Readonly<Record<string, string>>,
+  goViperCompat: boolean,
+): string {
+  const match = (goViperCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).exec(value);
   if (match === null) {
     return value;
   }
@@ -247,11 +256,12 @@ function walk(
   document: unknown,
   env: Readonly<Record<string, string>>,
   ast: SchemaAST.AST | null,
+  goViperCompat: boolean,
 ): unknown {
   if (Array.isArray(document)) {
     return document.map((item, index) => {
       const child = ast === null ? null : descendAst(ast, String(index));
-      return walk(item, env, child);
+      return walk(item, env, child, goViperCompat);
     });
   }
 
@@ -259,7 +269,7 @@ function walk(
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(document)) {
       const child = ast === null ? null : descendAst(ast, key);
-      result[key] = walk(value, env, child);
+      result[key] = walk(value, env, child, goViperCompat);
     }
     return result;
   }
@@ -272,7 +282,7 @@ function walk(
       return document;
     }
 
-    const substituted = substituteEnvLeaf(document, env);
+    const substituted = substituteEnvLeaf(document, env, goViperCompat);
     const expected = ast === null ? "unknown" : leafExpectedType(ast);
 
     // Go's `StringToSliceHookFunc(",")` (`apps/cli-go/pkg/config/config.go:
@@ -283,9 +293,12 @@ function walk(
     // coercion below (scoped to substituted values only, since TOML already
     // decodes literal numbers/booleans to their native type), array coercion
     // must also apply to literal strings that never went through
-    // `substituteEnvLeaf`.
+    // `substituteEnvLeaf`. Gated by `goViperCompat`: when off, the string is
+    // left unsplit — literal and substituted alike — so an array-typed field
+    // fed a string fails decode instead of silently coercing, matching
+    // pre-PR-#5765 behavior.
     if (expected === "array") {
-      return coerceLeaf(substituted, expected);
+      return goViperCompat ? coerceLeaf(substituted, expected) : substituted;
     }
 
     // Substitute env() then coerce based on the schema's expected type at this
@@ -325,6 +338,7 @@ export function interpolateEnvReferencesAgainstSchema(
   document: unknown,
   env: Readonly<Record<string, string>>,
   schema: { readonly ast: SchemaAST.AST },
+  options?: { readonly goViperCompat?: boolean },
 ): unknown {
-  return walk(document, env, schema.ast);
+  return walk(document, env, schema.ast, options?.goViperCompat ?? false);
 }

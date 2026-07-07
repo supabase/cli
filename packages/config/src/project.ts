@@ -1,10 +1,9 @@
 import { Effect, FileSystem, Redacted } from "effect";
 import { ProjectConfigSchema } from "./base.ts";
 import { ProjectEnvParseError } from "./errors.ts";
-import { ENV_CAPTURE_REGEX, isEnvReference } from "./lib/env.ts";
+import { ENV_CAPTURE_REGEX, ENV_CAPTURE_REGEX_STRICT, isEnvReference } from "./lib/env.ts";
 import { findProjectPaths, type ProjectPaths } from "./paths.ts";
 
-const envReferencePattern = ENV_CAPTURE_REGEX;
 const dotEnvLinePattern =
   /^\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?$/;
 
@@ -197,6 +196,16 @@ export interface LoadProjectEnvironmentOptions {
   readonly skipEnvLocal?: boolean;
 }
 
+export interface ResolveProjectOptions {
+  /**
+   * Opt into Go/viper-parity `env()` matching (case-agnostic
+   * `^env\((.*)\)$`). Defaults to `false`, which uses the pre-PR-#5765 strict
+   * SCREAMING_SNAKE_CASE matcher (`ENV_CAPTURE_REGEX_STRICT`). Only the
+   * Go-parity legacy shell sets this to `true`.
+   */
+  readonly goViperCompat?: boolean;
+}
+
 export const loadProjectEnvironment = Effect.fnUntraced(function* (
   options: LoadProjectEnvironmentOptions,
 ) {
@@ -298,8 +307,12 @@ function isSecretPath(path: ReadonlyArray<string>): boolean {
   return secretPathPatterns.some((pattern) => matchesPathPattern(pattern, path));
 }
 
-function interpolateLeafValue(value: string, env: Readonly<Record<string, string>>): string {
-  const match = envReferencePattern.exec(value);
+function interpolateLeafValue(
+  value: string,
+  env: Readonly<Record<string, string>>,
+  goViperCompat: boolean,
+): string {
+  const match = (goViperCompat ? ENV_CAPTURE_REGEX : ENV_CAPTURE_REGEX_STRICT).exec(value);
   const envName = match?.[1];
 
   if (envName === undefined) {
@@ -331,44 +344,48 @@ function toPathSegments(path: string): ReadonlyArray<string> {
   return path.split(".").filter((segment) => segment.length > 0);
 }
 
-function interpolateValue(value: unknown, env: Readonly<Record<string, string>>): unknown {
+function interpolateValue(
+  value: unknown,
+  env: Readonly<Record<string, string>>,
+  goViperCompat: boolean,
+): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => interpolateValue(item, env));
+    return value.map((item) => interpolateValue(item, env, goViperCompat));
   }
 
   if (typeof value === "object" && value !== null) {
     const result: Record<string, unknown> = {};
 
     for (const [key, child] of Object.entries(value)) {
-      result[key] = interpolateValue(child, env);
+      result[key] = interpolateValue(child, env, goViperCompat);
     }
 
     return result;
   }
 
   if (typeof value === "string") {
-    return interpolateLeafValue(value, env);
+    return interpolateLeafValue(value, env, goViperCompat);
   }
 
   return value;
 }
 
-function redactValue(value: unknown, path: ReadonlyArray<string> = []): unknown {
+function redactValue(value: unknown, path: ReadonlyArray<string>, goViperCompat: boolean): unknown {
   if (Array.isArray(value)) {
-    return value.map((item, index) => redactValue(item, [...path, String(index)]));
+    return value.map((item, index) => redactValue(item, [...path, String(index)], goViperCompat));
   }
 
   if (typeof value === "object" && value !== null) {
     const result: Record<string, unknown> = {};
 
     for (const [key, child] of Object.entries(value)) {
-      result[key] = redactValue(child, [...path, key]);
+      result[key] = redactValue(child, [...path, key], goViperCompat);
     }
 
     return result;
   }
 
-  if (typeof value === "string" && isSecretPath(path) && !isEnvReference(value)) {
+  if (typeof value === "string" && isSecretPath(path) && !isEnvReference(value, goViperCompat)) {
     return Redacted.make(value, { label: path.join(".") });
   }
 
@@ -379,15 +396,17 @@ function resolveProjectValueAtPath(
   value: unknown,
   projectEnv: ProjectEnvironment,
   path: ReadonlyArray<string>,
+  goViperCompat: boolean,
 ): unknown {
-  const interpolated = interpolateValue(value, projectEnv.values);
-  return redactValue(interpolated, path);
+  const interpolated = interpolateValue(value, projectEnv.values, goViperCompat);
+  return redactValue(interpolated, path, goViperCompat);
 }
 
 export function resolveProjectValue<T>(
   value: T,
   projectEnv: ProjectEnvironment,
   configPath: string,
+  options?: ResolveProjectOptions,
 ): Effect.Effect<ResolvedProjectValue<T>> {
   return Effect.sync(
     () =>
@@ -395,6 +414,7 @@ export function resolveProjectValue<T>(
         value,
         projectEnv,
         toPathSegments(configPath),
+        options?.goViperCompat ?? false,
       ) as ResolvedProjectValue<T>,
   );
 }
@@ -403,6 +423,7 @@ export function resolveProjectSubtree<T>(
   value: T,
   projectEnv: ProjectEnvironment,
   pathPrefix: string,
+  options?: ResolveProjectOptions,
 ): Effect.Effect<ResolvedProjectValue<T>> {
   return Effect.sync(
     () =>
@@ -410,6 +431,7 @@ export function resolveProjectSubtree<T>(
         value,
         projectEnv,
         toPathSegments(pathPrefix),
+        options?.goViperCompat ?? false,
       ) as ResolvedProjectValue<T>,
   );
 }

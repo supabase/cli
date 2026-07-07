@@ -509,4 +509,75 @@ account_sid = "AC123"
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  // Pins the pre-PR-#5765 strict SCREAMING_SNAKE_CASE `env()` matcher as the
+  // default for `resolveProjectValue`/`resolveProjectSubtree`, since `next/`
+  // and `packages/stack` call these without ever passing `goViperCompat`.
+  test("resolveProjectValue does not resolve a lowercase-named env() reference by default", async () => {
+    const cwd = makeTempProject();
+    const projectRoot = join(cwd, "repo");
+
+    try {
+      await mkdir(join(projectRoot, "supabase"), { recursive: true });
+      await writeFile(
+        join(projectRoot, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+jwt_secret = "env(lowercase_secret)"
+`,
+      );
+      await writeFile(join(projectRoot, "supabase", ".env"), "lowercase_secret=super-secret\n");
+
+      const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
+
+      const resolved = await runConfigEffect(
+        resolveProjectValue(loaded!.config.auth.jwt_secret, projectEnv!, "auth.jwt_secret"),
+      );
+
+      expect(Redacted.isRedacted(resolved)).toBe(true);
+      if (!Redacted.isRedacted(resolved)) {
+        throw new Error("Expected auth.jwt_secret to be redacted.");
+      }
+      expect(Redacted.value(resolved)).toBe("env(lowercase_secret)");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("resolveProjectValue resolves a lowercase-named env() reference when goViperCompat is true", async () => {
+    const cwd = makeTempProject();
+    const projectRoot = join(cwd, "repo");
+
+    try {
+      await mkdir(join(projectRoot, "supabase"), { recursive: true });
+      await writeFile(
+        join(projectRoot, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+jwt_secret = "env(lowercase_secret)"
+`,
+      );
+      await writeFile(join(projectRoot, "supabase", ".env"), "lowercase_secret=super-secret\n");
+
+      const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
+
+      const resolved = await runConfigEffect(
+        resolveProjectValue(loaded!.config.auth.jwt_secret, projectEnv!, "auth.jwt_secret", {
+          goViperCompat: true,
+        }),
+      );
+
+      expect(Redacted.isRedacted(resolved)).toBe(true);
+      if (!Redacted.isRedacted(resolved)) {
+        throw new Error("Expected auth.jwt_secret to be redacted.");
+      }
+      expect(Redacted.value(resolved)).toBe("super-secret");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
 });
