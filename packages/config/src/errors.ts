@@ -20,7 +20,11 @@ export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigPars
    * Only `edge_runtime` is retained, not the whole document — several callers
    * of `loadProjectConfig` don't catch `ProjectConfigParseError` at all, so
    * this error can propagate with whatever is attached here, and no caller
-   * needs anything outside `edge_runtime` today. `undefined` when the
+   * needs anything outside `edge_runtime` today. Every `edge_runtime.secrets`
+   * value is wrapped in `Redacted` (mirroring `secret()`'s `x-secret`
+   * treatment elsewhere in this package) so an uncaught error can't
+   * accidentally leak a resolved secret into a log or trace; callers must
+   * unwrap via `Redacted.value` before re-decoding. `undefined` when the
    * document never parsed at all — that class has no recoverable structure in
    * either implementation.
    */

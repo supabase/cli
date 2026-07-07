@@ -1,4 +1,4 @@
-import { Console, Effect, FileSystem, Path, Schema } from "effect";
+import { Console, Effect, FileSystem, Path, Redacted, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
 import { DuplicateRemoteProjectIdError, ProjectConfigParseError } from "./errors.ts";
@@ -317,6 +317,37 @@ function normalizeDeprecatedSMTPSections(document: unknown): NormalizedSMTPDocum
   return { document: normalized, deprecatedSections };
 }
 
+/**
+ * Wraps every `edge_runtime.secrets` value in `Redacted` before it's attached
+ * to `ProjectConfigParseError.document`. By this point `secrets` values are
+ * real, resolved secrets (post `env()` interpolation, see
+ * `interpolateEnvReferencesAgainstSchema` in `loadProjectConfigFile`) — the
+ * same values `secret()` (`lib/env.ts`) annotates `x-secret` for elsewhere in
+ * this package (`resolveProjectValue`'s `redactValue`). Several callers of
+ * `loadProjectConfig` (`gen types`, `next start`, `functions dev/serve/deploy`)
+ * don't catch `ProjectConfigParseError` at all, so this keeps the same
+ * accidental-leak protection `Redacted` already gives every other secret path
+ * in this package, in case an uncaught error's `document` ever reaches a log
+ * or trace. `secrets set`'s `recoverEdgeRuntimeConfig`/`filterDecodableSecrets`
+ * unwrap via `Redacted.isRedacted`/`Redacted.value` before re-decoding.
+ */
+function redactEdgeRuntimeSecrets(edgeRuntime: unknown): unknown {
+  if (!isObject(edgeRuntime) || !isObject(edgeRuntime.secrets)) {
+    return edgeRuntime;
+  }
+  return {
+    ...edgeRuntime,
+    secrets: Object.fromEntries(
+      Object.entries(edgeRuntime.secrets).map(([name, value]) => [
+        name,
+        typeof value === "string"
+          ? Redacted.make(value, { label: `edge_runtime.secrets.${name}` })
+          : value,
+      ]),
+    ),
+  };
+}
+
 function getSchemaRef(document: unknown): string | undefined {
   if (!isObject(document)) {
     return undefined;
@@ -350,7 +381,9 @@ function parseProjectConfig(
         path,
         format,
         cause,
-        document: isObject(document) ? { edge_runtime: document.edge_runtime } : undefined,
+        document: isObject(document)
+          ? { edge_runtime: redactEdgeRuntimeSecrets(document.edge_runtime) }
+          : undefined,
       }),
   });
 }

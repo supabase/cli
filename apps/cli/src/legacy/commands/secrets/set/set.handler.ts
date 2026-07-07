@@ -98,13 +98,20 @@ function recoverEdgeRuntimeConfig(cause: ProjectConfigParseError): ProjectConfig
  * `apps/cli-go/pkg/config/config.go:749`): a decode error on one secret
  * value doesn't discard the whole `[edge_runtime.secrets]` map — only that
  * entry is dropped, and every other entry is still recovered.
+ *
+ * Each value arrives as `Redacted<string>` — `ProjectConfigParseError.document`
+ * wraps `edge_runtime.secrets` values so an uncaught parse error can't leak a
+ * resolved secret into a log or trace (see the field doc on `.document`).
+ * Unwrap before re-decoding: `secret()`'s schema is a plain `Schema.String`,
+ * not `Redacted`.
  */
 function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string, unknown> {
   const kept: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(secrets)) {
+    const plainValue = Redacted.isRedacted(value) ? Redacted.value(value) : value;
     try {
-      decodeProjectConfig({ edge_runtime: { secrets: { [name]: value } } });
-      kept[name] = value;
+      decodeProjectConfig({ edge_runtime: { secrets: { [name]: plainValue } } });
+      kept[name] = plainValue;
     } catch {
       // Drop this entry only, matching mapstructure's per-key error handling.
     }

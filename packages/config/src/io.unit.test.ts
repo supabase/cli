@@ -5,7 +5,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
 import { ProjectConfigSchema } from "./base.ts";
 import { loadProjectConfig as loadProjectConfigFromBun } from "./bun.ts";
 import {
@@ -425,6 +425,60 @@ major_version = 16
           }
         }
       }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("redacts edge_runtime.secrets on the ProjectConfigParseError document", async () => {
+    const cwd = makeTempProject();
+    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      // `analytics.port` fails schema decode (expects a number), which is
+      // enough to fail the whole `Schema.decodeUnknownSync` call while
+      // `edge_runtime.secrets` parses fine on its own — the scenario
+      // `recoverEdgeRuntimeConfig` (apps/cli's `secrets set`) exists to
+      // recover from. `MY_SUPER_SECRET_VALUE` stands in for a real secret so
+      // the assertion below can confirm it never appears in plaintext.
+      await writeFile(
+        tomlPath,
+        `[analytics]
+port = "not-a-number"
+
+[edge_runtime.secrets]
+FOO = "MY_SUPER_SECRET_VALUE"
+`,
+      );
+
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfigFile(tomlPath).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) {
+        return;
+      }
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (!Option.isSome(error) || error.value._tag !== "ProjectConfigParseError") {
+        return;
+      }
+
+      const edgeRuntime = error.value.document?.edge_runtime;
+      const secrets =
+        edgeRuntime !== null && typeof edgeRuntime === "object" && edgeRuntime !== undefined
+          ? (edgeRuntime as Record<string, unknown>).secrets
+          : undefined;
+      expect(secrets).toBeDefined();
+      const foo = (secrets as Record<string, unknown>).FOO;
+      expect(Redacted.isRedacted(foo)).toBe(true);
+      expect(Redacted.value(foo as Redacted.Redacted<string>)).toBe("MY_SUPER_SECRET_VALUE");
+      // The whole point: a caller that doesn't know to unwrap `Redacted`
+      // (e.g. an uncaught error serialized into a log) never sees the raw
+      // secret, even via JSON.stringify.
+      expect(JSON.stringify(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
