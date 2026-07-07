@@ -139,12 +139,14 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     // literals stay as plain strings, so `Redacted.isRedacted(...)` is the
     // equivalent guard.
     const merged = new Map<string, string>();
-    // Go swallows a malformed config.toml here (`internal/secrets/set/set.go:20-24`:
-    // `fmt.Fprintln(utils.GetDebugLogger(), err)`) and proceeds with an empty
-    // `EdgeRuntime.Secrets` — env-file and positional-arg secrets still work.
-    // `secrets set` has no `--linked`/`--local`/`--db-url` flag, so (unlike most
-    // commands) the root `PreRun` never loads the config first either; this is
-    // the only load, and it must not be fatal.
+    // Go swallows a malformed config.toml (or a malformed `.env`/`.env.local`
+    // sibling — see the `ProjectEnvParseError` catch below) here
+    // (`internal/secrets/set/set.go:20-24`: `fmt.Fprintln(utils.GetDebugLogger(), err)`)
+    // and proceeds with an empty `EdgeRuntime.Secrets` — env-file and
+    // positional-arg secrets still work. `secrets set` has no
+    // `--linked`/`--local`/`--db-url` flag, so (unlike most commands) the root
+    // `PreRun` never loads the config first either; this is the only load, and
+    // it must not be fatal.
     const loadedConfig = yield* loadProjectConfig(runtimeInfo.cwd).pipe(
       Effect.map((loaded) => loaded?.config ?? null),
       Effect.catchTag("ProjectConfigParseError", (cause) => {
@@ -161,6 +163,19 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
           .debug(`failed to parse supabase/config.toml: ${shortMessage}`)
           .pipe(Effect.as(recoverEdgeRuntimeConfig(cause)));
       }),
+      // `loadProjectConfig` resolves `env(VAR)` references against
+      // `.env`/`.env.local` (`loadProjectEnvironment` inside
+      // `loadProjectConfigFile`) *before* schema decode, so a malformed dotenv
+      // line fails with this distinct tag rather than `ProjectConfigParseError`.
+      // Go's `Load()` (`pkg/config/config.go:788-791`) calls `loadNestedEnv`
+      // first too and returns immediately on error, before `loadFromFile` (the
+      // TOML parse) ever runs — so `EdgeRuntime.Secrets` never gets populated
+      // in this failure path, unlike the schema-decode-only case above. Recover
+      // to `null`, not `recoverEdgeRuntimeConfig`: there is no parsed document
+      // to recover a subtree from.
+      Effect.catchTag("ProjectEnvParseError", (cause) =>
+        debugLogger.debug(`failed to parse ${cause.path}:${cause.line}`).pipe(Effect.as(null)),
+      ),
     );
     if (loadedConfig !== null) {
       const projectEnv = yield* loadProjectEnvironment({

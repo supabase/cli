@@ -75,6 +75,11 @@ function writeConfig(content: string) {
   writeFileSync(join(tempRoot.current, "supabase", "config.toml"), content);
 }
 
+function writeSupabaseDotEnv(content: string) {
+  mkdirSync(join(tempRoot.current, "supabase"), { recursive: true });
+  writeFileSync(join(tempRoot.current, "supabase", ".env"), content);
+}
+
 function parsePostBody(body: unknown): Array<{ name: string; value: string }> {
   // `mockLegacyPlatformApi` JSON-decodes the request body when it parses; this
   // helper just narrows the type for the test assertions.
@@ -419,6 +424,39 @@ FROM_CONFIG = "config-value"
         ]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "tolerates a malformed supabase/.env, logs it to the debug logger, and still sets CLI-arg secrets (CLI-1867 Go parity)",
+    () => {
+      // `loadProjectConfig` resolves `env(VAR)` references against
+      // `supabase/.env`/`.env.local` *before* schema decode, so a malformed
+      // dotenv line fails with `ProjectEnvParseError` rather than
+      // `ProjectConfigParseError`. Go's `Load()` (`pkg/config/config.go:788-791`)
+      // calls `loadNestedEnv` first too and swallows any error the same way
+      // `flags.LoadConfig` does in `internal/secrets/set/set.go:20-24` — so this
+      // must not abort the command either. `.env` is only read once a
+      // `supabase/config.toml`/`.json` is found (`findProjectPaths`), so a
+      // config.toml must exist here too.
+      writeConfig(
+        `[edge_runtime.secrets]
+FROM_CONFIG = "config-value"
+`,
+      );
+      writeSupabaseDotEnv("THIS IS NOT A VALID DOTENV LINE\n");
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: ["FOO=bar"],
+        });
+        expect(api.requests).toHaveLength(1);
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([{ name: "FOO", value: "bar" }]);
+        expect(debugLogger.messages).toHaveLength(1);
+        expect(debugLogger.messages[0]).toContain("failed to parse");
       }).pipe(Effect.provide(layer));
     },
   );
