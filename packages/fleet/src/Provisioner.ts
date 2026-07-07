@@ -44,17 +44,24 @@ export class Provisioner {
         ? await templates.ensureWarmTemplate(opts.versions, enabled)
         : await templates.ensureBaseTemplate(pgVersion);
     const allocated = await ports.allocate(opts.id);
-    await cloneDir(template, pods.dataDir(opts.id));
-    const manifest: PodManifest = {
-      id: opts.id,
-      versions: opts.versions,
-      services: opts.services ?? {},
-      flags: { supautils: opts.flags?.supautils ?? false },
-      ports: allocated,
-      createdAt: new Date().toISOString(),
-    };
-    await pods.write(manifest);
-    return manifest;
+    try {
+      await cloneDir(template, pods.dataDir(opts.id));
+      const manifest: PodManifest = {
+        id: opts.id,
+        versions: opts.versions,
+        services: opts.services ?? {},
+        flags: { supautils: opts.flags?.supautils ?? false },
+        ports: allocated,
+        createdAt: new Date().toISOString(),
+      };
+      await pods.write(manifest);
+      return manifest;
+    } catch (err) {
+      await ports.release(opts.id).catch(() => {});
+      await rm(pods.dataDir(opts.id), { recursive: true, force: true }).catch(() => {});
+      await rm(pods.podDir(opts.id), { recursive: true, force: true }).catch(() => {});
+      throw err;
+    }
   }
 
   /** Re-clones the pod's data dir from the base template of its postgres version. */
@@ -78,15 +85,22 @@ export class Provisioner {
       throw new Error(`pod already exists: ${newId}`);
     }
     const allocated = await ports.allocate(newId);
-    await cloneDir(pods.dataDir(sourceId), pods.dataDir(newId));
-    const manifest: PodManifest = {
-      ...source,
-      id: newId,
-      ports: allocated,
-      createdAt: new Date().toISOString(),
-    };
-    await pods.write(manifest);
-    return manifest;
+    try {
+      await cloneDir(pods.dataDir(sourceId), pods.dataDir(newId));
+      const manifest: PodManifest = {
+        ...source,
+        id: newId,
+        ports: allocated,
+        createdAt: new Date().toISOString(),
+      };
+      await pods.write(manifest);
+      return manifest;
+    } catch (err) {
+      await ports.release(newId).catch(() => {});
+      await rm(pods.dataDir(newId), { recursive: true, force: true }).catch(() => {});
+      await rm(pods.podDir(newId), { recursive: true, force: true }).catch(() => {});
+      throw err;
+    }
   }
 
   async destroy(id: string): Promise<void> {
