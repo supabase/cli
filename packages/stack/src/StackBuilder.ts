@@ -161,6 +161,12 @@ export interface StackConfig {
   readonly mode?: "native" | "auto" | "docker";
   readonly jwtSecret?: string;
   readonly port?: number;
+  /**
+   * When true, `start()` only eagerly starts `postgres` (and `postgres-init` when present); every
+   * other service is started on demand by the ApiProxy on the first request to its route, instead
+   * of starting everything up front. Default false: existing eager-start behavior is unchanged.
+   */
+  readonly lazyServices?: boolean;
   readonly publishableKey?: string;
   readonly secretKey?: string;
   readonly functions?: FunctionsConfig | false;
@@ -286,6 +292,7 @@ export interface ResolvedStackConfig {
   readonly projectDir: string;
   readonly mode: "native" | "auto" | "docker";
   readonly jwtSecret: string;
+  readonly lazyServices: boolean;
   readonly ports: AllocatedPorts;
   readonly apiPort: number;
   readonly dbPort: number;
@@ -566,6 +573,16 @@ export class StackBuilder extends Context.Service<
           postgresResolution.type === "binary" && config.postgres.provisioned !== true;
         const postgresDeps = dependsOnPostgres(hasPostgresInit);
         const jwtJwks = generateJwks(config.jwtSecret);
+
+        // Every service def stays enabled in the process-compose graph, including under
+        // lazyServices: process-compose's dependency graph excludes `enabled: false` defs
+        // entirely (they're never added as nodes), so a service disabled at build time can never
+        // later be started via `startService` — there's no supported "enable" path once the
+        // orchestrator is built. Instead, laziness is enforced one layer up: when
+        // config.lazyServices is on, StackLifecycleCoordinator.start() only eagerly starts
+        // postgres (and postgres-init); every other service is started on demand by the ApiProxy
+        // via `ensureService`, which calls the ordinary `startService` + `waitReady` coordinator
+        // methods against these same (enabled) defs.
 
         const defs: Array<ServiceDef & { enabled: boolean }> = [
           {

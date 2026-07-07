@@ -488,4 +488,68 @@ describe("ApiProxy", () => {
       await echoBody.stop();
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // Lazy service start — ensureService
+  // ---------------------------------------------------------------------------
+
+  describe("ensureService", () => {
+    test("is invoked with the route's owning service before forwarding", async () => {
+      const backend = await startEchoBackend();
+      const calls: string[] = [];
+      const config: ProxyConfig = {
+        ...configForPort(backend.port),
+        ensureService: async (name) => {
+          calls.push(name);
+        },
+      };
+      const proxy = await startProxy(config);
+      try {
+        await fetch(`${proxy.url}/rest/v1/users`);
+        await fetch(`${proxy.url}/auth/v1/token`, { headers: { apikey: PUBLISHABLE_KEY } });
+        expect(calls).toEqual(["postgrest", "auth"]);
+      } finally {
+        await proxy.dispose();
+        await backend.stop();
+      }
+    });
+
+    test("is not invoked for /health", async () => {
+      const backend = await startEchoBackend();
+      const calls: string[] = [];
+      const config: ProxyConfig = {
+        ...configForPort(backend.port),
+        ensureService: async (name) => {
+          calls.push(name);
+        },
+      };
+      const proxy = await startProxy(config);
+      try {
+        const res = await fetch(`${proxy.url}/health`);
+        expect(res.status).toBe(200);
+        expect(calls).toEqual([]);
+      } finally {
+        await proxy.dispose();
+        await backend.stop();
+      }
+    });
+
+    test("returns 502 when ensureService rejects", async () => {
+      const backend = await startEchoBackend();
+      const config: ProxyConfig = {
+        ...configForPort(backend.port),
+        ensureService: async () => {
+          throw new Error("failed to start");
+        },
+      };
+      const proxy = await startProxy(config);
+      try {
+        const res = await fetch(`${proxy.url}/rest/v1/users`);
+        expect(res.status).toBe(502);
+      } finally {
+        await proxy.dispose();
+        await backend.stop();
+      }
+    });
+  });
 });

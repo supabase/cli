@@ -43,6 +43,7 @@ const baseConfig: ResolvedStackConfig = {
   projectDir: "/tmp/supabase-project",
   mode: "auto",
   jwtSecret: testJwtSecret,
+  lazyServices: false,
   ports: basePorts,
   apiPort: 3000,
   dbPort: 5432,
@@ -295,6 +296,32 @@ describe("StackBuilder", () => {
       expect(names).toContain("postgres-init");
       expect(names).toContain("postgrest");
       expect(names).not.toContain("auth");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lazyServices still builds every service enabled in the graph", () => {
+    // process-compose's dependency graph excludes `enabled: false` defs entirely (they're never
+    // added as nodes), so a service disabled at build time could never later be started via
+    // `startService`. lazyServices is enforced one layer up instead: StackLifecycleCoordinator
+    // only eagerly starts postgres/postgres-init, and the ApiProxy starts everything else on
+    // demand via the ordinary startService + waitReady coordinator methods, which require every
+    // def to remain a node in the graph.
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph } = yield* prepareAndBuild(builder, preparation, {
+        ...baseConfig,
+        lazyServices: true,
+      });
+
+      const byName = new Map(graph.startOrder.map((def) => [def.name, def] as const));
+      expect(byName.get("postgres")?.enabled).toBe(true);
+      expect(byName.get("postgres-init")?.enabled).toBe(true);
+      expect(byName.get("postgrest")?.enabled).toBe(true);
+      expect(byName.get("auth")?.enabled).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 

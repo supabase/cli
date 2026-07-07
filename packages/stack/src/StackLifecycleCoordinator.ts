@@ -1,6 +1,6 @@
 import { LogBuffer, Orchestrator } from "@supabase/process-compose";
 import { ServiceNotFoundError } from "@supabase/process-compose";
-import type { LogEntry, ServiceReadyError } from "@supabase/process-compose";
+import type { LogEntry, ResolvedGraph, ServiceReadyError } from "@supabase/process-compose";
 import {
   Deferred,
   Effect,
@@ -47,7 +47,39 @@ type LifecyclePhase =
 interface RuntimeState {
   readonly orchestrator: Orchestrator["Service"];
   readonly cleanupTargets: CleanupTargets;
+  readonly graph: ResolvedGraph;
 }
+
+// postgres/postgres-init are always nodes in the graph (StackBuilder never disables them), so
+// ServiceNotFoundError can't actually occur when lazyServices eager-starts them — map it to
+// StackBuildError only to satisfy start()'s declared error type.
+const eagerStartService = (
+  orchestrator: Orchestrator["Service"],
+  name: string,
+): Effect.Effect<void, StackBuildError> =>
+  orchestrator.startService(name).pipe(
+    Effect.catchTag(
+      "ServiceNotFoundError",
+      (error) =>
+        new StackBuildError({
+          detail: `lazyServices eager-start: unexpected missing service "${error.name}"`,
+        }),
+    ),
+  );
+
+const eagerWaitReady = (
+  orchestrator: Orchestrator["Service"],
+  name: string,
+): Effect.Effect<void, StackBuildError | ServiceReadyError> =>
+  orchestrator.waitReady(name).pipe(
+    Effect.catchTag(
+      "ServiceNotFoundError",
+      (error) =>
+        new StackBuildError({
+          detail: `lazyServices eager-start: unexpected missing service "${error.name}"`,
+        }),
+    ),
+  );
 
 const sameState = (a: StackServiceState | undefined, b: StackServiceState): boolean =>
   a?.name === b.name &&
@@ -405,6 +437,7 @@ export class StackLifecycleCoordinator extends Context.Service<
             return {
               orchestrator,
               cleanupTargets,
+              graph,
             } satisfies RuntimeState;
           }).pipe(
             Effect.tap((value) =>
@@ -527,8 +560,26 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* Ref.set(phaseRef, "starting");
               const runtime = yield* ensureRuntime;
               yield* configureFunctions(config);
-              yield* runtime.orchestrator.start();
-              yield* runtime.orchestrator.waitAllReady();
+              if (config.lazyServices === true) {
+                // Only bring up postgres (and postgres-init, which depends on postgres and
+                // bootstraps the schema once). Every other service stays Pending until the
+                // ApiProxy starts it on demand via startService + waitReady (see ensureService in
+                // ApiProxy.ts / lazyServices.ts).
+                const eagerServices = runtime.graph.startOrder
+                  .map((def) => def.name)
+                  .filter((name) => name === "postgres" || name === "postgres-init");
+                for (const name of eagerServices) {
+                  yield* eagerStartService(runtime.orchestrator, name);
+                }
+                yield* Effect.forEach(
+                  eagerServices,
+                  (name) => eagerWaitReady(runtime.orchestrator, name),
+                  { concurrency: "unbounded" },
+                );
+              } else {
+                yield* runtime.orchestrator.start();
+                yield* runtime.orchestrator.waitAllReady();
+              }
               yield* Ref.set(phaseRef, "running");
             }),
           stop: () =>

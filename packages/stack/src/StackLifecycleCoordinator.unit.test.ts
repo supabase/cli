@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import * as http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
@@ -48,6 +49,7 @@ function makeConfig(dataDir: string): ResolvedStackConfig {
     projectDir: "/tmp/supabase-project",
     mode: "native",
     jwtSecret: testJwtSecret,
+    lazyServices: false,
     ports: defaultPorts,
     apiPort: 54321,
     dbPort: 54322,
@@ -99,7 +101,40 @@ function setupLayer(config: ResolvedStackConfig) {
     Layer.provide(NodeServices.layer),
   );
 
-  return { layer };
+  return { layer, spawner };
+}
+
+function makeLazyConfig(dataDir: string): ResolvedStackConfig {
+  return {
+    ...makeConfig(dataDir),
+    lazyServices: true,
+    // postgrest's health check is a real HTTP probe against 127.0.0.1:postgrestPort; the test
+    // below binds a fake listener there so waitReady can actually resolve once startService
+    // spawns it (spawning itself is satisfied generically by the mocked ChildProcessSpawner).
+    postgrest: {
+      port: defaultPorts.postgrestPort,
+      adminPort: defaultPorts.postgrestAdminPort,
+      schemas: ["public"],
+      extraSearchPath: ["public"],
+      maxRows: 1000,
+      version: DEFAULT_VERSIONS.postgrest,
+    },
+  };
+}
+
+function startFakeHealthyServer(port: number): Promise<() => Promise<void>> {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer((_req, res) => {
+      res.writeHead(200);
+      res.end("OK");
+    });
+    server.listen(port, "127.0.0.1", () => {
+      resolve(
+        () => new Promise<void>((res, rej) => server.close((err) => (err ? rej(err) : res()))),
+      );
+    });
+    server.on("error", reject);
+  });
 }
 
 describe("StackLifecycleCoordinator enableExtension", () => {
@@ -133,6 +168,62 @@ describe("StackLifecycleCoordinator enableExtension", () => {
       expect(libraries).toContain("pg_cron");
       expect(libraries).toContain("pg_net");
       expect(libraries).toHaveLength(2);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
+    );
+  });
+});
+
+describe("StackLifecycleCoordinator lazyServices", () => {
+  // it.live: the mocked ChildProcessSpawner and postgres's health-check probe both resolve via a
+  // real `Effect.sleep`, which needs the real clock to progress (same reason as the
+  // enableExtension test above).
+  it.live("start() only eager-starts postgres/postgres-init; postgrest starts on demand", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-lazy-test-"));
+    const config = makeLazyConfig(dataDir);
+    const { layer, spawner } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const stopFakeServer = yield* Effect.promise(() =>
+        startFakeHealthyServer(defaultPorts.postgrestPort),
+      );
+
+      const isPostgrestPayload = (s: { args: ReadonlyArray<string> }) => {
+        const encoded = s.args.at(-1);
+        if (encoded === undefined) return false;
+        try {
+          const decoded = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {
+            command?: string;
+          };
+          return decoded.command?.endsWith("/postgrest") ?? false;
+        } catch {
+          return false;
+        }
+      };
+
+      const stack = yield* Stack;
+      yield* stack.start();
+
+      // postgrest must not have been spawned by start() itself.
+      expect(spawner.spawned.some(isPostgrestPayload)).toBe(false);
+
+      const postgrestState = yield* stack.getState("postgrest");
+      expect(postgrestState.status).toBe("Pending");
+
+      // The ApiProxy's ensureService would call startService + waitReady on first request;
+      // simulate that here directly against the coordinator.
+      yield* stack.startService("postgrest");
+      yield* stack.waitReady("postgrest");
+
+      expect(spawner.spawned.some(isPostgrestPayload)).toBe(true);
+      // waitReady already proved the service reached a ready state (Running or Healthy — health
+      // checks poll on an interval, so the coordinator's projected state may briefly lag the
+      // orchestrator's internal readiness signal that waitReady resolves on).
+      const readyState = yield* stack.getState("postgrest");
+      expect(["Running", "Healthy"]).toContain(readyState.status);
+
+      yield* Effect.promise(() => stopFakeServer());
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),

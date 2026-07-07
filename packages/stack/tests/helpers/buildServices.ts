@@ -89,6 +89,7 @@ const baseConfig: ResolvedStackConfig = {
   projectDir: "/tmp/supabase-project",
   mode: "auto",
   jwtSecret: testJwtSecret,
+  lazyServices: false,
   ports: basePorts,
   apiPort: 3000,
   dbPort: 5432,

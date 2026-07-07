@@ -1,11 +1,12 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { Data, Effect, Layer, Option } from "effect";
 import { FileSystem, Path } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
+import { FetchHttpClient, HttpClient, HttpServer } from "effect/unstable/http";
 import { ApiProxy, type ProxyConfig } from "./ApiProxy.ts";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { PlatformFactory } from "./createStack.ts";
 import type { DaemonMessage, DaemonStartMessage } from "./daemon.ts";
+import { makeEnsureServiceMemo } from "./lazyServices.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack } from "./Stack.ts";
 import { StackLifecycleCoordinator } from "./StackLifecycleCoordinator.ts";
@@ -20,9 +21,58 @@ import {
   type StateManagerService,
 } from "./StateManager.ts";
 import { StackBuilder, type ResolvedStackConfig } from "./StackBuilder.ts";
+import type { ServiceName } from "./versions.ts";
 import { UnixHttpClient } from "./UnixHttpClient.ts";
 import { resolveManagedStack } from "./managed-stack.ts";
 import { terminateChildProcess } from "./terminateChild.ts";
+
+const baseProxyConfig = (config: ResolvedStackConfig): Omit<ProxyConfig, "ensureService"> => ({
+  listenPort: config.apiPort,
+  gotruePort: config.auth !== false ? config.auth.port : 0,
+  postgrestPort: config.postgrest !== false ? config.postgrest.port : 0,
+  postgrestAdminPort: config.postgrest !== false ? config.postgrest.adminPort : 0,
+  edgeRuntimePort: config.edgeRuntime !== false ? config.edgeRuntime.port : 0,
+  realtimePort: config.realtime !== false ? config.realtime.port : 0,
+  storagePort: config.storage !== false ? config.storage.port : 0,
+  pgmetaPort: config.pgmeta !== false ? config.pgmeta.port : 0,
+  analyticsPort: config.analytics !== false ? config.analytics.port : 0,
+  poolerPort: config.pooler !== false ? config.pooler.apiPort : 0,
+  studioPort: config.studio !== false ? config.studio.port : 0,
+  publishableKey: config.publishableKey,
+  secretKey: config.secretKey,
+  anonJwt: config.anonJwt,
+  serviceRoleJwt: config.serviceRoleJwt,
+});
+
+/**
+ * Build the ApiProxy layer for a stack.
+ *
+ * When `config.lazyServices` is on, the layer depends on `Stack` so it can wire
+ * `ProxyConfig.ensureService` to `Stack.startService` + `Stack.waitReady`, memoized so concurrent
+ * first requests to a route trigger a single start. Otherwise it's the plain config-only layer.
+ */
+const makeApiProxyLayer = (
+  config: ResolvedStackConfig,
+): Layer.Layer<ApiProxy, never, HttpServer.HttpServer | HttpClient.HttpClient | Stack> => {
+  if (!config.lazyServices) {
+    return ApiProxy.layer(baseProxyConfig(config));
+  }
+
+  return Layer.unwrap(
+    Effect.gen(function* () {
+      const stack = yield* Stack;
+      const ensureService = makeEnsureServiceMemo((name: ServiceName) =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            yield* stack.startService(name);
+            yield* stack.waitReady(name);
+          }),
+        ),
+      );
+      return ApiProxy.layer({ ...baseProxyConfig(config), ensureService });
+    }),
+  );
+};
 
 /**
  * Build a foreground layer that runs the stack in-process.
@@ -47,24 +97,10 @@ export const foregroundLayer = (
   );
   const stackLayer = Stack.layer(config).pipe(Layer.provide(coordinatorLayer));
 
-  const proxyConfig: ProxyConfig = {
-    listenPort: config.apiPort,
-    gotruePort: config.auth !== false ? config.auth.port : 0,
-    postgrestPort: config.postgrest !== false ? config.postgrest.port : 0,
-    postgrestAdminPort: config.postgrest !== false ? config.postgrest.adminPort : 0,
-    edgeRuntimePort: config.edgeRuntime !== false ? config.edgeRuntime.port : 0,
-    realtimePort: config.realtime !== false ? config.realtime.port : 0,
-    storagePort: config.storage !== false ? config.storage.port : 0,
-    pgmetaPort: config.pgmeta !== false ? config.pgmeta.port : 0,
-    analyticsPort: config.analytics !== false ? config.analytics.port : 0,
-    poolerPort: config.pooler !== false ? config.pooler.apiPort : 0,
-    studioPort: config.studio !== false ? config.studio.port : 0,
-    publishableKey: config.publishableKey,
-    secretKey: config.secretKey,
-    anonJwt: config.anonJwt,
-    serviceRoleJwt: config.serviceRoleJwt,
-  };
-  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(Layer.provide(FetchHttpClient.layer));
+  const apiProxyLayer = makeApiProxyLayer(config).pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(stackLayer),
+  );
 
   return Layer.mergeAll(stackLayer, apiProxyLayer).pipe(Layer.provide(platform), Layer.orDie);
 };
@@ -95,24 +131,6 @@ export const foregroundDaemonLayer = (
   const binaryResolverLayer = BinaryResolver.make(config.cacheRoot).pipe(
     Layer.provide(FetchHttpClient.layer),
   );
-  const proxyConfig: ProxyConfig = {
-    listenPort: config.apiPort,
-    gotruePort: config.auth !== false ? config.auth.port : 0,
-    postgrestPort: config.postgrest !== false ? config.postgrest.port : 0,
-    postgrestAdminPort: config.postgrest !== false ? config.postgrest.adminPort : 0,
-    edgeRuntimePort: config.edgeRuntime !== false ? config.edgeRuntime.port : 0,
-    realtimePort: config.realtime !== false ? config.realtime.port : 0,
-    storagePort: config.storage !== false ? config.storage.port : 0,
-    pgmetaPort: config.pgmeta !== false ? config.pgmeta.port : 0,
-    analyticsPort: config.analytics !== false ? config.analytics.port : 0,
-    poolerPort: config.pooler !== false ? config.pooler.apiPort : 0,
-    studioPort: config.studio !== false ? config.studio.port : 0,
-    publishableKey: config.publishableKey,
-    secretKey: config.secretKey,
-    anonJwt: config.anonJwt,
-    serviceRoleJwt: config.serviceRoleJwt,
-  };
-  const apiProxyLayer = ApiProxy.layer(proxyConfig).pipe(Layer.provide(FetchHttpClient.layer));
   const stateManagerLayer = StateManager.make(
     singleStackStateManagerPaths(config.stackRoot, config.runtimeRoot, config.name),
   );
@@ -126,6 +144,11 @@ export const foregroundDaemonLayer = (
     Layer.provide(metadataPersistenceLayer),
   );
   const stackLayer = Stack.layer(config).pipe(Layer.provide(coordinatorLayer));
+
+  const apiProxyLayer = makeApiProxyLayer(config).pipe(
+    Layer.provide(FetchHttpClient.layer),
+    Layer.provide(stackLayer),
+  );
 
   return Layer.mergeAll(stackLayer, apiProxyLayer, stateManagerLayer).pipe(
     Layer.provide(platform),

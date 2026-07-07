@@ -547,6 +547,7 @@ export async function resolveConfig(
     projectDir,
     mode: resolvedMode,
     jwtSecret,
+    lazyServices: config.lazyServices === true,
     ports,
     apiPort: ports.apiPort,
     dbPort: ports.dbPort,
