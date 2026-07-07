@@ -26,7 +26,7 @@
     "vitest": "catalog:"
   },
   "knip": {
-    "entry": ["src/**/*.test.ts"],
+    "entry": ["src/**/*.test.ts", "tests/**/*.ts"],
     "ignoreDependencies": ["@typescript/native-preview", "oxfmt", "oxlint", "oxlint-tsgolint"],
     "ignoreBinaries": ["nx"]
   }

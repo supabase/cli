@@ -24,6 +24,13 @@ export default defineConfig({
           include: ["**/*.integration.test.ts"],
         },
       },
+      {
+        test: {
+          name: "e2e",
+          include: ["**/*.e2e.test.ts"],
+          fileParallelism: false,
+        },
+      },
     ],
   },
 });
