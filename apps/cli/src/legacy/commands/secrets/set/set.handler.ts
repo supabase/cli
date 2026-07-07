@@ -186,15 +186,26 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     const loadedConfig = yield* loadProjectConfig(runtimeInfo.cwd, { projectRef: ref }).pipe(
       Effect.map((loaded) => loaded?.config ?? null),
       Effect.catchTag("ProjectConfigParseError", (cause) => {
-        // `smol-toml`'s `TomlError` (and some schema-decode errors) embed a
-        // source codeblock after a blank-line separator — literal file content,
-        // which for this file's `[edge_runtime.secrets]` section can include
-        // real secret values. Go's equivalent log line (`DecodeError.Error()`)
-        // is a short, content-free message; only its unused `.String()` method
-        // includes a snippet, and Go's `set.go:20-24` never calls it. Truncate
-        // before the separator so a syntax error next to a secret line can't
-        // echo that secret to `--debug` output.
-        const shortMessage = String(cause.cause).split("\n\n")[0];
+        // `smol-toml`'s `TomlError` embeds a source codeblock after a
+        // blank-line separator — literal file content, which for this file's
+        // `[edge_runtime.secrets]` section can include real secret values.
+        // Truncating before the separator handles that case (`cause.document
+        // === undefined`, a raw parse failure with no decoded document to
+        // recover from — see the field doc on `ProjectConfigParseError`).
+        //
+        // A schema-decode error (`cause.document !== undefined`) has no such
+        // separator: Effect's `ParseError` puts the rejected value inline on
+        // one line (e.g. `Expected string, actual ["actual-secret"]`), which
+        // the truncation above wouldn't catch. Go's pinned mapstructure
+        // decode-error types (`UnconvertibleTypeError.Error()`,
+        // `DecodeError.Error()`, `github.com/go-viper/mapstructure/v2
+        // v2.5.0`) never include the rejected value, only type names — so a
+        // fixed, content-free message here matches Go's actual behaviour
+        // rather than just being defensive.
+        const shortMessage =
+          cause.document === undefined
+            ? String(cause.cause).split("\n\n")[0]
+            : "schema validation failed";
         return debugLogger
           .debug(`failed to parse supabase/config.toml: ${shortMessage}`)
           .pipe(Effect.as(recoverEdgeRuntimeConfig(cause)));

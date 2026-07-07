@@ -690,6 +690,36 @@ project_id = "dupe-project-id"
   );
 
   it.live(
+    "does not echo a literal secret value from config.toml into the debug log on a schema-decode error",
+    () => {
+      // Unlike the syntax-error case above, a schema-decode failure has no
+      // blank-line-separated source codeblock to truncate: Effect's decode
+      // error puts the rejected value inline on one line (e.g. `Expected
+      // string, actual ["sk_live_TOTALLY_REAL_SECRET_VALUE"]`). The bad entry
+      // sits inside `[edge_runtime.secrets]` itself, so this also exercises
+      // the per-entry recovery path — `PLANTED_SECRET` is dropped, but the
+      // CLI-arg secret still goes through.
+      writeConfig(
+        `[edge_runtime.secrets]
+PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
+`,
+      );
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: ["FOO=bar"],
+        });
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([{ name: "FOO", value: "bar" }]);
+        expect(debugLogger.messages).toHaveLength(1);
+        expect(debugLogger.messages[0]).not.toContain("PLANTED_SECRET");
+        expect(debugLogger.messages[0]).not.toContain("sk_live_TOTALLY_REAL_SECRET_VALUE");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "still fails with LegacySecretsNoArgumentsError when a malformed config leaves zero secret sources",
     () => {
       writeConfig("this is not valid = = toml [[[\n");
