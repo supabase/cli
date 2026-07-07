@@ -560,6 +560,8 @@ export async function resolveConfig(
       dataDir: postgresDataDir,
       version: postgresInput.version ?? DEFAULT_VERSIONS.postgres,
       autoExposeNewTables: postgresInput.autoExposeNewTables ?? true,
+      provisioned: postgresInput.provisioned,
+      profile: postgresInput.profile,
     },
     postgrest: resolvePostgrestConfig(postgrestInput, config.postgrest, ports),
     auth: resolveAuthConfig(authInput, config.auth, ports, ports.apiPort),

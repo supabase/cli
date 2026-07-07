@@ -51,6 +51,17 @@ export interface PostgresConfig {
    * through the Data API.
    */
   readonly autoExposeNewTables?: boolean;
+  /**
+   * When true, `dataDir` is a pre-initialized template clone (already migrated and
+   * configured), so the `postgres-init` service is skipped entirely.
+   */
+  readonly provisioned?: boolean;
+  /**
+   * "micro": settings live in `micro.conf`/`pod.conf` inside PGDATA rather than being passed as
+   * `-c` runtime args, so ALTER SYSTEM changes made by users aren't overridden on every boot.
+   * Absent or "default": current behavior (settings passed via `-c` args) is unchanged.
+   */
+  readonly profile?: "default" | "micro";
 }
 
 export interface PostgrestConfig {
@@ -173,6 +184,8 @@ export interface ResolvedPostgresConfig {
   readonly dataDir: string;
   readonly version: string;
   readonly autoExposeNewTables: boolean;
+  readonly provisioned?: boolean;
+  readonly profile?: "default" | "micro";
 }
 
 export interface ResolvedPostgrestConfig {
@@ -549,7 +562,8 @@ export class StackBuilder extends Context.Service<
           postgresResolution,
           dockerServicesEnabled,
         );
-        const hasPostgresInit = postgresResolution.type === "binary";
+        const hasPostgresInit =
+          postgresResolution.type === "binary" && config.postgres.provisioned !== true;
         const postgresDeps = dependsOnPostgres(hasPostgresInit);
         const jwtJwks = generateJwks(config.jwtSecret);
 
@@ -562,6 +576,7 @@ export class StackBuilder extends Context.Service<
                   port: config.dbPort,
                   dockerAccessible: needsDockerAccess,
                   cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
+                  profile: config.postgres.profile,
                 })
               : makePostgresServiceDocker({
                   image: postgresResolution.image,

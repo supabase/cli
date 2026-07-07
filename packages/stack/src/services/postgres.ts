@@ -16,6 +16,12 @@ interface NativePostgresOptions extends PostgresServiceOptions {
   readonly binPath: string;
   /** When true, patches postgres to listen on all interfaces so Docker containers can connect. */
   readonly dockerAccessible?: boolean;
+  /**
+   * "micro": settings live in micro.conf/pod.conf inside PGDATA, so no `-c` runtime args are
+   * passed (command-line `-c` would override users' `ALTER SYSTEM` changes on every boot).
+   * Absent or "default": current `-c` args are passed unchanged.
+   */
+  readonly profile?: "default" | "micro";
 }
 
 interface DockerPostgresOptions extends PostgresServiceOptions {
@@ -49,6 +55,14 @@ const NATIVE_POSTGRES_RUNTIME_ARGS = [
   "-c",
   "max_replication_slots=5",
 ] as const;
+
+/**
+ * On the "micro" profile, these settings live in micro.conf/pod.conf inside PGDATA instead,
+ * so no `-c` runtime args are emitted; passing them on the command line would take precedence
+ * over the conf files and override users' `ALTER SYSTEM` changes on every restart.
+ */
+const runtimeArgsForProfile = (profile?: "default" | "micro"): readonly string[] =>
+  profile === "micro" ? [] : NATIVE_POSTGRES_RUNTIME_ARGS;
 
 const orphanCleanup = (opts: PostgresServiceOptions) =>
   opts.cleanupDataDirOnExit ? removePathOnOrphanCleanup(opts.dataDir) : [];
@@ -141,7 +155,7 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
         initScript,
         "-p",
         String(opts.port),
-        ...NATIVE_POSTGRES_RUNTIME_ARGS,
+        ...runtimeArgsForProfile(opts.profile),
         "-c",
         "listen_addresses=*",
         "-c",
@@ -163,7 +177,7 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
   return {
     name: "postgres",
     command: "bash",
-    args: [initScript, "-p", String(opts.port), ...NATIVE_POSTGRES_RUNTIME_ARGS],
+    args: [initScript, "-p", String(opts.port), ...runtimeArgsForProfile(opts.profile)],
     env: postgresEnv(opts),
     healthCheck: postgresHealthCheck(opts.binPath, opts.port),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
