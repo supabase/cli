@@ -22,9 +22,9 @@
 
 ## Environment Variables
 
-| Variable | Purpose | Required? |
-| -------- | ------- | --------- |
-| -        | -       | -         |
+| Variable       | Purpose                                                                            | Required? |
+| -------------- | ---------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_YES` | Auto-confirms the overwrite prompt, same as `--yes` (Go's `viper.GetBool("YES")`). | No        |
 
 ## Exit Codes
 
@@ -47,16 +47,17 @@
 
 ### `--output-format json`
 
-Not applicable; the command uses raw stdout and stderr text like the Go CLI.
+Not applicable to output rendering; the command uses raw stdout and stderr text like the Go CLI. It does, however, affect the overwrite-confirmation prompt: since this command has no structured json/stream-json payload, requesting a non-text format from a real interactive terminal (no `--yes`, no piped stdin) fails the overwrite closed (`context canceled`) rather than silently defaulting to yes on a destructive, irreversible action. A non-TTY caller (piped or not) is unaffected — piped `y`/`n` answers are honored regardless of `--output-format`.
 
 ### `--output-format stream-json`
 
-Not applicable; the command uses raw stdout and stderr text like the Go CLI.
+Same as `--output-format json` above.
 
 ## Notes
 
 - `--algorithm` accepts `ES256` (default, recommended) or `RS256`.
 - `--append` appends the new key to an existing keys file instead of overwriting.
+- The overwrite prompt honors `SUPABASE_YES` and an explicit `--yes=false` override, matching Go's `viper.GetBool("YES")` precedence (flag wins over env; an omitted flag falls back to the env var). On non-TTY stdin, a piped `y`/`n` line is read within a 100ms timeout and honored before falling back to the default (`y`), matching Go's `Console.ReadLine`/`PromptYesNo` — a piped answer other than an exact `y`/`yes`/`n`/`no` (case-insensitive) also falls back to the default.
 - `auth.signing_keys_path` is resolved relative to the active `supabase/config.toml` or `supabase/config.json`.
 - Generated keys are JWKs, not PEM files.
 - No network or Management API calls are involved.
