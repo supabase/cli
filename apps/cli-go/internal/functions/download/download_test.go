@@ -308,6 +308,93 @@ func TestRunDockerUnbundle(t *testing.T) {
 	})
 }
 
+// TestDownloadAllRejectsMaliciousSlug is a regression test for CLI-1891: the
+// per-function loop in downloadAll must reject a path-traversal payload in
+// a function's Slug -- as returned by V1ListAllFunctionsWithResponse, which
+// this threat model treats as untrusted (a malicious/compromised Management
+// API response, or a MITM) -- before handing it to any downloader that
+// joins it into a filesystem path.
+//
+// This mirrors an exploit independently confirmed against downloadOne: with
+// slug = "../../../../../poc-escaped-outside-project", downloadOne's
+// eszipPath := filepath.Join(utils.TempDir, fmt.Sprintf("output_%s.eszip",
+// slug)) resolves (after filepath.Clean) to "../poc-escaped-outside-project.eszip",
+// i.e. one directory level above the project root, and
+// afero.WriteReader happily MkdirAll's its way there and writes the
+// server-controlled response body outside the sandbox.
+func TestDownloadAllRejectsMaliciousSlug(t *testing.T) {
+	const maliciousSlug = "../../../../../poc-escaped-outside-project"
+
+	// Use a real OS filesystem rooted at an isolated temp directory so an
+	// escape can actually be observed landing outside the project root,
+	// exactly as in the reviewer's PoC.
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	fsys := afero.NewOsFs()
+	require.NoError(t, utils.WriteConfig(fsys, false))
+
+	project := apitest.RandomProjectRef()
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+	utils.CmdSuggestion = ""
+	t.Cleanup(func() { utils.CmdSuggestion = "" })
+
+	defer gock.OffAll()
+	gock.New(utils.DefaultApiHost).
+		Get("/v1/projects/" + project + "/functions").
+		Reply(http.StatusOK).
+		JSON([]api.FunctionResponse{{
+			Id:   "poc-id",
+			Name: "poc",
+			Slug: maliciousSlug,
+		}})
+	// Mocked so that, if the fix is removed, the malicious slug's request
+	// still succeeds and downloadOne proceeds all the way to writing the
+	// escaped file -- proving the escape, rather than masking it behind an
+	// unrelated network error. With the fix in place this mock is never hit.
+	gock.New(utils.DefaultApiHost).
+		Get("/v1/projects/" + project + "/functions/.*/body").
+		Reply(http.StatusOK).
+		BodyString("fake eszip payload")
+
+	// downloadOne is the exact sink the reviewer's PoC targeted directly;
+	// wrap it as a downloader so downloadAll's dispatch is exercised against
+	// the real vulnerable code, without also pulling in downloadWithDockerUnbundle's
+	// unrelated Docker extraction step (and its defer-cleanup of the eszip
+	// file, which would otherwise remove the escaped file before this test
+	// can observe it).
+	downloaderCalled := false
+	downloader := func(ctx context.Context, slug, projectRef string, fsys afero.Fs) error {
+		downloaderCalled = true
+		_, err := downloadOne(ctx, slug, projectRef, fsys)
+		return err
+	}
+
+	err := downloadAll(context.Background(), project, fsys, downloader)
+
+	// Check for the escape before any assertion below that could halt the
+	// test on failure (e.g. require.Error), so this is verified regardless
+	// of whether downloadAll happened to return an error for some other
+	// reason. t.TempDir()'s own cleanup RemoveAll's tmpDir's parent, which
+	// would otherwise sweep away the evidence once the test returns.
+	//
+	// The exploit resolves to "../poc-escaped-outside-project.eszip"
+	// relative to utils.TempDir, i.e. one level above the project root.
+	escapedPath := filepath.Join(tmpDir, "..", "poc-escaped-outside-project.eszip")
+	t.Cleanup(func() { _ = os.Remove(escapedPath) })
+	exists, existsErr := afero.Exists(fsys, escapedPath)
+	require.NoError(t, existsErr)
+	assert.False(t, exists, "malicious slug must not be able to write outside the project directory")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, utils.ErrInvalidSlug)
+	assert.Contains(t, utils.CmdSuggestion, "unexpected function slug")
+	assert.False(t, downloaderCalled, "downloader must not be invoked with an unvalidated slug")
+
+	assert.Empty(t, apitest.ListUnmatchedRequests())
+}
+
 func TestRunServerSideUnbundle(t *testing.T) {
 	const slug = "test-func"
 	token := apitest.RandomAccessToken(t)

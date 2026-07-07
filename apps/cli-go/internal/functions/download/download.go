@@ -170,6 +170,22 @@ func downloadAll(ctx context.Context, projectRef string, fsys afero.Fs, download
 
 	fmt.Fprintf(os.Stderr, "Found %d function(s) to download\n", len(functions))
 	for _, f := range functions {
+		// f.Slug comes straight from the Management API response, which
+		// this threat model treats as untrusted: a malicious or corrupted
+		// response (or a MITM) could return a slug containing ".." or "/"
+		// segments. Every downloader below joins this value into a
+		// filesystem path (utils.TempDir for downloadOne, utils.FunctionsDir
+		// for downloadWithServerSideUnbundle) before any validation of its
+		// own, so it must be rejected here -- the single point where it
+		// enters this dispatch logic -- rather than relying on each
+		// downstream path-construction site to defend itself.
+		if err := utils.ValidateFunctionSlug(f.Slug); err != nil {
+			utils.CmdSuggestion = fmt.Sprintf(
+				"The Supabase API returned an unexpected function slug (%s). Retry the command, and if this keeps happening, verify your network connection is not being intercepted before contacting Supabase support.",
+				utils.Aqua(f.Slug),
+			)
+			return errors.Errorf("failed to download function %s: %w", f.Slug, err)
+		}
 		if err := downloader(ctx, f.Slug, projectRef, fsys); err != nil {
 			return err
 		}
