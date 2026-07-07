@@ -1037,7 +1037,9 @@ major_version = "not-a-number"
     );
     try {
       const exit = await Effect.runPromiseExit(
-        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(Effect.provide(BunServices.layer)),
+        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
+          Effect.provide(BunServices.layer),
+        ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (!Exit.isFailure(exit)) {
