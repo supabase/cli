@@ -109,11 +109,13 @@ function recoverEdgeRuntimeConfig(cause: ProjectConfigParseError): ProjectConfig
  * value doesn't discard the whole `[edge_runtime.secrets]` map — only that
  * entry is dropped, and every other entry is still recovered.
  *
- * Each value arrives as `Redacted<string>` — `ProjectConfigParseError.document`
- * wraps `edge_runtime.secrets` values so an uncaught parse error can't leak a
- * resolved secret into a log or trace (see the field doc on `.document`).
+ * Each value arrives wrapped in `Redacted` (whatever its underlying type) —
+ * `ProjectConfigParseError.document` wraps every `edge_runtime.secrets` entry
+ * so an uncaught parse error can't leak a resolved secret, or a malformed
+ * non-string entry, into a log or trace (see the field doc on `.document`).
  * Unwrap before re-decoding: `secret()`'s schema is a plain `Schema.String`,
- * not `Redacted`.
+ * not `Redacted`, and a non-string entry (e.g. an array) still fails that
+ * decode and is dropped below, same as it would in Go.
  */
 function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string, unknown> {
   const kept: Record<string, unknown> = {};
@@ -224,7 +226,17 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
           "edge_runtime",
         );
         for (const [name, value] of Object.entries(resolved.secrets ?? {})) {
-          if (Redacted.isRedacted(value)) {
+          // Go's `DecryptSecretHookFunc` (`pkg/config/secret.go:98`) never
+          // hashes an empty value, and `ListSecrets` (`internal/secrets/set/set.go:48-52`)
+          // only includes config entries with a non-empty SHA256 — so an empty
+          // `[edge_runtime.secrets]` entry is silently skipped rather than sent
+          // as an empty-string overwrite of a remote secret. `Redacted.isRedacted`
+          // already excludes the other SHA256-empty case (a still-literal
+          // `env(VAR)` reference); check for a non-empty value too so both
+          // zero-hash cases match. This applies to config-sourced secrets only —
+          // an explicit `--env-file`/positional `NAME=` below is sent as-is,
+          // matching Go's unconditional `maps.Copy`/assignment for those sources.
+          if (Redacted.isRedacted(value) && Redacted.value(value).length > 0) {
             merged.set(name, Redacted.value(value));
           }
         }

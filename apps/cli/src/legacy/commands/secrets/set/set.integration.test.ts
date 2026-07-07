@@ -239,6 +239,34 @@ LITERAL = "plain-value"
   });
 
   it.live(
+    "skips an empty [edge_runtime.secrets] value instead of overwriting a remote secret (Go set.go:48-52 parity)",
+    () => {
+      // Go's `DecryptSecretHookFunc` (`pkg/config/secret.go:98`) leaves `SHA256`
+      // empty for an empty value, and `ListSecrets` only includes entries with
+      // `len(secret.SHA256) > 0` — so a literal `EMPTY = ""` in config.toml is
+      // never sent, which prevents it from silently overwriting a same-named
+      // remote secret with an empty string.
+      writeConfig(
+        `[edge_runtime.secrets]
+EMPTY = ""
+NON_EMPTY = "config-value"
+`,
+      );
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: [],
+        });
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([
+          { name: "NON_EMPTY", value: "config-value" },
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "does not crash when config.toml has env(NUMERIC_PORT) on an unrelated numeric field (CLI-1489 regression guard)",
     () => {
       writeConfig(
@@ -487,6 +515,39 @@ BAD = 123
         });
         const body = parsePostBody(api.requests[0]?.body);
         expect(body).toEqual([{ name: "GOOD", value: "config-value" }]);
+        expect(debugLogger.messages).toHaveLength(1);
+        expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "skips an empty recovered [edge_runtime.secrets] entry alongside an unrelated schema error (Go set.go:48-52 parity)",
+    () => {
+      // Same empty-value skip as the happy path, but exercised through
+      // `recoverEdgeRuntimeConfig`/`filterDecodableSecrets`: `EMPTY` decodes
+      // fine on its own (it's a valid, if empty, string), so it must be
+      // dropped downstream in the same merge loop the happy path uses, not
+      // resurrected as a false "recoverable" entry.
+      writeConfig(
+        `[edge_runtime.secrets]
+EMPTY = ""
+GOOD = "config-value"
+
+[analytics]
+port = "not-a-number"
+`,
+      );
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: [],
+        });
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([
+          { name: "GOOD", value: "config-value" },
+        ]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
       }).pipe(Effect.provide(layer));
