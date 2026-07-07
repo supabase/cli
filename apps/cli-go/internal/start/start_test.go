@@ -167,6 +167,7 @@ func TestShouldMountRootDockerSocket(t *testing.T) {
 		assert.True(t, shouldMountRootDockerSocket("/Users/test/.docker/run/docker.sock"))
 		assert.True(t, shouldMountRootDockerSocket("/Users/test/.docker/desktop/docker.sock"))
 		assert.True(t, shouldMountRootDockerSocket("/Users/test/.colima/default/docker.sock"))
+		assert.True(t, shouldMountRootDockerSocket("/Users/test/.colima/local/docker.sock"))
 		assert.True(t, shouldMountRootDockerSocket("/Users/test/.colima/docker.sock"))
 	})
 

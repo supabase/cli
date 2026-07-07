@@ -131,7 +131,7 @@ type vectorConfig struct {
 func shouldMountRootDockerSocket(host string) bool {
 	return strings.HasSuffix(host, "/.docker/run/docker.sock") ||
 		strings.HasSuffix(host, "/.docker/desktop/docker.sock") ||
-		strings.HasSuffix(host, "/.colima/default/docker.sock") ||
+		(strings.Contains(host, "/.colima/") && strings.HasSuffix(host, "/docker.sock")) ||
 		strings.HasSuffix(host, "/.colima/docker.sock")
 }
 
@@ -438,9 +438,7 @@ EOF
 			} else {
 				// Podman and OrbStack can mount root-less socket without issue
 				binds = append(binds, fmt.Sprintf("%s:%s:ro", parsed.Host, dindHost.Host))
-				if parsed.Host != dindHost.Host {
-					securityOpts = append(securityOpts, "label:disable")
-				}
+				securityOpts = append(securityOpts, "label:disable")
 			}
 		}
 		if _, err := utils.DockerStart(
