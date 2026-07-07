@@ -27,24 +27,24 @@ const AWS_REGIONS = [
 ] as const;
 
 const INSTANCE_SIZES = [
-  "micro",
-  "small",
-  "medium",
   "large",
-  "xlarge",
-  "2xlarge",
-  "4xlarge",
-  "8xlarge",
+  "medium",
+  "micro",
   "12xlarge",
   "16xlarge",
   "24xlarge",
   "24xlarge_high_memory",
   "24xlarge_optimized_cpu",
   "24xlarge_optimized_memory",
+  "2xlarge",
   "48xlarge",
   "48xlarge_high_memory",
   "48xlarge_optimized_cpu",
   "48xlarge_optimized_memory",
+  "4xlarge",
+  "8xlarge",
+  "small",
+  "xlarge",
 ] as const;
 
 const config = {
