@@ -1,6 +1,6 @@
 import { type AddressInfo, connect, createServer, type Server } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
-import { EdgeProxy } from "./EdgeProxy.ts";
+import { EdgeProxy, MAX_PREWAKE_BUFFER_BYTES } from "./EdgeProxy.ts";
 
 function echoServer(): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
@@ -182,5 +182,113 @@ describe("EdgeProxy", () => {
     // backend for the now-destroyed client, it would leak a socket/listener.
     await new Promise((r) => setTimeout(r, 150));
     expect(proxy.openConnections("pod-e")).toBe(0);
+  });
+
+  it("destroys the client if it floods the pre-wake buffer past the cap, and stays usable afterward", async () => {
+    const proxy = new EdgeProxy();
+    proxies.push(proxy);
+    const listenPort = await freePort();
+
+    let unhandledRejection: unknown;
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandledRejection = reason;
+    };
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      await proxy.register("pod-f", listenPort, async () => {
+        // Slow wake gives the flooding client plenty of time to exceed the cap.
+        await new Promise((r) => setTimeout(r, 200));
+        return { host: "127.0.0.1", port: await freePort() };
+      });
+
+      const clientDestroyed = await new Promise<boolean>((resolve) => {
+        const sock = connect(listenPort, "127.0.0.1", () => {
+          // A single write just over the cap: this floods immediately and
+          // reflects that the cap must trigger regardless of how the
+          // client chooses to chunk its writes.
+          sock.write(Buffer.alloc(MAX_PREWAKE_BUFFER_BYTES + 64 * 1024, "a"));
+        });
+        sock.on("error", () => resolve(true));
+        sock.on("close", () => resolve(sock.destroyed));
+      });
+      expect(clientDestroyed).toBe(true);
+
+      // Give any lingering wake() resolution a chance to run before we assert
+      // there was no unhandled rejection.
+      await new Promise((r) => setTimeout(r, 250));
+      expect(unhandledRejection).toBeUndefined();
+
+      // Proxy must still be usable for a subsequent normal connection.
+      const { server, port: upstreamPort } = await echoServer();
+      await proxy.unregister("pod-f");
+      await proxy.register("pod-f", listenPort, async () => ({
+        host: "127.0.0.1",
+        port: upstreamPort,
+      }));
+
+      const reply = await new Promise<string>((resolve, reject) => {
+        const sock = connect(listenPort, "127.0.0.1", () => sock.write("hello"));
+        sock.on("data", (d) => {
+          resolve(d.toString());
+          sock.end();
+        });
+        sock.on("error", reject);
+      });
+      expect(reply).toBe("hello");
+      server.close();
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+  });
+
+  it("destroys the client without an unhandled rejection when wake() resolves with a garbage upstream", async () => {
+    const proxy = new EdgeProxy();
+    proxies.push(proxy);
+    const listenPort = await freePort();
+
+    let unhandledRejection: unknown;
+    const onUnhandledRejection = (reason: unknown) => {
+      unhandledRejection = reason;
+    };
+    process.on("unhandledRejection", onUnhandledRejection);
+
+    try {
+      await proxy.register("pod-g", listenPort, async () => ({
+        host: "127.0.0.1",
+        port: -1,
+      }));
+
+      const clientDestroyed = await new Promise<boolean>((resolve) => {
+        const sock = connect(listenPort, "127.0.0.1", () => sock.write("x"));
+        sock.on("error", () => resolve(true));
+        sock.on("close", () => resolve(sock.destroyed));
+      });
+      expect(clientDestroyed).toBe(true);
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(unhandledRejection).toBeUndefined();
+
+      // Proxy must still be usable for a subsequent normal connection.
+      const { server, port: upstreamPort } = await echoServer();
+      await proxy.unregister("pod-g");
+      await proxy.register("pod-g", listenPort, async () => ({
+        host: "127.0.0.1",
+        port: upstreamPort,
+      }));
+
+      const reply = await new Promise<string>((resolve, reject) => {
+        const sock = connect(listenPort, "127.0.0.1", () => sock.write("hello"));
+        sock.on("data", (d) => {
+          resolve(d.toString());
+          sock.end();
+        });
+        sock.on("error", reject);
+      });
+      expect(reply).toBe("hello");
+      server.close();
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
   });
 });

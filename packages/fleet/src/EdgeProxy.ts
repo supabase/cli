@@ -5,6 +5,16 @@ export interface PodUpstream {
   readonly port: number;
 }
 
+/**
+ * Cap on bytes buffered per client while `wake()` is in flight. Postgres
+ * startup packets and HTTP request heads are tiny (low kilobytes at most);
+ * 1 MiB is generous headroom for either protocol while still bounding memory
+ * if a client streams data at a suspended pod during a slow wake. A client
+ * that exceeds this cap before the backend is reachable is treated as
+ * misbehaving (or attacking) and has its socket destroyed.
+ */
+export const MAX_PREWAKE_BUFFER_BYTES = 1024 * 1024; // 1 MiB
+
 export interface EdgeProxyEvents {
   /** Fired on connect/disconnect/bytes; IdleMonitor consumes these. */
   onActivity: (
@@ -35,8 +45,17 @@ interface Registration {
  *   still succeed regardless of how many times `wake()` runs.
  * - **wake() rejection destroys the client.** If `wake()` rejects, the
  *   accepted client socket is destroyed and no upstream connection is
- *   attempted. The rejection is handled inline (never left as a dangling
- *   promise) so it can never surface as an unhandled rejection.
+ *   attempted.
+ * - **Pre-wake buffering is capped.** Bytes received from the client while
+ *   `wake()` is in flight are buffered (see above) up to
+ *   `MAX_PREWAKE_BUFFER_BYTES`. A client that exceeds the cap before the
+ *   backend is reachable has its socket destroyed; the usual disconnect
+ *   activity event still fires exactly once.
+ * - **Nothing here can surface as an unhandled rejection.** Both the
+ *   rejection path and any synchronous throw from the resolution path
+ *   (e.g. `wake()` resolving with a malformed upstream address that makes
+ *   `net.connect()` throw) are caught and routed to the same client-destroy
+ *   path.
  */
 export class EdgeProxy {
   private readonly registrations = new Map<string, Registration>();
@@ -66,43 +85,77 @@ export class EdgeProxy {
       client.on("close", cleanup);
       client.on("error", cleanup);
 
-      // Hold any bytes the client sends while `wake()` is in flight. Merely
-      // calling `client.pause()` is not sufficient: some runtimes start
-      // sockets flowing before user code gets a chance to react, silently
-      // dropping data received before a listener is attached. Attaching a
-      // real `data` listener up front guarantees nothing is lost; buffered
-      // chunks are replayed to the backend once it's connected, then the
-      // socket is handed off to `pipe()` for the rest of the stream.
+      // Hold any bytes the client sends while `wake()` is in flight. A plain
+      // `data` listener does not fire while the socket is paused (Node only
+      // delivers `data` once flowing, i.e. after `resume()`/`pipe()`), so we
+      // use `readable` + `read()` instead: those fire even in paused mode,
+      // draining the socket's internal buffer as bytes arrive and letting us
+      // count them without ever switching the stream into flowing mode.
+      // Buffered chunks are replayed to the backend once it's connected,
+      // then the socket is handed off to `pipe()` for the rest of the
+      // stream.
+      //
+      // Buffering is capped at MAX_PREWAKE_BUFFER_BYTES: a client that
+      // floods the socket while the backend isn't reachable yet (e.g. a
+      // slow wake()) is destroyed rather than allowed to grow this array
+      // without bound.
       const buffered: Buffer[] = [];
-      const bufferChunk = (chunk: Buffer) => buffered.push(chunk);
-      client.on("data", bufferChunk);
+      let bufferedBytes = 0;
+      let overflowed = false;
+      const onReadable = () => {
+        if (overflowed) return;
+        for (;;) {
+          const chunk = client.read() as Buffer | null;
+          if (chunk === null) return;
+          bufferedBytes += chunk.length;
+          if (bufferedBytes > MAX_PREWAKE_BUFFER_BYTES) {
+            overflowed = true;
+            buffered.length = 0;
+            client.destroy();
+            return;
+          }
+          buffered.push(chunk);
+        }
+      };
+      client.on("readable", onReadable);
       client.pause();
 
       wake().then(
         (upstream) => {
           // The client may have already disconnected while wake() was
-          // in flight; don't bother connecting an upstream nobody needs.
+          // in flight (including due to a pre-wake buffer overflow); don't
+          // bother connecting an upstream nobody needs.
           if (disconnected) return;
 
-          const backend = connect(upstream.port, upstream.host);
-          backend.on("error", () => {
+          try {
+            const backend = connect(upstream.port, upstream.host);
+            backend.on("error", () => {
+              client.destroy();
+              backend.destroy();
+            });
+            client.on("close", () => backend.destroy());
+            backend.on("close", () => client.destroy());
+            backend.on("data", () => emit("data"));
+            backend.on("connect", () => {
+              client.off("readable", onReadable);
+              client.on("data", () => emit("data"));
+              for (const chunk of buffered) {
+                backend.write(chunk);
+                emit("data");
+              }
+              client.pipe(backend);
+              backend.pipe(client);
+              // The activity `data` listener above is independent of the
+              // listener `pipe()` attaches internally; both observe the
+              // same events, this isn't double-consumption of the stream.
+            });
+          } catch {
+            // wake() resolved, but the upstream address it handed back was
+            // unusable (e.g. an invalid port that makes net.connect()
+            // throw synchronously). Destroy the client instead of letting
+            // the throw escape as an unhandled rejection.
             client.destroy();
-            backend.destroy();
-          });
-          client.on("close", () => backend.destroy());
-          backend.on("close", () => client.destroy());
-          backend.on("data", () => emit("data"));
-          backend.on("connect", () => {
-            client.off("data", bufferChunk);
-            client.on("data", () => emit("data"));
-            for (const chunk of buffered) {
-              backend.write(chunk);
-              emit("data");
-            }
-            client.pipe(backend);
-            backend.pipe(client);
-            client.resume();
-          });
+          }
         },
         () => {
           // wake() failed: destroy the client without letting the
