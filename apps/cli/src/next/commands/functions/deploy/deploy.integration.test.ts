@@ -2171,8 +2171,38 @@ describe("functions deploy", () => {
       if (!(error instanceof ConflictingFunctionDeployFlagsError)) {
         throw new Error(`unexpected error: ${String(error)}`);
       }
-      expect(error.message).toContain("--use-api");
-      expect(error.message).toContain("--use-docker");
+      // Byte-matches cobra's validateExclusiveFlagGroups (flag_groups.go:204):
+      // full group in registration order, changed subset sorted alphabetically.
+      expect(error.message).toBe(
+        "if any flags in the group [use-api use-docker legacy-bundle] are set none of the others can be; [use-api use-docker] were all set",
+      );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
+  it.live("still rejects the bundler mutex when --use-docker=false is explicit", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      const { layer } = setup(tempDir, {
+        rawArgs: ["functions", "deploy", "--use-api", "--use-docker=false"],
+      });
+
+      const error = yield* functionsDeploy({
+        ...BASE_FLAGS,
+        useApi: true,
+        useDocker: false,
+      }).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toBeInstanceOf(ConflictingFunctionDeployFlagsError);
+      if (!(error instanceof ConflictingFunctionDeployFlagsError)) {
+        throw new Error(`unexpected error: ${String(error)}`);
+      }
+      // cobra tracks pflag.Changed, not the resolved boolean value — an
+      // explicit --use-docker=false still counts as "set" for the mutex.
+      expect(error.message).toBe(
+        "if any flags in the group [use-api use-docker legacy-bundle] are set none of the others can be; [use-api use-docker] were all set",
+      );
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 

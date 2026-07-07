@@ -326,3 +326,15 @@ Flag divergences from the Go reference:
 - `projects create` has a TS-only `--high-availability` flag (no Go equivalent). It sets
   `high_availability` in the create request body. Default behavior (omitted flag) matches
   Go exactly.
+
+Behavioral divergences from the Go reference:
+
+- `services` warns on a malformed linked project ref (matching Go's
+  `flags.LoadProjectRef` validation message) but, unlike Go, does not then use
+  that ref for the remote lookup. Go's `cmd/services.go` treats the validation
+  failure as non-fatal and still calls `listRemoteImages` with the malformed
+  value; TS skips the remote lookup instead, since the ref is embedded
+  unescaped into the tenant gateway hostname and a malformed value could
+  redirect the service-role key to an attacker-controlled host. Intentional
+  TS-only hardening, not a parity bug — see
+  [`services/SIDE_EFFECTS.md`](../src/legacy/commands/services/SIDE_EFFECTS.md).

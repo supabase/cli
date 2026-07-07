@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Stdio } from "effect";
 import {
   downloadFunctions,
   makeGoProxyDownloadArgs,
@@ -20,11 +20,14 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const proxy = yield* LegacyGoProxy;
+  const stdio = yield* Stdio.Stdio;
+  const rawArgs = yield* stdio.args;
   let resolvedProjectRef = Option.none<string>();
 
   yield* downloadFunctions(flags, {
     api,
     projectRoot: cliConfig.workdir,
+    rawArgs,
     resolveProjectRef: (projectRef) =>
       resolver.resolve(projectRef).pipe(
         Effect.tap((ref) =>

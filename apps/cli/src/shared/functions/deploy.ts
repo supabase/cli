@@ -16,7 +16,15 @@ import { Output } from "../output/output.service.ts";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import { findGitRootPath } from "../git/git-root.ts";
-import { invalidFunctionSlugDetail, validateFunctionSlugMessage } from "./functions.shared.ts";
+import {
+  cobraMutuallyExclusiveErrorMessage,
+  hasExplicitLongFlag,
+} from "../cli/cobra-flag-groups.ts";
+import {
+  FUNCTIONS_BUNDLER_MUTEX_GROUP,
+  invalidFunctionSlugDetail,
+  validateFunctionSlugMessage,
+} from "./functions.shared.ts";
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionDeployCancelledError,
@@ -190,30 +198,6 @@ function validateDeploySlug(slug: string): Effect.Effect<void, InvalidFunctionDe
   }
 
   return Effect.fail(new InvalidFunctionDeploySlugError({ message: invalidFunctionSlugDetail }));
-}
-
-function hasExplicitLongFlag(
-  rawArgs: ReadonlyArray<string>,
-  commandPath: ReadonlyArray<string>,
-  flagName: string,
-): boolean {
-  const commandIndex = rawArgs.findIndex((_, index) =>
-    commandPath.every((segment, offset) => rawArgs[index + offset] === segment),
-  );
-  if (commandIndex === -1) {
-    return rawArgs.some((token) => token === `--${flagName}` || token.startsWith(`--${flagName}=`));
-  }
-
-  for (let index = commandIndex + commandPath.length; index < rawArgs.length; index += 1) {
-    const token = rawArgs[index];
-    if (token === undefined || token === "--") {
-      return false;
-    }
-    if (token === `--${flagName}` || token.startsWith(`--${flagName}=`)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function explicitBooleanFlag(
@@ -2115,16 +2099,16 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       "legacy-bundle",
     );
 
-    const selectedModes = [
-      explicitUseApi ? "--use-api" : undefined,
-      explicitUseDocker ? "--use-docker" : undefined,
-      explicitLegacyBundle ? "--legacy-bundle" : undefined,
-    ].filter((flag) => flag !== undefined);
+    const changedModes = [
+      explicitUseApi ? "use-api" : undefined,
+      explicitUseDocker ? "use-docker" : undefined,
+      explicitLegacyBundle ? "legacy-bundle" : undefined,
+    ].filter((flag): flag is string => flag !== undefined);
 
-    if (selectedModes.length > 1) {
+    if (changedModes.length > 1) {
       return yield* Effect.fail(
         new ConflictingFunctionDeployFlagsError({
-          message: `flags ${selectedModes.join(", ")} are mutually exclusive`,
+          message: cobraMutuallyExclusiveErrorMessage(FUNCTIONS_BUNDLER_MUTEX_GROUP, changedModes),
         }),
       );
     }

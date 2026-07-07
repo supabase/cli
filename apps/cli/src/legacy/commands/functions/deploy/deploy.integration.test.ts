@@ -15,6 +15,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
+import { ConflictingFunctionDeployFlagsError } from "../../../../shared/functions/deploy.errors.ts";
 import { legacyFunctionsDeploy } from "./deploy.handler.ts";
 import type { LegacyFunctionsDeployFlags } from "./deploy.command.ts";
 
@@ -482,6 +483,38 @@ describe("legacy functions deploy", () => {
         Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
       ),
     );
+  });
+
+  it.live("rejects the bundler mutex with cobra's exact error text", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+      }),
+      Layer.succeed(LegacyYesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api", "--use-docker"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const error = yield* legacyFunctionsDeploy({ ...baseFlags, useDocker: true }).pipe(
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(ConflictingFunctionDeployFlagsError);
+      if (!(error instanceof ConflictingFunctionDeployFlagsError)) {
+        throw new Error(`unexpected error: ${String(error)}`);
+      }
+      expect(error.message).toBe(
+        "if any flags in the group [use-api use-docker legacy-bundle] are set none of the others can be; [use-api use-docker] were all set",
+      );
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
   });
 
   describe("--jobs validation (Go parity: cmd/functions.go:79-82)", () => {

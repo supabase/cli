@@ -2703,6 +2703,11 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
       .check(Schema.isGreaterThanOrEqualTo(10))
       .check(Schema.isLessThanOrEqualTo(2147483640)),
   ),
+  max_logical_replication_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(0))
+      .check(Schema.isLessThanOrEqualTo(262143)),
+  ),
   max_parallel_maintenance_workers: Schema.optionalKey(
     Schema.Number.check(Schema.isInt())
       .check(Schema.isGreaterThanOrEqualTo(0))
@@ -2722,6 +2727,11 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
+  max_sync_workers_per_subscription: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(0))
+      .check(Schema.isLessThanOrEqualTo(262143)),
+  ),
   max_wal_size: Schema.optionalKey(Schema.String),
   max_wal_senders: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
   max_worker_processes: Schema.optionalKey(
@@ -5649,6 +5659,11 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
       .check(Schema.isGreaterThanOrEqualTo(10))
       .check(Schema.isLessThanOrEqualTo(2147483640)),
   ),
+  max_logical_replication_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(0))
+      .check(Schema.isLessThanOrEqualTo(262143)),
+  ),
   max_parallel_maintenance_workers: Schema.optionalKey(
     Schema.Number.check(Schema.isInt())
       .check(Schema.isGreaterThanOrEqualTo(0))
@@ -5668,6 +5683,11 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
+  max_sync_workers_per_subscription: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(0))
+      .check(Schema.isLessThanOrEqualTo(262143)),
+  ),
   max_wal_size: Schema.optionalKey(Schema.String),
   max_wal_senders: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
   max_worker_processes: Schema.optionalKey(
@@ -5732,6 +5752,11 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
       .check(Schema.isGreaterThanOrEqualTo(10))
       .check(Schema.isLessThanOrEqualTo(2147483640)),
   ),
+  max_logical_replication_workers: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(0))
+      .check(Schema.isLessThanOrEqualTo(262143)),
+  ),
   max_parallel_maintenance_workers: Schema.optionalKey(
     Schema.Number.check(Schema.isInt())
       .check(Schema.isGreaterThanOrEqualTo(0))
@@ -5751,6 +5776,11 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   max_slot_wal_keep_size: Schema.optionalKey(Schema.String),
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
+  max_sync_workers_per_subscription: Schema.optionalKey(
+    Schema.Number.check(Schema.isInt())
+      .check(Schema.isGreaterThanOrEqualTo(0))
+      .check(Schema.isLessThanOrEqualTo(262143)),
+  ),
   max_wal_size: Schema.optionalKey(Schema.String),
   max_wal_senders: Schema.optionalKey(Schema.Number.check(Schema.isInt())),
   max_worker_processes: Schema.optionalKey(
@@ -8773,6 +8803,7 @@ export const operationDefinitions = {
         "track_activity_query_size",
         "max_connections",
         "max_locks_per_transaction",
+        "max_logical_replication_workers",
         "max_parallel_maintenance_workers",
         "max_parallel_workers",
         "max_parallel_workers_per_gather",
@@ -8780,6 +8811,7 @@ export const operationDefinitions = {
         "max_slot_wal_keep_size",
         "max_standby_archive_delay",
         "max_standby_streaming_delay",
+        "max_sync_workers_per_subscription",
         "max_wal_size",
         "max_wal_senders",
         "max_worker_processes",
