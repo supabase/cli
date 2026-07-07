@@ -85,6 +85,24 @@ function isProjectNotFound(cause: unknown) {
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
 
+// Go's `genTypesCmd` registers these as value-consuming long flags
+// (`apps/cli-go/cmd/gen.go:147-161`): `db-url` (String), `project-id`
+// (StringVar), `lang` (custom Var), `schema` (StringSliceVarP),
+// `swift-access-control` (custom Var), `query-timeout` (DurationVar). pflag
+// consumes each one's space-separated value token unconditionally, even when
+// that token looks like one of the other flags checked below — the
+// `hasExplicitLongFlag` scans must skip it to avoid a false-positive
+// detection. (`local`/`linked`/`postgrest-v9-compat` are `Bool`/`BoolVar` and
+// are never value-consuming, so they're intentionally excluded.)
+const GEN_TYPES_VALUE_CONSUMING_LONG_FLAGS = new Set([
+  "db-url",
+  "project-id",
+  "lang",
+  "schema",
+  "swift-access-control",
+  "query-timeout",
+]);
+
 function ensureMutuallyExclusive(
   group: ReadonlyArray<string>,
   present: ReadonlyArray<string>,
@@ -210,7 +228,12 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   if (
     Option.isSome(legacyLang) &&
     legacyLang.value !== "typescript" &&
-    !hasExplicitLongFlag(rawArgs, GEN_TYPES_COMMAND_PATH, "lang")
+    !hasExplicitLongFlag(
+      rawArgs,
+      GEN_TYPES_COMMAND_PATH,
+      "lang",
+      GEN_TYPES_VALUE_CONSUMING_LONG_FLAGS,
+    )
   ) {
     return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
   }
@@ -224,7 +247,12 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const usesPgMeta = flags.local || Option.isSome(flags.dbUrl) || flags.lang !== "typescript";
 
   if (
-    hasExplicitLongFlag(rawArgs, GEN_TYPES_COMMAND_PATH, "swift-access-control") &&
+    hasExplicitLongFlag(
+      rawArgs,
+      GEN_TYPES_COMMAND_PATH,
+      "swift-access-control",
+      GEN_TYPES_VALUE_CONSUMING_LONG_FLAGS,
+    ) &&
     lang !== "swift"
   ) {
     return yield* Effect.fail(
@@ -236,7 +264,15 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       new Error("--postgrest-v9-compat can only be used with pg-meta type generation"),
     );
   }
-  if (hasExplicitLongFlag(rawArgs, GEN_TYPES_COMMAND_PATH, "query-timeout") && !usesPgMeta) {
+  if (
+    hasExplicitLongFlag(
+      rawArgs,
+      GEN_TYPES_COMMAND_PATH,
+      "query-timeout",
+      GEN_TYPES_VALUE_CONSUMING_LONG_FLAGS,
+    ) &&
+    !usesPgMeta
+  ) {
     if (flags.linked || Option.isSome(flags.projectId)) {
       return yield* Effect.fail(
         new Error("--query-timeout can only be used with pg-meta type generation"),

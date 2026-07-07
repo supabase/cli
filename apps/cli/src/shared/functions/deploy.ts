@@ -200,13 +200,24 @@ function validateDeploySlug(slug: string): Effect.Effect<void, InvalidFunctionDe
   return Effect.fail(new InvalidFunctionDeploySlugError({ message: invalidFunctionSlugDetail }));
 }
 
+// Go's `functionsDeployCmd` registers `--project-ref` (`apps/cli-go/cmd/functions.go:164`,
+// `StringVar`), `--import-map` (`:166`, `StringVar`), and `--jobs`/`-j` (`:161`,
+// `UintVarP`) as value-consuming long flags. pflag consumes each one's
+// space-separated value token unconditionally, even when that token looks
+// like `--use-api`/`--use-docker`/`--legacy-bundle`/`--no-verify-jwt` — the
+// "changed" scans below must skip it to avoid a false-positive detection.
+const FUNCTIONS_DEPLOY_VALUE_CONSUMING_LONG_FLAGS = new Set(["project-ref", "import-map", "jobs"]);
+
 function explicitBooleanFlag(
   rawArgs: ReadonlyArray<string>,
   commandPath: ReadonlyArray<string>,
   flagName: string,
   value: boolean,
+  valueConsumingLongFlags: ReadonlySet<string>,
 ) {
-  return hasExplicitLongFlag(rawArgs, commandPath, flagName) ? Option.some(value) : Option.none();
+  return hasExplicitLongFlag(rawArgs, commandPath, flagName, valueConsumingLongFlags)
+    ? Option.some(value)
+    : Option.none();
 }
 
 function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
@@ -2087,12 +2098,23 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
   return Effect.gen(function* () {
     const output = yield* Output;
     const commandPath = ["functions", "deploy"] as const;
-    const explicitUseApi = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-api");
-    const explicitUseDocker = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-docker");
+    const explicitUseApi = hasExplicitLongFlag(
+      dependencies.rawArgs,
+      commandPath,
+      "use-api",
+      FUNCTIONS_DEPLOY_VALUE_CONSUMING_LONG_FLAGS,
+    );
+    const explicitUseDocker = hasExplicitLongFlag(
+      dependencies.rawArgs,
+      commandPath,
+      "use-docker",
+      FUNCTIONS_DEPLOY_VALUE_CONSUMING_LONG_FLAGS,
+    );
     const explicitLegacyBundle = hasExplicitLongFlag(
       dependencies.rawArgs,
       commandPath,
       "legacy-bundle",
+      FUNCTIONS_DEPLOY_VALUE_CONSUMING_LONG_FLAGS,
     );
 
     const changedModes = [
@@ -2132,6 +2154,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       ["functions", "deploy"],
       "no-verify-jwt",
       flags.noVerifyJwt,
+      FUNCTIONS_DEPLOY_VALUE_CONSUMING_LONG_FLAGS,
     );
     const debugEnabled = hasGlobalLongFlag(dependencies.rawArgs, "debug");
     const projectRef =

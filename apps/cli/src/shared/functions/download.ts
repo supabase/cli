@@ -116,14 +116,42 @@ function validateSlug(slug: string): Effect.Effect<void, InvalidFunctionSlugErro
   return Effect.fail(new InvalidFunctionSlugError({ message: invalidFunctionSlugDetail }));
 }
 
+// Go's `functionsDownloadCmd` registers `--project-ref` as a value-consuming
+// long flag (`apps/cli-go/cmd/functions.go:177`, `StringVar`). pflag consumes
+// its space-separated value token unconditionally, even when that token looks
+// like `--use-api`/`--use-docker`/`--legacy-bundle` — the mutex scan below
+// must skip it to avoid a false-positive "changed" detection.
+const FUNCTIONS_DOWNLOAD_VALUE_CONSUMING_LONG_FLAGS = new Set(["project-ref"]);
+
 function validateDownloadFlags(
   rawArgs: ReadonlyArray<string>,
 ): Effect.Effect<void, ConflictingFunctionDownloadFlagsError> {
   const commandPath = ["functions", "download"] as const;
   const changed = [
-    hasExplicitLongFlag(rawArgs, commandPath, "use-api") ? "use-api" : undefined,
-    hasExplicitLongFlag(rawArgs, commandPath, "use-docker") ? "use-docker" : undefined,
-    hasExplicitLongFlag(rawArgs, commandPath, "legacy-bundle") ? "legacy-bundle" : undefined,
+    hasExplicitLongFlag(
+      rawArgs,
+      commandPath,
+      "use-api",
+      FUNCTIONS_DOWNLOAD_VALUE_CONSUMING_LONG_FLAGS,
+    )
+      ? "use-api"
+      : undefined,
+    hasExplicitLongFlag(
+      rawArgs,
+      commandPath,
+      "use-docker",
+      FUNCTIONS_DOWNLOAD_VALUE_CONSUMING_LONG_FLAGS,
+    )
+      ? "use-docker"
+      : undefined,
+    hasExplicitLongFlag(
+      rawArgs,
+      commandPath,
+      "legacy-bundle",
+      FUNCTIONS_DOWNLOAD_VALUE_CONSUMING_LONG_FLAGS,
+    )
+      ? "legacy-bundle"
+      : undefined,
   ].filter((flag): flag is string => flag !== undefined);
 
   return changed.length <= 1
