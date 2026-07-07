@@ -37,7 +37,10 @@
 
 ### `--output-format text` (Go CLI compatible)
 
-Prints `Finished supabase db pull.` on success.
+Prints `Schema written to <path>` to stderr on success (from the shared
+`pull.Run`, `internal/db/pull/pull.go:72`); no stdout confirmation message is
+printed. The `Finished supabase db pull.` PostRun message belongs only to
+`db pull` (`cmd/db.go:198-200`), not `db remote commit`.
 
 ### `--output-format json`
 
