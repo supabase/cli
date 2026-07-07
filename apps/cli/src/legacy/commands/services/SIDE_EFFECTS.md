@@ -36,7 +36,7 @@ matching `apps/cli-go/pkg/fetcher/gateway.go`.
 | Variable                | Purpose                                             | Required?                                                   |
 | ----------------------- | --------------------------------------------------- | ----------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token for Management API linked-version checks | no (falls back to keyring, then `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                    | no (defaults to `https://api.supabase.com`)                 |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path             | no (falls back to `~/.supabase/profile` -> `supabase`)      |
 
 ## Exit Codes
 

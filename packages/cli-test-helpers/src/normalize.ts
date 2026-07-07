@@ -148,6 +148,19 @@ export function normalize(output: string, options: NormalizeOptions = {}): strin
       )
       .replace(/^Digest: sha256:[0-9a-f]+\n?/gm, "")
       .replace(/^Status: (?:Downloaded newer image for|Image is up to date for)[^\n]*\n?/gm, "")
+      // 17d. Postgres connection-error detail. Go wraps pgconn's driver error
+      //      (`failed to connect to \`host=… user=… database=…\`: dial error … connection
+      //      refused` locally, `server error (FATAL: … SQLSTATE …)` from the pooler) while
+      //      the ts-legacy port surfaces the @effect/sql error (`effect/sql/SqlError:
+      //      PgClient: Failed to connect`). Both share the `failed to connect to postgres: `
+      //      prefix (the port reproduces Go's wrapper verbatim); only the driver-specific
+      //      suffix differs, which is a connection-layer implementation detail rather than
+      //      command behavior. Canonicalize the suffix so connection-refused parity
+      //      (e.g. `db push --local`/`--dry-run`) compares equal on both sides.
+      .replace(
+        /failed to connect to postgres: .*/g,
+        "failed to connect to postgres: <CONNECTION_ERROR>",
+      )
       // 18. Trailing whitespace on each line
       .replace(/[ \t]+$/gm, "")
       // 19. Collapse 3+ consecutive blank lines to two newlines

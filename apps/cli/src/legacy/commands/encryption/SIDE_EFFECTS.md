@@ -6,11 +6,11 @@ additionally reads the new key from stdin.
 
 ## Files Read
 
-| Path                                             | Format                    | When                                                               |
-| ------------------------------------------------ | ------------------------- | ------------------------------------------------------------------ |
-| `~/.supabase/access-token`                       | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable         |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON                      | when `--project-ref` / `PROJECT_ID` unset, to resolve linked ref   |
-| stdin                                            | raw bytes / masked TTY    | `update-root-key` only — masked TTY input or piped bytes (the key) |
+| Path                                             | Format                    | When                                                                      |
+| ------------------------------------------------ | ------------------------- | ------------------------------------------------------------------------- |
+| `~/.supabase/access-token`                       | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON                      | when `--project-ref` / `SUPABASE_PROJECT_ID` unset, to resolve linked ref |
+| stdin                                            | raw bytes / masked TTY    | `update-root-key` only — masked TTY input or piped bytes (the key)        |
 
 ## Files Written
 
@@ -30,12 +30,11 @@ additionally reads the new key from stdin.
 
 ## Environment Variables
 
-| Variable                             | Purpose                                              | Required?                                               |
-| ------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`              | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROJECT_ID` / `PROJECT_ID` | project ref (fallback when `--project-ref` unset)    | no (falls back to linked-project file → prompt)         |
-| `SUPABASE_API_URL`                   | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
-| `SUPABASE_PROFILE`                   | built-in profile name or YAML file path              | no (defaults to `supabase`)                             |
+| Variable                | Purpose                                              | Required?                                               |
+| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROJECT_ID`   | project ref (fallback when `--project-ref` unset)    | no (falls back to linked-project file → prompt)         |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)  |
 
 ## Exit Codes
 
@@ -76,7 +75,7 @@ One `result` event carrying `{root_key}` (both subcommands).
 
 ## Notes
 
-- Requires `--project-ref`, `SUPABASE_PROJECT_ID`/`PROJECT_ID`, or a linked project.
+- Requires `--project-ref`, `SUPABASE_PROJECT_ID`, or a linked project.
 - `update-root-key` reads the key from stdin: a real TTY is read with a masked
   prompt; piped stdin is decoded as UTF-8 and whitespace-trimmed. An empty or
   whitespace-only key sends an empty `root_key`, matching Go's `io.Copy` +

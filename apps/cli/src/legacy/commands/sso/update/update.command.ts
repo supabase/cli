@@ -106,7 +106,7 @@ export const legacySsoUpdateCommand = Command.make("update", config).pipe(
   ]),
   Command.withHandler((flags) =>
     legacySsoUpdate(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"], config }),
       withJsonErrorHandling,
     ),
   ),

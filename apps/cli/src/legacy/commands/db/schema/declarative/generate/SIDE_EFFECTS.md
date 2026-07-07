@@ -54,9 +54,15 @@ pg-delta catalog (source) against the target database's catalog (target).
 
 ## Output
 
-Text mode only (no machine envelope). Diagnostics + the final
-`Declarative schema written to <dir>` go to stderr; the PostRun prints
-`Finished supabase db schema declarative generate.` to stdout on success.
+Diagnostics (target resolution, prompts, `Declarative schema written to <dir>`)
+always go to stderr, in every `--output-format`. On success:
+
+- `text` mode prints `Finished supabase db schema declarative generate.` to
+  stdout (matches Go's PostRun `fmt.Println`, `cmd/db_schema_declarative.go:116-118`).
+- `json`/`stream-json` mode instead emits a structured success envelope
+  (`output.success("Finished supabase db schema declarative generate.")`) so
+  the machine stdout payload isn't corrupted by a bare human line
+  (`generate.command.ts:74-90`, CLI-1546 invariant).
 
 ## Notes
 

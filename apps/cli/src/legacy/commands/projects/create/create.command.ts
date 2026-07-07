@@ -107,8 +107,9 @@ export const legacyProjectsCreateCommand = Command.make("create", config).pipe(
       // `org-id` telemetry-safe (`markFlagTelemetrySafe`), and it's a boolean flag
       // anyway — boolean values are always logged verbatim by the instrumentation
       // regardless of `safeFlags`. See the same pattern on `projects api-keys`'s
-      // `--reveal`.
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["org-id"] }),
+      // `--reveal`. `config` is passed so `region`/`size` (both `Flag.choice`)
+      // are auto-detected as telemetry-safe, matching Go's `isEnumFlag`.
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["org-id"], config }),
       withJsonErrorHandling,
     ),
   ),

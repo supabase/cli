@@ -1,4 +1,5 @@
 import { Context, type Effect, type Scope } from "effect";
+import type { LegacyConnectSuggestionContext } from "./legacy-connect-errors.ts";
 import type {
   LegacyDbConnectError,
   LegacyDbCopyError,
@@ -71,6 +72,13 @@ export interface LegacyPgConnInput {
    * `ToPostgresURL`/`ConnectLocalPostgres`).
    */
   readonly connectTimeoutSeconds?: number;
+  /**
+   * Profile context for the connect-failure suggestion (Go's `SetConnectSuggestion`,
+   * which reads the ambient `CurrentProfile` in `ConnectByUrl`). The resolver attaches
+   * it so the driver layer can map a refused/auth/IPv6 connect error to Go's actionable
+   * hint. Absent → the driver omits the suggestion (callers fall back to the generic one).
+   */
+  readonly suggestionContext?: LegacyConnectSuggestionContext;
 }
 
 /**

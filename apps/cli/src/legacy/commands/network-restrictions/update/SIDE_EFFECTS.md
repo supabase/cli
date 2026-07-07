@@ -2,10 +2,10 @@
 
 ## Files Read
 
-| Path                                   | Format                    | When                                                          |
-| -------------------------------------- | ------------------------- | ------------------------------------------------------------- |
-| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable    |
-| `<workdir>/supabase/.temp/project-ref` | plain text (project ref)  | when `--project-ref` flag and `PROJECT_ID` env are both unset |
+| Path                                   | Format                    | When                                                                   |
+| -------------------------------------- | ------------------------- | ---------------------------------------------------------------------- |
+| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable             |
+| `<workdir>/supabase/.temp/project-ref` | plain text (project ref)  | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are both unset |
 
 ## Files Written
 
@@ -31,8 +31,8 @@ when no `--db-allow-cidr` was supplied), matching Go's `&[]string{}` initializat
 | Variable                | Purpose                                              | Required?                                                |
 | ----------------------- | ---------------------------------------------------- | -------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)  |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)              |
-| `PROJECT_ID`            | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref` → prompt) |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)   |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref` → prompt) |
 
 ## Exit Codes
 

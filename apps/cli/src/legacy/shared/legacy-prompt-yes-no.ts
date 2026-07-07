@@ -29,6 +29,9 @@ export const legacyParseYesNo = (input: string): boolean | undefined => {
  * `db pull`, `seed buckets`, and `storage rm`:
  *  - when `yes` is set, echoes `<label> [Y/n|y/N] y` and returns true even on a
  *    TTY (Go auto-confirms with the affirmative echo, `console.go:70-72`);
+ *  - when `interactive` is false (Go callers that force `console.IsTTY = false`,
+ *    e.g. `buckets.Run(ctx, "", false, fsys)` during `db reset`), behaves like a
+ *    non-TTY stdin: label + one bounded line scan, honoring a parsed answer;
  *  - `json`/`stream-json` output never prompts and uses the default silently;
  *  - a real TTY otherwise prompts with the given default via clack;
  *  - on a non-TTY stdin, Go does **not** short-circuit to the default: it prints
@@ -44,6 +47,7 @@ export const legacyPromptYesNo = Effect.fnUntraced(function* (
   yes: boolean,
   label: string,
   defaultValue: boolean,
+  interactive = true,
 ) {
   const choices = defaultValue ? "Y/n" : "y/N";
   if (yes) {
@@ -54,7 +58,12 @@ export const legacyPromptYesNo = Effect.fnUntraced(function* (
     return defaultValue;
   }
   const tty = yield* Tty;
-  if (!tty.stdinIsTty) {
+  // `interactive === false` mirrors Go callers that force `console.IsTTY = false`
+  // (e.g. `buckets.Run(ctx, "", false, fsys)` during `db reset`): Go does NOT
+  // silently take the default — `PromptYesNo` still prints the label, scans one
+  // line with the 100ms timeout, echoes it, and honors a parsed answer
+  // (`console.go:64-102`). So route it through the same non-TTY read path.
+  if (!interactive || !tty.stdinIsTty) {
     // Go's `PromptText` prints the label, then `ReadLine` scans one line and (on a
     // non-TTY) echoes it to stderr (`console.go:96-102`). A parsed piped answer
     // wins; an empty/exhausted scan or an unparseable line uses the default.
