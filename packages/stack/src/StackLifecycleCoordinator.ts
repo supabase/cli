@@ -9,6 +9,7 @@ import {
   Path,
   Ref,
   Context,
+  Semaphore,
   Stream,
   SubscriptionRef,
 } from "effect";
@@ -201,6 +202,7 @@ export class StackLifecycleCoordinator extends Context.Service<
         const info = stackInfoFor(config);
         const stateRef = yield* SubscriptionRef.make(initialPublicStates(config));
         const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
+        const enableExtensionLock = yield* Semaphore.make(1);
 
         const logBufferServices = yield* Layer.buildWithScope(LogBuffer.layer, scope);
         const logBuffer = Context.get(logBufferServices, LogBuffer);
@@ -560,22 +562,24 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* runtime.orchestrator.restartService(name);
             }),
           enableExtension: (name) =>
-            Effect.gen(function* () {
-              const currentLibraries = yield* Effect.promise(() =>
-                readPreloadLibraries(config.postgres.dataDir),
-              );
-              const plan = planEnableExtension(name, currentLibraries);
-              if (plan.action === "none") {
-                return;
-              }
-              yield* Effect.promise(() =>
-                writePreloadLibraries(config.postgres.dataDir, plan.libraries),
-              );
-              yield* requireKnownService("postgres");
-              const runtime = yield* ensureRuntime;
-              yield* runtime.orchestrator.restartService("postgres");
-              yield* runtime.orchestrator.waitReady("postgres");
-            }),
+            enableExtensionLock.withPermits(1)(
+              Effect.gen(function* () {
+                const currentLibraries = yield* Effect.promise(() =>
+                  readPreloadLibraries(config.postgres.dataDir),
+                );
+                const plan = planEnableExtension(name, currentLibraries);
+                if (plan.action === "none") {
+                  return;
+                }
+                yield* Effect.promise(() =>
+                  writePreloadLibraries(config.postgres.dataDir, plan.libraries),
+                );
+                yield* requireKnownService("postgres");
+                const runtime = yield* ensureRuntime;
+                yield* runtime.orchestrator.restartService("postgres");
+                yield* runtime.orchestrator.waitReady("postgres");
+              }),
+            ),
           reloadFunctions: (opts) =>
             Effect.gen(function* () {
               yield* requireKnownService("edge-runtime");
