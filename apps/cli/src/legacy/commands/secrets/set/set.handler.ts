@@ -221,9 +221,27 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
           cause.document === undefined
             ? String(cause.cause).split("\n\n")[0]
             : "schema validation failed";
-        return debugLogger
-          .debug(`failed to parse supabase/config.toml: ${shortMessage}`)
-          .pipe(Effect.as(recoverEdgeRuntimeConfig(cause)));
+        // Go prints the override notice unconditionally as soon as a
+        // `[remotes.*]` block's `project_id` matches, *before* `mapstructure`
+        // decode ever runs (`pkg/config/config.go:604-609`) — so the notice is
+        // still owed here even though decode subsequently failed and this
+        // whole load is non-fatal. `cause.appliedRemote` carries that match
+        // through the failed decode (see the field doc on
+        // `ProjectConfigParseError.appliedRemote`); the success path above
+        // handles the non-error case. Emitted ahead of the debug log below to
+        // match Go's actual order: the print happens inside `loadFromFile`,
+        // the debug log only after `flags.LoadConfig` returns the swallowed
+        // error to `Run` (`internal/secrets/set/set.go:20-24`).
+        return (
+          cause.appliedRemote !== undefined
+            ? output.raw(`Loading config override: [remotes.${cause.appliedRemote}]\n`, "stderr")
+            : Effect.void
+        ).pipe(
+          Effect.andThen(
+            debugLogger.debug(`failed to parse supabase/config.toml: ${shortMessage}`),
+          ),
+          Effect.as(recoverEdgeRuntimeConfig(cause)),
+        );
       }),
       // `loadProjectConfig` resolves `env(VAR)` references against
       // `.env`/`.env.local` (`loadProjectEnvironment` inside

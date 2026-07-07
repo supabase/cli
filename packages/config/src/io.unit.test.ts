@@ -1022,6 +1022,38 @@ enabled = false
     }
   });
 
+  test("carries appliedRemote on ProjectConfigParseError when the matched remote's decode fails", async () => {
+    // Go prints `Loading config override: [remotes.<name>]` unconditionally
+    // as soon as the `project_id` match is found, *before* `mapstructure`
+    // decode runs (`apps/cli-go/pkg/config/config.go:604-609`) — so the notice
+    // is still owed even when the decode that follows fails. `db.major_version`
+    // is an unrelated schema-decode error; the remote merge must still have
+    // happened (and be reported) ahead of it.
+    const cwd = await writeTomlProject(
+      `${BASE_WITH_REMOTES}
+[remotes.preview.db]
+major_version = "not-a-number"
+`,
+    );
+    try {
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(Effect.provide(BunServices.layer)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) {
+        return;
+      }
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (!Option.isSome(error) || error.value._tag !== "ProjectConfigParseError") {
+        return;
+      }
+      expect(error.value.appliedRemote).toBe("preview");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("loads the base config verbatim when no remote matches", async () => {
     const cwd = await writeTomlProject(BASE_WITH_REMOTES);
     try {

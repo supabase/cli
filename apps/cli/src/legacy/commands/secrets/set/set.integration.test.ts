@@ -612,7 +612,7 @@ project_id = "${LEGACY_VALID_REF}"
 FROM_CONFIG = "remote-value"
 `,
       );
-      const { layer, api, debugLogger } = setup();
+      const { layer, out, api, debugLogger } = setup();
       return Effect.gen(function* () {
         yield* legacySecretsSet({
           projectRef: Option.none(),
@@ -624,6 +624,11 @@ FROM_CONFIG = "remote-value"
         ]);
         expect(debugLogger.messages).toHaveLength(1);
         expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
+        // Go prints the override notice unconditionally as soon as the
+        // `project_id` match is found, *before* `mapstructure` decode ever
+        // runs (`pkg/config/config.go:604-609`) — so it's still owed here
+        // even though the decode that follows fails and recovers.
+        expect(out.stderrText).toContain("Loading config override: [remotes.staging]\n");
       }).pipe(Effect.provide(layer));
     },
   );

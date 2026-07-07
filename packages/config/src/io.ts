@@ -379,6 +379,7 @@ function parseProjectConfig(
   document: unknown,
   format: ConfigFormat,
   path: string,
+  appliedRemote: string | undefined,
 ): Effect.Effect<ProjectConfig, ProjectConfigParseError> {
   return Effect.try({
     try: () => decodeProjectConfig(document),
@@ -393,7 +394,10 @@ function parseProjectConfig(
     // `functions dev/serve/deploy`) don't catch `ProjectConfigParseError` at
     // all, so this error can propagate with whatever we attach here — no
     // reason to carry unrelated sections (db credentials, other
-    // `[remotes.*]` blocks, etc.) along for the ride.
+    // `[remotes.*]` blocks, etc.) along for the ride. `appliedRemote` is passed
+    // through unconditionally too — see the field doc on
+    // `ProjectConfigParseError.appliedRemote` for why a tolerant caller still
+    // owes the override notice on this path.
     catch: (cause) =>
       new ProjectConfigParseError({
         path,
@@ -402,6 +406,7 @@ function parseProjectConfig(
         document: isObject(document)
           ? { edge_runtime: redactEdgeRuntimeSecrets(document.edge_runtime) }
           : undefined,
+        appliedRemote,
       }),
   });
 }
@@ -492,7 +497,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     appliedRemote = resolved.appliedRemote;
   }
 
-  const config = yield* parseProjectConfig(documentForDecode, format, filePath);
+  const config = yield* parseProjectConfig(documentForDecode, format, filePath, appliedRemote);
 
   return {
     path: filePath,

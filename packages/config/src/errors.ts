@@ -29,6 +29,23 @@ export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigPars
    * either implementation.
    */
   readonly document?: { readonly edge_runtime?: unknown };
+  /**
+   * Name of the `[remotes.<name>]` block whose subtree was merged over the
+   * base document before the decode that produced this error, when a
+   * `projectRef` was supplied and one matched. Mirrors `appliedRemote` on
+   * {@link LoadedProjectConfig} for the success path. Go's `loadFromFile`
+   * prints `Loading config override: [remotes.<name>]` to stderr
+   * unconditionally, *before* `mapstructure` decode ever runs
+   * (`apps/cli-go/pkg/config/config.go:604-609`) — so the notice is still due
+   * even when the subsequent decode fails. Callers that tolerate a
+   * schema-decode failure and keep going (e.g. `secrets set`) must surface
+   * this themselves; callers that let the error propagate get no such
+   * notice from Go either, since `c.load(v)` fails before `Run` prints
+   * anything else. `undefined` when no `projectRef` was requested or none
+   * matched — same as the raw-parse-failure case, where remote merging never
+   * runs at all.
+   */
+  readonly appliedRemote?: string;
 }> {}
 
 export class ProjectEnvParseError extends Data.TaggedError("ProjectEnvParseError")<{
