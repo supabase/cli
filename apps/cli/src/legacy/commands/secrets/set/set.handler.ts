@@ -91,7 +91,15 @@ function recoverEdgeRuntimeConfig(cause: ProjectConfigParseError): ProjectConfig
     return null;
   }
   const edgeRuntime = cause.document.edge_runtime;
-  const secrets = isRecord(edgeRuntime) ? edgeRuntime.secrets : undefined;
+  const secretsField = isRecord(edgeRuntime) ? edgeRuntime.secrets : undefined;
+  // `redactEdgeRuntimeSecrets` (`packages/config/src/io.ts`) wraps a malformed,
+  // non-object `secrets` field (e.g. a TOML array) in a single `Redacted`
+  // rather than leaving it a plain record, so an uncaught error can't leak it
+  // either. Unwrap before the `isRecord` check below — otherwise the
+  // `Redacted` wrapper object itself (an object, just not a secrets map) gets
+  // misread as a one-entry map and fabricates a bogus secret from its
+  // internal fields.
+  const secrets = Redacted.isRedacted(secretsField) ? Redacted.value(secretsField) : secretsField;
   const decodableSecrets = isRecord(secrets) ? filterDecodableSecrets(secrets) : undefined;
   try {
     return decodeProjectConfig({

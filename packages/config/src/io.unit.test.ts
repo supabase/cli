@@ -533,6 +533,55 @@ FOO = ["MY_SUPER_SECRET_VALUE"]
     }
   });
 
+  test("redacts a non-object edge_runtime.secrets field on the ProjectConfigParseError document", async () => {
+    const cwd = makeTempProject();
+    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      // `secrets` itself is a TOML array here, not a table — the whole field
+      // is malformed rather than a single entry inside it. `isObject` rejects
+      // arrays, so `redactEdgeRuntimeSecrets` must wrap the field as one unit
+      // instead of falling through its early-return and leaving it raw.
+      await writeFile(
+        tomlPath,
+        `[analytics]
+port = "not-a-number"
+
+[edge_runtime]
+secrets = ["MY_SUPER_SECRET_VALUE"]
+`,
+      );
+
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfigFile(tomlPath).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) {
+        return;
+      }
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (!Option.isSome(error) || error.value._tag !== "ProjectConfigParseError") {
+        return;
+      }
+
+      const edgeRuntime = error.value.document?.edge_runtime;
+      const secrets =
+        edgeRuntime !== null && typeof edgeRuntime === "object" && edgeRuntime !== undefined
+          ? (edgeRuntime as Record<string, unknown>).secrets
+          : undefined;
+      expect(Redacted.isRedacted(secrets)).toBe(true);
+      expect(Redacted.value(secrets as Redacted.Redacted<unknown>)).toEqual([
+        "MY_SUPER_SECRET_VALUE",
+      ]);
+      expect(JSON.stringify(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("preserves TOML as the active format on save", async () => {
     const cwd = makeTempProject();
     const tomlPath = await runConfigEffect(configTomlPath(cwd));

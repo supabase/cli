@@ -332,8 +332,22 @@ function normalizeDeprecatedSMTPSections(document: unknown): NormalizedSMTPDocum
  * unwrap via `Redacted.isRedacted`/`Redacted.value` before re-decoding.
  */
 function redactEdgeRuntimeSecrets(edgeRuntime: unknown): unknown {
-  if (!isObject(edgeRuntime) || !isObject(edgeRuntime.secrets)) {
+  if (!isObject(edgeRuntime) || !("secrets" in edgeRuntime)) {
     return edgeRuntime;
+  }
+  if (!isObject(edgeRuntime.secrets)) {
+    // The whole `secrets` field is malformed — e.g. `secrets = ["actual-secret"]`
+    // (a TOML array instead of a table) — rather than a single bad entry
+    // inside an otherwise-valid table. Still carries a secret in its
+    // structure, so wrap the field as one unit with the same rationale as
+    // the per-entry case below. Guarded by `"secrets" in edgeRuntime`
+    // (not just falling through on `undefined`) so `edge_runtime` documents
+    // that legitimately omit `secrets` don't gain a spurious
+    // `Redacted.make(undefined)` field.
+    return {
+      ...edgeRuntime,
+      secrets: Redacted.make(edgeRuntime.secrets, { label: "edge_runtime.secrets" }),
+    };
   }
   return {
     ...edgeRuntime,
