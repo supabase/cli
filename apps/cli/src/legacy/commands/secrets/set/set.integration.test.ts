@@ -629,6 +629,63 @@ FROM_CONFIG = "remote-value"
   );
 
   it.live(
+    "prints the remote override notice to stderr when [remotes.*] matches the resolved ref (Go parity: pkg/config/config.go:605)",
+    () => {
+      // No decode error here — the plain success path. Go's `loadFromFile`
+      // prints `Loading config override: [remotes.<name>]` to stderr
+      // unconditionally whenever a `[remotes.*]` block's `project_id` matches
+      // `Config.ProjectId`, before `mapstructure` ever runs. `mockLegacyCliConfig`
+      // defaults the resolved ref to `LEGACY_VALID_REF`.
+      writeConfig(
+        `[edge_runtime.secrets]
+FROM_CONFIG = "base-value"
+
+[remotes.staging]
+project_id = "${LEGACY_VALID_REF}"
+
+[remotes.staging.edge_runtime.secrets]
+FROM_CONFIG = "remote-value"
+`,
+      );
+      const { layer, out, api } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: [],
+        });
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([
+          { name: "FROM_CONFIG", value: "remote-value" },
+        ]);
+        expect(out.stderrText).toContain("Loading config override: [remotes.staging]\n");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "does not print a remote override notice when no [remotes.*] block matches the resolved ref",
+    () => {
+      writeConfig(
+        `[edge_runtime.secrets]
+FROM_CONFIG = "config-value"
+`,
+      );
+      const { layer, out, api } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: [],
+        });
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([
+          { name: "FROM_CONFIG", value: "config-value" },
+        ]);
+        expect(out.stderrText).not.toContain("Loading config override");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "tolerates two [remotes.*] blocks sharing the target project_id, logs it, and still sets CLI-arg secrets (CLI-1867 Go parity)",
     () => {
       // Go's `flags.LoadConfig` swallows *any* `Load()` error non-fatally

@@ -184,7 +184,22 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     // would recover the *base* `[edge_runtime.secrets]` instead of the
     // explicitly selected remote's override.
     const loadedConfig = yield* loadProjectConfig(runtimeInfo.cwd, { projectRef: ref }).pipe(
-      Effect.map((loaded) => loaded?.config ?? null),
+      Effect.flatMap((loaded) => {
+        if (loaded === null) {
+          return Effect.succeed(null);
+        }
+        // Go prints this from inside config load, before any command output
+        // (`pkg/config/config.go:605`) — unconditionally on a matching
+        // `[remotes.*]` block, ahead of the (possibly failing) decode. Other
+        // legacy handlers surface it the same way (e.g. `config push`); this
+        // path must not silently drop it just because it maps straight down
+        // to `.config` below.
+        return (
+          loaded.appliedRemote !== undefined
+            ? output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr")
+            : Effect.void
+        ).pipe(Effect.as(loaded.config));
+      }),
       Effect.catchTag("ProjectConfigParseError", (cause) => {
         // `smol-toml`'s `TomlError` embeds a source codeblock after a
         // blank-line separator — literal file content, which for this file's
