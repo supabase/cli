@@ -60,12 +60,43 @@ export interface PostgrestConfig {
   readonly version?: string;
 }
 
+/** One external OAuth provider for the auth (GoTrue) member, keyed in
+ * `AuthConfig.external` by the provider id GoTrue knows (google, github,
+ * azure, …) — the same set the classic CLI's `[auth.external.*]` config
+ * drives, translated to `GOTRUE_EXTERNAL_<ID>_*` env the same way.
+ * Provider ids are validated by GoTrue itself. */
+export interface AuthExternalProviderConfig {
+  /** Default true: a declared provider is one you mean to use; keep
+   * credentials wired but inactive with an explicit false. */
+  readonly enabled?: boolean;
+  readonly clientId: string;
+  /** Optional for providers GoTrue accepts without one (e.g. apple,
+   * google one-tap); emitted empty when absent, like the classic CLI. */
+  readonly secret?: string;
+  /** Defaults to `<externalUrl>/auth/v1/callback`, the classic CLI's
+   * issuer-derived default. */
+  readonly redirectUri?: string;
+  /** Base URL for self-hosted providers (gitlab, azure, keycloak). */
+  readonly url?: string;
+  /** Default false — emitted explicitly so a shell variable can never
+   * override the typed config (native spawns extend the parent env). */
+  readonly skipNonceCheck?: boolean;
+  /** Default false — emitted explicitly, like skipNonceCheck. */
+  readonly emailOptional?: boolean;
+}
+
 export interface AuthConfig {
   readonly port?: number;
   readonly siteUrl?: string;
   readonly jwtExpiry?: number;
   readonly externalUrl?: string;
   readonly version?: string;
+  readonly external?: Readonly<Record<string, AuthExternalProviderConfig>>;
+  /** Extra redirect targets GoTrue accepts beyond siteUrl — the classic
+   * CLI's [auth] additional_redirect_urls, translated to
+   * GOTRUE_URI_ALLOW_LIST the same way (always emitted, empty when none,
+   * so a shell variable can never supply the allow list). */
+  readonly additionalRedirectUrls?: ReadonlyArray<string>;
 }
 
 export interface RealtimeConfig {
@@ -190,6 +221,8 @@ export interface ResolvedAuthConfig {
   readonly jwtExpiry: number;
   readonly externalUrl: string;
   readonly version: string;
+  readonly external: Readonly<Record<string, AuthExternalProviderConfig>>;
+  readonly additionalRedirectUrls: ReadonlyArray<string>;
 }
 
 export interface ResolvedRealtimeConfig {
@@ -640,6 +673,8 @@ export class StackBuilder extends Context.Service<
                   smtpPort: config.mailpit !== false ? config.mailpit.smtpPort : undefined,
                   smtpAdminEmail: config.mailpit !== false ? config.mailpit.adminEmail : undefined,
                   smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
+                  external: config.auth.external,
+                  additionalRedirectUrls: config.auth.additionalRedirectUrls,
                   dependencies: postgresDeps,
                 })
               : makeAuthServiceDocker({
@@ -655,6 +690,8 @@ export class StackBuilder extends Context.Service<
                   smtpPort: config.mailpit !== false ? config.mailpit.smtpPort : undefined,
                   smtpAdminEmail: config.mailpit !== false ? config.mailpit.adminEmail : undefined,
                   smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
+                  external: config.auth.external,
+                  additionalRedirectUrls: config.auth.additionalRedirectUrls,
                   networkArgs: dockerNetworkArgs(platform.os, [config.auth.port]),
                   apiPort: config.apiPort,
                   dependencies: postgresDeps,

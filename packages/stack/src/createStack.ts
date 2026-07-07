@@ -299,6 +299,8 @@ function resolveAuthConfig(
     jwtExpiry: cfg.jwtExpiry ?? 3600,
     externalUrl: cfg.externalUrl ?? `http://127.0.0.1:${apiPort}`,
     version: cfg.version ?? DEFAULT_VERSIONS.auth,
+    external: cfg.external ?? {},
+    additionalRedirectUrls: cfg.additionalRedirectUrls ?? [],
   };
 }
 

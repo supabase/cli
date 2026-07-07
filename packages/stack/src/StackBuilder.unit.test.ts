@@ -72,6 +72,8 @@ const baseConfig: ResolvedStackConfig = {
     jwtExpiry: 3600,
     externalUrl: "http://localhost:9999",
     version: DEFAULT_VERSIONS.auth,
+    external: {},
+    additionalRedirectUrls: [],
   },
   edgeRuntime: false,
   realtime: false,

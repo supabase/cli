@@ -1,4 +1,5 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import type { AuthExternalProviderConfig } from "../StackBuilder.ts";
 import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
 
 interface AuthServiceOptions {
@@ -12,6 +13,13 @@ interface AuthServiceOptions {
   readonly smtpPort?: number;
   readonly smtpAdminEmail?: string;
   readonly smtpSenderName?: string;
+  /** External OAuth providers by GoTrue provider id, translated to
+   * `GOTRUE_EXTERNAL_<ID>_*` env the way the classic CLI translates
+   * `[auth.external.*]`. */
+  readonly external?: Readonly<Record<string, AuthExternalProviderConfig>>;
+  /** Extra allowed redirect targets, translated to GOTRUE_URI_ALLOW_LIST
+   * like the classic CLI's [auth] additional_redirect_urls. */
+  readonly additionalRedirectUrls?: ReadonlyArray<string>;
   readonly dependencies: ReadonlyArray<{
     readonly service: string;
     readonly condition: "healthy" | "completed";
@@ -28,6 +36,29 @@ interface DockerAuthOptions extends AuthServiceOptions {
   readonly networkArgs: readonly string[];
   readonly apiPort: number;
 }
+
+/** Mirrors the classic CLI's [auth.external.*] → GOTRUE_EXTERNAL_* env
+ * translation. Every field except url emits explicitly, defaults
+ * included: native-mode spawns extend the parent environment, so an
+ * unset variable would inherit whatever the shell carries — the classic
+ * CLI shadows the same way (start.go emits the booleans with %t). url
+ * stays conditional, matching start.go. */
+const externalProviderEnv = (opts: AuthServiceOptions): Record<string, string> => {
+  const env: Record<string, string> = {};
+  for (const [id, provider] of Object.entries(opts.external ?? {})) {
+    const prefix = `GOTRUE_EXTERNAL_${id.toUpperCase()}`;
+    env[`${prefix}_ENABLED`] = String(provider.enabled ?? true);
+    env[`${prefix}_CLIENT_ID`] = provider.clientId;
+    env[`${prefix}_SECRET`] = provider.secret ?? "";
+    env[`${prefix}_REDIRECT_URI`] = provider.redirectUri ?? `${opts.externalUrl}/auth/v1/callback`;
+    env[`${prefix}_SKIP_NONCE_CHECK`] = String(provider.skipNonceCheck ?? false);
+    env[`${prefix}_EMAIL_OPTIONAL`] = String(provider.emailOptional ?? false);
+    if (provider.url !== undefined) {
+      env[`${prefix}_URL`] = provider.url;
+    }
+  }
+  return env;
+};
 
 const authEnv = (opts: AuthServiceOptions, dbHost = "127.0.0.1"): Record<string, string> => ({
   GOTRUE_DB_DATABASE_URL: `postgresql://supabase_auth_admin:postgres@${dbHost}:${opts.dbPort}/postgres`,
@@ -56,6 +87,11 @@ const authEnv = (opts: AuthServiceOptions, dbHost = "127.0.0.1"): Record<string,
           ? {}
           : { GOTRUE_SMTP_SENDER_NAME: opts.smtpSenderName }),
       }),
+  // Always emitted, empty when none: native spawns extend the parent env,
+  // so omission would let a shell GOTRUE_URI_ALLOW_LIST become the allow
+  // list (start.go always appends it, empty included).
+  GOTRUE_URI_ALLOW_LIST: (opts.additionalRedirectUrls ?? []).join(","),
+  ...externalProviderEnv(opts),
 });
 
 const authHealthCheck = (port: number) => ({
