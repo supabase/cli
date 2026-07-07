@@ -135,7 +135,9 @@ function validateDownloadFlags(
   const changed = [
     hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-api") ? "use-api" : undefined,
     hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-docker") ? "use-docker" : undefined,
-    hasExplicitLongFlag(rawArgs, downloadCommandPath, "legacy-bundle") ? "legacy-bundle" : undefined,
+    hasExplicitLongFlag(rawArgs, downloadCommandPath, "legacy-bundle")
+      ? "legacy-bundle"
+      : undefined,
   ].filter((flag): flag is string => flag !== undefined);
 
   return changed.length <= 1
