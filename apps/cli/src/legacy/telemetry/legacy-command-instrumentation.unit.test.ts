@@ -501,6 +501,38 @@ describe("withLegacyCommandInstrumentation", () => {
     },
   );
 
+  it.live(
+    "resolves a Flag.choice's shorthand alias to its canonical name (Go parity: pflag.Visit)",
+    () => {
+      const analytics = mockContextualAnalytics();
+      // Mirrors sso add's real `type` flag construction exactly — `-t` is a
+      // registered alias (Flag.withAlias("t")) that must be mapped to the
+      // canonical "type" name for extractChangedFlagNames to record it at all.
+      const config = {
+        type: Flag.choice("type", ["saml"] as const).pipe(Flag.withAlias("t")),
+      };
+
+      return Effect.void.pipe(
+        withLegacyCommandInstrumentation({
+          flags: { type: "saml" },
+          config,
+          aliases: { t: "type" },
+        }),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["sso", "add", "-t", "saml"]) })),
+        Effect.provide(commandRuntimeLayer(["sso", "add"])),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const event = analytics.captured[0];
+            expect(event?.properties.flags).toEqual({ type: "saml" });
+          }),
+        ),
+      );
+    },
+  );
+
   it.live("passes an Optional-wrapped Flag.choice value through verbatim", () => {
     const analytics = mockContextualAnalytics();
     const config = {
