@@ -55,7 +55,6 @@ when its local gate is off.
 | `SUPABASE_PROJECT_ID`   | project ref (flag → this → `.temp/project-ref` → prompt) | no                                                      |
 | `SUPABASE_YES`          | auto-confirm prompts (`--yes`)                           | no                                                      |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                         | no (defaults to `https://api.supabase.com`)             |
 | `SUPABASE_PROFILE`      | API profile selection                                    | no                                                      |
 | `env(VAR)` references   | interpolated into `config.toml` values at load           | no                                                      |
 

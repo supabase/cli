@@ -20,10 +20,10 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                          | Required?                                               |
-| ----------------------- | -------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token                       | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL | no (defaults to `https://api.supabase.com`)             |
+| Variable                | Purpose                                 | Required?                                               |
+| ----------------------- | --------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token                              | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path | no (falls back to `~/.supabase/profile` -> `supabase`)  |
 
 ## Exit Codes
 

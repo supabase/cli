@@ -6,10 +6,10 @@ Cloudflare DNS-over-HTTPS CNAME pre-check.
 
 ## Files Read
 
-| Path                                   | Format                    | When                                                       |
-| -------------------------------------- | ------------------------- | ---------------------------------------------------------- |
-| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
-| `<workdir>/supabase/.temp/project-ref` | plain text                | when `--project-ref` flag and `PROJECT_ID` env are unset   |
+| Path                                   | Format                    | When                                                              |
+| -------------------------------------- | ------------------------- | ----------------------------------------------------------------- |
+| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable        |
+| `<workdir>/supabase/.temp/project-ref` | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset |
 
 ## Files Written
 
@@ -92,7 +92,7 @@ suppressed on stderr. `delete` ignores `-o`.
 
 - `--custom-hostname` is required for `create`.
 - `create` validates the CNAME via Cloudflare DNS-over-HTTPS (`https://1.1.1.1`, 10s timeout) before initializing; on failure it short-circuits before any POST.
-- All subcommands resolve the ref via `--project-ref` → `PROJECT_ID` env → linked-project file, matching Go.
+- All subcommands resolve the ref via `--project-ref` → `SUPABASE_PROJECT_ID` env → linked-project file, matching Go.
 - The project-ref fallback env var is `SUPABASE_PROJECT_ID`, matching Go (Go calls `viper.GetString("PROJECT_ID")` under `viper.SetEnvPrefix("SUPABASE")`, which resolves to the `SUPABASE_PROJECT_ID` environment variable).
 - **Documented divergences from Go (intentional):**
   - `--include-raw-output` is declared as a normal boolean **on each subcommand** (Go declares it as a persistent flag on the `domains` group). Two consequences: (a) it must appear after the subcommand name (`domains get --include-raw-output`) rather than before it (`domains --include-raw-output get`), matching how `--project-ref` is already handled shell-wide; (b) it cannot reproduce Cobra's help-hiding or the `Flag --include-raw-output has been deprecated` stderr warning, which Effect CLI has no hook for. It still reproduces the behavioral effect (forces `-o json` when `-o` is unset/pretty); on `delete` it is inert, matching Go.
