@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,9 +11,11 @@ import {
 import { EdgeProxy, type PodUpstream } from "./EdgeProxy.ts";
 import { IdleMonitor } from "./IdleMonitor.ts";
 import type { PodManifest } from "./PodManifest.ts";
+import { PodLock } from "./podLock.ts";
 import { PodRegistry } from "./PodRegistry.ts";
 import { PortRegistry } from "./PortRegistry.ts";
 import { Provisioner, type CreatePodOptions } from "./Provisioner.ts";
+import { reapStalePostmaster } from "./reapStalePostmaster.ts";
 import { TemplateStore } from "./TemplateStore.ts";
 
 export interface FleetOptions {
@@ -75,15 +77,33 @@ const INTERNAL_PORT_OFFSET = 10_000;
  *   `StackHandle` on demand and tears it down again in `suspend`.
  * - Concurrent wakes of the same pod are deduped via `wakesInFlight`, since
  *   EdgeProxy may invoke `wake()` once per connection.
+ * - Every operation that touches a pod's live processes or on-disk data dir
+ *   (the body of a wake, the body of `suspend`, and the process/data-dir
+ *   affecting parts of `destroyPod`/`resetPod`/`forkPod`) runs inside
+ *   `podLocks.withLock(id, ...)`, a per-pod FIFO chain (see `podLock.ts`).
+ *   This prevents e.g. a wake racing an in-flight suspend from calling
+ *   `createStack` against a data dir whose postmaster is still shutting
+ *   down, or `destroyPod`/`resetPod` deleting a data dir out from under a
+ *   wake that's still in `wakesInFlight` (and thus not yet visible in
+ *   `warm`). Wake dedup via `wakesInFlight` deliberately stays OUTSIDE the
+ *   lock so concurrent connections still share a single wake; only the
+ *   shared wake body itself acquires the lock.
  * - `run.pid` files under each pod's directory record which daemon process
- *   currently owns a warm pod; startup reconciliation uses them to kill stale
- *   processes from a previous daemon run before treating every pod as
- *   suspended. This is a phase-1 kill-then-suspend policy, not adoption: the
- *   spec's long-term goal is to adopt still-live pods across daemon restarts,
- *   but that requires reattaching the in-process StackHandle to an externally
- *   running set of processes, which isn't supported yet. Killing and letting
- *   the next connection re-wake the pod is acceptable because pod data is
- *   disposable and wake is fast.
+ *   currently owns a warm pod; startup reconciliation uses them as a hint
+ *   that the pod *may* have been running under a previous daemon. The
+ *   actual kill decision, however, keys off postgres's own
+ *   `<dataDir>/postmaster.pid` (see `reapStalePostmaster.ts`) since
+ *   process-compose/`createStack` spawn postgres `detached: true` — its own
+ *   process group, not the daemon's — so killing `-daemonPid` would miss it
+ *   entirely. Phase 1 only ever runs postgres under a fleet pod (no HTTP
+ *   edge yet), so reaping the postmaster's process group covers every
+ *   process a stale pod could have left behind. This is a phase-1
+ *   kill-then-suspend policy, not adoption: the spec's long-term goal is to
+ *   adopt still-live pods across daemon restarts, but that requires
+ *   reattaching the in-process StackHandle to an externally running set of
+ *   processes, which isn't supported yet. Killing and letting the next
+ *   connection re-wake the pod is acceptable because pod data is disposable
+ *   and wake is fast.
  */
 export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle> {
   const root = opts.root ?? join(homedir(), ".supabase");
@@ -97,6 +117,7 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   const states = new Map<string, PodState>();
   const warm = new Map<string, WarmPod>();
   const wakesInFlight = new Map<string, Promise<PodUpstream>>();
+  const podLocks = new PodLock();
 
   const monitor = new IdleMonitor({
     idleMs,
@@ -119,55 +140,60 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   async function wakeUpstream(id: string): Promise<PodUpstream> {
     const existing = warm.get(id);
     if (existing) return { host: "127.0.0.1", port: existing.internalDbPort };
+    // Dedup deliberately stays OUTSIDE podLocks: EdgeProxy may invoke wake()
+    // once per connection, and every such caller should share the SAME wake
+    // (and thus the same lock acquisition), not each queue up its own.
     const inFlight = wakesInFlight.get(id);
     if (inFlight) return inFlight;
-    const p = (async (): Promise<PodUpstream> => {
-      const manifest = await pods.read(id);
-      if (manifest === undefined) throw new Error(`unknown pod: ${id}`);
-      states.set(id, "waking");
-      const internalDbPort = manifest.ports.dbPort + INTERNAL_PORT_OFFSET;
-      const stack = await createStack({
-        stackRoot: join(pods.podDir(id), "stack"),
-        port: manifest.ports.apiPort + INTERNAL_PORT_OFFSET,
-        lazyServices: true,
-        postgres: {
-          dataDir: pods.dataDir(id),
-          version: manifest.versions.postgres,
-          port: internalDbPort,
-          provisioned: true,
-          profile: "micro",
-        },
-        postgrest: manifest.services.postgrest === true ? {} : false,
-        auth: manifest.services.auth === true ? {} : false,
-        realtime: manifest.services.realtime === true ? {} : false,
-        edgeRuntime: manifest.services["edge-runtime"] === true ? {} : false,
-        storage: manifest.services.storage === true ? {} : false,
-        imgproxy: manifest.services.imgproxy === true ? {} : false,
-        mailpit: manifest.services.mailpit === true ? {} : false,
-        pgmeta: manifest.services.pgmeta === true ? {} : false,
-        studio: manifest.services.studio === true ? {} : false,
-        analytics: manifest.services.analytics === true ? {} : false,
-        vector: manifest.services.vector === true ? {} : false,
-        pooler: manifest.services.pooler === true ? {} : false,
-        functions: false,
-      });
-      try {
-        await stack.start();
-        await stack.serviceReady("postgres");
-      } catch (err) {
-        await stack.dispose().catch(() => {});
+    const p = podLocks
+      .withLock(id, async (): Promise<PodUpstream> => {
+        const manifest = await pods.read(id);
+        if (manifest === undefined) throw new Error(`unknown pod: ${id}`);
+        states.set(id, "waking");
+        const internalDbPort = manifest.ports.dbPort + INTERNAL_PORT_OFFSET;
+        const stack = await createStack({
+          stackRoot: join(pods.podDir(id), "stack"),
+          port: manifest.ports.apiPort + INTERNAL_PORT_OFFSET,
+          lazyServices: true,
+          postgres: {
+            dataDir: pods.dataDir(id),
+            version: manifest.versions.postgres,
+            port: internalDbPort,
+            provisioned: true,
+            profile: "micro",
+          },
+          postgrest: manifest.services.postgrest === true ? {} : false,
+          auth: manifest.services.auth === true ? {} : false,
+          realtime: manifest.services.realtime === true ? {} : false,
+          edgeRuntime: manifest.services["edge-runtime"] === true ? {} : false,
+          storage: manifest.services.storage === true ? {} : false,
+          imgproxy: manifest.services.imgproxy === true ? {} : false,
+          mailpit: manifest.services.mailpit === true ? {} : false,
+          pgmeta: manifest.services.pgmeta === true ? {} : false,
+          studio: manifest.services.studio === true ? {} : false,
+          analytics: manifest.services.analytics === true ? {} : false,
+          vector: manifest.services.vector === true ? {} : false,
+          pooler: manifest.services.pooler === true ? {} : false,
+          functions: false,
+        });
+        try {
+          await stack.start();
+          await stack.serviceReady("postgres");
+        } catch (err) {
+          await stack.dispose().catch(() => {});
+          throw err;
+        }
+        warm.set(id, { stack, internalDbPort });
+        states.set(id, "warm");
+        monitor.track(id);
+        monitor.recordActivity(id, proxy.openConnections(id));
+        await writeFile(runPidFile(id), String(process.pid));
+        return { host: "127.0.0.1", port: internalDbPort };
+      })
+      .catch((err: unknown) => {
+        states.set(id, "suspended");
         throw err;
-      }
-      warm.set(id, { stack, internalDbPort });
-      states.set(id, "warm");
-      monitor.track(id);
-      monitor.recordActivity(id, proxy.openConnections(id));
-      await writeFile(runPidFile(id), String(process.pid));
-      return { host: "127.0.0.1", port: internalDbPort };
-    })().catch((err: unknown) => {
-      states.set(id, "suspended");
-      throw err;
-    });
+      });
     const tracked = p.finally(() => {
       wakesInFlight.delete(id);
     });
@@ -181,6 +207,16 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   }
 
   async function suspend(id: string): Promise<void> {
+    // Full body runs inside the per-pod lock so a suspend can never
+    // interleave with a concurrent wake, destroy, reset, or fork touching
+    // the same pod's process/data dir. Note this is a fresh, non-re-entrant
+    // acquisition: callers that already hold the lock for `id` (forkPod's
+    // source-pod lock) call the LOCKED body directly instead of this
+    // function — see `suspendLocked` usage below.
+    return podLocks.withLock(id, () => suspendLocked(id));
+  }
+
+  async function suspendLocked(id: string): Promise<void> {
     const pod = warm.get(id);
     if (!pod) return;
     states.set(id, "suspending");
@@ -200,43 +236,25 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   }
 
   // Startup reconciliation: phase 1 policy is kill-then-suspend, not adoption
-  // (see class doc above). Any pod with a run.pid file left over from a
-  // previous daemon has its process terminated before we treat it as
-  // suspended; the pod's ports are also re-seeded into the freshly loaded
-  // PortRegistry from its manifest, which is the mechanism `restore()` exists
-  // for (recovering from a quarantined/corrupt port-state file).
+  // (see class doc above). `run.pid` (the daemon's own pid) is only a HINT
+  // that a pod may have been running under a previous daemon; it's not the
+  // kill target, since process-compose/createStack spawn postgres
+  // `detached: true` — its own process group, distinct from the daemon's —
+  // so `kill(-daemonPid, ...)` would miss postgres entirely and leave a
+  // stale postmaster running forever. The actual kill decision keys off
+  // postgres's own ground truth, `<dataDir>/postmaster.pid`, whose first
+  // line is the postmaster's pid; the postmaster is always its own
+  // process-group leader, so `reapStalePostmaster` can reliably signal the
+  // whole tree via `-pid`. Phase 1 only ever runs postgres under a fleet pod
+  // (postgres-only ready gate; no HTTP edge yet), so this fully covers what
+  // a stale pod could have left behind. The pod's ports are also re-seeded
+  // into the freshly loaded PortRegistry from its manifest, which is the
+  // mechanism `restore()` exists for (recovering from a quarantined/corrupt
+  // port-state file).
   for (const manifest of await pods.list()) {
     await ports.restore(manifest.id, manifest.ports);
-
-    const pidRaw = await readFile(runPidFile(manifest.id), "utf8").catch(() => undefined);
-    if (pidRaw !== undefined) {
-      const pid = Number(pidRaw);
-      if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) {
-        try {
-          process.kill(-pid, "SIGTERM");
-        } catch {
-          /* not a process-group leader, or already gone */
-        }
-        try {
-          process.kill(pid, "SIGTERM");
-        } catch {
-          /* already gone */
-        }
-        setTimeout(() => {
-          try {
-            process.kill(-pid, "SIGKILL");
-          } catch {
-            /* already gone */
-          }
-          try {
-            process.kill(pid, "SIGKILL");
-          } catch {
-            /* already gone */
-          }
-        }, 5000).unref();
-      }
-      await rm(runPidFile(manifest.id), { force: true });
-    }
+    await reapStalePostmaster(pods.dataDir(manifest.id));
+    await rm(runPidFile(manifest.id), { force: true });
     await registerEdge(manifest);
   }
 
@@ -247,18 +265,32 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
       return status(manifest);
     },
     async destroyPod(id) {
-      await suspend(id);
+      // suspend (tears down live processes) and provisioner.destroy (deletes
+      // the data dir) run as ONE lock acquisition so a wake that's still
+      // mid-flight (registered in wakesInFlight, not yet in `warm`) can't
+      // slip in between them and recreate a stack against a dir we're about
+      // to delete.
+      await podLocks.withLock(id, async () => {
+        await suspendLocked(id);
+        await provisioner.destroy(id);
+      });
       await proxy.unregister(id);
       states.delete(id);
-      await provisioner.destroy(id);
     },
     async resetPod(id) {
-      await suspend(id);
-      await provisioner.reset(id);
+      await podLocks.withLock(id, async () => {
+        await suspendLocked(id);
+        await provisioner.reset(id);
+      });
     },
     async forkPod(sourceId, newId) {
-      await suspend(sourceId);
-      const manifest = await provisioner.fork(sourceId, newId);
+      // Lock the SOURCE pod around suspend + the fork's clone of its data
+      // dir (provisioner.fork reads sourceId's data dir). The new pod needs
+      // no lock: it isn't live yet, nothing else can race it.
+      const manifest = await podLocks.withLock(sourceId, async () => {
+        await suspendLocked(sourceId);
+        return provisioner.fork(sourceId, newId);
+      });
       await registerEdge(manifest);
       return status(manifest);
     },
@@ -266,6 +298,18 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
       await wakeUpstream(id);
     },
     suspend,
+    // Preload-only semantics when suspended: if the pod is warm, this
+    // enables `extension` immediately via the live StackHandle (CREATE
+    // EXTENSION, possibly after a preload-triggered restart) regardless of
+    // which extension it is. If the pod is SUSPENDED, there is no live
+    // postgres to run CREATE EXTENSION against, so this can only durably
+    // record intent for extensions that need a preload library — those get
+    // appended to the data dir's preload-libraries config so the next wake
+    // picks them up. For a suspended pod and a NON-preload extension (i.e.
+    // not in `PRELOAD_REQUIRED_EXTENSIONS`), this method is a silent no-op:
+    // nothing is persisted, and the extension is NOT created on the next
+    // wake. Callers that need a non-preload extension enabled on a
+    // currently-suspended pod must `wake()` it first.
     async enableExtension(id, extension) {
       const pod = warm.get(id);
       if (pod) {
