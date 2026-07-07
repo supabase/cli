@@ -17,6 +17,10 @@ const config = {
 
 export type LegacyFunctionsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
+// Go marks `--project-ref` telemetry-safe on both `functionsListCmd` and
+// `functionsDeleteCmd` (`cmd/functions.go:150-153`). Matches `list.command.ts`.
+export const LEGACY_FUNCTIONS_DELETE_SAFE_FLAGS = ["project-ref"] as const;
+
 export const legacyFunctionsDeleteCommand = Command.make("delete", config).pipe(
   Command.withDescription(
     "Delete a Function from the linked Supabase project. This does NOT remove the Function locally.",
@@ -34,7 +38,7 @@ export const legacyFunctionsDeleteCommand = Command.make("delete", config).pipe(
   ]),
   Command.withHandler((flags) =>
     legacyFunctionsDelete(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
+      withLegacyCommandInstrumentation({ flags, safeFlags: LEGACY_FUNCTIONS_DELETE_SAFE_FLAGS }),
       withJsonErrorHandling,
     ),
   ),
