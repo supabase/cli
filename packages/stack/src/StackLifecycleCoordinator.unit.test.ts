@@ -20,6 +20,22 @@ import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const testJwtSecret = "super-secret-jwt-token-with-at-least-32-characters-long";
 
+/**
+ * The coordinator's projected status is fed by an async stream, so it lags the
+ * orchestrator's internal readiness signal that waitReady/waitAllReady resolve on —
+ * on slow machines it can transiently read "Starting" (still catching up) or even
+ * "Restarting" (a flaky health probe briefly failed). Only its EVENTUAL value is
+ * contractual, so poll until it settles instead of asserting a snapshot.
+ */
+const waitForReadyStatus = <E, R>(getState: Effect.Effect<{ readonly status: string }, E, R>) =>
+  Effect.gen(function* () {
+    for (;;) {
+      const state = yield* getState;
+      if (state.status === "Running" || state.status === "Healthy") return;
+      yield* Effect.sleep(Duration.millis(25));
+    }
+  }).pipe(Effect.timeout(Duration.seconds(5)));
+
 const defaultPorts: AllocatedPorts = {
   apiPort: 54321,
   dbPort: 54322,
@@ -229,12 +245,8 @@ describe("StackLifecycleCoordinator lazyServices", () => {
 
           expect(spawner.spawned.some(isPostgrestPayload)).toBe(true);
           // waitReady already proved the service reached a ready state — that's the actual
-          // assertion above. The coordinator's projected status here is best-effort: health
-          // checks poll on an interval, so it may still lag behind (or even show a transient
-          // "Restarting", if a flaky health check briefly failed and triggered a restart)
-          // relative to the orchestrator's internal readiness signal that waitReady resolves on.
-          const readyState = yield* stack.getState("postgrest");
-          expect(["Running", "Healthy", "Restarting"]).toContain(readyState.status);
+          // assertion above. The projected status only settles eventually; see helper doc.
+          yield* waitForReadyStatus(stack.getState("postgrest"));
 
           yield* Effect.promise(() => fakeServer.stop());
         }).pipe(Effect.provide(layer));
@@ -292,8 +304,9 @@ describe("StackLifecycleCoordinator lazyServices", () => {
 
           yield* stack.waitAllReady().pipe(Effect.timeout(Duration.seconds(5)));
 
-          const postgrestState = yield* stack.getState("postgrest");
-          expect(["Running", "Healthy"]).toContain(postgrestState.status);
+          // waitAllReady covering the on-demand service means it reaches ready; the
+          // projected status only settles eventually; see helper doc.
+          yield* waitForReadyStatus(stack.getState("postgrest"));
 
           yield* Effect.promise(() => fakeServer.stop());
         }).pipe(Effect.provide(layer));
