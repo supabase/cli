@@ -25,6 +25,7 @@ import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectRefResolver } from "../../../../legacy/config/legacy-project-ref.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../../legacy/config/legacy-project-ref.errors.ts";
+import { legacySeedBucketsRun } from "../../../shared/legacy-seed-buckets.ts";
 import { legacySeedBuckets } from "./buckets.handler.ts";
 import type { LegacyBucketsFlags } from "./buckets.command.ts";
 import { LegacyPlatformApi } from "../../../../legacy/auth/legacy-platform-api.service.ts";
@@ -323,6 +324,36 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live(
+    "honors a piped decline for the overwrite prompt when non-interactive (db reset path)",
+    () => {
+      const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: "[storage.buckets.test]\npublic = true\n",
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [{ name: "test", id: "test" }] },
+        ],
+        pipedAnswers: ["n"],
+      });
+      return Effect.gen(function* () {
+        // db reset seeds buckets with interactive=false (Go's `buckets.Run(ctx, "",
+        // false, fsys)` forces console.IsTTY=false). Go does NOT silently take the
+        // default: the prompt still prints its label, scans one line, and honors a
+        // parsed answer — so the piped "n" must skip the overwrite (default is yes).
+        const exit = yield* legacySeedBucketsRun({
+          projectRef: "",
+          emitSummary: false,
+          interactive: false,
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain(
+          "already exists. Do you want to overwrite its properties?",
+        );
+        expect(out.stderrText).not.toContain("Updating Storage bucket");
+        expect(requests.some((r) => r.method === "PUT")).toBe(false);
+      });
+    },
+  );
+
   it.live("creates configured vector buckets and leaves stale ones (prune default no)", () => {
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.vector]\nenabled = true\n[storage.vector.buckets.documents-openai]\n[storage.vector.buckets.existing-vec]\n",
@@ -396,6 +427,40 @@ describe("legacy seed buckets", () => {
       expect(requests.some((r) => r.url.includes(VECTOR_DELETE))).toBe(true);
     });
   });
+
+  it.live(
+    "prunes a stale vector bucket when the caller passes yes (db reset project-env path)",
+    () => {
+      // `db reset` resolves `yes` with the nested project `.env` and passes it into the runner
+      // with `interactive: false`; the pre-resolved `yes` must drive pruning even though no
+      // prompt is answered and the runner's own shell-only resolveYes would default to false.
+      const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: "[storage.vector]\nenabled = true\n[storage.vector.buckets.keep-vec]\n",
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          {
+            method: "POST",
+            match: VECTOR_LIST,
+            body: {
+              vectorBuckets: [{ vectorBucketName: "keep-vec" }, { vectorBucketName: "stale-vec" }],
+            },
+          },
+          { method: "POST", match: VECTOR_DELETE, body: {} },
+        ],
+        // No `confirm` and no `--yes` flag — pruning is driven solely by the passed `yes`.
+      });
+      return Effect.gen(function* () {
+        yield* legacySeedBucketsRun({
+          projectRef: "",
+          emitSummary: false,
+          interactive: false,
+          yes: true,
+        }).pipe(Effect.provide(layer));
+        expect(out.stderrText).toContain("Pruning vector bucket: stale-vec");
+        expect(requests.some((r) => r.url.includes(VECTOR_DELETE))).toBe(true);
+      });
+    },
+  );
 
   it.live("warns and continues when vector buckets are unavailable in the region", () => {
     const { layer, out } = setupLegacySeedBuckets(tmp.current, {

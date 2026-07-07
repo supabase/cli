@@ -7,7 +7,7 @@
 | keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliConfig.profile` |
 | keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
 | `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
-| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` flag and `PROJECT_ID` env are unset                                      |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` flag and `SUPABASE_PROJECT_ID` env are unset                             |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                |
 
 ## Files Written
@@ -30,8 +30,7 @@ Only `content.sql` is rendered in text mode. The full payload is exposed via `--
 | Variable                | Purpose                                              | Required?                                               |
 | ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `PROJECT_ID`            | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref`)         |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset   | no (falls back to `supabase/.temp/project-ref`)         |
 | `SUPABASE_PROFILE`      | profile selector (built-in name or YAML file path)   | no (defaults to `supabase`)                             |
 
 ## Exit Codes

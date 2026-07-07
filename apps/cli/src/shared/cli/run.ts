@@ -50,6 +50,10 @@ const globalFlagsWithValues = new Set([
 const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [
   ["start"],
   ["db", "start"],
+  // `db reset` (local path) drives the bootstrap seam, which holds SIGINT/SIGTERM/SIGHUP with
+  // no-op listeners while the Go child recreates the container; the global handler would
+  // otherwise race that and cut off the child's Docker cleanup / status propagation.
+  ["db", "reset"],
   ["functions", "serve"],
 ];
 

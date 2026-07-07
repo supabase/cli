@@ -84,6 +84,7 @@ export const legacyDbPullCommand = Command.make("pull", config).pipe(
           password: flags.password,
         },
         aliases: { s: "schema", p: "password" },
+        config,
       }),
       withJsonErrorHandling,
     ),

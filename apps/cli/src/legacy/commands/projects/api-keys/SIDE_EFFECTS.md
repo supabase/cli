@@ -28,7 +28,7 @@ Management API to return the full secret keys (`sb_secret_...`) in `api_key` ins
 | Variable                | Purpose                                              | Required?                                               |
 | ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)  |
 
 ## Flags
 

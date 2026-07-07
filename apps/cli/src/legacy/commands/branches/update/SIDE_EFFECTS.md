@@ -6,10 +6,10 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 
 ## Files Written
 
-| Path                                             | Format | When                                                                     |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
-| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
+| Path                                           | Format | When                                                                     |
+| ---------------------------------------------- | ------ | ------------------------------------------------------------------------ |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
+| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
 
 ## API Routes
 
@@ -51,4 +51,4 @@ In Go encoder modes, the header goes to stderr followed by the encoded payload o
 
 ## Notes
 
-The upgrade-suggest call uses the parent project ref (resolved from `--project-ref`) rather than the branch's project ref. Both refs belong to the same organization, so the entitlement check returns the same `org_slug` either way; this also sidesteps a known API schema constraint where `getProject` strictly requires a `^[a-z]{20}$` ref.
+The upgrade-suggest call uses the branch's own resolved project ref (`legacyResolveBranchProjectRef`), matching Go's `update.go:26` (`pause.GetBranchProjectRef`) — not the parent `--project-ref` value — so the entitlements check is scoped to the branch's org.

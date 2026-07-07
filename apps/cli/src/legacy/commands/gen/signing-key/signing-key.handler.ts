@@ -7,8 +7,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { findGitRootPath } from "../../../../shared/git/git-root.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
+import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import type { LegacyGenSigningKeyFlags } from "./signing-key.command.ts";
@@ -246,25 +247,6 @@ const isGitIgnored = Effect.fnUntraced(function* (filePath: string, searchFrom: 
     .pipe(Effect.map((exitCode) => Option.some(Number(exitCode) === 0)));
 });
 
-const confirmOverwrite = Effect.fnUntraced(function* (title: string) {
-  const output = yield* Output;
-  const tty = yield* Tty;
-  const yes = yield* LegacyYesFlag;
-  if (yes) {
-    yield* output.raw(`${title} [Y/n] y\n`, "stderr");
-    return true;
-  }
-  if (!tty.stdinIsTty) {
-    yield* output.raw(`${title} [Y/n] \n`, "stderr");
-    return true;
-  }
-  // In json / stream-json mode `promptConfirm` fails with NonInteractiveError; treat that as a
-  // declined overwrite so the command cancels cleanly instead of corrupting the machine payload.
-  return yield* output
-    .promptConfirm(title, { defaultValue: true })
-    .pipe(Effect.orElseSucceed(() => false));
-});
-
 export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function* (
   flags: LegacyGenSigningKeyFlags,
 ) {
@@ -273,6 +255,7 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
   const telemetryState = yield* LegacyTelemetryState;
   const output = yield* Output;
   const tty = yield* Tty;
+  const yes = yield* legacyResolveYes;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const emphasize = (text: string) => styleIfTty(tty.stdoutIsTty, "bold", text);
@@ -298,9 +281,30 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
     const nextKeys = flags.append
       ? [...configured.value.existingKeys, key]
       : yield* Effect.gen(function* () {
-          const confirmed = yield* confirmOverwrite(
-            `Do you want to overwrite the existing ${emphasize(configured.value.displayPath)} file?`,
-          );
+          // `legacyPromptYesNo` silently returns the default (true) for any non-text
+          // `--output-format`, but this command has no structured json/stream-json output
+          // (SIDE_EFFECTS.md) — that combination only arises from a real interactive TTY
+          // explicitly requesting machine output. Fail closed rather than silently
+          // overwriting irrecoverable key material.
+          const confirmed =
+            !yes && tty.stdinIsTty && output.format !== "text"
+              ? false
+              : yield* legacyPromptYesNo(
+                  // `legacyPromptYesNo` checks `output.format !== "text"` BEFORE it checks
+                  // TTY, so a non-TTY (piped or empty) invocation under `json`/`stream-json`
+                  // would otherwise hit that check first and return the default without
+                  // ever reading stdin. Go's `console.PromptYesNo`
+                  // (apps/cli-go/internal/utils/console.go:64-82) has no concept of output
+                  // format at all — it always reads piped stdin — so a piped `y`/`n` answer
+                  // must be honored here the same as in text mode. Present a text-shaped
+                  // view of `output` to reach that read; `raw`/`promptConfirm` write the
+                  // prompt to stderr under every `Output` layer, so this never touches the
+                  // machine-readable stdout payload.
+                  output.format === "text" ? output : { ...output, format: "text" },
+                  yes,
+                  `Do you want to overwrite the existing ${emphasize(configured.value.displayPath)} file?`,
+                  true,
+                );
           if (!confirmed) {
             return yield* Effect.fail(
               new LegacyGenSigningKeyCancelledError({ message: "context canceled" }),

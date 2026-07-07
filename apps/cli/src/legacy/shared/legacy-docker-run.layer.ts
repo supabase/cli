@@ -7,12 +7,9 @@ import {
   legacyApplyBitbucketDockerFilter,
 } from "./legacy-docker-run.args.ts";
 import { LegacyDockerRunError } from "./legacy-docker-run.errors.ts";
+import { LEGACY_SUGGEST_DOCKER_INSTALL } from "./legacy-docker-suggest.ts";
 import { legacyGetRegistryImageUrlCandidates } from "./legacy-docker-registry.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
-
-// Go's prerequisite hint (`apps/cli-go/internal/utils/docker.go:248`).
-const SUGGEST_DOCKER_INSTALL =
-  "Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop";
 
 // Go's `DockerStart` checks `os.Getenv("BITBUCKET_CLONE_DIR") != ""`
 // (`apps/cli-go/internal/utils/docker.go:289`) to drop named volumes / security-opts.
@@ -49,7 +46,9 @@ export const legacyDockerRunLayer: Layer.Layer<
       // Never embed the spawn error verbatim: it can leak the full argv and
       // environment of the failed exec (CWE-214/209). Emit a fixed,
       // credential-free message that still points at the likely cause.
-      new LegacyDockerRunError({ message: `failed to run docker. ${SUGGEST_DOCKER_INSTALL}` });
+      new LegacyDockerRunError({
+        message: `failed to run docker. ${LEGACY_SUGGEST_DOCKER_INSTALL}`,
+      });
 
     const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
       const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
@@ -309,7 +308,7 @@ export const legacyDockerRunLayer: Layer.Layer<
               Effect.mapError(
                 () =>
                   new LegacyDockerRunError({
-                    message: `failed to run docker. ${SUGGEST_DOCKER_INSTALL}`,
+                    message: `failed to run docker. ${LEGACY_SUGGEST_DOCKER_INSTALL}`,
                   }),
               ),
             );

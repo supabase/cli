@@ -52,7 +52,7 @@ export const legacyBranchesUpdateCommand = Command.make("update", config).pipe(
   Command.withShortDescription("Update a preview branch"),
   Command.withHandler((flags) =>
     legacyBranchesUpdate(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"], config }),
       withJsonErrorHandling,
     ),
   ),

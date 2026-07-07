@@ -5,10 +5,12 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, Exit, FileSystem, Path } from "effect";
 
+import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   legacyApplyMigrationFile,
   legacyIsPipelineIncompatible,
+  legacySeedGlobals,
 } from "./legacy-migration-apply.ts";
 
 class TestError extends Data.TaggedError("TestError")<{ readonly message: string }> {}
@@ -228,5 +230,29 @@ describe("legacyIsPipelineIncompatible", () => {
 
   it.each(cases)("%s", (_name, sql, want) => {
     expect(legacyIsPipelineIncompatible(sql)).toBe(want);
+  });
+});
+
+describe("legacySeedGlobals", () => {
+  it.effect("runs the globals file WITHOUT RESET ALL and without a history insert", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-globals-"));
+    const file = join(dir, "roles.sql");
+    writeFileSync(file, "CREATE ROLE my_role;");
+    const { session, calls } = fakeSession();
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* legacySeedGlobals(session, fs, path, [file], (message) => new TestError({ message }));
+      const execs = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+      // Go's SeedGlobals calls ExecBatch directly — no RESET ALL (that's only the
+      // migration-apply path) and no schema-migrations history insert.
+      expect(execs).not.toContain("RESET ALL");
+      expect(execs).toContain("CREATE ROLE my_role");
+      expect(calls.some((c) => c.kind === "query")).toBe(false);
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(BunServices.layer),
+    );
   });
 });
