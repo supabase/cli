@@ -788,8 +788,10 @@ describe("legacy gen types", () => {
 
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
+        // cobra sorts the violating-flag set alphabetically (sort.Strings) —
+        // "linked" before "local" — regardless of check order.
         expect(String(exit.cause)).toContain(
-          "if any flags in the group [local linked project-id db-url] are set none of the others can be; [local linked] were all set",
+          "if any flags in the group [local linked project-id db-url] are set none of the others can be; [linked local] were all set",
         );
       }
     });

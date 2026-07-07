@@ -56,6 +56,7 @@ describe("legacyCliConfigLayer", () => {
       expect(config.apiUrl).toBe("https://api.supabase.com");
       expect(config.projectHost).toBe("supabase.co");
       expect(config.poolerHost).toBe("supabase.com");
+      expect(config.dashboardUrl).toBe("https://supabase.com/dashboard");
     }).pipe(Effect.provide(makeLayer({ cwd: tempRoot }))),
   );
 
@@ -154,7 +155,7 @@ describe("legacyCliConfigLayer", () => {
       ),
   );
 
-  it.effect("loads api_url, name, and pooler_host from a YAML profile file", () => {
+  it.effect("loads api_url, name, pooler_host, and dashboard_url from a YAML profile file", () => {
     const profilePath = join(tempRoot, "profile.yaml");
     writeFileSync(
       profilePath,
@@ -163,6 +164,7 @@ describe("legacyCliConfigLayer", () => {
         'api_url: "http://127.0.0.1:9999"',
         "project_host: localhost",
         "pooler_host: staging.example.com",
+        'dashboard_url: "http://127.0.0.1:9999"',
       ].join("\n"),
     );
     return Effect.gen(function* () {
@@ -171,6 +173,9 @@ describe("legacyCliConfigLayer", () => {
       expect(config.apiUrl).toBe("http://127.0.0.1:9999");
       expect(config.projectHost).toBe("localhost");
       expect(config.poolerHost).toBe("staging.example.com");
+      // Go reads `dashboard_url` from the profile (used by the connect-failure hint);
+      // the cli-e2e harness points it at the replay server for parity.
+      expect(config.dashboardUrl).toBe("http://127.0.0.1:9999");
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
   });
 
@@ -183,6 +188,8 @@ describe("legacyCliConfigLayer", () => {
       // Go's Profile.PoolerHost is `omitempty`: an absent pooler_host disables the
       // MITM domain assertion rather than falling back to supabase.com.
       expect(config.poolerHost).toBe("");
+      // An omitted dashboard_url falls back to the built-in supabase dashboard.
+      expect(config.dashboardUrl).toBe("https://supabase.com/dashboard");
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
   });
 

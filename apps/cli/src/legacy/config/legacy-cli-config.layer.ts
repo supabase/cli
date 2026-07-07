@@ -2,7 +2,11 @@ import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { parse as parseYaml } from "yaml";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
-import { legacyPoolerHost, legacyProjectHost } from "../shared/legacy-profile.ts";
+import {
+  legacyDashboardUrl,
+  legacyPoolerHost,
+  legacyProjectHost,
+} from "../shared/legacy-profile.ts";
 import {
   LegacyDebugLogger,
   type LegacyDebugLoggerShape,
@@ -16,6 +20,7 @@ interface ResolvedProfile {
   readonly apiUrl: string;
   readonly projectHost: string;
   readonly poolerHost: string;
+  readonly dashboardUrl: string;
 }
 
 const BUILTIN_PROFILE_API_URLS: Record<LegacyProfileName, string> = {
@@ -38,6 +43,7 @@ function resolvedBuiltin(name: LegacyProfileName): ResolvedProfile {
     apiUrl: BUILTIN_PROFILE_API_URLS[name],
     projectHost: legacyProjectHost(name),
     poolerHost: legacyPoolerHost(name),
+    dashboardUrl: legacyDashboardUrl(name),
   };
 }
 
@@ -47,6 +53,7 @@ function safeParseYaml(text: string):
       api_url?: unknown;
       project_host?: unknown;
       pooler_host?: unknown;
+      dashboard_url?: unknown;
     }
   | undefined {
   try {
@@ -57,6 +64,7 @@ function safeParseYaml(text: string):
           api_url?: unknown;
           project_host?: unknown;
           pooler_host?: unknown;
+          dashboard_url?: unknown;
         })
       : undefined;
   } catch {
@@ -147,6 +155,13 @@ function resolveProfile(
       // that omits `pooler_host:` yields an empty host, which disables the MITM
       // domain assertion — it must NOT fall back to the production `supabase.com`.
       poolerHost: typeof parsed.pooler_host === "string" ? parsed.pooler_host : "",
+      // Go's `Profile.DashboardURL` is `required` (`profile.go:20`); a YAML profile
+      // that omits it falls back to the built-in `supabase` dashboard here rather
+      // than erroring, since it only feeds the connect-failure suggestion text.
+      dashboardUrl:
+        typeof parsed.dashboard_url === "string"
+          ? parsed.dashboard_url
+          : legacyDashboardUrl("supabase"),
     };
   });
 }
@@ -200,6 +215,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
           apiUrl,
           projectHost,
           poolerHost,
+          dashboardUrl,
         } = yield* resolveProfile(
           profileFlag,
           env["SUPABASE_PROFILE"],
@@ -236,6 +252,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
           apiUrl,
           projectHost,
           poolerHost,
+          dashboardUrl,
           accessToken,
           projectId,
           workdir,

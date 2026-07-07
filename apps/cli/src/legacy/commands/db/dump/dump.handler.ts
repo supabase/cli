@@ -18,6 +18,7 @@ import {
 } from "../../../shared/legacy-connect-errors.ts";
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
+import { cobraMutuallyExclusiveErrorMessage } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import type { LegacyDbDumpFlags } from "./dump.command.ts";
 import {
@@ -42,15 +43,16 @@ import {
 
 /**
  * Mutually-exclusive flag groups, in cobra's check order (it sorts the joined
- * group keys alphabetically — `apps/cli-go/cmd/db.go:434,436,441,445`). The `key`
- * preserves the registration order used in the error's `[group]`, while the set
- * of violating flags is alphabetised in the message (cobra `sort.Strings(set)`).
+ * group keys alphabetically — `apps/cli-go/cmd/db.go:434,436,441,445`). Each
+ * group's flags are in registration order, matching cobra's `[group]` in the
+ * error text; the set of violating flags is alphabetised separately by
+ * `cobraMutuallyExclusiveErrorMessage` (cobra `sort.Strings(set)`).
  */
 const LEGACY_DUMP_EXCLUSIVE_GROUPS = [
-  { key: "db-url linked local", flags: ["db-url", "linked", "local"] },
-  { key: "keep-comments data-only", flags: ["keep-comments", "data-only"] },
-  { key: "role-only data-only", flags: ["role-only", "data-only"] },
-  { key: "schema role-only", flags: ["schema", "role-only"] },
+  ["db-url", "linked", "local"],
+  ["keep-comments", "data-only"],
+  ["role-only", "data-only"],
+  ["schema", "role-only"],
 ] as const;
 
 const DUMP_FILE_MODE = 0o644;
@@ -126,11 +128,11 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       }
     };
     for (const group of LEGACY_DUMP_EXCLUSIVE_GROUPS) {
-      const set = group.flags.filter(isSet);
+      const set = group.filter(isSet);
       if (set.length > 1) {
         return yield* Effect.fail(
           new LegacyDbDumpMutuallyExclusiveFlagsError({
-            message: `if any flags in the group [${group.key}] are set none of the others can be; [${[...set].sort().join(" ")}] were all set`,
+            message: cobraMutuallyExclusiveErrorMessage(group, set),
           }),
         );
       }

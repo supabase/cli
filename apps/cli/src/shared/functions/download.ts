@@ -8,7 +8,11 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { Output } from "../output/output.service.ts";
 import {
+  cobraMutuallyExclusiveErrorMessage,
   hasExplicitLongFlag,
+} from "../cli/cobra-flag-groups.ts";
+import {
+  FUNCTIONS_BUNDLER_MUTEX_GROUP,
   invalidFunctionSlugDetail,
   validateFunctionSlugMessage,
 } from "./functions.shared.ts";
@@ -128,19 +132,17 @@ const downloadCommandPath = ["functions", "download"] as const;
 function validateDownloadFlags(
   rawArgs: ReadonlyArray<string>,
 ): Effect.Effect<void, ConflictingFunctionDownloadFlagsError> {
-  const selected = [
-    hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-api") ? "--use-api" : undefined,
-    hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-docker") ? "--use-docker" : undefined,
-    hasExplicitLongFlag(rawArgs, downloadCommandPath, "legacy-bundle")
-      ? "--legacy-bundle"
-      : undefined,
-  ].filter((flag) => flag !== undefined);
+  const changed = [
+    hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-api") ? "use-api" : undefined,
+    hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-docker") ? "use-docker" : undefined,
+    hasExplicitLongFlag(rawArgs, downloadCommandPath, "legacy-bundle") ? "legacy-bundle" : undefined,
+  ].filter((flag): flag is string => flag !== undefined);
 
-  return selected.length <= 1
+  return changed.length <= 1
     ? Effect.void
     : Effect.fail(
         new ConflictingFunctionDownloadFlagsError({
-          message: `flags ${selected.join(", ")} are mutually exclusive`,
+          message: cobraMutuallyExclusiveErrorMessage(FUNCTIONS_BUNDLER_MUTEX_GROUP, changed),
         }),
       );
 }

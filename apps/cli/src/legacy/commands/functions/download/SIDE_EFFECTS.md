@@ -39,16 +39,17 @@ itself once the child exits successfully.
 | Variable                | Purpose                                              | Required?                                               |
 | ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)             |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)  |
 
 ## Exit Codes
 
-| Code | Condition                             |
-| ---- | ------------------------------------- |
-| `0`  | success                               |
-| `1`  | API error (non-2xx response)          |
-| `1`  | authentication error (no token found) |
-| `1`  | network / connection failure          |
+| Code | Condition                              |
+| ---- | -------------------------------------- |
+| `0`  | success                                |
+| `1`  | API error (non-2xx response)           |
+| `1`  | authentication error (no token found)  |
+| `1`  | network / connection failure           |
+| `1`  | invalid function slug or flag conflict |
 
 ## Output
 

@@ -39,7 +39,19 @@ export const legacyTestNewCommand = Command.make("new", config).pipe(
   Command.withDescription("Create a new test file."),
   Command.withShortDescription("Create a new test file"),
   Command.withHandler((flags) =>
-    legacyTestNew(flags).pipe(withLegacyCommandInstrumentation({ flags }), withJsonErrorHandling),
+    legacyTestNew(flags).pipe(
+      withLegacyCommandInstrumentation({
+        flags,
+        config,
+        // `--template` registers `-t` (Flag.withAlias above); without this,
+        // `-t pgtap` never resolves to the canonical `template` name in
+        // extractChangedFlagNames, so it wouldn't appear in telemetry at all
+        // (Go's pflag.Visit reports the canonical name regardless of shorthand —
+        // cmd/root_analytics.go:53-76).
+        aliases: { t: "template" },
+      }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(legacyTestNewRuntimeLayer),
 );

@@ -77,6 +77,11 @@ interface LegacyDbTomlValues {
   readonly seed: LegacyDbSeedTomlConfig;
   /** `[db.vault]` secrets (name → resolved value) — upserted by `up`/`down`. */
   readonly vault: ReadonlyArray<LegacyDbVaultSecretToml>;
+  /**
+   * The matched `[remotes.<name>]` block name when a linked ref merged its override
+   * (Go's `Loading config override: [remotes.<name>]` line), else `undefined`.
+   */
+  readonly appliedRemote: string | undefined;
 }
 
 /** `[db.seed]` config surfaced for `migration down`'s seed step. */
@@ -180,6 +185,12 @@ function deepMergeDoc(base: RawDoc, override: RawDoc): RawDoc {
  */
 interface LegacyRemoteOverride {
   readonly doc: RawDoc | undefined;
+  /**
+   * The name of the matched `[remotes.<name>]` block whose `project_id` equals the
+   * resolved ref, or `undefined` when no block matched. Callers echo Go's
+   * `Loading config override: [remotes.<name>]` stderr line from this.
+   */
+  readonly appliedRemote?: string;
   /**
    * The config keys the matched remote block contributed at viper's OVERRIDE tier. Go's
    * `mergeRemoteConfig` applies every block key via `v.Set(...)` after `AutomaticEnv`
@@ -302,10 +313,11 @@ function applyRemoteOverride(
       if (blockSeed?.["enabled"] === undefined) {
         return {
           doc: deepMergeDoc(merged, { db: { seed: { enabled: false } } }),
+          appliedRemote: name,
           remoteOverrideKeys,
         };
       }
-      return { doc: merged, remoteOverrideKeys };
+      return { doc: merged, appliedRemote: name, remoteOverrideKeys };
     }
   }
   return { doc, remoteOverrideKeys: new Set() };
@@ -476,6 +488,18 @@ function legacyJoinSupabaseSeedPath(pattern: string): string {
   return out.length === 0 ? "." : out.join("/");
 }
 
+/**
+ * Resolves a single seed `sql_paths` entry to Go's config-load form: a relative
+ * pattern is joined under `supabase/` (Go's `path.Join`, `config.go:918-921`); an
+ * absolute (or empty) pattern is returned verbatim. Used by the reader for
+ * `[db.seed].sql_paths` and by `db reset` for its `--sql-paths` override (Go's
+ * `resolveSeedSqlPaths`, `cmd/db.go`) so both feed the glob the same resolved paths.
+ */
+export const legacyResolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string =>
+  pattern.length === 0 || pathSvc.isAbsolute(pattern)
+    ? pattern
+    : legacyJoinSupabaseSeedPath(pattern);
+
 /** `[db]` ports default through the development env unless `SUPABASE_ENV` overrides. */
 const DEFAULT_SUPABASE_ENV = "development";
 
@@ -644,7 +668,12 @@ function resolveBool(value: unknown, fallback: boolean, lookup: EnvLookup): bool
   // width). A TOML number (`enabled = 0`) is therefore an explicit false, NOT absent — it
   // must not fall through to the schema default.
   if (typeof value === "number") return value !== 0;
-  return fallback;
+  // Absent → the schema default. A PRESENT non-scalar (array/inline table, e.g.
+  // `enabled = []`) is a decode error in Go's `UnmarshalExact` during `LoadConfig`, so it
+  // must NOT fall through to the default — otherwise `db reset` could accept the prompt and
+  // drop schemas on a config Go rejects up front.
+  if (value === undefined) return fallback;
+  return "invalid";
 }
 
 /**
@@ -717,45 +746,115 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
     }
     return Option.some(parsed);
   }
-  return Option.none<boolean>();
+  // Absent → `None` (Go's `*bool` stays nil). A present non-scalar value fails Go's
+  // `UnmarshalExact`, so reject it here rather than silently treating it as absent.
+  if (value === undefined) return Option.none<boolean>();
+  return yield* Effect.fail(
+    new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
+  );
 });
 
 /**
- * Recursively asserts every `encrypted:` secret in the (merged) config can be decrypted,
- * mirroring Go's global `DecryptSecretHookFunc` (`pkg/config/secret.go:77-109`,
- * `config.go:730`), which decrypts every `config.Secret` field during `UnmarshalExact` and
- * aborts the load with `failed to parse config: <error>` when one cannot be decrypted (e.g.
- * no `DOTENV_PRIVATE_KEY`). The reader's `[db.vault]` walk only covered vault secrets, so
- * non-vault `Secret` fields (`db.root_key`, `auth.external.<p>.secret`, smtp `pass`, …) were
- * silently passed through. A recursive string scan tracks Go's "decode the entire config"
- * behaviour and stays robust as new `Secret` fields are added. The unset-`env(...)` and
- * plain-string forms are returned verbatim by Go's hook (no error), so they are no-ops here.
- * Returns the failure (or `undefined`); the caller surfaces it via `Effect.fail`.
+ * Dotted paths of every `config.Secret`-typed field Go decrypts via its global
+ * `DecryptSecretHookFunc` (`pkg/config/secret.go`, `config.go:730`) — the hook only runs
+ * while decoding INTO a `config.Secret`, never over arbitrary strings. `*` matches any map
+ * key (`auth.external.<provider>`, `auth.hook.<name>`). `[db.vault]` (a `map[string]Secret`)
+ * is intentionally omitted — the reader decrypts it directly in the body with the same
+ * fail-on-undecryptable behaviour. Derived from the Go structs (`auth.go`, `db.go`,
+ * `config.go`); update alongside any new `Secret` field.
  */
-const legacyAssertDecryptableSecrets = (
-  value: unknown,
+const LEGACY_SECRET_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
+  ["db", "root_key"],
+  ["auth", "publishable_key"],
+  ["auth", "secret_key"],
+  ["auth", "jwt_secret"],
+  ["auth", "anon_key"],
+  ["auth", "service_role_key"],
+  ["auth", "email", "smtp", "pass"],
+  ["auth", "external", "*", "secret"],
+  ["auth", "hook", "*", "secrets"],
+  ["auth", "sms", "twilio", "auth_token"],
+  ["auth", "sms", "twilio_verify", "auth_token"],
+  ["auth", "sms", "messagebird", "access_key"],
+  ["auth", "sms", "textlocal", "api_key"],
+  ["auth", "sms", "vonage", "api_secret"],
+  ["auth", "captcha", "secret"],
+  ["studio", "openai_api_key"],
+  // Go decodes `[edge_runtime.secrets]` as `SecretsConfig map[string]Secret` (config.go:283,287),
+  // so every value is decrypted by the hook — `*` spans the arbitrary secret names.
+  ["edge_runtime", "secrets", "*"],
+];
+
+/** Collects the string leaves reachable from `node` along `segs` (`*` spans map keys). */
+const legacyCollectSecretStrings = (
+  node: unknown,
+  segs: ReadonlyArray<string>,
+  index: number,
+  out: Array<string>,
+): void => {
+  if (index === segs.length) {
+    if (typeof node === "string") out.push(node);
+    return;
+  }
+  const record = asRecord(node);
+  if (record === undefined) return;
+  const seg = segs[index]!;
+  if (seg === "*") {
+    for (const key of Object.keys(record)) {
+      legacyCollectSecretStrings(record[key], segs, index + 1, out);
+    }
+  } else {
+    legacyCollectSecretStrings(record[seg], segs, index + 1, out);
+  }
+};
+
+/** Fails when a single `encrypted:` secret value cannot be decrypted (Go's hook error). */
+const legacyAssertSecretValue = (
+  value: string,
   lookup: EnvLookup,
   dotenvPrivateKeys: ReadonlyArray<string>,
 ): LegacyDbConfigLoadError | undefined => {
-  if (typeof value === "string") {
-    const expanded = legacyExpandEnv(value, lookup);
-    if (ENV_PATTERN.test(expanded) || !legacyIsEncryptedSecret(expanded)) return undefined;
-    const decrypted = legacyDecryptSecret(expanded, dotenvPrivateKeys);
-    return decrypted.ok
-      ? undefined
-      : new LegacyDbConfigLoadError({ message: `failed to parse config: ${decrypted.error}` });
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const error = legacyAssertDecryptableSecrets(item, lookup, dotenvPrivateKeys);
-      if (error !== undefined) return error;
+  const expanded = legacyExpandEnv(value, lookup);
+  // Unset `env(...)` and plain strings are returned verbatim by Go's hook (no error).
+  if (ENV_PATTERN.test(expanded) || !legacyIsEncryptedSecret(expanded)) return undefined;
+  const decrypted = legacyDecryptSecret(expanded, dotenvPrivateKeys);
+  return decrypted.ok
+    ? undefined
+    : new LegacyDbConfigLoadError({ message: `failed to parse config: ${decrypted.error}` });
+};
+
+/**
+ * Asserts every `config.Secret`-typed `encrypted:` value in the (merged) config can be
+ * decrypted, mirroring Go's global `DecryptSecretHookFunc`, which aborts the load with
+ * `failed to parse config: <error>` when a secret cannot be decrypted. Only the actual
+ * `Secret` field paths ({@link LEGACY_SECRET_PATHS}) are scanned — a non-secret string that
+ * merely starts with `encrypted:` (e.g. an auth email-template `subject`) stays plain text
+ * in Go and must not block the load. Go decodes every `[remotes.<name>]` block into the same
+ * struct, so the same paths are checked under each remote too. Returns the failure (or
+ * `undefined`); the caller surfaces it via `Effect.fail`.
+ */
+const legacyAssertDecryptableSecrets = (
+  doc: unknown,
+  lookup: EnvLookup,
+  dotenvPrivateKeys: ReadonlyArray<string>,
+): LegacyDbConfigLoadError | undefined => {
+  const scan = (node: unknown): LegacyDbConfigLoadError | undefined => {
+    for (const segs of LEGACY_SECRET_PATHS) {
+      const values: Array<string> = [];
+      legacyCollectSecretStrings(node, segs, 0, values);
+      for (const value of values) {
+        const error = legacyAssertSecretValue(value, lookup, dotenvPrivateKeys);
+        if (error !== undefined) return error;
+      }
     }
     return undefined;
-  }
-  const record = asRecord(value);
-  if (record !== undefined) {
-    for (const key of Object.keys(record)) {
-      const error = legacyAssertDecryptableSecrets(record[key], lookup, dotenvPrivateKeys);
+  };
+  const topLevel = scan(doc);
+  if (topLevel !== undefined) return topLevel;
+  const remotes = asRecord(asRecord(doc)?.["remotes"]);
+  if (remotes !== undefined) {
+    for (const name of Object.keys(remotes)) {
+      const error = scan(remotes[name]);
       if (error !== undefined) return error;
     }
   }
@@ -1173,7 +1272,7 @@ const legacyValidateAuthConfig = Effect.fnUntraced(function* (
  * Fails with `LegacyDbConfigLoadError` only when the config file is present but
  * unparseable; an absent file (and an absent/empty pooler-url file) is not an error.
  */
-export const legacyReadDbToml = Effect.fnUntraced(function* (
+const readDbTomlCore = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
@@ -1183,6 +1282,12 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // `--local` / `--db-url` / declarative pass nothing and read the unmerged config,
   // matching Go (those paths never resolve a ref before config load).
   ref?: string,
+  // Internal: when true the on-disk `config.toml` is treated as absent so the body
+  // resolves pure defaults (still honoring `SUPABASE_*` env overrides, which Go binds
+  // regardless of a config file). The lenient `legacyReadDbToml({ validate: false })`
+  // wrapper uses this as its fallback after a config-load failure, mirroring the
+  // best-effort behavior the container-id seam relied on before.
+  ignoreConfigFile = false,
 ) {
   const supabaseDir = path.join(workdir, "supabase");
   const configPath = path.join(supabaseDir, "config.toml");
@@ -1192,18 +1297,20 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   // is swallowed, every other read error aborts rather than silently running against the
   // default local database. Effect surfaces "not found" as `PlatformError` with a
   // `SystemError` reason tagged `"NotFound"`.
-  const maybeContent = yield* fs.readFileString(configPath).pipe(
-    Effect.map(Option.some<string>),
-    Effect.catchTag("PlatformError", (error) =>
-      error.reason._tag === "NotFound"
-        ? Effect.succeed(Option.none<string>())
-        : Effect.fail(
-            new LegacyDbConfigLoadError({
-              message: `failed to read file config: ${error.message}`,
-            }),
-          ),
-    ),
-  );
+  const maybeContent = ignoreConfigFile
+    ? Option.none<string>()
+    : yield* fs.readFileString(configPath).pipe(
+        Effect.map(Option.some<string>),
+        Effect.catchTag("PlatformError", (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed(Option.none<string>())
+            : Effect.fail(
+                new LegacyDbConfigLoadError({
+                  message: `failed to read file config: ${error.message}`,
+                }),
+              ),
+        ),
+      );
 
   // Resolve `env(VAR)` against the shell env first, then the project `.env` files
   // (Go's `loadNestedEnv` populates the process env before `LoadEnvHook`). Built
@@ -1228,9 +1335,16 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   let functionsRaw: RawDoc | undefined;
   let analyticsRaw: RawDoc | undefined;
   let projectId = Option.none<string>();
+  // Whether `config.toml` set a top-level `project_id` string that env-expanded to empty
+  // (`project_id = ""`). Go keeps that empty override and `config.Validate` fails with
+  // `Missing required field in config: project_id` (config.go:991); tracked here so the
+  // check can run after the `SUPABASE_PROJECT_ID` env override below may still rescue it.
+  let projectIdExplicitEmpty = false;
   // Config keys a matched remote block contributed at viper's override tier (Go's
   // `v.Set`), so they must beat the matching `SUPABASE_*` env overrides below.
   let remoteOverrideKeys: ReadonlySet<string> = new Set();
+  // The matched `[remotes.<name>]` block name, echoed as Go's config-override line.
+  let appliedRemote: string | undefined;
   if (Option.isSome(maybeContent)) {
     let doc: RawDoc | undefined;
     try {
@@ -1271,6 +1385,7 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
         : applyRemoteOverride(doc, ref, lookup);
     const effectiveDoc = remoteOverride.doc;
     remoteOverrideKeys = remoteOverride.remoteOverrideKeys;
+    appliedRemote = remoteOverride.appliedRemote;
     db = asRecord(effectiveDoc?.["db"]);
     experimentalRaw = asRecord(effectiveDoc?.["experimental"]);
     pgDeltaRaw = asRecord(experimentalRaw?.["pgdelta"]);
@@ -1289,6 +1404,8 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     projectId = nonEmptyString(
       typeof rawProjectId === "string" ? legacyExpandEnv(rawProjectId, lookup) : rawProjectId,
     );
+    // A present `project_id` string that resolves to empty is Go's "kept empty override".
+    projectIdExplicitEmpty = typeof rawProjectId === "string" && Option.isNone(projectId);
 
     // Go's `DecryptSecretHookFunc` is a global decode hook (config.go:730) that decrypts
     // EVERY `config.Secret` field during `UnmarshalExact`, so an `encrypted:` secret anywhere
@@ -1342,6 +1459,16 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
   const projectIdEnv = envOverride("SUPABASE_PROJECT_ID");
   if (projectIdEnv !== undefined) {
     projectId = nonEmptyString(legacyExpandEnv(projectIdEnv, lookup));
+  }
+
+  // Go's `config.Validate` rejects an empty top-level `project_id` (config.go:991). An
+  // absent field is tolerated here (deferred), but a present `project_id = ""` that the
+  // `SUPABASE_PROJECT_ID` override did not rescue is a load error, so a destructive command
+  // (e.g. remote `db reset`) fails fast rather than dropping schemas on a config Go rejects.
+  if (projectIdExplicitEmpty && Option.isNone(projectId)) {
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({ message: "Missing required field in config: project_id" }),
+    );
   }
 
   // A present-but-unmarshalable port aborts in Go rather than defaulting; mirror
@@ -1770,13 +1897,9 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
         : typeof rawSqlPaths === "string"
           ? splitGoSeedPaths(rawSqlPaths)
           : ["seed.sql"];
-  const seedSqlPaths = sqlPathPatterns.map((pattern) => {
-    // Patterns are already env-expanded above (Go's LoadEnvHook runs before the split), so
-    // an absolute path is used verbatim and a relative one is supabase-prefixed via Go's
-    // `path.Join("supabase", pattern)` → `path.Clean` (collapses `.`/`..`).
-    if (pattern.length === 0 || path.isAbsolute(pattern)) return pattern;
-    return legacyJoinSupabaseSeedPath(pattern);
-  });
+  // Patterns are already env-expanded above (Go's LoadEnvHook runs before the split);
+  // resolve each to Go's config-load form (absolute verbatim, relative supabase-joined).
+  const seedSqlPaths = sqlPathPatterns.map((pattern) => legacyResolveSeedSqlPath(path, pattern));
 
   // `[db.vault]` secrets: env-expand each value, then decrypt dotenvx `encrypted:`
   // ciphertext. `resolved` mirrors Go's `len(SHA256) > 0` gate (Go sets SHA256 only
@@ -1860,9 +1983,52 @@ export const legacyReadDbToml = Effect.fnUntraced(function* (
     migrationsEnabled,
     seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },
     vault,
+    appliedRemote,
   };
   return values;
 });
+
+/**
+ * Read + validate `config.toml` exactly like Go's `flags.LoadConfig` → `config.Load`
+ * → `Validate`: an absent file yields defaults, but a present config that is
+ * unreadable/malformed, references an undecryptable `encrypted:` secret, or fails any
+ * of Go's decode/Validate checks (remote refs, `db.port`, `db.major_version`,
+ * `edge_runtime.deno_version`, pgdelta gate, `format_options` JSON, bucket names,
+ * function slugs, auth, analytics) aborts with the matching Go error. Call this at the
+ * point Go fails fast — before asserting the stack is running, prompting, or any
+ * destructive work — so a broken config never runs against the default local database.
+ */
+export const legacyCheckDbToml = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  ref?: string,
+) => readDbTomlCore(fs, path, workdir, ref, false);
+
+/**
+ * Read `config.toml`. Defaults to Go's validating behavior (identical to
+ * {@link legacyCheckDbToml}); pass `{ validate: false }` for a best-effort read that
+ * never throws on an invalid config — a config-load failure falls back to pure
+ * defaults (env overrides still applied), matching the tolerant behavior the
+ * container-id seam needs when it only wants `projectId` and the handler has already
+ * validated the config. The throwing default keeps every existing caller at Go parity.
+ */
+export const legacyReadDbToml = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  ref?: string,
+  opts?: { readonly validate?: boolean },
+) =>
+  opts?.validate === false
+    ? readDbTomlCore(fs, path, workdir, ref, false).pipe(
+        // Fall back to the ignore-file defaults path (never re-reads the broken config)
+        // so a best-effort caller gets a well-formed defaults result instead of a throw.
+        Effect.catchTag("LegacyDbConfigLoadError", () =>
+          readDbTomlCore(fs, path, workdir, ref, true),
+        ),
+      )
+    : readDbTomlCore(fs, path, workdir, ref, false);
 
 /**
  * The effective declarative schema directory: the configured

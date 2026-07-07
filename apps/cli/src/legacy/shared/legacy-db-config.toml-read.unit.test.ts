@@ -7,6 +7,7 @@ import { Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import {
   legacyApplyProjectEnv,
+  legacyCheckDbToml,
   legacyLoadProjectEnv,
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
@@ -45,6 +46,69 @@ const loadEnv = (workdir: string) =>
     const path = yield* Path.Path;
     return yield* legacyLoadProjectEnv(fs, path, workdir);
   }).pipe(Effect.provide(BunServices.layer));
+
+describe("read (lenient) vs check (throws) split", () => {
+  const withServices = <A, E>(
+    dir: string,
+    run: (fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, E, never>,
+  ) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      return yield* run(fs, path);
+    }).pipe(Effect.provide(BunServices.layer));
+
+  it.effect("legacyCheckDbToml throws on an undecryptable secret", () => {
+    const dir = withConfig('[db]\nroot_key = "encrypted:anything"\n');
+    return withServices(dir, (fs, path) => legacyCheckDbToml(fs, path, dir)).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "failed to parse config: missing private key",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "legacyReadDbToml({ validate: false }) tolerates the same secret, returning defaults",
+    () => {
+      const dir = withConfig('[db]\nroot_key = "encrypted:anything"\n');
+      return withServices(dir, (fs, path) =>
+        legacyReadDbToml(fs, path, dir, undefined, { validate: false }),
+      ).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            // The broken config is swallowed → the ignore-file defaults path (no vault).
+            expect(v.vault).toEqual([]);
+            expect(v.port).toBeGreaterThan(0);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("legacyReadDbToml({ validate: false }) still returns a valid config's values", () => {
+    const dir = withConfig('project_id = "lenientproj"\n');
+    return withServices(dir, (fs, path) =>
+      legacyReadDbToml(fs, path, dir, undefined, { validate: false }),
+    ).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.projectId).toEqual(Option.some("lenientproj"));
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+});
 
 describe("legacyReadDbToml", () => {
   it.effect("returns defaults when config.toml is absent", () => {
@@ -2190,6 +2254,102 @@ describe("legacyReadDbToml encrypted secret decryption (Go DecryptSecretHookFunc
   it.effect("treats an unset env() secret as a no-op (verbatim, like Go's hook)", () =>
     expectLoads(["[db]", 'root_key = "env(SOME_UNSET_ROOT_KEY)"']),
   );
+  it.effect("does NOT decrypt a non-secret string that starts with encrypted:", () =>
+    // Go's hook only runs while decoding into `config.Secret`; a non-secret field like an
+    // email-template subject stays plain text, so `db push`/`reset`/`start` must not abort.
+    expectLoads([
+      "[auth.email.template.invite]",
+      'subject = "encrypted: your invite"',
+      "[db]",
+      'root_key = "env(SOME_UNSET_ROOT_KEY)"',
+    ]),
+  );
+  it.effect("fails on an undecryptable auth.captcha.secret (Secret-typed field)", () =>
+    expectFails(
+      [
+        "[auth.captcha]",
+        "enabled = false",
+        'provider = "hcaptcha"',
+        'secret = "encrypted:anything"',
+      ],
+      "failed to parse config: missing private key",
+    ),
+  );
+  it.effect("fails on an undecryptable [edge_runtime.secrets] value (map[string]Secret)", () =>
+    expectFails(
+      ["[edge_runtime.secrets]", 'MY_SECRET = "encrypted:anything"'],
+      "failed to parse config: missing private key",
+    ),
+  );
+  it.effect("fails on an undecryptable Secret inside a [remotes.*] block", () =>
+    // Go decodes every remote block into the same struct, so an undecryptable secret in any
+    // remote (matched or not) aborts the load.
+    expectFails(
+      [
+        "[remotes.preview]",
+        'project_id = "abcdefghijklmnopqrst"',
+        "[remotes.preview.db]",
+        'root_key = "encrypted:anything"',
+      ],
+      "failed to parse config: missing private key",
+    ),
+  );
+});
+
+describe("legacyReadDbToml non-scalar config booleans (Go UnmarshalExact parity)", () => {
+  // Go's `UnmarshalExact` fails to decode a bool field given an array/inline-table value,
+  // aborting `LoadConfig` before any destructive work. A present non-scalar must not fall
+  // through to the schema default (which would let `db reset` prompt + drop schemas).
+  const failsInvalid = (lines: ReadonlyArray<string>, field: string) =>
+    Effect.gen(function* () {
+      const dir = withConfig(lines.join("\n"));
+      const exit = yield* read(dir).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(`failed to parse config: invalid ${field}.`);
+      }
+      rmSync(dir, { recursive: true, force: true });
+    });
+  it.effect("rejects an array value for [db.migrations] enabled", () =>
+    failsInvalid(["[db.migrations]", "enabled = []"], "db.migrations.enabled"),
+  );
+  it.effect("rejects an inline-table value for [db.seed] enabled", () =>
+    failsInvalid(["[db.seed]", "enabled = {}"], "db.seed.enabled"),
+  );
+});
+
+describe("legacyReadDbToml empty project_id (Go config.Validate parity)", () => {
+  it.effect("rejects a present-but-empty top-level project_id", () => {
+    // Go keeps the empty override and `config.Validate` fails "Missing required field in
+    // config: project_id" (config.go:991) before any destructive command runs.
+    const dir = withConfig('project_id = ""\n');
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Missing required field in config: project_id",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("still tolerates an absent project_id (deferred broader requirement)", () => {
+    const dir = withConfig("[db]\nmajor_version = 15\n");
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.baseline).toBeDefined();
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });
 
 describe("legacyReadDbToml [analytics] validation (Go config.Validate parity)", () => {
