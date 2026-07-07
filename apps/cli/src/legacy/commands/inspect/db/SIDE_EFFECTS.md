@@ -40,7 +40,7 @@ no new config reads.
 | ---------------------------------------------------- | --------------------------------- | --------------------------------------- |
 | `SUPABASE_DB_PASSWORD` / `DB_PASSWORD`               | database password (linked/local)  | no (prompts / config fallback)          |
 | `SUPABASE_ACCESS_TOKEN`                              | Management API auth (linked only) | no (falls back to keyring / token file) |
-| `PROJECT_ID`                                         | project ref fallback (linked)     | no (config resolution fallback)         |
+| `SUPABASE_PROJECT_ID`                                | project ref fallback (linked)     | no (config resolution fallback)         |
 | libpq vars (`PGSSLROOTCERT`, `PGCONNECT_TIMEOUT`, …) | honored when `--db-url` is used   | no                                      |
 
 ## Database Queries

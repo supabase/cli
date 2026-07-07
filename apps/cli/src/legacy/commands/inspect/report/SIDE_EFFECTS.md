@@ -54,12 +54,12 @@ resolve the connection (via `LegacyDbConfigResolver`).
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required? |
-| ----------------------- | ---------------------------------------------------- | --------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no        |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no        |
-| `SUPABASE_DB_*`         | override `[db]` port / shadow_port / password        | no        |
-| `SUPABASE_ENV`          | selects which project `.env` files load              | no        |
+| Variable                | Purpose                                              | Required?                                              |
+| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------ |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no                                                     |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`) |
+| `SUPABASE_DB_*`         | override `[db]` port / shadow_port / password        | no                                                     |
+| `SUPABASE_ENV`          | selects which project `.env` files load              | no                                                     |
 
 ## Exit Codes
 

@@ -99,7 +99,11 @@ export const legacyProjectsCreateCommand = Command.make("create", config).pipe(
   ]),
   Command.withHandler((flags) =>
     legacyProjectsCreate(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["org-id", "high-availability"] }),
+      withLegacyCommandInstrumentation({
+        flags,
+        safeFlags: ["org-id", "high-availability"],
+        config,
+      }),
       withJsonErrorHandling,
     ),
   ),

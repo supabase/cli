@@ -348,6 +348,7 @@ export function mockLegacyCliConfig(opts: {
   readonly apiUrl?: string;
   readonly projectHost?: string;
   readonly poolerHost?: string;
+  readonly dashboardUrl?: string;
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
   readonly projectId?: Option.Option<string>;
   readonly userAgent?: string;
@@ -357,6 +358,7 @@ export function mockLegacyCliConfig(opts: {
     apiUrl: opts.apiUrl ?? LEGACY_DEFAULT_API_URL,
     projectHost: opts.projectHost ?? "supabase.co",
     poolerHost: opts.poolerHost ?? "supabase.com",
+    dashboardUrl: opts.dashboardUrl ?? "https://supabase.com/dashboard",
     accessToken: opts.accessToken ?? Option.some(Redacted.make(LEGACY_VALID_TOKEN)),
     projectId: opts.projectId ?? Option.some(LEGACY_VALID_REF),
     workdir: opts.workdir,

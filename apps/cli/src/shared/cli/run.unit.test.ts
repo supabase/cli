@@ -30,6 +30,9 @@ describe("shouldUseGlobalSignalInterrupt", () => {
     expect(shouldUseGlobalSignalInterrupt(["functions", "serve"])).toBe(false);
     expect(shouldUseGlobalSignalInterrupt(["start"])).toBe(false);
     expect(shouldUseGlobalSignalInterrupt(["db", "start"])).toBe(false);
+    // `db reset` drives the bootstrap seam (holds signals for the Go child), so it must not
+    // be wrapped in the global handler either.
+    expect(shouldUseGlobalSignalInterrupt(["db", "reset"])).toBe(false);
     expect(
       shouldUseGlobalSignalInterrupt(["--workdir", "/tmp/app", "functions", "serve", "--debug"]),
     ).toBe(false);

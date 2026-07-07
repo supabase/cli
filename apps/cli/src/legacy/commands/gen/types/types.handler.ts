@@ -7,6 +7,10 @@ import {
   LegacyNetworkIdFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import {
+  cobraMutuallyExclusiveErrorMessage,
+  hasExplicitLongFlag,
+} from "../../../../shared/cli/cobra-flag-groups.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
 import {
@@ -79,6 +83,8 @@ function isProjectNotFound(cause: unknown) {
   return cause instanceof LegacyGenTypesUnexpectedStatusError && cause.status === 404;
 }
 
+const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
+
 function ensureMutuallyExclusive(
   group: ReadonlyArray<string>,
   present: ReadonlyArray<string>,
@@ -86,11 +92,7 @@ function ensureMutuallyExclusive(
   if (present.length <= 1) {
     return Effect.void;
   }
-  return Effect.fail(
-    new Error(
-      `if any flags in the group [${group.join(" ")}] are set none of the others can be; [${present.join(" ")}] were all set`,
-    ),
-  );
+  return Effect.fail(new Error(cobraMutuallyExclusiveErrorMessage(group, present)));
 }
 
 function forwardByteStream(
@@ -177,29 +179,6 @@ function findLegacyPositionalLanguage(rawArgs: ReadonlyArray<string>): Option.Op
   return Option.none();
 }
 
-function hasExplicitLongFlag(rawArgs: ReadonlyArray<string>, flagName: string): boolean {
-  const commandIndex = rawArgs.findIndex(
-    (value, index) => value === "types" && rawArgs[index - 1] === "gen",
-  );
-  if (commandIndex === -1) {
-    return false;
-  }
-
-  for (let index = commandIndex + 1; index < rawArgs.length; index += 1) {
-    const token = rawArgs[index];
-    if (token === undefined) {
-      return false;
-    }
-    if (token === "--") {
-      return false;
-    }
-    if (token === `--${flagName}` || token.startsWith(`--${flagName}=`)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: LegacyGenTypesFlags) {
   const output = yield* Output;
   const cliConfig = yield* LegacyCliConfig;
@@ -231,7 +210,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   if (
     Option.isSome(legacyLang) &&
     legacyLang.value !== "typescript" &&
-    !hasExplicitLongFlag(rawArgs, "lang")
+    !hasExplicitLongFlag(rawArgs, GEN_TYPES_COMMAND_PATH, "lang")
   ) {
     return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
   }
@@ -244,7 +223,10 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const swiftAccessControl = flags.swiftAccessControl;
   const usesPgMeta = flags.local || Option.isSome(flags.dbUrl) || flags.lang !== "typescript";
 
-  if (hasExplicitLongFlag(rawArgs, "swift-access-control") && lang !== "swift") {
+  if (
+    hasExplicitLongFlag(rawArgs, GEN_TYPES_COMMAND_PATH, "swift-access-control") &&
+    lang !== "swift"
+  ) {
     return yield* Effect.fail(
       new Error("--swift-access-control can only be used with --lang swift"),
     );
@@ -254,7 +236,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       new Error("--postgrest-v9-compat can only be used with pg-meta type generation"),
     );
   }
-  if (hasExplicitLongFlag(rawArgs, "query-timeout") && !usesPgMeta) {
+  if (hasExplicitLongFlag(rawArgs, GEN_TYPES_COMMAND_PATH, "query-timeout") && !usesPgMeta) {
     if (flags.linked || Option.isSome(flags.projectId)) {
       return yield* Effect.fail(
         new Error("--query-timeout can only be used with pg-meta type generation"),

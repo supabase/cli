@@ -96,7 +96,7 @@ export const legacyBranchesCreateCommand = Command.make("create", config).pipe(
   Command.withShortDescription("Create a preview branch"),
   Command.withHandler((flags) =>
     legacyBranchesCreate(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"], config }),
       withJsonErrorHandling,
     ),
   ),

@@ -7,20 +7,21 @@ local → if changed, print the unified diff and confirm → PATCH/PUT/POST.
 
 ## Files Read
 
-| Path                                             | Format                    | When                                                            |
-| ------------------------------------------------ | ------------------------- | --------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                 | TOML                      | always, before any network call (parse error aborts, exit 1)    |
-| `<workdir>/supabase/.env`, `.env.local`          | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`   |
-| Auth email template HTML (`content_path`)        | HTML                      | when `auth.enabled`; paths resolved per Go rules (see below)    |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON                      | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file) |
-| `~/.supabase/access-token`                       | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable      |
+| Path                                           | Format                    | When                                                                                                                                                                               |
+| ---------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`               | TOML                      | always, before any network call (parse error aborts, exit 1)                                                                                                                       |
+| `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`                                                                                                                      |
+| Auth email template HTML (`content_path`)      | HTML                      | when `auth.enabled`; paths resolved per Go rules (see below)                                                                                                                       |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file)                                                                                                                    |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check only, to decide whether the cache write below is skipped (mirrors Go's `ensureProjectGroupsCached` telemetry cache — see `db/lint`'s Notes for the full mechanism) |
+| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                         |
 
 ## Files Written
 
-| Path                                             | Format | When                                                                   |
-| ------------------------------------------------ | ------ | ---------------------------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | `Effect.ensuring` after run (success **and** failure), if ref resolved |
-| `~/.supabase/telemetry.json`                     | JSON   | `Effect.ensuring` after run (success **and** failure)                  |
+| Path                                           | Format | When                                                                   |
+| ---------------------------------------------- | ------ | ---------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | `Effect.ensuring` after run (success **and** failure), if ref resolved |
+| `~/.supabase/telemetry.json`                   | JSON   | `Effect.ensuring` after run (success **and** failure)                  |
 
 No writes to `config.toml`.
 
@@ -55,7 +56,6 @@ when its local gate is off.
 | `SUPABASE_PROJECT_ID`   | project ref (flag → this → `.temp/project-ref` → prompt) | no                                                      |
 | `SUPABASE_YES`          | auto-confirm prompts (`--yes`)                           | no                                                      |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_API_URL`      | override Management API base URL                         | no (defaults to `https://api.supabase.com`)             |
 | `SUPABASE_PROFILE`      | API profile selection                                    | no                                                      |
 | `env(VAR)` references   | interpolated into `config.toml` values at load           | no                                                      |
 

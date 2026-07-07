@@ -26,10 +26,10 @@
 
 ## Exit Codes
 
-| Code | Condition                                                          |
-| ---- | ------------------------------------------------------------------ |
-| `0`  | success — completion script for the chosen shell printed to stdout |
-| `1`  | invocation error (missing or unknown shell subcommand)             |
+| Code | Condition                                                                                                            |
+| ---- | -------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — completion script for the chosen shell printed to stdout                                                   |
+| `1`  | unknown shell subcommand, or bare `completion` with no shell subcommand — **known divergence, see Notes (CLI-1906)** |
 
 ## Output
 
@@ -58,9 +58,19 @@ straight to the Go binary.
 - Effect CLI's `--completions` global flag remains exposed at the root for `next/`
   users; it does not satisfy the legacy parity contract and is not what this
   subcommand routes through.
-- The Go CLI exits non-zero when called without a shell subcommand (e.g.
-  `supabase completion`). Effect CLI surfaces the same condition through its usual
-  "missing subcommand" help-with-exit-1 behavior.
+- **Known divergence (CLI-1906):** Go's cobra CLI exits `0` on both bare
+  `completion` (no shell subcommand) AND `completion <unknown-shell>` — cobra
+  treats an unrecognized subcommand name the same as a missing one: a
+  non-`Runnable()` command with no `RunE` returns `flag.ErrHelp`, which cobra
+  maps to printing help and returning a nil error (verified against the
+  compiled Go binary for both cases: `completion` and `completion
+bogus-shell` both exit `0`). The legacy TS shell currently exits `1` for
+  both invocations; this is a real, systemic exit-code bug in the shared CLI
+  harness (`shared/cli/run.ts`), not `completion`-specific — it reproduces on
+  any bare or unrecognized-subcommand invocation of a group command with
+  subcommands (e.g. `branches`, `branches bogus-subcommand`). See CLI-1906 for
+  the fix; this doc describes current (buggy) behavior, not the intended
+  target.
 - Each of `bash`/`zsh`/`fish`/`powershell` declares `--no-descriptions` (cobra's
   auto-registered flag, `completions.go` in `spf13/cobra`) and forwards it to the
   Go binary, so the emitted script omits completion descriptions exactly as it

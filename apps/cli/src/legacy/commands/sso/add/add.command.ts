@@ -84,7 +84,16 @@ export const legacySsoAddCommand = Command.make("add", config).pipe(
   ]),
   Command.withHandler((flags) =>
     legacySsoAdd(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withLegacyCommandInstrumentation({
+        flags,
+        safeFlags: ["project-ref"],
+        config,
+        // `--type` registers `-t` (Flag.withAlias above); without this, `-t saml`
+        // never resolves to the canonical `type` name in extractChangedFlagNames,
+        // so it wouldn't appear in telemetry at all (Go's pflag.Visit reports the
+        // canonical name regardless of shorthand — cmd/root_analytics.go:53-76).
+        aliases: { t: "type" },
+      }),
       withJsonErrorHandling,
     ),
   ),

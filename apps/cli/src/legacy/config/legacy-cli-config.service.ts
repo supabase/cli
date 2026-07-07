@@ -29,6 +29,14 @@ interface LegacyCliConfigShape {
    * db-config resolver's MITM domain check.
    */
   readonly poolerHost: string;
+  /**
+   * Dashboard base URL for the active profile (Go's `Profile.DashboardURL`,
+   * `apps/cli-go/internal/utils/profile.go:20`). Sourced from the resolved profile —
+   * the built-in table for named profiles, or the `dashboard_url:` key of a YAML
+   * profile file — so staging/custom dashboards are honored. Used by the
+   * connect-failure suggestion (Go's `SetConnectSuggestion` network-restrictions hint).
+   */
+  readonly dashboardUrl: string;
   readonly accessToken: Option.Option<Redacted.Redacted<string>>;
   readonly projectId: Option.Option<string>;
   readonly workdir: string;

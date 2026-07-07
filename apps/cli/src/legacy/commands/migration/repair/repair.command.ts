@@ -55,8 +55,9 @@ export const legacyMigrationRepairCommand = Command.make("repair", config).pipe(
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
-        // Go records `utils.EnumFlag` values verbatim (`--status`); password stays redacted.
-        safeFlags: ["status"],
+        // --status is Flag.choice and is auto-detected as safe via `config`
+        // below (Go's isEnumFlag, cmd/root_analytics.go:110-116); password stays redacted.
+        config,
         aliases: { p: "password" },
       }),
       withJsonErrorHandling,

@@ -16,7 +16,15 @@ import { Output } from "../output/output.service.ts";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import { findGitRootPath } from "../git/git-root.ts";
-import { invalidFunctionSlugDetail, validateFunctionSlugMessage } from "./functions.shared.ts";
+import {
+  cobraMutuallyExclusiveErrorMessage,
+  hasExplicitLongFlag,
+} from "../cli/cobra-flag-groups.ts";
+import {
+  FUNCTIONS_BUNDLER_MUTEX_GROUP,
+  invalidFunctionSlugDetail,
+  validateFunctionSlugMessage,
+} from "./functions.shared.ts";
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionDeployCancelledError,
@@ -190,30 +198,6 @@ function validateDeploySlug(slug: string): Effect.Effect<void, InvalidFunctionDe
   }
 
   return Effect.fail(new InvalidFunctionDeploySlugError({ message: invalidFunctionSlugDetail }));
-}
-
-function hasExplicitLongFlag(
-  rawArgs: ReadonlyArray<string>,
-  commandPath: ReadonlyArray<string>,
-  flagName: string,
-): boolean {
-  const commandIndex = rawArgs.findIndex((_, index) =>
-    commandPath.every((segment, offset) => rawArgs[index + offset] === segment),
-  );
-  if (commandIndex === -1) {
-    return rawArgs.some((token) => token === `--${flagName}` || token.startsWith(`--${flagName}=`));
-  }
-
-  for (let index = commandIndex + commandPath.length; index < rawArgs.length; index += 1) {
-    const token = rawArgs[index];
-    if (token === undefined || token === "--") {
-      return false;
-    }
-    if (token === `--${flagName}` || token.startsWith(`--${flagName}=`)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function explicitBooleanFlag(
@@ -2103,6 +2087,10 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
   return Effect.gen(function* () {
     const output = yield* Output;
     const commandPath = ["functions", "deploy"] as const;
+    // Presence-based (true for `--use-api=false`, not just bare `--use-api`) — mirrors
+    // cobra's `Changed()`-driven `MarkFlagsMutuallyExclusive`, so it's only used for the
+    // mutual-exclusivity check below. Behavior branches (bundler routing, --jobs guard)
+    // key off the resolved `flags.useApi` value instead, matching Go's own `if useApi`.
     const explicitUseApi = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-api");
     const explicitUseDocker = hasExplicitLongFlag(dependencies.rawArgs, commandPath, "use-docker");
     const explicitLegacyBundle = hasExplicitLongFlag(
@@ -2111,25 +2099,32 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       "legacy-bundle",
     );
 
-    const selectedModes = [
-      explicitUseApi ? "--use-api" : undefined,
-      explicitUseDocker ? "--use-docker" : undefined,
-      explicitLegacyBundle ? "--legacy-bundle" : undefined,
-    ].filter((flag) => flag !== undefined);
+    const changedModes = [
+      explicitUseApi ? "use-api" : undefined,
+      explicitUseDocker ? "use-docker" : undefined,
+      explicitLegacyBundle ? "legacy-bundle" : undefined,
+    ].filter((flag): flag is string => flag !== undefined);
 
-    if (selectedModes.length > 1) {
+    if (changedModes.length > 1) {
       return yield* Effect.fail(
         new ConflictingFunctionDeployFlagsError({
-          message: `flags ${selectedModes.join(", ")} are mutually exclusive`,
+          message: cobraMutuallyExclusiveErrorMessage(FUNCTIONS_BUNDLER_MUTEX_GROUP, changedModes),
         }),
       );
     }
 
-    const useLocalBundler = !explicitUseApi && (flags.useDocker || flags.legacyBundle);
+    // Go parity (`cmd/functions.go:79-80`): `if useApi { useDocker = false }` mutates the
+    // resolved boolean, not a presence flag — `--use-api=false` alone must NOT force the
+    // API path, it should fall through to whatever `--use-docker`/`--legacy-bundle`
+    // already resolved to.
+    const useLocalBundler = !flags.useApi && (flags.useDocker || flags.legacyBundle);
     const configuredJobs = Option.getOrElse(flags.jobs, () => 1);
     const jobs = configuredJobs === 0 ? 1 : configuredJobs;
-    if (useLocalBundler && jobs > 1) {
-      return yield* Effect.fail(new Error("--jobs cannot be used with local bundling"));
+    // Go parity (`cmd/functions.go:79-82`): the guard is `if useApi { ... } else if
+    // maxJobs > 1 { error }` — keyed on the resolved `--use-api` value alone, not on
+    // whether local bundling (Docker/legacy-bundle) is in play.
+    if (!flags.useApi && jobs > 1) {
+      return yield* Effect.fail(new Error("--jobs must be used together with --use-api"));
     }
 
     const preResolvedProjectRef =

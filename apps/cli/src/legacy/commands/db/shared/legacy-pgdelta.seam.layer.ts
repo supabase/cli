@@ -209,9 +209,11 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                 })(),
               )
               .trim();
-            // Only a missing container means "not running" → start it. Any other
-            // inspect failure (e.g. Docker daemon down) propagates, matching Go.
-            if (!stderr.includes("No such container")) {
+            // Only a missing container means "not running" → start it. Docker reports
+            // this as either "No such container" or "No such object" (the same pair
+            // handled in `shared/functions/serve.ts`). Any other inspect failure (e.g.
+            // Docker daemon down) propagates, matching Go.
+            if (!stderr.includes("No such container") && !stderr.includes("No such object")) {
               return yield* Effect.fail(
                 new LegacyDeclarativeShadowDbError({
                   message:

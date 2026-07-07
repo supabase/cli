@@ -75,7 +75,7 @@ export const legacyGenTypesCommand = Command.make("types", config).pipe(
   ]),
   Command.withHandler((flags) =>
     legacyGenTypes(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-id"] }),
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-id"], config }),
       withJsonErrorHandling,
     ),
   ),

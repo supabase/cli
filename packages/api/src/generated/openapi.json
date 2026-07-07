@@ -19015,6 +19015,11 @@
             "minimum": 10,
             "maximum": 2147483640
           },
+          "max_logical_replication_workers": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 262143
+          },
           "max_parallel_maintenance_workers": {
             "type": "integer",
             "minimum": 0,
@@ -19041,6 +19046,11 @@
           },
           "max_standby_streaming_delay": {
             "type": "string"
+          },
+          "max_sync_workers_per_subscription": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 262143
           },
           "max_wal_size": {
             "type": "string"
@@ -19151,6 +19161,11 @@
             "minimum": 10,
             "maximum": 2147483640
           },
+          "max_logical_replication_workers": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 262143
+          },
           "max_parallel_maintenance_workers": {
             "type": "integer",
             "minimum": 0,
@@ -19177,6 +19192,11 @@
           },
           "max_standby_streaming_delay": {
             "type": "string"
+          },
+          "max_sync_workers_per_subscription": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 262143
           },
           "max_wal_size": {
             "type": "string"

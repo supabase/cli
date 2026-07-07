@@ -1,6 +1,10 @@
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyDbStart } from "./start.handler.ts";
+import { legacyDbStartRuntimeLayer } from "./start.layers.ts";
 
 const config = {
   fromBackup: Flag.string("from-backup").pipe(
@@ -14,5 +18,15 @@ export type LegacyDbStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 export const legacyDbStartCommand = Command.make("start", config).pipe(
   Command.withDescription("Starts local Postgres database."),
   Command.withShortDescription("Starts local Postgres database"),
-  Command.withHandler((flags) => legacyDbStart(flags)),
+  Command.withHandler((flags) =>
+    legacyDbStart(flags).pipe(
+      withLegacyCommandInstrumentation({
+        // `--from-backup` is not telemetry-safe in Go (no markFlagTelemetrySafe),
+        // so a set value reaches telemetry as `<redacted>`.
+        flags: { "from-backup": flags.fromBackup },
+      }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyDbStartRuntimeLayer),
 );

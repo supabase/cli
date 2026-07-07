@@ -41,7 +41,7 @@ subcommand's own `SIDE_EFFECTS.md`.
 | ----------------------- | ---------------------------------------------------- | ------------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)       |
 | `SUPABASE_PROJECT_REF`  | linked project ref (via the config layer)            | no (used by `list` marker / `api-keys` ref / `delete` unlink) |
-| `SUPABASE_API_URL`      | override Management API base URL                     | no (defaults to `https://api.supabase.com`)                   |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)        |
 
 > `DB_PASSWORD` is **not** consumed. In Go it only mirrors `--db-password` via a
 > viper binding for downstream local-stack use; `projects create` never reads it.

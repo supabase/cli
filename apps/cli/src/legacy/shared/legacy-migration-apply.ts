@@ -1,5 +1,6 @@
 import { Data, Effect, type FileSystem, type Path } from "effect";
 
+import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   INSERT_MIGRATION_VERSION,
@@ -60,7 +61,7 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
  * Whether a migration statement cannot run inside a transaction block — `CREATE
  * [UNIQUE] INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`,
  * `CLUSTER`. Such statements fail with SQLSTATE 25001 inside the `BEGIN`/`COMMIT`
- * that wraps a migration, so `legacyApplyMigrationFile` runs them standalone.
+ * that wraps a migration, so `execMigrationBatch` runs them standalone.
  * Port of Go's `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156).
  */
 export const legacyIsPipelineIncompatible = (sql: string): boolean => {
@@ -79,55 +80,45 @@ type LegacyBatchItem =
   | { readonly kind: "exec"; readonly sql: string }
   | { readonly kind: "version" };
 
+const errMessage = (e: unknown): string =>
+  typeof e === "object" && e !== null && "message" in e && typeof e.message === "string"
+    ? e.message
+    : String(e);
+
 /**
- * Applies a single migration file to the connected database and records it in
- * `supabase_migrations.schema_migrations`. Mirrors Go's `migration.ApplyMigrations`
- * for one file (`pkg/migration/apply.go` + `(*MigrationFile).ExecBatch`): `RESET ALL`
- * first to clear any session state leaked by a prior file, then create the history
- * table, then run the file's statements + the history insert.
- *
- * Statements run inside a `BEGIN`/`COMMIT` batch, except pipeline-incompatible ones
+ * Runs a single migration/seed file's statements (plus the optional history insert).
+ * Mirrors Go's `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`): statements run
+ * inside a `BEGIN`/`COMMIT` batch, except pipeline-incompatible ones
  * (`legacyIsPipelineIncompatible` — `CREATE INDEX CONCURRENTLY`, `VACUUM`, …) which
- * cannot run in a transaction block: the batch is flushed (committed), the statement
- * runs standalone, then batching resumes — mirroring Go's `ExecBatch` flush logic
- * (supabase/cli#5156). The history insert goes in the final batch, so the migration
- * is recorded only after every statement succeeds. A file with no such statements is
- * a single `BEGIN`/`COMMIT` around everything, identical to the pre-fix behaviour.
+ * cannot run in a transaction block: the open batch is flushed (committed), the
+ * statement runs standalone, then batching resumes (supabase/cli#5156). The history
+ * insert goes in the final batch, so the migration is recorded only after every
+ * statement succeeds. A file with no such statements is a single `BEGIN`/`COMMIT`.
  *
- * `mapError` lets the caller tag the failure (e.g. `LegacyDeclarativeApplyError`).
+ * Does NOT create the history table and does NOT `RESET ALL` — Go's `ExecBatch` does
+ * neither; those are the migration-apply path's responsibility (`ApplyMigrations`,
+ * apply.go:65-69), so role/globals files (`legacySeedGlobals`) stay reset-free like Go.
+ * When `forceNoVersion` is set the history insert is skipped regardless of filename
+ * (Go's `SeedGlobals` clears `Version`).
  */
-export const legacyApplyMigrationFile = <E>(
+const execMigrationBatch = <E>(
   session: LegacyDbSession,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   migrationPath: string,
   mapError: (message: string) => E,
+  forceNoVersion: boolean,
 ): Effect.Effect<void, E> =>
   Effect.gen(function* () {
     const content = yield* fs.readFileString(migrationPath);
     const statements = legacySplitAndTrim(content);
     const filename = path.basename(migrationPath);
     const matches = MIGRATE_FILE_PATTERN.exec(filename);
-    const version = matches?.[1] ?? "";
+    const version = forceNoVersion ? "" : (matches?.[1] ?? "");
     const name = matches?.[2] ?? "";
 
-    // `RESET ALL` runs FIRST, before the history-table DDL: an earlier migration applied
-    // on this same connection may have left a session default (e.g.
-    // `SET default_transaction_read_only = on`) that would otherwise make this DDL fail
-    // before it is cleared. Go resets connection state at the top of each file's apply,
-    // ahead of any work (`apps/cli-go/pkg/migration/apply.go:65-69`).
-    yield* session.exec("RESET ALL");
-    yield* legacyCreateMigrationTable(session);
-
     // Mirror Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go`):
-    // on a failed statement, append `At statement: <index>` and the statement text so the
-    // error (and the debug bundle) point at the exact failing SQL. (Go also adds a caret /
-    // pgErr.Detail / extension-type hint, which need the driver SQLSTATE the session does
-    // not currently surface — the statement number + text is the always-present context.)
-    const errMessage = (e: unknown): string =>
-      typeof e === "object" && e !== null && "message" in e && typeof e.message === "string"
-        ? e.message
-        : String(e);
+    // on a failed statement, append `At statement: <index>` and the statement text.
     const atStatement = (e: unknown, index: number, stat: string) =>
       new Error(`${errMessage(e)}\nAt statement: ${index}\n${stat}`);
 
@@ -183,10 +174,91 @@ export const legacyApplyMigrationFile = <E>(
       pending = [...pending, { kind: "version" }];
     }
     yield* flushBatch;
-  }).pipe(
-    Effect.mapError((error) =>
-      mapError(
-        "message" in error && typeof error.message === "string" ? error.message : String(error),
-      ),
-    ),
-  );
+  }).pipe(Effect.mapError((error) => mapError(errMessage(error))));
+
+/**
+ * Go's per-migration connection reset (`apply.go:65-69`): `RESET ALL` clears any
+ * connection settings a prior statement on the same session may have changed
+ * (e.g. `set_config('search_path', …)`), run before each migration's `ExecBatch`.
+ * Only the migration-apply path does this — `SeedGlobals` (role/globals files)
+ * must NOT, so this is a caller responsibility, never inside `execMigrationBatch`.
+ */
+const resetConnectionState = <E>(
+  session: LegacyDbSession,
+  mapError: (message: string) => E,
+): Effect.Effect<void, E> =>
+  session.exec("RESET ALL").pipe(Effect.mapError((e) => mapError(errMessage(e))));
+
+/**
+ * Applies a single migration file to the connected database and records it in
+ * `supabase_migrations.schema_migrations`. Mirrors Go's `migration.ApplyMigrations`
+ * for one file (`pkg/migration/apply.go` + `(*MigrationFile).ExecBatch`): `RESET ALL`
+ * first to clear any session state leaked by a prior file (e.g.
+ * `SET default_transaction_read_only = on`) before the history-table DDL, then create
+ * the history table, then run the file's statements + the history insert.
+ *
+ * `mapError` lets the caller tag the failure (e.g. `LegacyDeclarativeApplyError`).
+ */
+export const legacyApplyMigrationFile = <E>(
+  session: LegacyDbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  migrationPath: string,
+  mapError: (message: string) => E,
+): Effect.Effect<void, E> =>
+  Effect.gen(function* () {
+    yield* resetConnectionState(session, mapError);
+    yield* legacyCreateMigrationTable(session).pipe(
+      Effect.mapError((e) => mapError(errMessage(e))),
+    );
+    yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
+  });
+
+/**
+ * Applies a list of pending migration files, mirroring Go's
+ * `migration.ApplyMigrations` (`pkg/migration/apply.go:56-77`): create the
+ * history table once when there is anything to apply, then for each file emit
+ * `Applying migration <name>...` to stderr, `RESET ALL`, and run it transactionally.
+ */
+export const legacyApplyMigrations = <E>(
+  session: LegacyDbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  pending: ReadonlyArray<string>,
+  mapError: (message: string) => E,
+): Effect.Effect<void, E, Output> =>
+  Effect.gen(function* () {
+    const output = yield* Output;
+    if (pending.length === 0) return;
+    yield* legacyCreateMigrationTable(session).pipe(
+      Effect.mapError((e) => mapError(errMessage(e))),
+    );
+    for (const migrationPath of pending) {
+      yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
+      // Go resets connection state per migration (apply.go:65-69) before ExecBatch.
+      yield* resetConnectionState(session, mapError);
+      yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
+    }
+  });
+
+/**
+ * Applies custom-role / globals files, mirroring Go's `migration.SeedGlobals`
+ * (`pkg/migration/seed.go:85-100`): for each file emit `Seeding globals from
+ * <name>...` to stderr and run it transactionally WITHOUT inserting a migration
+ * history row (Go clears `Version`), WITHOUT creating the history table, and WITHOUT
+ * `RESET ALL` (Go's `SeedGlobals` → `ExecBatch` never resets).
+ */
+export const legacySeedGlobals = <E>(
+  session: LegacyDbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  globals: ReadonlyArray<string>,
+  mapError: (message: string) => E,
+): Effect.Effect<void, E, Output> =>
+  Effect.gen(function* () {
+    const output = yield* Output;
+    for (const globalPath of globals) {
+      yield* output.raw(`Seeding globals from ${path.basename(globalPath)}...\n`, "stderr");
+      yield* execMigrationBatch(session, fs, path, globalPath, mapError, true);
+    }
+  });

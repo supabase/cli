@@ -12,15 +12,18 @@ Native TypeScript port of Go's `internal/db/lint`.
 
 ## Files Written
 
-| Path                         | Format | When                                                 |
-| ---------------------------- | ------ | ---------------------------------------------------- |
-| `~/.supabase/telemetry.json` | JSON   | always (PostHog state flush, Go `PersistentPostRun`) |
+| Path                                           | Format | When                                                                                                                |
+| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | `--linked` only, via `LegacyLinkedProjectCache.cache` (Go's `ensureProjectGroupsCached`, `cmd/root.go:174,212-234`) |
+| `~/.supabase/telemetry.json`                   | JSON   | always (PostHog state flush, Go `PersistentPostRun`)                                                                |
 
 No user data is written: the lint runs inside a transaction that is **always
 rolled back** (`BEGIN` … `ROLLBACK`), matching Go — including
 `CREATE EXTENSION plpgsql_check`, which is issued on the same connection inside
-the open transaction and so is rolled back too. `db lint` does not write the
-linked-project cache (it has no `LegacyLinkedProjectCache` dependency).
+the open transaction and so is rolled back too. `db lint` DOES write the
+linked-project cache when run with `--linked` (matching Go's
+`ensureProjectGroupsCached`); the default `--local` and `--db-url` paths never
+populate a project ref, so no cache write occurs there.
 
 ## API Routes
 

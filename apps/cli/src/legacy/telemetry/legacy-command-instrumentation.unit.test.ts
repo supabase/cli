@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stdio } from "effect";
+import { Flag } from "effect/unstable/cli";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import { LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
 import { CurrentAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
@@ -434,6 +435,156 @@ describe("withLegacyCommandInstrumentation", () => {
           expect(event?.properties.flags).toEqual({
             "project-ref": "abcdefghijklmnopqrst",
           });
+        }),
+      ),
+    );
+  });
+
+  it.live("passes Flag.choice values through verbatim (Go parity: isEnumFlag)", () => {
+    const analytics = mockContextualAnalytics();
+    const config = {
+      lang: Flag.choice("lang", ["typescript", "go", "python"] as const),
+    };
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { lang: "python" },
+        config,
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({ args: Effect.succeed(["gen", "types", "--lang", "python"]) }),
+      ),
+      Effect.provide(commandRuntimeLayer(["gen", "types"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ lang: "python" });
+        }),
+      ),
+    );
+  });
+
+  it.live(
+    "passes a Flag.withDefault-wrapped Flag.choice value through verbatim (Map(Optional(Single)))",
+    () => {
+      const analytics = mockContextualAnalytics();
+      // Mirrors gen signing-key's real `algorithm` flag construction exactly —
+      // `.pipe(Flag.withDefault(...))` composes as `Map(Optional(Single))`.
+      const config = {
+        algorithm: Flag.choice("algorithm", ["RS256", "ES256"] as const).pipe(
+          Flag.withDefault("ES256" as const),
+        ),
+      };
+
+      return Effect.void.pipe(
+        withLegacyCommandInstrumentation({
+          flags: { algorithm: "RS256" },
+          config,
+        }),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(
+          Stdio.layerTest({ args: Effect.succeed(["gen", "signing-key", "--algorithm", "RS256"]) }),
+        ),
+        Effect.provide(commandRuntimeLayer(["gen", "signing-key"])),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const event = analytics.captured[0];
+            expect(event?.properties.flags).toEqual({ algorithm: "RS256" });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live(
+    "resolves a Flag.choice's shorthand alias to its canonical name (Go parity: pflag.Visit)",
+    () => {
+      const analytics = mockContextualAnalytics();
+      // Mirrors sso add's real `type` flag construction exactly — `-t` is a
+      // registered alias (Flag.withAlias("t")) that must be mapped to the
+      // canonical "type" name for extractChangedFlagNames to record it at all.
+      const config = {
+        type: Flag.choice("type", ["saml"] as const).pipe(Flag.withAlias("t")),
+      };
+
+      return Effect.void.pipe(
+        withLegacyCommandInstrumentation({
+          flags: { type: "saml" },
+          config,
+          aliases: { t: "type" },
+        }),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["sso", "add", "-t", "saml"]) })),
+        Effect.provide(commandRuntimeLayer(["sso", "add"])),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const event = analytics.captured[0];
+            expect(event?.properties.flags).toEqual({ type: "saml" });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live("passes an Optional-wrapped Flag.choice value through verbatim", () => {
+    const analytics = mockContextualAnalytics();
+    const config = {
+      algorithm: Flag.choice("algorithm", ["RS256", "ES256"] as const).pipe(Flag.optional),
+    };
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { algorithm: Option.some("ES256") },
+        config,
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({ args: Effect.succeed(["gen", "signing-key", "--algorithm", "ES256"]) }),
+      ),
+      Effect.provide(commandRuntimeLayer(["gen", "signing-key"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ algorithm: "ES256" });
+        }),
+      ),
+    );
+  });
+
+  it.live("still redacts non-choice string flags even when config is provided", () => {
+    const analytics = mockContextualAnalytics();
+    const config = {
+      lang: Flag.choice("lang", ["typescript", "go"] as const),
+      schema: Flag.string("schema"),
+    };
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { lang: "go", schema: "public" },
+        config,
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed(["gen", "types", "--lang", "go", "--schema", "public"]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["gen", "types"])),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ lang: "go", schema: "<redacted>" });
         }),
       ),
     );
