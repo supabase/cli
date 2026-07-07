@@ -12,9 +12,7 @@
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
   },
   "dependencies": {
-    "@supabase/process-compose": "workspace:*",
-    "@supabase/stack": "workspace:*",
-    "effect": "catalog:"
+    "@supabase/stack": "workspace:*"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",
@@ -26,8 +24,19 @@
     "vitest": "catalog:"
   },
   "knip": {
-    "entry": ["src/**/*.test.ts", "tests/**/*.ts"],
-    "ignoreDependencies": ["@typescript/native-preview", "oxfmt", "oxlint", "oxlint-tsgolint"],
-    "ignoreBinaries": ["nx"]
+    "entry": [
+      "src/**/*.test.ts",
+      "tests/**/*.ts"
+    ],
+    "ignoreDependencies": [
+      "@typescript/native-preview",
+      "oxfmt",
+      "oxlint",
+      "oxlint-tsgolint",
+      "@tsconfig/bun"
+    ],
+    "ignoreBinaries": [
+      "nx"
+    ]
   }
 }

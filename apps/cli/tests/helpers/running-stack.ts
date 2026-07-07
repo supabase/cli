@@ -152,6 +152,10 @@ function makeStackLayer(opts: {
       opts.states.some((state) => state.name === name)
         ? Effect.void
         : Effect.fail(new ServiceNotFoundError({ name })),
+    enableExtension: (name: string) =>
+      opts.states.some((state) => state.name === name)
+        ? Effect.void
+        : Effect.fail(new ServiceNotFoundError({ name })),
     reloadFunctions: () =>
       opts.states.some((state) => state.name === "edge-runtime")
         ? Effect.void

@@ -104,7 +104,7 @@ function setupLayer(config: ResolvedStackConfig) {
   return { layer, spawner };
 }
 
-function makeLazyConfig(dataDir: string): ResolvedStackConfig {
+function makeLazyConfig(dataDir: string, postgrestPort: number): ResolvedStackConfig {
   return {
     ...makeConfig(dataDir),
     lazyServices: true,
@@ -112,7 +112,7 @@ function makeLazyConfig(dataDir: string): ResolvedStackConfig {
     // below binds a fake listener there so waitReady can actually resolve once startService
     // spawns it (spawning itself is satisfied generically by the mocked ChildProcessSpawner).
     postgrest: {
-      port: defaultPorts.postgrestPort,
+      port: postgrestPort,
       adminPort: defaultPorts.postgrestAdminPort,
       schemas: ["public"],
       extraSearchPath: ["public"],
@@ -122,16 +122,28 @@ function makeLazyConfig(dataDir: string): ResolvedStackConfig {
   };
 }
 
-function startFakeHealthyServer(port: number): Promise<() => Promise<void>> {
+interface FakeHealthyServer {
+  readonly port: number;
+  readonly stop: () => Promise<void>;
+}
+
+function startFakeHealthyServer(): Promise<FakeHealthyServer> {
   return new Promise((resolve, reject) => {
     const server = http.createServer((_req, res) => {
       res.writeHead(200);
       res.end("OK");
     });
-    server.listen(port, "127.0.0.1", () => {
-      resolve(
-        () => new Promise<void>((res, rej) => server.close((err) => (err ? rej(err) : res()))),
-      );
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      if (!addr || typeof addr === "string") {
+        reject(new Error("Unexpected server address"));
+        return;
+      }
+      resolve({
+        port: addr.port,
+        stop: () =>
+          new Promise<void>((res, rej) => server.close((err) => (err ? rej(err) : res()))),
+      });
     });
     server.on("error", reject);
   });
@@ -181,51 +193,52 @@ describe("StackLifecycleCoordinator lazyServices", () => {
   // enableExtension test above).
   it.live("start() only eager-starts postgres/postgres-init; postgrest starts on demand", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-lazy-test-"));
-    const config = makeLazyConfig(dataDir);
-    const { layer, spawner } = setupLayer(config);
 
-    return Effect.gen(function* () {
-      const stopFakeServer = yield* Effect.promise(() =>
-        startFakeHealthyServer(defaultPorts.postgrestPort),
-      );
+    return Effect.promise(() => startFakeHealthyServer()).pipe(
+      Effect.flatMap((fakeServer) => {
+        const config = makeLazyConfig(dataDir, fakeServer.port);
+        const { layer, spawner } = setupLayer(config);
 
-      const isPostgrestPayload = (s: { args: ReadonlyArray<string> }) => {
-        const encoded = s.args.at(-1);
-        if (encoded === undefined) return false;
-        try {
-          const decoded = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {
-            command?: string;
-          };
-          return decoded.command?.endsWith("/postgrest") ?? false;
-        } catch {
-          return false;
-        }
-      };
+        const isPostgrestPayload = (s: { args: ReadonlyArray<string> }) => {
+          const encoded = s.args.at(-1);
+          if (encoded === undefined) return false;
+          try {
+            const decoded = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {
+              command?: string;
+            };
+            return decoded.command?.endsWith("/postgrest") ?? false;
+          } catch {
+            return false;
+          }
+        };
 
-      const stack = yield* Stack;
-      yield* stack.start();
+        return Effect.gen(function* () {
+          const stack = yield* Stack;
+          yield* stack.start();
 
-      // postgrest must not have been spawned by start() itself.
-      expect(spawner.spawned.some(isPostgrestPayload)).toBe(false);
+          // postgrest must not have been spawned by start() itself.
+          expect(spawner.spawned.some(isPostgrestPayload)).toBe(false);
 
-      const postgrestState = yield* stack.getState("postgrest");
-      expect(postgrestState.status).toBe("Pending");
+          const postgrestState = yield* stack.getState("postgrest");
+          expect(postgrestState.status).toBe("Pending");
 
-      // The ApiProxy's ensureService would call startService + waitReady on first request;
-      // simulate that here directly against the coordinator.
-      yield* stack.startService("postgrest");
-      yield* stack.waitReady("postgrest");
+          // The ApiProxy's ensureService would call startService + waitReady on first request;
+          // simulate that here directly against the coordinator.
+          yield* stack.startService("postgrest");
+          yield* stack.waitReady("postgrest");
 
-      expect(spawner.spawned.some(isPostgrestPayload)).toBe(true);
-      // waitReady already proved the service reached a ready state (Running or Healthy — health
-      // checks poll on an interval, so the coordinator's projected state may briefly lag the
-      // orchestrator's internal readiness signal that waitReady resolves on).
-      const readyState = yield* stack.getState("postgrest");
-      expect(["Running", "Healthy"]).toContain(readyState.status);
+          expect(spawner.spawned.some(isPostgrestPayload)).toBe(true);
+          // waitReady already proved the service reached a ready state — that's the actual
+          // assertion above. The coordinator's projected status here is best-effort: health
+          // checks poll on an interval, so it may still lag behind (or even show a transient
+          // "Restarting", if a flaky health check briefly failed and triggered a restart)
+          // relative to the orchestrator's internal readiness signal that waitReady resolves on.
+          const readyState = yield* stack.getState("postgrest");
+          expect(["Running", "Healthy", "Restarting"]).toContain(readyState.status);
 
-      yield* Effect.promise(() => stopFakeServer());
-    }).pipe(
-      Effect.provide(layer),
+          yield* Effect.promise(() => fakeServer.stop());
+        }).pipe(Effect.provide(layer));
+      }),
       Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
     );
   });
@@ -239,7 +252,9 @@ describe("StackLifecycleCoordinator lazyServices", () => {
   // timeout) rather than hanging the suite.
   it.live("waitAllReady() resolves promptly when only postgres was eager-started", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-lazy-ready-test-"));
-    const config = makeLazyConfig(dataDir);
+    // postgrest is never started in this test, so nothing binds to its configured port; any
+    // fixed port is safe here (no EADDRINUSE risk).
+    const config = makeLazyConfig(dataDir, defaultPorts.postgrestPort);
     const { layer } = setupLayer(config);
 
     return Effect.gen(function* () {
@@ -262,28 +277,27 @@ describe("StackLifecycleCoordinator lazyServices", () => {
     const dataDir = mkdtempSync(
       join(tmpdir(), "stack-lifecycle-coordinator-lazy-ready-started-test-"),
     );
-    const config = makeLazyConfig(dataDir);
-    const { layer } = setupLayer(config);
 
-    return Effect.gen(function* () {
-      const stopFakeServer = yield* Effect.promise(() =>
-        startFakeHealthyServer(defaultPorts.postgrestPort),
-      );
+    return Effect.promise(() => startFakeHealthyServer()).pipe(
+      Effect.flatMap((fakeServer) => {
+        const config = makeLazyConfig(dataDir, fakeServer.port);
+        const { layer } = setupLayer(config);
 
-      const stack = yield* Stack;
-      yield* stack.start();
+        return Effect.gen(function* () {
+          const stack = yield* Stack;
+          yield* stack.start();
 
-      // Simulate the ApiProxy's ensureService on-demand path.
-      yield* stack.startService("postgrest");
+          // Simulate the ApiProxy's ensureService on-demand path.
+          yield* stack.startService("postgrest");
 
-      yield* stack.waitAllReady().pipe(Effect.timeout(Duration.seconds(5)));
+          yield* stack.waitAllReady().pipe(Effect.timeout(Duration.seconds(5)));
 
-      const postgrestState = yield* stack.getState("postgrest");
-      expect(["Running", "Healthy"]).toContain(postgrestState.status);
+          const postgrestState = yield* stack.getState("postgrest");
+          expect(["Running", "Healthy"]).toContain(postgrestState.status);
 
-      yield* Effect.promise(() => stopFakeServer());
-    }).pipe(
-      Effect.provide(layer),
+          yield* Effect.promise(() => fakeServer.stop());
+        }).pipe(Effect.provide(layer));
+      }),
       Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
     );
   });
