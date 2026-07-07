@@ -494,6 +494,39 @@ BAD = 123
   );
 
   it.live(
+    "does not fabricate a secret named 0 when [edge_runtime.secrets] is an array (CLI-1867 Go parity)",
+    () => {
+      // `edge_runtime.secrets` as an array (instead of a table) is not
+      // recoverable structure: Go's mapstructure decoder never sets
+      // `WeaklyTypedInput`, so a slice source for a map-typed field hits
+      // `UnconvertibleTypeError` in `decodeMap` rather than the index-as-key
+      // `decodeMapFromSlice` path, and the whole field is left empty. Before
+      // the `isRecord` fix, `Object.entries(["actual-secret"])` would turn
+      // this into a spurious `{ "0": "actual-secret" }` entry.
+      writeConfig(
+        `[analytics]
+port = "not-a-number"
+
+[edge_runtime]
+secrets = ["actual-secret"]
+`,
+      );
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: ["FOO=bar"],
+        });
+        const body = parsePostBody(api.requests[0]?.body);
+        expect(body).toEqual([{ name: "FOO", value: "bar" }]);
+        expect(body.find((entry) => entry.name === "0")).toBeUndefined();
+        expect(debugLogger.messages).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "does not echo a literal secret value from config.toml into the debug log on a syntax error",
     () => {
       // `smol-toml`'s `TomlError` embeds a source codeblock (the offending line ±1)

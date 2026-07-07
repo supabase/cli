@@ -36,8 +36,18 @@ const mapSetError = mapLegacyHttpError({
 
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 
+// Excludes arrays, matching `packages/config/src/io.ts`'s `isObject` (the
+// identical "is this a table" check used when merging `[remotes.*]`). A TOML
+// array for a map-typed field (e.g. `[edge_runtime] secrets = ["actual-secret"]`)
+// is not a recoverable table: `Object.entries` on an array yields index keys
+// ("0", "1", ...), which would otherwise fabricate spurious secret names. Go's
+// mapstructure decoder never does this either — `UnmarshalExact`
+// (`apps/cli-go/pkg/config/config.go:749`) never sets `WeaklyTypedInput`, so a
+// slice source for a map-typed field hits `UnconvertibleTypeError` in
+// `decodeMap` rather than the index-as-key `decodeMapFromSlice` path, and the
+// whole field is left empty.
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
