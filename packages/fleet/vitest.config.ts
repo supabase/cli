@@ -18,6 +18,12 @@ export default defineConfig({
           include: ["**/*.unit.test.ts"],
         },
       },
+      {
+        test: {
+          name: "integration",
+          include: ["**/*.integration.test.ts"],
+        },
+      },
     ],
   },
 });
