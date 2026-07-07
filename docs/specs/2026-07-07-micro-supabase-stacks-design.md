@@ -16,12 +16,13 @@ Run 100+ Supabase-compatible Postgres instances in parallel on small machines (8
 - **Scope now:** Postgres and its orchestration. Sidecar services (PostgREST, Auth, Realtime, Edge Functions) are designed for but implemented later; their needs shape Postgres decisions today.
 - **Durability:** data is disposable/re-cloneable everywhere (`fsync=off` profile). Recovery from host-crash corruption is "re-clone from template."
 - **Density target:** 100+ registered instances on an 8–16GB host, most idle at any moment.
+- **Windows:** `supabase start` must work, always via the Docker path (no native Windows service binaries). Windows gets functional parity, not the density optimizations — templates, suspend-on-idle, and the budget guardrails apply to macOS/Linux native pods.
 
 ## Non-goals
 
 - Production/paid-tier deployments.
 - Postgres major-version in-place upgrades (pods are disposable; reset onto a new base template).
-- Windows native support (Docker fallback only).
+- Windows *native* binaries and Windows density optimizations (`supabase start` still works on Windows via Docker; see Requirements).
 - Slimming the sidecar services themselves (tracked as follow-up; see Risks).
 
 ## Approach
@@ -207,4 +208,4 @@ A script in the CLI repo: provision N pods, wake a subset, drive synthetic traff
 1. **Nix darwin builds** of some extensions in the `supabase/postgres` set may not compile on `aarch64-darwin`. First implementation spike; fallback is Linux pods in a lightweight VM on macOS.
 2. **Realtime memory per pod** (~150–300MB BEAM VM) dominates full pods. Mitigated now by lazy start; the structural fix is one shared multi-tenant Realtime per host — future project, not blocked by this design.
 3. **Docker-only services** (Edge Runtime today) undercut density on tiny machines; native bundles are a roadmap ask to service teams.
-4. **Windows:** Docker fallback only; explicitly out of the density story.
+4. **Windows:** served by the Docker path for functional parity (`supabase start` works); explicitly out of the density story. The fleet daemon must degrade gracefully there — pods run as Docker containers without templates or suspend-on-idle.
