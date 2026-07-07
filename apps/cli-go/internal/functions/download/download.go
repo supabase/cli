@@ -315,6 +315,10 @@ func suggestLegacyBundle(slug string) string {
 	return fmt.Sprintf("\nIf your function is deployed using CLI < 1.120.0, trying running %s instead.", utils.Aqua("supabase functions download --legacy-bundle "+slug))
 }
 
+func suggestUnsafeDownloadPath() string {
+	return "This usually indicates a malformed or unexpected API response. If you're using a self-hosted instance, verify your API URL is correct."
+}
+
 type bundleMetadata struct {
 	EntrypointPath string `json:"deno2_entrypoint_path,omitempty"`
 }
@@ -427,8 +431,12 @@ func saveFile(file *multipart.FileHeader, entrypointPath, funcDir string, fsys a
 
 	relPath, err := filepath.Rel(filepath.FromSlash(entrypointPath), filepath.FromSlash(partPath))
 	if err != nil {
-		// Continue extracting without entrypoint
-		fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)
+		// Continue extracting without entrypoint. Go's Rel error embeds
+		// both paths verbatim ("Rel: can't make <target> relative to
+		// <base>"), and partPath is server-controlled, so this is gated
+		// behind --debug like the "Resolving file path" log above rather
+		// than printed unconditionally to stderr.
+		fmt.Fprintln(logger, "WARNING:", err)
 		relPath = filepath.FromSlash(path.Join("..", partPath))
 	}
 
@@ -446,6 +454,7 @@ func saveFile(file *multipart.FileHeader, entrypointPath, funcDir string, fsys a
 	// payload.
 	root := utils.FunctionsDir
 	if err := validateDownloadPath(root, dstPath); err != nil {
+		utils.CmdSuggestion = suggestUnsafeDownloadPath()
 		return err
 	}
 
@@ -456,6 +465,7 @@ func saveFile(file *multipart.FileHeader, entrypointPath, funcDir string, fsys a
 	// write lands in case a symlink was swapped in between the two checks.
 	dstDir := filepath.Dir(dstPath)
 	if err := ensureNoSymlinkInPath(fsys, root, dstDir); err != nil {
+		utils.CmdSuggestion = suggestUnsafeDownloadPath()
 		return err
 	}
 	if err := utils.MkdirIfNotExistFS(fsys, dstDir); err != nil {
@@ -467,7 +477,11 @@ func saveFile(file *multipart.FileHeader, entrypointPath, funcDir string, fsys a
 		return err
 	}
 
-	return ensureNoSymlinkInPath(fsys, root, dstPath)
+	if err := ensureNoSymlinkInPath(fsys, root, dstPath); err != nil {
+		utils.CmdSuggestion = suggestUnsafeDownloadPath()
+		return err
+	}
+	return nil
 }
 
 // validateDownloadPath rejects dstPath if, once lexically cleaned, it does
@@ -484,44 +498,99 @@ func validateDownloadPath(root, dstPath string) error {
 	return nil
 }
 
-// ensureNoSymlinkInPath rejects dir if it, or any existing ancestor of it
-// down to (but excluding) root, is a symlink.
+// ensureNoSymlinkInPath rejects dir if resolving the symlinks along it would
+// land outside root.
+//
+// Earlier versions of this check rejected the mere presence of a symlink
+// anywhere under root, which also broke legitimate setups such as a
+// monorepo symlinking a shared directory into place inside the functions
+// tree. Instead, this resolves both root and dir the same way -- walking up
+// to the deepest ancestor that already exists on disk, following any chain
+// of symlinks there via filepath.EvalSymlinks (this also naturally covers
+// root itself being a symlink, since dir's walk passes through root), and
+// re-joining the still-nonexistent remainder back on -- and re-validates
+// the two resolved paths against each other with validateDownloadPath.
+// Resolving root the same way dir is resolved, rather than comparing a
+// resolved dir against a literal root, matters in practice: it is what
+// keeps an OS-level symlink that sits above both of them (e.g. macOS's
+// /var -> /private/var, which every path under a t.TempDir() passes
+// through) from producing a spurious mismatch. Only a resolved dir that
+// escapes the resolved root is rejected; a symlink whose target still
+// lands inside root, however deeply nested, is now allowed.
 //
 // This only has an effect on filesystems that expose real symlink
-// semantics through afero.Lstater, i.e. afero.NewOsFs in production. The
-// in-memory filesystem used in tests has no notion of symlinks, so
-// LstatIfPossible never reports the symlink bit there and this check is
-// effectively a no-op -- there is nothing to protect against on a
-// filesystem that cannot contain symlinks in the first place.
+// semantics through afero.LinkReader, i.e. afero.NewOsFs in production
+// (afero.Lstater is not a reliable enough signal on its own: afero.MemMapFs
+// also implements it, just by delegating straight to Stat). The in-memory
+// filesystem used in tests implements neither, so this check is
+// effectively a no-op there -- there is nothing to protect against on a
+// filesystem that cannot contain symlinks in the first place. That same
+// guard is also why it is safe for filepath.EvalSymlinks below to hit the
+// real OS filesystem directly instead of going through fsys: the only
+// afero.Fs implementation used in production, afero.NewOsFs, delegates to
+// the real OS filesystem for every operation, so the two agree.
 func ensureNoSymlinkInPath(fsys afero.Fs, root, dir string) error {
-	lstater, ok := fsys.(afero.Lstater)
-	if !ok {
+	if _, ok := fsys.(afero.LinkReader); !ok {
 		return nil
 	}
 
-	rel, err := filepath.Rel(root, dir)
-	if err != nil || rel == "." || rel == "" {
-		return nil
+	// filepath.EvalSymlinks returns an absolute result as soon as it
+	// crosses one absolute symlink, but stays relative otherwise (per its
+	// doc comment), so root and dir must both start out absolute here --
+	// otherwise root (no symlink crossed) and dir (crossing one) could
+	// resolve to a relative and an absolute path respectively, which
+	// filepath.Rel below cannot meaningfully compare.
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return errors.Errorf("failed to inspect extraction path: %w", err)
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return errors.Errorf("failed to inspect extraction path: %w", err)
 	}
 
-	current := root
-	for _, segment := range strings.Split(rel, string(filepath.Separator)) {
-		current = filepath.Join(current, segment)
-		info, _, err := lstater.LstatIfPossible(current)
-		if err != nil {
-			if os.IsNotExist(err) {
-				// Nothing here yet, and therefore nothing further down
-				// this branch either: MkdirAll will create plain
-				// directories from this point on.
-				break
-			}
-			return errors.Errorf("failed to inspect extraction path: %w", err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return errors.Errorf("failed to save file: %w", ErrUnsafeDownloadPath)
-		}
+	resolvedRoot, err := resolveExistingPath(fsys, absRoot)
+	if err != nil {
+		return errors.Errorf("failed to inspect extraction path: %w", err)
 	}
-	return nil
+	resolvedDir, err := resolveExistingPath(fsys, absDir)
+	if err != nil {
+		return errors.Errorf("failed to inspect extraction path: %w", err)
+	}
+
+	return validateDownloadPath(resolvedRoot, resolvedDir)
+}
+
+// resolveExistingPath resolves p by walking up to the deepest ancestor of it
+// that already exists -- a path component that does not exist yet cannot
+// itself be a symlink, so there is nothing there for EvalSymlinks to
+// resolve -- following any chain of symlinks in that ancestor to its real
+// target, then re-joining the still-nonexistent remainder of p back onto
+// the result.
+func resolveExistingPath(fsys afero.Fs, p string) (string, error) {
+	existing := p
+	var suffix []string
+	for {
+		if _, err := fsys.Stat(existing); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			// Reached the filesystem root without finding anything that
+			// exists yet, so there is nothing left to resolve.
+			return filepath.Join(append([]string{existing}, suffix...)...), nil
+		}
+		suffix = append([]string{filepath.Base(existing)}, suffix...)
+		existing = parent
+	}
+
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(append([]string{resolved}, suffix...)...), nil
 }
 
 // writeFileNoFollowSymlink writes r to dstPath without following a symlink
