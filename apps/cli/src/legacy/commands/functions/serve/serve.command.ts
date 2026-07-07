@@ -54,7 +54,7 @@ export const legacyFunctionsServeCommand = Command.make("serve", config).pipe(
   Command.withShortDescription("Serve all Functions locally"),
   Command.withHandler((flags) =>
     legacyFunctionsServe(flags).pipe(
-      withLegacyCommandInstrumentation({ flags }),
+      withLegacyCommandInstrumentation({ flags, config }),
       withJsonErrorHandling,
     ),
   ),

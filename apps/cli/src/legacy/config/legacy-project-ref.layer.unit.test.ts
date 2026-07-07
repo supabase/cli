@@ -24,6 +24,7 @@ function mockCliConfig(opts: { workdir: string; projectId?: string }) {
     apiUrl: "https://api.supabase.com",
     projectHost: "supabase.co",
     poolerHost: "supabase.com",
+    dashboardUrl: "https://supabase.com/dashboard",
     accessToken: Option.none(),
     projectId: opts.projectId === undefined ? Option.none() : Option.some(opts.projectId),
     workdir: opts.workdir,

@@ -24,6 +24,12 @@ describe("legacyGetRegistryImageUrl", () => {
     );
   });
 
+  it("treats a blank registry override as unset", () => {
+    expect(withRegistry("  ", () => legacyGetRegistryImageUrl("supabase/pg_prove:3.36"))).toBe(
+      "public.ecr.aws/supabase/pg_prove:3.36",
+    );
+  });
+
   it("returns the image unchanged for docker.io (case-insensitive)", () => {
     expect(
       withRegistry("docker.io", () => legacyGetRegistryImageUrl("supabase/pg_prove:3.36")),
@@ -74,5 +80,10 @@ describe("legacyGetRegistryImageUrl", () => {
         legacyGetRegistryImageUrlCandidates("supabase/postgres:17.6.1.138"),
       ),
     ).toEqual(["supabase/postgres:17.6.1.138"]);
+    expect(
+      withRegistry("my.mirror.example", () =>
+        legacyGetRegistryImageUrlCandidates("supabase/postgres:17.6.1.138"),
+      ),
+    ).toEqual(["my.mirror.example/supabase/postgres:17.6.1.138"]);
   });
 });

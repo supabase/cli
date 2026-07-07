@@ -1,6 +1,10 @@
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
+import {
+  INVALID_PROJECT_REF_MESSAGE,
+  PROJECT_REF_PATTERN,
+} from "../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyReadDbToml } from "../../shared/legacy-db-config.toml-read.ts";
@@ -62,6 +66,21 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
   yield* Effect.gen(function* () {
     const accessTokenExit = yield* credentials.getAccessToken.pipe(Effect.exit);
     const accessToken = Exit.isSuccess(accessTokenExit) ? accessTokenExit.value : Option.none();
+
+    const validLinkedRef = Option.filter(linkedProjectRef, (ref) => PROJECT_REF_PATTERN.test(ref));
+    if (Option.isSome(linkedProjectRef) && Option.isNone(validLinkedRef)) {
+      // Go's `flags.LoadProjectRef` (project_ref.go:54-76) validates the ref but
+      // `cmd/services.go`'s Run only warns on the error and keeps going, so Go
+      // still calls `listRemoteImages` with the malformed ref (services.go:61-62).
+      // TS matches the warning but deliberately skips the remote call instead of
+      // reproducing it: the ref is embedded unescaped into the tenant gateway
+      // hostname in `fetchLinkedServiceVersions`, so proceeding would let a
+      // malformed ref redirect the service-role key to an attacker-controlled host.
+      // Emitted before the config-load warning below to match the order Go's
+      // `Run` prints them in (services.go:18-24).
+      yield* output.raw(`${INVALID_PROJECT_REF_MESSAGE}\n`, "stderr");
+    }
+
     const tomlValues = yield* legacyReadDbToml(
       fs,
       path,
@@ -109,11 +128,11 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     };
 
     let rows = listLocalServiceVersions(localImageOptions);
-    if (Option.isSome(linkedProjectRef) && Option.isSome(accessToken)) {
+    if (Option.isSome(validLinkedRef) && Option.isSome(accessToken)) {
       const remote = yield* fetchLinkedServiceVersions({
         apiUrl: cliConfig.apiUrl,
         projectHost: cliConfig.projectHost,
-        projectRef: linkedProjectRef.value,
+        projectRef: validLinkedRef.value,
         accessToken: accessToken.value,
         userAgent: cliConfig.userAgent,
       });

@@ -308,6 +308,93 @@ func TestRunDockerUnbundle(t *testing.T) {
 	})
 }
 
+// TestDownloadAllRejectsMaliciousSlug is a regression test for CLI-1891: the
+// per-function loop in downloadAll must reject a path-traversal payload in
+// a function's Slug -- as returned by V1ListAllFunctionsWithResponse, which
+// this threat model treats as untrusted (a malicious/compromised Management
+// API response, or a MITM) -- before handing it to any downloader that
+// joins it into a filesystem path.
+//
+// This mirrors an exploit independently confirmed against downloadOne: with
+// slug = "../../../../../poc-escaped-outside-project", downloadOne's
+// eszipPath := filepath.Join(utils.TempDir, fmt.Sprintf("output_%s.eszip",
+// slug)) resolves (after filepath.Clean) to "../poc-escaped-outside-project.eszip",
+// i.e. one directory level above the project root, and
+// afero.WriteReader happily MkdirAll's its way there and writes the
+// server-controlled response body outside the sandbox.
+func TestDownloadAllRejectsMaliciousSlug(t *testing.T) {
+	const maliciousSlug = "../../../../../poc-escaped-outside-project"
+
+	// Use a real OS filesystem rooted at an isolated temp directory so an
+	// escape can actually be observed landing outside the project root,
+	// exactly as in the reviewer's PoC.
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+	fsys := afero.NewOsFs()
+	require.NoError(t, utils.WriteConfig(fsys, false))
+
+	project := apitest.RandomProjectRef()
+	token := apitest.RandomAccessToken(t)
+	t.Setenv("SUPABASE_ACCESS_TOKEN", string(token))
+
+	utils.CmdSuggestion = ""
+	t.Cleanup(func() { utils.CmdSuggestion = "" })
+
+	defer gock.OffAll()
+	gock.New(utils.DefaultApiHost).
+		Get("/v1/projects/" + project + "/functions").
+		Reply(http.StatusOK).
+		JSON([]api.FunctionResponse{{
+			Id:   "poc-id",
+			Name: "poc",
+			Slug: maliciousSlug,
+		}})
+	// Mocked so that, if the fix is removed, the malicious slug's request
+	// still succeeds and downloadOne proceeds all the way to writing the
+	// escaped file -- proving the escape, rather than masking it behind an
+	// unrelated network error. With the fix in place this mock is never hit.
+	gock.New(utils.DefaultApiHost).
+		Get("/v1/projects/" + project + "/functions/.*/body").
+		Reply(http.StatusOK).
+		BodyString("fake eszip payload")
+
+	// downloadOne is the exact sink the reviewer's PoC targeted directly;
+	// wrap it as a downloader so downloadAll's dispatch is exercised against
+	// the real vulnerable code, without also pulling in downloadWithDockerUnbundle's
+	// unrelated Docker extraction step (and its defer-cleanup of the eszip
+	// file, which would otherwise remove the escaped file before this test
+	// can observe it).
+	downloaderCalled := false
+	downloader := func(ctx context.Context, slug, projectRef string, fsys afero.Fs) error {
+		downloaderCalled = true
+		_, err := downloadOne(ctx, slug, projectRef, fsys)
+		return err
+	}
+
+	err := downloadAll(context.Background(), project, fsys, downloader)
+
+	// Check for the escape before any assertion below that could halt the
+	// test on failure (e.g. require.Error), so this is verified regardless
+	// of whether downloadAll happened to return an error for some other
+	// reason. t.TempDir()'s own cleanup RemoveAll's tmpDir's parent, which
+	// would otherwise sweep away the evidence once the test returns.
+	//
+	// The exploit resolves to "../poc-escaped-outside-project.eszip"
+	// relative to utils.TempDir, i.e. one level above the project root.
+	escapedPath := filepath.Join(tmpDir, "..", "poc-escaped-outside-project.eszip")
+	t.Cleanup(func() { _ = os.Remove(escapedPath) })
+	exists, existsErr := afero.Exists(fsys, escapedPath)
+	require.NoError(t, existsErr)
+	assert.False(t, exists, "malicious slug must not be able to write outside the project directory")
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, utils.ErrInvalidSlug)
+	assert.Contains(t, utils.CmdSuggestion, "unexpected function slug")
+	assert.False(t, downloaderCalled, "downloader must not be invoked with an unvalidated slug")
+
+	assert.Empty(t, apitest.ListUnmatchedRequests())
+}
+
 func TestRunServerSideUnbundle(t *testing.T) {
 	const slug = "test-func"
 	token := apitest.RandomAccessToken(t)
@@ -452,6 +539,216 @@ func TestRunServerSideUnbundle(t *testing.T) {
 		assert.Equal(t, "SECRET=1", string(data))
 
 		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("rejects a path traversal payload in Supabase-Path", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+
+		utils.CmdSuggestion = ""
+		t.Cleanup(func() { utils.CmdSuggestion = "" })
+
+		defer gock.OffAll()
+		mockMultipartBody(t, project, slug, bundleMetadata{EntrypointPath: "source/index.ts"}, []multipartPart{
+			{filename: "source/index.ts", contents: "console.log('hello')"},
+			{filename: "leftover.ts", supabasePath: "../../../../../../etc/passwd", contents: "root:x:0:0::/root:/bin/bash"},
+		})
+
+		err := Run(context.Background(), slug, project, false, false, fsys)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrUnsafeDownloadPath)
+
+		// The generic "invalid path in server response" message on its own
+		// gives users nothing actionable, so this must carry a specific
+		// suggestion (DX finding on CLI-1891) rather than falling through
+		// to the generic --debug suggestion.
+		assert.Contains(t, utils.CmdSuggestion, "malformed or unexpected API response")
+
+		// Nothing should have escaped the functions directory.
+		exists, err := afero.Exists(fsys, "/etc/passwd")
+		require.NoError(t, err)
+		assert.False(t, exists, "path traversal payload must not be written outside the functions directory")
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("writes deeply nested legitimate paths", func(t *testing.T) {
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+
+		defer gock.OffAll()
+		mockMultipartBody(t, project, slug, bundleMetadata{EntrypointPath: "source/index.ts"}, []multipartPart{
+			{filename: "source/index.ts", contents: "console.log('hello')"},
+			{filename: "source/a/b/c/d/deep.ts", contents: "export const deep = true;"},
+		})
+
+		err := Run(context.Background(), slug, project, false, false, fsys)
+		require.NoError(t, err)
+
+		root := filepath.Join(utils.FunctionsDir, slug)
+		data, err := afero.ReadFile(fsys, filepath.Join(root, "index.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, "console.log('hello')", string(data))
+
+		data, err = afero.ReadFile(fsys, filepath.Join(root, "a", "b", "c", "d", "deep.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, "export const deep = true;", string(data))
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("does not write through a pre-existing symlink at the destination", func(t *testing.T) {
+		// Symlink semantics only exist on a real filesystem, so this test
+		// exercises afero.NewOsFs against an isolated temp directory rather
+		// than the in-memory fs used elsewhere in this file.
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+		fsys := afero.NewOsFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+
+		// A file living outside the sandboxed functions directory that must
+		// never be touched by the download.
+		outsideDir := filepath.Join(tmpDir, "outside")
+		require.NoError(t, os.MkdirAll(outsideDir, 0o755))
+		secretPath := filepath.Join(outsideDir, "secret.txt")
+		require.NoError(t, os.WriteFile(secretPath, []byte("original"), 0o600))
+
+		// Plant a symlink inside the function directory, before the
+		// download runs, pointing at the file outside the sandbox. A
+		// server response that resolves to this exact path must not be
+		// allowed to write through it.
+		funcDir := filepath.Join(utils.FunctionsDir, slug)
+		require.NoError(t, os.MkdirAll(funcDir, 0o755))
+		linkPath := filepath.Join(funcDir, "evil.ts")
+		require.NoError(t, os.Symlink(secretPath, linkPath))
+
+		defer gock.OffAll()
+		mockMultipartBody(t, project, slug, bundleMetadata{EntrypointPath: "source/index.ts"}, []multipartPart{
+			{filename: "source/index.ts", contents: "console.log('hello')"},
+			{filename: "source/evil.ts", contents: "overwritten"},
+		})
+
+		err := Run(context.Background(), slug, project, false, false, fsys)
+		require.NoError(t, err)
+
+		// The symlink target outside the sandbox must be untouched.
+		data, err := os.ReadFile(secretPath)
+		require.NoError(t, err)
+		assert.Equal(t, "original", string(data), "file outside the functions directory must not be modified")
+
+		// The destination itself should now be a plain file with the
+		// downloaded contents: the atomic rename replaces the symlink
+		// directory entry rather than following it.
+		info, err := os.Lstat(linkPath)
+		require.NoError(t, err)
+		assert.Zero(t, info.Mode()&os.ModeSymlink, "planted symlink should have been replaced, not written through")
+
+		data, err = os.ReadFile(linkPath)
+		require.NoError(t, err)
+		assert.Equal(t, "overwritten", string(data))
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	// Regression test for the DX finding on CLI-1891: ensureNoSymlinkInPath
+	// used to reject the mere presence of a symlink anywhere under
+	// utils.FunctionsDir, which would also have broken a legitimate
+	// monorepo pattern like this one, where a function directory
+	// symlinks in a shared directory that itself lives inside the
+	// functions tree. That symlink's target still resolves inside root,
+	// so it must be allowed end-to-end.
+	t.Run("writes through a symlink pointing to a legitimate location inside the functions directory", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Chdir(tmpDir)
+		fsys := afero.NewOsFs()
+		require.NoError(t, utils.WriteConfig(fsys, false))
+
+		sharedDir := filepath.Join(utils.FunctionsDir, "_shared")
+		require.NoError(t, os.MkdirAll(sharedDir, 0o755))
+		// os.Symlink resolves a relative target against the symlink's own
+		// containing directory, not the process cwd, so the target must be
+		// made absolute here for the link to actually point at sharedDir.
+		absSharedDir, err := filepath.Abs(sharedDir)
+		require.NoError(t, err)
+
+		funcDir := filepath.Join(utils.FunctionsDir, slug)
+		require.NoError(t, os.MkdirAll(funcDir, 0o755))
+		require.NoError(t, os.Symlink(absSharedDir, filepath.Join(funcDir, "_shared")))
+
+		defer gock.OffAll()
+		mockMultipartBody(t, project, slug, bundleMetadata{EntrypointPath: "source/index.ts"}, []multipartPart{
+			{filename: "source/index.ts", contents: "console.log('hello')"},
+			{filename: "source/_shared/util.ts", contents: "export const util = 2;"},
+		})
+
+		err = Run(context.Background(), slug, project, false, false, fsys)
+		require.NoError(t, err)
+
+		data, err := afero.ReadFile(fsys, filepath.Join(funcDir, "index.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, "console.log('hello')", string(data))
+
+		// The write landed through the symlink, in the real shared
+		// directory rather than being rejected.
+		data, err = os.ReadFile(filepath.Join(sharedDir, "util.ts"))
+		require.NoError(t, err)
+		assert.Equal(t, "export const util = 2;", string(data))
+
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+}
+
+// TestEnsureNoSymlinkInPath exercises ensureNoSymlinkInPath's resolve-then-check
+// policy directly: it must still reject a symlink whose target escapes root,
+// but must now allow one whose target resolves to a legitimate, even deeply
+// nested, location that is still inside root.
+func TestEnsureNoSymlinkInPath(t *testing.T) {
+	t.Run("rejects a symlink whose target resolves outside root", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		fsys := afero.NewOsFs()
+
+		root := filepath.Join(tmpDir, "supabase", "functions")
+		require.NoError(t, os.MkdirAll(root, 0o755))
+
+		outsideDir := filepath.Join(tmpDir, "outside")
+		require.NoError(t, os.MkdirAll(outsideDir, 0o755))
+
+		// Plant a symlink inside root whose target lives outside it
+		// entirely -- the actual attack this check defends against.
+		linkDir := filepath.Join(root, "escape")
+		require.NoError(t, os.Symlink(outsideDir, linkDir))
+
+		dir := filepath.Join(linkDir, "nested")
+		err := ensureNoSymlinkInPath(fsys, root, dir)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrUnsafeDownloadPath)
+	})
+
+	t.Run("allows a symlink whose target resolves to a nested location inside root", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		fsys := afero.NewOsFs()
+
+		root := filepath.Join(tmpDir, "supabase", "functions")
+		require.NoError(t, os.MkdirAll(root, 0o755))
+
+		// A legitimate monorepo-style symlink: a shared directory that
+		// lives elsewhere inside the functions tree, symlinked into place
+		// from a function's own directory.
+		sharedDir := filepath.Join(root, "_shared")
+		require.NoError(t, os.MkdirAll(sharedDir, 0o755))
+
+		funcDir := filepath.Join(root, "my-func")
+		require.NoError(t, os.MkdirAll(funcDir, 0o755))
+		linkDir := filepath.Join(funcDir, "_shared")
+		require.NoError(t, os.Symlink(sharedDir, linkDir))
+
+		// dir itself does not exist yet -- ensureNoSymlinkInPath is called
+		// before MkdirIfNotExistFS creates it -- so this also proves the
+		// still-nonexistent remainder is correctly re-joined onto the
+		// resolved ancestor.
+		dir := filepath.Join(linkDir, "nested", "deeper")
+		err := ensureNoSymlinkInPath(fsys, root, dir)
+		assert.NoError(t, err, "a symlink resolving to a legitimate location inside root must be allowed")
 	})
 }
 

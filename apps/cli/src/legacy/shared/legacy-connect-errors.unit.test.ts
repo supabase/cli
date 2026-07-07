@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  LEGACY_SUGGEST_ENV_VAR,
+  legacyConnectSuggestion,
+  legacyIpv6Suggestion,
   legacyIsIPv6ConnectivityError,
   legacyIsIPv6ConnectivityErrorCause,
 } from "./legacy-connect-errors.ts";
@@ -41,6 +44,77 @@ describe("legacyIsIPv6ConnectivityError", () => {
   it("does not classify unrelated errors", () => {
     expect(legacyIsIPv6ConnectivityError("permission denied for schema public")).toBe(false);
     expect(legacyIsIPv6ConnectivityError("")).toBe(false);
+  });
+});
+
+describe("legacyConnectSuggestion", () => {
+  const ctx = {
+    dashboardUrl: "https://supabase.com/dashboard",
+    profileName: "supabase",
+    debug: false,
+  } as const;
+
+  // The @effect/sql SqlError wraps the node driver error on `.cause`; a multi-address
+  // dial wraps an AggregateError whose `.errors[]` carry the per-IP system errors.
+  const sqlError = (cause: unknown) =>
+    Object.assign(new Error("PgClient: Failed to connect"), { cause });
+  const systemError = (message: string, code: string) =>
+    Object.assign(new Error(message), { code });
+
+  it("maps a refused connection (node ECONNREFUSED) to the network-restrictions hint", () => {
+    const err = sqlError(systemError("connect ECONNREFUSED 127.0.0.1:54322", "ECONNREFUSED"));
+    expect(legacyConnectSuggestion(err, ctx)).toBe(
+      "Make sure your local IP is allowed in Network Restrictions and Network Bans.\nhttps://supabase.com/dashboard/project/_/database/settings",
+    );
+  });
+
+  it("maps an AggregateError of refused dials to the network-restrictions hint", () => {
+    const err = sqlError(
+      Object.assign(new AggregateError([], "all attempts failed"), {
+        errors: [systemError("connect ECONNREFUSED [::1]:54322", "ECONNREFUSED")],
+      }),
+    );
+    expect(legacyConnectSuggestion(err, ctx)).toContain(
+      "Make sure your local IP is allowed in Network Restrictions and Network Bans.",
+    );
+  });
+
+  it("maps the pooler allow_list rejection to the network-restrictions hint", () => {
+    const err = sqlError(new Error("Address not in tenant allow_list"));
+    expect(legacyConnectSuggestion(err, ctx)).toContain("Network Restrictions and Network Bans");
+  });
+
+  it("maps a password-auth failure to the env-var suggestion", () => {
+    const err = sqlError(
+      Object.assign(new Error('password authentication failed for user "postgres"'), {
+        code: "28P01",
+      }),
+    );
+    expect(legacyConnectSuggestion(err, ctx)).toBe(LEGACY_SUGGEST_ENV_VAR);
+  });
+
+  it("suggests the --debug SSL note only under --debug", () => {
+    const err = sqlError(new Error("SSL connection is required"));
+    expect(legacyConnectSuggestion(err, ctx)).toBeUndefined();
+    expect(legacyConnectSuggestion(err, { ...ctx, debug: true })).toBe(
+      "SSL connection is not supported with --debug flag",
+    );
+  });
+
+  it("maps an IPv6-only connectivity failure to the IPv6 pooler suggestion", () => {
+    const err = sqlError(new Error("dial tcp: network is unreachable"));
+    expect(legacyConnectSuggestion(err, ctx)).toBe(legacyIpv6Suggestion());
+  });
+
+  it("maps a tenant-not-found error to the wrong-profile hint", () => {
+    const err = sqlError(new Error("Tenant or user not found"));
+    expect(legacyConnectSuggestion(err, ctx)).toBe(
+      "Make sure your project exists on profile: supabase",
+    );
+  });
+
+  it("returns undefined for an unrecognized connect error", () => {
+    expect(legacyConnectSuggestion(sqlError(new Error("some other failure")), ctx)).toBeUndefined();
   });
 });
 

@@ -56,14 +56,14 @@ default 10s pg-delta probe timeout.
 
 ## Environment Variables
 
-| Variable                           | Purpose                                                            | Required?                                                                                                     |
-| ---------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`            | auth token for linked/project-id mode                              | no (falls back to keyring → `~/.supabase/access-token`)                                                       |
-| `SUPABASE_API_URL`                 | override Management API base URL                                   | no (defaults to `https://api.supabase.com`)                                                                   |
-| `SUPABASE_DB_PASSWORD`             | database password for `--local` and the `--linked` workdir project | no (defaults to `postgres`; **ignored** for ad-hoc `--project-id`, which always mints a temporary login role) |
-| `SUPABASE_SERVICES_HOSTNAME`       | host used for the local TLS probe                                  | no (defaults to `127.0.0.1`)                                                                                  |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | pg-meta image registry override (`docker.io` → Docker Hub)         | no (defaults to the ECR registry)                                                                             |
-| `SUPABASE_CA_SKIP_VERIFY`          | when `true`, prints a TLS-verification-disabled warning to stderr  | no                                                                                                            |
+| Variable                           | Purpose                                                                                     | Required?                                                                                                     |
+| ---------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`            | auth token for linked/project-id mode                                                       | no (falls back to keyring → `~/.supabase/access-token`)                                                       |
+| `SUPABASE_PROFILE`                 | built-in profile name or YAML file path                                                     | no (falls back to `~/.supabase/profile` -> `supabase`)                                                        |
+| `SUPABASE_DB_PASSWORD`             | database password for `--local` and the `--linked` workdir project                          | no (defaults to `postgres`; **ignored** for ad-hoc `--project-id`, which always mints a temporary login role) |
+| `SUPABASE_SERVICES_HOSTNAME`       | host used for the local TLS probe                                                           | no (defaults to `127.0.0.1`)                                                                                  |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | pg-meta image registry override (`docker.io` → Docker Hub; any other value → that registry) | no (defaults to the ECR registry)                                                                             |
+| `SUPABASE_CA_SKIP_VERIFY`          | when `true`, prints a TLS-verification-disabled warning to stderr                           | no                                                                                                            |
 
 ## Exit Codes
 

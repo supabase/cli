@@ -46,13 +46,13 @@ leaking the change to the surrounding process.
 
 ## Environment Variables
 
-| Variable                               | Purpose                                            | Required? |
-| -------------------------------------- | -------------------------------------------------- | --------- |
-| `SUPABASE_WORKDIR`                     | target dir (`--workdir` flag → env → prompt → cwd) | no        |
-| `SUPABASE_DB_PASSWORD`                 | DB password (`-p` flag → env → prompt/generate)    | no        |
-| `GITHUB_TOKEN`                         | raise the GitHub API rate limit for template fetch | no        |
-| `SUPABASE_ACCESS_TOKEN`                | auth bypass for ensure-login                       | no        |
-| `SUPABASE_API_URL`, `SUPABASE_PROFILE` | API host / profile                                 | no        |
+| Variable                | Purpose                                                      | Required? |
+| ----------------------- | ------------------------------------------------------------ | --------- |
+| `SUPABASE_WORKDIR`      | target dir (`--workdir` flag → env → prompt → cwd)           | no        |
+| `SUPABASE_DB_PASSWORD`  | DB password (`-p` flag → env → prompt/generate)              | no        |
+| `GITHUB_TOKEN`          | raise the GitHub API rate limit for template fetch           | no        |
+| `SUPABASE_ACCESS_TOKEN` | auth bypass for ensure-login                                 | no        |
+| `SUPABASE_PROFILE`      | profile name/path (env → `~/.supabase/profile` → `supabase`) | no        |
 
 ## Exit Codes
 

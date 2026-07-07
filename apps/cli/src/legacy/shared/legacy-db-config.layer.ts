@@ -20,6 +20,10 @@ import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
+import {
+  type LegacyConnectSuggestionContext,
+  LEGACY_SUGGEST_ENV_VAR,
+} from "./legacy-connect-errors.ts";
 import { LegacyDbConnection, type LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 import { LegacyIdentityStitch } from "./legacy-identity-stitch.ts";
 import {
@@ -44,9 +48,6 @@ const TCP_PROBE_TIMEOUT = Duration.seconds(5);
 const MAX_RETRIES = 8;
 const BACKOFF_INITIAL = Duration.seconds(3);
 const BACKOFF_MAX = Duration.seconds(60);
-// Go: utils.SuggestEnvVar (`apps/cli-go/internal/utils/connect.go:174`).
-const SUGGEST_ENV_VAR =
-  "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD";
 
 const loginRoleErrorMapper = mapLegacyHttpError({
   networkError: Errors.LegacyDbConfigLoginRoleNetworkError,
@@ -105,6 +106,16 @@ export const legacyDbConfigLayer = Layer.effect(
     const output = yield* Output;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+
+    // Profile context for the connect-failure suggestion (Go's `SetConnectSuggestion`
+    // reads the ambient `CurrentProfile` + `viper.GetBool("DEBUG")`). Snapshot it once
+    // and attach it to every resolved connection so the driver layer can render Go's
+    // hint on a refused/auth/IPv6 connect error.
+    const suggestionContext: LegacyConnectSuggestionContext = {
+      dashboardUrl: cliConfig.dashboardUrl,
+      profileName: cliConfig.profile,
+      debug: yield* LegacyDebugFlag,
+    };
 
     // Capture the ambient services the Management API stack needs, so the
     // lazily-built linked stack is fully self-provided and `resolve`'s R stays
@@ -203,7 +214,7 @@ export const legacyDbConfigLayer = Layer.effect(
               return Effect.fail(
                 new Errors.LegacyDbConfigConnectTempRoleError({
                   message: `failed to connect as temp role: ${cause.message}`,
-                  suggestion: SUGGEST_ENV_VAR,
+                  suggestion: LEGACY_SUGGEST_ENV_VAR,
                 }),
               );
             }
@@ -549,6 +560,18 @@ export const legacyDbConfigLayer = Layer.effect(
         );
       });
 
-    return LegacyDbConfigResolver.of({ resolve, resolvePoolerFallback });
+    // Attach the connect-failure suggestion context to every resolved connection in
+    // one place (Go sets it ambiently via `CurrentProfile`), so each connecting
+    // command inherits Go's `SetConnectSuggestion` hint without per-call-site wiring.
+    const withSuggestion = (conn: LegacyPgConnInput): LegacyPgConnInput => ({
+      ...conn,
+      suggestionContext,
+    });
+    return LegacyDbConfigResolver.of({
+      resolve: (flags) =>
+        resolve(flags).pipe(Effect.map((r) => ({ ...r, conn: withSuggestion(r.conn) }))),
+      resolvePoolerFallback: (flags) =>
+        resolvePoolerFallback(flags).pipe(Effect.map(Option.map(withSuggestion))),
+    });
   }),
 );

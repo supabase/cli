@@ -7,7 +7,15 @@ import { Effect, FileSystem, Option } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { Output } from "../output/output.service.ts";
-import { invalidFunctionSlugDetail, validateFunctionSlugMessage } from "./functions.shared.ts";
+import {
+  cobraMutuallyExclusiveErrorMessage,
+  hasExplicitLongFlag,
+} from "../cli/cobra-flag-groups.ts";
+import {
+  FUNCTIONS_BUNDLER_MUTEX_GROUP,
+  invalidFunctionSlugDetail,
+  validateFunctionSlugMessage,
+} from "./functions.shared.ts";
 import {
   ConflictingFunctionDownloadFlagsError,
   FunctionDownloadNotFoundError,
@@ -34,12 +42,21 @@ export interface DownloadFunctionsDependencies<
 > {
   readonly api: ApiClient;
   readonly projectRoot: string;
+  readonly rawArgs: ReadonlyArray<string>;
   readonly resolveProjectRef: (
     projectRef: Option.Option<string>,
   ) => Effect.Effect<string, ResolveError, ResolveRequirements>;
+  /**
+   * `captureOutput` is `true` whenever `output.format !== "text"`: the Go
+   * child's raw stdout must not reach the terminal (it would corrupt the
+   * JSON/NDJSON envelope, CLI-1546's "stdout is payload-only in machine
+   * mode" invariant), so the dependency must capture/discard it (e.g. via
+   * `LegacyGoProxy.execCapture`) instead of inheriting stdio.
+   */
   readonly proxyDownload: (
     flags: DownloadFunctionsOptions,
     projectRef: string,
+    captureOutput: boolean,
   ) => Effect.Effect<void, ProxyError, ProxyRequirements>;
 }
 
@@ -57,11 +74,14 @@ export function makeGoProxyDownloadArgs(
     args.push(flags.functionName.value);
   }
   args.push("--project-ref", projectRef);
-  if (flags.useDocker) {
-    args.push("--use-docker");
-  }
+  // At most one of these may reach the Go binary — it re-parses this argv
+  // fresh and enforces the same mutual exclusivity itself. `legacyBundle`
+  // takes priority since `useDocker` now defaults to `true` (CLI-1862) and
+  // would otherwise ride along on every `--legacy-bundle` invocation.
   if (flags.legacyBundle) {
     args.push("--legacy-bundle");
+  } else if (flags.useDocker) {
+    args.push("--use-docker");
   }
   return args;
 }
@@ -107,20 +127,24 @@ function validateSlug(slug: string): Effect.Effect<void, InvalidFunctionSlugErro
   return Effect.fail(new InvalidFunctionSlugError({ message: invalidFunctionSlugDetail }));
 }
 
-function validateDownloadFlags(
-  flags: DownloadFunctionsOptions,
-): Effect.Effect<void, ConflictingFunctionDownloadFlagsError> {
-  const selected = [
-    flags.useApi ? "--use-api" : undefined,
-    flags.useDocker ? "--use-docker" : undefined,
-    flags.legacyBundle ? "--legacy-bundle" : undefined,
-  ].filter((flag) => flag !== undefined);
+const downloadCommandPath = ["functions", "download"] as const;
 
-  return selected.length <= 1
+function validateDownloadFlags(
+  rawArgs: ReadonlyArray<string>,
+): Effect.Effect<void, ConflictingFunctionDownloadFlagsError> {
+  const changed = [
+    hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-api") ? "use-api" : undefined,
+    hasExplicitLongFlag(rawArgs, downloadCommandPath, "use-docker") ? "use-docker" : undefined,
+    hasExplicitLongFlag(rawArgs, downloadCommandPath, "legacy-bundle")
+      ? "legacy-bundle"
+      : undefined,
+  ].filter((flag): flag is string => flag !== undefined);
+
+  return changed.length <= 1
     ? Effect.void
     : Effect.fail(
         new ConflictingFunctionDownloadFlagsError({
-          message: `flags ${selected.join(", ")} are mutually exclusive`,
+          message: cobraMutuallyExclusiveErrorMessage(FUNCTIONS_BUNDLER_MUTEX_GROUP, changed),
         }),
       );
 }
@@ -734,15 +758,59 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
   return Effect.gen(function* () {
     const output = yield* Output;
 
-    yield* validateDownloadFlags(flags);
-
-    if (flags.useDocker || flags.legacyBundle) {
-      const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
-      return yield* dependencies.proxyDownload(flags, projectRef);
-    }
+    yield* validateDownloadFlags(dependencies.rawArgs);
 
     if (Option.isSome(flags.functionName)) {
       yield* validateSlug(flags.functionName.value);
+    }
+
+    // Mirrors Go's `if useApi { useDocker = false }` (apps/cli-go/cmd/functions.go:51-53),
+    // which reads the resolved flag value, not `pflag.Changed`. Gate on
+    // `flags.useApi` directly so `--use-api=false` still routes through the
+    // Docker/legacy-bundle proxy, matching Go.
+    if (!flags.useApi && (flags.useDocker || flags.legacyBundle)) {
+      const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
+
+      if (output.format === "text") {
+        yield* dependencies.proxyDownload(flags, projectRef, false);
+        return;
+      }
+
+      // Resolve the slug list *before* delegating, mirroring Go's own
+      // `downloadAll` (which also lists before looping through downloads,
+      // `apps/cli-go/internal/functions/download/download.go`). The
+      // delegated Go child never emits the TS `Output` envelope itself
+      // (CLI-1546: stdout is payload-only in machine mode, so its raw text
+      // is captured/discarded below, not inherited) — this list is purely
+      // for the JSON payload. Resolving it first means a transient listing
+      // failure is reported before any download side effect, instead of
+      // masking an already-successful delegated download with a later,
+      // unrelated listing failure.
+      const slugs = Option.isSome(flags.functionName)
+        ? [flags.functionName.value]
+        : yield* listRemoteFunctionSlugs(dependencies.api, projectRef);
+
+      // Mirrors the native path's empty-project short-circuit just below:
+      // an empty project has nothing to delegate, so report it the same way
+      // ("No functions found.") instead of still invoking the Go child (an
+      // unnecessary Docker/subprocess round-trip) and reporting a
+      // misleading "Downloaded Edge Function source." success with an
+      // empty slug list.
+      if (slugs.length === 0) {
+        yield* output.success("No functions found.", {
+          function_slugs: [],
+          project_ref: projectRef,
+        });
+        return;
+      }
+
+      yield* dependencies.proxyDownload(flags, projectRef, true);
+
+      yield* output.success("Downloaded Edge Function source.", {
+        function_slugs: slugs,
+        project_ref: projectRef,
+      });
+      return;
     }
 
     const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
