@@ -38,6 +38,7 @@ const baseProxyConfig = (config: ResolvedStackConfig): Omit<ProxyConfig, "ensure
   analyticsPort: config.analytics !== false ? config.analytics.port : 0,
   poolerPort: config.pooler !== false ? config.pooler.apiPort : 0,
   studioPort: config.studio !== false ? config.studio.port : 0,
+  imgproxyEnabled: config.imgproxy !== false,
   publishableKey: config.publishableKey,
   secretKey: config.secretKey,
   anonJwt: config.anonJwt,

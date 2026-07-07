@@ -43,13 +43,16 @@ describe("reapStalePostmaster", () => {
     const dir = await mkdtemp(join(tmpdir(), "reap-test-"));
     dirs.push(dir);
 
-    const child = spawn("sleep", ["60"], { detached: true, stdio: "ignore" });
+    const child = spawn("bash", ["-c", `exec -a "postgres -D ${dir}" sleep 60`], {
+      detached: true,
+      stdio: "ignore",
+    });
     child.unref();
     const pid = child.pid;
     if (pid === undefined) throw new Error("failed to spawn dummy process");
     pidsToCleanUp.push(pid);
 
-    await writeFile(join(dir, "postmaster.pid"), `${pid}\n/some/data/dir\n1234567\n5432\n`);
+    await writeFile(join(dir, "postmaster.pid"), `${pid}\n${dir}\n1234567\n5432\n`);
 
     expect(isAlive(pid)).toBe(true);
     await reapStalePostmaster(dir);
@@ -77,5 +80,21 @@ describe("reapStalePostmaster", () => {
     await expect(reapStalePostmaster(dir)).resolves.toBeUndefined();
     // Sanity: we're still alive (obviously true, but documents intent).
     expect(isAlive(process.pid)).toBe(true);
+  });
+
+  it("refuses to kill a reused pid that is not this postmaster", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "reap-test-"));
+    dirs.push(dir);
+
+    const child = spawn("sleep", ["60"], { detached: true, stdio: "ignore" });
+    child.unref();
+    const pid = child.pid;
+    if (pid === undefined) throw new Error("failed to spawn dummy process");
+    pidsToCleanUp.push(pid);
+
+    await writeFile(join(dir, "postmaster.pid"), `${pid}\n${dir}\n1234567\n5432\n`);
+
+    await reapStalePostmaster(dir);
+    expect(isAlive(pid)).toBe(true);
   });
 });

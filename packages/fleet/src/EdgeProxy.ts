@@ -167,8 +167,20 @@ export class EdgeProxy {
 
     this.registrations.set(podId, { server, sockets });
     return new Promise((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(listenPort, "127.0.0.1", () => resolve());
+      const onError = (error: Error) => {
+        this.registrations.delete(podId);
+        for (const sock of sockets) sock.destroy();
+        try {
+          server.close(() => reject(error));
+        } catch {
+          reject(error);
+        }
+      };
+      server.once("error", onError);
+      server.listen(listenPort, "127.0.0.1", () => {
+        server.off("error", onError);
+        resolve();
+      });
     });
   }
 

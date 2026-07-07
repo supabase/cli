@@ -23,7 +23,7 @@ describe("makeEnsureServiceMemo", () => {
     expect(attempt).toBe(2);
   });
 
-  it("resolves immediately for a service already marked done", async () => {
+  it("checks again after a completed start", async () => {
     let starts = 0;
     const ensure = makeEnsureServiceMemo(async (_name) => {
       starts += 1;
@@ -31,7 +31,7 @@ describe("makeEnsureServiceMemo", () => {
     await ensure("storage");
     await ensure("storage");
     await ensure("storage");
-    expect(starts).toBe(1);
+    expect(starts).toBe(3);
   });
 
   it("tracks each service name independently", async () => {

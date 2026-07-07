@@ -64,5 +64,6 @@ export class IdleMonitor {
       this.tracked.delete(podId);
       this.opts.onIdle(podId);
     }, this.opts.idleMs);
+    entry.timer.unref?.();
   }
 }

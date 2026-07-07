@@ -29,6 +29,22 @@ describe("PortRegistry", () => {
     expect(c.dbPort).toBe(a1.dbPort); // freed ports are reusable
   });
 
+  it("serializes concurrent mutations before persisting", async () => {
+    const file = join(await mkdtemp(join(tmpdir(), "ports-")), "state.json");
+    const reg = await PortRegistry.load(file);
+
+    const pods = Array.from({ length: 20 }, (_, index) => `pod-${index}`);
+    await Promise.all(pods.map((pod) => reg.allocate(pod)));
+    await Promise.all(pods.slice(0, 10).map((pod) => reg.release(pod)));
+    await Promise.all(pods.slice(0, 10).map((pod) => reg.allocate(`${pod}-new`)));
+
+    const reloaded = await PortRegistry.load(file);
+    const restored = [...pods.slice(10), ...pods.slice(0, 10).map((pod) => `${pod}-new`)].map(
+      (pod) => reloaded.get(pod),
+    );
+    expect(restored.every((ports) => ports !== undefined)).toBe(true);
+  });
+
   it("quarantines a corrupt state file and loads with fresh empty state", async () => {
     const file = join(await mkdtemp(join(tmpdir(), "ports-")), "state.json");
     const garbage = "{not valid json at all";
@@ -121,6 +137,15 @@ describe("PortRegistry", () => {
       await reg.restore("pod-a", { dbPort: 55010, apiPort: 55011 });
       await expect(reg.restore("pod-b", { dbPort: 55010, apiPort: 55012 })).rejects.toThrow();
       await expect(reg.restore("pod-b", { dbPort: 55020, apiPort: 55011 })).rejects.toThrow();
+    });
+
+    it("throws if a restored db port collides with another pod's api port", async () => {
+      const file = join(await mkdtemp(join(tmpdir(), "ports-")), "state.json");
+      const reg = await PortRegistry.load(file);
+
+      await reg.restore("pod-a", { dbPort: 55010, apiPort: 55011 });
+      await expect(reg.restore("pod-b", { dbPort: 55011, apiPort: 55012 })).rejects.toThrow();
+      await expect(reg.restore("pod-b", { dbPort: 55012, apiPort: 55010 })).rejects.toThrow();
     });
   });
 });

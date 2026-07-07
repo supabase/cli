@@ -511,6 +511,21 @@ describe("Orchestrator", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.live("startService restarts a service that was stopped", () => {
+    const { layer, proc } = setupOrchestrator([svc("a")], {
+      exitDelay: "5 seconds",
+    });
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("a");
+      yield* proc.waitForSpawnCount(1);
+      yield* orc.stopService("a");
+      yield* orc.startService("a");
+      yield* proc.waitForSpawnCount(2);
+      expect(proc.spawned.map((s) => s.command)).toEqual(["a", "a"]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.live("restartService stops and restarts a service", () => {
     const { layer, proc } = setupOrchestrator([svc("a")], {
       exitDelay: "5 seconds",
@@ -560,6 +575,28 @@ describe("Orchestrator", () => {
         unrelated: 1,
         web: 2,
       });
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("restartService skips transitive dependents that were never started", () => {
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("db"),
+        svc("api", {
+          dependencies: [{ service: "db", condition: "started" }],
+        }),
+      ],
+      { exitDelay: "5 seconds" },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("db");
+      yield* proc.waitForSpawnCount(1);
+
+      yield* orc.restartService("db");
+      yield* proc.waitForSpawnCount(2);
+
+      expect(proc.spawned.map((s) => s.command)).toEqual(["db", "db"]);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 

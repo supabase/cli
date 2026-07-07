@@ -10,11 +10,19 @@ export interface PodManifest {
   readonly createdAt: string;
 }
 
-export const baseTemplateKey = (postgresVersion: string): string => `pg-${postgresVersion}`;
+const keyHash = (value: string): string =>
+  createHash("sha256").update(value).digest("hex").slice(0, 16);
 
-export const templateKey = (versions: Partial<VersionManifest>): string => {
-  const canonical = JSON.stringify(
-    Object.fromEntries(Object.entries(versions).sort(([a], [b]) => a.localeCompare(b))),
-  );
-  return `tuple-${createHash("sha256").update(canonical).digest("hex").slice(0, 16)}`;
+export const baseTemplateKey = (postgresVersion: string): string =>
+  `pg-${keyHash(postgresVersion)}`;
+
+export const templateKey = (
+  versions: Partial<VersionManifest>,
+  enabledServices: ReadonlyArray<ServiceName> = [],
+): string => {
+  const canonical = JSON.stringify({
+    versions: Object.fromEntries(Object.entries(versions).sort(([a], [b]) => a.localeCompare(b))),
+    enabledServices: [...new Set(enabledServices)].sort((a, b) => a.localeCompare(b)),
+  });
+  return `tuple-${keyHash(canonical)}`;
 };

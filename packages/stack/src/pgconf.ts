@@ -13,6 +13,7 @@ const INCLUDE_BLOCK = [
 // Line-anchored, active (non-commented) include directive only — a commented-out
 // line like `#include_if_exists = 'micro.conf'` must NOT count as installed.
 const ACTIVE_INCLUDE_RE = /^\s*include_if_exists = 'micro\.conf'/m;
+const ACTIVE_POD_INCLUDE_RE = /^\s*include_if_exists = 'pod\.conf'/m;
 
 const PRELOAD_LIBRARIES_RE = /^\s*shared_preload_libraries\s*=\s*['"]([^'"]*)['"]/m;
 
@@ -27,6 +28,20 @@ export async function installMicroProfile(pgdata: string): Promise<void> {
   const main = await readFile(mainPath, "utf8");
   if (!ACTIVE_INCLUDE_RE.test(main)) {
     await writeFile(mainPath, main + INCLUDE_BLOCK);
+  }
+}
+
+export async function installPodConfOverlay(pgdata: string): Promise<void> {
+  const podConf = join(pgdata, "pod.conf");
+  const existing = await readFile(podConf, "utf8").catch(() => undefined);
+  if (existing === undefined) {
+    await writeFile(podConf, buildPodConf([]));
+  }
+  const mainPath = join(pgdata, "postgresql.conf");
+  const main = await readFile(mainPath, "utf8");
+  if (!ACTIVE_POD_INCLUDE_RE.test(main)) {
+    const separator = main.endsWith("\n") || main === "" ? "" : "\n";
+    await writeFile(mainPath, `${main}${separator}include_if_exists = 'pod.conf'\n`);
   }
 }
 

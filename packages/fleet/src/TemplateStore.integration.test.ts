@@ -2,6 +2,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { baseTemplateKey } from "./PodManifest.ts";
 import { TemplateStore } from "./TemplateStore.ts";
 
 // Requires postgres binaries in the local cache; opt-in via env, since the first
@@ -13,7 +14,7 @@ describe.skipIf(!process.env.FLEET_PG_TESTS)("TemplateStore", () => {
     const root = await mkdtemp(join(tmpdir(), "templates-"));
     const store = new TemplateStore(root);
     const first = await store.ensureBaseTemplate(POSTGRES_VERSION);
-    expect(first).toContain(`pg-${POSTGRES_VERSION}`);
+    expect(first).toContain(baseTemplateKey(POSTGRES_VERSION));
     // PGDATA got the micro profile
     const conf = await readFile(join(first, "postgresql.conf"), "utf8");
     expect(conf).toContain("include_if_exists = 'micro.conf'");

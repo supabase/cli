@@ -8,6 +8,11 @@ import { baseTemplateKey, templateKey } from "./PodManifest.ts";
 const LOCK_STALE_MS = 10 * 60 * 1000;
 const LOCK_POLL_MS = 250;
 
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
 /**
  * Builds and caches golden Postgres template data directories that pods are later
  * CoW-cloned from.
@@ -15,7 +20,7 @@ const LOCK_POLL_MS = 250;
  * - "base" templates are a one-shot `postgres`-only stack boot: `postgres-init`
  *   applies the baseline roles/schemas/migrations exactly as it does for a normal
  *   stack, then the micro profile (`micro.conf`/`pod.conf` includes) is installed
- *   before the data dir is frozen under `root/pg-<version>/data`.
+ *   before the data dir is frozen under `root/pg-<hash>/data`.
  * - "warm" templates clone a base template and boot the requested services once
  *   so each self-migrates against a `provisioned` (post-init) data dir, then
  *   freeze the result under `root/<templateKey>/data`. An empty service list has
@@ -86,7 +91,7 @@ export class TemplateStore {
     const base = await this.ensureBaseTemplate(pgVersion);
     if (enabledServices.length === 0) return base;
 
-    const key = templateKey(versions);
+    const key = templateKey(versions, enabledServices);
     if (await this.has(key)) return this.dataDir(key);
     return this.withLock(key, async () => {
       if (await this.has(key)) return this.dataDir(key);
@@ -105,18 +110,20 @@ export class TemplateStore {
           provisioned: true,
           profile: "micro",
         },
-        postgrest: enabledServices.includes("postgrest") ? {} : false,
-        auth: enabledServices.includes("auth") ? {} : false,
-        edgeRuntime: enabledServices.includes("edge-runtime") ? {} : false,
-        realtime: enabledServices.includes("realtime") ? {} : false,
-        storage: enabledServices.includes("storage") ? {} : false,
-        imgproxy: enabledServices.includes("imgproxy") ? {} : false,
-        mailpit: enabledServices.includes("mailpit") ? {} : false,
-        pgmeta: enabledServices.includes("pgmeta") ? {} : false,
-        studio: enabledServices.includes("studio") ? {} : false,
-        analytics: enabledServices.includes("analytics") ? {} : false,
-        vector: enabledServices.includes("vector") ? {} : false,
-        pooler: enabledServices.includes("pooler") ? {} : false,
+        postgrest: enabledServices.includes("postgrest") ? { version: versions.postgrest } : false,
+        auth: enabledServices.includes("auth") ? { version: versions.auth } : false,
+        edgeRuntime: enabledServices.includes("edge-runtime")
+          ? { version: versions["edge-runtime"] }
+          : false,
+        realtime: enabledServices.includes("realtime") ? { version: versions.realtime } : false,
+        storage: enabledServices.includes("storage") ? { version: versions.storage } : false,
+        imgproxy: enabledServices.includes("imgproxy") ? { version: versions.imgproxy } : false,
+        mailpit: enabledServices.includes("mailpit") ? { version: versions.mailpit } : false,
+        pgmeta: enabledServices.includes("pgmeta") ? { version: versions.pgmeta } : false,
+        studio: enabledServices.includes("studio") ? { version: versions.studio } : false,
+        analytics: enabledServices.includes("analytics") ? { version: versions.analytics } : false,
+        vector: enabledServices.includes("vector") ? { version: versions.vector } : false,
+        pooler: enabledServices.includes("pooler") ? { version: versions.pooler } : false,
         functions: false,
       });
       try {
@@ -136,10 +143,10 @@ export class TemplateStore {
   }
 
   private async freeze(buildDir: string, key: string, marker: unknown): Promise<void> {
-    await mkdir(join(this.root, key), { recursive: true });
-    await rename(join(buildDir, "data"), this.dataDir(key));
-    await writeFile(join(this.root, key, "template.json"), JSON.stringify(marker));
-    await rm(buildDir, { recursive: true, force: true });
+    const finalDir = join(this.root, key);
+    await writeFile(join(buildDir, "template.json"), JSON.stringify(marker));
+    await rm(finalDir, { recursive: true, force: true });
+    await rename(buildDir, finalDir);
   }
 
   private async withLock<T>(key: string, body: () => Promise<T>): Promise<T> {
@@ -150,7 +157,8 @@ export class TemplateStore {
         const handle = await open(lockPath, "wx");
         await handle.close();
         break;
-      } catch {
+      } catch (error) {
+        if (errorCode(error) !== "EEXIST") throw error;
         const s = await stat(lockPath).catch(() => undefined);
         if (s && Date.now() - s.mtimeMs > LOCK_STALE_MS) {
           await unlink(lockPath).catch(() => {});

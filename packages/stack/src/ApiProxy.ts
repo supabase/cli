@@ -23,6 +23,7 @@ export interface ProxyConfig {
   readonly analyticsPort: number;
   readonly poolerPort: number;
   readonly studioPort: number;
+  readonly imgproxyEnabled?: boolean;
   readonly publishableKey: string;
   readonly secretKey: string;
   readonly anonJwt: string;
@@ -122,6 +123,7 @@ const COLD_START_RETRY_SCHEDULE = Schedule.spaced("250 millis").pipe(Schedule.ta
 interface ProxyHandlerOptions {
   readonly backendPort: number;
   readonly service: ServiceName;
+  readonly additionalServices?: ReadonlyArray<ServiceName>;
   readonly stripPrefix?: string;
   readonly backendPath?: string;
   readonly transformAuth?: boolean;
@@ -141,14 +143,15 @@ function makeProxyHandler(
   return (req: HttpServerRequest.HttpServerRequest) =>
     Effect.gen(function* () {
       if (config.ensureService) {
-        const ensured = yield* Effect.result(
-          Effect.tryPromise(() => config.ensureService!(opts.service)),
-        );
-        if (Result.isFailure(ensured)) {
-          return HttpServerResponse.text(
-            `Bad gateway: failed to start ${opts.service}: ${String(ensured.failure)}`,
-            { status: 502 },
+        for (const service of [opts.service, ...(opts.additionalServices ?? [])]) {
+          const ensured = yield* Effect.result(
+            Effect.tryPromise(() => config.ensureService!(service)),
           );
+          if (Result.isFailure(ensured)) {
+            return HttpServerResponse.text(`Bad gateway: failed to start ${service}`, {
+              status: 502,
+            });
+          }
         }
       }
 
@@ -351,6 +354,17 @@ export class ApiProxy extends Context.Service<
               backendPort: config.storagePort,
               service: "storage",
               stripPrefix: "/storage/v1",
+            }),
+          ),
+          HttpRouter.route(
+            "*",
+            "/storage/v1/render/image/*",
+            makeProxyHandler(client, config, {
+              backendPort: config.storagePort,
+              service: "storage",
+              additionalServices: config.imgproxyEnabled === true ? ["imgproxy"] : [],
+              stripPrefix: "/storage/v1",
+              transformAuth: true,
             }),
           ),
           HttpRouter.route(

@@ -2,7 +2,12 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { installMicroProfile, readPreloadLibraries, writePreloadLibraries } from "./pgconf.ts";
+import {
+  installMicroProfile,
+  installPodConfOverlay,
+  readPreloadLibraries,
+  writePreloadLibraries,
+} from "./pgconf.ts";
 
 async function fakePgdata(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "pgconf-test-"));
@@ -22,6 +27,17 @@ describe("pgconf", () => {
     expect(main.indexOf("micro.conf")).toBeLessThan(main.indexOf("pod.conf"));
     const micro = await readFile(join(pgdata, "micro.conf"), "utf8");
     expect(micro).toContain("shared_buffers = '16MB'");
+  });
+
+  it("installs only the pod.conf overlay for default stacks", async () => {
+    const pgdata = await fakePgdata();
+    await installPodConfOverlay(pgdata);
+    await installPodConfOverlay(pgdata);
+
+    const main = await readFile(join(pgdata, "postgresql.conf"), "utf8");
+    expect(main).toContain("include_if_exists = 'pod.conf'");
+    expect(main).not.toContain("include_if_exists = 'micro.conf'");
+    expect(main.match(/include_if_exists = 'pod\.conf'/g)).toHaveLength(1);
   });
 
   it("round-trips preload libraries via pod.conf", async () => {

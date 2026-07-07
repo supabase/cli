@@ -20,7 +20,7 @@ import { planEnableExtension } from "./enableExtension.ts";
 import { StackBuildError } from "./errors.ts";
 import { configureFunctionsRuntime, type FunctionsConfig } from "./functions.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
-import { readPreloadLibraries, writePreloadLibraries } from "./pgconf.ts";
+import { installPodConfOverlay, readPreloadLibraries, writePreloadLibraries } from "./pgconf.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { PreparedStackArtifacts } from "./StackPreparation.ts";
@@ -248,6 +248,12 @@ export class StackLifecycleCoordinator extends Context.Service<
         const startedServicesRef = yield* Ref.make<ReadonlySet<string>>(new Set());
         const markStarted = (names: Iterable<string>) =>
           Ref.update(startedServicesRef, (current) => new Set([...current, ...names]));
+        const markStopped = (names: Iterable<string>) =>
+          Ref.update(startedServicesRef, (current) => {
+            const next = new Set(current);
+            for (const name of names) next.delete(name);
+            return next;
+          });
 
         const logBufferServices = yield* Layer.buildWithScope(LogBuffer.layer, scope);
         const logBuffer = Context.get(logBufferServices, LogBuffer);
@@ -605,6 +611,7 @@ export class StackLifecycleCoordinator extends Context.Service<
               }
               yield* Ref.set(phaseRef, "stopping");
               yield* runtimeState.orchestrator.stop();
+              yield* Ref.set(startedServicesRef, new Set());
               yield* Ref.set(phaseRef, "stopped");
             }),
           dispose: disposeOnce,
@@ -621,6 +628,7 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* requireKnownService(name);
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.stopService(name);
+              yield* markStopped([name]);
             }),
           restartService: (name) =>
             Effect.gen(function* () {
@@ -635,6 +643,7 @@ export class StackLifecycleCoordinator extends Context.Service<
           enableExtension: (name) =>
             enableExtensionLock.withPermits(1)(
               Effect.gen(function* () {
+                yield* Effect.promise(() => installPodConfOverlay(config.postgres.dataDir));
                 const currentLibraries = yield* Effect.promise(() =>
                   readPreloadLibraries(config.postgres.dataDir),
                 );

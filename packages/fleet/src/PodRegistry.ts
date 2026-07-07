@@ -1,6 +1,15 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { PodManifest } from "./PodManifest.ts";
+
+const POD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function validatePodId(id: string): string {
+  if (!POD_ID_RE.test(id) || basename(id) !== id) {
+    throw new Error(`invalid pod id: ${id}`);
+  }
+  return id;
+}
 
 /**
  * Persists pod manifests on disk, one per pod directory: `podsRoot/<id>/pod.json`.
@@ -10,11 +19,11 @@ export class PodRegistry {
   constructor(private readonly podsRoot: string) {}
 
   podDir(id: string): string {
-    return join(this.podsRoot, id);
+    return join(this.podsRoot, validatePodId(id));
   }
 
   dataDir(id: string): string {
-    return join(this.podsRoot, id, "data");
+    return join(this.podDir(id), "data");
   }
 
   async read(id: string): Promise<PodManifest | undefined> {

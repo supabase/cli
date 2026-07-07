@@ -546,6 +546,30 @@ describe("ApiProxy", () => {
       try {
         const res = await fetch(`${proxy.url}/rest/v1/users`);
         expect(res.status).toBe(502);
+        expect(await res.text()).toBe("Bad gateway: failed to start postgrest");
+      } finally {
+        await proxy.dispose();
+        await backend.stop();
+      }
+    });
+
+    test("starts imgproxy before transformed storage requests when enabled", async () => {
+      const backend = await startEchoBackend();
+      const calls: string[] = [];
+      const config: ProxyConfig = {
+        ...configForPort(backend.port),
+        imgproxyEnabled: true,
+        ensureService: async (name) => {
+          calls.push(name);
+        },
+      };
+      const proxy = await startProxy(config);
+      try {
+        const res = await fetch(`${proxy.url}/storage/v1/render/image/public/bucket/image.png`, {
+          headers: { apikey: PUBLISHABLE_KEY },
+        });
+        expect(res.status).toBe(200);
+        expect(calls).toEqual(["storage", "imgproxy"]);
       } finally {
         await proxy.dispose();
         await backend.stop();

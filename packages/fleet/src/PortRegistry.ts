@@ -46,8 +46,13 @@ function isValidState(value: unknown): value is PortState {
  *   ports are also duplicated in each pod's own manifest (`pod.json`), the
  *   daemon is expected to re-seed the registry after such a reset by calling
  *   `restore()` for each known pod.
+ * - **In-process serialization.** Mutating operations are queued so concurrent
+ *   lifecycle calls in the owner process cannot interleave writes to the shared
+ *   temporary state file.
  */
 export class PortRegistry {
+  private mutationQueue: Promise<void> = Promise.resolve();
+
   private constructor(
     private readonly stateFile: string,
     private state: PortState,
@@ -84,19 +89,21 @@ export class PortRegistry {
   }
 
   async allocate(podId: string): Promise<PodPorts> {
-    const existing = this.state.pods[podId];
-    if (existing) return existing;
-    const used = new Set(Object.values(this.state.pods).flatMap((p) => [p.dbPort, p.apiPort]));
-    let candidate = this.state.basePort;
-    const next = (): number => {
-      while (used.has(candidate)) candidate += 1;
-      used.add(candidate);
-      return candidate;
-    };
-    const ports: PodPorts = { dbPort: next(), apiPort: next() };
-    this.state = { ...this.state, pods: { ...this.state.pods, [podId]: ports } };
-    await this.persist();
-    return ports;
+    return this.withMutation(async () => {
+      const existing = this.state.pods[podId];
+      if (existing) return existing;
+      const used = new Set(Object.values(this.state.pods).flatMap((p) => [p.dbPort, p.apiPort]));
+      let candidate = this.state.basePort;
+      const next = (): number => {
+        while (used.has(candidate)) candidate += 1;
+        used.add(candidate);
+        return candidate;
+      };
+      const ports: PodPorts = { dbPort: next(), apiPort: next() };
+      this.state = { ...this.state, pods: { ...this.state.pods, [podId]: ports } };
+      await this.persist();
+      return ports;
+    });
   }
 
   /**
@@ -107,35 +114,54 @@ export class PortRegistry {
    * pod.
    */
   async restore(podId: string, ports: PodPorts): Promise<void> {
-    const existing = this.state.pods[podId];
-    if (existing) {
-      if (existing.dbPort === ports.dbPort && existing.apiPort === ports.apiPort) {
-        return;
-      }
-      throw new Error(
-        `PortRegistry: cannot restore pod "${podId}" with ports ${JSON.stringify(ports)}; ` +
-          `it is already recorded with different ports ${JSON.stringify(existing)}`,
-      );
-    }
-
-    for (const [otherPodId, otherPorts] of Object.entries(this.state.pods)) {
-      if (otherPorts.dbPort === ports.dbPort || otherPorts.apiPort === ports.apiPort) {
+    await this.withMutation(async () => {
+      const existing = this.state.pods[podId];
+      if (existing) {
+        if (existing.dbPort === ports.dbPort && existing.apiPort === ports.apiPort) {
+          return;
+        }
         throw new Error(
           `PortRegistry: cannot restore pod "${podId}" with ports ${JSON.stringify(ports)}; ` +
-            `port already assigned to pod "${otherPodId}"`,
+            `it is already recorded with different ports ${JSON.stringify(existing)}`,
         );
       }
-    }
 
-    this.state = { ...this.state, pods: { ...this.state.pods, [podId]: ports } };
-    await this.persist();
+      const restoredPorts = new Set([ports.dbPort, ports.apiPort]);
+      for (const [otherPodId, otherPorts] of Object.entries(this.state.pods)) {
+        if (restoredPorts.has(otherPorts.dbPort) || restoredPorts.has(otherPorts.apiPort)) {
+          throw new Error(
+            `PortRegistry: cannot restore pod "${podId}" with ports ${JSON.stringify(ports)}; ` +
+              `port already assigned to pod "${otherPodId}"`,
+          );
+        }
+      }
+
+      this.state = { ...this.state, pods: { ...this.state.pods, [podId]: ports } };
+      await this.persist();
+    });
   }
 
   async release(podId: string): Promise<void> {
-    const rest = { ...this.state.pods };
-    delete rest[podId];
-    this.state = { ...this.state, pods: rest };
-    await this.persist();
+    await this.withMutation(async () => {
+      const rest = { ...this.state.pods };
+      delete rest[podId];
+      this.state = { ...this.state, pods: rest };
+      await this.persist();
+    });
+  }
+
+  private async withMutation<T>(body: () => Promise<T>): Promise<T> {
+    const previous = this.mutationQueue;
+    let release: () => void = () => {};
+    this.mutationQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    try {
+      return await body();
+    } finally {
+      release();
+    }
   }
 
   private async persist(): Promise<void> {

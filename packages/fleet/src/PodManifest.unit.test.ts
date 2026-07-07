@@ -12,7 +12,16 @@ describe("templateKey", () => {
       templateKey({ postgres: "17.6.1.143", auth: "2.192.1" }),
     );
   });
-  it("base key is human-readable", () => {
-    expect(baseTemplateKey("17.6.1.143")).toBe("pg-17.6.1.143");
+  it("includes enabled services in canonical order", () => {
+    const versions = { postgres: "17.6.1.143", auth: "2.192.0" };
+    expect(templateKey(versions, ["auth", "postgrest"])).toBe(
+      templateKey(versions, ["postgrest", "auth"]),
+    );
+    expect(templateKey(versions, ["auth"])).not.toBe(templateKey(versions, ["auth", "postgrest"]));
+  });
+  it("base key is stable and path-safe", () => {
+    expect(baseTemplateKey("17.6.1.143")).toBe(baseTemplateKey("17.6.1.143"));
+    expect(baseTemplateKey("../17.6.1.143")).toMatch(/^pg-[a-f0-9]{16}$/);
+    expect(baseTemplateKey("../17.6.1.143")).not.toContain("..");
   });
 });

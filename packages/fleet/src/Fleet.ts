@@ -48,10 +48,10 @@ interface WarmPod {
   readonly internalDbPort: number;
 }
 
-// Matches the supabase CLI local-dev convention (see packages/stack
-// services/postgres.ts POSTGRES_PASSWORD default) — a template-built
-// postgres data dir only accepts this password.
-const DB_PASSWORD = "postgres";
+// Must match packages/stack/src/services/postgres.ts: the template build stores
+// this password in the data dir, and pod connection URLs need to use the same
+// value when exposing the suspended/warm pod.
+const DB_PASSWORD = process.env.POSTGRES_PASSWORD ?? "postgres";
 
 // Internal (in-process stack) ports are derived from the externally-visible,
 // PortRegistry-owned port by a fixed +10_000 offset so the two ranges never
@@ -118,6 +118,7 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   const warm = new Map<string, WarmPod>();
   const wakesInFlight = new Map<string, Promise<PodUpstream>>();
   const podLocks = new PodLock();
+  let disposed = false;
 
   const monitor = new IdleMonitor({
     idleMs,
@@ -137,7 +138,23 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
 
   const runPidFile = (id: string): string => join(pods.podDir(id), "run.pid");
 
+  async function withPodLocks<T>(ids: ReadonlyArray<string>, body: () => Promise<T>): Promise<T> {
+    const ordered = [...new Set(ids)].sort((a, b) => a.localeCompare(b));
+    const acquire = (index: number): Promise<T> =>
+      index >= ordered.length
+        ? body()
+        : podLocks.withLock(ordered[index]!, () => acquire(index + 1));
+    return acquire(0);
+  }
+
+  async function rollbackProvisionedPod(id: string): Promise<void> {
+    await proxy.unregister(id).catch(() => {});
+    await provisioner.destroy(id).catch(() => {});
+    states.delete(id);
+  }
+
   async function wakeUpstream(id: string): Promise<PodUpstream> {
+    if (disposed) throw new Error("fleet is disposed");
     const existing = warm.get(id);
     if (existing) return { host: "127.0.0.1", port: existing.internalDbPort };
     // Dedup deliberately stays OUTSIDE podLocks: EdgeProxy may invoke wake()
@@ -162,33 +179,42 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
             provisioned: true,
             profile: "micro",
           },
-          postgrest: manifest.services.postgrest === true ? {} : false,
-          auth: manifest.services.auth === true ? {} : false,
-          realtime: manifest.services.realtime === true ? {} : false,
-          edgeRuntime: manifest.services["edge-runtime"] === true ? {} : false,
-          storage: manifest.services.storage === true ? {} : false,
-          imgproxy: manifest.services.imgproxy === true ? {} : false,
-          mailpit: manifest.services.mailpit === true ? {} : false,
-          pgmeta: manifest.services.pgmeta === true ? {} : false,
-          studio: manifest.services.studio === true ? {} : false,
-          analytics: manifest.services.analytics === true ? {} : false,
-          vector: manifest.services.vector === true ? {} : false,
-          pooler: manifest.services.pooler === true ? {} : false,
+          postgrest:
+            manifest.services.postgrest === true ? { version: manifest.versions.postgrest } : false,
+          auth: manifest.services.auth === true ? { version: manifest.versions.auth } : false,
+          realtime:
+            manifest.services.realtime === true ? { version: manifest.versions.realtime } : false,
+          edgeRuntime:
+            manifest.services["edge-runtime"] === true
+              ? { version: manifest.versions["edge-runtime"] }
+              : false,
+          storage:
+            manifest.services.storage === true ? { version: manifest.versions.storage } : false,
+          imgproxy:
+            manifest.services.imgproxy === true ? { version: manifest.versions.imgproxy } : false,
+          mailpit:
+            manifest.services.mailpit === true ? { version: manifest.versions.mailpit } : false,
+          pgmeta: manifest.services.pgmeta === true ? { version: manifest.versions.pgmeta } : false,
+          studio: manifest.services.studio === true ? { version: manifest.versions.studio } : false,
+          analytics:
+            manifest.services.analytics === true ? { version: manifest.versions.analytics } : false,
+          vector: manifest.services.vector === true ? { version: manifest.versions.vector } : false,
+          pooler: manifest.services.pooler === true ? { version: manifest.versions.pooler } : false,
           functions: false,
         });
         try {
           await stack.start();
           await stack.serviceReady("postgres");
+          await writeFile(runPidFile(id), String(process.pid));
+          warm.set(id, { stack, internalDbPort });
+          states.set(id, "warm");
+          monitor.track(id);
+          monitor.recordActivity(id, proxy.openConnections(id));
+          return { host: "127.0.0.1", port: internalDbPort };
         } catch (err) {
           await stack.dispose().catch(() => {});
           throw err;
         }
-        warm.set(id, { stack, internalDbPort });
-        states.set(id, "warm");
-        monitor.track(id);
-        monitor.recordActivity(id, proxy.openConnections(id));
-        await writeFile(runPidFile(id), String(process.pid));
-        return { host: "127.0.0.1", port: internalDbPort };
       })
       .catch((err: unknown) => {
         states.set(id, "suspended");
@@ -260,9 +286,16 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
 
   const handle: FleetHandle = {
     async createPod(opts) {
-      const manifest = await provisioner.create(opts);
-      await registerEdge(manifest);
-      return status(manifest);
+      return podLocks.withLock(opts.id, async () => {
+        const manifest = await provisioner.create(opts);
+        try {
+          await registerEdge(manifest);
+          return status(manifest);
+        } catch (err) {
+          await rollbackProvisionedPod(manifest.id);
+          throw err;
+        }
+      });
     },
     async destroyPod(id) {
       // suspend (tears down live processes) and provisioner.destroy (deletes
@@ -284,14 +317,21 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
       });
     },
     async forkPod(sourceId, newId) {
+      if (sourceId === newId) throw new Error(`pod already exists: ${newId}`);
       // Lock the SOURCE pod around suspend + the fork's clone of its data
-      // dir (provisioner.fork reads sourceId's data dir). The new pod needs
-      // no lock: it isn't live yet, nothing else can race it.
-      const manifest = await podLocks.withLock(sourceId, async () => {
+      // dir (provisioner.fork reads sourceId's data dir), and lock the TARGET
+      // id so concurrent creates/forks cannot delete each other's results.
+      const manifest = await withPodLocks([sourceId, newId], async () => {
         await suspendLocked(sourceId);
-        return provisioner.fork(sourceId, newId);
+        const forked = await provisioner.fork(sourceId, newId);
+        try {
+          await registerEdge(forked);
+          return forked;
+        } catch (err) {
+          await rollbackProvisionedPod(forked.id);
+          throw err;
+        }
       });
-      await registerEdge(manifest);
       return status(manifest);
     },
     async wake(id) {
@@ -311,26 +351,30 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
     // wake. Callers that need a non-preload extension enabled on a
     // currently-suspended pod must `wake()` it first.
     async enableExtension(id, extension) {
-      const pod = warm.get(id);
-      if (pod) {
-        await pod.stack.enableExtension(extension);
-        return;
-      }
-      const manifest = await pods.read(id);
-      if (manifest === undefined) throw new Error(`unknown pod: ${id}`);
-      if (!PRELOAD_REQUIRED_EXTENSIONS.has(extension)) return;
-      const libs = await readPreloadLibraries(pods.dataDir(id));
-      if (!libs.includes(extension)) {
-        await writePreloadLibraries(pods.dataDir(id), [...libs, extension]);
-      }
+      await podLocks.withLock(id, async () => {
+        const pod = warm.get(id);
+        if (pod) {
+          await pod.stack.enableExtension(extension);
+          return;
+        }
+        const manifest = await pods.read(id);
+        if (manifest === undefined) throw new Error(`unknown pod: ${id}`);
+        if (!PRELOAD_REQUIRED_EXTENSIONS.has(extension)) return;
+        const libs = await readPreloadLibraries(pods.dataDir(id));
+        if (!libs.includes(extension)) {
+          await writePreloadLibraries(pods.dataDir(id), [...libs, extension]);
+        }
+      });
     },
     async listPods() {
       const manifests = await pods.list();
       return Promise.all(manifests.map((m) => status(m)));
     },
     async dispose() {
-      for (const id of warm.keys()) await suspend(id);
+      disposed = true;
       await proxy.close();
+      await Promise.allSettled(wakesInFlight.values());
+      for (const id of warm.keys()) await suspend(id);
     },
     async [Symbol.asyncDispose]() {
       await handle.dispose();

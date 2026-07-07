@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -181,6 +181,7 @@ describe("StackLifecycleCoordinator enableExtension", () => {
   // `Effect.sleep("10 millis")`, which needs the real clock to progress.
   it.live("serializes concurrent enableExtension calls so no write is lost", () => {
     const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-test-"));
+    writeFileSync(join(dataDir, "postgresql.conf"), "# stock conf\n");
     const config = makeConfig(dataDir);
     const { layer } = setupLayer(config);
 

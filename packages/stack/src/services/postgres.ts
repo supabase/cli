@@ -33,16 +33,18 @@ interface DockerPostgresOptions extends PostgresServiceOptions {
   readonly cleanupDataDirOnExit?: boolean;
 }
 
+const POSTGRES_PASSWORD = process.env.POSTGRES_PASSWORD ?? "postgres";
+
 const postgresEnv = (opts: NativePostgresOptions): Record<string, string> => ({
   PGDATA: opts.dataDir,
-  POSTGRES_PASSWORD: "postgres",
+  POSTGRES_PASSWORD,
   DYLD_LIBRARY_PATH: `${opts.binPath}/lib`,
   LD_LIBRARY_PATH: `${opts.binPath}/lib`,
   TZDIR: "/var/db/timezone/zoneinfo",
 });
 
 const postgresDockerEnv = (opts: DockerPostgresOptions): Record<string, string> => ({
-  POSTGRES_PASSWORD: "postgres",
+  POSTGRES_PASSWORD,
   JWT_SECRET: opts.jwtSecret,
   JWT_EXP: String(opts.jwtExpiry),
 });

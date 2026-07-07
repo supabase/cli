@@ -530,9 +530,16 @@ export class Orchestrator extends Context.Service<
 
         const restartClosureFor = (name: string): ReadonlyArray<ServiceDef> => {
           const names = new Set<string>([name]);
+          const shouldRestartDependent = (dependentName: string): boolean => {
+            const svc = services.get(dependentName);
+            if (svc === undefined) return false;
+            const status = SubscriptionRef.getUnsafe(svc.state).status;
+            return status !== "Pending" && status !== "Stopped";
+          };
           const collectDependents = (current: string): void => {
             for (const dependent of graph.dependentsOf(current)) {
               if (names.has(dependent.name)) continue;
+              if (!shouldRestartDependent(dependent.name)) continue;
               names.add(dependent.name);
               collectDependents(dependent.name);
             }
@@ -613,6 +620,12 @@ export class Orchestrator extends Context.Service<
               }
               const order = graph.startOrderFor(name);
               for (const d of order) {
+                const svc = services.get(d.name);
+                const status =
+                  svc === undefined ? undefined : SubscriptionRef.getUnsafe(svc.state).status;
+                if (status === "Stopped" || status === "Failed") {
+                  yield* resetService(d.name);
+                }
                 yield* FiberMap.run(fibers, d.name, runServiceSafe(d), { onlyIfMissing: true });
               }
             }),
