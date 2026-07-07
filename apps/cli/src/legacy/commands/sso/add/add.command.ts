@@ -84,7 +84,7 @@ export const legacySsoAddCommand = Command.make("add", config).pipe(
   ]),
   Command.withHandler((flags) =>
     legacySsoAdd(flags).pipe(
-      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"] }),
+      withLegacyCommandInstrumentation({ flags, safeFlags: ["project-ref"], config }),
       withJsonErrorHandling,
     ),
   ),

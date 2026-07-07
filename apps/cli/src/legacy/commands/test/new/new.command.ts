@@ -39,7 +39,10 @@ export const legacyTestNewCommand = Command.make("new", config).pipe(
   Command.withDescription("Create a new test file."),
   Command.withShortDescription("Create a new test file"),
   Command.withHandler((flags) =>
-    legacyTestNew(flags).pipe(withLegacyCommandInstrumentation({ flags }), withJsonErrorHandling),
+    legacyTestNew(flags).pipe(
+      withLegacyCommandInstrumentation({ flags, config }),
+      withJsonErrorHandling,
+    ),
   ),
   Command.provide(legacyTestNewRuntimeLayer),
 );
