@@ -1,0 +1,33 @@
+{
+  "name": "@supabase/fleet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "nx run-many -t test:unit --projects=$npm_package_name",
+    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
+    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
+  },
+  "dependencies": {
+    "@supabase/process-compose": "workspace:*",
+    "@supabase/stack": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
+    "@vitest/coverage-istanbul": "catalog:",
+    "knip": "catalog:",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "vitest": "catalog:"
+  },
+  "knip": {
+    "entry": ["src/**/*.test.ts"],
+    "ignoreDependencies": ["@typescript/native-preview", "oxfmt", "oxlint", "oxlint-tsgolint"],
+    "ignoreBinaries": ["nx"]
+  }
+}
