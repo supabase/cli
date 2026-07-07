@@ -527,6 +527,81 @@ secrets = ["actual-secret"]
   );
 
   it.live(
+    "recovers the selected remote's [edge_runtime.secrets] override, not the base, on schema-decode error (CLI-1867 Go parity)",
+    () => {
+      // `analytics.port` is an unrelated schema-decode error that triggers the
+      // recovery path. `remotes.staging.project_id` matches the ref the
+      // resolver defaults to (`mockLegacyCliConfig`'s `LEGACY_VALID_REF`), so
+      // Go seeds `Config.ProjectId` before `Load()`
+      // (`internal/utils/flags/config_path.go:11-12`) and merges the remote
+      // override in `loadFromFile` (`pkg/config/config.go:604-609`) before the
+      // tolerant decode this PR models — the recovered secret must reflect the
+      // remote's override value, not the base document's.
+      writeConfig(
+        `[edge_runtime.secrets]
+FROM_CONFIG = "base-value"
+
+[analytics]
+port = "not-a-number"
+
+[remotes.staging]
+project_id = "${LEGACY_VALID_REF}"
+
+[remotes.staging.edge_runtime.secrets]
+FROM_CONFIG = "remote-value"
+`,
+      );
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: [],
+        });
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([
+          { name: "FROM_CONFIG", value: "remote-value" },
+        ]);
+        expect(debugLogger.messages).toHaveLength(1);
+        expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "tolerates two [remotes.*] blocks sharing the target project_id, logs it, and still sets CLI-arg secrets (CLI-1867 Go parity)",
+    () => {
+      // Go's `flags.LoadConfig` swallows *any* `Load()` error non-fatally
+      // (`internal/secrets/set/set.go:22-24`), including the duplicate-
+      // `project_id` error `loadFromFile` raises before `mapstructure` ever
+      // runs (`pkg/config/config.go:601`). There is no parsed document to
+      // recover a subtree from, so config-sourced secrets are dropped
+      // entirely — only CLI-arg secrets survive.
+      writeConfig(
+        `[edge_runtime.secrets]
+FROM_CONFIG = "config-value"
+
+[remotes.a]
+project_id = "dupe-project-id"
+
+[remotes.b]
+project_id = "dupe-project-id"
+`,
+      );
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: ["FOO=bar"],
+        });
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([{ name: "FOO", value: "bar" }]);
+        expect(debugLogger.messages).toHaveLength(1);
+        expect(debugLogger.messages[0]).toContain("duplicate project_id for [remotes.");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "does not echo a literal secret value from config.toml into the debug log on a syntax error",
     () => {
       // `smol-toml`'s `TomlError` embeds a source codeblock (the offending line ±1)

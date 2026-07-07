@@ -164,7 +164,16 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     // `--linked`/`--local`/`--db-url` flag, so (unlike most commands) the root
     // `PreRun` never loads the config first either; this is the only load, and
     // it must not be fatal.
-    const loadedConfig = yield* loadProjectConfig(runtimeInfo.cwd).pipe(
+    //
+    // Pass `ref` so a matching `[remotes.*]` block is merged over the base
+    // config before decode, mirroring Go's `flags.LoadConfig`
+    // (`internal/utils/flags/config_path.go:11-12`: `utils.Config.ProjectId =
+    // ProjectRef` before `Load()`) merging the override in `loadFromFile`
+    // (`pkg/config/config.go:604-609`) ahead of the tolerant decode below.
+    // Without this, a schema-decode error on `--project-ref <remote-ref>`
+    // would recover the *base* `[edge_runtime.secrets]` instead of the
+    // explicitly selected remote's override.
+    const loadedConfig = yield* loadProjectConfig(runtimeInfo.cwd, { projectRef: ref }).pipe(
       Effect.map((loaded) => loaded?.config ?? null),
       Effect.catchTag("ProjectConfigParseError", (cause) => {
         // `smol-toml`'s `TomlError` (and some schema-decode errors) embed a
@@ -192,6 +201,15 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
       // to recover a subtree from.
       Effect.catchTag("ProjectEnvParseError", (cause) =>
         debugLogger.debug(`failed to parse ${cause.path}:${cause.line}`).pipe(Effect.as(null)),
+      ),
+      // Two `[remotes.*]` blocks declare the same `project_id` as `ref` — Go's
+      // `flags.LoadConfig` swallows *any* `Load()` error non-fatally
+      // (`internal/secrets/set/set.go:22-24`), including this one, which
+      // `loadFromFile` raises before `mapstructure` ever runs
+      // (`pkg/config/config.go:601`). `cause.message` already matches Go's
+      // string verbatim (see `DuplicateRemoteProjectIdError`'s field doc).
+      Effect.catchTag("DuplicateRemoteProjectIdError", (cause) =>
+        debugLogger.debug(cause.message).pipe(Effect.as(null)),
       ),
     );
     if (loadedConfig !== null) {
