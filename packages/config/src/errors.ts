@@ -6,7 +6,7 @@ export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigPars
   readonly format: ConfigFormat;
   readonly cause: unknown;
   /**
-   * The raw, pre-schema-decode document (post env-interpolation and
+   * The pre-schema-decode `edge_runtime` subtree (post env-interpolation and
    * `[remotes.*]` merge) — present only when the failure happened during
    * *schema* decode (`Schema.decodeUnknownSync`), not during raw TOML/JSON
    * parsing. `Schema.decodeUnknownSync` is all-or-nothing: a single invalid
@@ -16,11 +16,15 @@ export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigPars
    * independently decoded before hitting an unrelated error. Callers that
    * need Go's tolerance for a single subtree (e.g. `secrets set` recovering
    * `edge_runtime.secrets` when an unrelated field like `analytics.port` is
-   * malformed) can re-decode a narrowed slice of this document against the
-   * full schema themselves. `undefined` when the document never parsed at
-   * all — that class has no recoverable structure in either implementation.
+   * malformed) can re-decode this subtree against the full schema themselves.
+   * Only `edge_runtime` is retained, not the whole document — several callers
+   * of `loadProjectConfig` don't catch `ProjectConfigParseError` at all, so
+   * this error can propagate with whatever is attached here, and no caller
+   * needs anything outside `edge_runtime` today. `undefined` when the
+   * document never parsed at all — that class has no recoverable structure in
+   * either implementation.
    */
-  readonly document?: Record<string, unknown>;
+  readonly document?: { readonly edge_runtime?: unknown };
 }> {}
 
 export class ProjectEnvParseError extends Data.TaggedError("ProjectEnvParseError")<{

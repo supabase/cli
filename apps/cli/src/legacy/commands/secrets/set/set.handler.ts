@@ -45,28 +45,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * TOML/JSON parse failure) on `supabase/config.toml`. Go's `viper`+
  * `mapstructure` decode (`apps/cli-go/pkg/config/config.go:749`) mutates the
  * target struct field-by-field: a type error anywhere — an unrelated
- * top-level table (`analytics.port`) *or* a sibling field inside the same
- * `edge_runtime` table (`edge_runtime.inspector_port`) — does not stop
- * `edge_runtime.secrets` from landing in `utils.Config`, because
- * `UnmarshalExact` still populates every field it *can* decode before
- * aggregating errors. Confirmed empirically against this repo's actual
- * `pkg/config`: a TOML with both a malformed `edge_runtime.inspector_port`
+ * top-level table (`analytics.port`), a sibling field inside the same
+ * `edge_runtime` table (`edge_runtime.inspector_port`), *or* a single bad
+ * entry inside the `edge_runtime.secrets` map itself (`BAD = 123`) — does not
+ * stop the rest of `edge_runtime.secrets` from landing in `utils.Config`.
+ * `UnmarshalExact` still populates every field (and every map entry) it *can*
+ * decode before aggregating errors: `mapstructure`'s map decoder
+ * (`decodeMapFromMap`) iterates each key independently, appends a per-entry
+ * error and `continue`s rather than aborting, then still calls `val.Set` with
+ * whatever entries succeeded. Confirmed empirically against this repo's
+ * actual `pkg/config`: a TOML with both a malformed `edge_runtime.inspector_port`
  * and a valid `[edge_runtime.secrets]` block still yields a populated
- * `EdgeRuntime.Secrets` (`InspectorPort` is left at its zero value).
+ * `EdgeRuntime.Secrets` (`InspectorPort` is left at its zero value), and a
+ * `[edge_runtime.secrets]` block with one bad entry alongside a good one
+ * still yields the good entry.
  * `Schema.decodeUnknownSync` has no such tolerance; a single bad field
- * anywhere discards the whole decode — and re-decoding the *entire*
- * `edge_runtime` subtree (as opposed to just `secrets`) would still fail in
- * the sibling-field case, since `inspector_port` comes along for the ride. To
- * keep `secrets set` at parity without loosening `packages/config`'s decode
- * semantics for every caller, re-slice just `edge_runtime.secrets` out of the
+ * anywhere discards the whole decode — re-decoding the *entire* `edge_runtime`
+ * subtree would still fail in the sibling-field case (`inspector_port` comes
+ * along for the ride), and re-decoding the whole `secrets` map atomically
+ * would still fail when just one entry in that map is bad. To keep
+ * `secrets set` at parity without loosening `packages/config`'s decode
+ * semantics for every caller: re-slice `edge_runtime.secrets` out of the
  * pre-decode document (`cause.document` — only set when the document itself
  * parsed fine and the *schema* decode is what failed, see
- * `ProjectConfigParseError`) and re-decode it alone against the full schema,
- * where every other field (including the rest of `edge_runtime`) defaults
- * cleanly. A true parse failure (`cause.document` undefined) has no
- * recoverable structure in either implementation — Go's own
- * `viper.MergeConfig` also fails the whole load before `mapstructure` ever
- * runs in that case.
+ * `ProjectConfigParseError`), decode each entry independently and keep only
+ * the ones that succeed (mirroring `decodeMapFromMap`'s per-key tolerance),
+ * then decode the filtered map against the full schema, where every other
+ * field (including the rest of `edge_runtime`) defaults cleanly. A true parse
+ * failure (`cause.document` undefined) has no recoverable structure in either
+ * implementation — Go's own `viper.MergeConfig` also fails the whole load
+ * before `mapstructure` ever runs in that case.
  */
 function recoverEdgeRuntimeConfig(cause: ProjectConfigParseError): ProjectConfig | null {
   if (cause.document === undefined) {
@@ -74,13 +82,34 @@ function recoverEdgeRuntimeConfig(cause: ProjectConfigParseError): ProjectConfig
   }
   const edgeRuntime = cause.document.edge_runtime;
   const secrets = isRecord(edgeRuntime) ? edgeRuntime.secrets : undefined;
+  const decodableSecrets = isRecord(secrets) ? filterDecodableSecrets(secrets) : undefined;
   try {
     return decodeProjectConfig({
-      edge_runtime: isRecord(secrets) ? { secrets } : {},
+      edge_runtime: decodableSecrets !== undefined ? { secrets: decodableSecrets } : {},
     });
   } catch {
     return null;
   }
+}
+
+/**
+ * Mirrors mapstructure's per-entry map decode tolerance
+ * (`decodeMapFromMap`, invoked via `v.UnmarshalExact` in
+ * `apps/cli-go/pkg/config/config.go:749`): a decode error on one secret
+ * value doesn't discard the whole `[edge_runtime.secrets]` map — only that
+ * entry is dropped, and every other entry is still recovered.
+ */
+function filterDecodableSecrets(secrets: Record<string, unknown>): Record<string, unknown> {
+  const kept: Record<string, unknown> = {};
+  for (const [name, value] of Object.entries(secrets)) {
+    try {
+      decodeProjectConfig({ edge_runtime: { secrets: { [name]: value } } });
+      kept[name] = value;
+    } catch {
+      // Drop this entry only, matching mapstructure's per-key error handling.
+    }
+  }
+  return kept;
 }
 
 export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (

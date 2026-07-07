@@ -337,13 +337,20 @@ function parseProjectConfig(
     // are caught earlier, in `loadProjectConfigFile`), so any error here is a
     // schema-decode failure — attach it so callers can attempt a narrower,
     // Go-tolerant re-decode of an unaffected subtree. See the field doc on
-    // `ProjectConfigParseError.document`.
+    // `ProjectConfigParseError.document`. Only the `edge_runtime` subtree is
+    // retained (not the whole document): it's the only slice any caller
+    // re-decodes today (`secrets set`'s `recoverEdgeRuntimeConfig`), and several
+    // callers of `loadProjectConfig` (e.g. `gen types`, `next start`,
+    // `functions dev/serve/deploy`) don't catch `ProjectConfigParseError` at
+    // all, so this error can propagate with whatever we attach here — no
+    // reason to carry unrelated sections (db credentials, other
+    // `[remotes.*]` blocks, etc.) along for the ride.
     catch: (cause) =>
       new ProjectConfigParseError({
         path,
         format,
         cause,
-        document: isObject(document) ? document : undefined,
+        document: isObject(document) ? { edge_runtime: document.edge_runtime } : undefined,
       }),
   });
 }
