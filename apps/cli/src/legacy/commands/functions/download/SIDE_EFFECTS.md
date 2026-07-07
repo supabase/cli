@@ -20,13 +20,13 @@
 
 ## API Routes
 
-| Method | Path                                       | Auth         | Request body | Response (used fields)                             |
-| ------ | ------------------------------------------ | ------------ | ------------ | -------------------------------------------------- |
-| `GET`  | `/v1/projects/{ref}/functions`             | Bearer token | none         | function slugs, when downloading all               |
-| `GET`  | `/v1/projects/{ref}/functions/{slug}`      | Bearer token | none         | entrypoint path, when absent from metadata         |
-| `GET`  | `/v1/projects/{ref}/functions/{slug}/body` | Bearer token | none         | multipart function source                          |
+| Method | Path                                       | Auth         | Request body | Response (used fields)                                |
+| ------ | ------------------------------------------ | ------------ | ------------ | ----------------------------------------------------- |
+| `GET`  | `/v1/projects/{ref}/functions`             | Bearer token | none         | function slugs, when downloading all                  |
+| `GET`  | `/v1/projects/{ref}/functions/{slug}`      | Bearer token | none         | entrypoint path, when absent from metadata            |
+| `GET`  | `/v1/projects/{ref}/functions/{slug}/body` | Bearer token | none         | multipart function source                             |
 | `GET`  | `/v1/projects`                             | Bearer token | none         | project picker options when no ref is supplied in TTY |
-| `GET`  | `/v1/projects/{ref}`                       | Bearer token | none         | linked project metadata used by the post-run cache |
+| `GET`  | `/v1/projects/{ref}`                       | Bearer token | none         | linked project metadata used by the post-run cache    |
 
 ## Subprocesses
 
@@ -36,14 +36,14 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                                        | Required?                                                 |
-| ----------------------- | -------------------------------------------------------------- | --------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)           | no (falls back to keyring → `~/.supabase/access-token`)   |
-| `SUPABASE_HOME`         | overrides where `telemetry.json` and `profile` are read/written | no (defaults to `~/.supabase`)                            |
-| `SUPABASE_NO_KEYRING`   | disables the OS keyring, forcing the access-token file fallback | no                                                        |
-| `SUPABASE_PROFILE`      | select a built-in profile or YAML profile file with `api_url:` | no (falls back to `~/.supabase/profile` -> `supabase`)    |
-| `SUPABASE_PROJECT_ID`   | provides the project ref when `--project-ref` is unset         | no (falls back to `<workdir>/supabase/.temp/project-ref`) |
-| `SUPABASE_WORKDIR`      | sets `<workdir>` for local Supabase temp files                 | no (falls back to `--workdir` -> nearest ancestor with `supabase/config.toml` -> cwd) |
+| Variable                | Purpose                                                         | Required?                                                                             |
+| ----------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)            | no (falls back to keyring → `~/.supabase/access-token`)                               |
+| `SUPABASE_HOME`         | overrides where `telemetry.json` and `profile` are read/written | no (defaults to `~/.supabase`)                                                        |
+| `SUPABASE_NO_KEYRING`   | disables the OS keyring, forcing the access-token file fallback | no                                                                                    |
+| `SUPABASE_PROFILE`      | select a built-in profile or YAML profile file with `api_url:`  | no (falls back to `~/.supabase/profile` -> `supabase`)                                |
+| `SUPABASE_PROJECT_ID`   | provides the project ref when `--project-ref` is unset          | no (falls back to `<workdir>/supabase/.temp/project-ref`)                             |
+| `SUPABASE_WORKDIR`      | sets `<workdir>` for local Supabase temp files                  | no (falls back to `--workdir` -> nearest ancestor with `supabase/config.toml` -> cwd) |
 
 ## Exit Codes
 
