@@ -128,6 +128,13 @@ type vectorConfig struct {
 	DbId          string
 }
 
+func shouldMountRootDockerSocket(host string) bool {
+	return strings.HasSuffix(host, "/.docker/run/docker.sock") ||
+		strings.HasSuffix(host, "/.docker/desktop/docker.sock") ||
+		strings.HasSuffix(host, "/.colima/default/docker.sock") ||
+		strings.HasSuffix(host, "/.colima/docker.sock")
+}
+
 var (
 	//go:embed templates/vector.yaml
 	vectorConfigEmbed    string
@@ -424,15 +431,16 @@ EOF
 		case "unix":
 			if dindHost, err = client.ParseHostURL(client.DefaultDockerHost); err != nil {
 				return errors.Errorf("failed to parse default host: %w", err)
-			} else if strings.HasSuffix(parsed.Host, "/.docker/run/docker.sock") ||
-				strings.HasSuffix(parsed.Host, "/.docker/desktop/docker.sock") {
+			} else if shouldMountRootDockerSocket(parsed.Host) {
 				// Docker will not mount rootless socket directly;
 				// instead, specify root socket to have it handled under the hood
 				binds = append(binds, fmt.Sprintf("%[1]s:%[1]s:ro", dindHost.Host))
 			} else {
 				// Podman and OrbStack can mount root-less socket without issue
 				binds = append(binds, fmt.Sprintf("%s:%s:ro", parsed.Host, dindHost.Host))
-				securityOpts = append(securityOpts, "label:disable")
+				if parsed.Host != dindHost.Host {
+					securityOpts = append(securityOpts, "label:disable")
+				}
 			}
 		}
 		if _, err := utils.DockerStart(
