@@ -3,6 +3,7 @@ import type { ServiceDef } from "@supabase/process-compose";
 interface PostgresInitOptions {
   readonly postgresDir: string;
   readonly dbPort: number;
+  readonly dbPassword: string;
   /**
    * When false, append the SQL that Studio runs at cloud project creation to revoke the default
    * Data API privileges on the `public` schema so newly-created entities require explicit GRANTs.
@@ -25,13 +26,17 @@ alter default privileges for role postgres in schema public
   revoke execute on functions from anon, authenticated, service_role;
 `.trim();
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
 export const makePostgresInitService = (opts: PostgresInitOptions): ServiceDef => {
   const pgBinDir = `${opts.postgresDir}/bin`;
   const pgLibDir = `${opts.postgresDir}/lib`;
   const migrationsDir = `${opts.postgresDir}/share/supabase-cli/migrations`;
 
   const psql = `${pgBinDir}/psql -h 127.0.0.1 -p ${opts.dbPort}`;
-  const psqlOpts = `-v ON_ERROR_STOP=1 --no-password --no-psqlrc`;
+  const psqlOpts = `-v ON_ERROR_STOP=1 --no-password --no-psqlrc -v pgpass="$PGPASSWORD"`;
 
   const revokeStep = opts.autoExposeNewTables
     ? ""
@@ -48,7 +53,7 @@ EOSQL
   // postgres-init time from ~5s to ~1s.
   const script = `
 export PATH="${pgBinDir}:$PATH"
-export PGPASSWORD=postgres
+export PGPASSWORD=${shellQuote(opts.dbPassword)}
 db="${migrationsDir}"
 
 # Check if already migrated (authenticator role created by initial-schema.sql)
@@ -59,13 +64,9 @@ else
 
   # Create postgres role if missing (as supabase_admin)
   ${psql} ${psqlOpts} -U supabase_admin -d postgres <<'EOSQL'
-do $$
-begin
-  if not exists (select from pg_roles where rolname = 'postgres') then
-    create role postgres superuser login password 'postgres';
-    alter database postgres owner to postgres;
-  end if;
-end $$
+SELECT format('CREATE ROLE postgres SUPERUSER LOGIN PASSWORD %L', :'pgpass')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres')\\gexec
+ALTER DATABASE postgres OWNER TO postgres;
 EOSQL
 
   # Run all init-scripts in a single psql session (as postgres)
@@ -78,7 +79,9 @@ EOSQL
   fi
 
   # Set supabase_admin password (as postgres)
-  ${psql} ${psqlOpts} -U postgres -d postgres -c "ALTER USER supabase_admin WITH PASSWORD 'postgres'"
+  ${psql} ${psqlOpts} -U postgres -d postgres <<'EOSQL'
+SELECT format('ALTER ROLE supabase_admin WITH PASSWORD %L', :'pgpass')\\gexec
+EOSQL
 
   # Run all migrations in a single psql session (as supabase_admin)
   migrate_flags=""
@@ -111,20 +114,19 @@ ALTER SCHEMA _supavisor OWNER TO postgres;
 EOSQL
 
 # Always update role passwords (idempotent)
-${psql} -U supabase_admin -d postgres -c "
-DO \\$\\$
-DECLARE
-  roles text[] := ARRAY['authenticator','supabase_auth_admin','supabase_storage_admin','supabase_functions_admin','supabase_replication_admin','supabase_read_only_user','postgres'];
-  r text;
-BEGIN
-  FOREACH r IN ARRAY roles LOOP
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
-      EXECUTE format('ALTER ROLE %I WITH PASSWORD ''postgres''', r);
-    END IF;
-  END LOOP;
-END
-\\$\\$;
-"
+${psql} ${psqlOpts} -U supabase_admin -d postgres <<'EOSQL'
+SELECT format('ALTER ROLE %I WITH PASSWORD %L', rolname, :'pgpass')
+FROM pg_roles
+WHERE rolname = ANY (ARRAY[
+  'authenticator',
+  'supabase_auth_admin',
+  'supabase_storage_admin',
+  'supabase_functions_admin',
+  'supabase_replication_admin',
+  'supabase_read_only_user',
+  'postgres'
+])\\gexec
+EOSQL
 `;
 
   return {
@@ -134,7 +136,7 @@ END
     env: {
       DYLD_LIBRARY_PATH: pgLibDir,
       LD_LIBRARY_PATH: pgLibDir,
-      PGPASSWORD: "postgres",
+      PGPASSWORD: opts.dbPassword,
     },
     dependencies: [{ service: "postgres", condition: "healthy" }],
     supervision: {},

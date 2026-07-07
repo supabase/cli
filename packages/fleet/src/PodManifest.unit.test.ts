@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { baseTemplateKey, templateKey } from "./PodManifest.ts";
+import { DEFAULT_VERSIONS } from "@supabase/stack";
+import { baseTemplateKey, resolveTemplateVersions, templateKey } from "./PodManifest.ts";
 
 describe("templateKey", () => {
   it("is stable across key order", () => {
@@ -23,5 +24,12 @@ describe("templateKey", () => {
     expect(baseTemplateKey("17.6.1.143")).toBe(baseTemplateKey("17.6.1.143"));
     expect(baseTemplateKey("../17.6.1.143")).toMatch(/^pg-[a-f0-9]{16}$/);
     expect(baseTemplateKey("../17.6.1.143")).not.toContain("..");
+  });
+
+  it("resolves default versions only for postgres and enabled services", () => {
+    expect(resolveTemplateVersions({ postgres: "17.6.1.143" }, ["postgrest"])).toEqual({
+      postgres: "17.6.1.143",
+      postgrest: DEFAULT_VERSIONS.postgrest,
+    });
   });
 });

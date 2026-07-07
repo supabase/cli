@@ -8,6 +8,7 @@ import {
   type ResolvedFunctionConfig,
 } from "@supabase/config";
 import { Effect, FileSystem, Path, Redacted } from "effect";
+import { postgresConnectionUrl } from "./postgresCredentials.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
 
 export interface FunctionsConfig {
@@ -194,7 +195,13 @@ export const resolveFunctionsRuntimeConfig = Effect.fnUntraced(function* (
   return {
     functionsUrl: `http://127.0.0.1:${stackConfig.apiPort}/functions/v1`,
     supabaseUrl: `http://${runtimeHost.hostname}:${stackConfig.apiPort}`,
-    dbUrl: `postgresql://postgres:postgres@${runtimeHost.hostname}:${stackConfig.dbPort}/postgres`,
+    dbUrl: postgresConnectionUrl({
+      user: "postgres",
+      password: stackConfig.postgres.password,
+      host: runtimeHost.hostname,
+      port: stackConfig.dbPort,
+      database: "postgres",
+    }),
     publishableKey: stackConfig.publishableKey,
     secretKey: stackConfig.secretKey,
     jwtSecret: stackConfig.jwtSecret,

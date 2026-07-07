@@ -1,8 +1,10 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { postgresConnectionUrl } from "../postgresCredentials.ts";
 import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
 
 interface PostgrestServiceOptions {
   readonly dbPort: number;
+  readonly dbPassword: string;
   readonly port: number;
   readonly schemas: ReadonlyArray<string>;
   readonly extraSearchPath: ReadonlyArray<string>;
@@ -26,7 +28,13 @@ const postgrestEnv = (
   opts: PostgrestServiceOptions,
   dbHost = "127.0.0.1",
 ): Record<string, string> => ({
-  PGRST_DB_URI: `postgresql://authenticator:postgres@${dbHost}:${opts.dbPort}/postgres`,
+  PGRST_DB_URI: postgresConnectionUrl({
+    user: "authenticator",
+    password: opts.dbPassword,
+    host: dbHost,
+    port: opts.dbPort,
+    database: "postgres",
+  }),
   PGRST_DB_SCHEMAS: opts.schemas.join(","),
   PGRST_DB_EXTRA_SEARCH_PATH: opts.extraSearchPath.join(","),
   PGRST_DB_ANON_ROLE: "anon",

@@ -1,4 +1,5 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { postgresConnectionUrl } from "../postgresCredentials.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 
 type PoolMode = "transaction" | "session";
@@ -9,6 +10,7 @@ interface DockerPoolerOptions {
   readonly hostAdminPort: number;
   readonly dbHost: string;
   readonly dbPort: number;
+  readonly dbPassword: string;
   readonly poolMode: PoolMode;
   readonly defaultPoolSize: number;
   readonly maxClientConn: number;
@@ -54,7 +56,7 @@ params = %{
   "default_parameter_status" => %{"server_version" => version},
   "users" => [%{
     "db_user" => "pgbouncer",
-    "db_password" => "postgres",
+    "db_password" => ${JSON.stringify(opts.dbPassword)},
     "mode_type" => "${opts.poolMode}",
     "pool_size" => ${opts.defaultPoolSize},
     "is_manager" => true
@@ -76,7 +78,14 @@ export const makePoolerServiceDocker = (opts: DockerPoolerOptions): ServiceDef =
         PORT: String(poolerContainerPorts.admin),
         PROXY_PORT_SESSION: String(poolerContainerPorts.session),
         PROXY_PORT_TRANSACTION: String(poolerContainerPorts.transaction),
-        DATABASE_URL: `ecto://postgres:postgres@${opts.dbHost}:${opts.dbPort}/_supabase`,
+        DATABASE_URL: postgresConnectionUrl({
+          scheme: "ecto",
+          user: "postgres",
+          password: opts.dbPassword,
+          host: opts.dbHost,
+          port: opts.dbPort,
+          database: "_supabase",
+        }),
         CLUSTER_POSTGRES: "true",
         SECRET_KEY_BASE: opts.secretKeyBase,
         VAULT_ENC_KEY: opts.encryptionKey,

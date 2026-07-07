@@ -76,6 +76,25 @@ describe("PortRegistry", () => {
     expect(quarantined).toBe(badStructure);
   });
 
+  it("quarantines saved pod entries with invalid port records", async () => {
+    const file = join(await mkdtemp(join(tmpdir(), "ports-")), "state.json");
+    const badStructure = JSON.stringify({
+      basePort: 55000,
+      pods: {
+        "pod-a": { dbPort: 55010, apiPort: "55011" },
+      },
+    });
+    await writeFile(file, badStructure);
+
+    const reg = await PortRegistry.load(file);
+    expect(reg.get("pod-a")).toBeUndefined();
+    const allocated = await reg.allocate("pod-a");
+    expect(allocated).toEqual({ dbPort: 55000, apiPort: 55001 });
+
+    const quarantined = await readFile(`${file}.corrupt`, "utf8");
+    expect(quarantined).toBe(badStructure);
+  });
+
   it("overwrites any previous quarantine file", async () => {
     const file = join(await mkdtemp(join(tmpdir(), "ports-")), "state.json");
     await writeFile(`${file}.corrupt`, "old-quarantine");

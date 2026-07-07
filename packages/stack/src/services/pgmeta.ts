@@ -7,6 +7,7 @@ interface DockerPgmetaOptions {
   readonly port: number;
   readonly dbHost: string;
   readonly dbPort: number;
+  readonly dbPassword: string;
   readonly networkArgs: ReadonlyArray<string>;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
@@ -36,7 +37,7 @@ export const makePgmetaServiceDocker = (opts: DockerPgmetaOptions): ServiceDef =
       PG_META_DB_NAME: "postgres",
       PG_META_DB_USER: "postgres",
       PG_META_DB_PORT: String(opts.dbPort),
-      PG_META_DB_PASSWORD: "postgres",
+      PG_META_DB_PASSWORD: opts.dbPassword,
     },
     dependsOn: opts.dependencies,
     healthCheck: pgmetaHealthCheck(opts.port),

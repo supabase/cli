@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { ServiceDef } from "@supabase/process-compose";
 import {
   dockerServiceCleanup,
@@ -9,6 +9,7 @@ import {
 interface PostgresServiceOptions {
   readonly dataDir: string;
   readonly port: number;
+  readonly password: string;
   readonly cleanupDataDirOnExit?: boolean;
 }
 
@@ -33,18 +34,16 @@ interface DockerPostgresOptions extends PostgresServiceOptions {
   readonly cleanupDataDirOnExit?: boolean;
 }
 
-const POSTGRES_PASSWORD = process.env.POSTGRES_PASSWORD ?? "postgres";
-
 const postgresEnv = (opts: NativePostgresOptions): Record<string, string> => ({
   PGDATA: opts.dataDir,
-  POSTGRES_PASSWORD,
+  POSTGRES_PASSWORD: opts.password,
   DYLD_LIBRARY_PATH: `${opts.binPath}/lib`,
   LD_LIBRARY_PATH: `${opts.binPath}/lib`,
   TZDIR: "/var/db/timezone/zoneinfo",
 });
 
 const postgresDockerEnv = (opts: DockerPostgresOptions): Record<string, string> => ({
-  POSTGRES_PASSWORD,
+  POSTGRES_PASSWORD: opts.password,
   JWT_SECRET: opts.jwtSecret,
   JWT_EXP: String(opts.jwtExpiry),
 });
@@ -58,13 +57,26 @@ const NATIVE_POSTGRES_RUNTIME_ARGS = [
   "max_replication_slots=5",
 ] as const;
 
+const ACTIVE_MICRO_INCLUDE_RE = /^\s*include_if_exists = 'micro\.conf'/m;
+
 /**
  * On the "micro" profile, these settings live in micro.conf/pod.conf inside PGDATA instead,
  * so no `-c` runtime args are emitted; passing them on the command line would take precedence
  * over the conf files and override users' `ALTER SYSTEM` changes on every restart.
  */
-const runtimeArgsForProfile = (profile?: "default" | "micro"): readonly string[] =>
-  profile === "micro" ? [] : NATIVE_POSTGRES_RUNTIME_ARGS;
+const runtimeArgsForProfile = (
+  profile: "default" | "micro" | undefined,
+  dataDir: string,
+): readonly string[] => {
+  if (profile !== "micro") return NATIVE_POSTGRES_RUNTIME_ARGS;
+  try {
+    return ACTIVE_MICRO_INCLUDE_RE.test(readFileSync(`${dataDir}/postgresql.conf`, "utf8"))
+      ? []
+      : NATIVE_POSTGRES_RUNTIME_ARGS;
+  } catch {
+    return NATIVE_POSTGRES_RUNTIME_ARGS;
+  }
+};
 
 const orphanCleanup = (opts: PostgresServiceOptions) =>
   opts.cleanupDataDirOnExit ? removePathOnOrphanCleanup(opts.dataDir) : [];
@@ -157,7 +169,7 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
         initScript,
         "-p",
         String(opts.port),
-        ...runtimeArgsForProfile(opts.profile),
+        ...runtimeArgsForProfile(opts.profile, opts.dataDir),
         "-c",
         "listen_addresses=*",
         "-c",
@@ -179,7 +191,12 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
   return {
     name: "postgres",
     command: "bash",
-    args: [initScript, "-p", String(opts.port), ...runtimeArgsForProfile(opts.profile)],
+    args: [
+      initScript,
+      "-p",
+      String(opts.port),
+      ...runtimeArgsForProfile(opts.profile, opts.dataDir),
+    ],
     env: postgresEnv(opts),
     healthCheck: postgresHealthCheck(opts.binPath, opts.port),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },

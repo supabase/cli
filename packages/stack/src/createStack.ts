@@ -16,6 +16,7 @@ import {
   defaultSecretKey,
   generateJwt,
 } from "./JwtGenerator.ts";
+import { resolvePostgresPassword } from "./postgresCredentials.ts";
 import {
   daemonLayer,
   foregroundLayer,
@@ -561,6 +562,7 @@ export async function resolveConfig(
       port: ports.dbPort,
       dataDir: postgresDataDir,
       version: postgresInput.version ?? DEFAULT_VERSIONS.postgres,
+      password: resolvePostgresPassword(postgresInput.password),
       autoExposeNewTables: postgresInput.autoExposeNewTables ?? true,
       provisioned: postgresInput.provisioned,
       profile: postgresInput.profile,

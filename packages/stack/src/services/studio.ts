@@ -8,6 +8,7 @@ interface DockerStudioOptions {
   readonly apiUrl: string;
   readonly publicApiUrl: string;
   readonly pgmetaUrl: string;
+  readonly dbPassword: string;
   readonly publishableKey: string;
   readonly secretKey: string;
   readonly s3ProtocolAccessKeyId: string;
@@ -44,7 +45,7 @@ export const makeStudioServiceDocker = (opts: DockerStudioOptions): ServiceDef =
       PORT: String(opts.port),
       CURRENT_CLI_VERSION: "local",
       STUDIO_PG_META_URL: opts.pgmetaUrl,
-      POSTGRES_PASSWORD: "postgres",
+      POSTGRES_PASSWORD: opts.dbPassword,
       SUPABASE_URL: opts.apiUrl,
       SUPABASE_PUBLIC_URL: opts.publicApiUrl,
       AUTH_JWT_SECRET: opts.jwtSecret,

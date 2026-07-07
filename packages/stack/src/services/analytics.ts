@@ -1,4 +1,5 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { postgresConnectionUrl } from "../postgresCredentials.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 
 interface DockerAnalyticsOptions {
@@ -9,6 +10,7 @@ interface DockerAnalyticsOptions {
   readonly nodeHost: string;
   readonly dbHost: string;
   readonly dbPort: number;
+  readonly dbPassword: string;
   readonly apiKey: string;
   readonly backend: "postgres" | "bigquery";
   readonly networkArgs: ReadonlyArray<string>;
@@ -48,7 +50,7 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
     DB_PORT: String(opts.dbPort),
     DB_SCHEMA: "_analytics",
     DB_USERNAME: "postgres",
-    DB_PASSWORD: "postgres",
+    DB_PASSWORD: opts.dbPassword,
     LOGFLARE_MIN_CLUSTER_SIZE: "1",
     LOGFLARE_SINGLE_TENANT: "true",
     LOGFLARE_SUPABASE_MODE: "true",
@@ -60,7 +62,13 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
   };
 
   if (opts.backend === "postgres") {
-    env.POSTGRES_BACKEND_URL = `postgresql://postgres:postgres@${opts.dbHost}:${opts.dbPort}/_supabase`;
+    env.POSTGRES_BACKEND_URL = postgresConnectionUrl({
+      user: "postgres",
+      password: opts.dbPassword,
+      host: opts.dbHost,
+      port: opts.dbPort,
+      database: "_supabase",
+    });
     env.POSTGRES_BACKEND_SCHEMA = "_analytics";
   } else {
     env.GOOGLE_DATASET_ID_APPEND = "_prod";

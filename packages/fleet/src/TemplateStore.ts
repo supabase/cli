@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { createStack, installMicroProfile } from "@supabase/stack";
 import type { ServiceName, VersionManifest } from "@supabase/stack";
 import { cloneDir } from "./cowClone.ts";
-import { baseTemplateKey, templateKey } from "./PodManifest.ts";
+import { baseTemplateKey, resolveTemplateVersions, templateKey } from "./PodManifest.ts";
 
 const LOCK_STALE_MS = 10 * 60 * 1000;
 const LOCK_POLL_MS = 250;
@@ -91,7 +91,8 @@ export class TemplateStore {
     const base = await this.ensureBaseTemplate(pgVersion);
     if (enabledServices.length === 0) return base;
 
-    const key = templateKey(versions, enabledServices);
+    const resolvedVersions = resolveTemplateVersions(versions, enabledServices);
+    const key = templateKey(resolvedVersions, enabledServices);
     if (await this.has(key)) return this.dataDir(key);
     return this.withLock(key, async () => {
       if (await this.has(key)) return this.dataDir(key);
@@ -110,20 +111,32 @@ export class TemplateStore {
           provisioned: true,
           profile: "micro",
         },
-        postgrest: enabledServices.includes("postgrest") ? { version: versions.postgrest } : false,
-        auth: enabledServices.includes("auth") ? { version: versions.auth } : false,
-        edgeRuntime: enabledServices.includes("edge-runtime")
-          ? { version: versions["edge-runtime"] }
+        postgrest: enabledServices.includes("postgrest")
+          ? { version: resolvedVersions.postgrest }
           : false,
-        realtime: enabledServices.includes("realtime") ? { version: versions.realtime } : false,
-        storage: enabledServices.includes("storage") ? { version: versions.storage } : false,
-        imgproxy: enabledServices.includes("imgproxy") ? { version: versions.imgproxy } : false,
-        mailpit: enabledServices.includes("mailpit") ? { version: versions.mailpit } : false,
-        pgmeta: enabledServices.includes("pgmeta") ? { version: versions.pgmeta } : false,
-        studio: enabledServices.includes("studio") ? { version: versions.studio } : false,
-        analytics: enabledServices.includes("analytics") ? { version: versions.analytics } : false,
-        vector: enabledServices.includes("vector") ? { version: versions.vector } : false,
-        pooler: enabledServices.includes("pooler") ? { version: versions.pooler } : false,
+        auth: enabledServices.includes("auth") ? { version: resolvedVersions.auth } : false,
+        edgeRuntime: enabledServices.includes("edge-runtime")
+          ? { version: resolvedVersions["edge-runtime"] }
+          : false,
+        realtime: enabledServices.includes("realtime")
+          ? { version: resolvedVersions.realtime }
+          : false,
+        storage: enabledServices.includes("storage")
+          ? { version: resolvedVersions.storage }
+          : false,
+        imgproxy: enabledServices.includes("imgproxy")
+          ? { version: resolvedVersions.imgproxy }
+          : false,
+        mailpit: enabledServices.includes("mailpit")
+          ? { version: resolvedVersions.mailpit }
+          : false,
+        pgmeta: enabledServices.includes("pgmeta") ? { version: resolvedVersions.pgmeta } : false,
+        studio: enabledServices.includes("studio") ? { version: resolvedVersions.studio } : false,
+        analytics: enabledServices.includes("analytics")
+          ? { version: resolvedVersions.analytics }
+          : false,
+        vector: enabledServices.includes("vector") ? { version: resolvedVersions.vector } : false,
+        pooler: enabledServices.includes("pooler") ? { version: resolvedVersions.pooler } : false,
         functions: false,
       });
       try {
@@ -134,7 +147,7 @@ export class TemplateStore {
       }
       await this.freeze(buildDir, key, {
         key,
-        versions,
+        versions: resolvedVersions,
         enabledServices,
         builtAt: new Date().toISOString(),
       });

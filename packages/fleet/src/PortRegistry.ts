@@ -17,12 +17,23 @@ function freshState(): PortState {
   return { basePort: DEFAULT_BASE_PORT, pods: {} };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
 function isValidState(value: unknown): value is PortState {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const candidate = value as Record<string, unknown>;
-  const { basePort, pods } = candidate;
-  if (typeof basePort !== "number" || Number.isNaN(basePort)) return false;
-  if (typeof pods !== "object" || pods === null || Array.isArray(pods)) return false;
+  if (!isRecord(value)) return false;
+  const { basePort, pods } = value;
+  if (!isPositiveInteger(basePort)) return false;
+  if (!isRecord(pods)) return false;
+  for (const ports of Object.values(pods)) {
+    if (!isRecord(ports)) return false;
+    if (!isPositiveInteger(ports.dbPort) || !isPositiveInteger(ports.apiPort)) return false;
+  }
   return true;
 }
 

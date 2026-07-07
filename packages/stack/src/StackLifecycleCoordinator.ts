@@ -20,6 +20,7 @@ import { planEnableExtension } from "./enableExtension.ts";
 import { StackBuildError } from "./errors.ts";
 import { configureFunctionsRuntime, type FunctionsConfig } from "./functions.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
+import { postgresConnectionUrl } from "./postgresCredentials.ts";
 import { installPodConfOverlay, readPreloadLibraries, writePreloadLibraries } from "./pgconf.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
@@ -111,7 +112,13 @@ const initialPublicStates = (config: ResolvedStackConfig): ReadonlyArray<StackSe
 
 const stackInfoFor = (config: ResolvedStackConfig): StackInfo => ({
   url: `http://127.0.0.1:${config.apiPort}`,
-  dbUrl: `postgresql://postgres:postgres@127.0.0.1:${config.dbPort}/postgres`,
+  dbUrl: postgresConnectionUrl({
+    user: "postgres",
+    password: config.postgres.password,
+    host: "127.0.0.1",
+    port: config.dbPort,
+    database: "postgres",
+  }),
   publishableKey: config.publishableKey,
   secretKey: config.secretKey,
   anonJwt: config.anonJwt,
@@ -150,7 +157,13 @@ const stackInfoFor = (config: ResolvedStackConfig): StackInfo => ({
     ...(config.pooler === false
       ? {}
       : {
-          pooler: `postgresql://postgres:postgres@127.0.0.1:${config.pooler.port}/postgres`,
+          pooler: postgresConnectionUrl({
+            user: "postgres",
+            password: config.postgres.password,
+            host: "127.0.0.1",
+            port: config.pooler.port,
+            database: "postgres",
+          }),
           pooler_admin: `http://127.0.0.1:${config.pooler.apiPort}`,
         }),
   },
@@ -654,6 +667,9 @@ export class StackLifecycleCoordinator extends Context.Service<
                 yield* Effect.promise(() =>
                   writePreloadLibraries(config.postgres.dataDir, plan.libraries),
                 );
+                if ((yield* Ref.get(phaseRef)) !== "running") {
+                  return;
+                }
                 yield* requireKnownService("postgres");
                 const runtime = yield* ensureRuntime;
                 yield* runtime.orchestrator.restartService("postgres");

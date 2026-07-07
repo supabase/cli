@@ -43,6 +43,7 @@ export interface PostgresConfig {
   readonly port?: number;
   readonly dataDir?: string;
   readonly version?: string;
+  readonly password?: string;
   /**
    * When true (default), the bundled initial schema GRANTs that expose new tables, views,
    * sequences, and functions in `public` to the Data API roles (`anon`, `authenticated`,
@@ -189,6 +190,7 @@ export interface ResolvedPostgresConfig {
   readonly port: number;
   readonly dataDir: string;
   readonly version: string;
+  readonly password: string;
   readonly autoExposeNewTables: boolean;
   readonly provisioned?: boolean;
   readonly profile?: "default" | "micro";
@@ -591,6 +593,7 @@ export class StackBuilder extends Context.Service<
                   binPath: postgresResolution.path,
                   dataDir: config.postgres.dataDir,
                   port: config.dbPort,
+                  password: config.postgres.password,
                   dockerAccessible: needsDockerAccess,
                   cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
                   profile: config.postgres.profile,
@@ -599,6 +602,7 @@ export class StackBuilder extends Context.Service<
                   image: postgresResolution.image,
                   dataDir: config.postgres.dataDir,
                   port: config.dbPort,
+                  password: config.postgres.password,
                   networkArgs: dockerNetworkArgs(platform.os, [config.dbPort]),
                   jwtSecret: config.jwtSecret,
                   jwtExpiry: config.auth !== false ? config.auth.jwtExpiry : 3600,
@@ -614,6 +618,7 @@ export class StackBuilder extends Context.Service<
             ...makePostgresInitService({
               postgresDir: postgresResolution.path,
               dbPort: config.dbPort,
+              dbPassword: config.postgres.password,
               autoExposeNewTables: config.postgres.autoExposeNewTables,
             }),
             enabled: true,
@@ -626,6 +631,7 @@ export class StackBuilder extends Context.Service<
               ? makePostgrestService({
                   binPath: postgrestResolution.path,
                   dbPort: config.dbPort,
+                  dbPassword: config.postgres.password,
                   port: config.postgrest.port,
                   schemas: config.postgrest.schemas,
                   extraSearchPath: config.postgrest.extraSearchPath,
@@ -636,6 +642,7 @@ export class StackBuilder extends Context.Service<
                   image: postgrestResolution.image,
                   dbHost: serviceHost,
                   dbPort: config.dbPort,
+                  dbPassword: config.postgres.password,
                   port: config.postgrest.port,
                   adminPort: config.postgrest.adminPort,
                   schemas: config.postgrest.schemas,
@@ -663,6 +670,7 @@ export class StackBuilder extends Context.Service<
               ? makeAuthServiceNative({
                   binPath: authResolution.path,
                   dbPort: config.dbPort,
+                  dbPassword: config.postgres.password,
                   authPort: config.auth.port,
                   siteUrl: config.auth.siteUrl,
                   jwtSecret: config.jwtSecret,
@@ -678,6 +686,7 @@ export class StackBuilder extends Context.Service<
                   image: authResolution.image,
                   dbHost: serviceHost,
                   dbPort: config.dbPort,
+                  dbPassword: config.postgres.password,
                   authPort: config.auth.port,
                   siteUrl: config.auth.siteUrl,
                   jwtSecret: config.jwtSecret,
@@ -751,6 +760,7 @@ export class StackBuilder extends Context.Service<
               apiPort: config.apiPort,
               dbHost: serviceHost,
               dbPort: config.dbPort,
+              dbPassword: config.postgres.password,
               jwtSecret: config.jwtSecret,
               jwtJwks,
               tenantId: config.realtime.tenantId,
@@ -773,6 +783,7 @@ export class StackBuilder extends Context.Service<
               apiPort: config.apiPort,
               dbHost: serviceHost,
               dbPort: config.dbPort,
+              dbPassword: config.postgres.password,
               dataDir: config.storage.dataDir,
               anonKey: config.publishableKey,
               serviceKey: config.secretKey,
@@ -816,6 +827,7 @@ export class StackBuilder extends Context.Service<
               port: config.pgmeta.port,
               dbHost: serviceHost,
               dbPort: config.dbPort,
+              dbPassword: config.postgres.password,
               networkArgs: dockerNetworkArgs(platform.os, [config.pgmeta.port]),
               dependencies: postgresDeps,
             }),
@@ -839,6 +851,7 @@ export class StackBuilder extends Context.Service<
               nodeHost: analyticsRuntimeNetwork.nodeHost,
               dbHost: serviceHost,
               dbPort: config.dbPort,
+              dbPassword: config.postgres.password,
               apiKey: config.analytics.apiKey,
               backend: config.analytics.backend,
               networkArgs: dockerPortMapArgs(platform.os, [
@@ -876,6 +889,7 @@ export class StackBuilder extends Context.Service<
               hostAdminPort: config.pooler.apiPort,
               dbHost: serviceHost,
               dbPort: config.dbPort,
+              dbPassword: config.postgres.password,
               poolMode: config.pooler.mode,
               defaultPoolSize: config.pooler.defaultPoolSize,
               maxClientConn: config.pooler.maxClientConn,
@@ -913,6 +927,7 @@ export class StackBuilder extends Context.Service<
               apiUrl: config.studio.apiUrl,
               publicApiUrl: `http://127.0.0.1:${config.apiPort}`,
               pgmetaUrl: pgmetaConfig === false ? "" : `http://${serviceHost}:${pgmetaConfig.port}`,
+              dbPassword: config.postgres.password,
               publishableKey: config.publishableKey,
               secretKey: config.secretKey,
               s3ProtocolAccessKeyId: LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,

@@ -1,8 +1,10 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { postgresConnectionUrl } from "../postgresCredentials.ts";
 import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
 
 interface AuthServiceOptions {
   readonly dbPort: number;
+  readonly dbPassword: string;
   readonly authPort: number;
   readonly siteUrl: string;
   readonly jwtSecret: string;
@@ -30,7 +32,13 @@ interface DockerAuthOptions extends AuthServiceOptions {
 }
 
 const authEnv = (opts: AuthServiceOptions, dbHost = "127.0.0.1"): Record<string, string> => ({
-  GOTRUE_DB_DATABASE_URL: `postgresql://supabase_auth_admin:postgres@${dbHost}:${opts.dbPort}/postgres`,
+  GOTRUE_DB_DATABASE_URL: postgresConnectionUrl({
+    user: "supabase_auth_admin",
+    password: opts.dbPassword,
+    host: dbHost,
+    port: opts.dbPort,
+    database: "postgres",
+  }),
   GOTRUE_DB_DRIVER: "postgres",
   GOTRUE_SITE_URL: opts.siteUrl,
   GOTRUE_JWT_SECRET: opts.jwtSecret,

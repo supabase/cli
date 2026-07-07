@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -21,6 +21,7 @@ import { DEFAULT_VERSIONS, dockerImageForService } from "../versions.ts";
 
 const JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
 const DB_PORT = 54322;
+const DB_PASSWORD = "postgres";
 const API_PORT = 54321;
 const POSTGRES_BIN_PATH = `/cache/postgres/${DEFAULT_VERSIONS.postgres}/darwin-arm64`;
 const POSTGREST_BIN_PATH = `/cache/postgrest/${DEFAULT_VERSIONS.postgrest}/macos-aarch64`;
@@ -34,6 +35,7 @@ describe("makePostgresService", () => {
       binPath: POSTGRES_BIN_PATH,
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
+      password: DB_PASSWORD,
     });
 
     expect(def.name).toBe("postgres");
@@ -65,6 +67,44 @@ describe("makePostgresService", () => {
     expect(def.restart).toBe("unless-stopped");
     expect(def.supervision).toBeDefined();
   });
+
+  it("keeps runtime replication args for fresh micro-profile data dirs", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "stack-postgres-service-"));
+    const dataDir = path.join(tempDir, "data");
+    const def = makePostgresService({
+      binPath: POSTGRES_BIN_PATH,
+      dataDir,
+      port: DB_PORT,
+      password: DB_PASSWORD,
+      profile: "micro",
+    });
+
+    try {
+      expect(def.args).toContain("wal_level=logical");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("omits runtime replication args when the micro-profile overlay is installed", () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "stack-postgres-service-"));
+    const dataDir = path.join(tempDir, "data");
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(path.join(dataDir, "postgresql.conf"), "include_if_exists = 'micro.conf'\n");
+    const def = makePostgresService({
+      binPath: POSTGRES_BIN_PATH,
+      dataDir,
+      port: DB_PORT,
+      password: DB_PASSWORD,
+      profile: "micro",
+    });
+
+    try {
+      expect(def.args).not.toContain("wal_level=logical");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("analyticsDockerRuntimeNetwork", () => {
@@ -92,6 +132,7 @@ describe("makeStudioServiceDocker", () => {
       apiUrl: "http://host.docker.internal:54321",
       publicApiUrl: "http://127.0.0.1:54321",
       pgmetaUrl: "http://host.docker.internal:54322",
+      dbPassword: DB_PASSWORD,
       publishableKey: "sb_publishable_test",
       secretKey: "sb_secret_test",
       s3ProtocolAccessKeyId: LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
@@ -123,6 +164,7 @@ describe("makePostgresService (dockerAccessible)", () => {
       binPath: POSTGRES_BIN_PATH,
       dataDir: path.join(tempDir, "data"),
       port: DB_PORT,
+      password: DB_PASSWORD,
       dockerAccessible: true,
       cleanupDataDirOnExit: true,
     });
@@ -166,6 +208,7 @@ describe("makePostgresServiceDocker", () => {
       image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
+      password: DB_PASSWORD,
       networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", `${DB_PORT}:${DB_PORT}`],
       jwtSecret: "test-jwt-secret-with-at-least-32-characters",
       jwtExpiry: 3600,
@@ -209,6 +252,7 @@ describe("makePostgresServiceDocker", () => {
       image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
+      password: DB_PASSWORD,
       networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", `${DB_PORT}:${DB_PORT}`],
       jwtSecret: "test-jwt-secret-with-at-least-32-characters",
       jwtExpiry: 3600,
@@ -231,6 +275,7 @@ describe("makePostgrestService", () => {
     const def = makePostgrestService({
       binPath: POSTGREST_BIN_PATH,
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       port: API_PORT,
       schemas: ["public", "storage"],
       extraSearchPath: ["public", "extensions"],
@@ -263,6 +308,7 @@ describe("makeAuthServiceNative", () => {
     const def = makeAuthServiceNative({
       binPath: AUTH_BIN_PATH,
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       authPort: 9999,
       siteUrl: "http://localhost:3000",
       jwtSecret: JWT_SECRET,
@@ -293,6 +339,7 @@ describe("makeAuthServiceDocker", () => {
     const def = makeAuthServiceDocker({
       image: dockerImageForService("auth", DEFAULT_VERSIONS.auth),
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       authPort: 9999,
       siteUrl: "http://localhost:3000",
       jwtSecret: JWT_SECRET,
@@ -408,6 +455,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       autoExposeNewTables: true,
     });
 
@@ -426,6 +474,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
@@ -436,6 +485,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
@@ -447,6 +497,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
@@ -462,6 +513,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
@@ -475,6 +527,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       autoExposeNewTables: true,
     });
     const script = def.args?.[1] as string;
@@ -486,6 +539,7 @@ describe("makePostgresInitService", () => {
     const def = makePostgresInitService({
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       autoExposeNewTables: false,
     });
     const script = def.args?.[1] as string;
@@ -581,6 +635,7 @@ describe("docker-backed auxiliary services", () => {
       nodeHost: "0.0.0.0",
       dbHost: "127.0.0.1",
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       apiKey: "test-api-key",
       backend: "postgres",
       networkArgs: ["-p", "54328:4000"],
@@ -611,6 +666,7 @@ describe("docker-backed auxiliary services", () => {
       nodeHost: "0.0.0.0",
       dbHost: "host.docker.internal",
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       apiKey: "test-api-key",
       backend: "postgres",
       networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "54328:4000"],
@@ -631,6 +687,7 @@ describe("docker-backed auxiliary services", () => {
       hostAdminPort: 54329,
       dbHost: "127.0.0.1",
       dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
       poolMode: "transaction",
       defaultPoolSize: 20,
       maxClientConn: 100,

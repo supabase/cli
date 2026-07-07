@@ -7,6 +7,7 @@ interface DockerRealtimeOptions {
   readonly apiPort: number;
   readonly dbHost: string;
   readonly dbPort: number;
+  readonly dbPassword: string;
   readonly jwtSecret: string;
   readonly jwtJwks: string;
   readonly tenantId: string;
@@ -47,7 +48,7 @@ export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceD
       DB_HOST: opts.dbHost,
       DB_PORT: String(opts.dbPort),
       DB_USER: "postgres",
-      DB_PASSWORD: "postgres",
+      DB_PASSWORD: opts.dbPassword,
       DB_NAME: "postgres",
       DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
       DB_ENC_KEY: opts.encryptionKey,

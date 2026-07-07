@@ -3,8 +3,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   createStack,
+  postgresConnectionUrl,
   PRELOAD_REQUIRED_EXTENSIONS,
   readPreloadLibraries,
+  resolvePostgresPassword,
   writePreloadLibraries,
   type StackHandle,
 } from "@supabase/stack";
@@ -51,7 +53,7 @@ interface WarmPod {
 // Must match packages/stack/src/services/postgres.ts: the template build stores
 // this password in the data dir, and pod connection URLs need to use the same
 // value when exposing the suspended/warm pod.
-const DB_PASSWORD = process.env.POSTGRES_PASSWORD ?? "postgres";
+const DB_PASSWORD = resolvePostgresPassword();
 
 // Internal (in-process stack) ports are derived from the externally-visible,
 // PortRegistry-owned port by a fixed +10_000 offset so the two ranges never
@@ -134,7 +136,13 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   });
 
   const dbUrl = (manifest: PodManifest): string =>
-    `postgresql://postgres:${DB_PASSWORD}@127.0.0.1:${manifest.ports.dbPort}/postgres`;
+    postgresConnectionUrl({
+      user: "postgres",
+      password: DB_PASSWORD,
+      host: "127.0.0.1",
+      port: manifest.ports.dbPort,
+      database: "postgres",
+    });
 
   const runPidFile = (id: string): string => join(pods.podDir(id), "run.pid");
 

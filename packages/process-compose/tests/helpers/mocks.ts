@@ -6,22 +6,32 @@ interface SpawnRecord {
   args: ReadonlyArray<string>;
 }
 
+interface SupervisorPayload {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}
+
 const encoder = new TextEncoder();
 
 /**
- * Decode the supervisor payload (base64url JSON in the last arg — see
- * `makeSupervisedCommand`) to recover the underlying service command. Returns
+ * Decode the supervisor payload (base64url JSON in the last arg - see
+ * `makeSupervisedCommand`) to recover the underlying service command and args. Returns
  * `undefined` for non-supervised spawns (health-check probes, docker commands,
  * etc.) whose last arg is not a supervisor payload.
  */
-function decodeSupervisedInnerCommand(args: ReadonlyArray<string>): string | undefined {
+function decodeSupervisedPayload(args: ReadonlyArray<string>): SupervisorPayload | undefined {
   const encoded = args.at(-1);
   if (encoded === undefined) return undefined;
   try {
-    const decoded = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {
-      command?: unknown;
-    };
-    return typeof decoded.command === "string" ? decoded.command : undefined;
+    const decoded: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
+    if (typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+      return undefined;
+    }
+    const command = "command" in decoded ? decoded.command : undefined;
+    const innerArgs = "args" in decoded ? decoded.args : undefined;
+    if (typeof command !== "string" || !Array.isArray(innerArgs)) return undefined;
+    if (!innerArgs.every((arg) => typeof arg === "string")) return undefined;
+    return { command, args: innerArgs };
   } catch {
     return undefined;
   }
@@ -43,15 +53,17 @@ function decodeSupervisedInnerCommand(args: ReadonlyArray<string>): string | und
  *
  * A supervised spawn (launched through `makeSupervisedCommand`, i.e. the
  * supervisor runtime with a base64url payload) is treated as a long-running
- * daemon UNLESS its inner command is a shell (`bash`/`sh`), which is how
- * one-shot init services like `postgres-init` (restart: "no") are launched —
- * those must still exit so their `completed` signal fires.
+ * daemon. The explicit exception is one-shot shell scripts (`bash -c` / `sh -c`)
+ * such as `postgres-init`, which must exit so their `completed` signal fires.
+ * Native Postgres is also launched through `bash`, but its first arg is the
+ * bundled `supabase-postgres-init.sh` wrapper and it stays alive like Postgres
+ * does in production.
  */
 function isLongRunningDaemon(args: ReadonlyArray<string>): boolean {
-  const inner = decodeSupervisedInnerCommand(args);
-  if (inner === undefined) return false;
-  const base = inner.split("/").pop() ?? inner;
-  return base !== "bash" && base !== "sh";
+  const payload = decodeSupervisedPayload(args);
+  if (payload === undefined) return false;
+  const base = payload.command.split("/").pop() ?? payload.command;
+  return !((base === "bash" || base === "sh") && payload.args[0] === "-c");
 }
 
 export function mockChildProcessSpawner(

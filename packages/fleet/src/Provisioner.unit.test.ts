@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ServiceName, VersionManifest } from "@supabase/stack";
+import { DEFAULT_VERSIONS, type ServiceName, type VersionManifest } from "@supabase/stack";
 import { describe, expect, it } from "vitest";
 import { PodRegistry } from "./PodRegistry.ts";
 import { PortRegistry } from "./PortRegistry.ts";
@@ -83,6 +83,24 @@ describe("Provisioner (unit, fake deps)", () => {
       // The duplicate-id pre-check throws before any (re-)allocation, so the
       // original pod's ports must still be intact.
       expect(ports.get("dup")).toEqual(first.ports);
+    });
+
+    it("records resolved default versions for enabled warm services", async () => {
+      const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
+      await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
+      const { p } = await makeHarness(templateDir);
+
+      const manifest = await p.create({
+        id: "warm",
+        versions: { postgres: PG_VERSION },
+        services: { postgrest: true },
+        warm: true,
+      });
+
+      expect(manifest.versions).toEqual({
+        postgres: PG_VERSION,
+        postgrest: DEFAULT_VERSIONS.postgrest,
+      });
     });
   });
 

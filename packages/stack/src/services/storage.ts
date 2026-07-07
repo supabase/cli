@@ -1,4 +1,5 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { postgresConnectionUrl } from "../postgresCredentials.ts";
 import { removePathOnOrphanCleanup } from "./docker-cleanup.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 
@@ -8,6 +9,7 @@ interface DockerStorageOptions {
   readonly apiPort: number;
   readonly dbHost: string;
   readonly dbPort: number;
+  readonly dbPassword: string;
   readonly dataDir: string;
   readonly anonKey: string;
   readonly serviceKey: string;
@@ -57,7 +59,13 @@ export const makeStorageServiceDocker = (opts: DockerStorageOptions): ServiceDef
       AUTH_JWT_SECRET: opts.jwtSecret,
       PGRST_JWT_SECRET: opts.jwtSecret,
       JWT_JWKS: opts.jwtJwks,
-      DATABASE_URL: `postgresql://supabase_storage_admin:postgres@${opts.dbHost}:${opts.dbPort}/postgres`,
+      DATABASE_URL: postgresConnectionUrl({
+        user: "supabase_storage_admin",
+        password: opts.dbPassword,
+        host: opts.dbHost,
+        port: opts.dbPort,
+        database: "postgres",
+      }),
       FILE_SIZE_LIMIT: opts.fileSizeLimit,
       STORAGE_BACKEND: "file",
       FILE_STORAGE_BACKEND_PATH: STORAGE_DATA_DIR,

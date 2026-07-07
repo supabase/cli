@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import type { ServiceName, VersionManifest } from "@supabase/stack";
 import { cloneDir } from "./cowClone.ts";
-import type { PodManifest } from "./PodManifest.ts";
+import { resolveTemplateVersions, type PodManifest } from "./PodManifest.ts";
 import type { PodRegistry } from "./PodRegistry.ts";
 import type { PortRegistry } from "./PortRegistry.ts";
 import type { TemplateStore } from "./TemplateStore.ts";
@@ -39,16 +39,17 @@ export class Provisioner {
     const enabled = Object.entries(opts.services ?? {})
       .filter(([, on]) => on === true)
       .map(([name]) => name as ServiceName);
+    const resolvedVersions = resolveTemplateVersions(opts.versions, enabled);
     const template =
       opts.warm === true
-        ? await templates.ensureWarmTemplate(opts.versions, enabled)
+        ? await templates.ensureWarmTemplate(resolvedVersions, enabled)
         : await templates.ensureBaseTemplate(pgVersion);
     const allocated = await ports.allocate(opts.id);
     try {
       await cloneDir(template, pods.dataDir(opts.id));
       const manifest: PodManifest = {
         id: opts.id,
-        versions: opts.versions,
+        versions: resolvedVersions,
         services: opts.services ?? {},
         flags: { supautils: opts.flags?.supautils ?? false },
         ports: allocated,

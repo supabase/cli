@@ -1,5 +1,9 @@
 import { createHash } from "node:crypto";
-import type { ServiceName, VersionManifest } from "@supabase/stack";
+import {
+  fillServiceVersionManifest,
+  type ServiceName,
+  type VersionManifest,
+} from "@supabase/stack";
 
 export interface PodManifest {
   readonly id: string;
@@ -25,4 +29,16 @@ export const templateKey = (
     enabledServices: [...new Set(enabledServices)].sort((a, b) => a.localeCompare(b)),
   });
   return `tuple-${keyHash(canonical)}`;
+};
+
+export const resolveTemplateVersions = (
+  versions: Partial<VersionManifest>,
+  enabledServices: ReadonlyArray<ServiceName>,
+): Partial<VersionManifest> => {
+  const full = fillServiceVersionManifest(versions);
+  const resolved: Partial<Record<ServiceName, string>> = { postgres: full.postgres };
+  for (const service of new Set(enabledServices)) {
+    resolved[service] = full[service];
+  }
+  return resolved;
 };

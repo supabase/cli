@@ -58,6 +58,7 @@ const defaultConfig: ResolvedStackConfig = {
     port: 54322,
     dataDir: "/tmp/supabase/data",
     version: DEFAULT_VERSIONS.postgres,
+    password: "postgres",
     autoExposeNewTables: true,
   },
   postgrest: {

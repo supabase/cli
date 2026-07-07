@@ -79,6 +79,7 @@ function makeConfig(dataDir: string): ResolvedStackConfig {
       port: 54322,
       dataDir,
       version: DEFAULT_VERSIONS.postgres,
+      password: "postgres",
       autoExposeNewTables: true,
     },
     // postgrest/auth are disabled: their health checks are real HTTP probes
@@ -197,6 +198,29 @@ describe("StackLifecycleCoordinator enableExtension", () => {
       expect(libraries).toContain("pg_cron");
       expect(libraries).toContain("pg_net");
       expect(libraries).toHaveLength(2);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("records preload libraries without restarting postgres while stopped", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-stopped-test-"));
+    writeFileSync(join(dataDir, "postgresql.conf"), "# stock conf\n");
+    const config = makeConfig(dataDir);
+    const { layer, spawner } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.start();
+      yield* stack.stop();
+      const spawnedBefore = spawner.spawned.length;
+
+      yield* stack.enableExtension("pg_cron");
+
+      expect(spawner.spawned).toHaveLength(spawnedBefore);
+      expect((yield* stack.getState("postgres")).status).toBe("Stopped");
+      expect(yield* Effect.promise(() => readPreloadLibraries(dataDir))).toEqual(["pg_cron"]);
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
