@@ -67,7 +67,12 @@ const eagerStartService = (
     ),
   );
 
-const eagerWaitReady = (
+// Used both for the eager-start set in start() and for waitAllReady()'s started-service set
+// under lazyServices. In both cases the name comes from either the graph's own startOrder or
+// from a name the coordinator already validated via requireKnownService/startService, so
+// ServiceNotFoundError can't actually occur — map it to StackBuildError only to satisfy the
+// declared error types of the callers.
+const waitReadyKnownService = (
   orchestrator: Orchestrator["Service"],
   name: string,
 ): Effect.Effect<void, StackBuildError | ServiceReadyError> =>
@@ -76,7 +81,7 @@ const eagerWaitReady = (
       "ServiceNotFoundError",
       (error) =>
         new StackBuildError({
-          detail: `lazyServices eager-start: unexpected missing service "${error.name}"`,
+          detail: `waitReady: unexpected missing service "${error.name}"`,
         }),
     ),
   );
@@ -235,6 +240,14 @@ export class StackLifecycleCoordinator extends Context.Service<
         const stateRef = yield* SubscriptionRef.make(initialPublicStates(config));
         const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
         const enableExtensionLock = yield* Semaphore.make(1);
+        // Tracks every service that has actually been asked to start: the eager set from
+        // start() under lazyServices, plus anything started later via startService (the
+        // ApiProxy's ensureService on-demand path) or restartService. Under lazyServices,
+        // waitAllReady() only waits on this set, since never-started ServiceDefs never resolve
+        // their `healthy` deferred and never emit a Failed state either (see waitAllReady below).
+        const startedServicesRef = yield* Ref.make<ReadonlySet<string>>(new Set());
+        const markStarted = (names: Iterable<string>) =>
+          Ref.update(startedServicesRef, (current) => new Set([...current, ...names]));
 
         const logBufferServices = yield* Layer.buildWithScope(LogBuffer.layer, scope);
         const logBuffer = Context.get(logBufferServices, LogBuffer);
@@ -571,13 +584,15 @@ export class StackLifecycleCoordinator extends Context.Service<
                 for (const name of eagerServices) {
                   yield* eagerStartService(runtime.orchestrator, name);
                 }
+                yield* markStarted(eagerServices);
                 yield* Effect.forEach(
                   eagerServices,
-                  (name) => eagerWaitReady(runtime.orchestrator, name),
+                  (name) => waitReadyKnownService(runtime.orchestrator, name),
                   { concurrency: "unbounded" },
                 );
               } else {
                 yield* runtime.orchestrator.start();
+                yield* markStarted(runtime.graph.startOrder.map((def) => def.name));
                 yield* runtime.orchestrator.waitAllReady();
               }
               yield* Ref.set(phaseRef, "running");
@@ -598,6 +613,7 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* requireKnownService(name);
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.startService(name);
+              yield* markStarted([name]);
               yield* runtime.orchestrator.waitReady(name);
             }),
           stopService: (name) =>
@@ -611,6 +627,10 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* requireKnownService(name);
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.restartService(name);
+              // Idempotent: the service was necessarily already in the started set (you can't
+              // restart something that was never started), but marking again is harmless and
+              // keeps this call site self-contained if that invariant ever changes.
+              yield* markStarted([name]);
             }),
           enableExtension: (name) =>
             enableExtensionLock.withPermits(1)(
@@ -628,6 +648,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                 yield* requireKnownService("postgres");
                 const runtime = yield* ensureRuntime;
                 yield* runtime.orchestrator.restartService("postgres");
+                yield* markStarted(["postgres"]);
                 yield* runtime.orchestrator.waitReady("postgres");
               }),
             ),
@@ -637,6 +658,7 @@ export class StackLifecycleCoordinator extends Context.Service<
               const runtime = yield* ensureRuntime;
               yield* configureFunctions(configWithFunctionOptions(opts));
               yield* runtime.orchestrator.restartService("edge-runtime");
+              yield* markStarted(["edge-runtime"]);
               yield* runtime.orchestrator.waitReady("edge-runtime");
             }),
           reloadEdgeRuntime: (opts) =>
@@ -667,6 +689,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                   ),
                 );
               yield* runtime.orchestrator.restartService("edge-runtime");
+              yield* markStarted(["edge-runtime"]);
               yield* runtime.orchestrator.waitReady("edge-runtime");
             }),
           getState: (name) =>
@@ -694,7 +717,26 @@ export class StackLifecycleCoordinator extends Context.Service<
           waitAllReady: () =>
             Effect.gen(function* () {
               const runtime = yield* ensureRuntime;
-              yield* runtime.orchestrator.waitAllReady();
+              if (config.lazyServices !== true) {
+                // Non-lazy: identical to pre-lazyServices behavior — every ServiceDef gets
+                // started by start(), so waiting on the full graph is correct and byte-identical
+                // to today.
+                yield* runtime.orchestrator.waitAllReady();
+                return;
+              }
+              // Lazy: "ready" means "every service that has been started is ready". Services
+              // that were never started (e.g. postgrest, still Pending until the ApiProxy's
+              // ensureService calls startService on demand) never resolve their `healthy`
+              // deferred and never emit a Failed state either, so waiting on them would hang
+              // forever. Snapshot the started set at call time — if a service starts
+              // concurrently between this read and the wait below, it's acceptable to not wait
+              // on it; callers that need to observe it can call waitReady/waitAllReady again.
+              const startedServices = yield* Ref.get(startedServicesRef);
+              yield* Effect.forEach(
+                startedServices,
+                (name) => waitReadyKnownService(runtime.orchestrator, name),
+                { concurrency: "unbounded" },
+              );
             }),
           subscribeLogs: (name) => logBuffer.subscribe(name),
           subscribeAllLogs: (services) =>

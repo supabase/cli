@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
-import { Effect, Layer } from "effect";
+import { Duration, Effect, Layer } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
@@ -222,6 +222,64 @@ describe("StackLifecycleCoordinator lazyServices", () => {
       // orchestrator's internal readiness signal that waitReady resolves on).
       const readyState = yield* stack.getState("postgrest");
       expect(["Running", "Healthy"]).toContain(readyState.status);
+
+      yield* Effect.promise(() => stopFakeServer());
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
+    );
+  });
+
+  // Regression test: waitAllReady() used to unconditionally delegate to
+  // orchestrator.waitAllReady() over the FULL graph startOrder. Under lazyServices, services
+  // that were never started (e.g. postgrest, which stays "Pending" until the ApiProxy's
+  // ensureService calls startService on first request) never resolve their `healthy` deferred
+  // and never emit a Failed state either, so the old implementation hung forever. This is the
+  // red test against the pre-fix code: bounded with a short timeout so it fails fast (as a
+  // timeout) rather than hanging the suite.
+  it.live("waitAllReady() resolves promptly when only postgres was eager-started", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-lazy-ready-test-"));
+    const config = makeLazyConfig(dataDir);
+    const { layer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.start();
+
+      // postgrest was never started; under the old behavior this would hang because
+      // orchestrator.waitAllReady() waits on the full graph, including never-started services.
+      yield* stack.waitAllReady().pipe(Effect.timeout(Duration.seconds(5)));
+
+      const postgrestState = yield* stack.getState("postgrest");
+      expect(postgrestState.status).toBe("Pending");
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("waitAllReady() covers a service started on demand after start()", () => {
+    const dataDir = mkdtempSync(
+      join(tmpdir(), "stack-lifecycle-coordinator-lazy-ready-started-test-"),
+    );
+    const config = makeLazyConfig(dataDir);
+    const { layer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const stopFakeServer = yield* Effect.promise(() =>
+        startFakeHealthyServer(defaultPorts.postgrestPort),
+      );
+
+      const stack = yield* Stack;
+      yield* stack.start();
+
+      // Simulate the ApiProxy's ensureService on-demand path.
+      yield* stack.startService("postgrest");
+
+      yield* stack.waitAllReady().pipe(Effect.timeout(Duration.seconds(5)));
+
+      const postgrestState = yield* stack.getState("postgrest");
+      expect(["Running", "Healthy"]).toContain(postgrestState.status);
 
       yield* Effect.promise(() => stopFakeServer());
     }).pipe(
