@@ -161,3 +161,22 @@ export const legacyResolveExperimental = Effect.gen(function* () {
   const flag = yield* LegacyExperimentalFlag;
   return flag || legacyViperEnvBool("SUPABASE_EXPERIMENTAL");
 });
+
+/**
+ * `--experimental` resolved with the project `.env` consulted too, for commands that load the
+ * nested project env before branching on the experimental gate (`db reset`). Go's
+ * `ParseDatabaseConfig` runs `loadNestedEnv` — which `os.Setenv`s each project-.env key —
+ * before `reset.Run` reads `viper.GetBool("EXPERIMENTAL")`, so a `SUPABASE_EXPERIMENTAL` set
+ * only in `supabase/.env` enables the experimental path. The shell env still wins over the
+ * file value; a passed `--experimental` wins over both. `projectEnv` is the loaded map from
+ * `legacyLoadProjectEnv`.
+ */
+export const legacyResolveExperimentalWithProjectEnv = (projectEnv: Record<string, string>) =>
+  Effect.gen(function* () {
+    const flag = yield* LegacyExperimentalFlag;
+    return (
+      flag ||
+      legacyViperEnvBool("SUPABASE_EXPERIMENTAL") ||
+      legacyViperBool(projectEnv["SUPABASE_EXPERIMENTAL"])
+    );
+  });
