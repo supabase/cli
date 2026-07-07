@@ -424,6 +424,38 @@ FROM_CONFIG = "config-value"
   );
 
   it.live(
+    "recovers valid [edge_runtime.secrets] entries when a sibling entry in the same map fails schema decode (CLI-1867 Go parity)",
+    () => {
+      // `GOOD` is a valid secret value; `BAD` is not (a non-string TOML value
+      // for a field whose schema expects a string-like secret). Go's
+      // mapstructure decodes `map[string]Secret` entry-by-entry
+      // (`decodeMapFromMap`), appending a per-entry error and continuing
+      // rather than discarding the whole map, so `GOOD` still lands on
+      // `utils.Config.EdgeRuntime.Secrets` even with `BAD` present. Effect
+      // Schema's `decodeUnknownSync` is atomic per record and would otherwise
+      // discard `GOOD` too when re-decoding the whole `secrets` map at once.
+      writeConfig(
+        `[edge_runtime.secrets]
+GOOD = "config-value"
+BAD = 123
+`,
+      );
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: [],
+        });
+        const body = parsePostBody(api.requests[0]?.body);
+        expect(body).toEqual([{ name: "GOOD", value: "config-value" }]);
+        expect(debugLogger.messages).toHaveLength(1);
+        expect(debugLogger.messages[0]).toContain("failed to parse supabase/config.toml");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "does not echo a literal secret value from config.toml into the debug log on a syntax error",
     () => {
       // `smol-toml`'s `TomlError` embeds a source codeblock (the offending line ±1)
