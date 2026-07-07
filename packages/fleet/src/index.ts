@@ -3,6 +3,7 @@ export const FLEET_PACKAGE = "@supabase/fleet";
 export { cloneDir } from "./cowClone.ts";
 export type { EdgeProxyEvents, PodUpstream } from "./EdgeProxy.ts";
 export { EdgeProxy } from "./EdgeProxy.ts";
+export { IdleMonitor } from "./IdleMonitor.ts";
 export type { PodManifest } from "./PodManifest.ts";
 export { baseTemplateKey, templateKey } from "./PodManifest.ts";
 export { PodRegistry } from "./PodRegistry.ts";
