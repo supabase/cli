@@ -23,12 +23,12 @@ as a new timestamped migration.
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                     | When                                                         |
-| -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| `supabase-go db schema declarative __catalog --mode migrations --experimental` (seam) — shadow Postgres + `SetupDatabase` + apply migrations → catalog   | always                                                       |
-| `supabase-go db schema declarative __catalog --mode declarative --experimental` (seam) — shadow Postgres + `SetupDatabase` + apply declarative → catalog | always                                                       |
-| Edge-runtime container running the pg-delta diff Deno script                                                                                             | always                                                       |
-| `supabase-go migration up --local`                                                                                                                       | when the migration is applied (`--apply` / prompt / `--yes`) |
+| What                                                                                                                                                                                                 | When                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `supabase-go db schema declarative __catalog --mode migrations --experimental` (seam) — shadow Postgres + `SetupDatabase` + apply migrations → catalog                                               | always                                                            |
+| `supabase-go db schema declarative __catalog --mode declarative --experimental` (seam) — shadow Postgres + `SetupDatabase` + apply declarative → catalog                                             | always                                                            |
+| Edge-runtime container running the pg-delta diff Deno script                                                                                                                                         | always                                                            |
+| `supabase-go db reset --local [--network-id <id>]` (seam) — only on the failed-apply recovery path; `db reset` is still Go-proxied (`wrapped`), so the reset itself shells out to the bundled binary | TTY only, apply failed, and the user confirms "reset and reapply" |
 
 ## Environment Variables
 
@@ -42,14 +42,14 @@ as a new timestamped migration.
 
 ## Exit Codes
 
-| Code | Condition                                                          |
-| ---- | ------------------------------------------------------------------ |
-| `0`  | success (migration created, applied, or "No schema changes found") |
-| `1`  | conflicting `--apply`/`--no-apply` (mutually exclusive)            |
-| `1`  | pg-delta not enabled                                               |
-| `1`  | no declarative schema files found                                  |
-| `1`  | shadow-database / edge-runtime / diff failure                      |
-| `1`  | apply failure (when applied) — propagated from `migration up`      |
+| Code | Condition                                                                                           |
+| ---- | --------------------------------------------------------------------------------------------------- |
+| `0`  | success (migration created, applied, or "No schema changes found")                                  |
+| `1`  | conflicting `--apply`/`--no-apply` (mutually exclusive)                                             |
+| `1`  | pg-delta not enabled                                                                                |
+| `1`  | no declarative schema files found                                                                   |
+| `1`  | shadow-database / edge-runtime / diff failure                                                       |
+| `1`  | apply failure (when applied) — propagated from the native migration apply (`applyMigrationToLocal`) |
 
 ## Output
 
