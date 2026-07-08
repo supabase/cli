@@ -1,3 +1,9 @@
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Parses a pflag `StringSliceVar` flag: CSV-splits each occurrence via
  * `encoding/csv` and accumulates across repeats, matching `readAsCSV` in
@@ -19,6 +25,10 @@ export class LegacyStringSliceFlagParseError extends Error {
     this.name = "LegacyStringSliceFlagParseError";
     this.value = value;
     this.detail = detail;
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
   }
 }
 

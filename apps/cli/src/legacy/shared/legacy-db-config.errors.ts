@@ -2,6 +2,7 @@ import { Data } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
+  CliSuggestionType,
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
@@ -112,7 +113,14 @@ export class LegacyDbConfigIpv6Error extends Data.TaggedError("LegacyDbConfigIpv
   readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbConnection;
+    // The rendered remediation is "Run supabase link --project-ref <ref> to
+    // setup IPv4 connection", so the suggestion is link-shaped even though the
+    // category stays db_connection.
+    return {
+      ...actionability.dbConnection,
+      suggestion_type: CliSuggestionType.LinkProject,
+      suggested_command: "supabase link",
+    };
   }
 }
 

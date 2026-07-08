@@ -35,7 +35,7 @@ export class LegacyDeclarativeShadowDbError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbConnection;
+    return actionability.startStack;
   }
 }
 
@@ -51,7 +51,7 @@ export class LegacyDeclarativeEmptyOutputError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbFinding;
+    return actionability.impossibleState;
   }
 }
 
@@ -66,7 +66,7 @@ export class LegacyDeclarativeParseOutputError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbFinding;
+    return actionability.impossibleState;
   }
 }
 

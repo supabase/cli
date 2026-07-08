@@ -35,7 +35,7 @@ export class LegacyStorageMissingApiKeyError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.permission;
+    return actionability.apiStatus;
   }
 }
 

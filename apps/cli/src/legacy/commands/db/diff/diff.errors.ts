@@ -72,6 +72,6 @@ export class LegacyDbDiffWriteError extends Data.TaggedError("LegacyDbDiffWriteE
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
+    return actionability.permission;
   }
 }

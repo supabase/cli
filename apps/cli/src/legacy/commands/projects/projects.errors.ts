@@ -109,7 +109,7 @@ export class LegacyProjectsDeleteNotFoundError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
+    return actionability.invalidInput;
   }
 }
 

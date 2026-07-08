@@ -167,7 +167,7 @@ export class LegacyStorageFileError extends Data.TaggedError("LegacyStorageFileE
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidInput;
+    return actionability.permission;
   }
 }
 

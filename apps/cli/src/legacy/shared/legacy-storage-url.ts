@@ -1,3 +1,9 @@
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Storage URL parsing, ported 1:1 from Go's `internal/storage/client/scheme.go`
  * plus the slices of `net/url` that `url.Parse` exercises for the `ss://` scheme.
@@ -32,6 +38,10 @@ export class LegacyGoUrlParseError extends Error {
     super(`parse "${rawURL}": ${inner}`);
     this.name = "LegacyGoUrlParseError";
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
 }
 
 /**
@@ -44,6 +54,10 @@ export class LegacyStorageUrlPatternError extends Error {
   constructor() {
     super(LEGACY_STORAGE_INVALID_URL_MESSAGE);
     this.name = "LegacyStorageUrlPatternError";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 

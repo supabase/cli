@@ -58,6 +58,7 @@ export const CliSuggestionType = {
   UpdateConfig: "update_config",
   UpgradePlan: "upgrade_plan",
   RerunDebug: "rerun_debug",
+  OpenDashboard: "open_dashboard",
   None: "none",
 } as const;
 
@@ -103,6 +104,14 @@ export const ErrorActionabilityId: unique symbol = Symbol.for(
 export interface CliErrorActionabilityDeclaration {
   readonly error_kind: CliErrorKind;
   readonly error_category: CliErrorCategory;
+  /**
+   * Whether this failure class has a canonical remediation. This is the
+   * taxonomy-level claim, not a guarantee that the CLI rendered a
+   * `Suggestion:` line for a given instance — some errors convey the fix in
+   * the message itself. When CLI-1561 wires capture, the emitted
+   * `has_suggestion` should be reconciled with what the output layer actually
+   * rendered so telemetry can never disagree with what the user saw.
+   */
   readonly has_suggestion: boolean;
   readonly suggestion_type: CliSuggestionType;
   readonly suggested_command?: string;
@@ -388,10 +397,33 @@ const externalActionabilityByTag: Record<
   string,
   (error: ErrorRecord) => CliErrorActionabilityDeclaration
 > = {
-  // effect/unstable/cli parser failures
+  // effect/unstable/cli parser failures (ShowHelp and UserError recurse in
+  // classifyCliErrorActionability instead of mapping here)
   MissingOption: () => actionability.invalidInput,
+  MissingArgument: () => actionability.invalidInput,
+  DuplicateOption: () => actionability.invalidInput,
+  InvalidValue: () => actionability.invalidInput,
   UnknownSubcommand: () => actionability.invalidInput,
   UnrecognizedOption: () => actionability.invalidInput,
+
+  // effect PlatformError — OS/filesystem operations. `reason` is
+  // `BadArgument | SystemError`; BadArgument means the CLI itself passed a
+  // rejected argument (internal bug), SystemError reasons are local
+  // environment problems the user resolves.
+  PlatformError: (error) => {
+    const reason = error["reason"];
+    const reasonTag = isErrorRecord(reason)
+      ? safeIdentifier(readString(reason, "_tag"))
+      : undefined;
+    if (reasonTag === "BadArgument") {
+      return { ...actionability.impossibleState, fingerprint_suffix: "bad_argument" };
+    }
+    return {
+      ...actionability.permission,
+      ...(reasonTag !== undefined ? { fingerprint_suffix: reasonTag } : {}),
+    };
+  },
+  BadArgument: () => ({ ...actionability.impossibleState, fingerprint_suffix: "bad_argument" }),
 
   // @supabase/config
   ProjectConfigParseError: () => actionability.invalidConfig,
@@ -414,7 +446,12 @@ const externalActionabilityByTag: Record<
   HttpBodyError: () => ({ ...actionability.apiStatus, fingerprint_suffix: "api_response" }),
   SchemaError: () => ({ ...actionability.apiStatus, fingerprint_suffix: "api_response" }),
 
-  // @supabase/stack
+  // @supabase/stack — StackError is a plain Error subclass matched by `name`
+  // in classifyCliErrorActionability, with a structured `code` field.
+  StackError: (error) =>
+    readString(error, "code") === "PORT_ALLOCATION"
+      ? { ...actionability.invalidConfig, fingerprint_suffix: "port_allocation" }
+      : actionability.unknown,
   BinaryNotFoundError: () => actionability.invalidConfig,
   DownloadError: () => actionability.externalNetwork,
   ChecksumMismatchError: () => ({
@@ -506,6 +543,12 @@ export function classifyCliErrorActionability(error: unknown): CliErrorActionabi
     if (classified !== undefined) return classified;
   }
 
+  // effect cli wraps handler failures in UserError({ cause }) — classify the
+  // actual failure instead of the wrapper.
+  if (tag === "UserError" && isErrorRecord(error) && error["cause"] !== undefined) {
+    return classifyCliErrorActionability(error["cause"]);
+  }
+
   if (tag !== undefined && isErrorRecord(error)) {
     const external = externalActionabilityByTag[tag];
     if (external !== undefined) {
@@ -515,14 +558,10 @@ export function classifyCliErrorActionability(error: unknown): CliErrorActionabi
   }
 
   if (isErrorRecord(error) && readErrorName(error) === "StackError") {
-    if (readString(error, "code") === "PORT_ALLOCATION") {
-      return toActionability(
-        { ...actionability.invalidConfig, fingerprint_suffix: "port_allocation" },
-        "error",
-        "StackError",
-      );
+    const classify = externalActionabilityByTag["StackError"];
+    if (classify !== undefined) {
+      return toActionability(classify(error), "error", "StackError");
     }
-    return toActionability(actionability.unknown, "error", "StackError");
   }
 
   if (typeof error === "string") {

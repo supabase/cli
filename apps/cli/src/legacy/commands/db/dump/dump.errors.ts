@@ -43,7 +43,7 @@ export class LegacyDbDumpOpenFileError extends Data.TaggedError("LegacyDbDumpOpe
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
+    return actionability.permission;
   }
 }
 

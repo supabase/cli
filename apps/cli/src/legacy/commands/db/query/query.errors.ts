@@ -55,8 +55,17 @@ export class LegacyDbQueryLoginRequiredError extends Data.TaggedError(
 /** Query execution failed. Byte-matches Go's `"failed to execute query: " + err`. */
 export class LegacyDbQueryExecError extends Data.TaggedError("LegacyDbQueryExecError")<{
   readonly message: string;
+  /**
+   * Set when this failure came from the linked path's HTTP transport
+   * (`httpClient.execute`/body read against `/v1/projects/{ref}/database/query`)
+   * rather than the user's SQL failing to execute.
+   */
+  readonly transport?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.transport === true) {
+      return { ...actionability.externalNetwork, fingerprint_suffix: "network" };
+    }
     return actionability.invalidInput;
   }
 }

@@ -15,7 +15,7 @@ export class LegacyUnlinkRefReadError extends Data.TaggedError("LegacyUnlinkRefR
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
+    return actionability.permission;
   }
 }
 

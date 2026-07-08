@@ -49,6 +49,6 @@ export class UnsafeFunctionDownloadPathError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.apiStatus;
+    return actionability.permission;
   }
 }

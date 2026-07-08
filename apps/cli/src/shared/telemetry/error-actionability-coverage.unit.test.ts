@@ -27,7 +27,8 @@ import {
  * forgot to classify".
  */
 
-const ERROR_DEFINITION_PATTERN = /(?:TaggedError|CliError)\(\s*"([A-Za-z0-9_]+)"/gs;
+const ERROR_DEFINITION_PATTERN =
+  /(?:TaggedError|CliError)\(\s*"([A-Za-z0-9_]+)"|class\s+([A-Za-z0-9_]+)\s+extends\s+Error\b/gs;
 
 function scanErrorTags(root: string): Map<string, Array<string>> {
   const tagsByFile = new Map<string, Array<string>>();
@@ -40,7 +41,7 @@ function scanErrorTags(root: string): Map<string, Array<string>> {
       }
       if (!path.endsWith(".ts") || path.endsWith(".test.ts")) continue;
       const tags = [...readFileSync(path, "utf8").matchAll(ERROR_DEFINITION_PATTERN)].map(
-        (match) => match[1] ?? "",
+        (match) => match[1] ?? match[2] ?? "",
       );
       if (tags.length > 0) tagsByFile.set(path, tags);
     }
@@ -67,14 +68,14 @@ function collectErrorClasses(module: Record<string, unknown>): Array<DeclaredErr
     if (typeof prototype !== "object" || prototype === null) continue;
     if (!(prototype instanceof Error)) continue;
     // effect V4 assigns `_tag` per instance, so probe with an empty props bag.
+    // Plain `extends Error` classes have no `_tag`; identify them by class name.
     let tag: unknown;
     try {
       tag = Reflect.get(Reflect.construct(value, [{}]), "_tag");
     } catch {
       tag = undefined;
     }
-    if (typeof tag !== "string") continue;
-    classes.push({ exportName, tag, prototype });
+    classes.push({ exportName, tag: typeof tag === "string" ? tag : exportName, prototype });
   }
   return classes;
 }
@@ -98,7 +99,9 @@ describe("apps/cli error classes declare their actionability", () => {
 
   for (const [file, tags] of tagsByFile) {
     const relativePath = file.slice(srcRoot.length + 1);
-    it(relativePath, async () => {
+    // Importing a command module can pull in a large transitive graph on first
+    // load; give these dynamic-import tests more headroom than the default 5s.
+    it(relativePath, { timeout: 30_000 }, async () => {
       const loader = moduleLoaders.get(file);
       expect(loader, `no module loader for ${relativePath}`).toBeDefined();
       const module = await loader?.();

@@ -85,7 +85,7 @@ export class LegacySecretsEnvFileOpenError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidInput;
+    return actionability.provideFlags;
   }
 }
 

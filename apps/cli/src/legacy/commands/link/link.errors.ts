@@ -2,6 +2,7 @@ import { Data } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
+  CliSuggestionType,
   ErrorActionabilityId,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
@@ -41,7 +42,12 @@ export class LegacyProjectPausedError extends Data.TaggedError("LegacyProjectPau
   readonly suggestion: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
+    // The rendered remediation is "unpause it from the Supabase dashboard" —
+    // remote project state, not local config.
+    return {
+      ...actionability.planLimit,
+      suggestion_type: CliSuggestionType.OpenDashboard,
+    };
   }
 }
 

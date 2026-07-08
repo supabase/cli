@@ -67,7 +67,7 @@ export class LegacyDbAdvisorsSetupError extends Data.TaggedError("LegacyDbAdviso
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbFinding;
+    return actionability.dbConnection;
   }
 }
 

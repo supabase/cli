@@ -451,7 +451,9 @@ const applyMigrationToLocal = (
         { isLocal: true, dnsResolver: local.dnsResolver },
       )
       .pipe(
-        Effect.mapError((error) => new LegacyDeclarativeApplyError({ message: error.message })),
+        Effect.mapError(
+          (error) => new LegacyDeclarativeApplyError({ message: error.message, connect: true }),
+        ),
       );
     yield* legacyApplyMigrationFile(
       session,

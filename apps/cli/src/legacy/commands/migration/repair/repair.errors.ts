@@ -16,6 +16,6 @@ export class LegacyMigrationRepairUpdateError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbFinding;
+    return actionability.dbConnection;
   }
 }

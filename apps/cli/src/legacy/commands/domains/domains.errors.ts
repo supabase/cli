@@ -45,8 +45,17 @@ export class LegacyDomainsUnexpectedStatusError extends Data.TaggedError(
  */
 export class LegacyDomainsCnameError extends Data.TaggedError("LegacyDomainsCnameError")<{
   readonly message: string;
+  /**
+   * Set when the DNS-over-HTTPS resolver call itself failed (timeout,
+   * non-200, or fetch failure against the 1.1.1.1 resolver) rather than the
+   * CNAME being missing or pointing at the wrong host.
+   */
+  readonly transport?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.transport === true) {
+      return { ...actionability.externalNetwork, fingerprint_suffix: "network" };
+    }
     return actionability.invalidConfig;
   }
 }

@@ -109,8 +109,16 @@ export class LegacyDeclarativeDiffError extends Data.TaggedError("LegacyDeclarat
  */
 export class LegacyDeclarativeApplyError extends Data.TaggedError("LegacyDeclarativeApplyError")<{
   readonly message: string;
+  /**
+   * Set when this failure came from connecting to the local Postgres instance
+   * (`dbConnection.connect`) rather than the migration SQL failing to apply.
+   */
+  readonly connect?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.connect === true) {
+      return { ...actionability.dbConnection, fingerprint_suffix: "connect" };
+    }
     return actionability.dbFinding;
   }
 }
