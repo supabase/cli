@@ -1,4 +1,10 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../../shared/telemetry/error-actionability.ts";
 
 // ---------------------------------------------------------------------------
 // HTTP-bound errors — one (Network + UnexpectedStatus) pair per Go errorf site
@@ -7,7 +13,11 @@ import { Data } from "effect";
 
 export class LegacyOrgsListNetworkError extends Data.TaggedError("LegacyOrgsListNetworkError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyOrgsListUnexpectedStatusError extends Data.TaggedError(
   "LegacyOrgsListUnexpectedStatusError",
@@ -15,11 +25,19 @@ export class LegacyOrgsListUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 export class LegacyOrgsCreateNetworkError extends Data.TaggedError("LegacyOrgsCreateNetworkError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyOrgsCreateUnexpectedStatusError extends Data.TaggedError(
   "LegacyOrgsCreateUnexpectedStatusError",
@@ -27,7 +45,11 @@ export class LegacyOrgsCreateUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Pure-path error — `orgs list --output env` is explicitly rejected by the Go
@@ -40,4 +62,8 @@ export class LegacyOrgsEnvNotSupportedError extends Data.TaggedError(
   "LegacyOrgsEnvNotSupportedError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}

@@ -1,12 +1,22 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
+
 /**
  * `create extension if not exists pgtap` failed. Byte-matches Go's
  * `"failed to enable pgTAP: " + err` (`apps/cli-go/internal/db/test/test.go:70`).
  */
 export class LegacyTestDbEnablePgtapError extends Data.TaggedError("LegacyTestDbEnablePgtapError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbConnection;
+  }
+}
 
 /**
  * `pg_prove` exited non-zero (test failures or a container error). Byte-matches
@@ -15,7 +25,11 @@ export class LegacyTestDbEnablePgtapError extends Data.TaggedError("LegacyTestDb
  */
 export class LegacyTestDbRunError extends Data.TaggedError("LegacyTestDbRunError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * More than one of `--db-url` / `--linked` / `--local` was set. Reproduces
@@ -26,4 +40,8 @@ export class LegacyTestDbMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacyTestDbMutuallyExclusiveFlagsError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}

@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
+
 /**
  * Reading `supabase/.temp/project-ref` failed for a reason other than the file
  * being absent (which maps to `LegacyProjectNotLinkedError`). Byte-matches Go's
@@ -7,7 +13,11 @@ import { Data } from "effect";
  */
 export class LegacyUnlinkRefReadError extends Data.TaggedError("LegacyUnlinkRefReadError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /**
  * Removing the `supabase/.temp` directory failed. Byte-matches Go's
@@ -15,4 +25,8 @@ export class LegacyUnlinkRefReadError extends Data.TaggedError("LegacyUnlinkRefR
  */
 export class LegacyUnlinkTempRemovalError extends Data.TaggedError("LegacyUnlinkTempRemovalError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}

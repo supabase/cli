@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
  * `--use-copy` / `--exclude` were passed without `--data-only`. Reproduces
@@ -9,7 +14,11 @@ export class LegacyDbDumpRequiresDataOnlyError extends Data.TaggedError(
   "LegacyDbDumpRequiresDataOnlyError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * Two mutually exclusive flags were set together. Reproduces cobra's
@@ -20,7 +29,11 @@ export class LegacyDbDumpMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacyDbDumpMutuallyExclusiveFlagsError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * Failed to open the `--file` output path. Byte-matches Go's
@@ -28,7 +41,11 @@ export class LegacyDbDumpMutuallyExclusiveFlagsError extends Data.TaggedError(
  */
 export class LegacyDbDumpOpenFileError extends Data.TaggedError("LegacyDbDumpOpenFileError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * The pg_dump container exited non-zero. Byte-matches Go's
@@ -41,4 +58,8 @@ export class LegacyDbDumpRunError extends Data.TaggedError("LegacyDbDumpRunError
   // transaction-pooler guidance. `Output.fail` prints it bare on stderr after the
   // error message, mirroring Go's `recoverAndExit`.
   readonly suggestion?: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbConnection;
+  }
+}

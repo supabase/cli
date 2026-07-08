@@ -20,11 +20,25 @@ export class DockerPullError extends Data.TaggedError("DockerPullError")<{
   readonly image: string;
   readonly detail: string;
   readonly cause: unknown;
+  /**
+   * Whether the pull failed because the Docker daemon itself is unreachable,
+   * detected from the runtime's output at the boundary where it is produced.
+   * Consumers must branch on this instead of sniffing `detail` text.
+   */
+  readonly daemonDown: boolean;
 }> {}
 
 export class StackBuildError extends Data.TaggedError("StackBuildError")<{
   readonly detail: string;
   readonly cause?: unknown;
+  /**
+   * Structured discriminant for consumers that need to distinguish failure
+   * classes without parsing `detail`: `invalid_config` for user-fixable
+   * configuration problems, `asset_preparation` for download/registry
+   * failures while preparing stack assets. Absent for internal invariant
+   * violations.
+   */
+  readonly reason?: "invalid_config" | "asset_preparation";
 }> {}
 
 export class PortConflictError extends Data.TaggedError("PortConflictError")<{

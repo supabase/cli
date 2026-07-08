@@ -7,6 +7,7 @@ import { Data, Effect, Exit, FileSystem, Path } from "effect";
 
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import {
   legacyApplyMigrationFile,
   legacyIsPipelineIncompatible,
@@ -15,15 +16,13 @@ import {
 
 class TestError extends Data.TaggedError("TestError")<{ readonly message: string }> {}
 
-class FakeExecError extends Data.TaggedError("LegacyDbExecError")<{ readonly message: string }> {}
-
 function fakeSession(opts: { failOn?: string } = {}) {
   const calls: Array<{ kind: "exec" | "query"; sql: string; params?: ReadonlyArray<unknown> }> = [];
   const session: LegacyDbSession = {
     exec: (sql) => {
       calls.push({ kind: "exec", sql });
       return opts.failOn !== undefined && sql.includes(opts.failOn)
-        ? Effect.fail(new FakeExecError({ message: "exec failed" }))
+        ? Effect.fail(new LegacyDbExecError({ message: "exec failed" }))
         : Effect.void;
     },
     query: (sql, params) => {

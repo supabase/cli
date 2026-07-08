@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
+
 /**
  * The migra diff failed (edge-runtime run, or the OOM bash fallback in the
  * `supabase/migra` Docker image). Byte-matches Go's
@@ -8,7 +14,11 @@ import { Data } from "effect";
  */
 export class LegacyMigraDiffError extends Data.TaggedError("LegacyMigraDiffError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * Loading the target's user-defined schemas for the migra bash fallback failed.
@@ -18,4 +28,8 @@ export class LegacyMigraDiffError extends Data.TaggedError("LegacyMigraDiffError
  */
 export class LegacyMigraSchemaLoadError extends Data.TaggedError("LegacyMigraSchemaLoadError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}

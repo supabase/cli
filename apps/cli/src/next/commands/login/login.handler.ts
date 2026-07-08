@@ -18,14 +18,23 @@ import {
 } from "../../../shared/telemetry/identity.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import { withAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
 import type { NonInteractiveError } from "../../../shared/output/errors.ts";
 import { LoginFailedError, NoTtyError } from "./login.errors.ts";
 import type { LoginFlags } from "./login.command.ts";
 
-class LoginVerificationError extends Data.TaggedError("LoginVerificationError")<{
+export class LoginVerificationError extends Data.TaggedError("LoginVerificationError")<{
   cause: ApiError;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 const MAX_LOGIN_VERIFICATION_RETRIES = 2;
 

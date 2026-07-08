@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../telemetry/error-actionability.ts";
 
 export class InitAlreadyExistsError extends Data.TaggedError("InitAlreadyExistsError")<{
   readonly detail: string;
@@ -6,6 +11,10 @@ export class InitAlreadyExistsError extends Data.TaggedError("InitAlreadyExistsE
 }> {
   override get message() {
     return "A Supabase project is already initialized in this directory.";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
@@ -18,6 +27,10 @@ export class InitExperimentalRequiredError extends Data.TaggedError(
   override get message() {
     return "The --use-orioledb flag requires --experimental.";
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
 }
 
 export class InitParseSettingsError extends Data.TaggedError("InitParseSettingsError")<{
@@ -26,5 +39,9 @@ export class InitParseSettingsError extends Data.TaggedError("InitParseSettingsE
 }> {
   override get message() {
     return "Failed to parse existing IDE settings file.";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }

@@ -1,4 +1,10 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
  * Tagged errors for `supabase config push`, one per Go error path
@@ -29,113 +35,229 @@ interface StatusErrorArgs {
 /** TOML parse failure (rewraps the packages/config parse error). Aborts before any network call. */
 export class LegacyConfigPushLoadConfigError extends Data.TaggedError(
   "LegacyConfigPushLoadConfigError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 // --- cost matrix (list addons) ---------------------------------------------
 
 export class LegacyConfigPushListAddonsNetworkError extends Data.TaggedError(
   "LegacyConfigPushListAddonsNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyConfigPushListAddonsStatusError extends Data.TaggedError(
   "LegacyConfigPushListAddonsStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 // --- api --------------------------------------------------------------------
 
 export class LegacyConfigPushApiReadNetworkError extends Data.TaggedError(
   "LegacyConfigPushApiReadNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushApiReadStatusError extends Data.TaggedError(
   "LegacyConfigPushApiReadStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 export class LegacyConfigPushApiUpdateNetworkError extends Data.TaggedError(
   "LegacyConfigPushApiUpdateNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushApiUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushApiUpdateStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 // --- db.settings ------------------------------------------------------------
 
 export class LegacyConfigPushDbReadNetworkError extends Data.TaggedError(
   "LegacyConfigPushDbReadNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushDbReadStatusError extends Data.TaggedError(
   "LegacyConfigPushDbReadStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 export class LegacyConfigPushDbUpdateNetworkError extends Data.TaggedError(
   "LegacyConfigPushDbUpdateNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushDbUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushDbUpdateStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 // --- db.network_restrictions ------------------------------------------------
 
 export class LegacyConfigPushNetworkRestrictionsReadNetworkError extends Data.TaggedError(
   "LegacyConfigPushNetworkRestrictionsReadNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushNetworkRestrictionsReadStatusError extends Data.TaggedError(
   "LegacyConfigPushNetworkRestrictionsReadStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 export class LegacyConfigPushNetworkRestrictionsUpdateNetworkError extends Data.TaggedError(
   "LegacyConfigPushNetworkRestrictionsUpdateNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushNetworkRestrictionsUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushNetworkRestrictionsUpdateStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 // --- db.ssl_enforcement -----------------------------------------------------
 
 export class LegacyConfigPushSslEnforcementReadNetworkError extends Data.TaggedError(
   "LegacyConfigPushSslEnforcementReadNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushSslEnforcementReadStatusError extends Data.TaggedError(
   "LegacyConfigPushSslEnforcementReadStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 export class LegacyConfigPushSslEnforcementUpdateNetworkError extends Data.TaggedError(
   "LegacyConfigPushSslEnforcementUpdateNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushSslEnforcementUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushSslEnforcementUpdateStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 // --- auth -------------------------------------------------------------------
 
 export class LegacyConfigPushAuthReadNetworkError extends Data.TaggedError(
   "LegacyConfigPushAuthReadNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushAuthReadStatusError extends Data.TaggedError(
   "LegacyConfigPushAuthReadStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 export class LegacyConfigPushAuthUpdateNetworkError extends Data.TaggedError(
   "LegacyConfigPushAuthUpdateNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushAuthUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushAuthUpdateStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 // --- storage ----------------------------------------------------------------
 
 export class LegacyConfigPushStorageReadNetworkError extends Data.TaggedError(
   "LegacyConfigPushStorageReadNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushStorageReadStatusError extends Data.TaggedError(
   "LegacyConfigPushStorageReadStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 export class LegacyConfigPushStorageUpdateNetworkError extends Data.TaggedError(
   "LegacyConfigPushStorageUpdateNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushStorageUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushStorageUpdateStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 // --- experimental.webhooks --------------------------------------------------
 
 export class LegacyConfigPushEnableWebhookNetworkError extends Data.TaggedError(
   "LegacyConfigPushEnableWebhookNetworkError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushEnableWebhookStatusError extends Data.TaggedError(
   "LegacyConfigPushEnableWebhookStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}

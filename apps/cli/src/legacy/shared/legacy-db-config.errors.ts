@@ -1,4 +1,10 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../shared/telemetry/error-actionability.ts";
 
 /**
  * `--db-url` could not be parsed as a Postgres connection string. Mirrors Go's
@@ -7,7 +13,11 @@ import { Data } from "effect";
  */
 export class LegacyDbConfigParseUrlError extends Data.TaggedError("LegacyDbConfigParseUrlError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /**
  * `supabase/config.toml` exists but could not be read or parsed. Mirrors Go's
@@ -19,12 +29,20 @@ export class LegacyDbConfigParseUrlError extends Data.TaggedError("LegacyDbConfi
  */
 export class LegacyDbConfigLoadError extends Data.TaggedError("LegacyDbConfigLoadError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /** Transport failure creating a temporary login role (`V1CreateLoginRole`). */
 export class LegacyDbConfigLoginRoleNetworkError extends Data.TaggedError(
   "LegacyDbConfigLoginRoleNetworkError",
-)<{ readonly message: string }> {}
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 /** Non-201 status creating a temporary login role (`V1CreateLoginRole`). */
 export class LegacyDbConfigLoginRoleStatusError extends Data.TaggedError(
@@ -33,12 +51,20 @@ export class LegacyDbConfigLoginRoleStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 /** Transport failure listing network bans (`V1ListAllNetworkBans`). */
 export class LegacyDbConfigListBansNetworkError extends Data.TaggedError(
   "LegacyDbConfigListBansNetworkError",
-)<{ readonly message: string }> {}
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 /** Non-2xx status listing network bans (`V1ListAllNetworkBans`). */
 export class LegacyDbConfigListBansStatusError extends Data.TaggedError(
@@ -47,12 +73,20 @@ export class LegacyDbConfigListBansStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 /** Transport failure removing network bans (`V1DeleteNetworkBans`). */
 export class LegacyDbConfigUnbanNetworkError extends Data.TaggedError(
   "LegacyDbConfigUnbanNetworkError",
-)<{ readonly message: string }> {}
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 /** Non-2xx status removing network bans (`V1DeleteNetworkBans`). */
 export class LegacyDbConfigUnbanStatusError extends Data.TaggedError(
@@ -61,7 +95,11 @@ export class LegacyDbConfigUnbanStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 /**
  * The linked project's direct database host is unreachable (IPv6-only) and no
@@ -72,7 +110,11 @@ export class LegacyDbConfigUnbanStatusError extends Data.TaggedError(
 export class LegacyDbConfigIpv6Error extends Data.TaggedError("LegacyDbConfigIpv6Error")<{
   readonly message: string;
   readonly suggestion?: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbConnection;
+  }
+}
 
 /**
  * Failed to connect to the linked project as the temporary login role after the
@@ -84,7 +126,11 @@ export class LegacyDbConfigConnectTempRoleError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly suggestion?: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbConnection;
+  }
+}
 
 /**
  * The configured pooler connection string does not match the linked project ref
@@ -97,4 +143,8 @@ export class LegacyDbConfigPoolerLoginError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly suggestion?: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbConnection;
+  }
+}

@@ -254,6 +254,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                     new StackBuildError({
                       detail: "Failed to prepare stack assets",
                       cause,
+                      reason: "asset_preparation",
                     }),
                 ),
               )
@@ -346,6 +347,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                   new StackBuildError({
                     detail: "Failed to persist stack cleanup metadata",
                     cause,
+                    reason: "invalid_config",
                   }),
               ),
             );

@@ -78,12 +78,23 @@ export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function
                 : 0;
             // Mirrors Go's `update.go:26` — pass the resolved branch's project
             // ref so the entitlements check is scoped to the branch's org.
-            yield* legacySuggestUpgrade({
+            const upgradeSuggested = yield* legacySuggestUpgrade({
               projectRef: branchRef,
               featureKey: "branching_persistent",
               statusCode: status,
             });
-            return yield* mapUpdateError(cause);
+            const mapped = yield* Effect.flip(mapUpdateError(cause));
+            if (mapped._tag === "LegacyBranchesUpdateUnexpectedStatusError") {
+              return yield* Effect.fail(
+                new LegacyBranchesUpdateUnexpectedStatusError({
+                  status: mapped.status,
+                  body: mapped.body,
+                  message: mapped.message,
+                  upgradeSuggested,
+                }),
+              );
+            }
+            return yield* Effect.fail(mapped);
           }),
         ),
       );

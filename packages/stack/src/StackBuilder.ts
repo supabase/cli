@@ -372,6 +372,7 @@ export const validateResolvedConfig = (
         return yield* Effect.fail(
           new StackBuildError({
             detail: `mode "native" only supports postgres, auth, and postgrest. Disable ${enabledDockerOnly.join(", ")} or switch to "auto" or "docker".`,
+            reason: "invalid_config",
           }),
         );
       }
@@ -381,6 +382,7 @@ export const validateResolvedConfig = (
       return yield* Effect.fail(
         new StackBuildError({
           detail: "imgproxy requires storage to be enabled",
+          reason: "invalid_config",
         }),
       );
     }
@@ -389,6 +391,7 @@ export const validateResolvedConfig = (
       return yield* Effect.fail(
         new StackBuildError({
           detail: "vector requires analytics to be enabled",
+          reason: "invalid_config",
         }),
       );
     }
@@ -397,6 +400,7 @@ export const validateResolvedConfig = (
       return yield* Effect.fail(
         new StackBuildError({
           detail: "studio requires pgmeta to be enabled",
+          reason: "invalid_config",
         }),
       );
     }

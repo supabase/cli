@@ -57,11 +57,19 @@ export const legacyVanitySubdomainsActivate = Effect.fn("legacy.vanity-subdomain
                 // tagged error before deciding whether to suggest an upgrade, then re-fail.
                 const mapped = yield* Effect.flip(mapActivateError(cause));
                 if (mapped._tag === "LegacyVanitySubdomainsActivateUnexpectedStatusError") {
-                  yield* legacySuggestUpgrade({
+                  const upgradeSuggested = yield* legacySuggestUpgrade({
                     projectRef: ref,
                     featureKey: "vanity_subdomain",
                     statusCode: mapped.status,
                   });
+                  return yield* Effect.fail(
+                    new LegacyVanitySubdomainsActivateUnexpectedStatusError({
+                      status: mapped.status,
+                      body: mapped.body,
+                      message: mapped.message,
+                      upgradeSuggested,
+                    }),
+                  );
                 }
                 return yield* Effect.fail(mapped);
               }),

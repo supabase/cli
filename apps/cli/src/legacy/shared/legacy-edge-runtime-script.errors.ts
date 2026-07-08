@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 /**
  * Running a TypeScript program inside the edge-runtime container failed (non-zero
@@ -10,4 +15,8 @@ import { Data } from "effect";
  */
 export class LegacyEdgeRuntimeScriptError extends Data.TaggedError("LegacyEdgeRuntimeScriptError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}

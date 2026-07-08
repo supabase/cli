@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
+
 /**
  * Go's `ErrMissingToken` (`apps/cli-go/cmd/login.go:16`). Go Aqua-styles the
  * `--token` / `SUPABASE_ACCESS_TOKEN` substrings, but the legacy port renders
@@ -12,12 +18,20 @@ export const LEGACY_LOGIN_MISSING_TOKEN_MESSAGE =
 /** Token-path save failure — Go's `cannot save provided token: %w` (`login.go:171`). */
 export class LegacyLoginSaveTokenError extends Data.TaggedError("LegacyLoginSaveTokenError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 /** Non-TTY environment with no token supplied (`login.go:34-35`). */
 export class LegacyLoginMissingTokenError extends Data.TaggedError("LegacyLoginMissingTokenError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authToken;
+  }
+}
 
 /**
  * A single login-session poll/parse failure. Carries the underlying message so
@@ -27,19 +41,35 @@ export class LegacyLoginMissingTokenError extends Data.TaggedError("LegacyLoginM
  */
 export class LegacyLoginVerificationError extends Data.TaggedError("LegacyLoginVerificationError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 /** All verification retries exhausted (`login.go:214-216`). */
 export class LegacyLoginFailedError extends Data.TaggedError("LegacyLoginFailedError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 /** ECDH / AES-GCM decryption failure — Go's `cannot decrypt access token` (`login.go:47`). */
 export class LegacyLoginDecryptError extends Data.TaggedError("LegacyLoginDecryptError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 /** ECDH keypair generation failure — Go's `cannot generate crypto keys` (`login.go:66`). */
 export class LegacyLoginCryptoError extends Data.TaggedError("LegacyLoginCryptoError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.internalPanic;
+  }
+}

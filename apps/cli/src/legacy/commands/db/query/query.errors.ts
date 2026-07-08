@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
  * No SQL was provided by any source. Byte-matches Go's
@@ -7,17 +12,29 @@ import { Data } from "effect";
  */
 export class LegacyDbQueryNoSqlError extends Data.TaggedError("LegacyDbQueryNoSqlError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /** Stdin was piped but empty. Byte-matches Go's `"no SQL provided via stdin"`. */
 export class LegacyDbQueryNoStdinSqlError extends Data.TaggedError("LegacyDbQueryNoStdinSqlError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /** `--file` could not be read. Byte-matches Go's `"failed to read SQL file: " + err`. */
 export class LegacyDbQueryReadFileError extends Data.TaggedError("LegacyDbQueryReadFileError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * `--linked` was used without an access token. Mirrors Go's PreRunE, which
@@ -29,12 +46,20 @@ export class LegacyDbQueryLoginRequiredError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 /** Query execution failed. Byte-matches Go's `"failed to execute query: " + err`. */
 export class LegacyDbQueryExecError extends Data.TaggedError("LegacyDbQueryExecError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
 
 /**
  * More than one of `--db-url` / `--linked` / `--local` was set. Reproduces
@@ -46,7 +71,11 @@ export class LegacyDbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacyDbQueryMutuallyExclusiveFlagsError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * The linked Management API returned a non-201 status. Byte-matches Go's
@@ -56,4 +85,8 @@ export class LegacyDbQueryUnexpectedStatusError extends Data.TaggedError(
   "LegacyDbQueryUnexpectedStatusError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.apiStatus;
+  }
+}

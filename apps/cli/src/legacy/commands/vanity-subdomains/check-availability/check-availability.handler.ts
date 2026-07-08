@@ -60,12 +60,20 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
               if (mapped._tag === "LegacyVanitySubdomainsCheckUnexpectedStatusError") {
                 // Go's check command calls SuggestUpgradeOnError without a following
                 // TrackUpgradeSuggested, so suppress the analytics event for parity.
-                yield* legacySuggestUpgrade({
+                const upgradeSuggested = yield* legacySuggestUpgrade({
                   projectRef: ref,
                   featureKey: "vanity_subdomain",
                   statusCode: mapped.status,
                   trackAnalytics: false,
                 });
+                return yield* Effect.fail(
+                  new LegacyVanitySubdomainsCheckUnexpectedStatusError({
+                    status: mapped.status,
+                    body: mapped.body,
+                    message: mapped.message,
+                    upgradeSuggested,
+                  }),
+                );
               }
               return yield* Effect.fail(mapped);
             }),

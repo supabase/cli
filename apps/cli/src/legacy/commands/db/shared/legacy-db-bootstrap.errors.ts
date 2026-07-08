@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
  * Driving the bundled Go binary's hidden `db __db-bootstrap` seam failed — the
@@ -17,4 +22,10 @@ export class LegacyDbBootstrapError extends Data.TaggedError("LegacyDbBootstrapE
    * runtime's daemon is unreachable (`AssertServiceIsRunning`, `misc.go:148-154`).
    */
   readonly suggestion?: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.suggestion !== undefined
+      ? { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" }
+      : { ...actionability.unknown, fingerprint_suffix: "seam" };
+  }
+}

@@ -258,9 +258,25 @@ const pullImage = (
         image: images[0] ?? "unknown",
         detail: `Failed to pull Docker image from all registries. ${detail}`,
         cause: new Error(detail),
+        daemonDown: failures.some((failure) => isDockerDaemonDownMessage(failure.message)),
       }),
     );
   });
+
+/**
+ * Whether the container runtime's output indicates the daemon itself is not
+ * running. This is the boundary where docker's text output is produced, so it
+ * is the one place allowed to interpret it.
+ */
+const isDockerDaemonDownMessage = (message: string): boolean => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("cannot connect to the docker daemon") ||
+    normalized.includes("docker daemon is not running") ||
+    normalized.includes("docker desktop is not running") ||
+    normalized.includes("is the docker daemon running")
+  );
+};
 
 const resolveServiceWithMetadata = (
   resolver: BinaryResolver["Service"],

@@ -52,7 +52,7 @@ const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapGetStatusOrNetwork(cause));
     if (mapped._tag === "LegacySsoUpdateUnexpectedStatusError") {
-      yield* legacySuggestUpgrade({
+      const upgradeSuggested = yield* legacySuggestUpgrade({
         projectRef: ref,
         featureKey: "auth.saml_2",
         statusCode: mapped.status,
@@ -61,9 +61,18 @@ const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError
         return yield* Effect.fail(
           new LegacySsoUpdateNotFoundError({
             message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
+            upgradeSuggested,
           }),
         );
       }
+      return yield* Effect.fail(
+        new LegacySsoUpdateUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
+          upgradeSuggested,
+        }),
+      );
     }
     return yield* Effect.fail(mapped);
   });
@@ -209,7 +218,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         // Cap + sanitise to match `mapLegacyHttpError`'s defences — see add handler
         // for the rationale; the raw-HTTP path must not bypass these.
         const bodyText = sanitizeLegacyErrorBody(rawBody);
-        yield* legacySuggestUpgrade({
+        const upgradeSuggested = yield* legacySuggestUpgrade({
           projectRef: ref,
           featureKey: "auth.saml_2",
           statusCode: response.status,
@@ -221,6 +230,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
             status: response.status,
             body: bodyText,
             message: `unexpected error fetching identity provider: ${bodyText}`,
+            upgradeSuggested,
           }),
         );
       }

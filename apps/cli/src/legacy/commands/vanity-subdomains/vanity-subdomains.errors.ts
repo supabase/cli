@@ -1,10 +1,20 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../../shared/telemetry/error-actionability.ts";
 
 export class LegacyVanitySubdomainsGetNetworkError extends Data.TaggedError(
   "LegacyVanitySubdomainsGetNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyVanitySubdomainsGetUnexpectedStatusError extends Data.TaggedError(
   "LegacyVanitySubdomainsGetUnexpectedStatusError",
@@ -12,13 +22,21 @@ export class LegacyVanitySubdomainsGetUnexpectedStatusError extends Data.TaggedE
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 export class LegacyVanitySubdomainsCheckNetworkError extends Data.TaggedError(
   "LegacyVanitySubdomainsCheckNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyVanitySubdomainsCheckUnexpectedStatusError extends Data.TaggedError(
   "LegacyVanitySubdomainsCheckUnexpectedStatusError",
@@ -26,13 +44,22 @@ export class LegacyVanitySubdomainsCheckUnexpectedStatusError extends Data.Tagge
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+  readonly upgradeSuggested?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
+  }
+}
 
 export class LegacyVanitySubdomainsActivateNetworkError extends Data.TaggedError(
   "LegacyVanitySubdomainsActivateNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyVanitySubdomainsActivateUnexpectedStatusError extends Data.TaggedError(
   "LegacyVanitySubdomainsActivateUnexpectedStatusError",
@@ -40,13 +67,22 @@ export class LegacyVanitySubdomainsActivateUnexpectedStatusError extends Data.Ta
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+  readonly upgradeSuggested?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
+  }
+}
 
 export class LegacyVanitySubdomainsDeleteNetworkError extends Data.TaggedError(
   "LegacyVanitySubdomainsDeleteNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyVanitySubdomainsDeleteUnexpectedStatusError extends Data.TaggedError(
   "LegacyVanitySubdomainsDeleteUnexpectedStatusError",
@@ -54,4 +90,8 @@ export class LegacyVanitySubdomainsDeleteUnexpectedStatusError extends Data.Tagg
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}

@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
+
 /**
  * The pg-delta edge-runtime script failed. Byte-matches Go's
  * `"<errPrefix>: <err>:\n<stderr>"` wrapping in `RunEdgeRuntimeScript`
@@ -11,7 +17,11 @@ export class LegacyDeclarativeEdgeRuntimeError extends Data.TaggedError(
   "LegacyDeclarativeEdgeRuntimeError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * Setting up / connecting to / migrating the throwaway shadow database failed.
@@ -23,7 +33,11 @@ export class LegacyDeclarativeShadowDbError extends Data.TaggedError(
   "LegacyDeclarativeShadowDbError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbConnection;
+  }
+}
 
 /**
  * Exporting declarative schema produced no output. Byte-matches Go's
@@ -35,7 +49,11 @@ export class LegacyDeclarativeEmptyOutputError extends Data.TaggedError(
   "LegacyDeclarativeEmptyOutputError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * Parsing the declarative export envelope failed. Byte-matches Go's
@@ -46,7 +64,11 @@ export class LegacyDeclarativeParseOutputError extends Data.TaggedError(
   "LegacyDeclarativeParseOutputError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * Materializing the declarative export on disk failed. Byte-matches Go's
@@ -57,4 +79,8 @@ export class LegacyDeclarativeParseOutputError extends Data.TaggedError(
  */
 export class LegacyDeclarativeWriteError extends Data.TaggedError("LegacyDeclarativeWriteError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}

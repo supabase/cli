@@ -1,16 +1,29 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 export class LegacyInvalidAccessTokenError extends Data.TaggedError(
   "LegacyInvalidAccessTokenError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 export class LegacyPlatformAuthRequiredError extends Data.TaggedError(
   "LegacyPlatformAuthRequiredError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 /**
  * Raised by `deleteProjectCredential` when removing a stored database-password
@@ -21,7 +34,11 @@ export class LegacyPlatformAuthRequiredError extends Data.TaggedError(
  */
 export class LegacyCredentialDeleteError extends Data.TaggedError("LegacyCredentialDeleteError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 /**
  * Raised by `deleteAccessToken` when there is no access token to delete, i.e.
@@ -33,7 +50,11 @@ export class LegacyCredentialDeleteError extends Data.TaggedError("LegacyCredent
  */
 export class LegacyNotLoggedInError extends Data.TaggedError("LegacyNotLoggedInError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 /**
  * Raised by `deleteAccessToken` when removing the token fails for a real reason
@@ -44,4 +65,8 @@ export class LegacyNotLoggedInError extends Data.TaggedError("LegacyNotLoggedInE
  */
 export class LegacyDeleteTokenError extends Data.TaggedError("LegacyDeleteTokenError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}

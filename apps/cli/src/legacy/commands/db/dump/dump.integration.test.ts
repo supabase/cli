@@ -112,7 +112,11 @@ function mockDockerRun(opts: {
       allOpts.push(runOpts);
       if (opts.runFails === true) {
         return Effect.fail(
-          new LegacyDockerRunError({ message: "failed to run docker: not found" }),
+          new LegacyDockerRunError({
+            message: "failed to run docker: not found",
+            reason: "spawn",
+            daemonDown: false,
+          }),
         );
       }
       const next = queue.shift();
@@ -130,7 +134,11 @@ function mockDockerRun(opts: {
         allOpts.push(runOpts);
         if (opts.runFails === true) {
           return yield* Effect.fail(
-            new LegacyDockerRunError({ message: "failed to run docker: not found" }),
+            new LegacyDockerRunError({
+              message: "failed to run docker: not found",
+              reason: "spawn",
+              daemonDown: false,
+            }),
           );
         }
         const next = queue.shift();

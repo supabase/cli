@@ -1,11 +1,21 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../../shared/telemetry/error-actionability.ts";
 
 /** Transport failure while fetching `GET /v1/projects/{ref}`. */
 export class LegacyLinkProjectStatusNetworkError extends Data.TaggedError(
   "LegacyLinkProjectStatusNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 /**
  * `GET /v1/projects/{ref}` returned a non-200, non-404 status. Byte-matches Go's
@@ -15,7 +25,11 @@ export class LegacyLinkProjectStatusError extends Data.TaggedError("LegacyLinkPr
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 /**
  * The remote project is paused (`status == INACTIVE`). Message `"project is paused"`
@@ -25,14 +39,22 @@ export class LegacyLinkProjectStatusError extends Data.TaggedError("LegacyLinkPr
 export class LegacyProjectPausedError extends Data.TaggedError("LegacyProjectPausedError")<{
   readonly message: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /** Transport failure while fetching `GET /v1/projects/{ref}/api-keys`. */
 export class LegacyLinkApiKeysNetworkError extends Data.TaggedError(
   "LegacyLinkApiKeysNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 /**
  * `GET /v1/projects/{ref}/api-keys` returned a non-200 status. Byte-matches Go's
@@ -43,7 +65,11 @@ export class LegacyLinkAuthTokenError extends Data.TaggedError("LegacyLinkAuthTo
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
 
 /**
  * The api-keys response contained no usable anon/service-role key. Byte-matches
@@ -51,4 +77,8 @@ export class LegacyLinkAuthTokenError extends Data.TaggedError("LegacyLinkAuthTo
  */
 export class LegacyLinkMissingKeyError extends Data.TaggedError("LegacyLinkMissingKeyError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}

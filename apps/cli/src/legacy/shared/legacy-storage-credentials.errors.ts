@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Errors raised while deriving Storage connection credentials, shared by
  * `seed buckets` and `storage ls/cp/mv/rm`.
@@ -11,7 +17,11 @@ import { Data } from "effect";
  */
 export class LegacyStorageConfigError extends Data.TaggedError("LegacyStorageConfigError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /**
  * Raised on `--linked` when the project's api-keys response yields no keys,
@@ -23,14 +33,22 @@ export class LegacyStorageMissingApiKeyError extends Data.TaggedError(
   "LegacyStorageMissingApiKeyError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 /** Transport failure fetching the project's api-keys (`failed to get api keys: <cause>`). */
 export class LegacyStorageApiKeysNetworkError extends Data.TaggedError(
   "LegacyStorageApiKeysNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 /**
  * `GET /v1/projects/{ref}/api-keys?reveal=true` returned a non-200 on a
@@ -42,4 +60,8 @@ export class LegacyStorageAuthTokenError extends Data.TaggedError("LegacyStorage
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}

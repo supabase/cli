@@ -1,10 +1,20 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../../shared/telemetry/error-actionability.ts";
 
 export class LegacyPostgresConfigGetNetworkError extends Data.TaggedError(
   "LegacyPostgresConfigGetNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyPostgresConfigGetUnexpectedStatusError extends Data.TaggedError(
   "LegacyPostgresConfigGetUnexpectedStatusError",
@@ -12,19 +22,31 @@ export class LegacyPostgresConfigGetUnexpectedStatusError extends Data.TaggedErr
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 export class LegacyPostgresConfigGetUnmarshalError extends Data.TaggedError(
   "LegacyPostgresConfigGetUnmarshalError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.apiStatus;
+  }
+}
 
 export class LegacyPostgresConfigUpdateNetworkError extends Data.TaggedError(
   "LegacyPostgresConfigUpdateNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyPostgresConfigUpdateUnexpectedStatusError extends Data.TaggedError(
   "LegacyPostgresConfigUpdateUnexpectedStatusError",
@@ -32,25 +54,41 @@ export class LegacyPostgresConfigUpdateUnexpectedStatusError extends Data.Tagged
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 export class LegacyPostgresConfigUpdateUnmarshalError extends Data.TaggedError(
   "LegacyPostgresConfigUpdateUnmarshalError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.apiStatus;
+  }
+}
 
 export class LegacyPostgresConfigUpdateSerializeError extends Data.TaggedError(
   "LegacyPostgresConfigUpdateSerializeError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 export class LegacyPostgresConfigDeleteNetworkError extends Data.TaggedError(
   "LegacyPostgresConfigDeleteNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyPostgresConfigDeleteUnexpectedStatusError extends Data.TaggedError(
   "LegacyPostgresConfigDeleteUnexpectedStatusError",
@@ -58,19 +96,31 @@ export class LegacyPostgresConfigDeleteUnexpectedStatusError extends Data.Tagged
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 export class LegacyPostgresConfigDeleteUnmarshalError extends Data.TaggedError(
   "LegacyPostgresConfigDeleteUnmarshalError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.apiStatus;
+  }
+}
 
 export class LegacyPostgresConfigDeleteSerializeError extends Data.TaggedError(
   "LegacyPostgresConfigDeleteSerializeError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 export class LegacyPostgresConfigInvalidConfigValueError extends Data.TaggedError(
   "LegacyPostgresConfigInvalidConfigValueError",
@@ -83,5 +133,9 @@ export class LegacyPostgresConfigInvalidConfigValueError extends Data.TaggedErro
       input: args.input,
       message: `expected config value in key:value format, received: '${args.input}'`,
     });
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }

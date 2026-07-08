@@ -106,12 +106,23 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
               HttpClientError.isHttpClientError(cause) && cause.response !== undefined
                 ? cause.response.status
                 : 0;
-            yield* legacySuggestUpgrade({
+            const upgradeSuggested = yield* legacySuggestUpgrade({
               projectRef: ref,
               featureKey: "branching_limit",
               statusCode: status,
             });
-            return yield* mapCreateErrorRaw(cause);
+            const mapped = yield* Effect.flip(mapCreateErrorRaw(cause));
+            if (mapped._tag === "LegacyBranchesCreateUnexpectedStatusError") {
+              return yield* Effect.fail(
+                new LegacyBranchesCreateUnexpectedStatusError({
+                  status: mapped.status,
+                  body: mapped.body,
+                  message: mapped.message,
+                  upgradeSuggested,
+                }),
+              );
+            }
+            return yield* Effect.fail(mapped);
           }),
         ),
       );

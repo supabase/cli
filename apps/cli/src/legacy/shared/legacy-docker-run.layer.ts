@@ -32,6 +32,22 @@ const RETRYABLE_PULL_PATTERNS = [
   /i\/o timeout/i,
 ] as const;
 
+/**
+ * Whether the container runtime's output indicates the daemon itself is not
+ * running. This is the boundary where docker's text output is produced, so it
+ * is the one place allowed to interpret it (feeds
+ * `LegacyDockerRunError.daemonDown`).
+ */
+const legacyIsDockerDaemonDownMessage = (message: string): boolean => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("cannot connect to the docker daemon") ||
+    normalized.includes("docker daemon is not running") ||
+    normalized.includes("docker desktop is not running") ||
+    normalized.includes("is the docker daemon running")
+  );
+};
+
 export const legacyDockerRunLayer: Layer.Layer<
   LegacyDockerRun,
   never,
@@ -48,6 +64,8 @@ export const legacyDockerRunLayer: Layer.Layer<
       // credential-free message that still points at the likely cause.
       new LegacyDockerRunError({
         message: `failed to run docker. ${LEGACY_SUGGEST_DOCKER_INSTALL}`,
+        reason: "spawn",
+        daemonDown: false,
       });
 
     const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
@@ -169,6 +187,8 @@ export const legacyDockerRunLayer: Layer.Layer<
         return yield* Effect.fail(
           new LegacyDockerRunError({
             message: `failed to pull docker image from all registries: ${failures.join("; ")}`,
+            reason: "pull",
+            daemonDown: failures.some(legacyIsDockerDaemonDownMessage),
           }),
         );
       });
@@ -309,6 +329,8 @@ export const legacyDockerRunLayer: Layer.Layer<
                 () =>
                   new LegacyDockerRunError({
                     message: `failed to run docker. ${LEGACY_SUGGEST_DOCKER_INSTALL}`,
+                    reason: "spawn",
+                    daemonDown: false,
                   }),
               ),
             );

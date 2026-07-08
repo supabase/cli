@@ -1,4 +1,10 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../shared/telemetry/error-actionability.ts";
 
 /**
  * Errors for the Supabase Storage **service gateway** (Kong), shared by every
@@ -17,7 +23,11 @@ export class LegacyStorageGatewayNetworkError extends Data.TaggedError(
   "LegacyStorageGatewayNetworkError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyStorageGatewayStatusError extends Data.TaggedError(
   "LegacyStorageGatewayStatusError",
@@ -25,7 +35,11 @@ export class LegacyStorageGatewayStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status);
+  }
+}
 
 export type LegacyStorageGatewayError =
   | LegacyStorageGatewayNetworkError
