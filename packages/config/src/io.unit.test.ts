@@ -174,6 +174,45 @@ describe("config io", () => {
     ).toThrow();
   });
 
+  test("only validates the highest-priority enabled sms provider during decode (Go switch parity)", () => {
+    // Go's `(s *sms) validate()` (`apps/cli-go/pkg/config/config.go:1348-1410`) is a boolean
+    // `switch` that inspects providers in a fixed priority order (twilio, twilio_verify,
+    // messagebird, textlocal, vonage) and validates ONLY the first enabled one — a later
+    // enabled-but-incomplete provider is never even looked at. A complete, higher-priority
+    // `twilio` block plus an incomplete, lower-priority `messagebird` block must decode fine.
+    const config = decodeProjectConfig({
+      auth: {
+        sms: {
+          twilio: {
+            enabled: true,
+            account_sid: "AC123",
+            message_service_sid: "MG123",
+            auth_token: "secret",
+          },
+          messagebird: {
+            enabled: true,
+          },
+        },
+      },
+    });
+    expect(config.auth.sms.twilio.enabled).toBe(true);
+    expect(config.auth.sms.messagebird.enabled).toBe(true);
+  });
+
+  test("rejects an incomplete sms provider when no higher-priority provider is enabled", () => {
+    expect(() =>
+      decodeProjectConfig({
+        auth: {
+          sms: {
+            messagebird: {
+              enabled: true,
+            },
+          },
+        },
+      }),
+    ).toThrow(/auth\.sms\.messagebird\.originator/);
+  });
+
   test("requires enabled smtp fields during decode", () => {
     expect(() =>
       decodeProjectConfig({
