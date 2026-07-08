@@ -64,9 +64,16 @@ this command.
 
 ## Output
 
-Go's `stop` has **no** `-o`/`--output` flag at all, so the Go-compat `LegacyOutputFlag`
-is not consulted by this handler — only the TS-native `--output-format` matters here.
-This is a harmless, documented divergence: Go would reject an unknown `-o` flag outright.
+Go's `stop.RunE` never reads `-o`/`--output` itself, but the flag is still registered
+on the root command as a `PersistentFlags()` enum (`cmd/root.go:330`,
+`env|pretty|json|toml|yaml`) that every subcommand inherits, so `stop -o csv`/`-o table`
+is rejected by pflag at parse time, before `RunE` runs — Go never reaches this command's
+body with an unsupported value. `stop.command.ts` matches this: it wraps the handler
+with `withLegacyCommandInstrumentation`, whose default `outputFormats`
+(`LEGACY_RESOURCE_OUTPUT_FORMATS`, same `env|pretty|json|toml|yaml` set) validates and
+rejects the flag before the handler runs — not a divergence, just enforced one layer up
+rather than read inside this handler. Only the TS-native `--output-format` is consulted
+by this handler's own logic below.
 
 ### `--output-format text` (Go CLI compatible)
 
