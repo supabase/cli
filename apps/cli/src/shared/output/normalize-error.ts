@@ -18,6 +18,16 @@ const readString = (value: ErrorRecord, key: string): string | undefined => {
   return typeof field === "string" && field.trim().length > 0 ? field.trim() : undefined;
 };
 
+// Unlike `readString`, does not trim or reject empty strings. Use this for
+// fields that carry raw user input (e.g. `CliError.InvalidValue#value`),
+// where an empty string or meaningful surrounding whitespace is a legitimate
+// value the user typed (`supabase --output-format ''`) and must be preserved
+// and reported verbatim rather than normalized away.
+const readRawString = (value: ErrorRecord, key: string): string | undefined => {
+  const field = value[key];
+  return typeof field === "string" ? field : undefined;
+};
+
 const mappedError = (error: ErrorRecord): NormalizedCliError | undefined => {
   const tag = readString(error, "_tag");
   switch (tag) {
@@ -87,7 +97,11 @@ const mappedError = (error: ErrorRecord): NormalizedCliError | undefined => {
       // `InvalidValue` failure — whichever path it takes — renders the same
       // way.
       const option = readString(error, "option");
-      const value = readString(error, "value");
+      // Raw read: `value` is the exact argv token the user typed and can
+      // legitimately be `""` or carry surrounding whitespace — `readString`
+      // would trim it or drop it entirely, either masking the bug this case
+      // exists to fix or misreporting what the user actually typed.
+      const value = readRawString(error, "value");
       const expected = readString(error, "expected");
       const kind = readString(error, "kind");
       if (

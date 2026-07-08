@@ -71,6 +71,43 @@ describe("normalizeCliError", () => {
     });
   });
 
+  test("InvalidValue preserves an empty invalid value (e.g. `--output-format ''`)", () => {
+    // Regression test for a Codex review finding on CLI-1898: `value` is raw
+    // user input read straight off argv, so `''` is a legitimate way to
+    // trigger this failure. Reading it through the trim-and-reject-empty
+    // `readString` helper would fail the guard and leak the original
+    // doubled "Expected: Expected" message instead of fixing it.
+    const error = new CliError.InvalidValue({
+      option: "output-format",
+      value: "",
+      expected: 'Expected "text" | "json" | "stream-json", got ""',
+      kind: "flag",
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "InvalidValue",
+      message:
+        'Invalid value for flag --output-format: "". Expected "text" | "json" | "stream-json", got ""',
+    });
+  });
+
+  test("InvalidValue preserves surrounding whitespace in the invalid value (e.g. `--output-format ' json'`)", () => {
+    // Regression test for the same Codex finding: trimming `value` would
+    // report a different string than what the user actually typed.
+    const error = new CliError.InvalidValue({
+      option: "output-format",
+      value: " json",
+      expected: 'Expected "text" | "json" | "stream-json", got " json"',
+      kind: "flag",
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "InvalidValue",
+      message:
+        'Invalid value for flag --output-format: " json". Expected "text" | "json" | "stream-json", got " json"',
+    });
+  });
+
   test("InvalidValue leaves an already-clean 'expected' message untouched", () => {
     const error = new CliError.InvalidValue({
       option: "define",
