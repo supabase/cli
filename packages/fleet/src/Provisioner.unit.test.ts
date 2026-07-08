@@ -102,6 +102,23 @@ describe("Provisioner (unit, fake deps)", () => {
         postgrest: DEFAULT_VERSIONS.postgrest,
       });
     });
+
+    it("rejects invalid service dependency combinations before provisioning", async () => {
+      const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
+      await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
+      const { p, ports, podsRoot } = await makeHarness(templateDir);
+
+      await expect(
+        p.create({
+          id: "bad",
+          versions: { postgres: PG_VERSION },
+          services: { imgproxy: true },
+        }),
+      ).rejects.toThrow(/imgproxy requires storage/);
+
+      expect(ports.get("bad")).toBeUndefined();
+      expect(await podsRootEntries(podsRoot)).not.toContain("bad");
+    });
   });
 
   describe("fork", () => {

@@ -29,6 +29,16 @@ describe("PortRegistry", () => {
     expect(c.dbPort).toBe(a1.dbPort); // freed ports are reusable
   });
 
+  it("treats inherited property names as ordinary pod ids", async () => {
+    const file = join(await mkdtemp(join(tmpdir(), "ports-")), "state.json");
+    const reg = await PortRegistry.load(file);
+
+    const ports = await reg.allocate("constructor");
+
+    expect(ports).toEqual({ dbPort: 55000, apiPort: 55001 });
+    expect(reg.get("constructor")).toEqual(ports);
+  });
+
   it("serializes concurrent mutations before persisting", async () => {
     const file = join(await mkdtemp(join(tmpdir(), "ports-")), "state.json");
     const reg = await PortRegistry.load(file);

@@ -43,6 +43,18 @@ describe("cloneDir", () => {
     await expect(cloneDir(src, dest)).rejects.toThrow(/exists/);
   });
 
+  it("creates the destination parent before attempting the CoW clone", async () => {
+    const root = await mkdtemp(join(tmpdir(), "cow-test-"));
+    const src = join(root, "src");
+    await mkdir(src);
+    await writeFile(join(src, "file.txt"), "hello");
+
+    const dest = join(root, "missing-parent", "dest");
+    await cloneDir(src, dest);
+
+    expect(await readFile(join(dest, "file.txt"), "utf8")).toBe("hello");
+  });
+
   it("does not silently mix stale CoW leftovers with fallback output when the CoW command fails after partially writing dest", async () => {
     const root = await mkdtemp(join(tmpdir(), "cow-test-"));
     const src = join(root, "src");

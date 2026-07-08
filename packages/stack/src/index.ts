@@ -21,8 +21,9 @@ export type {
 } from "./StackBuilder.ts";
 
 export type { ServiceName, VersionManifest } from "./versions.ts";
-export { DEFAULT_VERSIONS, fillServiceVersionManifest } from "./versions.ts";
+export { DEFAULT_VERSIONS, fillServiceVersionManifest, SERVICE_NAMES } from "./versions.ts";
 export { postgresConnectionUrl, resolvePostgresPassword } from "./postgresCredentials.ts";
+export { validateEnabledServiceDependencies } from "./serviceDependencies.ts";
 export type { ServiceResolution } from "./resolve.ts";
 export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export type { ReadyOptions, StackHandle } from "./createStack.ts";

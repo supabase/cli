@@ -285,11 +285,16 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   // into the freshly loaded PortRegistry from its manifest, which is the
   // mechanism `restore()` exists for (recovering from a quarantined/corrupt
   // port-state file).
-  for (const manifest of await pods.list()) {
-    await ports.restore(manifest.id, manifest.ports);
-    await reapStalePostmaster(pods.dataDir(manifest.id));
-    await rm(runPidFile(manifest.id), { force: true });
-    await registerEdge(manifest);
+  try {
+    for (const manifest of await pods.list()) {
+      await ports.restore(manifest.id, manifest.ports);
+      await reapStalePostmaster(pods.dataDir(manifest.id));
+      await rm(runPidFile(manifest.id), { force: true });
+      await registerEdge(manifest);
+    }
+  } catch (err) {
+    await proxy.close().catch(() => {});
+    throw err;
   }
 
   const handle: FleetHandle = {
@@ -314,9 +319,9 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
       await podLocks.withLock(id, async () => {
         await suspendLocked(id);
         await provisioner.destroy(id);
+        await proxy.unregister(id);
+        states.delete(id);
       });
-      await proxy.unregister(id);
-      states.delete(id);
     },
     async resetPod(id) {
       await podLocks.withLock(id, async () => {

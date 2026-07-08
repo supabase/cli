@@ -252,6 +252,7 @@ export class StackLifecycleCoordinator extends Context.Service<
         const info = stackInfoFor(config);
         const stateRef = yield* SubscriptionRef.make(initialPublicStates(config));
         const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
+        const startInFlightRef = yield* Ref.make(false);
         const enableExtensionLock = yield* Semaphore.make(1);
         // Tracks every service that has actually been asked to start: the eager set from
         // start() under lazyServices, plus anything started later via startService (the
@@ -589,8 +590,10 @@ export class StackLifecycleCoordinator extends Context.Service<
             Effect.succeed(runtimeState?.cleanupTargets ?? { dockerContainerNames: [] }),
           start: () =>
             Effect.gen(function* () {
+              yield* Ref.set(startInFlightRef, true);
               yield* Ref.set(phaseRef, "starting");
               const runtime = yield* ensureRuntime;
+              yield* Ref.set(phaseRef, "starting");
               yield* configureFunctions(config);
               if (config.lazyServices === true) {
                 // Only bring up postgres (and postgres-init, which depends on postgres and
@@ -615,7 +618,7 @@ export class StackLifecycleCoordinator extends Context.Service<
                 yield* runtime.orchestrator.waitAllReady();
               }
               yield* Ref.set(phaseRef, "running");
-            }),
+            }).pipe(Effect.ensuring(Ref.set(startInFlightRef, false))),
           stop: () =>
             Effect.gen(function* () {
               if (runtimeState === undefined) {
@@ -656,6 +659,14 @@ export class StackLifecycleCoordinator extends Context.Service<
           enableExtension: (name) =>
             enableExtensionLock.withPermits(1)(
               Effect.gen(function* () {
+                const startInFlight = yield* Ref.get(startInFlightRef);
+                if (startInFlight || (yield* Ref.get(phaseRef)) === "starting") {
+                  return yield* Effect.fail(
+                    new StackBuildError({
+                      detail: `Cannot enable extension "${name}" while the stack is starting. Wait for start() to finish and retry.`,
+                    }),
+                  );
+                }
                 yield* Effect.promise(() => installPodConfOverlay(config.postgres.dataDir));
                 const currentLibraries = yield* Effect.promise(() =>
                   readPreloadLibraries(config.postgres.dataDir),

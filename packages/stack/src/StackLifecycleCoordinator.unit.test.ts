@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
-import { Duration, Effect, Layer } from "effect";
+import { Duration, Effect, Exit, Fiber, Layer } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
@@ -139,6 +139,20 @@ function makeLazyConfig(dataDir: string, postgrestPort: number): ResolvedStackCo
   };
 }
 
+function makeSlowStartConfig(dataDir: string): ResolvedStackConfig {
+  return {
+    ...makeConfig(dataDir),
+    postgrest: {
+      port: defaultPorts.postgrestPort,
+      adminPort: defaultPorts.postgrestAdminPort,
+      schemas: ["public"],
+      extraSearchPath: ["public"],
+      maxRows: 1000,
+      version: DEFAULT_VERSIONS.postgrest,
+    },
+  };
+}
+
 interface FakeHealthyServer {
   readonly port: number;
   readonly stop: () => Promise<void>;
@@ -221,6 +235,33 @@ describe("StackLifecycleCoordinator enableExtension", () => {
       expect(spawner.spawned).toHaveLength(spawnedBefore);
       expect((yield* stack.getState("postgres")).status).toBe("Stopped");
       expect(yield* Effect.promise(() => readPreloadLibraries(dataDir))).toEqual(["pg_cron"]);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("rejects preload changes while the stack is still starting", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-starting-test-"));
+    writeFileSync(join(dataDir, "postgresql.conf"), "# stock conf\n");
+    const config = makeSlowStartConfig(dataDir);
+    const { layer, spawner } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const startFiber = yield* stack.start().pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Effect.gen(function* () {
+        for (;;) {
+          if (spawner.spawned.length > 0) break;
+          yield* Effect.sleep(Duration.millis(10));
+        }
+
+        const exit = yield* stack.enableExtension("pg_cron").pipe(Effect.exit);
+
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(yield* Effect.promise(() => readPreloadLibraries(dataDir))).toEqual([]);
+      }).pipe(Effect.ensuring(Fiber.interrupt(startFiber)));
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),

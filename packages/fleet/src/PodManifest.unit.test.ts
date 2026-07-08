@@ -25,6 +25,20 @@ describe("templateKey", () => {
     expect(baseTemplateKey("../17.6.1.143")).toMatch(/^pg-[a-f0-9]{16}$/);
     expect(baseTemplateKey("../17.6.1.143")).not.toContain("..");
   });
+  it("keys templates by the postgres password used to initialize the data dir", () => {
+    expect(baseTemplateKey("17.6.1.143", { postgresPassword: "one" })).not.toBe(
+      baseTemplateKey("17.6.1.143", { postgresPassword: "two" }),
+    );
+    expect(
+      templateKey({ postgres: "17.6.1.143", auth: "2.192.0" }, ["auth"], {
+        postgresPassword: "one",
+      }),
+    ).not.toBe(
+      templateKey({ postgres: "17.6.1.143", auth: "2.192.0" }, ["auth"], {
+        postgresPassword: "two",
+      }),
+    );
+  });
 
   it("resolves default versions only for postgres and enabled services", () => {
     expect(resolveTemplateVersions({ postgres: "17.6.1.143" }, ["postgrest"])).toEqual({

@@ -17,6 +17,10 @@ function freshState(): PortState {
   return { basePort: DEFAULT_BASE_PORT, pods: {} };
 }
 
+function getOwnPodPorts(pods: Record<string, PodPorts>, podId: string): PodPorts | undefined {
+  return Object.hasOwn(pods, podId) ? pods[podId] : undefined;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -96,12 +100,12 @@ export class PortRegistry {
   }
 
   get(podId: string): PodPorts | undefined {
-    return this.state.pods[podId];
+    return getOwnPodPorts(this.state.pods, podId);
   }
 
   async allocate(podId: string): Promise<PodPorts> {
     return this.withMutation(async () => {
-      const existing = this.state.pods[podId];
+      const existing = getOwnPodPorts(this.state.pods, podId);
       if (existing) return existing;
       const used = new Set(Object.values(this.state.pods).flatMap((p) => [p.dbPort, p.apiPort]));
       let candidate = this.state.basePort;
@@ -126,7 +130,7 @@ export class PortRegistry {
    */
   async restore(podId: string, ports: PodPorts): Promise<void> {
     await this.withMutation(async () => {
-      const existing = this.state.pods[podId];
+      const existing = getOwnPodPorts(this.state.pods, podId);
       if (existing) {
         if (existing.dbPort === ports.dbPort && existing.apiPort === ports.apiPort) {
           return;

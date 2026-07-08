@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { cp, rm, stat } from "node:fs/promises";
+import { cp, mkdir, rm, stat } from "node:fs/promises";
+import { dirname } from "node:path";
 
 const run = (cmd: string, args: string[]): Promise<number> =>
   new Promise((resolve, reject) => {
@@ -30,6 +31,7 @@ export async function cloneDir(
     () => false,
   );
   if (exists) throw new Error(`cloneDir: destination already exists: ${dest}`);
+  await mkdir(dirname(dest), { recursive: true });
 
   const cowCommand = options?.cowCommand ?? "cp";
   let attemptedCow = false;

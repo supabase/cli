@@ -12,6 +12,7 @@ import {
   dockerPortMapArgs,
 } from "./Platform.ts";
 import type { ServiceResolution } from "./resolve.ts";
+import { validateEnabledServiceDependencies } from "./serviceDependencies.ts";
 import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./services/analytics.ts";
 import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts";
 import {
@@ -37,7 +38,7 @@ import { makeVectorServiceDocker } from "./services/vector.ts";
 import type { PreparedStackArtifacts } from "./StackPreparation.ts";
 import type { StackServiceProjectionCatalog } from "./StackStateProjection.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
-import type { ServiceName, VersionManifest } from "./versions.ts";
+import { SERVICE_NAMES, type ServiceName, type VersionManifest } from "./versions.ts";
 
 export interface PostgresConfig {
   readonly port?: number;
@@ -382,6 +383,10 @@ const resolvedConfigForService = (
   service: Exclude<ServiceName, "postgres">,
 ) => (service === "edge-runtime" ? config.edgeRuntime : config[service]);
 
+const nonPostgresServices = SERVICE_NAMES.filter(
+  (service): service is Exclude<ServiceName, "postgres"> => service !== "postgres",
+);
+
 export const validateResolvedConfig = (
   config: ResolvedStackConfig,
 ): Effect.Effect<void, StackBuildError> =>
@@ -399,26 +404,17 @@ export const validateResolvedConfig = (
       }
     }
 
-    if (config.imgproxy !== false && config.storage === false) {
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: "imgproxy requires storage to be enabled",
-        }),
-      );
+    const enabledServices = new Set<ServiceName>(["postgres"]);
+    for (const service of nonPostgresServices) {
+      if (resolvedConfigForService(config, service) !== false) {
+        enabledServices.add(service);
+      }
     }
-
-    if (config.vector !== false && config.analytics === false) {
+    const dependencyError = validateEnabledServiceDependencies(enabledServices);
+    if (dependencyError !== undefined) {
       return yield* Effect.fail(
         new StackBuildError({
-          detail: "vector requires analytics to be enabled",
-        }),
-      );
-    }
-
-    if (config.studio !== false && config.pgmeta === false) {
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: "studio requires pgmeta to be enabled",
+          detail: dependencyError,
         }),
       );
     }

@@ -1,5 +1,10 @@
 import { rm } from "node:fs/promises";
-import type { ServiceName, VersionManifest } from "@supabase/stack";
+import {
+  SERVICE_NAMES,
+  validateEnabledServiceDependencies,
+  type ServiceName,
+  type VersionManifest,
+} from "@supabase/stack";
 import { cloneDir } from "./cowClone.ts";
 import { resolveTemplateVersions, type PodManifest } from "./PodManifest.ts";
 import type { PodRegistry } from "./PodRegistry.ts";
@@ -36,9 +41,11 @@ export class Provisioner {
     }
     const pgVersion = opts.versions.postgres;
     if (pgVersion === undefined) throw new Error("versions.postgres is required");
-    const enabled = Object.entries(opts.services ?? {})
-      .filter(([, on]) => on === true)
-      .map(([name]) => name as ServiceName);
+    const enabled = SERVICE_NAMES.filter((name) => opts.services?.[name] === true);
+    const dependencyError = validateEnabledServiceDependencies(new Set(enabled));
+    if (dependencyError !== undefined) {
+      throw new Error(dependencyError);
+    }
     const resolvedVersions = resolveTemplateVersions(opts.versions, enabled);
     const template =
       opts.warm === true

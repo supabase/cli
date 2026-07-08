@@ -4,8 +4,12 @@ import type { PodManifest } from "./PodManifest.ts";
 
 const POD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
+function isValidPodId(id: string): boolean {
+  return POD_ID_RE.test(id) && basename(id) === id;
+}
+
 function validatePodId(id: string): string {
-  if (!POD_ID_RE.test(id) || basename(id) !== id) {
+  if (!isValidPodId(id)) {
     throw new Error(`invalid pod id: ${id}`);
   }
   return id;
@@ -38,7 +42,7 @@ export class PodRegistry {
 
   async list(): Promise<PodManifest[]> {
     const entries = await readdir(this.podsRoot).catch(() => [] as string[]);
-    const manifests = await Promise.all(entries.map((id) => this.read(id)));
+    const manifests = await Promise.all(entries.filter(isValidPodId).map((id) => this.read(id)));
     return manifests.filter((m): m is PodManifest => m !== undefined);
   }
 
