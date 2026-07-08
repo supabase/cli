@@ -56,13 +56,8 @@ interface WarmPod {
 const DB_PASSWORD = resolvePostgresPassword();
 
 // Internal (in-process stack) ports are derived from the externally-visible,
-// PortRegistry-owned port by a fixed +10_000 offset so the two ranges never
-// collide. PortRegistry hands out ports starting at 55_000, so this scheme
-// only stays valid while every allocated external port is < 55_536; beyond
-// that the derived internal port would exceed the 16-bit port ceiling
-// (65_535). Fine for the pod counts this phase targets; a later phase should
-// allocate internal ports dynamically (e.g. port 0) if the fleet needs to
-// scale past that.
+// PortRegistry-owned ports by a fixed lower offset so the proxy-owned public
+// range and the stack-owned internal range never collide.
 const INTERNAL_PORT_OFFSET = 10_000;
 
 /**
@@ -114,7 +109,7 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   const templates = new TemplateStore(join(root, "templates"));
   const pods = new PodRegistry(join(root, "pods"));
   const ports = await PortRegistry.load(join(root, "fleet-state.json"));
-  const provisioner = new Provisioner({ templates, pods, ports });
+  const provisioner = new Provisioner({ templates, pods, ports, postgresPassword: DB_PASSWORD });
 
   const states = new Map<string, PodState>();
   const warm = new Map<string, WarmPod>();
@@ -138,11 +133,13 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   const dbUrl = (manifest: PodManifest): string =>
     postgresConnectionUrl({
       user: "postgres",
-      password: DB_PASSWORD,
+      password: manifest.postgresPassword,
       host: "127.0.0.1",
       port: manifest.ports.dbPort,
       database: "postgres",
     });
+
+  const internalPort = (externalPort: number): number => externalPort - INTERNAL_PORT_OFFSET;
 
   const runPidFile = (id: string): string => join(pods.podDir(id), "run.pid");
 
@@ -175,39 +172,41 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
         const manifest = await pods.read(id);
         if (manifest === undefined) throw new Error(`unknown pod: ${id}`);
         states.set(id, "waking");
-        const internalDbPort = manifest.ports.dbPort + INTERNAL_PORT_OFFSET;
+        const internalDbPort = internalPort(manifest.ports.dbPort);
         const stack = await createStack({
+          mode: "native",
           stackRoot: join(pods.podDir(id), "stack"),
-          port: manifest.ports.apiPort + INTERNAL_PORT_OFFSET,
+          port: internalPort(manifest.ports.apiPort),
           lazyServices: true,
           postgres: {
             dataDir: pods.dataDir(id),
             version: manifest.versions.postgres,
             port: internalDbPort,
+            password: manifest.postgresPassword,
             provisioned: true,
             profile: "micro",
           },
           postgrest:
-            manifest.services.postgrest === true ? { version: manifest.versions.postgrest } : false,
-          auth: manifest.services.auth === true ? { version: manifest.versions.auth } : false,
-          realtime:
-            manifest.services.realtime === true ? { version: manifest.versions.realtime } : false,
-          edgeRuntime:
-            manifest.services["edge-runtime"] === true
-              ? { version: manifest.versions["edge-runtime"] }
+            manifest.services.postgrest === true
+              ? {
+                  version: manifest.versions.postgrest,
+                  port: internalPort(manifest.ports.postgrestPort),
+                }
               : false,
-          storage:
-            manifest.services.storage === true ? { version: manifest.versions.storage } : false,
-          imgproxy:
-            manifest.services.imgproxy === true ? { version: manifest.versions.imgproxy } : false,
-          mailpit:
-            manifest.services.mailpit === true ? { version: manifest.versions.mailpit } : false,
-          pgmeta: manifest.services.pgmeta === true ? { version: manifest.versions.pgmeta } : false,
-          studio: manifest.services.studio === true ? { version: manifest.versions.studio } : false,
-          analytics:
-            manifest.services.analytics === true ? { version: manifest.versions.analytics } : false,
-          vector: manifest.services.vector === true ? { version: manifest.versions.vector } : false,
-          pooler: manifest.services.pooler === true ? { version: manifest.versions.pooler } : false,
+          auth:
+            manifest.services.auth === true
+              ? { version: manifest.versions.auth, port: internalPort(manifest.ports.authPort) }
+              : false,
+          realtime: false,
+          edgeRuntime: false,
+          storage: false,
+          imgproxy: false,
+          mailpit: false,
+          pgmeta: false,
+          studio: false,
+          analytics: false,
+          vector: false,
+          pooler: false,
           functions: false,
         });
         try {
@@ -281,13 +280,13 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   // process-group leader, so `reapStalePostmaster` can reliably signal the
   // whole tree via `-pid`. Phase 1 only ever runs postgres under a fleet pod
   // (postgres-only ready gate; no HTTP edge yet), so this fully covers what
-  // a stale pod could have left behind. The pod's ports are also re-seeded
-  // into the freshly loaded PortRegistry from its manifest, which is the
-  // mechanism `restore()` exists for (recovering from a quarantined/corrupt
-  // port-state file).
+  // a stale pod could have left behind. The pod port registry is reconciled
+  // to exactly the valid manifests on disk so stale allocations from deleted
+  // or skipped pods are pruned during startup.
   try {
-    for (const manifest of await pods.list()) {
-      await ports.restore(manifest.id, manifest.ports);
+    const manifests = await pods.list();
+    await ports.reconcile(new Map(manifests.map((manifest) => [manifest.id, manifest.ports])));
+    for (const manifest of manifests) {
       await reapStalePostmaster(pods.dataDir(manifest.id));
       await rm(runPidFile(manifest.id), { force: true });
       await registerEdge(manifest);

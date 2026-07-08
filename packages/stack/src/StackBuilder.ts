@@ -67,6 +67,8 @@ export interface PostgresConfig {
 }
 
 export interface PostgrestConfig {
+  readonly port?: number;
+  readonly adminPort?: number;
   readonly schemas?: ReadonlyArray<string>;
   readonly extraSearchPath?: ReadonlyArray<string>;
   readonly maxRows?: number;

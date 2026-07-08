@@ -531,6 +531,7 @@ export class Orchestrator extends Context.Service<
 
         const restartClosureFor = (name: string): ReadonlyArray<ServiceDef> => {
           const names = new Set<string>([name]);
+          const visited = new Set<string>([name]);
           const shouldRestartDependent = (dependentName: string): boolean => {
             const svc = services.get(dependentName);
             if (svc === undefined) return false;
@@ -540,9 +541,11 @@ export class Orchestrator extends Context.Service<
           };
           const collectDependents = (current: string): void => {
             for (const dependent of graph.dependentsOf(current)) {
-              if (names.has(dependent.name)) continue;
-              if (!shouldRestartDependent(dependent.name)) continue;
-              names.add(dependent.name);
+              if (visited.has(dependent.name)) continue;
+              visited.add(dependent.name);
+              if (shouldRestartDependent(dependent.name)) {
+                names.add(dependent.name);
+              }
               collectDependents(dependent.name);
             }
           };

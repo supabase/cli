@@ -95,11 +95,12 @@ export const makePoolerServiceDocker = (opts: DockerPoolerOptions): ServiceDef =
         RUN_JANITOR: "true",
         ERL_AFLAGS: "-proto_dist inet_tcp",
         RLIMIT_NOFILE: "",
+        SUPAVISOR_TENANT_SCRIPT: tenantScript(opts),
       },
       cmd: [
         "/bin/sh",
         "-c",
-        `/app/bin/migrate && /app/bin/supavisor eval '${tenantScript(opts)}' && /app/bin/server`,
+        `/app/bin/migrate && /app/bin/supavisor eval "$SUPAVISOR_TENANT_SCRIPT" && /app/bin/server`,
       ],
       dependsOn: opts.dependencies,
       healthCheck: poolerHealthCheck(opts.hostAdminPort),

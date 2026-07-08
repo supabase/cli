@@ -628,6 +628,47 @@ describe("Orchestrator", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.live("restartService traverses stopped one-shot helpers to restart live dependents", () => {
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("postgres"),
+        svc("postgres-init", {
+          restart: "no",
+          dependencies: [{ service: "postgres", condition: "started" }],
+        }),
+        svc("api", {
+          dependencies: [{ service: "postgres-init", condition: "completed" }],
+        }),
+      ],
+      {
+        perService: {
+          api: { exitDelay: "5 seconds" },
+          postgres: { exitDelay: "5 seconds" },
+          "postgres-init": { exitDelay: "10 millis" },
+        },
+      },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.start();
+      yield* proc.waitForSpawn("api");
+      yield* waitForStopped(orc, "postgres-init");
+
+      yield* orc.restartService("postgres");
+      yield* proc.waitForSpawn("api", 2);
+
+      const spawnCounts = proc.spawned.reduce<Record<string, number>>((counts, record) => {
+        counts[record.command] = (counts[record.command] ?? 0) + 1;
+        return counts;
+      }, {});
+      expect(spawnCounts).toEqual({
+        api: 2,
+        postgres: 2,
+        "postgres-init": 1,
+      });
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.live("restartService includes launched dependents that are still pending", () => {
     let dbReady = false;
     const { layer, proc } = setupOrchestrator(

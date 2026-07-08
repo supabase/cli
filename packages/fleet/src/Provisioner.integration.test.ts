@@ -15,7 +15,7 @@ describe.skipIf(!process.env.FLEET_PG_TESTS)("Provisioner", () => {
     const templates = new TemplateStore(join(root, "templates"));
     const pods = new PodRegistry(join(root, "pods"));
     const ports = await PortRegistry.load(join(root, "fleet-state.json"));
-    return { p: new Provisioner({ templates, pods, ports }), pods };
+    return { p: new Provisioner({ templates, pods, ports, postgresPassword: "postgres" }), pods };
   }
 
   it("creates, forks, resets, destroys", async () => {

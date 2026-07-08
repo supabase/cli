@@ -70,7 +70,12 @@ export class TemplateStore {
           // One-shot stack: postgres only, non-provisioned -> postgres-init applies
           // roles/schemas/baseline migrations exactly as it does for a normal stack.
           const stack = await createStack({
-            postgres: { version: postgresVersion, dataDir: buildDataDir },
+            mode: "native",
+            postgres: {
+              version: postgresVersion,
+              dataDir: buildDataDir,
+              password: postgresPassword,
+            },
             postgrest: false,
             auth: false,
             edgeRuntime: false,
@@ -132,9 +137,11 @@ export class TemplateStore {
           // The clone is already post-init, so postgres-init is skipped (`provisioned: true`);
           // each enabled service boots once and self-migrates against it.
           const stack = await createStack({
+            mode: "native",
             postgres: {
               version: pgVersion,
               dataDir: buildDataDir,
+              password: postgresPassword,
               provisioned: true,
               profile: "micro",
             },

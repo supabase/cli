@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   fillServiceVersionManifest,
+  type AllocatedPorts,
   type ServiceName,
   type VersionManifest,
 } from "@supabase/stack";
@@ -10,7 +11,8 @@ export interface PodManifest {
   readonly versions: Partial<VersionManifest>;
   readonly services: Partial<Record<ServiceName, boolean>>;
   readonly flags: { readonly supautils: boolean };
-  readonly ports: { readonly dbPort: number; readonly apiPort: number };
+  readonly ports: AllocatedPorts;
+  readonly postgresPassword: string;
   readonly createdAt: string;
 }
 

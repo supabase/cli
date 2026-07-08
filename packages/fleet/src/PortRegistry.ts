@@ -1,10 +1,8 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { PORT_FIELDS, type AllocatedPorts } from "@supabase/stack";
 
-export interface PodPorts {
-  readonly dbPort: number;
-  readonly apiPort: number;
-}
+export type PodPorts = AllocatedPorts;
 
 interface PortState {
   readonly basePort: number;
@@ -25,25 +23,50 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isPositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 0;
+function isFleetPort(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 10_000 && value <= 65_535;
 }
 
 function isValidState(value: unknown): value is PortState {
   if (!isRecord(value)) return false;
   const { basePort, pods } = value;
-  if (!isPositiveInteger(basePort)) return false;
+  if (!isFleetPort(basePort)) return false;
   if (!isRecord(pods)) return false;
   for (const ports of Object.values(pods)) {
     if (!isRecord(ports)) return false;
-    if (!isPositiveInteger(ports.dbPort) || !isPositiveInteger(ports.apiPort)) return false;
+    for (const field of PORT_FIELDS) {
+      if (!isFleetPort(ports[field])) return false;
+    }
   }
   return true;
 }
 
+function allocatePortSet(next: () => number): PodPorts {
+  return {
+    dbPort: next(),
+    apiPort: next(),
+    authPort: next(),
+    postgrestPort: next(),
+    postgrestAdminPort: next(),
+    edgeRuntimePort: next(),
+    edgeRuntimeInspectorPort: next(),
+    realtimePort: next(),
+    storagePort: next(),
+    imgproxyPort: next(),
+    mailpitPort: next(),
+    mailpitSmtpPort: next(),
+    mailpitPop3Port: next(),
+    pgmetaPort: next(),
+    studioPort: next(),
+    analyticsPort: next(),
+    poolerPort: next(),
+    poolerApiPort: next(),
+  };
+}
+
 /**
- * Persistent registry mapping pod IDs to their allocated `{ dbPort, apiPort }`
- * pair, backed by a single JSON state file on disk.
+ * Persistent registry mapping pod IDs to their allocated stack ports, backed
+ * by a single JSON state file on disk.
  *
  * Design assumptions:
  * - **Single owner process.** Exactly one `PortRegistry` instance (the fleet
@@ -59,8 +82,7 @@ function isValidState(value: unknown): value is PortState {
  *   quarantines the bad file (renaming it to `<stateFile>.corrupt`, replacing
  *   any previous quarantine) and starts from fresh empty state. Since pod
  *   ports are also duplicated in each pod's own manifest (`pod.json`), the
- *   daemon is expected to re-seed the registry after such a reset by calling
- *   `restore()` for each known pod.
+ *   daemon reconciles the registry from valid manifests after such a reset.
  * - **In-process serialization.** Mutating operations are queued so concurrent
  *   lifecycle calls in the owner process cannot interleave writes to the shared
  *   temporary state file.
@@ -107,14 +129,19 @@ export class PortRegistry {
     return this.withMutation(async () => {
       const existing = getOwnPodPorts(this.state.pods, podId);
       if (existing) return existing;
-      const used = new Set(Object.values(this.state.pods).flatMap((p) => [p.dbPort, p.apiPort]));
+      const used = new Set(
+        Object.values(this.state.pods).flatMap((p) => PORT_FIELDS.map((f) => p[f])),
+      );
       let candidate = this.state.basePort;
       const next = (): number => {
         while (used.has(candidate)) candidate += 1;
+        if (candidate > 65_535) {
+          throw new Error("PortRegistry: exhausted fleet port range");
+        }
         used.add(candidate);
         return candidate;
       };
-      const ports: PodPorts = { dbPort: next(), apiPort: next() };
+      const ports = allocatePortSet(next);
       this.state = { ...this.state, pods: { ...this.state.pods, [podId]: ports } };
       await this.persist();
       return ports;
@@ -132,7 +159,7 @@ export class PortRegistry {
     await this.withMutation(async () => {
       const existing = getOwnPodPorts(this.state.pods, podId);
       if (existing) {
-        if (existing.dbPort === ports.dbPort && existing.apiPort === ports.apiPort) {
+        if (PORT_FIELDS.every((field) => existing[field] === ports[field])) {
           return;
         }
         throw new Error(
@@ -141,9 +168,9 @@ export class PortRegistry {
         );
       }
 
-      const restoredPorts = new Set([ports.dbPort, ports.apiPort]);
+      const restoredPorts = new Set(PORT_FIELDS.map((field) => ports[field]));
       for (const [otherPodId, otherPorts] of Object.entries(this.state.pods)) {
-        if (restoredPorts.has(otherPorts.dbPort) || restoredPorts.has(otherPorts.apiPort)) {
+        if (PORT_FIELDS.some((field) => restoredPorts.has(otherPorts[field]))) {
           throw new Error(
             `PortRegistry: cannot restore pod "${podId}" with ports ${JSON.stringify(ports)}; ` +
               `port already assigned to pod "${otherPodId}"`,
@@ -161,6 +188,29 @@ export class PortRegistry {
       const rest = { ...this.state.pods };
       delete rest[podId];
       this.state = { ...this.state, pods: rest };
+      await this.persist();
+    });
+  }
+
+  async reconcile(podPorts: ReadonlyMap<string, PodPorts>): Promise<void> {
+    await this.withMutation(async () => {
+      const nextPods: Record<string, PodPorts> = {};
+      const used = new Map<number, string>();
+      for (const [podId, ports] of podPorts) {
+        for (const field of PORT_FIELDS) {
+          const port = ports[field];
+          const owner = used.get(port);
+          if (owner !== undefined) {
+            throw new Error(
+              `PortRegistry: cannot reconcile pod "${podId}" with ports ${JSON.stringify(ports)}; ` +
+                `port already assigned to pod "${owner}"`,
+            );
+          }
+          used.set(port, podId);
+        }
+        nextPods[podId] = ports;
+      }
+      this.state = { ...this.state, pods: nextPods };
       await this.persist();
     });
   }

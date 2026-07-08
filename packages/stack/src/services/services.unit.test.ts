@@ -493,6 +493,17 @@ describe("makePostgresInitService", () => {
     expect(script).toContain("already initialized");
   });
 
+  it("keeps the pooler database role password in sync", () => {
+    const def = makePostgresInitService({
+      postgresDir: "/cache/postgres/17/darwin-arm64",
+      dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
+      autoExposeNewTables: true,
+    });
+    const script = def.args?.[1] as string;
+    expect(script).toContain("'pgbouncer'");
+  });
+
   it("backfills auxiliary service schemas and internal databases", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",
@@ -716,5 +727,8 @@ describe("docker-backed auxiliary services", () => {
     expect(def.args).toContain(`PROXY_PORT_TRANSACTION=${poolerContainerPorts.transaction}`);
     expect(def.args).toContain(`54329:${poolerContainerPorts.admin}`);
     expect(def.args).toContain(`54330:${poolerContainerPorts.transaction}`);
+    const args = def.args ?? [];
+    expect(args.some((arg) => arg.startsWith("SUPAVISOR_TENANT_SCRIPT="))).toBe(true);
+    expect(args.join(" ")).toContain('supavisor eval "$SUPAVISOR_TENANT_SCRIPT"');
   });
 });

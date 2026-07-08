@@ -124,6 +124,7 @@ WHERE rolname = ANY (ARRAY[
   'supabase_functions_admin',
   'supabase_replication_admin',
   'supabase_read_only_user',
+  'pgbouncer',
   'postgres'
 ])\\gexec
 EOSQL

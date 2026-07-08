@@ -22,6 +22,8 @@ export type {
 
 export type { ServiceName, VersionManifest } from "./versions.ts";
 export { DEFAULT_VERSIONS, fillServiceVersionManifest, SERVICE_NAMES } from "./versions.ts";
+export type { AllocatedPorts } from "./PortAllocator.ts";
+export { PORT_FIELDS } from "./PortAllocator.ts";
 export { postgresConnectionUrl, resolvePostgresPassword } from "./postgresCredentials.ts";
 export { validateEnabledServiceDependencies } from "./serviceDependencies.ts";
 export type { ServiceResolution } from "./resolve.ts";

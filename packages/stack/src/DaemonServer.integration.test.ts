@@ -4,6 +4,7 @@ import { Effect, Layer, ManagedRuntime, Stream } from "effect";
 import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { DaemonServer } from "./DaemonServer.ts";
+import { StackBuildError } from "./errors.ts";
 import { Stack, type StackInfo } from "./Stack.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 
@@ -79,9 +80,11 @@ function mockStack() {
     enableExtension: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
-        : Effect.sync(() => {
-            serviceCalls.push(`enable-extension:${name}`);
-          }),
+        : name === "bad-build"
+          ? Effect.fail(new StackBuildError({ detail: "cannot enable while starting" }))
+          : Effect.sync(() => {
+              serviceCalls.push(`enable-extension:${name}`);
+            }),
     reloadFunctions: () =>
       Effect.sync(() => {
         serviceCalls.push("reload-functions");
@@ -319,6 +322,13 @@ describe("DaemonServer", () => {
     const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(mock.serviceCalls).toContain("reload-edge-runtime");
+  });
+
+  test("POST /extensions/:name/enable maps build errors to JSON 500", async () => {
+    const res = await fetch(`${url}/extensions/bad-build/enable`, { method: "POST" });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("cannot enable while starting");
   });
 
   // -------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { rename, rm } from "node:fs/promises";
 import {
   SERVICE_NAMES,
   validateEnabledServiceDependencies,
@@ -10,6 +10,13 @@ import { resolveTemplateVersions, type PodManifest } from "./PodManifest.ts";
 import type { PodRegistry } from "./PodRegistry.ts";
 import type { PortRegistry } from "./PortRegistry.ts";
 import type { TemplateStore } from "./TemplateStore.ts";
+
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
+const NATIVE_FLEET_SERVICES = new Set<ServiceName>(["postgres", "postgrest", "auth"]);
 
 export interface CreatePodOptions {
   readonly id: string;
@@ -31,11 +38,12 @@ export class Provisioner {
       readonly templates: TemplateStore;
       readonly pods: PodRegistry;
       readonly ports: PortRegistry;
+      readonly postgresPassword: string;
     },
   ) {}
 
   async create(opts: CreatePodOptions): Promise<PodManifest> {
-    const { templates, pods, ports } = this.deps;
+    const { templates, pods, ports, postgresPassword } = this.deps;
     if ((await pods.read(opts.id)) !== undefined) {
       throw new Error(`pod already exists: ${opts.id}`);
     }
@@ -45,6 +53,12 @@ export class Provisioner {
     const dependencyError = validateEnabledServiceDependencies(new Set(enabled));
     if (dependencyError !== undefined) {
       throw new Error(dependencyError);
+    }
+    const unsupported = enabled.filter((service) => !NATIVE_FLEET_SERVICES.has(service));
+    if (unsupported.length > 0) {
+      throw new Error(
+        `fleet native mode only supports postgrest and auth pods; unsupported services: ${unsupported.join(", ")}`,
+      );
     }
     const resolvedVersions = resolveTemplateVersions(opts.versions, enabled);
     const template =
@@ -60,6 +74,7 @@ export class Provisioner {
         services: opts.services ?? {},
         flags: { supautils: opts.flags?.supautils ?? false },
         ports: allocated,
+        postgresPassword,
         createdAt: new Date().toISOString(),
       };
       await pods.write(manifest);
@@ -74,14 +89,38 @@ export class Provisioner {
 
   /** Re-clones the pod's data dir from the base template of its postgres version. */
   async reset(id: string): Promise<void> {
-    const { templates, pods } = this.deps;
+    const { templates, pods, postgresPassword } = this.deps;
     const manifest = await pods.read(id);
     if (manifest === undefined) throw new Error(`unknown pod: ${id}`);
     const pgVersion = manifest.versions.postgres;
     if (pgVersion === undefined) throw new Error(`pod ${id} has no postgres version`);
     const template = await templates.ensureBaseTemplate(pgVersion);
-    await rm(pods.dataDir(id), { recursive: true, force: true });
-    await cloneDir(template, pods.dataDir(id));
+    const dataDir = pods.dataDir(id);
+    const tmpDataDir = `${dataDir}.reset-${process.pid}-${Date.now()}`;
+    const backupDataDir = `${dataDir}.backup-${process.pid}-${Date.now()}`;
+    let backedUp = false;
+    await cloneDir(template, tmpDataDir);
+    try {
+      await rename(dataDir, backupDataDir).then(
+        () => {
+          backedUp = true;
+        },
+        (error: unknown) => {
+          if (errorCode(error) !== "ENOENT") throw error;
+        },
+      );
+      await rename(tmpDataDir, dataDir);
+      await pods.write({ ...manifest, postgresPassword });
+      await rm(backupDataDir, { recursive: true, force: true });
+    } catch (error) {
+      if (backedUp) {
+        await rm(dataDir, { recursive: true, force: true }).catch(() => {});
+        await rename(backupDataDir, dataDir).catch(() => {});
+      }
+      throw error;
+    } finally {
+      await rm(tmpDataDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
   /** Caller must ensure the source pod is stopped/suspended first. */

@@ -2,7 +2,31 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { AllocatedPorts } from "@supabase/stack";
 import { PortRegistry } from "./PortRegistry.ts";
+
+function ports(dbPort: number, apiPort: number): AllocatedPorts {
+  return {
+    dbPort,
+    apiPort,
+    authPort: apiPort + 1,
+    postgrestPort: apiPort + 2,
+    postgrestAdminPort: apiPort + 3,
+    edgeRuntimePort: apiPort + 4,
+    edgeRuntimeInspectorPort: apiPort + 5,
+    realtimePort: apiPort + 6,
+    storagePort: apiPort + 7,
+    imgproxyPort: apiPort + 8,
+    mailpitPort: apiPort + 9,
+    mailpitSmtpPort: apiPort + 10,
+    mailpitPop3Port: apiPort + 11,
+    pgmetaPort: apiPort + 12,
+    studioPort: apiPort + 13,
+    analyticsPort: apiPort + 14,
+    poolerPort: apiPort + 15,
+    poolerApiPort: apiPort + 16,
+  };
+}
 
 describe("PortRegistry", () => {
   it("allocates unique port pairs and persists them", async () => {
@@ -35,7 +59,8 @@ describe("PortRegistry", () => {
 
     const ports = await reg.allocate("constructor");
 
-    expect(ports).toEqual({ dbPort: 55000, apiPort: 55001 });
+    expect(ports).toEqual(expect.objectContaining({ dbPort: 55000, apiPort: 55001 }));
+    expect(new Set(Object.values(ports)).size).toBe(18);
     expect(reg.get("constructor")).toEqual(ports);
   });
 
@@ -91,18 +116,21 @@ describe("PortRegistry", () => {
     const badStructure = JSON.stringify({
       basePort: 55000,
       pods: {
-        "pod-a": { dbPort: 55010, apiPort: "55011" },
+        "pod-a": ports(55010, 55011),
       },
     });
-    await writeFile(file, badStructure);
+    const parsed = JSON.parse(badStructure);
+    parsed.pods["pod-a"].poolerApiPort = "55027";
+    const raw = JSON.stringify(parsed);
+    await writeFile(file, raw);
 
     const reg = await PortRegistry.load(file);
     expect(reg.get("pod-a")).toBeUndefined();
     const allocated = await reg.allocate("pod-a");
-    expect(allocated).toEqual({ dbPort: 55000, apiPort: 55001 });
+    expect(allocated).toEqual(expect.objectContaining({ dbPort: 55000, apiPort: 55001 }));
 
     const quarantined = await readFile(`${file}.corrupt`, "utf8");
-    expect(quarantined).toBe(badStructure);
+    expect(quarantined).toBe(raw);
   });
 
   it("overwrites any previous quarantine file", async () => {
@@ -122,59 +150,59 @@ describe("PortRegistry", () => {
       const file = join(await mkdtemp(join(tmpdir(), "ports-")), "state.json");
       const reg = await PortRegistry.load(file);
 
-      await reg.restore("pod-a", { dbPort: 55010, apiPort: 55011 });
-      await reg.restore("pod-b", { dbPort: 55012, apiPort: 55013 });
+      await reg.restore("pod-a", ports(55010, 55011));
+      await reg.restore("pod-b", ports(55030, 55031));
 
-      expect(reg.get("pod-a")).toEqual({ dbPort: 55010, apiPort: 55011 });
-      expect(reg.get("pod-b")).toEqual({ dbPort: 55012, apiPort: 55013 });
+      expect(reg.get("pod-a")).toEqual(expect.objectContaining({ dbPort: 55010, apiPort: 55011 }));
+      expect(reg.get("pod-b")).toEqual(expect.objectContaining({ dbPort: 55030, apiPort: 55031 }));
 
       // New allocations must skip the restored ports.
       const next = await reg.allocate("new-pod");
       expect([next.dbPort, next.apiPort]).not.toContain(55010);
       expect([next.dbPort, next.apiPort]).not.toContain(55011);
-      expect([next.dbPort, next.apiPort]).not.toContain(55012);
-      expect([next.dbPort, next.apiPort]).not.toContain(55013);
+      expect([next.dbPort, next.apiPort]).not.toContain(55030);
+      expect([next.dbPort, next.apiPort]).not.toContain(55031);
 
       // Persisted, so a reload sees the restored allocation.
       const reloaded = await PortRegistry.load(file);
-      expect(reloaded.get("pod-a")).toEqual({ dbPort: 55010, apiPort: 55011 });
+      expect(reloaded.get("pod-a")).toEqual(
+        expect.objectContaining({ dbPort: 55010, apiPort: 55011 }),
+      );
     });
 
     it("is idempotent when restoring identical ports for the same pod", async () => {
       const file = join(await mkdtemp(join(tmpdir(), "ports-")), "state.json");
       const reg = await PortRegistry.load(file);
 
-      await reg.restore("pod-a", { dbPort: 55010, apiPort: 55011 });
-      await expect(
-        reg.restore("pod-a", { dbPort: 55010, apiPort: 55011 }),
-      ).resolves.toBeUndefined();
-      expect(reg.get("pod-a")).toEqual({ dbPort: 55010, apiPort: 55011 });
+      await reg.restore("pod-a", ports(55010, 55011));
+      await expect(reg.restore("pod-a", ports(55010, 55011))).resolves.toBeUndefined();
+      expect(reg.get("pod-a")).toEqual(expect.objectContaining({ dbPort: 55010, apiPort: 55011 }));
     });
 
     it("throws if the pod already has different ports recorded", async () => {
       const file = join(await mkdtemp(join(tmpdir(), "ports-")), "state.json");
       const reg = await PortRegistry.load(file);
 
-      await reg.restore("pod-a", { dbPort: 55010, apiPort: 55011 });
-      await expect(reg.restore("pod-a", { dbPort: 55010, apiPort: 55099 })).rejects.toThrow();
+      await reg.restore("pod-a", ports(55010, 55011));
+      await expect(reg.restore("pod-a", ports(55010, 55099))).rejects.toThrow();
     });
 
     it("throws if a port is already assigned to a different pod", async () => {
       const file = join(await mkdtemp(join(tmpdir(), "ports-")), "state.json");
       const reg = await PortRegistry.load(file);
 
-      await reg.restore("pod-a", { dbPort: 55010, apiPort: 55011 });
-      await expect(reg.restore("pod-b", { dbPort: 55010, apiPort: 55012 })).rejects.toThrow();
-      await expect(reg.restore("pod-b", { dbPort: 55020, apiPort: 55011 })).rejects.toThrow();
+      await reg.restore("pod-a", ports(55010, 55011));
+      await expect(reg.restore("pod-b", ports(55010, 55030))).rejects.toThrow();
+      await expect(reg.restore("pod-b", ports(55030, 55011))).rejects.toThrow();
     });
 
     it("throws if a restored db port collides with another pod's api port", async () => {
       const file = join(await mkdtemp(join(tmpdir(), "ports-")), "state.json");
       const reg = await PortRegistry.load(file);
 
-      await reg.restore("pod-a", { dbPort: 55010, apiPort: 55011 });
-      await expect(reg.restore("pod-b", { dbPort: 55011, apiPort: 55012 })).rejects.toThrow();
-      await expect(reg.restore("pod-b", { dbPort: 55012, apiPort: 55010 })).rejects.toThrow();
+      await reg.restore("pod-a", ports(55010, 55011));
+      await expect(reg.restore("pod-b", ports(55011, 55030))).rejects.toThrow();
+      await expect(reg.restore("pod-b", ports(55030, 55010))).rejects.toThrow();
     });
   });
 });

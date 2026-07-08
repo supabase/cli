@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { AllocatedPorts } from "@supabase/stack";
 import { createFleet } from "./Fleet.ts";
 import { PodRegistry } from "./PodRegistry.ts";
 import type { PodManifest } from "./PodManifest.ts";
@@ -28,13 +29,37 @@ function expectPortAvailable(port: number): Promise<void> {
   });
 }
 
+function ports(dbPort: number, apiPort: number): AllocatedPorts {
+  return {
+    dbPort,
+    apiPort,
+    authPort: apiPort + 1,
+    postgrestPort: apiPort + 2,
+    postgrestAdminPort: apiPort + 3,
+    edgeRuntimePort: apiPort + 4,
+    edgeRuntimeInspectorPort: apiPort + 5,
+    realtimePort: apiPort + 6,
+    storagePort: apiPort + 7,
+    imgproxyPort: apiPort + 8,
+    mailpitPort: apiPort + 9,
+    mailpitSmtpPort: apiPort + 10,
+    mailpitPop3Port: apiPort + 11,
+    pgmetaPort: apiPort + 12,
+    studioPort: apiPort + 13,
+    analyticsPort: apiPort + 14,
+    poolerPort: apiPort + 15,
+    poolerApiPort: apiPort + 16,
+  };
+}
+
 function manifest(id: string, dbPort: number, apiPort: number): PodManifest {
   return {
     id,
     versions: { postgres: "17.6.1.143" },
     services: {},
     flags: { supautils: false },
-    ports: { dbPort, apiPort },
+    ports: ports(dbPort, apiPort),
+    postgresPassword: "postgres",
     createdAt: "2026-07-08T00:00:00.000Z",
   };
 }

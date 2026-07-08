@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_VERSIONS, type ServiceName, type VersionManifest } from "@supabase/stack";
@@ -37,7 +37,12 @@ async function makeHarness(templateDir: string) {
   const pods = new PodRegistry(podsRoot);
   const ports = await PortRegistry.load(join(root, "fleet-state.json"));
   const templates = fakeTemplateStore(templateDir);
-  return { p: new Provisioner({ templates, pods, ports }), pods, ports, podsRoot };
+  return {
+    p: new Provisioner({ templates, pods, ports, postgresPassword: "secret-password" }),
+    pods,
+    ports,
+    podsRoot,
+  };
 }
 
 async function podsRootEntries(podsRoot: string): Promise<string[]> {
@@ -54,6 +59,7 @@ describe("Provisioner (unit, fake deps)", () => {
       const manifest = await p.create({ id: "x", versions: { postgres: PG_VERSION } });
 
       expect(manifest.id).toBe("x");
+      expect(manifest.postgresPassword).toBe("secret-password");
       expect(ports.get("x")).toEqual(manifest.ports);
       expect(await pods.read("x")).toEqual(manifest);
     });
@@ -118,6 +124,41 @@ describe("Provisioner (unit, fake deps)", () => {
 
       expect(ports.get("bad")).toBeUndefined();
       expect(await podsRootEntries(podsRoot)).not.toContain("bad");
+    });
+
+    it("rejects services that cannot run in native fleet mode before provisioning", async () => {
+      const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
+      await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
+      const { p, ports, podsRoot } = await makeHarness(templateDir);
+
+      await expect(
+        p.create({
+          id: "bad",
+          versions: { postgres: PG_VERSION },
+          services: { storage: true },
+        }),
+      ).rejects.toThrow(/native mode/);
+
+      expect(ports.get("bad")).toBeUndefined();
+      expect(await podsRootEntries(podsRoot)).not.toContain("bad");
+    });
+  });
+
+  describe("reset", () => {
+    it("keeps the live data dir when cloning the replacement template fails", async () => {
+      const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
+      await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
+      const { p, pods } = await makeHarness(templateDir);
+
+      await p.create({ id: "x", versions: { postgres: PG_VERSION } });
+      await writeFile(join(pods.dataDir("x"), "marker.txt"), "still-here");
+      await rm(templateDir, { recursive: true, force: true });
+
+      await expect(p.reset("x")).rejects.toThrow();
+
+      await expect(readFile(join(pods.dataDir("x"), "marker.txt"), "utf8")).resolves.toBe(
+        "still-here",
+      );
     });
   });
 

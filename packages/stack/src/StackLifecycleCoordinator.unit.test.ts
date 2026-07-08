@@ -8,6 +8,7 @@ import { Duration, Effect, Exit, Fiber, Layer } from "effect";
 import { mockChildProcessSpawner } from "../../process-compose/tests/helpers/mocks.ts";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
+import { StackBuildError } from "./errors.ts";
 import { readPreloadLibraries } from "./pgconf.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { Stack } from "./Stack.ts";
@@ -262,6 +263,35 @@ describe("StackLifecycleCoordinator enableExtension", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(yield* Effect.promise(() => readPreloadLibraries(dataDir))).toEqual([]);
       }).pipe(Effect.ensuring(Fiber.interrupt(startFiber)));
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("returns to stopped phase after start fails", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-failed-start-test-"));
+    writeFileSync(join(dataDir, "postgresql.conf"), "# stock conf\n");
+    const config = makeConfig(dataDir);
+    const resolver = mockBinaryResolver();
+    const stackPreparationLayer = StackPreparation.layer.pipe(Layer.provide(resolver.layer));
+    const failingBuilderLayer = Layer.succeed(StackBuilder, {
+      build: () => Effect.fail(new StackBuildError({ detail: "build failed" })),
+    });
+    const layer = StackLifecycleCoordinator.layer(config).pipe(
+      Layer.provide(failingBuilderLayer),
+      Layer.provide(stackPreparationLayer),
+      Layer.provide(StackMetadataPersistence.noop),
+      Layer.provide(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const coordinator = yield* StackLifecycleCoordinator;
+      const startExit = yield* coordinator.start().pipe(Effect.exit);
+
+      expect(Exit.isFailure(startExit)).toBe(true);
+      yield* coordinator.enableExtension("pg_cron");
+      expect(yield* Effect.promise(() => readPreloadLibraries(dataDir))).toEqual(["pg_cron"]);
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),

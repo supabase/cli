@@ -618,7 +618,10 @@ export class StackLifecycleCoordinator extends Context.Service<
                 yield* runtime.orchestrator.waitAllReady();
               }
               yield* Ref.set(phaseRef, "running");
-            }).pipe(Effect.ensuring(Ref.set(startInFlightRef, false))),
+            }).pipe(
+              Effect.onError(() => Ref.set(phaseRef, "stopped")),
+              Effect.ensuring(Ref.set(startInFlightRef, false)),
+            ),
           stop: () =>
             Effect.gen(function* () {
               if (runtimeState === undefined) {
