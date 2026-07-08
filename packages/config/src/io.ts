@@ -1,4 +1,4 @@
-import { Console, Effect, FileSystem, Path, Schema } from "effect";
+import { Console, Effect, FileSystem, Path, Redacted, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
 import { DuplicateRemoteProjectIdError, ProjectConfigParseError } from "./errors.ts";
@@ -317,6 +317,55 @@ function normalizeDeprecatedSMTPSections(document: unknown): NormalizedSMTPDocum
   return { document: normalized, deprecatedSections };
 }
 
+/**
+ * Wraps every `edge_runtime.secrets` value in `Redacted` before it's attached
+ * to `ProjectConfigParseError.document`. By this point `secrets` values are
+ * real, resolved secrets (post `env()` interpolation, see
+ * `interpolateEnvReferencesAgainstSchema` in `loadProjectConfigFile`) — the
+ * same values `secret()` (`lib/env.ts`) annotates `x-secret` for elsewhere in
+ * this package (`resolveProjectValue`'s `redactValue`). Several callers of
+ * `loadProjectConfig` (`gen types`, `next start`, `functions dev/serve/deploy`)
+ * don't catch `ProjectConfigParseError` at all, so this keeps the same
+ * accidental-leak protection `Redacted` already gives every other secret path
+ * in this package, in case an uncaught error's `document` ever reaches a log
+ * or trace. `secrets set`'s `recoverEdgeRuntimeConfig`/`filterDecodableSecrets`
+ * unwrap via `Redacted.isRedacted`/`Redacted.value` before re-decoding.
+ */
+function redactEdgeRuntimeSecrets(edgeRuntime: unknown): unknown {
+  if (!isObject(edgeRuntime) || !("secrets" in edgeRuntime)) {
+    return edgeRuntime;
+  }
+  if (!isObject(edgeRuntime.secrets)) {
+    // The whole `secrets` field is malformed — e.g. `secrets = ["actual-secret"]`
+    // (a TOML array instead of a table) — rather than a single bad entry
+    // inside an otherwise-valid table. Still carries a secret in its
+    // structure, so wrap the field as one unit with the same rationale as
+    // the per-entry case below. Guarded by `"secrets" in edgeRuntime`
+    // (not just falling through on `undefined`) so `edge_runtime` documents
+    // that legitimately omit `secrets` don't gain a spurious
+    // `Redacted.make(undefined)` field.
+    return {
+      ...edgeRuntime,
+      secrets: Redacted.make(edgeRuntime.secrets, { label: "edge_runtime.secrets" }),
+    };
+  }
+  return {
+    ...edgeRuntime,
+    // Wrap the whole entry, not just string values: a malformed
+    // `[edge_runtime.secrets]` entry (e.g. a TOML array `FOO = ["actual-secret"]`
+    // or inline table) still carries the secret in its structure, and
+    // `Redacted.make` accepts any value — `toString`/`toJSON` always render
+    // `<redacted:...>` regardless of the wrapped type, so this can't leak a
+    // non-string entry either.
+    secrets: Object.fromEntries(
+      Object.entries(edgeRuntime.secrets).map(([name, value]) => [
+        name,
+        Redacted.make(value, { label: `edge_runtime.secrets.${name}` }),
+      ]),
+    ),
+  };
+}
+
 function getSchemaRef(document: unknown): string | undefined {
   if (!isObject(document)) {
     return undefined;
@@ -330,10 +379,35 @@ function parseProjectConfig(
   document: unknown,
   format: ConfigFormat,
   path: string,
+  appliedRemote: string | undefined,
 ): Effect.Effect<ProjectConfig, ProjectConfigParseError> {
   return Effect.try({
     try: () => decodeProjectConfig(document),
-    catch: (cause) => new ProjectConfigParseError({ path, format, cause }),
+    // `document` always parsed successfully by this point (raw parse failures
+    // are caught earlier, in `loadProjectConfigFile`), so any error here is a
+    // schema-decode failure — attach it so callers can attempt a narrower,
+    // Go-tolerant re-decode of an unaffected subtree. See the field doc on
+    // `ProjectConfigParseError.document`. Only the `edge_runtime` subtree is
+    // retained (not the whole document): it's the only slice any caller
+    // re-decodes today (`secrets set`'s `recoverEdgeRuntimeConfig`), and several
+    // callers of `loadProjectConfig` (e.g. `gen types`, `next start`,
+    // `functions dev/serve/deploy`) don't catch `ProjectConfigParseError` at
+    // all, so this error can propagate with whatever we attach here — no
+    // reason to carry unrelated sections (db credentials, other
+    // `[remotes.*]` blocks, etc.) along for the ride. `appliedRemote` is passed
+    // through unconditionally too — see the field doc on
+    // `ProjectConfigParseError.appliedRemote` for why a tolerant caller still
+    // owes the override notice on this path.
+    catch: (cause) =>
+      new ProjectConfigParseError({
+        path,
+        format,
+        cause,
+        document: isObject(document)
+          ? { edge_runtime: redactEdgeRuntimeSecrets(document.edge_runtime) }
+          : undefined,
+        appliedRemote,
+      }),
   });
 }
 
@@ -423,7 +497,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     appliedRemote = resolved.appliedRemote;
   }
 
-  const config = yield* parseProjectConfig(documentForDecode, format, filePath);
+  const config = yield* parseProjectConfig(documentForDecode, format, filePath, appliedRemote);
 
   return {
     path: filePath,

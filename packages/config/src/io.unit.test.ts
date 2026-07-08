@@ -5,7 +5,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
 import { ProjectConfigSchema } from "./base.ts";
 import { loadProjectConfig as loadProjectConfigFromBun } from "./bun.ts";
 import {
@@ -425,6 +425,158 @@ major_version = 16
           }
         }
       }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("redacts edge_runtime.secrets on the ProjectConfigParseError document", async () => {
+    const cwd = makeTempProject();
+    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      // `analytics.port` fails schema decode (expects a number), which is
+      // enough to fail the whole `Schema.decodeUnknownSync` call while
+      // `edge_runtime.secrets` parses fine on its own — the scenario
+      // `recoverEdgeRuntimeConfig` (apps/cli's `secrets set`) exists to
+      // recover from. `MY_SUPER_SECRET_VALUE` stands in for a real secret so
+      // the assertion below can confirm it never appears in plaintext.
+      await writeFile(
+        tomlPath,
+        `[analytics]
+port = "not-a-number"
+
+[edge_runtime.secrets]
+FOO = "MY_SUPER_SECRET_VALUE"
+`,
+      );
+
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfigFile(tomlPath).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) {
+        return;
+      }
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (!Option.isSome(error) || error.value._tag !== "ProjectConfigParseError") {
+        return;
+      }
+
+      const edgeRuntime = error.value.document?.edge_runtime;
+      const secrets =
+        edgeRuntime !== null && typeof edgeRuntime === "object" && edgeRuntime !== undefined
+          ? (edgeRuntime as Record<string, unknown>).secrets
+          : undefined;
+      expect(secrets).toBeDefined();
+      const foo = (secrets as Record<string, unknown>).FOO;
+      expect(Redacted.isRedacted(foo)).toBe(true);
+      expect(Redacted.value(foo as Redacted.Redacted<string>)).toBe("MY_SUPER_SECRET_VALUE");
+      // The whole point: a caller that doesn't know to unwrap `Redacted`
+      // (e.g. an uncaught error serialized into a log) never sees the raw
+      // secret, even via JSON.stringify.
+      expect(JSON.stringify(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("redacts a non-string edge_runtime.secrets value on the ProjectConfigParseError document", async () => {
+    const cwd = makeTempProject();
+    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      // `FOO` is a TOML array, not a string — the schema decode for this
+      // entry fails, but the raw pre-decode value still carries
+      // `MY_SUPER_SECRET_VALUE` in plaintext. `redactEdgeRuntimeSecrets` must
+      // wrap the entry regardless of its shape, not just string entries.
+      await writeFile(
+        tomlPath,
+        `[analytics]
+port = "not-a-number"
+
+[edge_runtime.secrets]
+FOO = ["MY_SUPER_SECRET_VALUE"]
+`,
+      );
+
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfigFile(tomlPath).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) {
+        return;
+      }
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (!Option.isSome(error) || error.value._tag !== "ProjectConfigParseError") {
+        return;
+      }
+
+      const edgeRuntime = error.value.document?.edge_runtime;
+      const secrets =
+        edgeRuntime !== null && typeof edgeRuntime === "object" && edgeRuntime !== undefined
+          ? (edgeRuntime as Record<string, unknown>).secrets
+          : undefined;
+      expect(secrets).toBeDefined();
+      const foo = (secrets as Record<string, unknown>).FOO;
+      expect(Redacted.isRedacted(foo)).toBe(true);
+      expect(Redacted.value(foo as Redacted.Redacted<unknown>)).toEqual(["MY_SUPER_SECRET_VALUE"]);
+      expect(JSON.stringify(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("redacts a non-object edge_runtime.secrets field on the ProjectConfigParseError document", async () => {
+    const cwd = makeTempProject();
+    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      // `secrets` itself is a TOML array here, not a table — the whole field
+      // is malformed rather than a single entry inside it. `isObject` rejects
+      // arrays, so `redactEdgeRuntimeSecrets` must wrap the field as one unit
+      // instead of falling through its early-return and leaving it raw.
+      await writeFile(
+        tomlPath,
+        `[analytics]
+port = "not-a-number"
+
+[edge_runtime]
+secrets = ["MY_SUPER_SECRET_VALUE"]
+`,
+      );
+
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfigFile(tomlPath).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) {
+        return;
+      }
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (!Option.isSome(error) || error.value._tag !== "ProjectConfigParseError") {
+        return;
+      }
+
+      const edgeRuntime = error.value.document?.edge_runtime;
+      const secrets =
+        edgeRuntime !== null && typeof edgeRuntime === "object" && edgeRuntime !== undefined
+          ? (edgeRuntime as Record<string, unknown>).secrets
+          : undefined;
+      expect(Redacted.isRedacted(secrets)).toBe(true);
+      expect(Redacted.value(secrets as Redacted.Redacted<unknown>)).toEqual([
+        "MY_SUPER_SECRET_VALUE",
+      ]);
+      expect(JSON.stringify(error.value.document)).not.toContain("MY_SUPER_SECRET_VALUE");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -865,6 +1017,40 @@ enabled = false
       expect(loaded!.config.db.major_version).toBe(15);
       // remotes are stripped from the merged document before decode
       expect(loaded!.document?.remotes).toBeUndefined();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("carries appliedRemote on ProjectConfigParseError when the matched remote's decode fails", async () => {
+    // Go prints `Loading config override: [remotes.<name>]` unconditionally
+    // as soon as the `project_id` match is found, *before* `mapstructure`
+    // decode runs (`apps/cli-go/pkg/config/config.go:604-609`) — so the notice
+    // is still owed even when the decode that follows fails. `db.major_version`
+    // is an unrelated schema-decode error; the remote merge must still have
+    // happened (and be reported) ahead of it.
+    const cwd = await writeTomlProject(
+      `${BASE_WITH_REMOTES}
+[remotes.preview.db]
+major_version = "not-a-number"
+`,
+    );
+    try {
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) {
+        return;
+      }
+      const error = Cause.findErrorOption(exit.cause);
+      expect(Option.isSome(error)).toBe(true);
+      if (!Option.isSome(error) || error.value._tag !== "ProjectConfigParseError") {
+        return;
+      }
+      expect(error.value.appliedRemote).toBe("preview");
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
