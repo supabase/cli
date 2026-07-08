@@ -9,7 +9,7 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
-  hasExplicitLongFlag,
+  hasExplicitValueFlag,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -67,6 +67,24 @@ const SSO_UPDATE_MUTEX_GROUPS = [
   ["domains", "remove-domains"],
   ["metadata-file", "metadata-url"],
 ] as const;
+
+/**
+ * Every value-taking (non-boolean) flag `sso update` declares
+ * (`update.command.ts`) — tells `hasExplicitValueFlag` which bare tokens
+ * consume the next argv token as their value. `--skip-url-validation` is this
+ * command's only boolean flag and is deliberately excluded; booleans never
+ * consume a following token.
+ */
+const SSO_UPDATE_VALUE_FLAG_NAMES = new Set([
+  "project-ref",
+  "domains",
+  "add-domains",
+  "remove-domains",
+  "metadata-file",
+  "metadata-url",
+  "attribute-mapping-file",
+  "name-id-format",
+]);
 
 const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError) =>
   Effect.gen(function* () {
@@ -140,9 +158,20 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // empty array) must still count as "set"; gating on `.length > 0` would
     // miss it, the same "changed vs truthy" gap CLI-1860 fixed for
     // `functions download`'s `--use-docker`.
+    //
+    // `hasExplicitValueFlag` (not the simpler `hasExplicitLongFlag`) is
+    // required here because every flag in these groups takes a value: a bare
+    // `--metadata-file --metadata-url` is pflag consuming `--metadata-url` as
+    // `metadata-file`'s (oddly named) value, not two flags being set — see
+    // that function's doc comment.
     for (const group of SSO_UPDATE_MUTEX_GROUPS) {
       const changed = group.filter((flagName) =>
-        hasExplicitLongFlag(rawArgs, SSO_UPDATE_COMMAND_PATH, flagName),
+        hasExplicitValueFlag(
+          rawArgs,
+          SSO_UPDATE_COMMAND_PATH,
+          SSO_UPDATE_VALUE_FLAG_NAMES,
+          flagName,
+        ),
       );
       if (changed.length > 1) {
         return yield* Effect.fail(

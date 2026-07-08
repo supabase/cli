@@ -411,6 +411,41 @@ describe("legacy sso update integration", () => {
     },
   );
 
+  it.live(
+    "mutex check: a bare --metadata-file followed by --metadata-url is not a violation",
+    () => {
+      // pflag's `--flag arg` branch consumes the very next argv token as the
+      // value unconditionally (`flag.go:1013-1031`), so real cobra parses this
+      // as `metadata-file` receiving the literal value `"--metadata-url"` —
+      // `metadata-url` is never parsed as its own flag and stays unset. The
+      // TS CLI's own parser (unlike pflag) never hands a dash-prefixed token
+      // to a non-boolean flag as a bare value, so here both flags resolve to
+      // `Option.none()` — but the raw-argv mutex scan must reach the same
+      // "not a violation" conclusion pflag does, not double-count the
+      // `--metadata-url` token as a second explicit flag.
+      const { layer } = setup({
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--metadata-file", "--metadata-url"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        expect(Exit.isSuccess(exit)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("mutex check: a bare --add-domains followed by --domains=... is not a violation", () => {
+    // Same consumed-value class as the metadata-file/metadata-url case
+    // above, but for the domains group: pflag would hand `add-domains` the
+    // literal value `"--domains=x.com"` and never parse `--domains` at all.
+    const { layer } = setup({
+      cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--add-domains", "--domains=x.com"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("--domains replaces domains verbatim", () => {
     const { layer, api } = setup();
     return Effect.gen(function* () {
