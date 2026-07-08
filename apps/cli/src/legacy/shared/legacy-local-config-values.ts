@@ -603,6 +603,55 @@ const LEGACY_HOOK_TYPE_ORDER = [
   "before_user_created",
 ] as const;
 
+/** Go's `external.validate()` deprecated-provider skip (`config.go:1419-1423`) — `linkedin`/
+ * `slack` are deleted (and warned on, if enabled) before the required-field loop runs, so they
+ * are never validated here. Mirrors `legacy-db-config.toml-read.ts`'s identical "B5: external
+ * providers" skip list. */
+const DEPRECATED_EXTERNAL_PROVIDERS = new Set(["linkedin", "slack"]);
+
+/**
+ * Go's `(e external) validate()` (`pkg/config/config.go:1419-1451`) — D-only per
+ * `legacy-config-validate.ts`'s module header ("`auth.external` ... stays 100% inline in D"), so
+ * this ports the identical inline block D already has (`legacy-db-config.toml-read.ts`'s "B5:
+ * external providers") to close the same gap for L. `auth.external` is a genuine Go
+ * `map[string]provider` (`apps/cli-go/pkg/config/auth.go:190`), so an arbitrary/unmodeled
+ * provider name (e.g. `[auth.external.custom]`) is a legitimate config shape — Go validates
+ * every enabled entry regardless of name. `@supabase/config`'s `external` schema only models the
+ * ~20 known provider ids and silently drops anything else at decode time
+ * (`packages/config/src/auth/providers.ts`), so an unmodeled provider's required-field check
+ * must run against the RAW `authDocument` instead of the decoded `ProjectConfig` — same
+ * document-based approach as {@link readAuthEmailTemplateContent}/the passkey/smtp checks above.
+ * Known providers are already covered by the schema's own `requiredWhenEnabled` check at decode
+ * time, so in practice this only ever fires for a name the schema doesn't model, but it runs
+ * over every raw key unconditionally, matching Go's own map iteration rather than special-casing
+ * "unknown" a different way. `authDocument`'s values are already post-`env()`-interpolation (see
+ * `LoadedProjectConfig.document`), so no `legacyExpandEnv`-style resolution is needed here,
+ * unlike D's raw pre-interpolation document.
+ */
+function validateAuthExternalProviders(authDocument: Record<string, unknown> | undefined): void {
+  const external = asRecord(authDocument?.["external"]);
+  if (external === undefined) return;
+  for (const name of Object.keys(external)) {
+    if (DEPRECATED_EXTERNAL_PROVIDERS.has(name)) continue;
+    const provider = asRecord(external[name]);
+    if (provider === undefined || provider["enabled"] !== true) continue;
+    if (typeof provider["client_id"] !== "string" || provider["client_id"].length === 0) {
+      throw new LegacyConfigValidateError(
+        `Missing required field in config: auth.external.${name}.client_id`,
+      );
+    }
+    if (
+      name !== "apple" &&
+      name !== "google" &&
+      (typeof provider["secret"] !== "string" || provider["secret"].length === 0)
+    ) {
+      throw new LegacyConfigValidateError(
+        `Missing required field in config: auth.external.${name}.secret`,
+      );
+    }
+  }
+}
+
 /**
  * @throws when `project_id` (post-override) is an explicit empty string. Go's
  * `Config.Validate` checks this FIRST, before every other field
@@ -868,13 +917,16 @@ export function legacyResolveLocalConfigValues(
       : undefined;
   // Go's `Config.Validate` runs passkey/webauthn validation, then
   // `Auth.Hook.validate()`, then `Auth.MFA.validate()`, then
-  // `Auth.Email.validate()`, then (skipping the unported Sms/External steps)
-  // `Auth.ThirdParty.validate()`, all right after the signing-keys read and
-  // still inside `if c.Auth.Enabled` (`pkg/config/config.go:1117-1153`).
-  // Sms/External (`config.go:1145-1150`) aren't ported (D-only, see
-  // `legacy-config-validate.ts`'s module header). This block only ACCUMULATES
-  // the inputs those checks need — the checks themselves run once, later, as
-  // part of the single `legacyValidateResolvedConfig` call below.
+  // `Auth.Email.validate()`, then `Auth.Sms.validate()`/`Auth.ThirdParty.validate()` (skipping
+  // the D-only `external` step, ported separately below), all right after the signing-keys read
+  // and still inside `if c.Auth.Enabled` (`pkg/config/config.go:1117-1153`). Sms
+  // (`config.go:1145-1147`/`1348-1417`) is enforced at decode time by `@supabase/config`'s
+  // `sms` schema instead of here — see `packages/config/src/auth/sms.ts`'s provider-switch
+  // check. External (`config.go:1148-1150`/`1419-1451`) is D-only per
+  // `legacy-config-validate.ts`'s module header; {@link validateAuthExternalProviders} ports D's
+  // identical inline check, called after the single `legacyValidateResolvedConfig` call below.
+  // This block only ACCUMULATES the inputs those checks need — the checks themselves run once,
+  // later, as part of the single `legacyValidateResolvedConfig` call below.
   let authInput: LegacyAuthInput | undefined;
   if (authEnabled) {
     // `@supabase/config`'s auth schema has no `passkey`/`webauthn` fields at all (see
@@ -1199,6 +1251,13 @@ export function legacyResolveLocalConfigValues(
     experimental: experimentalInput,
   };
   legacyValidateResolvedConfig(input);
+  // D-only per `legacy-config-validate.ts`'s module header ("auth.external ... stays 100%
+  // inline in D") — this is L's port of D's identical inline block, run after the single shared
+  // `legacyValidateResolvedConfig` call per the module's documented sms/external-vs-third_party
+  // ordering tradeoff (third_party is checked inside that call; external runs after it here).
+  if (authEnabled) {
+    validateAuthExternalProviders(authDocument);
+  }
 
   return {
     apiUrl: apiExternalUrl,

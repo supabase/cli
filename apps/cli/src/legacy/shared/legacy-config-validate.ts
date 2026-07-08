@@ -52,8 +52,15 @@ import { legacyGoUrlParse } from "./legacy-storage-url.ts";
  *
  * - `remotes[*].project_id` pattern (`config.go:997-1001`, vs `LEGACY_PROJECT_REF_PATTERN`) —
  *   D's own remote-merge-phase check (`findInvalidRemoteProjectId`), never shared with L.
- * - `auth.sms` (`config.go:1145-1147`/`1348-1417`) — stays 100% inline in D.
- * - `auth.external` (`config.go:1148-1150`/`1419-1451`) — stays 100% inline in D.
+ * - `auth.sms` (`config.go:1145-1147`/`1348-1417`) — stays 100% inline in D; L instead relies on
+ *   `@supabase/config`'s `sms` schema enforcing the same provider-switch priority at decode time
+ *   (`packages/config/src/auth/sms.ts`), since L decodes through that schema and D doesn't.
+ * - `auth.external` (`config.go:1148-1150`/`1419-1451`) — inline in BOTH D
+ *   (`legacy-db-config.toml-read.ts`'s "B5: external providers") and L
+ *   ({@link legacyResolveLocalConfigValues}'s `validateAuthExternalProviders`, called after this
+ *   module's shared check, same ordering tradeoff as sms below) — never routed through this
+ *   shared module, since it needs the RAW pre-decode document to see provider names
+ *   `@supabase/config`'s schema doesn't model.
  * - `auth.jwt_secret` length check (`apikeys.go:43-73`, `generateAPIKeys`) — each caller's own
  *   key-generation flow (D and L both already implement this separately), not part of
  *   `Config.Validate`'s pure-check set.

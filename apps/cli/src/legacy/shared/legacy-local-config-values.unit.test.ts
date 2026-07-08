@@ -1297,6 +1297,60 @@ describe("legacyResolveLocalConfigValues", () => {
   // calls) — L pre-filters to enabled-only third_party providers and derives function slugs
   // directly off `config.functions` with no env-override mechanics of its own for these checks.
 
+  describe("auth.external (external.validate(), D-only, ported to L)", () => {
+    // `auth.external` is a genuine Go `map[string]provider`, so an unmodeled/arbitrary provider
+    // name is a legitimate config shape `@supabase/config`'s schema silently drops at decode —
+    // this check reads the raw `document` (5th param) instead, same as passkey/hook above.
+    it("rejects an enabled unmodeled external provider missing client_id", () => {
+      const config = baseConfig();
+      const document = { auth: { external: { custom: { enabled: true } } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow("Missing required field in config: auth.external.custom.client_id");
+    });
+
+    it("rejects an enabled unmodeled external provider missing secret", () => {
+      const config = baseConfig();
+      const document = {
+        auth: { external: { custom: { enabled: true, client_id: "abc" } } },
+      };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow("Missing required field in config: auth.external.custom.secret");
+    });
+
+    it("does not require a secret for apple/google providers", () => {
+      const config = baseConfig();
+      const document = {
+        auth: { external: { apple: { enabled: true, client_id: "abc" } } },
+      };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("skips deprecated linkedin/slack providers", () => {
+      const config = baseConfig();
+      const document = { auth: { external: { slack: { enabled: true } } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("does not validate a disabled unmodeled external provider", () => {
+      const config = baseConfig();
+      const document = { auth: { external: { custom: { enabled: false } } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("skips the check entirely when no document is threaded through", () => {
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
   describe("api.tls (cert/key validation)", () => {
     const tempRoot = useLegacyTempWorkdir("supabase-api-tls-test-");
 
