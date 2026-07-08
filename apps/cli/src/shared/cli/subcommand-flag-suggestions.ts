@@ -199,6 +199,23 @@ function buildSubcommandFlagHint(
   };
 }
 
+// Workaround for a doubled "Expected: Expected ..." prefix in
+// effect@4.0.0-beta.93's own primitive parsers. Several `Primitive`s under
+// `effect/unstable/cli` (`choice` — used by `Flag.choice`/
+// `Flag.choiceWithValue` — plus the schema-backed `integer`, `float`,
+// `boolean`, and `date`) fail with a raw message that already starts with
+// the word "Expected" (e.g. `Expected "micro" | "small", got "nano"` or
+// `Expected a valid date, got Invalid Date`), and `CliError.InvalidValue`'s
+// own `message` getter independently prepends its own `"Expected: "` label
+// on top of that — so any flag or argument backed by one of these
+// primitives renders "Expected: Expected ...". Collapsing the literal
+// doubled substring (rather than rebuilding the surrounding "Invalid value
+// for ..." template ourselves) keeps this tied to the exact defect and
+// covers every affected primitive uniformly, letting every other part of
+// the message keep tracking upstream's own wording. Remove once upstream
+// `effect` fixes this (see CLI-1898).
+const DOUBLED_EXPECTED_PREFIX = "Expected: Expected ";
+
 export function formatCliErrorsForDisplay(
   errors: ReadonlyArray<CliError.CliError>,
   context?: CliErrorSuggestionContext,
@@ -225,6 +242,17 @@ export function formatCliErrorsForDisplay(
 
     if (error._tag === "UnknownSubcommand" && suppressedUnknownSubcommands.has(error.subcommand)) {
       changed = true;
+      continue;
+    }
+
+    if (error._tag === "InvalidValue" && error.message.includes(DOUBLED_EXPECTED_PREFIX)) {
+      changed = true;
+      formatted.push({
+        _tag: error._tag,
+        message: error.message.replace(DOUBLED_EXPECTED_PREFIX, "Expected "),
+        source: error,
+        changed: true,
+      });
       continue;
     }
 
