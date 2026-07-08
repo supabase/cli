@@ -504,6 +504,38 @@ describe("makePostgresInitService", () => {
     expect(script).toContain("'pgbouncer'");
   });
 
+  it("keeps the supabase_admin database role password in sync", () => {
+    const def = makePostgresInitService({
+      postgresDir: "/cache/postgres/17/darwin-arm64",
+      dbPort: DB_PORT,
+      dbPassword: DB_PASSWORD,
+      autoExposeNewTables: true,
+    });
+    const script = def.args?.[1] as string;
+    expect(script).toContain("'supabase_admin'");
+  });
+
+  it("separates the current auth password from the target role password", () => {
+    const def = makePostgresInitService({
+      postgresDir: "/cache/postgres/17/darwin-arm64",
+      dbPort: DB_PORT,
+      dbPassword: "new-password",
+      autoExposeNewTables: true,
+    });
+    const script = def.args?.[1] as string;
+
+    expect(script).toContain("export TARGET_PGPASSWORD='new-password'");
+    expect(script).toContain('export PGPASSWORD="$DEFAULT_PGPASSWORD"');
+    expect(script).toContain('-v pgpass="$TARGET_PGPASSWORD"');
+
+    const updateRoles = script.indexOf("# Always update role passwords");
+    const useTargetPassword = script.indexOf('export PGPASSWORD="$TARGET_PGPASSWORD"', updateRoles);
+    const backfill = script.indexOf("# Backfill schemas/databases", updateRoles);
+    expect(updateRoles).toBeGreaterThan(-1);
+    expect(useTargetPassword).toBeGreaterThan(updateRoles);
+    expect(backfill).toBeGreaterThan(useTargetPassword);
+  });
+
   it("backfills auxiliary service schemas and internal databases", () => {
     const def = makePostgresInitService({
       postgresDir: "/cache/postgres/17/darwin-arm64",

@@ -30,13 +30,15 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
+const DEFAULT_POSTGRES_PASSWORD = "postgres";
+
 export const makePostgresInitService = (opts: PostgresInitOptions): ServiceDef => {
   const pgBinDir = `${opts.postgresDir}/bin`;
   const pgLibDir = `${opts.postgresDir}/lib`;
   const migrationsDir = `${opts.postgresDir}/share/supabase-cli/migrations`;
 
   const psql = `${pgBinDir}/psql -h 127.0.0.1 -p ${opts.dbPort}`;
-  const psqlOpts = `-v ON_ERROR_STOP=1 --no-password --no-psqlrc -v pgpass="$PGPASSWORD"`;
+  const psqlOpts = `-v ON_ERROR_STOP=1 --no-password --no-psqlrc -v pgpass="$TARGET_PGPASSWORD"`;
 
   const revokeStep = opts.autoExposeNewTables
     ? ""
@@ -53,11 +55,29 @@ EOSQL
   // postgres-init time from ~5s to ~1s.
   const script = `
 export PATH="${pgBinDir}:$PATH"
-export PGPASSWORD=${shellQuote(opts.dbPassword)}
+export TARGET_PGPASSWORD=${shellQuote(opts.dbPassword)}
+export PGPASSWORD="$TARGET_PGPASSWORD"
+DEFAULT_PGPASSWORD=${shellQuote(DEFAULT_POSTGRES_PASSWORD)}
 db="${migrationsDir}"
 
+is_initialized() {
+  ${psql} -U supabase_admin -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='authenticator'" 2>/dev/null | grep -q 1
+}
+
 # Check if already migrated (authenticator role created by initial-schema.sql)
-if ${psql} -U supabase_admin -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='authenticator'" 2>/dev/null | grep -q 1; then
+initialized=false
+if is_initialized; then
+  initialized=true
+elif [ "$TARGET_PGPASSWORD" != "$DEFAULT_PGPASSWORD" ]; then
+  export PGPASSWORD="$DEFAULT_PGPASSWORD"
+  if is_initialized; then
+    initialized=true
+  else
+    export PGPASSWORD="$TARGET_PGPASSWORD"
+  fi
+fi
+
+if [ "$initialized" = "true" ]; then
   echo "Database already initialized, updating passwords..."
 else
   echo "Running Supabase migrations..."
@@ -96,6 +116,25 @@ EOSQL
   ${psql} ${psqlOpts} -U supabase_admin -d postgres -c 'SELECT extensions.pg_stat_statements_reset(); SELECT pg_stat_reset();' || true
 ${revokeStep}fi
 
+# Always update role passwords (idempotent)
+${psql} ${psqlOpts} -U supabase_admin -d postgres <<'EOSQL'
+SELECT format('ALTER ROLE %I WITH PASSWORD %L', rolname, :'pgpass')
+FROM pg_roles
+WHERE rolname = ANY (ARRAY[
+  'supabase_admin',
+  'authenticator',
+  'supabase_auth_admin',
+  'supabase_storage_admin',
+  'supabase_functions_admin',
+  'supabase_replication_admin',
+  'supabase_read_only_user',
+  'pgbouncer',
+  'postgres'
+])\\gexec
+EOSQL
+
+export PGPASSWORD="$TARGET_PGPASSWORD"
+
 # Backfill schemas/databases used by docker-backed auxiliary services.
 ${psql} ${psqlOpts} -U postgres -d postgres <<'EOSQL'
 CREATE SCHEMA IF NOT EXISTS _realtime;
@@ -111,22 +150,6 @@ CREATE SCHEMA IF NOT EXISTS _analytics;
 ALTER SCHEMA _analytics OWNER TO postgres;
 CREATE SCHEMA IF NOT EXISTS _supavisor;
 ALTER SCHEMA _supavisor OWNER TO postgres;
-EOSQL
-
-# Always update role passwords (idempotent)
-${psql} ${psqlOpts} -U supabase_admin -d postgres <<'EOSQL'
-SELECT format('ALTER ROLE %I WITH PASSWORD %L', rolname, :'pgpass')
-FROM pg_roles
-WHERE rolname = ANY (ARRAY[
-  'authenticator',
-  'supabase_auth_admin',
-  'supabase_storage_admin',
-  'supabase_functions_admin',
-  'supabase_replication_admin',
-  'supabase_read_only_user',
-  'pgbouncer',
-  'postgres'
-])\\gexec
 EOSQL
 `;
 

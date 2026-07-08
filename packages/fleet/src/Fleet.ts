@@ -50,11 +50,6 @@ interface WarmPod {
   readonly internalDbPort: number;
 }
 
-// Must match packages/stack/src/services/postgres.ts: the template build stores
-// this password in the data dir, and pod connection URLs need to use the same
-// value when exposing the suspended/warm pod.
-const DB_PASSWORD = resolvePostgresPassword();
-
 // Internal (in-process stack) ports are derived from the externally-visible,
 // PortRegistry-owned ports by a fixed lower offset so the proxy-owned public
 // range and the stack-owned internal range never collide.
@@ -105,11 +100,15 @@ const INTERNAL_PORT_OFFSET = 10_000;
 export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle> {
   const root = opts.root ?? join(homedir(), ".supabase");
   const idleMs = opts.idleMs ?? 5 * 60_000;
+  // Must match packages/stack/src/services/postgres.ts: the template build stores
+  // this password in the data dir, and pod connection URLs need to use the same
+  // value when exposing the suspended/warm pod.
+  const postgresPassword = resolvePostgresPassword();
 
-  const templates = new TemplateStore(join(root, "templates"));
+  const templates = new TemplateStore(join(root, "templates"), postgresPassword);
   const pods = new PodRegistry(join(root, "pods"));
   const ports = await PortRegistry.load(join(root, "fleet-state.json"));
-  const provisioner = new Provisioner({ templates, pods, ports, postgresPassword: DB_PASSWORD });
+  const provisioner = new Provisioner({ templates, pods, ports, postgresPassword });
 
   const states = new Map<string, PodState>();
   const warm = new Map<string, WarmPod>();

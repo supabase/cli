@@ -43,7 +43,10 @@ function errorCode(error: unknown): string | undefined {
  * `wx` flag; a stale lock (holder crashed) is reclaimed after `LOCK_STALE_MS`.
  */
 export class TemplateStore {
-  constructor(private readonly root: string) {}
+  constructor(
+    private readonly root: string,
+    private readonly postgresPassword = resolvePostgresPassword(),
+  ) {}
 
   private dataDir(key: string): string {
     return join(this.root, key, "data");
@@ -57,7 +60,7 @@ export class TemplateStore {
   }
 
   async ensureBaseTemplate(postgresVersion: string): Promise<string> {
-    const postgresPassword = resolvePostgresPassword();
+    const postgresPassword = this.postgresPassword;
     const key = baseTemplateKey(postgresVersion, { postgresPassword });
     if (await this.has(key)) return this.dataDir(key);
     return this.withLock(key, async () => {
@@ -117,7 +120,7 @@ export class TemplateStore {
   ): Promise<string> {
     const pgVersion = versions.postgres;
     if (pgVersion === undefined) throw new Error("versions.postgres is required");
-    const postgresPassword = resolvePostgresPassword();
+    const postgresPassword = this.postgresPassword;
     const base = await this.ensureBaseTemplate(pgVersion);
     if (enabledServices.length === 0) return base;
 
