@@ -3,7 +3,11 @@ import { Effect, Exit, Layer, Option } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
-import { legacyRunWithPoolerFallback } from "./legacy-pooler-fallback.ts";
+import {
+  legacyIsPoolerDbHost,
+  legacyResolveDirectDbConfigForPgDelta,
+  legacyRunWithPoolerFallback,
+} from "./legacy-pooler-fallback.ts";
 
 interface AttemptResult {
   readonly exitCode: number;
@@ -70,6 +74,51 @@ function captureOutput() {
     },
   };
 }
+
+describe("legacyIsPoolerDbHost", () => {
+  it("detects Supabase pooler hosts", () => {
+    expect(legacyIsPoolerDbHost("aws-0-us-east-1.pooler.supabase.com")).toBe(true);
+    expect(legacyIsPoolerDbHost("pooler.supabase.com")).toBe(true);
+    expect(legacyIsPoolerDbHost("db.abcdefghijklmnopqrst.supabase.co")).toBe(false);
+  });
+});
+
+describe("legacyResolveDirectDbConfigForPgDelta", () => {
+  it("rewrites a linked pooler connection to the direct database host", () => {
+    const direct = legacyResolveDirectDbConfigForPgDelta(
+      {
+        host: "aws-0-us-east-1.pooler.supabase.com",
+        port: 6543,
+        user: "postgres.abcdefghijklmnopqrst",
+        password: "secret",
+        database: "postgres",
+        options: "reference=abcdefghijklmnopqrst",
+      },
+      "abcdefghijklmnopqrst",
+      "supabase.co",
+    );
+    expect(direct).toEqual({
+      host: "db.abcdefghijklmnopqrst.supabase.co",
+      port: 5432,
+      user: "postgres",
+      password: "secret",
+      database: "postgres",
+    });
+  });
+
+  it("leaves an already-direct connection unchanged", () => {
+    const conn = {
+      host: "db.abcdefghijklmnopqrst.supabase.co",
+      port: 5432,
+      user: "postgres",
+      password: "secret",
+      database: "postgres",
+    };
+    expect(legacyResolveDirectDbConfigForPgDelta(conn, "abcdefghijklmnopqrst", "supabase.co")).toBe(
+      conn,
+    );
+  });
+});
 
 describe("legacyRunWithPoolerFallback", () => {
   it.live("returns the retry outcome verbatim without re-classifying it", () => {

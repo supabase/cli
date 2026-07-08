@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { legacyToPostgresURL } from "./legacy-postgres-url.ts";
+import { legacyHostFromPostgresURL, legacyToPostgresURL } from "./legacy-postgres-url.ts";
 
 const base = {
   host: "127.0.0.1",
@@ -87,5 +87,24 @@ describe("legacyToPostgresURL", () => {
     expect(legacyToPostgresURL({ ...base, runtimeParams: { search_path: "a b,c" } })).toContain(
       "&search_path=a+b%2Cc",
     );
+  });
+});
+
+describe("legacyHostFromPostgresURL", () => {
+  it("extracts a hostname from a postgres URL", () => {
+    expect(legacyHostFromPostgresURL(legacyToPostgresURL(base))).toBe("127.0.0.1");
+    expect(
+      legacyHostFromPostgresURL(
+        legacyToPostgresURL({
+          ...base,
+          host: "db.abcdefghijklmnopqrst.supabase.co",
+          port: 5432,
+        }),
+      ),
+    ).toBe("db.abcdefghijklmnopqrst.supabase.co");
+  });
+
+  it("extracts an IPv6 host from bracket notation", () => {
+    expect(legacyHostFromPostgresURL(legacyToPostgresURL({ ...base, host: "::1" }))).toBe("::1");
   });
 });

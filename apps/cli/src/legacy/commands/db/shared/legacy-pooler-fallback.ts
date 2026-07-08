@@ -10,6 +10,10 @@ import {
 } from "../../../shared/legacy-pooler-fallback.ts";
 
 export { legacyEmitPoolerFallbackWarning } from "../../../shared/legacy-pooler-fallback.ts";
+export {
+  legacyIsPoolerDbHost,
+  legacyResolveDirectDbConfigForPgDelta,
+} from "../../../shared/legacy-pooler-fallback.ts";
 
 /** The exit/stderr pair a dump attempt surfaces for pooler-fallback classification. */
 interface LegacyPoolerFallbackResult {

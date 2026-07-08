@@ -29,7 +29,10 @@ import {
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyMakeDir } from "../../../shared/legacy-make-dir.ts";
-import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
+import {
+  legacyHostFromPostgresURL,
+  legacyToPostgresURL,
+} from "../../../shared/legacy-postgres-url.ts";
 import { legacySchemaToCsvField } from "../../../shared/legacy-schema-flags.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -49,6 +52,7 @@ import { legacyStreamPgDump } from "../shared/legacy-pg-dump.run.ts";
 import {
   legacyEmitPoolerFallbackWarning,
   legacyIsDirectLinkedHost,
+  legacyResolveDirectDbConfigForPgDelta,
   legacyRunWithPoolerFallback,
 } from "../shared/legacy-pooler-fallback.ts";
 import { legacyDumpSchemaScript } from "../shared/legacy-pg-dump.scripts.ts";
@@ -64,7 +68,12 @@ import {
   legacyExportCatalogPgDelta,
   legacyIsPgDeltaDebugEnabled,
 } from "../shared/legacy-pgdelta.ts";
-import { legacySaveEmptyPgDeltaPullDebug } from "./pull.debug.ts";
+import {
+  LEGACY_PG_DELTA_INTROSPECTION_ERROR,
+  legacyFormatInitialPgDeltaEmptyPullHint,
+  legacySaveEmptyPgDeltaPullDebug,
+  legacySummarizeCatalogJson,
+} from "./pull.debug.ts";
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";
 import {
@@ -267,14 +276,16 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     const withPoolerFallback = <A, E extends { readonly message: string }, R>(
       directTarget: string,
       attempt: (targetRef: string) => Effect.Effect<A, E, R>,
-    ) =>
-      attempt(directTarget).pipe(
+    ) => {
+      // Pooler fallback gates on the container TARGET host, not `resolved.conn.host`.
+      const targetHost = legacyHostFromPostgresURL(directTarget);
+      return attempt(directTarget).pipe(
         Effect.catch((error) =>
           Effect.gen(function* () {
             if (
               legacyIsDirectLinkedHost({
                 connType,
-                host: resolved.conn.host,
+                host: targetHost,
                 isLocal: resolved.isLocal,
                 projectHost: cliConfig.projectHost,
               }) &&
@@ -292,7 +303,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 })
                 .pipe(Effect.orElseSucceed(() => Option.none()));
               if (Option.isSome(pooler)) {
-                yield* legacyEmitPoolerFallbackWarning(resolved.conn.host);
+                yield* legacyEmitPoolerFallbackWarning(targetHost);
                 return yield* attempt(connToUrl(pooler.value));
               }
             }
@@ -300,6 +311,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           }),
         ),
       );
+    };
 
     const usePgDeltaDiff = legacyResolvePullDiffEngine({
       engineFlagChanged: Option.isSome(flags.diffEngine),
@@ -447,6 +459,16 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             }),
           );
         }
+        const initialPull = sync.kind === "missing";
+        // Initial pg-delta pull only: if `--linked` resolved to a pooler host, rewrite
+        // the pg-delta TARGET to `db.<ref>.<host>` (see legacyResolveDirectDbConfigForPgDelta).
+        // The CLI postgres session (`resolved.conn`) is unchanged.
+        const pgDeltaTargetConn =
+          initialPull && usePgDeltaDiff && connType === "linked" && linkedRef !== undefined
+            ? legacyResolveDirectDbConfigForPgDelta(resolved.conn, linkedRef, cliConfig.projectHost)
+            : resolved.conn;
+        const pgDeltaTargetUrl = connToUrl(pgDeltaTargetConn);
+        const diffTargetUrl = initialPull && usePgDeltaDiff ? pgDeltaTargetUrl : targetUrl;
         // Initial pull, migra engine (Go's `run` → `assertRemoteInSync` returns
         // `errMissing`): seed the migration file with a pg_dump of the remote schema
         // (`dumpRemoteSchema`, `pull.go:144-158`), then run the migra diff below as a
@@ -454,7 +476,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // which captures default privileges / managed schemas pg_dump can't emit.
         // pg-delta initial pulls skip the dump (`pull.go:126` `if !usePgDeltaDiff`):
         // they diff against an empty shadow, which already yields the full schema.
-        const seededFromDump = sync.kind === "missing" && !usePgDeltaDiff;
+        const seededFromDump = initialPull && !usePgDeltaDiff;
         // Tracks whether the pg_dump seed wrote any bytes, for Go's
         // `ensureMigrationWritten` (`pull.go:68,263-268`): an empty dump + empty diff
         // is "in sync", a non-empty dump is a valid initial migration on its own.
@@ -559,7 +581,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         // Native diff: shadow (baseline + local migrations) vs remote → migration SQL.
         // For the initial pull (no local migrations) the schema filter is ignored,
         // matching Go's `diffRemoteSchema(ctx, nil, …)`.
-        const diffSchema = sync.kind === "missing" ? [] : flags.schema;
+        const diffSchema = initialPull ? [] : flags.schema;
         // Go's `DiffDatabase` emits these to stderr before provisioning + diffing
         // (`internal/db/diff/diff.go:189,234-237`); the shadow seam doesn't, so the
         // pull handler emits them itself to match the migration-style `db pull` output.
@@ -581,7 +603,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // Use the declarative target override when present (Go substitutes it
           // for the diff target, `diff.go:196-197`); for remote pulls it's
           // undefined, so this is the direct target URL as before.
-          const target = shadow.targetUrlOverride ?? targetUrl;
+          const target = shadow.targetUrlOverride ?? diffTargetUrl;
           yield* output.raw(
             diffSchema.length > 0
               ? `Diffing schemas: ${diffSchema.join(",")}\n`
@@ -647,8 +669,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           if (diffOutcome.capture !== undefined) {
             const debugDir = yield* legacySaveEmptyPgDeltaPullDebug({
               ctx,
-              conn: resolved.conn,
-              targetUrl,
+              conn: pgDeltaTargetConn,
+              targetUrl: pgDeltaTargetUrl,
               sourceCatalog: diffOutcome.capture.sourceCatalog,
               pgDeltaStderr: diffOutcome.capture.stderr,
               id: legacyFormatDebugId(yield* Clock.currentTimeMillis),
@@ -672,6 +694,23 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 }),
               );
             }
+          }
+          if (initialPull && usePgDeltaDiff && !legacyIsPgDeltaDebugEnabled()) {
+            // Shown on every empty initial pg-delta pull (unless PGDELTA_DEBUG took the
+            // debug-bundle path above). Helps when pooler introspection silently fails.
+            yield* output.raw(`${legacyFormatInitialPgDeltaEmptyPullHint()}\n`, "stderr");
+            // Probe the remote catalog: if objects exist but pg-delta returned no SQL,
+            // fail with a specific introspection error instead of generic "in sync".
+            const targetCatalog = yield* legacyExportCatalogPgDelta(ctx, {
+              targetRef: pgDeltaTargetUrl,
+              role: "postgres",
+            }).pipe(Effect.catch(() => Effect.succeed("")));
+            if (legacySummarizeCatalogJson(targetCatalog).totalObjects > 0) {
+              return yield* Effect.fail(
+                new LegacyDbPullInSyncError({ message: LEGACY_PG_DELTA_INTROSPECTION_ERROR }),
+              );
+            }
+            // Catalog also empty → truly nothing pullable; fall through to generic error.
           }
           return yield* Effect.fail(
             new LegacyDbPullInSyncError({ message: "No schema changes found" }),

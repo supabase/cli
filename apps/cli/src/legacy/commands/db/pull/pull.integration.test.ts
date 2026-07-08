@@ -37,6 +37,7 @@ import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.
 import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";
 import { legacyDbPull } from "./pull.handler.ts";
+import { LEGACY_PG_DELTA_INTROSPECTION_ERROR } from "./pull.debug.ts";
 
 const EXPORT_JSON = JSON.stringify({
   version: 1,
@@ -74,6 +75,9 @@ interface SetupOpts {
   // `dumpFailFirstWith`, reproducing a direct attempt that emits preamble then
   // exits non-zero on an IPv6 drop.
   readonly dumpFailFirstPartialBytes?: string;
+  // Override the resolved linked/local connection host (defaults to direct db host).
+  readonly resolvedConnHost?: string;
+  readonly resolvedConnOptions?: string;
   // Raw argv seen by the handler (CliArgs). Only consulted when both
   // `--declarative` and `--use-pg-delta` are present, to replay pflag's
   // last-occurrence-wins ordering; defaults to empty.
@@ -115,9 +119,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   let edgeRunCount = 0;
+  const edgeTargets: string[] = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
       edgeRunCount += 1;
+      const target = runOpts.env["TARGET"];
+      if (target !== undefined) edgeTargets.push(target);
       if (opts.edgeFailFirstWith !== undefined && edgeRunCount === 1) {
         return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.edgeFailFirstWith }));
       }
@@ -182,14 +189,22 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         conn: {
           // A direct `db.<ref>.<projectHost>` host so the pooler-fallback gate
           // (Go's ProjectRefFromDirectDbHost) matches on the linked path.
-          host: connType === "local" ? "127.0.0.1" : "db.abcdefghijklmnopqrst.supabase.co",
+          host:
+            opts.resolvedConnHost ??
+            (connType === "local" ? "127.0.0.1" : "db.abcdefghijklmnopqrst.supabase.co"),
           port: 5432,
           user: "postgres",
           password: "x",
           database: "postgres",
+          ...(opts.resolvedConnOptions !== undefined ? { options: opts.resolvedConnOptions } : {}),
         },
         isLocal: connType === "local",
-        ref: opts.resolvedRef !== undefined ? Option.some(opts.resolvedRef) : Option.none(),
+        ref:
+          opts.resolvedRef !== undefined
+            ? Option.some(opts.resolvedRef)
+            : connType === "linked"
+              ? Option.some("abcdefghijklmnopqrst")
+              : Option.none(),
       }),
     resolvePoolerFallback: (resolveFlags) => {
       poolerFallbackCalls.push(resolveFlags);
@@ -265,6 +280,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     get edgeRunCount() {
       return edgeRunCount;
     },
+    edgeTargets,
   };
 }
 
@@ -551,6 +567,88 @@ describe("legacy db pull", () => {
       expect(streamText(s.out, "stderr")).toContain("Schema written to");
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect("an initial pull with pg-delta writes the diff as the migration", () => {
+    const s = setup(tmp.current, {
+      remoteVersions: [],
+      edgeStdout: "create table remote ();\n",
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") }));
+      expect(s.dumpCalls).toHaveLength(0);
+      expect(s.provisionCalls[0]?.usePgDelta).toBe(true);
+      const dir = join(tmp.current, "supabase", "migrations");
+      const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
+      expect(file).toBeDefined();
+      expect(readFileSync(join(dir, file ?? ""), "utf8")).toContain("create table remote ();");
+      expect(streamText(s.out, "stderr")).not.toContain("Dumping schema from remote database...");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "an initial pg-delta pull rewrites a linked pooler host to the direct database host",
+    () => {
+      const s = setup(tmp.current, {
+        remoteVersions: [],
+        edgeStdout: "create table remote ();\n",
+        resolvedConnHost: "aws-0-us-east-1.pooler.supabase.com",
+        resolvedConnOptions: "reference=abcdefghijklmnopqrst",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") }));
+        expect(
+          s.edgeTargets.some((target) => target.includes("db.abcdefghijklmnopqrst.supabase.co")),
+        ).toBe(true);
+        expect(s.edgeTargets.some((target) => target.includes("pooler"))).toBe(false);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "an initial pg-delta pull with a linked pooler session retries through IPv4 when direct introspection fails over IPv6",
+    () => {
+      const s = setup(tmp.current, {
+        remoteVersions: [],
+        resolvedConnHost: "aws-0-us-east-1.pooler.supabase.com",
+        resolvedConnOptions: "reference=abcdefghijklmnopqrst",
+        edgeFailFirstWith: "error diffing schema:\nfailed to connect: network is unreachable",
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+        poolerAvailable: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") }));
+        expect(streamText(s.out, "stderr")).toContain("does not support IPv6");
+        expect(streamText(s.out, "stderr")).toContain("Retrying via the IPv4 connection pooler");
+        expect(s.edgeRunCount).toBe(2);
+        expect(s.edgeTargets[0]).toContain("db.abcdefghijklmnopqrst.supabase.co");
+        expect(s.edgeTargets[1]).toContain("pooler");
+        expect(streamText(s.out, "stderr")).toContain("Schema written to");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "an initial pg-delta pull with remote catalog objects but empty diff reports introspection failure",
+    () => {
+      const catalog = JSON.stringify({ tables: [{ schema: "public", name: "t" }] });
+      const s = setup(tmp.current, {
+        remoteVersions: [],
+        edgeStdout: "",
+        catalogStdout: catalog,
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        const error = yield* legacyDbPull(flags({ diffEngine: Option.some("pg-delta") })).pipe(
+          Effect.flip,
+        );
+        expect(error.message).toBe(LEGACY_PG_DELTA_INTROSPECTION_ERROR);
+        expect(streamText(s.out, "stderr")).toContain("Hint: initial pg-delta pulls introspect");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("an initial pull with an empty schema reports 'No schema changes found'", () => {
     // Go's `ensureMigrationWritten` (`pull.go:68,263-268`): an empty dump + empty diff

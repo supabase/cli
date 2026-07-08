@@ -277,6 +277,40 @@ func ProjectRefFromDirectDbHost(host string) (string, bool) {
 	return matches[2], true
 }
 
+// IsPoolerDbHost reports whether host is a Supabase connection pooler endpoint.
+func IsPoolerDbHost(host string) bool {
+	host = strings.ToLower(host)
+	return host == "pooler.supabase.com" || strings.HasSuffix(host, ".pooler.supabase.com")
+}
+
+// ResolveDirectDbConfigForPgDelta rewrites a linked pooler connection to the direct
+// Supabase database host so pg-delta can introspect the full remote catalog on an
+// initial migration-style db pull.
+//
+// Inverse of PoolerFallbackConfig (container tried direct, retry pooler): the CLI may
+// have picked pooler in NewDbConfigWithPassword when the host OS cannot dial direct,
+// but pg-delta runs inside Docker and is given this config as its remote TARGET only.
+func ResolveDirectDbConfigForPgDelta(config pgconn.Config, projectRef, projectHost string) pgconn.Config {
+	if _, ok := ProjectRefFromDirectDbHost(config.Host); ok {
+		return config
+	}
+	if !IsPoolerDbHost(config.Host) {
+		return config
+	}
+	direct := config
+	direct.Host = GetSupabaseDbHost(projectRef)
+	direct.Port = 5432
+	direct.User = "postgres"
+	// Drop Supavisor tenant routing; not used on direct connections.
+	if len(direct.RuntimeParams) > 0 {
+		delete(direct.RuntimeParams, "options")
+		if len(direct.RuntimeParams) == 0 {
+			direct.RuntimeParams = nil
+		}
+	}
+	return direct
+}
+
 // WarnIPv6PoolerFallback prints a user-visible warning explaining that the direct
 // database connection could not be used because the current environment does not
 // support IPv6, and that the CLI is retrying through the IPv4 connection pooler.

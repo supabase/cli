@@ -8,7 +8,7 @@ Requires your local project to be linked to a remote database by running `supaba
 
 Optionally, a new row can be inserted into the migration history table to reflect the current state of the remote database.
 
-If no entries exist in the migration history table, the default diff engine uses `pg_dump` to capture all contents of the remote schemas you have created. Otherwise, this command will only diff schema changes against the remote database, similar to running `db diff --linked`.
+If no entries exist in the migration history table, the initial pull captures the remote schema. When pg-delta is the active diff engine (the default for projects created by a recent `supabase init`), pg-delta diffs against an empty shadow and produces the full migration without a pg_dump seed. When pg-delta is disabled (`[experimental.pgdelta] enabled = false`) or you pass `--diff-engine migra`, the initial pull uses `pg_dump` to capture remote schema contents before appending a migra diff. Otherwise, this command will only diff schema changes against the remote database, similar to running `db diff --linked`.
 
 Pass `--diff-engine pg-delta` to keep the migration-file `db pull` workflow while using pg-delta for the shadow diff step. On initial pull, pg-delta replaces `pg_dump` and produces the full migration from the shadow diff alone. Pass `--declarative` to switch to the declarative pg-delta export workflow instead.
 

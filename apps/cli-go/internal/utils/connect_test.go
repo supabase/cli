@@ -365,6 +365,45 @@ func TestProjectRefFromDirectDbHost(t *testing.T) {
 	})
 }
 
+func TestIsPoolerDbHost(t *testing.T) {
+	assert.True(t, IsPoolerDbHost("aws-0-us-east-1.pooler.supabase.com"))
+	assert.True(t, IsPoolerDbHost("pooler.supabase.com"))
+	assert.False(t, IsPoolerDbHost("db.test.supabase.co"))
+}
+
+func TestResolveDirectDbConfigForPgDelta(t *testing.T) {
+	ref := apitest.RandomProjectRef()
+	t.Run("rewrites pooler config to direct host", func(t *testing.T) {
+		config := pgconn.Config{
+			Host:     "aws-0-us-east-1.pooler.supabase.com",
+			Port:     6543,
+			User:     "postgres." + ref,
+			Password: "secret",
+			Database: "postgres",
+			RuntimeParams: map[string]string{
+				"options": "reference=" + ref,
+			},
+		}
+		got := ResolveDirectDbConfigForPgDelta(config, ref, "supabase.co")
+		assert.Equal(t, GetSupabaseDbHost(ref), got.Host)
+		assert.Equal(t, uint16(5432), got.Port)
+		assert.Equal(t, "postgres", got.User)
+		assert.Equal(t, "secret", got.Password)
+		assert.Nil(t, got.RuntimeParams)
+	})
+	t.Run("leaves direct config unchanged", func(t *testing.T) {
+		config := pgconn.Config{
+			Host:     GetSupabaseDbHost(ref),
+			Port:     5432,
+			User:     "postgres",
+			Password: "secret",
+			Database: "postgres",
+		}
+		got := ResolveDirectDbConfigForPgDelta(config, ref, "supabase.co")
+		assert.Equal(t, config, got)
+	})
+}
+
 func TestWarnIPv6PoolerFallback(t *testing.T) {
 	oldStderr := os.Stderr
 	r, w, err := os.Pipe()

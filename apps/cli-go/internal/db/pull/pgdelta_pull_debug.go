@@ -111,3 +111,30 @@ func formatByteSize(size int) string {
 		return fmt.Sprintf("%d B", size)
 	}
 }
+
+func printInitialPgDeltaEmptyPullHint() {
+	fmt.Fprintln(os.Stderr, "Hint: initial pg-delta pulls introspect the remote catalog directly.")
+	fmt.Fprintln(os.Stderr, "Prefer a direct connection (db.<project-ref>.supabase.co) over the pooler, or run with PGDELTA_DEBUG=1 for a debug bundle.")
+	fmt.Fprintln(os.Stderr, "You can also retry once with "+utils.Aqua("--diff-engine migra")+" to use pg_dump for the initial migration.")
+}
+
+func handleInitialPgDeltaEmptyPull(
+	ctx context.Context,
+	config pgconn.Config,
+	options ...func(*pgx.ConnConfig),
+) error {
+	// Always print the hint on empty initial pg-delta pull (when PGDELTA_DEBUG is off).
+	printInitialPgDeltaEmptyPullHint()
+	targetCatalog, err := exportTargetCatalog(ctx, utils.ToPostgresURL(config), "postgres", options...)
+	if err != nil {
+		// Catalog probe failed; keep the generic errInSync below.
+		return nil
+	}
+	summary := diff.SummarizeCatalogJSON(targetCatalog)
+	if summary.TotalObjects == 0 {
+		// Remote catalog is empty too → truly nothing to pull.
+		return nil
+	}
+	utils.CmdSuggestion = "pg-delta returned zero SQL statements even though the remote catalog contains objects. Prefer a direct database connection over the pooler, or run with PGDELTA_DEBUG=1."
+	return errors.New("No schema changes found: pg-delta could not introspect the remote schema")
+}

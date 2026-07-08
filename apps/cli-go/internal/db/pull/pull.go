@@ -25,6 +25,7 @@ import (
 	"github.com/supabase/cli/internal/migration/new"
 	"github.com/supabase/cli/internal/migration/repair"
 	"github.com/supabase/cli/internal/utils"
+	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/pkg/migration"
 )
 
@@ -158,6 +159,11 @@ func dumpRemoteSchema(ctx context.Context, path string, config pgconn.Config, fs
 }
 
 func diffRemoteSchema(ctx context.Context, schema []string, path string, config pgconn.Config, usePgDeltaDiff bool, differ diff.DiffFunc, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	initialPull := len(schema) == 0
+	if usePgDeltaDiff && initialPull && len(flags.ProjectRef) > 0 {
+		// Pooler→direct rewrite for pg-delta TARGET only (see ResolveDirectDbConfigForPgDelta).
+		config = utils.ResolveDirectDbConfigForPgDelta(config, flags.ProjectRef, utils.CurrentProfile.ProjectHost)
+	}
 	// Diff remote db (source) & shadow db (target) and write it as a new migration.
 	result, err := diff.DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDeltaDiff, options...)
 	if err != nil {
@@ -179,6 +185,12 @@ func diffRemoteSchema(ctx context.Context, schema []string, path string, config 
 				fmt.Fprintf(os.Stderr, "Warning: failed to save pg-delta debug bundle: %v\n", debugErr)
 			} else if len(debugDir) > 0 {
 				return errors.Errorf("%w (debug bundle: %s)", errInSync, debugDir)
+			}
+		}
+		if usePgDeltaDiff && initialPull {
+			// Hint + optional introspection-specific error (see handleInitialPgDeltaEmptyPull).
+			if err := handleInitialPgDeltaEmptyPull(ctx, config, options...); err != nil {
+				return err
 			}
 		}
 		return errors.New(errInSync)

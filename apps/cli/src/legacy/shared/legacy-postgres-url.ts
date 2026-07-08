@@ -88,3 +88,17 @@ export function legacyToPostgresURL(conn: LegacyPostgresUrlInput): string {
     conn.database,
   )}?connect_timeout=${timeout}${optionsParam}${extraParams}`;
 }
+
+/** Host from a `legacyToPostgresURL` string (Go keeps `pgconn.Config.Host` instead). */
+export function legacyHostFromPostgresURL(url: string): string {
+  const rest = url.replace(/^postgres(?:ql)?:\/\//u, "");
+  const at = rest.lastIndexOf("@"); // last `@` — userinfo boundary (Go `net/url`)
+  const authority = at >= 0 ? rest.slice(at + 1) : rest;
+  const hostPort = authority.split("/")[0] ?? authority;
+  if (hostPort.startsWith("[")) {
+    const close = hostPort.indexOf("]");
+    return close > 0 ? hostPort.slice(1, close) : hostPort; // `[ipv6]:port`
+  }
+  const colon = hostPort.lastIndexOf(":");
+  return colon >= 0 ? hostPort.slice(0, colon) : hostPort;
+}

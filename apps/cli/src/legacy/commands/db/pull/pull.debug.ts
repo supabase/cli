@@ -98,6 +98,22 @@ export function legacySummarizeCatalogJson(catalogJson: string): LegacyCatalogSu
   return { totalObjects: total, bySchema };
 }
 
+/**
+ * Stderr hint for empty initial pg-delta pulls. Port of Go's `printInitialPgDeltaEmptyPullHint`.
+ * Printed whenever pg-delta returns zero SQL on the first pull (unless PGDELTA_DEBUG handled it).
+ */
+export function legacyFormatInitialPgDeltaEmptyPullHint(): string {
+  return [
+    "Hint: initial pg-delta pulls introspect the remote catalog directly.",
+    "Prefer a direct connection (db.<project-ref>.supabase.co) over the pooler, or run with PGDELTA_DEBUG=1 for a debug bundle.",
+    `You can also retry once with ${legacyBold("--diff-engine migra")} to use pg_dump for the initial migration.`,
+  ].join("\n");
+}
+
+/** Message when pg-delta sees remote catalog objects but emits zero SQL. */
+export const LEGACY_PG_DELTA_INTROSPECTION_ERROR =
+  "No schema changes found: pg-delta could not introspect the remote schema";
+
 /** Port of Go's `formatCatalogSummary`. */
 export function legacyFormatCatalogSummary(label: string, summary: LegacyCatalogSummary): string {
   if (summary.totalObjects === 0) return `${label} catalog: no objects detected`;
