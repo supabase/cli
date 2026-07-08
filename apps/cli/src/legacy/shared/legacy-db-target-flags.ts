@@ -45,6 +45,25 @@ export interface LegacyDbTargetSelection {
  * (`src/shared/legacy/global-flags.ts`, `src/shared/cli/global-flags.ts`).
  * `Flag.string` / `Flag.choice` / `Flag.integer` → value-consuming;
  * `Flag.boolean` → not.
+ *
+ * Also consulted by `extractChangedFlagNames`
+ * (`legacy/telemetry/legacy-command-instrumentation.ts`), which scans EVERY
+ * legacy command's raw argv, not just the db-target/global subset above — so
+ * this set additionally lists every other value-consuming (non-boolean) flag
+ * declared anywhere under `legacy/commands/`. Without an entry here, a bare
+ * `--some-local-flag <token>` is mis-scanned: the value token is treated as a
+ * separate flag rather than skipped, and if that token happens to look like a
+ * global flag's long name (e.g. `secrets set --env-file --debug`, where
+ * `--debug` is `--env-file`'s value under pflag semantics), CLI-1896's
+ * global-flag fallback fabricates a `flags.debug` value Go never records for
+ * that invocation. `legacy-db-target-flags.unit.test.ts` statically scans
+ * every `*.command.ts` file's directly-declared `Flag.string`/`Flag.integer`/
+ * `Flag.choice`/`Flag.choiceWithValue` calls and asserts they're all
+ * represented here, so a new command that adds a value-consuming flag and
+ * forgets to register it fails CI. That scan cannot see flag names built
+ * through a helper indirection (`issue.command.ts`'s
+ * `legacyIssueOptionalTextFlag`, `status.command.ts`'s `csvStringSliceFlag`)
+ * — those flags are listed below by hand and excluded from the scan.
  */
 export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   // db-family command flags
@@ -72,6 +91,74 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "network-id",
   "dns-resolver",
   "agent",
+  // Every other value-consuming flag declared directly across legacy/commands/
+  // (CLI-1896 review follow-up — see the doc comment above).
+  "add-domains",
+  "algorithm",
+  "attribute-mapping-file",
+  "auth",
+  "config",
+  "custom-hostname",
+  "db-allow-cidr",
+  "db-password",
+  "db-unban-ip",
+  "desired-subdomain",
+  "diff-engine",
+  "domains",
+  "env-file",
+  "exclude",
+  "exp",
+  "file",
+  "from",
+  "from-backup",
+  "git-branch",
+  "import-map",
+  "inspect-mode",
+  "lang",
+  "last",
+  "metadata-file",
+  "metadata-url",
+  "name",
+  "name-id-format",
+  "notify-url",
+  "org-id",
+  "override-name",
+  "payload",
+  "plan",
+  "project-id",
+  "project-ref",
+  "query-timeout",
+  "region",
+  "remove-domains",
+  "role",
+  "size",
+  "status",
+  "sub",
+  "swift-access-control",
+  "template",
+  "timestamp",
+  "to",
+  "token",
+  "valid-for",
+  "version",
+  // Declared through a name-parameterized helper, invisible to the static
+  // scan (see the doc comment above): `issue.command.ts`'s
+  // `legacyIssueOptionalTextFlag` and `status.command.ts`'s
+  // `csvStringSliceFlag`.
+  "additional-context",
+  "area",
+  "command",
+  "actual-output",
+  "expected-behavior",
+  "reproduce",
+  "crash-report-id",
+  "docker-services",
+  "problem",
+  "proposed-solution",
+  "alternatives",
+  "link",
+  "issue-type",
+  "improvement",
 ]);
 
 /**
@@ -83,6 +170,9 @@ export const VALUE_CONSUMING_SHORT_FLAGS = new Set([
   "o", // --output / -o
   "p", // --password / -p (migration list, db push/pull/dump/remote)
   "j", // --jobs / -j (storage cp)
+  "f", // --file / -f (db dump/diff/query, db schema declarative sync)
+  "t", // --template / -t (test new); --type / -t (sso add); --timestamp / -t (backups restore)
+  "x", // --exclude / -x (start, db dump)
 ]);
 
 /**

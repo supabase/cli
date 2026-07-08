@@ -1177,4 +1177,41 @@ describe("withLegacyCommandInstrumentation", () => {
       ),
     );
   });
+
+  it.live(
+    "does not fabricate a global flag from a local flag's value token (secrets set --env-file --debug)",
+    () => {
+      // `--env-file` is a value-consuming local string flag. In bare
+      // space-separated form, pflag consumes the very next token as its
+      // VALUE regardless of its shape, so Go's changedFlags() never marks
+      // `debug` as changed for this invocation — the whole token is
+      // `env-file`'s value. Without `env-file` registered in
+      // VALUE_CONSUMING_LONG_FLAGS, extractChangedFlagNames would wrongly
+      // treat the trailing `--debug` as a separate flag, and CLI-1896's
+      // global-flag fallback would then fabricate a `flags.debug` value Go
+      // never records.
+      const analytics = mockContextualAnalytics();
+
+      return Effect.void.pipe(
+        withLegacyCommandInstrumentation({
+          flags: { envFile: Option.some("--debug") },
+        }),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(
+          Stdio.layerTest({
+            args: Effect.succeed(["secrets", "set", "--env-file", "--debug"]),
+          }),
+        ),
+        Effect.provide(commandRuntimeLayer(["secrets", "set"])),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const event = analytics.captured[0];
+            expect(event?.properties.flags).toEqual({ "env-file": "<redacted>" });
+          }),
+        ),
+      );
+    },
+  );
 });
