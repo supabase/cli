@@ -34,6 +34,7 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
     projectRoot: projectHome.projectRoot,
     supabaseDir: projectHome.supabaseDir,
     dashboardUrl: cliConfig.dashboardUrl,
+    goViperCompat: false,
     yes: flags.yes,
     rawArgs,
     edgeRuntimeVersion,

@@ -1,7 +1,11 @@
 import { Console, Effect, FileSystem, Path, Redacted, Schema } from "effect";
 import * as SmolToml from "smol-toml";
-import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
-import { DuplicateRemoteProjectIdError, ProjectConfigParseError } from "./errors.ts";
+import { ProjectConfigSchema, RemotesSchema, type ProjectConfig } from "./base.ts";
+import {
+  DuplicateRemoteProjectIdError,
+  InvalidRemoteProjectIdError,
+  ProjectConfigParseError,
+} from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
 import { findProjectPaths } from "./paths.ts";
 import { loadProjectEnvironment, type ProjectEnvironment } from "./project.ts";
@@ -34,11 +38,18 @@ export interface LoadedProjectConfig {
 }
 
 /**
- * When `projectRef` is set, the matching `[remotes.<name>]` block (the one whose
- * `project_id` equals it) is merged over the base config before decode, mirroring
- * Go's `config.Load` with `Config.ProjectId` set
- * (`apps/cli-go/pkg/config/config.go:503-562`). Omitting it loads the base config
- * verbatim, so existing callers are unaffected.
+ * When `projectRef` is set, the matching `[remotes.<name>]` block (the one
+ * whose `project_id` equals it) is merged over the base config before decode,
+ * mirroring Go's `config.Load` with `Config.ProjectId` set
+ * (`apps/cli-go/pkg/config/config.go:503-562`). Omitting it loads the base
+ * config verbatim (no merge), so existing callers are unaffected. Go's
+ * duplicate-`project_id`/project-ref-format checks across every
+ * `[remotes.*]` block (`config.go:594-602,996-1001`) run unconditionally on
+ * every config load in Go, not only when a caller ends up selecting a
+ * remote — but here they only run when {@link LoadProjectConfigOptions.goViperCompat}
+ * is `true`, regardless of whether `projectRef` is set, so non-Go-parity
+ * callers that never select a remote (and never opt into Go parity) aren't
+ * broken by an unrelated duplicate/malformed `[remotes.*]` block.
  */
 export interface LoadProjectConfigOptions {
   readonly projectRef?: string;
@@ -51,6 +62,37 @@ export interface LoadProjectConfigOptions {
    * so loading does not re-read those files or depend on `process.env` mutation.
    */
   readonly projectEnv?: ProjectEnvironment;
+  /** See {@link FindProjectPathsOptions.search}. */
+  readonly search?: boolean;
+  /**
+   * Skip the `config.json`-over-`config.toml` preference below and only ever
+   * load `config.toml`. Go's `Config.Load`/`NewPathBuilder`
+   * (`apps/cli-go/pkg/config/utils.go:43-48`) has no concept of a JSON project
+   * config file — it always resolves `supabase/config.toml` and treats a
+   * missing file as defaults — so Go-parity callers (the legacy `status`/`stop`
+   * ports) must set this to avoid picking up a stray `config.json` that Go
+   * would never see.
+   */
+  readonly tomlOnly?: boolean;
+  /**
+   * Opt into the Go/viper-parity decode+validation semantics this loader
+   * otherwise omits, so only the Go-parity legacy shell (and shared modules
+   * invoked exclusively by it) pays for them. Defaults to `false` = pre-PR-#5765
+   * behavior, which `next/`, `packages/stack`, and the functions manifest rely
+   * on. When `true`, mirrors Go's `config.Load` exactly:
+   *  - runs the unconditional duplicate-`project_id` and project-ref-format
+   *    checks across every `[remotes.*]` block (`config.go:594-602,996-1001`),
+   *    even when no `projectRef` is requested;
+   *  - warns on stderr for deprecated `auth.external.{linkedin,slack}` blocks
+   *    (`config.go:1418-1423`) — the block is stripped from the decoded config
+   *    either way, since the schema ignores excess properties;
+   *  - matches `env(...)` references case-agnostically (`^env\((.*)\)$`)
+   *    rather than the strict SCREAMING_SNAKE_CASE form;
+   *  - splits a comma-separated string into a `[]string`-typed field (Go's
+   *    `mapstructure.StringToSliceHookFunc(",")`, `config.go:775-784`), not
+   *    just an `env()`-substituted one.
+   */
+  readonly goViperCompat?: boolean;
 }
 
 export interface SaveProjectConfigOptions {
@@ -61,6 +103,18 @@ export interface SaveProjectConfigOptions {
 }
 
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+/**
+ * Decodes the `remotes` map with `disableChecks: true` — full type/shape
+ * decoding, defaults, and transformations (e.g. secret redaction) still run,
+ * but the `.check()`-based business-rule refinements embedded in `auth`/`db`/
+ * etc. (e.g. "external provider requires a secret when enabled") are skipped.
+ * See {@link RemotesSchema}'s doc comment for why: Go only ever applies those
+ * business rules to the merged effective config, never to a `[remotes.*]`
+ * block that wasn't selected.
+ */
+const decodeRemotesWithoutChecks = Schema.decodeUnknownSync(RemotesSchema, {
+  disableChecks: true,
+});
 const encodeProjectConfig = Schema.encodeSync(ProjectConfigSchema);
 const defaultEncodedProjectConfig = encodeProjectConfig(decodeProjectConfig({}));
 const defaultEncodedFunctionConfig = {
@@ -124,28 +178,20 @@ function withDbSeedDisabled(document: Record<string, unknown>): Record<string, u
 }
 
 /**
- * Applies the `[remotes.<name>]` override whose `project_id` matches `projectRef`
- * to `document`, mirroring Go's `loadFromFile` remote resolution
- * (`config.go:503-518`). Returns the merged document (with `remotes` stripped) and
- * the matched remote name.
- *
- * Like Go, duplicate `project_id`s are detected across *all* `[remotes.*]` blocks —
- * not just the ones matching `projectRef` — before the matching override is applied.
- * A missing `project_id` reads as `""` (Go's `viper.GetString`), so two remotes that
+ * Builds a `project_id -> "[remotes.<name>]"` map across every `[remotes.*]`
+ * block, failing on the first duplicate. Mirrors Go's `loadFromFile`
+ * (`config.go:594-602`): that loop runs unconditionally on every config load,
+ * regardless of whether any remote's `project_id` ends up matching
+ * `Config.ProjectId`. Here, {@link applyRemoteOverride} only invokes this when
+ * `goViperCompat` is set, so it still runs even for callers that don't
+ * request a specific `projectRef` — but only under Go-parity mode. A missing
+ * `project_id` reads as `""` (Go's `viper.GetString`), so two remotes that
  * both omit it collide on the empty key and fail just as in Go.
  */
-const applyRemoteOverride = Effect.fnUntraced(function* (
-  document: Record<string, unknown>,
-  projectRef: string,
+const checkDuplicateRemoteProjectIds = Effect.fnUntraced(function* (
+  remotes: Record<string, unknown>,
 ) {
-  const remotes = document["remotes"];
-  if (!isObject(remotes)) {
-    return { document, appliedRemote: undefined as string | undefined };
-  }
-  // Build a project_id -> "[remotes.<name>]" map over every remote, failing on the
-  // first duplicate, then resolve the single block matching projectRef.
   const idToName = new Map<string, string>();
-  let name: string | undefined;
   for (const [remoteName, remote] of Object.entries(remotes)) {
     const projectId =
       isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
@@ -156,17 +202,91 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
       });
     }
     idToName.set(projectId, `[remotes.${remoteName}]`);
-    if (projectId === projectRef) {
-      name = remoteName;
+  }
+});
+
+/** Go's project-ref pattern (`apps/cli-go/pkg/config/config.go:558`): exactly 20
+ * lowercase ASCII letters. */
+const REMOTE_PROJECT_ID_PATTERN = /^[a-z]{20}$/;
+
+/**
+ * Rejects the first `[remotes.*]` block whose `project_id` is not a valid
+ * project ref, mirroring Go's `Config.Validate` (`config.go:996-1001`) — that
+ * loop runs unconditionally over every remote on every config load, not only
+ * the one that ends up selected/merged. Here, {@link applyRemoteOverride} only
+ * invokes this when `goViperCompat` is set.
+ *
+ * Unlike {@link checkDuplicateRemoteProjectIds}/the match below (which read
+ * viper's raw, pre-`LoadEnvHook` values — see {@link applyRemoteOverride}'s
+ * doc comment), `Config.Validate` runs entirely AFTER the struct decode
+ * (`config.go:882`), by which point `LoadEnvHook` has already resolved every
+ * `env(...)` reference (`config.go:749-753`). So this check must see the
+ * already-interpolated `project_id`, not the literal `env(REF)` form — an
+ * `[remotes.x] project_id = "env(REF)"` that resolves to a valid 20-letter ref
+ * passes here even though the raw string doesn't match the pattern itself.
+ */
+const checkRemoteProjectIdFormat = Effect.fnUntraced(function* (remotes: Record<string, unknown>) {
+  for (const [remoteName, remote] of Object.entries(remotes)) {
+    const projectId =
+      isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
+    if (!REMOTE_PROJECT_ID_PATTERN.test(projectId)) {
+      return yield* new InvalidRemoteProjectIdError({
+        message: `Invalid config for remotes.${remoteName}.project_id. Must be like: abcdefghijklmnopqrst`,
+      });
     }
   }
+});
+
+/**
+ * Applies the `[remotes.<name>]` override whose `project_id` matches `projectRef`
+ * to `rawDocument`, mirroring Go's `loadFromFile` remote resolution
+ * (`config.go:503-518`). Returns the merged document (with `remotes` stripped,
+ * still pre-`env()`-interpolation — the caller re-interpolates the result) and
+ * the matched remote name. `projectRef` of `undefined` never matches any remote
+ * (including one that itself omits `project_id`, which reads as `""`) — callers
+ * that don't request a specific remote get the duplicate/format checks below
+ * without the merge, so the base document loads verbatim as before.
+ *
+ * `rawDocument`'s `remotes` block is the PRE-interpolation document: Go's
+ * duplicate-check/selection loop in `loadFromFile` reads directly off viper's
+ * raw config values (`v.GetString(fmt.Sprintf("remotes.%s.project_id", name))`,
+ * `config.go:596-610`) and only calls `c.load(v)` — which resolves `env(...)`
+ * via `LoadEnvHook` during the struct decode (`config.go:749-753`,
+ * `decode_hooks.go:13-26`) — afterward (`config.go:611`). So a
+ * `[remotes.prod] project_id = "env(REF)"` is matched/deduped against the
+ * LITERAL `env(REF)` string in Go, never against `REF`'s resolved value; this
+ * mirrors that exactly rather than matching post-interpolation, which would
+ * merge a remote Go itself would never select. `interpolatedRemotes` (Go's
+ * post-decode `c.Remotes`, mirrored here as the already-interpolated
+ * `remotes` subtree) is used only for {@link checkRemoteProjectIdFormat} — see
+ * its doc comment for why that check needs the resolved value instead.
+ */
+const applyRemoteOverride = Effect.fnUntraced(function* (
+  rawDocument: Record<string, unknown>,
+  interpolatedRemotes: Record<string, unknown> | undefined,
+  projectRef: string | undefined,
+  goViperCompat: boolean,
+) {
+  const remotes = rawDocument["remotes"];
+  if (!isObject(remotes)) {
+    return { document: rawDocument, appliedRemote: undefined as string | undefined };
+  }
+  if (goViperCompat) {
+    yield* checkDuplicateRemoteProjectIds(remotes);
+    yield* checkRemoteProjectIdFormat(interpolatedRemotes ?? remotes);
+  }
+  const name = Object.entries(remotes).find(([, remote]) => {
+    const projectId =
+      isObject(remote) && typeof remote["project_id"] === "string" ? remote["project_id"] : "";
+    return projectRef !== undefined && projectId === projectRef;
+  })?.[0];
   if (name === undefined) {
-    return { document, appliedRemote: undefined as string | undefined };
+    return { document: rawDocument, appliedRemote: undefined as string | undefined };
   }
   const remoteSubtree = remotes[name];
   let merged = isObject(remoteSubtree)
-    ? mergeRemoteSubtree(document, remoteSubtree)
-    : { ...document };
+    ? mergeRemoteSubtree(rawDocument, remoteSubtree)
+    : { ...rawDocument };
   if (!(isObject(remoteSubtree) && remoteSetsDbSeedEnabled(remoteSubtree))) {
     merged = withDbSeedDisabled(merged);
   }
@@ -317,6 +437,78 @@ function normalizeDeprecatedSMTPSections(document: unknown): NormalizedSMTPDocum
   return { document: normalized, deprecatedSections };
 }
 
+interface NormalizedExternalProvidersDocument {
+  readonly document: unknown;
+  /** Provider ids (`"linkedin"` | `"slack"`) whose deprecated top-level block was `enabled` — drives the WARN. */
+  readonly deprecatedProviders: ReadonlyArray<string>;
+}
+
+const DEPRECATED_EXTERNAL_PROVIDERS = ["linkedin", "slack"] as const;
+
+/**
+ * Go's `(e external) validate()` deprecated-provider handling
+ * (`apps/cli-go/pkg/config/config.go:1418-1423`): `linkedin`/`slack` are
+ * unconditionally deleted from `auth.external` before the required-field loop
+ * runs, so a bare `[auth.external.slack] enabled = true` with no
+ * `client_id`/`secret` loads fine in Go — a warning prints to stderr only
+ * when the deleted provider was `enabled`, never a hard failure.
+ *
+ * Unlike {@link normalizeDeprecatedSMTPSections}'s `[inbucket]` rename — which
+ * Go's own `normalizeDeprecatedSMTPConfig` runs BEFORE remote selection, over
+ * every `[remotes.*]` entry unconditionally (`config.go:594,614-640`) — Go's
+ * `external.validate()` runs from `Config.Validate()`, exactly ONCE on the
+ * final post-remote-merge struct (`config.go:882,1148`). A non-selected
+ * remote's own `auth.external.slack` block is never even looked at by Go. So
+ * this must run on the POST-merge document (`documentForDecode`, after
+ * `applyRemoteOverride`), not the pre-merge one:
+ *  - the top-level `auth.external.{linkedin,slack}` is always stripped, and
+ *    reported (for the caller to warn on) only when it was `enabled`,
+ *    matching Go's single `external.validate()` call.
+ *  - any `remotes.*.auth.external.{linkedin,slack}` still present (only
+ *    possible when no remote matched `projectRef`, so `applyRemoteOverride`
+ *    left `remotes` in place) is also stripped, but never reported — purely
+ *    so `remoteProjectConfig`'s eager, whole-map schema decode
+ *    (`packages/config/src/base.ts`) doesn't reject an unselected remote's
+ *    deprecated block over a field Go itself never struct-decodes at all for
+ *    a remote that isn't in effect.
+ */
+function normalizeDeprecatedExternalProviders(
+  document: unknown,
+): NormalizedExternalProvidersDocument {
+  if (!isObject(document)) {
+    return { document, deprecatedProviders: [] };
+  }
+  const normalized = { ...document };
+  const deprecatedProviders: Array<string> = [];
+  if (isObject(normalized.auth) && isObject(normalized.auth.external)) {
+    const external = { ...normalized.auth.external };
+    for (const ext of DEPRECATED_EXTERNAL_PROVIDERS) {
+      const provider = external[ext];
+      if (provider === undefined) continue;
+      if (isObject(provider) && provider.enabled === true) {
+        deprecatedProviders.push(ext);
+      }
+      delete external[ext];
+    }
+    normalized.auth = { ...normalized.auth, external };
+  }
+  if (isObject(normalized.remotes)) {
+    normalized.remotes = Object.fromEntries(
+      Object.entries(normalized.remotes).map(([name, remote]) => {
+        if (!isObject(remote) || !isObject(remote.auth) || !isObject(remote.auth.external)) {
+          return [name, remote];
+        }
+        const external = { ...remote.auth.external };
+        for (const ext of DEPRECATED_EXTERNAL_PROVIDERS) {
+          delete external[ext];
+        }
+        return [name, { ...remote, auth: { ...remote.auth, external } }];
+      }),
+    );
+  }
+  return { document: normalized, deprecatedProviders };
+}
+
 /**
  * Wraps every `edge_runtime.secrets` value in `Redacted` before it's attached
  * to `ProjectConfigParseError.document`. By this point `secrets` values are
@@ -382,7 +574,23 @@ function parseProjectConfig(
   appliedRemote: string | undefined,
 ): Effect.Effect<ProjectConfig, ProjectConfigParseError> {
   return Effect.try({
-    try: () => decodeProjectConfig(document),
+    try: () => {
+      // Decode `remotes` separately, with business-rule checks disabled — see
+      // `decodeRemotesWithoutChecks`/`RemotesSchema`'s doc comments. Non-selected
+      // `[remotes.*]` blocks reach here still attached to `document` (only a
+      // SELECTED remote gets merged in and stripped from `remotes` by
+      // `applyRemoteOverride`), so decoding them through the normal,
+      // checks-enabled `decodeProjectConfig` below would apply Go's
+      // merged-config-only business rules to every remote regardless of
+      // selection. Structural decoding (types, defaults, transformations)
+      // still runs either way, matching Go's unconditional `UnmarshalExact`
+      // struct decode of every remote.
+      const rawRemotes = isObject(document) ? document.remotes : undefined;
+      const config = decodeProjectConfig(
+        isObject(document) ? { ...document, remotes: {} } : document,
+      );
+      return { ...config, remotes: decodeRemotesWithoutChecks(rawRemotes ?? {}) };
+    },
     // `document` always parsed successfully by this point (raw parse failures
     // are caught earlier, in `loadProjectConfigFile`), so any error here is a
     // schema-decode failure — attach it so callers can attempt a narrower,
@@ -479,25 +687,78 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     (yield* loadProjectEnvironment({
       cwd: projectRoot,
       baseEnv: process.env,
+      search: options?.search,
     }));
-  const interpolated = interpolateEnvReferencesAgainstSchema(
-    normalized,
-    projectEnv?.values ?? {},
-    ProjectConfigSchema,
-  );
+  const goViperCompat = options?.goViperCompat ?? false;
+  const interpolateDocument = (document: unknown): unknown =>
+    interpolateEnvReferencesAgainstSchema(document, projectEnv?.values ?? {}, ProjectConfigSchema, {
+      goViperCompat,
+    });
 
-  // Merge the matching `[remotes.*]` override over the base document before
-  // decode (Go's `loadFromFile` with `Config.ProjectId` set). Only requested
-  // when a `projectRef` is supplied, so other callers load the base verbatim.
-  let documentForDecode: unknown = interpolated;
+  // Interpolated once here purely to give `applyRemoteOverride`'s FORMAT check
+  // (not its match/merge — see that function's doc comment) the resolved
+  // `remotes.*.project_id`, matching Go's post-decode `Config.Validate`.
+  const interpolatedForValidation = interpolateDocument(normalized);
+  const interpolatedRemotes =
+    isObject(interpolatedForValidation) && isObject(interpolatedForValidation["remotes"])
+      ? interpolatedForValidation["remotes"]
+      : undefined;
+
+  // Merge the matching `[remotes.*]` override over the RAW (pre-`env()`-
+  // interpolation) document — Go's `loadFromFile` duplicate-check/selection
+  // loop runs on viper's raw string values, before `LoadEnvHook` ever resolves
+  // `env(...)` (`config.go:594-611`, `decode_hooks.go:13-26`); see
+  // `applyRemoteOverride`'s doc comment. The match/merge itself always runs
+  // (callers that don't request a `projectRef` just never match a remote, so
+  // the base document loads verbatim), but the duplicate-`project_id`/format
+  // checks only run when `goViperCompat` is set — see `applyRemoteOverride`.
+  let documentForDecode: unknown = normalized;
   let appliedRemote: string | undefined;
-  if (options?.projectRef !== undefined && isObject(interpolated)) {
-    const resolved = yield* applyRemoteOverride(interpolated, options.projectRef);
+  if (isObject(normalized)) {
+    const resolved = yield* applyRemoteOverride(
+      normalized,
+      interpolatedRemotes,
+      options?.projectRef,
+      goViperCompat,
+    );
     documentForDecode = resolved.document;
     appliedRemote = resolved.appliedRemote;
   }
 
-  const config = yield* parseProjectConfig(documentForDecode, format, filePath, appliedRemote);
+  // The merge above ran on the raw document, so any `env(...)` reference in
+  // the winning remote's subtree (or elsewhere in the base) still needs
+  // resolving before decode — mirrors Go's `LoadEnvHook` running on the
+  // post-merge viper store inside `c.load(v)`. When no remote matched, this
+  // recomputes the same substitutions `interpolatedForValidation` already
+  // made (documentForDecode is just `normalized` again) — a redundant walk on
+  // that path, but correctness on the match+`env()` path matters more than
+  // avoiding it.
+  documentForDecode = isObject(documentForDecode)
+    ? interpolateDocument(documentForDecode)
+    : documentForDecode;
+
+  // Strip Go's deprecated `auth.external.{linkedin,slack}` provider ids from
+  // the POST-remote-merge document, matching `external.validate()` running
+  // once on the final effective config (see `normalizeDeprecatedExternalProviders`).
+  const { document: normalizedForDecode, deprecatedProviders } =
+    normalizeDeprecatedExternalProviders(documentForDecode);
+  // Warn on stderr, matching Go's `external.validate()` (`config.go:1418-1423`).
+  // Go's own format string is a raw string literal ending in a literal
+  // backslash-n (raw string literals never process escapes, and `Fprintf`
+  // doesn't append a newline the way `Fprintln` does), so Go's actual stderr
+  // bytes have no real line break after this message — a library-internal
+  // artifact, not the parity-relevant part, same call already made for
+  // `LegacyInvalidPortEnvOverrideError` in the legacy shell. Not reproduced
+  // byte-for-byte; `Console.error` supplies a normal trailing newline instead.
+  if (goViperCompat) {
+    for (const ext of deprecatedProviders) {
+      yield* Console.error(
+        `WARN: disabling deprecated "${ext}" provider. Please use [auth.external.${ext}_oidc] instead`,
+      );
+    }
+  }
+
+  const config = yield* parseProjectConfig(normalizedForDecode, format, filePath, appliedRemote);
 
   return {
     path: filePath,
@@ -505,7 +766,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     config,
     schemaRef: getSchemaRef(document),
     ignoredPaths: [],
-    document: isObject(documentForDecode) ? documentForDecode : undefined,
+    document: isObject(normalizedForDecode) ? normalizedForDecode : undefined,
     appliedRemote,
   } satisfies LoadedProjectConfig;
 });
@@ -515,7 +776,7 @@ export const loadProjectConfig = Effect.fnUntraced(function* (
   options?: LoadProjectConfigOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const project = yield* findProjectPaths(cwd);
+  const project = yield* findProjectPaths(cwd, { search: options?.search });
 
   if (project === null) {
     return null;
@@ -528,7 +789,7 @@ export const loadProjectConfig = Effect.fnUntraced(function* (
     ? project.configPath
     : project.configPath.replace(/config\.json$/, "config.toml");
 
-  if (yield* fs.exists(jsonPath)) {
+  if (!options?.tomlOnly && (yield* fs.exists(jsonPath))) {
     const json = yield* loadProjectConfigFile(jsonPath, options);
 
     return {

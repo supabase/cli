@@ -166,6 +166,22 @@ function resolveProfile(
   });
 }
 
+/**
+ * Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`) always
+ * `os.Chdir(workdir)`s using the raw `--workdir`/`SUPABASE_WORKDIR` string,
+ * which can be relative (e.g. `.`) — but every later reader of the resolved
+ * workdir (including the `Config.ProjectId` cwd-basename default, `Eject`,
+ * `pkg/config/config.go:561-570`, run on every `Config.Load()` via
+ * `mergeDefaultValues`, `config.go:690-699`) reads `os.Getwd()`, the real
+ * ABSOLUTE directory, never the raw configured string. `os.Chdir(".")` is a
+ * no-op syscall-wise, so Go's `cwd` is unaffected by the flag/env value being
+ * relative. This resolves the flag/env value against the real process `cwd`
+ * the same way, so `LegacyCliConfig.workdir` is always absolute — matching
+ * Go's invariant that basename-ing it (e.g. `legacyResolveLocalProjectId`'s
+ * workdir-basename fallback) operates on a real directory name, not a
+ * relative-path fragment like `.` (which would sanitize to an empty project
+ * id and build a bare, all-projects-matching Docker label filter).
+ */
 function resolveWorkdir(
   flagValue: Option.Option<string>,
   envValue: string | undefined,
@@ -175,10 +191,10 @@ function resolveWorkdir(
 ): Effect.Effect<string> {
   return Effect.gen(function* () {
     if (Option.isSome(flagValue) && flagValue.value.length > 0) {
-      return flagValue.value;
+      return path.resolve(cwd, flagValue.value);
     }
     if (envValue !== undefined && envValue.length > 0) {
-      return envValue;
+      return path.resolve(cwd, envValue);
     }
     let current = cwd;
     // Walk up until we hit a directory containing supabase/config.toml or the FS root.

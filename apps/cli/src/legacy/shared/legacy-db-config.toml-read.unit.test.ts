@@ -1530,6 +1530,28 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("rejects db.major_version = 0 with Go's missing-required message", () => {
+    // Divergence #1 fix: this used to fall through to the generic
+    // "Failed reading config: Invalid db.major_version: 0." message (the same branch that
+    // catches an unsupported value like 16) — `legacyValidateResolvedConfig`'s dedicated `0` case
+    // now matches Go's `Missing required field in config: db.major_version`.
+    const dir = withConfig(["[db]", "major_version = 0", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain(
+              "Missing required field in config: db.major_version",
+            );
+          }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("rejects db.major_version = 12 with Go's 12.x message", () => {
     const dir = withConfig(["[db]", "major_version = 12", ""].join("\n"));
     return read(dir).pipe(

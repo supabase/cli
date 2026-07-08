@@ -41,19 +41,10 @@
           "default": 54327
         },
         "backend": {
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "postgres"
-              ]
-            },
-            {
-              "type": "string",
-              "enum": [
-                "bigquery"
-              ]
-            }
+          "type": "string",
+          "enum": [
+            "postgres",
+            "bigquery"
           ],
           "description": "Configure one of the supported backends:\n\n- `postgres`\n- `bigquery`",
           "default": "postgres"
@@ -347,31 +338,12 @@
           "default": 6
         },
         "password_requirements": {
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                ""
-              ]
-            },
-            {
-              "type": "string",
-              "enum": [
-                "letters_digits"
-              ]
-            },
-            {
-              "type": "string",
-              "enum": [
-                "lower_upper_letters_digits"
-              ]
-            },
-            {
-              "type": "string",
-              "enum": [
-                "lower_upper_letters_digits_symbols"
-              ]
-            }
+          "type": "string",
+          "enum": [
+            "",
+            "letters_digits",
+            "lower_upper_letters_digits",
+            "lower_upper_letters_digits_symbols"
           ],
           "description": "Password character requirements.",
           "default": ""
@@ -600,19 +572,10 @@
               "default": false
             },
             "provider": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "hcaptcha"
-                  ]
-                },
-                {
-                  "type": "string",
-                  "enum": [
-                    "turnstile"
-                  ]
-                }
+              "type": "string",
+              "enum": [
+                "hcaptcha",
+                "turnstile"
               ],
               "description": "CAPTCHA provider to use."
             },
@@ -1019,30 +982,28 @@
               "anyOf": [
                 {
                   "type": "object",
-                  "patternProperties": {
-                    "^(invite|confirmation|recovery|magic_link|email_change|reauthentication)$": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "subject": {
-                              "type": "string",
-                              "description": "Subject line for the email template.",
-                              "default": ""
-                            },
-                            "content_path": {
-                              "type": "string",
-                              "description": "Path to the HTML template.",
-                              "default": ""
-                            }
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "subject": {
+                            "type": "string",
+                            "description": "Subject line for the email template.",
+                            "default": ""
                           },
-                          "additionalProperties": false
+                          "content_path": {
+                            "type": "string",
+                            "description": "Path to the HTML template.",
+                            "default": ""
+                          }
                         },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "description": "Custom email template configuration.",
                   "default": {}
@@ -1056,35 +1017,33 @@
               "anyOf": [
                 {
                   "type": "object",
-                  "patternProperties": {
-                    "^(password_changed|email_changed|phone_changed|identity_linked|identity_unlinked|mfa_factor_enrolled|mfa_factor_unenrolled)$": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "properties": {
-                            "enabled": {
-                              "type": "boolean",
-                              "description": "Enable the notification email.",
-                              "default": false
-                            },
-                            "subject": {
-                              "type": "string",
-                              "description": "Subject line for the notification email.",
-                              "default": ""
-                            },
-                            "content_path": {
-                              "type": "string",
-                              "description": "Path to the HTML notification template.",
-                              "default": ""
-                            }
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {
+                            "type": "boolean",
+                            "description": "Enable the notification email.",
+                            "default": false
                           },
-                          "additionalProperties": false
+                          "subject": {
+                            "type": "string",
+                            "description": "Subject line for the notification email.",
+                            "default": ""
+                          },
+                          "content_path": {
+                            "type": "string",
+                            "description": "Path to the HTML notification template.",
+                            "default": ""
+                          }
                         },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    }
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "description": "Notification email configuration.",
                   "default": {}
@@ -1893,7 +1852,7 @@
               },
               "additionalProperties": false
             },
-            "slack": {
+            "slack_oidc": {
               "type": "object",
               "properties": {
                 "enabled": {
@@ -1910,7 +1869,7 @@
                   "type": "string",
                   "description": "Client secret for the Slack OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
                   "examples": [
-                    "env(SUPABASE_AUTH_EXTERNAL_SLACK_SECRET)"
+                    "env(SUPABASE_AUTH_EXTERNAL_SLACK_OIDC_SECRET)"
                   ]
                 },
                 "url": {
@@ -2334,19 +2293,10 @@
               "default": 54329
             },
             "pool_mode": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "transaction"
-                  ]
-                },
-                {
-                  "type": "string",
-                  "enum": [
-                    "session"
-                  ]
-                }
+              "type": "string",
+              "enum": [
+                "transaction",
+                "session"
               ],
               "description": "Specifies when a server connection can be reused by other clients.",
               "default": "transaction"
@@ -2675,25 +2625,11 @@
               ]
             },
             "session_replication_role": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "enum": [
-                    "origin"
-                  ]
-                },
-                {
-                  "type": "string",
-                  "enum": [
-                    "replica"
-                  ]
-                },
-                {
-                  "type": "string",
-                  "enum": [
-                    "local"
-                  ]
-                }
+              "type": "string",
+              "enum": [
+                "origin",
+                "replica",
+                "local"
               ],
               "description": "Session replication role."
             },
@@ -2783,19 +2719,10 @@
           "default": true
         },
         "policy": {
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "oneshot"
-              ]
-            },
-            {
-              "type": "string",
-              "enum": [
-                "per_worker"
-              ]
-            }
+          "type": "string",
+          "enum": [
+            "oneshot",
+            "per_worker"
           ],
           "description": "Configure the supported request policy.",
           "default": "per_worker"
@@ -2903,6 +2830,22 @@
                       },
                       "description": "Static files to bundle with the function.",
                       "default": []
+                    },
+                    "env": {
+                      "type": "object",
+                      "patternProperties": {
+                        "^[A-Z_][A-Z0-9_]*$": {
+                          "type": "string",
+                          "allOf": [
+                            {
+                              "pattern": "^env\\((.*)\\)$",
+                              "description": "Reference to a project environment variable available to the Function."
+                            }
+                          ]
+                        }
+                      },
+                      "description": "Environment variables from the project environment that this Function can access.",
+                      "default": {}
                     }
                   },
                   "additionalProperties": false
@@ -3028,19 +2971,10 @@
           "default": true
         },
         "ip_version": {
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "IPv4"
-              ]
-            },
-            {
-              "type": "string",
-              "enum": [
-                "IPv6"
-              ]
-            }
+          "type": "string",
+          "enum": [
+            "IPv4",
+            "IPv6"
           ],
           "description": "Bind realtime via either IPv4 or IPv6.",
           "default": "IPv4"
@@ -3084,12 +3018,35 @@
           "default": true
         },
         "file_size_limit": {
-          "type": "string",
-          "description": "The maximum file size allowed.",
-          "default": "50MiB",
-          "examples": [
-            "5MB",
-            "500KB"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "NaN"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "Infinity"
+                  ]
+                },
+                {
+                  "type": "string",
+                  "enum": [
+                    "-Infinity"
+                  ]
+                }
+              ]
+            }
           ]
         },
         "image_transformation": {
@@ -3116,12 +3073,35 @@
                     "default": false
                   },
                   "file_size_limit": {
-                    "type": "string",
-                    "description": "The maximum file size allowed for the bucket.",
-                    "default": "50MiB",
-                    "examples": [
-                      "5MB",
-                      "500KB"
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "NaN"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "Infinity"
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "-Infinity"
+                            ]
+                          }
+                        ]
+                      }
                     ]
                   },
                   "allowed_mime_types": {
@@ -3286,7 +3266,7 @@
             "enabled": {
               "type": "boolean",
               "description": "Enable vector buckets.",
-              "default": false
+              "default": true
             },
             "max_buckets": {
               "anyOf": [
@@ -3586,19 +3566,10 @@
                         "default": 54327
                       },
                       "backend": {
-                        "anyOf": [
-                          {
-                            "type": "string",
-                            "enum": [
-                              "postgres"
-                            ]
-                          },
-                          {
-                            "type": "string",
-                            "enum": [
-                              "bigquery"
-                            ]
-                          }
+                        "type": "string",
+                        "enum": [
+                          "postgres",
+                          "bigquery"
                         ],
                         "description": "Configure one of the supported backends:\n\n- `postgres`\n- `bigquery`",
                         "default": "postgres"
@@ -3892,31 +3863,12 @@
                         "default": 6
                       },
                       "password_requirements": {
-                        "anyOf": [
-                          {
-                            "type": "string",
-                            "enum": [
-                              ""
-                            ]
-                          },
-                          {
-                            "type": "string",
-                            "enum": [
-                              "letters_digits"
-                            ]
-                          },
-                          {
-                            "type": "string",
-                            "enum": [
-                              "lower_upper_letters_digits"
-                            ]
-                          },
-                          {
-                            "type": "string",
-                            "enum": [
-                              "lower_upper_letters_digits_symbols"
-                            ]
-                          }
+                        "type": "string",
+                        "enum": [
+                          "",
+                          "letters_digits",
+                          "lower_upper_letters_digits",
+                          "lower_upper_letters_digits_symbols"
                         ],
                         "description": "Password character requirements.",
                         "default": ""
@@ -4145,19 +4097,10 @@
                             "default": false
                           },
                           "provider": {
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "hcaptcha"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "turnstile"
-                                ]
-                              }
+                            "type": "string",
+                            "enum": [
+                              "hcaptcha",
+                              "turnstile"
                             ],
                             "description": "CAPTCHA provider to use."
                           },
@@ -4564,30 +4507,28 @@
                             "anyOf": [
                               {
                                 "type": "object",
-                                "patternProperties": {
-                                  "^(invite|confirmation|recovery|magic_link|email_change|reauthentication)$": {
-                                    "anyOf": [
-                                      {
-                                        "type": "object",
-                                        "properties": {
-                                          "subject": {
-                                            "type": "string",
-                                            "description": "Subject line for the email template.",
-                                            "default": ""
-                                          },
-                                          "content_path": {
-                                            "type": "string",
-                                            "description": "Path to the HTML template.",
-                                            "default": ""
-                                          }
+                                "additionalProperties": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "subject": {
+                                          "type": "string",
+                                          "description": "Subject line for the email template.",
+                                          "default": ""
                                         },
-                                        "additionalProperties": false
+                                        "content_path": {
+                                          "type": "string",
+                                          "description": "Path to the HTML template.",
+                                          "default": ""
+                                        }
                                       },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
-                                  }
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
                                 },
                                 "description": "Custom email template configuration.",
                                 "default": {}
@@ -4601,35 +4542,33 @@
                             "anyOf": [
                               {
                                 "type": "object",
-                                "patternProperties": {
-                                  "^(password_changed|email_changed|phone_changed|identity_linked|identity_unlinked|mfa_factor_enrolled|mfa_factor_unenrolled)$": {
-                                    "anyOf": [
-                                      {
-                                        "type": "object",
-                                        "properties": {
-                                          "enabled": {
-                                            "type": "boolean",
-                                            "description": "Enable the notification email.",
-                                            "default": false
-                                          },
-                                          "subject": {
-                                            "type": "string",
-                                            "description": "Subject line for the notification email.",
-                                            "default": ""
-                                          },
-                                          "content_path": {
-                                            "type": "string",
-                                            "description": "Path to the HTML notification template.",
-                                            "default": ""
-                                          }
+                                "additionalProperties": {
+                                  "anyOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "enabled": {
+                                          "type": "boolean",
+                                          "description": "Enable the notification email.",
+                                          "default": false
                                         },
-                                        "additionalProperties": false
+                                        "subject": {
+                                          "type": "string",
+                                          "description": "Subject line for the notification email.",
+                                          "default": ""
+                                        },
+                                        "content_path": {
+                                          "type": "string",
+                                          "description": "Path to the HTML notification template.",
+                                          "default": ""
+                                        }
                                       },
-                                      {
-                                        "type": "null"
-                                      }
-                                    ]
-                                  }
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
                                 },
                                 "description": "Notification email configuration.",
                                 "default": {}
@@ -5438,7 +5377,7 @@
                             },
                             "additionalProperties": false
                           },
-                          "slack": {
+                          "slack_oidc": {
                             "type": "object",
                             "properties": {
                               "enabled": {
@@ -5455,7 +5394,7 @@
                                 "type": "string",
                                 "description": "Client secret for the Slack OAuth provider.\n\nDO NOT commit your OAuth provider secret to git. Use environment variable substitution instead.",
                                 "examples": [
-                                  "env(SUPABASE_AUTH_EXTERNAL_SLACK_SECRET)"
+                                  "env(SUPABASE_AUTH_EXTERNAL_SLACK_OIDC_SECRET)"
                                 ]
                               },
                               "url": {
@@ -5879,19 +5818,10 @@
                             "default": 54329
                           },
                           "pool_mode": {
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "transaction"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "session"
-                                ]
-                              }
+                            "type": "string",
+                            "enum": [
+                              "transaction",
+                              "session"
                             ],
                             "description": "Specifies when a server connection can be reused by other clients.",
                             "default": "transaction"
@@ -6220,25 +6150,11 @@
                             ]
                           },
                           "session_replication_role": {
-                            "anyOf": [
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "origin"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "replica"
-                                ]
-                              },
-                              {
-                                "type": "string",
-                                "enum": [
-                                  "local"
-                                ]
-                              }
+                            "type": "string",
+                            "enum": [
+                              "origin",
+                              "replica",
+                              "local"
                             ],
                             "description": "Session replication role."
                           },
@@ -6328,19 +6244,10 @@
                         "default": true
                       },
                       "policy": {
-                        "anyOf": [
-                          {
-                            "type": "string",
-                            "enum": [
-                              "oneshot"
-                            ]
-                          },
-                          {
-                            "type": "string",
-                            "enum": [
-                              "per_worker"
-                            ]
-                          }
+                        "type": "string",
+                        "enum": [
+                          "oneshot",
+                          "per_worker"
                         ],
                         "description": "Configure the supported request policy.",
                         "default": "per_worker"
@@ -6448,6 +6355,22 @@
                                     },
                                     "description": "Static files to bundle with the function.",
                                     "default": []
+                                  },
+                                  "env": {
+                                    "type": "object",
+                                    "patternProperties": {
+                                      "^[A-Z_][A-Z0-9_]*$": {
+                                        "type": "string",
+                                        "allOf": [
+                                          {
+                                            "pattern": "^env\\((.*)\\)$",
+                                            "description": "Reference to a project environment variable available to the Function."
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "description": "Environment variables from the project environment that this Function can access.",
+                                    "default": {}
                                   }
                                 },
                                 "additionalProperties": false
@@ -6573,19 +6496,10 @@
                         "default": true
                       },
                       "ip_version": {
-                        "anyOf": [
-                          {
-                            "type": "string",
-                            "enum": [
-                              "IPv4"
-                            ]
-                          },
-                          {
-                            "type": "string",
-                            "enum": [
-                              "IPv6"
-                            ]
-                          }
+                        "type": "string",
+                        "enum": [
+                          "IPv4",
+                          "IPv6"
                         ],
                         "description": "Bind realtime via either IPv4 or IPv6.",
                         "default": "IPv4"
@@ -6629,12 +6543,35 @@
                         "default": true
                       },
                       "file_size_limit": {
-                        "type": "string",
-                        "description": "The maximum file size allowed.",
-                        "default": "50MiB",
-                        "examples": [
-                          "5MB",
-                          "500KB"
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "anyOf": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "NaN"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "Infinity"
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "-Infinity"
+                                ]
+                              }
+                            ]
+                          }
                         ]
                       },
                       "image_transformation": {
@@ -6661,12 +6598,35 @@
                                   "default": false
                                 },
                                 "file_size_limit": {
-                                  "type": "string",
-                                  "description": "The maximum file size allowed for the bucket.",
-                                  "default": "50MiB",
-                                  "examples": [
-                                    "5MB",
-                                    "500KB"
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "anyOf": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "NaN"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "Infinity"
+                                          ]
+                                        },
+                                        {
+                                          "type": "string",
+                                          "enum": [
+                                            "-Infinity"
+                                          ]
+                                        }
+                                      ]
+                                    }
                                   ]
                                 },
                                 "allowed_mime_types": {
@@ -6831,7 +6791,7 @@
                           "enabled": {
                             "type": "boolean",
                             "description": "Enable vector buckets.",
-                            "default": false
+                            "default": true
                           },
                           "max_buckets": {
                             "anyOf": [

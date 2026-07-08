@@ -1,5 +1,26 @@
 import { Effect, type FileSystem, Option, type Path } from "effect";
 import * as SmolToml from "smol-toml";
+import {
+  LEGACY_PROJECT_REF_PATTERN,
+  type LegacyAnalyticsInput,
+  type LegacyAuthInput,
+  type LegacyCaptchaInput,
+  type LegacyConfigValidationInput,
+  type LegacyDbInput,
+  legacyEmailContentPathReadErrorMessage,
+  type LegacyExperimentalInput,
+  type LegacyHookInput,
+  type LegacyMfaFactorInput,
+  legacyParseGoBool,
+  type LegacyPasskeyInput,
+  legacyResolveEmailTemplateContentPath,
+  legacyResolveSigningKeysPath,
+  legacySigningKeysDecodeErrorMessage,
+  legacySigningKeysReadErrorMessage,
+  type LegacySmtpInput,
+  type LegacyThirdPartyInput,
+  legacyValidateResolvedConfig,
+} from "./legacy-config-validate.ts";
 import { LegacyDbConfigLoadError } from "./legacy-db-config.errors.ts";
 import { parseDotEnv } from "./legacy-dotenv.ts";
 import {
@@ -348,23 +369,6 @@ function findDuplicateRemoteProjectId(
   return undefined;
 }
 
-// Go's project-ref pattern (`apps/cli-go/pkg/config/config.go:470`): exactly 20
-// lowercase ASCII letters.
-const LEGACY_PROJECT_REF_PATTERN = /^[a-z]{20}$/;
-
-// Go's storage bucket-name pattern (`apps/cli-go/pkg/config/config.go:1382`).
-// `config.Validate` runs `ValidateBucketName` over every `[storage.buckets.*]` key
-// during config load (`config.go:898-903`), aborting before any db command when a
-// name does not match. The source string is reused verbatim in the error message via
-// `.source` so it byte-matches Go's `bucketNamePattern.String()`.
-const LEGACY_BUCKET_NAME_PATTERN = /^(\w|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
-
-// Go's function-slug pattern (`apps/cli-go/pkg/config/config.go:1372`). `config.Validate`
-// runs `ValidateFunctionSlug` over every `[functions.*]` key during config load
-// (`config.go:993-998`), rejecting the config before any db command. `.source` is reused
-// in the message so it byte-matches Go's `funcSlugPattern.String()`.
-const LEGACY_FUNCTION_SLUG_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
-
 /**
  * Go's `config.Validate` rejects any `[remotes.<name>]` whose `project_id` is not a
  * valid project ref (`config.go:832-836`), on every config load — so a malformed or
@@ -623,33 +627,6 @@ function nonEmptyString(value: unknown): Option.Option<string> {
   return typeof value === "string" && value.length > 0 ? Option.some(value) : Option.none();
 }
 
-/** Go's `json.Valid` (`encoding/json`): reports whether the string is well-formed JSON. */
-function legacyIsValidJson(value: string): boolean {
-  try {
-    JSON.parse(value);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Go's `strconv.ParseBool` accepted forms (`go-viper/mapstructure` `decodeBool` under
-// viper's forced `WeaklyTypedInput`): a string decodes to bool via ParseBool, an empty
-// string is `false`, and any other value is a parse error.
-const GO_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
-const GO_BOOL_FALSE = new Set(["0", "f", "F", "FALSE", "false", "False", ""]);
-
-/**
- * Parse a config bool the way Go does (`strconv.ParseBool` via mapstructure's weakly
- * typed decode). Returns the bool, or `undefined` for a malformed value (which Go
- * surfaces as a `failed to parse config` error).
- */
-function legacyParseGoBool(value: string): boolean | undefined {
-  if (GO_BOOL_TRUE.has(value)) return true;
-  if (GO_BOOL_FALSE.has(value)) return false;
-  return undefined;
-}
-
 /**
  * Resolve a `[section] enabled` style bool. Go decodes a TOML bool natively and a
  * string (incl. an `env(VAR)` reference) via `strconv.ParseBool` — so `"1"`/`"t"`/etc.
@@ -864,405 +841,6 @@ const legacyAssertDecryptableSecrets = (
 // Go merges the template default before Validate (`templates/config.toml`), so an absent
 // `auth.site_url` is non-empty; only an explicit empty string fails A1 (`config.go:1037`).
 const DEFAULT_AUTH_SITE_URL = "http://127.0.0.1:3000";
-// Go's `hookSecretPattern` (`pkg/config/config.go:1436`).
-const LEGACY_HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
-// Go's `clerkDomainPattern` (`pkg/config/config.go:1553`).
-const LEGACY_CLERK_DOMAIN_PATTERN =
-  /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/u;
-
-/**
- * Ports the FATAL validations Go runs inside `if c.Auth.Enabled { … }` during
- * `config.Validate` (`apps/cli-go/pkg/config/config.go:1036-1102` + the nested
- * `.validate()` methods at 1242-1632), in Go's first-failure-wins order, so a db/migration
- * command aborts on an invalid auth config exactly like the Go CLI (the reviewer's case:
- * `migration down --local` must stop before any destructive work). Every check below mirrors
- * a Go `return errors.New(...)` site with the byte-exact message.
- *
- * Deliberately NOT ported: the `assertEnvLoaded` WARN lines (Go's `config.go:1143-1148` only
- * prints a stderr warning and always returns nil — never fatal), and the non-fatal mutations
- * (the SMS "no provider → disable phone login" WARN, the linkedin/slack deprecation WARN);
- * those affect neither the exit code nor any value this subset reader exposes. The
- * linkedin/slack providers are still skipped (Go deletes them before validating).
- */
-const legacyValidateAuthConfig = Effect.fnUntraced(function* (
-  authRaw: RawDoc,
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-  lookup: EnvLookup,
-) {
-  const fail = (message: string) => Effect.fail(new LegacyDbConfigLoadError({ message }));
-  const supabaseDir = path.join(workdir, "supabase");
-  // Env-expanded string of `rec[key]` ("" when absent/non-string). An unresolved `env(VAR)`
-  // stays literal (non-empty), matching Go's LoadEnvHook + the Secret decode hook.
-  const str = (rec: RawDoc | undefined, key: string): string => {
-    const value = rec?.[key];
-    return typeof value === "string" ? legacyExpandEnv(value, lookup) : "";
-  };
-  // Weak-bool decode (Go mapstructure): boolean | nonzero number | strconv.ParseBool string.
-  // A malformed string ABORTS the load like Go's decode (it does NOT coerce to false), using
-  // the reader's `failed to parse config: invalid <field>.` shape (the same simplification the
-  // db.* bools use; Go's verbose mapstructure string is not reproduced byte-for-byte there
-  // either). Absent / non-string → false (the default for every auth enable-flag).
-  const gate = (rec: RawDoc | undefined, key: string, field: string) =>
-    Effect.gen(function* () {
-      const value = rec?.[key];
-      if (typeof value === "boolean") return value;
-      if (typeof value === "number") return value !== 0;
-      if (typeof value !== "string") return false;
-      const parsed = legacyParseGoBool(legacyExpandEnv(value, lookup));
-      if (parsed === undefined) return yield* fail(`failed to parse config: invalid ${field}.`);
-      return parsed;
-    });
-  // Resolve a config file path: absolute → verbatim (Go opens it from the OS root after chdir);
-  // relative → joined under `base` (`filepath.IsAbs` guards, `config.go:854-878`).
-  const resolvePath = (p: string, base: string): string =>
-    path.isAbsolute(p) ? p : path.join(base, p);
-
-  // A1: site_url required (`config.go:1037-1039`).
-  const siteUrl =
-    authRaw["site_url"] === undefined ? DEFAULT_AUTH_SITE_URL : str(authRaw, "site_url");
-  if (siteUrl.length === 0) return yield* fail("Missing required field in config: auth.site_url");
-
-  // A4: [auth.captcha]. The provider enum is a decode-time check (`CaptchaProvider.UnmarshalText`,
-  // `auth.go:58-71`) that fires whenever `provider` is set, regardless of `enabled`; the
-  // required-field checks run only when enabled (`config.go:1048-1058`).
-  const captcha = asRecord(authRaw["captcha"]);
-  if (captcha !== undefined) {
-    const provider = str(captcha, "provider");
-    if (provider.length > 0 && provider !== "hcaptcha" && provider !== "turnstile")
-      return yield* fail(
-        "failed to parse config: decoding failed due to the following error(s):\n\n'auth.captcha.provider' must be one of [hcaptcha turnstile]",
-      );
-    if (yield* gate(captcha, "enabled", "auth.captcha.enabled")) {
-      if (provider.length === 0)
-        return yield* fail("Missing required field in config: auth.captcha.provider");
-      if (str(captcha, "secret").length === 0)
-        return yield* fail("Missing required field in config: auth.captcha.secret");
-    }
-  }
-
-  // A5: signing keys file load (`config.go:1059-1065`) — read + parse as a JSON array. A
-  // relative path resolves under the supabase dir (`config.go:877-878`); absolute is verbatim.
-  const signingKeysPath = str(authRaw, "signing_keys_path");
-  if (signingKeysPath.length > 0) {
-    const keysJson = yield* fs.readFileString(resolvePath(signingKeysPath, supabaseDir)).pipe(
-      Effect.mapError(
-        (cause) =>
-          new LegacyDbConfigLoadError({
-            message: `failed to read signing keys: ${cause.message}`,
-          }),
-      ),
-    );
-    yield* Effect.try({
-      try: () => {
-        const parsed: unknown = JSON.parse(keysJson);
-        if (!Array.isArray(parsed)) throw new Error("signing keys must be a JSON array of JWKs");
-        return parsed;
-      },
-      catch: (cause) =>
-        new LegacyDbConfigLoadError({
-          message: `failed to decode signing keys: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    });
-  }
-
-  // A6: passkey/webauthn when passkey enabled (`config.go:1066-1084`).
-  const passkey = asRecord(authRaw["passkey"]);
-  if (passkey !== undefined && (yield* gate(passkey, "enabled", "auth.passkey.enabled"))) {
-    const webauthn = asRecord(authRaw["webauthn"]);
-    if (webauthn === undefined)
-      return yield* fail(
-        "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
-      );
-    if (str(webauthn, "rp_id").length === 0)
-      return yield* fail("Missing required field in config: auth.webauthn.rp_id");
-    const rpOrigins = webauthn["rp_origins"];
-    if (!Array.isArray(rpOrigins) || rpOrigins.length === 0)
-      return yield* fail("Missing required field in config: auth.webauthn.rp_origins");
-  }
-
-  // B1: hooks — each enabled hook (`config.go:1402-1470`).
-  const hook = asRecord(authRaw["hook"]);
-  if (hook !== undefined) {
-    const hookTypes = [
-      "mfa_verification_attempt",
-      "password_verification_attempt",
-      "custom_access_token",
-      "send_sms",
-      "send_email",
-      "before_user_created",
-    ] as const;
-    for (const hookType of hookTypes) {
-      const h = asRecord(hook[hookType]);
-      if (h === undefined) continue;
-      if (!(yield* gate(h, "enabled", `auth.hook.${hookType}.enabled`))) continue;
-      const uri = str(h, "uri");
-      if (uri.length === 0)
-        return yield* fail(`Missing required field in config: auth.hook.${hookType}.uri`);
-      // Go uses net/url.Parse, which (unlike `new URL`) does not throw on a missing scheme;
-      // extract the scheme the same lenient way so a no-scheme/other URI hits the default
-      // branch rather than erroring (the rare url.Parse error case is not separately ported).
-      const scheme = (/^([a-zA-Z][a-zA-Z0-9+.-]*):/u.exec(uri)?.[1] ?? "").toLowerCase();
-      const secrets = str(h, "secrets");
-      if (scheme === "http" || scheme === "https") {
-        if (secrets.length === 0)
-          return yield* fail(`Missing required field in config: auth.hook.${hookType}.secrets`);
-        for (const secret of secrets.split("|")) {
-          if (!LEGACY_HOOK_SECRET_PATTERN.test(secret))
-            return yield* fail(
-              `Invalid hook config: auth.hook.${hookType}.secrets must be formatted as "v1,whsec_<base64_encoded_secret>" with a minimum length of 32 characters.`,
-            );
-        }
-      } else if (scheme === "pg-functions") {
-        if (secrets.length > 0)
-          return yield* fail(
-            `Invalid hook config: auth.hook.${hookType}.secrets is unsupported for pg-functions URI`,
-          );
-      } else {
-        return yield* fail(
-          `Invalid hook config: auth.hook.${hookType}.uri should be a HTTP, HTTPS, or pg-functions URI`,
-        );
-      }
-    }
-  }
-
-  // B2: mfa — enroll requires verify (`config.go:1472-1483`).
-  const mfa = asRecord(authRaw["mfa"]);
-  if (mfa !== undefined) {
-    for (const [key, label] of [
-      ["totp", "totp"],
-      ["phone", "phone"],
-      ["web_authn", "web_authn"],
-    ] as const) {
-      const factor = asRecord(mfa[key]);
-      if (factor === undefined) continue;
-      const enroll = yield* gate(factor, "enroll_enabled", `auth.mfa.${label}.enroll_enabled`);
-      const verify = yield* gate(factor, "verify_enabled", `auth.mfa.${label}.verify_enabled`);
-      if (enroll && !verify)
-        return yield* fail(
-          `Invalid MFA config: auth.mfa.${label}.enroll_enabled requires verify_enabled`,
-        );
-    }
-  }
-
-  // B3: email (`config.go:1242-1295`).
-  const email = asRecord(authRaw["email"]);
-  if (email !== undefined) {
-    // Go resolves a relative `content_path` differently per section: email TEMPLATE paths are
-    // relative to the PROJECT ROOT (`config.go:854-856`, the `// FIXME` there), while
-    // NOTIFICATION paths are relative to the supabase dir (`config.go:861-862`); absolute → as-is.
-    const validateTemplate = (
-      section: "template" | "notification",
-      name: string,
-      tmpl: RawDoc,
-      base: string,
-    ) =>
-      Effect.gen(function* () {
-        const contentPath = str(tmpl, "content_path");
-        if (contentPath.length === 0) {
-          if (tmpl["content"] !== undefined)
-            return yield* fail(
-              `Invalid config for auth.email.${section}.${name}.content: please use content_path instead`,
-            );
-          return;
-        }
-        yield* fs.readFileString(resolvePath(contentPath, base)).pipe(
-          Effect.mapError(
-            (cause) =>
-              new LegacyDbConfigLoadError({
-                message: `Invalid config for auth.email.${section}.${name}.content_path: ${cause.message}`,
-              }),
-          ),
-        );
-      });
-    const templates = asRecord(email["template"]);
-    if (templates !== undefined) {
-      for (const name of Object.keys(templates)) {
-        const tmpl = asRecord(templates[name]);
-        if (tmpl !== undefined) yield* validateTemplate("template", name, tmpl, workdir);
-      }
-    }
-    const notifications = asRecord(email["notification"]);
-    if (notifications !== undefined) {
-      for (const name of Object.keys(notifications)) {
-        const tmpl = asRecord(notifications[name]);
-        if (
-          tmpl !== undefined &&
-          (yield* gate(tmpl, "enabled", `auth.email.notification.${name}.enabled`))
-        )
-          yield* validateTemplate("notification", name, tmpl, supabaseDir);
-      }
-    }
-    // Go defaults `auth.email.smtp.enabled = true` when the `[auth.email.smtp]` table is present
-    // but omits `enabled` (`config.go:692-696`), so a present table validates unless explicitly
-    // disabled.
-    const smtp = asRecord(email["smtp"]);
-    const smtpEnabled =
-      smtp !== undefined &&
-      (smtp["enabled"] === undefined
-        ? true
-        : yield* gate(smtp, "enabled", "auth.email.smtp.enabled"));
-    if (smtp !== undefined && smtpEnabled) {
-      if (str(smtp, "host").length === 0)
-        return yield* fail("Missing required field in config: auth.email.smtp.host");
-      const portRaw = smtp["port"];
-      const port =
-        typeof portRaw === "number"
-          ? portRaw
-          : typeof portRaw === "string"
-            ? Number(legacyExpandEnv(portRaw, lookup))
-            : 0;
-      if (!port) return yield* fail("Missing required field in config: auth.email.smtp.port");
-      if (str(smtp, "user").length === 0)
-        return yield* fail("Missing required field in config: auth.email.smtp.user");
-      if (str(smtp, "pass").length === 0)
-        return yield* fail("Missing required field in config: auth.email.smtp.pass");
-      if (str(smtp, "admin_email").length === 0)
-        return yield* fail("Missing required field in config: auth.email.smtp.admin_email");
-    }
-  }
-
-  // B4: sms — only the FIRST enabled provider is validated (Go's switch, `config.go:1297-1364`).
-  const sms = asRecord(authRaw["sms"]);
-  if (sms !== undefined) {
-    const twilio = asRecord(sms["twilio"]);
-    const twilioVerify = asRecord(sms["twilio_verify"]);
-    const messagebird = asRecord(sms["messagebird"]);
-    const textlocal = asRecord(sms["textlocal"]);
-    const vonage = asRecord(sms["vonage"]);
-    // Resolve every provider's enable-flag (a malformed bool aborts like Go's decode); Go's
-    // switch then validates only the FIRST enabled provider.
-    const twilioEnabled = yield* gate(twilio, "enabled", "auth.sms.twilio.enabled");
-    const twilioVerifyEnabled = yield* gate(
-      twilioVerify,
-      "enabled",
-      "auth.sms.twilio_verify.enabled",
-    );
-    const messagebirdEnabled = yield* gate(messagebird, "enabled", "auth.sms.messagebird.enabled");
-    const textlocalEnabled = yield* gate(textlocal, "enabled", "auth.sms.textlocal.enabled");
-    const vonageEnabled = yield* gate(vonage, "enabled", "auth.sms.vonage.enabled");
-    if (twilioEnabled) {
-      if (str(twilio, "account_sid").length === 0)
-        return yield* fail("Missing required field in config: auth.sms.twilio.account_sid");
-      if (str(twilio, "message_service_sid").length === 0)
-        return yield* fail("Missing required field in config: auth.sms.twilio.message_service_sid");
-      if (str(twilio, "auth_token").length === 0)
-        return yield* fail("Missing required field in config: auth.sms.twilio.auth_token");
-    } else if (twilioVerifyEnabled) {
-      if (str(twilioVerify, "account_sid").length === 0)
-        return yield* fail("Missing required field in config: auth.sms.twilio_verify.account_sid");
-      if (str(twilioVerify, "message_service_sid").length === 0)
-        return yield* fail(
-          "Missing required field in config: auth.sms.twilio_verify.message_service_sid",
-        );
-      if (str(twilioVerify, "auth_token").length === 0)
-        return yield* fail("Missing required field in config: auth.sms.twilio_verify.auth_token");
-    } else if (messagebirdEnabled) {
-      if (str(messagebird, "originator").length === 0)
-        return yield* fail("Missing required field in config: auth.sms.messagebird.originator");
-      if (str(messagebird, "access_key").length === 0)
-        return yield* fail("Missing required field in config: auth.sms.messagebird.access_key");
-    } else if (textlocalEnabled) {
-      if (str(textlocal, "sender").length === 0)
-        return yield* fail("Missing required field in config: auth.sms.textlocal.sender");
-      if (str(textlocal, "api_key").length === 0)
-        return yield* fail("Missing required field in config: auth.sms.textlocal.api_key");
-    } else if (vonageEnabled) {
-      if (str(vonage, "from").length === 0)
-        return yield* fail("Missing required field in config: auth.sms.vonage.from");
-      if (str(vonage, "api_key").length === 0)
-        return yield* fail("Missing required field in config: auth.sms.vonage.api_key");
-      if (str(vonage, "api_secret").length === 0)
-        return yield* fail("Missing required field in config: auth.sms.vonage.api_secret");
-    }
-  }
-
-  // B5: external providers (`config.go:1368-1398`). linkedin/slack are deprecated and deleted
-  // before validation, so they are never validated here.
-  const external = asRecord(authRaw["external"]);
-  if (external !== undefined) {
-    for (const name of Object.keys(external)) {
-      if (name === "linkedin" || name === "slack") continue;
-      const provider = asRecord(external[name]);
-      if (provider === undefined) continue;
-      if (!(yield* gate(provider, "enabled", `auth.external.${name}.enabled`))) continue;
-      if (str(provider, "client_id").length === 0)
-        return yield* fail(`Missing required field in config: auth.external.${name}.client_id`);
-      if (name !== "apple" && name !== "google" && str(provider, "secret").length === 0)
-        return yield* fail(`Missing required field in config: auth.external.${name}.secret`);
-    }
-  }
-
-  // B6: third_party — validate each enabled provider in order, then mutual exclusivity
-  // (`config.go:1584-1632`). Note `aws_cognito`'s messages say `cognito` (Go's wording).
-  const thirdParty = asRecord(authRaw["third_party"]);
-  if (thirdParty !== undefined) {
-    let enabledCount = 0;
-    const firebase = asRecord(thirdParty["firebase"]);
-    if (
-      firebase !== undefined &&
-      (yield* gate(firebase, "enabled", "auth.third_party.firebase.enabled"))
-    ) {
-      enabledCount += 1;
-      if (str(firebase, "project_id").length === 0)
-        return yield* fail(
-          "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
-        );
-    }
-    const auth0 = asRecord(thirdParty["auth0"]);
-    if (auth0 !== undefined && (yield* gate(auth0, "enabled", "auth.third_party.auth0.enabled"))) {
-      enabledCount += 1;
-      if (str(auth0, "tenant").length === 0)
-        return yield* fail(
-          "Invalid config: auth.third_party.auth0 is enabled but without a tenant.",
-        );
-    }
-    const cognito = asRecord(thirdParty["aws_cognito"]);
-    if (
-      cognito !== undefined &&
-      (yield* gate(cognito, "enabled", "auth.third_party.aws_cognito.enabled"))
-    ) {
-      enabledCount += 1;
-      if (str(cognito, "user_pool_id").length === 0)
-        return yield* fail(
-          "Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.",
-        );
-      if (str(cognito, "user_pool_region").length === 0)
-        return yield* fail(
-          "Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.",
-        );
-    }
-    const clerk = asRecord(thirdParty["clerk"]);
-    if (clerk !== undefined && (yield* gate(clerk, "enabled", "auth.third_party.clerk.enabled"))) {
-      enabledCount += 1;
-      const domain = str(clerk, "domain");
-      if (domain.length === 0)
-        return yield* fail(
-          "Invalid config: auth.third_party.clerk is enabled but without a domain.",
-        );
-      if (!LEGACY_CLERK_DOMAIN_PATTERN.test(domain))
-        return yield* fail(
-          "Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev. Check https://clerk.com/setup/supabase on how to find the correct value.",
-        );
-    }
-    const workos = asRecord(thirdParty["workos"]);
-    if (
-      workos !== undefined &&
-      (yield* gate(workos, "enabled", "auth.third_party.workos.enabled"))
-    ) {
-      enabledCount += 1;
-      if (str(workos, "issuer_url").length === 0)
-        return yield* fail(
-          "Invalid config: auth.third_party.workos is enabled but without a issuer_url.",
-        );
-    }
-    if (enabledCount > 1)
-      return yield* fail(
-        "Invalid config: Only one third_party provider allowed to be enabled at a time.",
-      );
-  }
-});
 
 /**
  * Reads `<workdir>/supabase/config.toml` (db subtree + project id) and the linked
@@ -1534,22 +1112,10 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       }),
     );
   }
-  // Reject unsupported major versions like Go's config.Validate ({13,14,15,17};
-  // `apps/cli-go/pkg/config/config.go:869-897`) before any image/container runs. An
-  // absent value falls through to the default (Go's zero-then-default).
-  if (
-    typeof majorVersionResolved === "number" &&
-    ![13, 14, 15, 17].includes(majorVersionResolved)
-  ) {
-    return yield* Effect.fail(
-      new LegacyDbConfigLoadError({
-        message:
-          majorVersionResolved === 12
-            ? "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects."
-            : `Failed reading config: Invalid db.major_version: ${majorVersionResolved}.`,
-      }),
-    );
-  }
+  // Rejecting an unsupported major version ({13,14,15,17}; `apps/cli-go/pkg/config/config.go:
+  // 869-897`) is now `legacyValidateResolvedConfig`'s `db.major_version` switch (called once,
+  // below) — an absent value falls through to the default (Go's zero-then-default) and a present
+  // one (including `0`) flows into `input.db.majorVersion` for that switch to check.
   const majorVersion =
     typeof majorVersionResolved === "number" ? majorVersionResolved : DEFAULT_MAJOR_VERSION;
 
@@ -1602,25 +1168,10 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       }),
     );
   }
-  // Go's config.Validate rejects a present-but-invalid deno_version before pg-delta
-  // runs (`config.go:999-1008`): 0 → missing-required, anything other than 1/2 →
-  // invalid. An absent key falls through to the default (Go merges deno_version=2).
-  if (typeof denoVersionResolved === "number") {
-    if (denoVersionResolved === 0) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message: "Missing required field in config: edge_runtime.deno_version",
-        }),
-      );
-    }
-    if (denoVersionResolved !== 1 && denoVersionResolved !== 2) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message: `Failed reading config: Invalid edge_runtime.deno_version: ${denoVersionResolved}.`,
-        }),
-      );
-    }
-  }
+  // Rejecting a present-but-invalid deno_version (`config.go:999-1008`: 0 → missing-required,
+  // anything other than 1/2 → invalid) is now `legacyValidateResolvedConfig`'s
+  // `edgeRuntimeDenoVersion` switch (called once, below). An absent key falls through to the
+  // default (Go merges deno_version=2).
   const denoVersion =
     typeof denoVersionResolved === "number" ? denoVersionResolved : DEFAULT_DENO_VERSION;
 
@@ -1704,60 +1255,19 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       (typeof formatOptionsRaw === "string" ? formatOptionsRaw : ""),
     lookup,
   );
-  // Go's config.Validate aborts config load when a non-empty format_options is not
-  // valid JSON (`apps/cli-go/pkg/config/config.go:1685-1686`), before any shadow /
-  // catalog container runs. Fail here with Go's exact message so the user gets the
-  // actionable error up front rather than a later `JSON.parse` failure in the script.
-  if (formatOptionsExpanded.length > 0 && !legacyIsValidJson(formatOptionsExpanded)) {
-    return yield* Effect.fail(
-      new LegacyDbConfigLoadError({
-        message: "Invalid config for experimental.pgdelta.format_options: must be valid JSON",
-      }),
-    );
-  }
+  // Rejecting a non-empty, non-JSON `format_options` (`apps/cli-go/pkg/config/config.go:
+  // 1685-1686`) is now `legacyValidateResolvedConfig`'s `experimental.pgdeltaFormatOptions`
+  // check (called once, below).
   const formatOptions = nonEmptyString(formatOptionsExpanded);
 
-  // Go's config.Validate runs `ValidateBucketName` over every `[storage.buckets.*]`
-  // key on load (`apps/cli-go/pkg/config/config.go:898-903`), rejecting the config
-  // before any db command when a bucket name does not match `bucketNamePattern`.
-  // The reader otherwise drops `storage.buckets`, so port the check here with Go's
-  // exact message (the trailing `(%s)` is the regex source, `config.go:1386`).
+  // Bucket-name/function-slug validation (`config.go:898-903`/`993-998`) now lives in
+  // `legacyValidateResolvedConfig` (called once, below); only the pure extraction stays here.
   const bucketsRaw = asRecord(storageRaw?.["buckets"]);
-  if (bucketsRaw !== undefined) {
-    for (const name of Object.keys(bucketsRaw)) {
-      if (!LEGACY_BUCKET_NAME_PATTERN.test(name)) {
-        return yield* Effect.fail(
-          new LegacyDbConfigLoadError({
-            message: `Invalid Bucket name: ${name}. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (${LEGACY_BUCKET_NAME_PATTERN.source})`,
-          }),
-        );
-      }
-    }
-  }
 
-  // Go's config.Validate runs `ValidateFunctionSlug` over every `[functions.*]` key on
-  // load (`apps/cli-go/pkg/config/config.go:993-998`, immediately after the bucket loop),
-  // rejecting the config before any db command when a slug does not match
-  // `funcSlugPattern`. The reader otherwise drops `functions`, so port the check here
-  // with Go's exact message (the trailing `(%s)` is the regex source, `config.go:1376`).
-  if (functionsRaw !== undefined) {
-    for (const name of Object.keys(functionsRaw)) {
-      if (!LEGACY_FUNCTION_SLUG_PATTERN.test(name)) {
-        return yield* Effect.fail(
-          new LegacyDbConfigLoadError({
-            message: `Invalid Function name: ${name}. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens. (${LEGACY_FUNCTION_SLUG_PATTERN.source})`,
-          }),
-        );
-      }
-    }
-  }
-
-  // Go's config.Validate runs the full `if c.Auth.Enabled` block (`config.go:1036-1102`)
-  // after the bucket/function checks — port its fatal validations so db/migration commands
-  // abort on an invalid auth config exactly like Go (e.g. an enabled passkey without a valid
-  // [auth.webauthn], or two third_party providers). Gated on `auth.enabled` (default true).
-  // Go's viper AutomaticEnv binds `auth.enabled` to `SUPABASE_AUTH_ENABLED` before Validate
-  // (`config.go:529-535`), so the env override decides whether the auth block is validated.
+  // Go's config.Validate runs the full `if c.Auth.Enabled` block (`config.go:1036-1102`) after
+  // the bucket/function checks. Gated on `auth.enabled` (default true); Go's viper AutomaticEnv
+  // binds `auth.enabled` to `SUPABASE_AUTH_ENABLED` before Validate (`config.go:529-535`), so the
+  // env override decides whether the auth block is validated.
   const authEnabled = yield* resolveBoolOrFail(
     "auth.enabled",
     authRaw?.["enabled"],
@@ -1765,41 +1275,300 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     lookup,
     envOverride("SUPABASE_AUTH_ENABLED"),
   );
+
+  // Local helpers mirroring the deleted `legacyValidateAuthConfig`'s closures — its Go-parity
+  // CHECKS now live in `legacyValidateResolvedConfig`; `str`/`gate`/`fail` are still needed here
+  // to build that call's `LegacyAuthInput`, and by the D-only sms/external checks below (never
+  // part of the shared validator — see `legacy-config-validate.ts`'s module header).
+  const fail = (message: string) => Effect.fail(new LegacyDbConfigLoadError({ message }));
+  // Env-expanded string of `rec[key]` ("" when absent/non-string). An unresolved `env(VAR)`
+  // stays literal (non-empty), matching Go's LoadEnvHook + the Secret decode hook.
+  const str = (rec: RawDoc | undefined, key: string): string => {
+    const value = rec?.[key];
+    return typeof value === "string" ? legacyExpandEnv(value, lookup) : "";
+  };
+  // Weak-bool decode (Go mapstructure): boolean | nonzero number | strconv.ParseBool string. A
+  // malformed string ABORTS the load like Go's decode (it does NOT coerce to false). Absent /
+  // non-string → false (the default for every auth enable-flag).
+  const gate = (rec: RawDoc | undefined, key: string, field: string) =>
+    Effect.gen(function* () {
+      const value = rec?.[key];
+      if (typeof value === "boolean") return value;
+      if (typeof value === "number") return value !== 0;
+      if (typeof value !== "string") return false;
+      const parsed = legacyParseGoBool(legacyExpandEnv(value, lookup));
+      if (parsed === undefined) return yield* fail(`failed to parse config: invalid ${field}.`);
+      return parsed;
+    });
+
+  const authRawResolved = authRaw ?? {};
+  let authInput: LegacyAuthInput | undefined;
   if (authEnabled) {
-    yield* legacyValidateAuthConfig(authRaw ?? {}, fs, path, workdir, lookup);
+    // A1: site_url required (`config.go:1037-1039`).
+    const siteUrl =
+      authRawResolved["site_url"] === undefined
+        ? DEFAULT_AUTH_SITE_URL
+        : str(authRawResolved, "site_url");
+
+    // A4: [auth.captcha]. The provider enum is a decode-time check (`CaptchaProvider.
+    // UnmarshalText`, `auth.go:58-71`); the required-field checks are `enabled`-gated
+    // (`config.go:1048-1058`) — both now live in `legacyValidateResolvedConfig`.
+    const captchaRaw = asRecord(authRawResolved["captcha"]);
+    let captchaInput: LegacyCaptchaInput | undefined;
+    if (captchaRaw !== undefined) {
+      const provider = str(captchaRaw, "provider");
+      const secret = str(captchaRaw, "secret");
+      captchaInput = {
+        enabled: yield* gate(captchaRaw, "enabled", "auth.captcha.enabled"),
+        // `str()` returns `""` for an absent key, but the shared validator's
+        // `provider === undefined` check needs a real `undefined` to fire correctly for an
+        // enabled captcha with no provider set.
+        provider: provider.length > 0 ? provider : undefined,
+        secret: secret.length > 0 ? secret : undefined,
+      };
+    }
+
+    // A5: signing keys file load (`config.go:1059-1065`) — I/O, stays in D. A relative path
+    // resolves under the supabase dir; absolute is verbatim.
+    const signingKeysPath = str(authRawResolved, "signing_keys_path");
+    if (signingKeysPath.length > 0) {
+      const keysJson = yield* fs
+        .readFileString(legacyResolveSigningKeysPath(workdir, signingKeysPath))
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyDbConfigLoadError({ message: legacySigningKeysReadErrorMessage(cause) }),
+          ),
+        );
+      yield* Effect.try({
+        try: () => {
+          const parsed: unknown = JSON.parse(keysJson);
+          if (!Array.isArray(parsed)) {
+            throw new Error("signing keys must be a JSON array of JWKs");
+          }
+          return parsed;
+        },
+        catch: (cause) =>
+          new LegacyDbConfigLoadError({ message: legacySigningKeysDecodeErrorMessage(cause) }),
+      });
+    }
+
+    // A6: passkey/webauthn when passkey enabled (`config.go:1066-1084`).
+    const passkeyRaw = asRecord(authRawResolved["passkey"]);
+    let passkeyInput: LegacyPasskeyInput | undefined;
+    if (passkeyRaw !== undefined && (yield* gate(passkeyRaw, "enabled", "auth.passkey.enabled"))) {
+      const webauthnRaw = asRecord(authRawResolved["webauthn"]);
+      const rpOrigins = webauthnRaw?.["rp_origins"];
+      passkeyInput = {
+        webauthnPresent: webauthnRaw !== undefined,
+        rpId: str(webauthnRaw, "rp_id"),
+        rpOrigins: Array.isArray(rpOrigins) ? rpOrigins : undefined,
+      };
+    }
+
+    // B1: hooks — each enabled hook, Go's fixed iteration order (`config.go:1402-1470`).
+    const hookRaw = asRecord(authRawResolved["hook"]);
+    const hookTypes = [
+      "mfa_verification_attempt",
+      "password_verification_attempt",
+      "custom_access_token",
+      "send_sms",
+      "send_email",
+      "before_user_created",
+    ] as const;
+    const hooks: Array<LegacyHookInput> = [];
+    for (const hookType of hookTypes) {
+      const h = asRecord(hookRaw?.[hookType]);
+      if (h !== undefined && (yield* gate(h, "enabled", `auth.hook.${hookType}.enabled`))) {
+        hooks.push({ type: hookType, uri: str(h, "uri"), secrets: str(h, "secrets") });
+      }
+    }
+
+    // B2: mfa — enroll requires verify (`config.go:1472-1483`), fixed totp/phone/web_authn order.
+    const mfaRaw = asRecord(authRawResolved["mfa"]);
+    const mfa: Array<LegacyMfaFactorInput> = [];
+    for (const label of ["totp", "phone", "web_authn"] as const) {
+      const factor = asRecord(mfaRaw?.[label]);
+      mfa.push({
+        label,
+        enrollEnabled: yield* gate(factor, "enroll_enabled", `auth.mfa.${label}.enroll_enabled`),
+        verifyEnabled: yield* gate(factor, "verify_enabled", `auth.mfa.${label}.verify_enabled`),
+      });
+    }
+
+    // B3: email (`config.go:1242-1295`) — template/notification content is I/O, stays in D. Go
+    // resolves a relative `content_path` differently per section: TEMPLATE paths are relative to
+    // the PROJECT ROOT (`config.go:854-856`, the `// FIXME` there), NOTIFICATION paths are
+    // relative to the supabase dir (`config.go:861-862`); absolute → as-is.
+    const emailRaw = asRecord(authRawResolved["email"]);
+    const templatesRaw = asRecord(emailRaw?.["template"]);
+    if (templatesRaw !== undefined) {
+      for (const name of Object.keys(templatesRaw)) {
+        const tmpl = asRecord(templatesRaw[name]);
+        if (tmpl === undefined) continue;
+        const contentPath = yield* Effect.try({
+          try: () =>
+            legacyResolveEmailTemplateContentPath({
+              section: "template",
+              name,
+              contentPath: str(tmpl, "content_path"),
+              contentPresent: tmpl["content"] !== undefined,
+              base: workdir,
+            }),
+          catch: (cause) =>
+            new LegacyDbConfigLoadError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        });
+        if (contentPath === undefined) continue;
+        yield* fs.readFileString(contentPath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyDbConfigLoadError({
+                message: legacyEmailContentPathReadErrorMessage("template", name, cause),
+              }),
+          ),
+        );
+      }
+    }
+    const notificationsRaw = asRecord(emailRaw?.["notification"]);
+    if (notificationsRaw !== undefined) {
+      for (const name of Object.keys(notificationsRaw)) {
+        const tmpl = asRecord(notificationsRaw[name]);
+        if (
+          tmpl === undefined ||
+          !(yield* gate(tmpl, "enabled", `auth.email.notification.${name}.enabled`))
+        ) {
+          continue;
+        }
+        const contentPath = yield* Effect.try({
+          try: () =>
+            legacyResolveEmailTemplateContentPath({
+              section: "notification",
+              name,
+              contentPath: str(tmpl, "content_path"),
+              contentPresent: tmpl["content"] !== undefined,
+              base: supabaseDir,
+            }),
+          catch: (cause) =>
+            new LegacyDbConfigLoadError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        });
+        if (contentPath === undefined) continue;
+        yield* fs.readFileString(contentPath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new LegacyDbConfigLoadError({
+                message: legacyEmailContentPathReadErrorMessage("notification", name, cause),
+              }),
+          ),
+        );
+      }
+    }
+    // Go defaults `auth.email.smtp.enabled = true` when the `[auth.email.smtp]` table is present
+    // but omits `enabled` (`config.go:692-696`), so a present table validates unless explicitly
+    // disabled.
+    const smtpRaw = asRecord(emailRaw?.["smtp"]);
+    let smtpInput: LegacySmtpInput | undefined;
+    if (smtpRaw !== undefined) {
+      const smtpPortRaw = smtpRaw["port"];
+      // The shared validator's required-field check is `port === 0` (Go decodes `port` into a
+      // numeric type at the config-decode step, so it can never observe a non-numeric value here).
+      // D reads the raw TOML/env string directly, so a non-numeric `port` (or an unresolved
+      // `env(VAR)`) parses to `NaN` via `Number(...)` — normalize that to `0` so it still trips
+      // the "missing required field" check instead of silently passing config load.
+      const smtpPortNumeric =
+        typeof smtpPortRaw === "number"
+          ? smtpPortRaw
+          : typeof smtpPortRaw === "string"
+            ? Number(legacyExpandEnv(smtpPortRaw, lookup))
+            : 0;
+      smtpInput = {
+        enabled:
+          smtpRaw["enabled"] === undefined
+            ? true
+            : yield* gate(smtpRaw, "enabled", "auth.email.smtp.enabled"),
+        host: str(smtpRaw, "host"),
+        port: Number.isNaN(smtpPortNumeric) ? 0 : smtpPortNumeric,
+        user: str(smtpRaw, "user"),
+        pass: str(smtpRaw, "pass"),
+        adminEmail: str(smtpRaw, "admin_email"),
+      };
+    }
+
+    // B6: third_party — each enabled provider, Go's fixed order (`config.go:1584-1632`). Note
+    // `aws_cognito`'s messages say `cognito` (Go's wording).
+    const thirdPartyRaw = asRecord(authRawResolved["third_party"]);
+    const thirdParty: Array<LegacyThirdPartyInput> = [];
+    const firebaseRaw = asRecord(thirdPartyRaw?.["firebase"]);
+    if (
+      firebaseRaw !== undefined &&
+      (yield* gate(firebaseRaw, "enabled", "auth.third_party.firebase.enabled"))
+    ) {
+      thirdParty.push({ provider: "firebase", requiredField: str(firebaseRaw, "project_id") });
+    }
+    const auth0Raw = asRecord(thirdPartyRaw?.["auth0"]);
+    if (
+      auth0Raw !== undefined &&
+      (yield* gate(auth0Raw, "enabled", "auth.third_party.auth0.enabled"))
+    ) {
+      thirdParty.push({ provider: "auth0", requiredField: str(auth0Raw, "tenant") });
+    }
+    const cognitoRaw = asRecord(thirdPartyRaw?.["aws_cognito"]);
+    if (
+      cognitoRaw !== undefined &&
+      (yield* gate(cognitoRaw, "enabled", "auth.third_party.aws_cognito.enabled"))
+    ) {
+      thirdParty.push({
+        provider: "cognito",
+        requiredField: str(cognitoRaw, "user_pool_id"),
+        cognitoUserPoolRegion: str(cognitoRaw, "user_pool_region"),
+      });
+    }
+    const clerkRaw = asRecord(thirdPartyRaw?.["clerk"]);
+    if (
+      clerkRaw !== undefined &&
+      (yield* gate(clerkRaw, "enabled", "auth.third_party.clerk.enabled"))
+    ) {
+      thirdParty.push({ provider: "clerk", requiredField: str(clerkRaw, "domain") });
+    }
+    const workosRaw = asRecord(thirdPartyRaw?.["workos"]);
+    if (
+      workosRaw !== undefined &&
+      (yield* gate(workosRaw, "enabled", "auth.third_party.workos.enabled"))
+    ) {
+      thirdParty.push({ provider: "workos", requiredField: str(workosRaw, "issuer_url") });
+    }
+
+    authInput = {
+      siteUrl,
+      captcha: captchaInput,
+      passkey: passkeyInput,
+      hooks,
+      mfa,
+      smtp: smtpInput,
+      thirdParty,
+    };
   }
 
   // Go's config.Validate validates `[analytics]` after the auth block (`config.go:1123-1135`).
-  // Two fatal checks run on the db/migration path:
-  //   1. `LogflareBackend.UnmarshalText` (`config.go:60-66`) is a decode-time enum that rejects
-  //      any `backend` other than `postgres`/`bigquery` — regardless of `enabled` (it fires
-  //      during UnmarshalExact, like the captcha provider enum), so it gates here too.
-  //   2. When analytics is enabled with the BigQuery backend, the three GCP fields are required
-  //      (`config.go:1124-1134`), in order, with byte-exact messages.
-  // Go merges the template defaults `enabled = true`, `backend = "postgres"` before Validate
-  // (`templates/config.toml:388-392`), so an absent `[analytics]` section is enabled+postgres and
-  // passes (an empty backend never equals `bigquery`, so the GCP block is skipped). viper
-  // AutomaticEnv binds `SUPABASE_ANALYTICS_*`; a matched remote block makes those keys env-immune,
-  // same as every other `LEGACY_ENV_OVERRIDABLE_KEYS` field above.
+  // Computed here (after the auth block, before the single shared call) rather than pure-derived
+  // earlier: `analyticsEnabled` resolves through `resolveBoolOrFail`, which can itself FAIL on a
+  // malformed `SUPABASE_ANALYTICS_ENABLED`/`analytics.enabled` bool — positioning that failure
+  // point ahead of the auth block would report it before an auth-block error even for a config
+  // that's ALSO broken there, reversing Go's real order. Go merges the template defaults
+  // `enabled = true`, `backend = "postgres"` before Validate (`templates/config.toml:388-392`), so
+  // an absent `[analytics]` section is enabled+postgres and passes (an empty backend never equals
+  // `bigquery`, so the GCP block is skipped). viper AutomaticEnv binds `SUPABASE_ANALYTICS_*`; a
+  // matched remote block makes those keys env-immune, same as every other
+  // `LEGACY_ENV_OVERRIDABLE_KEYS` field above.
   const analyticsString = (key: string, envName: string): string => {
     const fromEnv = remoteOverrideKeys.has(`analytics.${key}`) ? undefined : envOverride(envName);
     const raw = fromEnv ?? analyticsRaw?.[key];
     return typeof raw === "string" ? legacyExpandEnv(raw, lookup) : "";
   };
   const analyticsBackend = analyticsString("backend", "SUPABASE_ANALYTICS_BACKEND");
-  if (
-    analyticsBackend.length > 0 &&
-    analyticsBackend !== "postgres" &&
-    analyticsBackend !== "bigquery"
-  ) {
-    // Mirror the captcha enum's mapstructure envelope (`%v` of the allowed `[]LogflareBackend`).
-    return yield* Effect.fail(
-      new LegacyDbConfigLoadError({
-        message:
-          "failed to parse config: decoding failed due to the following error(s):\n\n'analytics.backend' must be one of [postgres bigquery]",
-      }),
-    );
-  }
   const analyticsEnabled = yield* resolveBoolOrFail(
     "analytics.enabled",
     analyticsRaw?.["enabled"],
@@ -1809,32 +1578,128 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       ? undefined
       : envOverride("SUPABASE_ANALYTICS_ENABLED"),
   );
-  if (analyticsEnabled && analyticsBackend === "bigquery") {
-    // Each GCP value is env-expanded (Go's LoadEnvHook), so an unresolved `env(VAR)` stays
-    // non-empty and passes the `len(...) == 0` check, exactly like Go.
-    if (analyticsString("gcp_project_id", "SUPABASE_ANALYTICS_GCP_PROJECT_ID").length === 0) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message: "Missing required field in config: analytics.gcp_project_id",
-        }),
+  // Each GCP value is env-expanded (Go's LoadEnvHook), so an unresolved `env(VAR)` stays
+  // non-empty and passes the shared validator's `length === 0` check, exactly like Go.
+  const gcpProjectId = analyticsString("gcp_project_id", "SUPABASE_ANALYTICS_GCP_PROJECT_ID");
+  const gcpProjectNumber = analyticsString(
+    "gcp_project_number",
+    "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
+  );
+  const gcpJwtPath = analyticsString("gcp_jwt_path", "SUPABASE_ANALYTICS_GCP_JWT_PATH");
+
+  // Every PURE Config.Validate check this module/legacy-config-validate.ts jointly own (db.port
+  // is checked earlier, above, and stays there — see the comment at that check) is deferred to
+  // this single call, in Go's exact relative order. D's sms/external checks (D-only, never part
+  // of the shared validator) run AFTER this call succeeds, still gated on `authEnabled` — see
+  // `legacy-config-validate.ts`'s module header for the accepted ordering tradeoff this
+  // introduces against third_party.
+  const dbInput: LegacyDbInput = { port, majorVersion };
+  const analyticsInput: LegacyAnalyticsInput = {
+    enabled: analyticsEnabled,
+    backend: analyticsBackend.length > 0 ? analyticsBackend : undefined,
+    gcpProjectId,
+    gcpProjectNumber,
+    gcpJwtPath,
+  };
+  const experimentalInput: LegacyExperimentalInput = {
+    pgdeltaFormatOptions: formatOptionsExpanded,
+  };
+  const validationInput: LegacyConfigValidationInput = {
+    db: dbInput,
+    storageBucketNames: bucketsRaw !== undefined ? Object.keys(bucketsRaw) : [],
+    functionSlugs: functionsRaw !== undefined ? Object.keys(functionsRaw) : [],
+    auth: authInput,
+    edgeRuntimeDenoVersion: denoVersion,
+    analytics: analyticsInput,
+    experimental: experimentalInput,
+  };
+  yield* Effect.try({
+    try: () => legacyValidateResolvedConfig(validationInput),
+    catch: (cause) =>
+      new LegacyDbConfigLoadError({
+        message: cause instanceof Error ? cause.message : String(cause),
+      }),
+  });
+
+  if (authEnabled) {
+    // B4: sms — D-only (`config.go:1145-1147`/`1348-1417`, never part of the shared validator,
+    // see `legacy-config-validate.ts`'s module header). Only the FIRST enabled provider is
+    // validated (Go's switch).
+    const sms = asRecord(authRawResolved["sms"]);
+    if (sms !== undefined) {
+      const twilio = asRecord(sms["twilio"]);
+      const twilioVerify = asRecord(sms["twilio_verify"]);
+      const messagebird = asRecord(sms["messagebird"]);
+      const textlocal = asRecord(sms["textlocal"]);
+      const vonage = asRecord(sms["vonage"]);
+      const twilioEnabled = yield* gate(twilio, "enabled", "auth.sms.twilio.enabled");
+      const twilioVerifyEnabled = yield* gate(
+        twilioVerify,
+        "enabled",
+        "auth.sms.twilio_verify.enabled",
       );
+      const messagebirdEnabled = yield* gate(
+        messagebird,
+        "enabled",
+        "auth.sms.messagebird.enabled",
+      );
+      const textlocalEnabled = yield* gate(textlocal, "enabled", "auth.sms.textlocal.enabled");
+      const vonageEnabled = yield* gate(vonage, "enabled", "auth.sms.vonage.enabled");
+      if (twilioEnabled) {
+        if (str(twilio, "account_sid").length === 0)
+          return yield* fail("Missing required field in config: auth.sms.twilio.account_sid");
+        if (str(twilio, "message_service_sid").length === 0)
+          return yield* fail(
+            "Missing required field in config: auth.sms.twilio.message_service_sid",
+          );
+        if (str(twilio, "auth_token").length === 0)
+          return yield* fail("Missing required field in config: auth.sms.twilio.auth_token");
+      } else if (twilioVerifyEnabled) {
+        if (str(twilioVerify, "account_sid").length === 0)
+          return yield* fail(
+            "Missing required field in config: auth.sms.twilio_verify.account_sid",
+          );
+        if (str(twilioVerify, "message_service_sid").length === 0)
+          return yield* fail(
+            "Missing required field in config: auth.sms.twilio_verify.message_service_sid",
+          );
+        if (str(twilioVerify, "auth_token").length === 0)
+          return yield* fail("Missing required field in config: auth.sms.twilio_verify.auth_token");
+      } else if (messagebirdEnabled) {
+        if (str(messagebird, "originator").length === 0)
+          return yield* fail("Missing required field in config: auth.sms.messagebird.originator");
+        if (str(messagebird, "access_key").length === 0)
+          return yield* fail("Missing required field in config: auth.sms.messagebird.access_key");
+      } else if (textlocalEnabled) {
+        if (str(textlocal, "sender").length === 0)
+          return yield* fail("Missing required field in config: auth.sms.textlocal.sender");
+        if (str(textlocal, "api_key").length === 0)
+          return yield* fail("Missing required field in config: auth.sms.textlocal.api_key");
+      } else if (vonageEnabled) {
+        if (str(vonage, "from").length === 0)
+          return yield* fail("Missing required field in config: auth.sms.vonage.from");
+        if (str(vonage, "api_key").length === 0)
+          return yield* fail("Missing required field in config: auth.sms.vonage.api_key");
+        if (str(vonage, "api_secret").length === 0)
+          return yield* fail("Missing required field in config: auth.sms.vonage.api_secret");
+      }
     }
-    if (
-      analyticsString("gcp_project_number", "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER").length === 0
-    ) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message: "Missing required field in config: analytics.gcp_project_number",
-        }),
-      );
-    }
-    if (analyticsString("gcp_jwt_path", "SUPABASE_ANALYTICS_GCP_JWT_PATH").length === 0) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message:
-            "Path to GCP Service Account Key must be provided in config, relative to config.toml: analytics.gcp_jwt_path",
-        }),
-      );
+
+    // B5: external providers — D-only (`config.go:1148-1150`/`1368-1398`, never part of the
+    // shared validator). linkedin/slack are deprecated and deleted before validation, so they are
+    // never validated here.
+    const external = asRecord(authRawResolved["external"]);
+    if (external !== undefined) {
+      for (const name of Object.keys(external)) {
+        if (name === "linkedin" || name === "slack") continue;
+        const provider = asRecord(external[name]);
+        if (provider === undefined) continue;
+        if (!(yield* gate(provider, "enabled", `auth.external.${name}.enabled`))) continue;
+        if (str(provider, "client_id").length === 0)
+          return yield* fail(`Missing required field in config: auth.external.${name}.client_id`);
+        if (name !== "apple" && name !== "google" && str(provider, "secret").length === 0)
+          return yield* fail(`Missing required field in config: auth.external.${name}.secret`);
+      }
     }
   }
 

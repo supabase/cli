@@ -31,10 +31,41 @@ const findConfigInRoot = Effect.fnUntraced(function* (root: string) {
   } satisfies ProjectPaths;
 });
 
-export const findProjectPaths = Effect.fnUntraced(function* (cwd: string) {
-  const path = yield* Path.Path;
-  let current = path.resolve(cwd);
+export interface FindProjectPathsOptions {
+  /**
+   * When `false`, only `cwd` itself is checked for `supabase/config.{json,toml}` —
+   * no ancestor climb. Go's own resolution never searches twice: an explicit
+   * `--workdir`/`SUPABASE_WORKDIR` is used exactly as given (`ChangeWorkDir`,
+   * `apps/cli-go/internal/utils/misc.go:231-247`), and once `os.Chdir`'d there,
+   * `config.toml` is read as a plain relative path with no further ancestor
+   * search (`NewPathBuilder`, `pkg/config/utils.go:43-48`). Ancestor climbing in
+   * Go only ever happens once, as the *default* when workdir is unset
+   * (`getProjectRoot`, `internal/utils/misc.go:209-224`).
+   *
+   * Callers that already hold an authoritative, Go-equivalent project root
+   * (e.g. the legacy `stop`/`status` ports' `cliConfig.workdir`, which mirrors
+   * `ChangeWorkDir`'s own explicit-vs-default resolution) should pass `false`
+   * here to avoid a second, un-Go-like ancestor search that could otherwise
+   * pick up an unrelated ancestor project's config.
+   *
+   * Defaults to `true` (the original ancestor-search behavior), so existing
+   * callers are unaffected.
+   */
+  readonly search?: boolean;
+}
 
+export const findProjectPaths = Effect.fnUntraced(function* (
+  cwd: string,
+  options?: FindProjectPathsOptions,
+) {
+  const path = yield* Path.Path;
+  const start = path.resolve(cwd);
+
+  if (options?.search === false) {
+    return yield* findConfigInRoot(start);
+  }
+
+  let current = start;
   while (true) {
     const match = yield* findConfigInRoot(current);
 

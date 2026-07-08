@@ -152,28 +152,57 @@ export const legacyResolveYesWithProjectEnv = (projectEnv: Record<string, string
   });
 
 /**
+ * True when the raw argv contains an explicit `--experimental=<false>` (pflag's `ParseBool`
+ * false set). Mirrors {@link legacyYesFlagExplicitlyFalse}: `--experimental` is bound to
+ * viper the same way `--yes` is (`apps/cli-go/cmd/root.go:318-334`), and viper's bound-pflag
+ * lookup returns the flag value whenever `Changed` is true — BEFORE falling back to
+ * `AutomaticEnv` — regardless of whether that value is `true` or `false`
+ * (`viper@v1.21.0/viper.go:1176-1178`). A plain boolean can't distinguish an explicit
+ * `--experimental=false` from the omitted default, so scan the raw argv. Only the `=false`
+ * form needs special handling: `--experimental` / `--experimental=true` are already `true`,
+ * so `flag || env` matches Go, and an omitted flag correctly falls through to the env value.
+ */
+const legacyExperimentalFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean =>
+  args.some(
+    (arg) =>
+      arg.startsWith("--experimental=") &&
+      PFLAG_FALSE_VALUES.has(arg.slice("--experimental=".length)),
+  );
+
+/**
  * `--experimental` resolved with Go's viper `AutomaticEnv` fallback: the gate in
  * `rootCmd.PersistentPreRunE` reads `viper.GetBool("EXPERIMENTAL")`
  * (`apps/cli-go/cmd/root.go:94`), so `SUPABASE_EXPERIMENTAL` enables experimental
- * commands just like the flag. A passed `--experimental` wins over the env.
+ * commands just like the flag. An explicit `--experimental` — including
+ * `--experimental=false` — wins over the env, matching viper's bound-pflag precedence.
  */
 export const legacyResolveExperimental = Effect.gen(function* () {
   const flag = yield* LegacyExperimentalFlag;
+  const cliArgs = yield* CliArgs;
+  if (legacyExperimentalFlagExplicitlyFalse(cliArgs.args)) {
+    return false;
+  }
   return flag || legacyViperEnvBool("SUPABASE_EXPERIMENTAL");
 });
 
 /**
  * `--experimental` resolved with the project `.env` consulted too, for commands that load the
- * nested project env before branching on the experimental gate (`db reset`). Go's
- * `ParseDatabaseConfig` runs `loadNestedEnv` — which `os.Setenv`s each project-.env key —
- * before `reset.Run` reads `viper.GetBool("EXPERIMENTAL")`, so a `SUPABASE_EXPERIMENTAL` set
- * only in `supabase/.env` enables the experimental path. The shell env still wins over the
- * file value; a passed `--experimental` wins over both. `projectEnv` is the loaded map from
- * `legacyLoadProjectEnv`.
+ * nested project env before branching on the experimental gate (`db reset`,
+ * `db schema declarative generate`/`sync`). Go's `ParseDatabaseConfig` /
+ * `dbDeclarativeCmd.PersistentPreRunE` run `loadNestedEnv` — which `os.Setenv`s each
+ * project-.env key — before reading `viper.GetBool("EXPERIMENTAL")`, so a
+ * `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` enables the experimental path. The
+ * shell env still wins over the file value; an explicit `--experimental` — including
+ * `--experimental=false` — wins over both, matching viper's bound-pflag precedence.
+ * `projectEnv` is the loaded map from `legacyLoadProjectEnv`.
  */
 export const legacyResolveExperimentalWithProjectEnv = (projectEnv: Record<string, string>) =>
   Effect.gen(function* () {
     const flag = yield* LegacyExperimentalFlag;
+    const cliArgs = yield* CliArgs;
+    if (legacyExperimentalFlagExplicitlyFalse(cliArgs.args)) {
+      return false;
+    }
     return (
       flag ||
       legacyViperEnvBool("SUPABASE_EXPERIMENTAL") ||

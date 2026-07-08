@@ -33,5 +33,6 @@ export const legacyFunctionsServe = Effect.fn("legacy.functions.serve")(function
     debug,
     networkId,
     projectIdOverride: cliConfig.projectId,
+    goViperCompat: true,
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

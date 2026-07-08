@@ -248,9 +248,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     );
   }
 
-  const loadConfig = () => loadProjectConfig(cliConfig.workdir);
+  const loadConfig = () => loadProjectConfig(cliConfig.workdir, { goViperCompat: true });
   const loadConfigForRef = (projectRef: string) =>
-    loadProjectConfig(cliConfig.workdir, { projectRef });
+    loadProjectConfig(cliConfig.workdir, { projectRef, goViperCompat: true });
 
   const schemasFromConfig = (apiSchemas: ReadonlyArray<string> | undefined) =>
     defaultSchemas(apiSchemas);

@@ -89,7 +89,9 @@ const listExistingFunctionSlugs = Effect.fnUntraced(function* (workdir: string) 
 });
 
 const resolveTemplateInputs = Effect.fnUntraced(function* (workdir: string, slug: string) {
-  const loaded = yield* loadProjectConfig(workdir).pipe(Effect.orElseSucceed(() => null));
+  const loaded = yield* loadProjectConfig(workdir, { goViperCompat: true }).pipe(
+    Effect.orElseSucceed(() => null),
+  );
   const port = loaded?.config.api.port ?? DEFAULT_LOCAL_API_PORT;
   const publishableKey = loaded?.config.auth.publishable_key ?? defaultPublishableKey;
   return {

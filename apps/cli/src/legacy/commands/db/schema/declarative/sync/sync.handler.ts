@@ -2,9 +2,9 @@ import { Cause, Clock, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import {
   LegacyDnsResolverFlag,
-  LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
   LegacyYesFlag,
+  legacyResolveExperimentalWithProjectEnv,
 } from "../../../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
@@ -13,6 +13,7 @@ import { legacyBold, legacyRed, legacyYellow } from "../../../../../shared/legac
 import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
 import { legacyGetHostname } from "../../../../../shared/legacy-hostname.ts";
 import {
+  legacyLoadProjectEnv,
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
@@ -72,7 +73,14 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     const path = yield* Path.Path;
     const cliConfig = yield* LegacyCliConfig;
     const telemetryState = yield* LegacyTelemetryState;
-    const experimental = yield* LegacyExperimentalFlag;
+    // Go's `dbDeclarativeCmd.PersistentPreRunE` calls `flags.LoadConfig` — which runs
+    // `loadNestedEnv` and `os.Setenv`s each project-.env key — BEFORE reading
+    // `viper.GetBool("EXPERIMENTAL")` for the gate below (`apps/cli-go/cmd/
+    // db_schema_declarative.go:73-78`, `pkg/config/config.go:789`). Load the project env
+    // first and resolve against it, as `db reset` does for its own experimental gate, so a
+    // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` opens the gate too.
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
     const yes = yield* LegacyYesFlag;
     const networkId = yield* LegacyNetworkIdFlag;
     const dnsResolver = yield* LegacyDnsResolverFlag;
@@ -89,10 +97,21 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     let linkedProjectRef: string | undefined;
 
     yield* Effect.gen(function* () {
+      const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      // Gate before the mutex check below — order matters; see
+      // legacyRequirePgDelta's doc comment for why.
+      yield* legacyRequirePgDelta({
+        experimental,
+        pgDeltaEnabled: toml.pgDelta.enabled,
+        configPath: path.join("supabase", "config.toml"),
+      });
+
       // cobra `MarkFlagsMutuallyExclusive("apply", "no-apply")`
-      // (`apps/cli-go/cmd/db_schema_declarative.go:490`) runs before PreRunE/RunE,
-      // so reject the conflict before reading config or the pg-delta gate, rather
-      // than letting `--no-apply` silently win in the apply-decision helper.
+      // (`apps/cli-go/cmd/db_schema_declarative.go:561`) runs via
+      // `ValidateFlagGroups()`, which cobra invokes AFTER `PersistentPreRunE` (the
+      // gate above) — see legacyRequirePgDelta's doc comment for the full ordering.
+      // Reject the conflict here rather than letting `--no-apply` silently win in
+      // the apply-decision helper.
       const exclusive: Array<string> = [];
       if (Option.isSome(flags.apply)) exclusive.push("apply");
       if (Option.isSome(flags.noApply)) exclusive.push("no-apply");
@@ -104,12 +123,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         );
       }
 
-      const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-      yield* legacyRequirePgDelta({
-        experimental,
-        pgDeltaEnabled: toml.pgDelta.enabled,
-        configPath: path.join("supabase", "config.toml"),
-      });
       // `path.resolve` (not `path.join`) so an absolute `declarative_schema_path` is
       // used as-is, matching Go's `config.resolve` (which only prefixes the workdir onto
       // a relative path). `path.join(workdir, abs)` would mangle the absolute path.

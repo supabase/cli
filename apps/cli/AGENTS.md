@@ -237,6 +237,10 @@ Concrete examples worth watching for as more commands land:
 
 This rule is consistent with the repo-wide **Refactoring Policy** ("delete obsolete helpers, shims, and parallel code paths as part of the refactor") — it just makes the policy concrete for the legacy-port workflow.
 
+### `Config.Validate` parity has one home
+
+Go's `Config.Validate` (`apps/cli-go/pkg/config/config.go:989-1190`) is ported exactly once: `src/legacy/shared/legacy-config-validate.ts` (`legacyValidateResolvedConfig`). Both the db/migration loader (`legacy-db-config.toml-read.ts`) and the status/stop resolver (`legacy-local-config-values.ts`) build a `LegacyConfigValidationInput` from their own pipelines and call it — do not add per-command reimplementations of these checks. When a Go validation branch or message changes, change it there. `legacy-config-validate.parity.unit.test.ts` feeds the same broken configs through both real pipelines and asserts identical error strings; extend it when adding a branch both callers share.
+
 ---
 
 ## Legacy Port: Go CLI Output Parity
@@ -403,6 +407,7 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 - `*.unit.test.ts` belongs to the `unit` Vitest project and is the default for unit-style and other fast in-process tests.
 - `*.integration.test.ts` belongs to the `integration` project and is for in-process integration tests that exercise real handler or service behavior with layered dependency replacement.
 - `*.e2e.test.ts` belongs to the `e2e` Vitest project and is for black-box CLI subprocess tests.
+- `*.live.test.ts` belongs to the `live` Vitest project and is for black-box CLI subprocess tests that run against a **real, running Supabase platform or local Docker stack** — see "Live tests" below.
 
 ### Testing policy
 
@@ -416,6 +421,21 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 - Prefer assertions on outputs and accumulated state over spy-heavy interaction tests.
 - Keep `*.e2e.test.ts` focused on golden paths, CLI surface behavior, and subprocess correctness, not branch-by-branch coverage.
 - **Forbidden pattern (do not add):** spawning the CLI to assert that `--help` renders a flag. Help text is dynamic over flag wiring and is exercised by the integration test's flag parser. The two backups e2e files removed alongside this guidance update are the canonical example of what not to write.
+
+### Live tests (`*.live.test.ts`)
+
+Live tests are black-box CLI subprocess tests — like `*.e2e.test.ts`, but run against a **real backend** instead of local fakes/mocks: either the real Management API (a full [supabox](https://github.com/supabase/supabox) platform stack) or a real local Docker dev stack (`supabase start`'s actual containers). They are the highest-fidelity, most expensive tier — reserved for the small set of behaviors that only a genuinely running backend can prove (auth round-trips, real Docker label filtering, real container lifecycle), not for anything an integration test can already cover with mocks.
+
+- **Where they run:** authored in this repo, but executed by the [`supabase/cli-e2e-ci`](https://github.com/supabase/cli-e2e-ci) harness, which builds this CLI, brings up a full supabox stack (and has a real Docker daemon, since that's how supabox itself runs), and invokes the `live` Vitest project (`nx run-many -t test:live`). They never run as part of the default unit/integration/e2e loop, and locally they no-op unless the live environment is configured (see below) — there is no need to stand up supabox yourself to develop other code.
+- **Add one whenever you add or change a command whose correctness genuinely depends on a real backend** — a new Management API command, or a change to `start`/`stop`/`status`'s real Docker interaction. Colocate it with the command, same as `*.e2e.test.ts`: `src/legacy/commands/<command>/[<subcommand>/]<subcommand>.live.test.ts`.
+- **Gating:** every live suite must be wrapped in one of `tests/helpers/live.ts`'s `describe.skipIf` gates so the file is inert (skipped, not failed) outside the cli-e2e-ci runner:
+  - `describeLive` — runs whenever `SUPABASE_ACCESS_TOKEN` is set (the live env is configured at all). Reuse this even for commands that don't call the Management API themselves (e.g. `stop`/`status`) — it doubles as the "we're in the full cli-e2e-ci runner, which also has a real Docker daemon" signal, and there is no dedicated Docker-availability gate today.
+  - `describeLiveProject` — additionally requires a provisioned project (`SUPABASE_LIVE_PROJECT_REF`); use for project-scoped Management API commands (branches, functions, project-scoped db).
+  - `describeLiveDataPlane` — additionally requires the project's own Postgres instance to be `ACTIVE_HEALTHY`; use for commands that talk to the project's data plane (migration, db, storage).
+- **Invocation:** use `runSupabaseLive(args, options?)` (wraps `runSupabase` with the `legacy` entrypoint and the live profile/timeout defaults) rather than calling `runSupabase` directly, so every live test picks up the same environment plumbing.
+- **Local-dev-stack live tests** (`start`/`stop`/`status`, and anything else that manages real Docker containers rather than calling the Management API) follow the same file/gating convention but don't need `SUPABASE_PROFILE`/project-ref machinery. Pattern: `mkdtemp` a project dir, `runSupabaseLive(["init"], { cwd })` to generate a real Go-schema `config.toml`, `runSupabaseLive(["start", ...])` to bring up (a lightweight subset of) the real stack, exercise the command under test, then clean up in `afterEach` (best-effort `stop --no-backup` + `rm` the temp dir) so a failed assertion never leaks containers onto the CI runner. See `commands/stop/stop.live.test.ts` and `commands/status/status.live.test.ts` for the canonical example.
+- **Keep the suite small and golden-path only** — same philosophy as `*.e2e.test.ts`, but even more so given the cost of a real backend. One or two scenarios per command is normal; branch-by-branch coverage belongs in `*.integration.test.ts`.
+- Timeouts are generous by default (`testTimeout`/`hookTimeout: 300_000` for the whole `live` project) because real platform/Docker operations are slow — pass an explicit per-`test()` timeout when a scenario needs less (or, for a real local-stack `start`, close to the full budget).
 
 ---
 

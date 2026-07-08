@@ -725,6 +725,39 @@ project_id = "dupe-project-id"
   );
 
   it.live(
+    "tolerates a [remotes.*] block with a malformed project_id and still sets CLI-arg secrets (Go parity)",
+    () => {
+      // Go's `flags.LoadConfig` swallows *any* `Load()` error non-fatally
+      // (`internal/secrets/set/set.go:22-24`), including the invalid-format
+      // error `Config.Validate` raises for every `[remotes.*].project_id`
+      // that doesn't match Go's ref pattern (`pkg/config/config.go:996-1001`),
+      // which runs inside the same `Config.Load()` call (`config.go:882`) as
+      // the duplicate check above. There is no parsed document to recover a
+      // subtree from, so config-sourced secrets are dropped entirely — only
+      // CLI-arg secrets survive.
+      writeConfig(
+        `[edge_runtime.secrets]
+FROM_CONFIG = "config-value"
+
+[remotes.a]
+project_id = "not-a-valid-ref"
+`,
+      );
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* legacySecretsSet({
+          projectRef: Option.none(),
+          envFile: Option.none(),
+          secrets: ["FOO=bar"],
+        });
+        expect(parsePostBody(api.requests[0]?.body)).toEqual([{ name: "FOO", value: "bar" }]);
+        expect(debugLogger.messages).toHaveLength(1);
+        expect(debugLogger.messages[0]).toContain("Invalid config for remotes.a.project_id");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "does not echo a literal secret value from config.toml into the debug log on a syntax error",
     () => {
       // `smol-toml`'s `TomlError` embeds a source codeblock (the offending line ±1)

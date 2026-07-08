@@ -25,16 +25,19 @@ const defaultNotificationEnabled = false;
 const defaultSubject = "";
 const defaultContentPath = "";
 
-const templateNamePattern = new RegExp(
-  "^(invite|confirmation|recovery|magic_link|email_change|reauthentication)$",
-);
-
-const notificationNamePattern = new RegExp(
-  "^(password_changed|email_changed|phone_changed|identity_linked|identity_unlinked|mfa_factor_enrolled|mfa_factor_unenrolled)$",
-);
-
-const templateName = Schema.String.check(Schema.isPattern(templateNamePattern));
-const notificationName = Schema.String.check(Schema.isPattern(notificationNamePattern));
+/**
+ * Go's `Auth.Email.Template`/`Notification` are genuine `map[string]emailTemplate`/
+ * `map[string]notification` (`apps/cli-go/pkg/config/auth.go:247-248`) — open maps with no key
+ * restriction at all; `(e *email) validate(fsys)` (`pkg/config/config.go:1293-1313`) iterates
+ * every entry regardless of name. The known template/notification names below are the ones the
+ * Studio/docs UI and `config push`'s Management API sync recognise, but an unrecognized key like
+ * `[auth.email.template.custom]` is still a legitimate config shape Go accepts — it's simply
+ * never synced anywhere, same as an unmodeled `auth.external` provider. Record keys therefore
+ * accept any string, matching Go; only decode failures on a KNOWN/matching name would be a
+ * Go-parity bug.
+ */
+const templateName = Schema.String;
+const notificationName = Schema.String;
 
 function requiredWhenEnabled<
   T extends Record<string, string | number | boolean | undefined> & { enabled: boolean },

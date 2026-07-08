@@ -162,7 +162,7 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
 
 const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
   const path = yield* Path.Path;
-  const loaded = yield* loadProjectConfig(cwd).pipe(
+  const loaded = yield* loadProjectConfig(cwd, { goViperCompat: true }).pipe(
     Effect.catchTag("ProjectConfigParseError", (cause) =>
       Effect.fail(
         new LegacyGenSigningKeyConfigParseError({

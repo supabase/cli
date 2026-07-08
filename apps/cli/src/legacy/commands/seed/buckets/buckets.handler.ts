@@ -45,6 +45,7 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
       ? yield* projectRefResolver.loadProjectRef(Option.none())
       : "";
     linkedRef = projectRef;
+
     yield* legacySeedBucketsRun({ projectRef, emitSummary: true });
   }).pipe(
     // Go's root `Execute` caches the linked project + fires org/project group

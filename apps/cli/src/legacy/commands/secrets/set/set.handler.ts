@@ -183,7 +183,13 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     // Without this, a schema-decode error on `--project-ref <remote-ref>`
     // would recover the *base* `[edge_runtime.secrets]` instead of the
     // explicitly selected remote's override.
-    const loadedConfig = yield* loadProjectConfig(runtimeInfo.cwd, { projectRef: ref }).pipe(
+    // `goViperCompat: true` opts into `applyRemoteOverride`'s duplicate-
+    // `project_id`/format checks (`packages/config/src/io.ts`) — required for
+    // the `DuplicateRemoteProjectIdError` catch below to ever fire.
+    const loadedConfig = yield* loadProjectConfig(runtimeInfo.cwd, {
+      projectRef: ref,
+      goViperCompat: true,
+    }).pipe(
       Effect.flatMap((loaded) => {
         if (loaded === null) {
           return Effect.succeed(null);
@@ -265,6 +271,17 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
       Effect.catchTag("DuplicateRemoteProjectIdError", (cause) =>
         debugLogger.debug(cause.message).pipe(Effect.as(null)),
       ),
+      // A `[remotes.*]` block's `project_id` fails Go's ref-pattern check —
+      // raised from `Config.Validate` (`pkg/config/config.go:996-1001`), which
+      // runs inside the same `Config.Load()` call as the duplicate check above
+      // (`config.go:882`). Go's `flags.LoadConfig` swallows this the same
+      // non-fatal way (`internal/secrets/set/set.go:22-24`), so a malformed
+      // remote block must not abort an otherwise-valid `secrets set`.
+      // `cause.message` already matches Go's string verbatim (see
+      // `InvalidRemoteProjectIdError`'s field doc).
+      Effect.catchTag("InvalidRemoteProjectIdError", (cause) =>
+        debugLogger.debug(cause.message).pipe(Effect.as(null)),
+      ),
     );
     if (loadedConfig !== null) {
       const projectEnv = yield* loadProjectEnvironment({
@@ -276,6 +293,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
           loadedConfig.edge_runtime,
           projectEnv,
           "edge_runtime",
+          { goViperCompat: true },
         );
         for (const [name, value] of Object.entries(resolved.secrets ?? {})) {
           // Go's `DecryptSecretHookFunc` (`pkg/config/secret.go:98`) never
