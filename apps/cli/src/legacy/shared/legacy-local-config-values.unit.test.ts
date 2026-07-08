@@ -1180,10 +1180,67 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
-  // auth.mfa.* (enroll_enabled requires verify_enabled) moved entirely to
-  // `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig` calls) — L
-  // derives mfa directly off `config.auth.*` with no env-override mechanics of its own for this
-  // check.
+  describe("auth.mfa env overrides", () => {
+    // `auth.mfa.<factor>.*` is Viper-bound unconditionally (value-typed struct fields, never
+    // `nil`) — unlike hooks/smtp above, no raw-document presence gate is needed; see the block
+    // comment above the `mfa` array in legacy-local-config-values.ts.
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"];
+      delete process.env["SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED"];
+    });
+
+    it("rejects an env-enabled enroll factor left at its TOML-decoded verify default", () => {
+      process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"] = "true";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid MFA config: auth.mfa.totp.enroll_enabled requires verify_enabled",
+      );
+    });
+
+    it("accepts an env-enabled enroll factor when verify is also env-enabled", () => {
+      process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"] = "true";
+      process.env["SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED"] = "true";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("rejects a malformed SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED override", () => {
+      process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"] = "not-a-bool";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        LegacyInvalidBoolEnvOverrideError,
+      );
+    });
+  });
+
+  describe("auth.third_party env overrides", () => {
+    // Same value-typed-struct reasoning as auth.mfa above — including `workos`, whose default
+    // template omits `[auth.third_party.workos]` entirely yet is still unconditionally overridable.
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"];
+      delete process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID"];
+    });
+
+    it("rejects a third-party provider enabled only via env with no required field configured", () => {
+      process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"] = "true";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
+      );
+    });
+
+    it("accepts an env-provided project_id overriding a TOML-enabled firebase provider", () => {
+      process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID"] = "my-project";
+      const config = baseConfig({ auth: { third_party: { firebase: { enabled: true } } } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("does not enable a third-party provider purely from a required-field env override", () => {
+      process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID"] = "my-project";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
 
   describe("auth.email.template/notification (content_path validation)", () => {
     // Go's `(e *email) validate(fsys)` (`pkg/config/config.go:1293-1313`),

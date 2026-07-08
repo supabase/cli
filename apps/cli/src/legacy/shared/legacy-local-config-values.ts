@@ -1170,21 +1170,59 @@ export function legacyResolveLocalConfigValues(
       }
     }
 
+    // Go's `Auth.MFA` factor fields (`TOTP`/`Phone`/`WebAuthn`) are value-typed structs
+    // (`pkg/config/auth.go:317-320`), never `nil` — unlike `Auth.Hook`'s pointer-typed fields
+    // above, `ExperimentalBindStruct` always recurses into them (vendored Viper's
+    // `decodeStructKeys`/`flattenAndMergeMap`) regardless of whether `[auth.mfa.<factor>]` is
+    // present in config.toml (the default template even leaves `[auth.mfa.web_authn]` commented
+    // out and it's still overridable), so `SUPABASE_AUTH_MFA_<FACTOR>_{ENROLL,VERIFY}_ENABLED`
+    // overrides always apply before `Auth.MFA.validate()` runs (`config.go:1523-1534`) — no
+    // raw-document presence gate needed here, unlike hooks/smtp above.
     const mfa: ReadonlyArray<LegacyMfaFactorInput> = [
       {
         label: "totp",
-        enrollEnabled: config.auth.mfa.totp.enroll_enabled,
-        verifyEnabled: config.auth.mfa.totp.verify_enabled,
+        enrollEnabled: legacyEnvOverrideBool(
+          "SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED",
+          config.auth.mfa.totp.enroll_enabled,
+          "auth.mfa.totp.enroll_enabled",
+          projectEnvValues,
+        ),
+        verifyEnabled: legacyEnvOverrideBool(
+          "SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED",
+          config.auth.mfa.totp.verify_enabled,
+          "auth.mfa.totp.verify_enabled",
+          projectEnvValues,
+        ),
       },
       {
         label: "phone",
-        enrollEnabled: config.auth.mfa.phone.enroll_enabled,
-        verifyEnabled: config.auth.mfa.phone.verify_enabled,
+        enrollEnabled: legacyEnvOverrideBool(
+          "SUPABASE_AUTH_MFA_PHONE_ENROLL_ENABLED",
+          config.auth.mfa.phone.enroll_enabled,
+          "auth.mfa.phone.enroll_enabled",
+          projectEnvValues,
+        ),
+        verifyEnabled: legacyEnvOverrideBool(
+          "SUPABASE_AUTH_MFA_PHONE_VERIFY_ENABLED",
+          config.auth.mfa.phone.verify_enabled,
+          "auth.mfa.phone.verify_enabled",
+          projectEnvValues,
+        ),
       },
       {
         label: "web_authn",
-        enrollEnabled: config.auth.mfa.web_authn.enroll_enabled,
-        verifyEnabled: config.auth.mfa.web_authn.verify_enabled,
+        enrollEnabled: legacyEnvOverrideBool(
+          "SUPABASE_AUTH_MFA_WEB_AUTHN_ENROLL_ENABLED",
+          config.auth.mfa.web_authn.enroll_enabled,
+          "auth.mfa.web_authn.enroll_enabled",
+          projectEnvValues,
+        ),
+        verifyEnabled: legacyEnvOverrideBool(
+          "SUPABASE_AUTH_MFA_WEB_AUTHN_VERIFY_ENABLED",
+          config.auth.mfa.web_authn.verify_enabled,
+          "auth.mfa.web_authn.verify_enabled",
+          projectEnvValues,
+        ),
       },
     ];
 
@@ -1247,37 +1285,105 @@ export function legacyResolveLocalConfigValues(
         : undefined;
 
     // Go's `(tpa *thirdParty) validate()` fixed provider order (`pkg/config/config.go:1635-1683`)
-    // — only enabled providers are forwarded, in that order.
+    // — only enabled providers are forwarded, in that order. Like `Auth.MFA` above, each provider
+    // struct (`tpaFirebase`/`tpaAuth0`/`tpaCognito`/`tpaClerk`/`tpaWorkOs`, `auth.go:191-198`) is
+    // value-typed, so `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_*` overrides always apply — including
+    // `workos`, whose default template omits `[auth.third_party.workos]` entirely — before
+    // `Auth.ThirdParty.validate()` runs; no raw-document presence gate needed.
     const thirdParty: Array<LegacyThirdPartyInput> = [];
-    if (config.auth.third_party.firebase.enabled) {
+    if (
+      legacyEnvOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+        config.auth.third_party.firebase.enabled,
+        "auth.third_party.firebase.enabled",
+        projectEnvValues,
+      )
+    ) {
       thirdParty.push({
         provider: "firebase",
-        requiredField: config.auth.third_party.firebase.project_id ?? "",
+        requiredField:
+          envOverride(
+            "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
+            config.auth.third_party.firebase.project_id,
+            projectEnvValues,
+          ) ?? "",
       });
     }
-    if (config.auth.third_party.auth0.enabled) {
+    if (
+      legacyEnvOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
+        config.auth.third_party.auth0.enabled,
+        "auth.third_party.auth0.enabled",
+        projectEnvValues,
+      )
+    ) {
       thirdParty.push({
         provider: "auth0",
-        requiredField: config.auth.third_party.auth0.tenant ?? "",
+        requiredField:
+          envOverride(
+            "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
+            config.auth.third_party.auth0.tenant,
+            projectEnvValues,
+          ) ?? "",
       });
     }
-    if (config.auth.third_party.aws_cognito.enabled) {
+    if (
+      legacyEnvOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
+        config.auth.third_party.aws_cognito.enabled,
+        "auth.third_party.aws_cognito.enabled",
+        projectEnvValues,
+      )
+    ) {
       thirdParty.push({
         provider: "cognito",
-        requiredField: config.auth.third_party.aws_cognito.user_pool_id ?? "",
-        cognitoUserPoolRegion: config.auth.third_party.aws_cognito.user_pool_region,
+        requiredField:
+          envOverride(
+            "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
+            config.auth.third_party.aws_cognito.user_pool_id,
+            projectEnvValues,
+          ) ?? "",
+        cognitoUserPoolRegion: envOverride(
+          "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
+          config.auth.third_party.aws_cognito.user_pool_region,
+          projectEnvValues,
+        ),
       });
     }
-    if (config.auth.third_party.clerk.enabled) {
+    if (
+      legacyEnvOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
+        config.auth.third_party.clerk.enabled,
+        "auth.third_party.clerk.enabled",
+        projectEnvValues,
+      )
+    ) {
       thirdParty.push({
         provider: "clerk",
-        requiredField: config.auth.third_party.clerk.domain ?? "",
+        requiredField:
+          envOverride(
+            "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
+            config.auth.third_party.clerk.domain,
+            projectEnvValues,
+          ) ?? "",
       });
     }
-    if (config.auth.third_party.workos.enabled) {
+    if (
+      legacyEnvOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
+        config.auth.third_party.workos.enabled,
+        "auth.third_party.workos.enabled",
+        projectEnvValues,
+      )
+    ) {
       thirdParty.push({
         provider: "workos",
-        requiredField: config.auth.third_party.workos.issuer_url ?? "",
+        requiredField:
+          envOverride(
+            "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+            config.auth.third_party.workos.issuer_url,
+            projectEnvValues,
+          ) ?? "",
       });
     }
 
