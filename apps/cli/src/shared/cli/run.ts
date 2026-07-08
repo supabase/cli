@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { ProjectConfigStore } from "@supabase/config";
 import { unixHttpClientLayer } from "@supabase/stack";
-import { Cause, Effect, Exit, Fiber, Layer, Stdio } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, Runtime, Stdio } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 import { CLI_VERSION } from "./version.ts";
 import { Credentials } from "../../next/auth/credentials.service.ts";
@@ -93,17 +93,26 @@ function formatterLayerFor(
     : CliOutput.layer(textCliOutputFormatter(context));
 }
 
-function isErrorRecord(error: unknown): error is Record<string, unknown> {
-  return typeof error === "object" && error !== null;
-}
-
-function isExplicitHelpCause(cause: Cause.Cause<unknown>): boolean {
-  const error = Cause.findErrorOption(cause);
-  if (error._tag !== "Some" || !isErrorRecord(error.value)) return false;
-  if (error.value["_tag"] !== "ShowHelp") return false;
-
-  const errors = error.value["errors"];
-  return !Array.isArray(errors) || errors.length === 0;
+/**
+ * Process exit code for a failed CLI run, matching Go cobra's exit-code
+ * mapping. Delegates to Effect's own `Runtime` exit-code protocol (the same
+ * one `Runtime.defaultTeardown` uses) rather than hand-rolling `ShowHelp`
+ * classification: `CliError.ShowHelp` declares
+ * `[Runtime.errorExitCode] = this.errors.length ? 1 : 0`, so a bare group
+ * command's default handler failing with `ShowHelp({ errors: [] })` (no
+ * subcommand given, e.g. `supabase branches`) reads as exit `0` here — matching
+ * Go cobra's non-`Runnable()` handling, which internally returns
+ * `flag.ErrHelp` and `ExecuteC()` maps that to "print help, return nil error".
+ * A `ShowHelp` with a non-empty `errors` array (a genuine parse/validation
+ * failure) reads as exit `1`, and any other failure (including a `Cause.die`
+ * defect with no typed `ShowHelp` marker at all) falls back to
+ * `Runtime.getErrorExitCode`'s default of `1`. An explicit `--help` invocation
+ * never reaches this function — it's handled earlier as a successful
+ * `GlobalFlag.Action` and exits 0 via the success path.
+ */
+export function exitCodeForFailure(cause: Cause.Cause<unknown>): number {
+  if (Cause.hasInterruptsOnly(cause)) return 130;
+  return Runtime.getErrorExitCode(Cause.squash(cause));
 }
 
 function projectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
@@ -232,11 +241,17 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       const output = yield* Output;
       const exit = yield* program.pipe(Effect.exit);
       if (Exit.isFailure(exit)) {
-        const interrupted = Cause.hasInterruptsOnly(exit.cause);
-        if (!interrupted && !isExplicitHelpCause(exit.cause)) {
+        const exitCode = exitCodeForFailure(exit.cause);
+        // Skip reporting for an interrupted run (130 — a signal, not a
+        // reportable error) and for a clean `ShowHelp` failure (0). Literal
+        // `--help` never reaches this branch — it's handled as a successful
+        // `GlobalFlag.Action` and exits 0 via the success path below. See
+        // `exitCodeForFailure` for why a "clean" ShowHelp failure (e.g. a bare
+        // group command with no subcommand) also maps to exit 0.
+        if (exitCode !== 0 && exitCode !== 130) {
           yield* output.fail(normalizeCause(exit.cause));
         }
-        return yield* processControl.exit(interrupted ? 130 : 1);
+        return yield* processControl.exit(exitCode);
       }
       const exitCode = yield* processControl.getExitCode;
       return yield* processControl.exit(exitCode ?? 0);
