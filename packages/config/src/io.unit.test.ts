@@ -1782,6 +1782,81 @@ max_rows = "env(SUPABASE_REMOTE_MAX_ROWS_TEST)"
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  // Go's `Config.Validate` only checks `remotes.*.project_id` format for
+  // every remote (`config.go:996-1001`, "Since remote config is merged to
+  // base, we only need to validate the project_id field") — every other
+  // business-rule check (`Auth.External.validate()`, etc.) runs exactly once,
+  // against the merged effective config (`config.go:1136-1152`), never
+  // iterated over `c.Remotes[*]`. A non-selected `[remotes.*]` block's own
+  // business-rule violations must not fail the whole config load.
+  test("loads an unselected remote whose external provider is enabled without a secret", async () => {
+    const cwd = await writeTomlProject(
+      `project_id = "baseref"
+
+[remotes.staging]
+project_id = "${STAGING_REF}"
+
+[remotes.staging.auth.external.github]
+enabled = true
+`,
+    );
+    try {
+      // No projectRef requested, so [remotes.staging] is never selected/merged —
+      // Go would never business-rule-validate it, even though it decodes fine
+      // structurally.
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.appliedRemote).toBeUndefined();
+      expect(loaded!.config.remotes.staging?.auth.external.github.enabled).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("still validates the same remote's external provider once it is selected", async () => {
+    const cwd = await writeTomlProject(
+      `project_id = "baseref"
+
+[remotes.staging]
+project_id = "${STAGING_REF}"
+
+[remotes.staging.auth.external.github]
+enabled = true
+`,
+    );
+    try {
+      // Selecting [remotes.staging] merges it into the effective config, which
+      // Go DOES business-rule-validate (config.go:1136-1152) — a required
+      // `client_id`/`secret` is missing, so this must still fail.
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfig(cwd, { projectRef: STAGING_REF }).pipe(Effect.provide(BunServices.layer)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("still fails on a structurally malformed value inside an unselected remote", async () => {
+    // Go's `UnmarshalExact` always structurally decodes every remote
+    // (`config.go:246,749-756`) regardless of selection — only the
+    // merged-config-only business rules are skipped for a non-selected
+    // remote, not type/shape decoding.
+    const cwd = await writeTomlProject(
+      `${BASE_WITH_REMOTES}
+[remotes.staging.db]
+major_version = "not-a-number"
+`,
+    );
+    try {
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfig(cwd).pipe(Effect.provide(BunServices.layer)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("config io deprecated [inbucket] back-compat", () => {

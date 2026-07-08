@@ -1,6 +1,6 @@
 import { Console, Effect, FileSystem, Path, Redacted, Schema } from "effect";
 import * as SmolToml from "smol-toml";
-import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
+import { ProjectConfigSchema, RemotesSchema, type ProjectConfig } from "./base.ts";
 import {
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
@@ -103,6 +103,18 @@ export interface SaveProjectConfigOptions {
 }
 
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+/**
+ * Decodes the `remotes` map with `disableChecks: true` — full type/shape
+ * decoding, defaults, and transformations (e.g. secret redaction) still run,
+ * but the `.check()`-based business-rule refinements embedded in `auth`/`db`/
+ * etc. (e.g. "external provider requires a secret when enabled") are skipped.
+ * See {@link RemotesSchema}'s doc comment for why: Go only ever applies those
+ * business rules to the merged effective config, never to a `[remotes.*]`
+ * block that wasn't selected.
+ */
+const decodeRemotesWithoutChecks = Schema.decodeUnknownSync(RemotesSchema, {
+  disableChecks: true,
+});
 const encodeProjectConfig = Schema.encodeSync(ProjectConfigSchema);
 const defaultEncodedProjectConfig = encodeProjectConfig(decodeProjectConfig({}));
 const defaultEncodedFunctionConfig = {
@@ -562,7 +574,23 @@ function parseProjectConfig(
   appliedRemote: string | undefined,
 ): Effect.Effect<ProjectConfig, ProjectConfigParseError> {
   return Effect.try({
-    try: () => decodeProjectConfig(document),
+    try: () => {
+      // Decode `remotes` separately, with business-rule checks disabled — see
+      // `decodeRemotesWithoutChecks`/`RemotesSchema`'s doc comments. Non-selected
+      // `[remotes.*]` blocks reach here still attached to `document` (only a
+      // SELECTED remote gets merged in and stripped from `remotes` by
+      // `applyRemoteOverride`), so decoding them through the normal,
+      // checks-enabled `decodeProjectConfig` below would apply Go's
+      // merged-config-only business rules to every remote regardless of
+      // selection. Structural decoding (types, defaults, transformations)
+      // still runs either way, matching Go's unconditional `UnmarshalExact`
+      // struct decode of every remote.
+      const rawRemotes = isObject(document) ? document.remotes : undefined;
+      const config = decodeProjectConfig(
+        isObject(document) ? { ...document, remotes: {} } : document,
+      );
+      return { ...config, remotes: decodeRemotesWithoutChecks(rawRemotes ?? {}) };
+    },
     // `document` always parsed successfully by this point (raw parse failures
     // are caught earlier, in `loadProjectConfigFile`), so any error here is a
     // schema-decode failure — attach it so callers can attempt a narrower,
