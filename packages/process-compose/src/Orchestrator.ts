@@ -119,6 +119,7 @@ export class Orchestrator extends Context.Service<
 
         // FiberMap to track running service fibers — auto-interrupted on scope close
         const fibers = yield* FiberMap.make<string>();
+        const launchedServices = new Set<string>();
 
         // Helper: send a validated FSM event — only does the state transition
         const sendEvent = (
@@ -534,7 +535,8 @@ export class Orchestrator extends Context.Service<
             const svc = services.get(dependentName);
             if (svc === undefined) return false;
             const status = SubscriptionRef.getUnsafe(svc.state).status;
-            return status !== "Pending" && status !== "Stopped";
+            if (status === "Pending") return launchedServices.has(dependentName);
+            return status !== "Stopped";
           };
           const collectDependents = (current: string): void => {
             for (const dependent of graph.dependentsOf(current)) {
@@ -608,6 +610,7 @@ export class Orchestrator extends Context.Service<
           start: () =>
             Effect.gen(function* () {
               for (const def of graph.startOrder) {
+                launchedServices.add(def.name);
                 yield* FiberMap.run(fibers, def.name, runServiceSafe(def));
               }
             }),
@@ -621,11 +624,19 @@ export class Orchestrator extends Context.Service<
               const order = graph.startOrderFor(name);
               for (const d of order) {
                 const svc = services.get(d.name);
-                const status =
-                  svc === undefined ? undefined : SubscriptionRef.getUnsafe(svc.state).status;
+                const state = svc === undefined ? undefined : SubscriptionRef.getUnsafe(svc.state);
+                const status = state?.status;
+                if (
+                  (d.restart ?? defaults.restart) === "no" &&
+                  status === "Stopped" &&
+                  state?.exitCode === 0
+                ) {
+                  continue;
+                }
                 if (status === "Stopped" || status === "Failed") {
                   yield* resetService(d.name);
                 }
+                launchedServices.add(d.name);
                 yield* FiberMap.run(fibers, d.name, runServiceSafe(d), { onlyIfMissing: true });
               }
             }),
@@ -681,6 +692,7 @@ export class Orchestrator extends Context.Service<
                   }),
                 ),
               );
+              launchedServices.clear();
             }),
 
           stopService: (name: string) =>
@@ -694,6 +706,7 @@ export class Orchestrator extends Context.Service<
               yield* FiberMap.remove(fibers, name);
               // Force Stopped if still in Stopping (fiber was interrupted before ProcessExited)
               yield* sendEvent(name, { _tag: "ProcessExited", exitCode: 143 });
+              launchedServices.delete(name);
             }),
 
           restartService: (name: string) =>
@@ -711,6 +724,7 @@ export class Orchestrator extends Context.Service<
                 yield* resetService(affectedDef.name);
               }
               for (const affectedDef of affected) {
+                launchedServices.add(affectedDef.name);
                 yield* FiberMap.run(fibers, affectedDef.name, runServiceSafe(affectedDef));
               }
             }),

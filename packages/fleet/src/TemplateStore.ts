@@ -19,6 +19,7 @@ import { baseTemplateKey, resolveTemplateVersions, templateKey } from "./PodMani
 const LOCK_STALE_MS = 10 * 60 * 1000;
 const LOCK_POLL_MS = 250;
 const LOCK_HEARTBEAT_MS = Math.floor(LOCK_STALE_MS / 3);
+const STACK_BOOT_LOCK_KEY = "__stack-boot";
 
 function errorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
@@ -65,30 +66,32 @@ export class TemplateStore {
       let frozen = false;
       const buildDataDir = join(buildDir, "data");
       try {
-        // One-shot stack: postgres only, non-provisioned -> postgres-init applies
-        // roles/schemas/baseline migrations exactly as it does for a normal stack.
-        const stack = await createStack({
-          postgres: { version: postgresVersion, dataDir: buildDataDir },
-          postgrest: false,
-          auth: false,
-          edgeRuntime: false,
-          realtime: false,
-          storage: false,
-          imgproxy: false,
-          mailpit: false,
-          pgmeta: false,
-          studio: false,
-          analytics: false,
-          vector: false,
-          pooler: false,
-          functions: false,
+        await this.withStackBootLock(async () => {
+          // One-shot stack: postgres only, non-provisioned -> postgres-init applies
+          // roles/schemas/baseline migrations exactly as it does for a normal stack.
+          const stack = await createStack({
+            postgres: { version: postgresVersion, dataDir: buildDataDir },
+            postgrest: false,
+            auth: false,
+            edgeRuntime: false,
+            realtime: false,
+            storage: false,
+            imgproxy: false,
+            mailpit: false,
+            pgmeta: false,
+            studio: false,
+            analytics: false,
+            vector: false,
+            pooler: false,
+            functions: false,
+          });
+          try {
+            await stack.start();
+            await stack.ready();
+          } finally {
+            await stack.dispose();
+          }
         });
-        try {
-          await stack.start();
-          await stack.ready();
-        } finally {
-          await stack.dispose();
-        }
         await installMicroProfile(buildDataDir);
         await this.freeze(buildDir, key, {
           key,
@@ -125,49 +128,59 @@ export class TemplateStore {
       try {
         await cloneDir(base, buildDataDir);
 
-        // The clone is already post-init, so postgres-init is skipped (`provisioned: true`);
-        // each enabled service boots once and self-migrates against it.
-        const stack = await createStack({
-          postgres: {
-            version: pgVersion,
-            dataDir: buildDataDir,
-            provisioned: true,
-            profile: "micro",
-          },
-          postgrest: enabledServices.includes("postgrest")
-            ? { version: resolvedVersions.postgrest }
-            : false,
-          auth: enabledServices.includes("auth") ? { version: resolvedVersions.auth } : false,
-          edgeRuntime: enabledServices.includes("edge-runtime")
-            ? { version: resolvedVersions["edge-runtime"] }
-            : false,
-          realtime: enabledServices.includes("realtime")
-            ? { version: resolvedVersions.realtime }
-            : false,
-          storage: enabledServices.includes("storage")
-            ? { version: resolvedVersions.storage }
-            : false,
-          imgproxy: enabledServices.includes("imgproxy")
-            ? { version: resolvedVersions.imgproxy }
-            : false,
-          mailpit: enabledServices.includes("mailpit")
-            ? { version: resolvedVersions.mailpit }
-            : false,
-          pgmeta: enabledServices.includes("pgmeta") ? { version: resolvedVersions.pgmeta } : false,
-          studio: enabledServices.includes("studio") ? { version: resolvedVersions.studio } : false,
-          analytics: enabledServices.includes("analytics")
-            ? { version: resolvedVersions.analytics }
-            : false,
-          vector: enabledServices.includes("vector") ? { version: resolvedVersions.vector } : false,
-          pooler: enabledServices.includes("pooler") ? { version: resolvedVersions.pooler } : false,
-          functions: false,
+        await this.withStackBootLock(async () => {
+          // The clone is already post-init, so postgres-init is skipped (`provisioned: true`);
+          // each enabled service boots once and self-migrates against it.
+          const stack = await createStack({
+            postgres: {
+              version: pgVersion,
+              dataDir: buildDataDir,
+              provisioned: true,
+              profile: "micro",
+            },
+            postgrest: enabledServices.includes("postgrest")
+              ? { version: resolvedVersions.postgrest }
+              : false,
+            auth: enabledServices.includes("auth") ? { version: resolvedVersions.auth } : false,
+            edgeRuntime: enabledServices.includes("edge-runtime")
+              ? { version: resolvedVersions["edge-runtime"] }
+              : false,
+            realtime: enabledServices.includes("realtime")
+              ? { version: resolvedVersions.realtime }
+              : false,
+            storage: enabledServices.includes("storage")
+              ? { version: resolvedVersions.storage }
+              : false,
+            imgproxy: enabledServices.includes("imgproxy")
+              ? { version: resolvedVersions.imgproxy }
+              : false,
+            mailpit: enabledServices.includes("mailpit")
+              ? { version: resolvedVersions.mailpit }
+              : false,
+            pgmeta: enabledServices.includes("pgmeta")
+              ? { version: resolvedVersions.pgmeta }
+              : false,
+            studio: enabledServices.includes("studio")
+              ? { version: resolvedVersions.studio }
+              : false,
+            analytics: enabledServices.includes("analytics")
+              ? { version: resolvedVersions.analytics }
+              : false,
+            vector: enabledServices.includes("vector")
+              ? { version: resolvedVersions.vector }
+              : false,
+            pooler: enabledServices.includes("pooler")
+              ? { version: resolvedVersions.pooler }
+              : false,
+            functions: false,
+          });
+          try {
+            await stack.start();
+            await stack.ready();
+          } finally {
+            await stack.dispose();
+          }
         });
-        try {
-          await stack.start();
-          await stack.ready();
-        } finally {
-          await stack.dispose();
-        }
         await this.freeze(buildDir, key, {
           key,
           versions: resolvedVersions,
@@ -185,6 +198,10 @@ export class TemplateStore {
   private async createBuildDir(key: string): Promise<string> {
     await mkdir(this.root, { recursive: true });
     return mkdtemp(join(this.root, `${key}.build-`));
+  }
+
+  private async withStackBootLock<T>(body: () => Promise<T>): Promise<T> {
+    return this.withLock(STACK_BOOT_LOCK_KEY, body);
   }
 
   private async freeze(buildDir: string, key: string, marker: unknown): Promise<void> {

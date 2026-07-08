@@ -318,8 +318,8 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
       // to delete.
       await podLocks.withLock(id, async () => {
         await suspendLocked(id);
-        await provisioner.destroy(id);
         await proxy.unregister(id);
+        await provisioner.destroy(id);
         states.delete(id);
       });
     },

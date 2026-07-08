@@ -526,6 +526,34 @@ describe("Orchestrator", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.live("startService does not rerun completed one-shot dependencies", () => {
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("postgres-init", { restart: "no" }),
+        svc("api", {
+          dependencies: [{ service: "postgres-init", condition: "completed" }],
+        }),
+      ],
+      {
+        perService: {
+          api: { exitDelay: "5 seconds" },
+          "postgres-init": { exitDelay: "10 millis" },
+        },
+      },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("api");
+      yield* proc.waitForSpawn("api");
+      yield* waitForStopped(orc, "postgres-init");
+
+      yield* orc.startService("api");
+      yield* Effect.sleep(Duration.millis(50));
+
+      expect(proc.spawned.map((s) => s.command)).toEqual(["postgres-init", "api"]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.live("restartService stops and restarts a service", () => {
     const { layer, proc } = setupOrchestrator([svc("a")], {
       exitDelay: "5 seconds",
@@ -597,6 +625,49 @@ describe("Orchestrator", () => {
       yield* proc.waitForSpawnCount(2);
 
       expect(proc.spawned.map((s) => s.command)).toEqual(["db", "db"]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("restartService includes launched dependents that are still pending", () => {
+    let dbReady = false;
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("db", {
+          healthCheck: {
+            probe: {
+              _tag: "Exec",
+              command: "db-ready",
+              args: [],
+            },
+            periodSeconds: 0.01,
+          },
+        }),
+        svc("api", {
+          dependencies: [{ service: "db", condition: "healthy" }],
+        }),
+      ],
+      {
+        perService: {
+          api: { exitDelay: "5 seconds" },
+          db: { exitDelay: "5 seconds" },
+          "db-ready": { getExitCode: () => (dbReady ? 0 : 1) },
+        },
+      },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.start();
+      yield* proc.waitForSpawn("db");
+      expect((yield* orc.getState("api")).status).toBe("Pending");
+
+      yield* orc.restartService("db");
+      dbReady = true;
+      yield* proc.waitForSpawn("api");
+
+      const spawnedServices = proc.spawned
+        .map((s) => s.command)
+        .filter((command) => command === "api" || command === "db");
+      expect(spawnedServices).toEqual(["db", "db", "api"]);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
