@@ -2,9 +2,9 @@ import { Cause, Clock, Effect, Exit, FileSystem, Option, Path } from "effect";
 
 import {
   LegacyDnsResolverFlag,
-  LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
   LegacyYesFlag,
+  legacyResolveExperimental,
 } from "../../../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
@@ -72,7 +72,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     const path = yield* Path.Path;
     const cliConfig = yield* LegacyCliConfig;
     const telemetryState = yield* LegacyTelemetryState;
-    const experimental = yield* LegacyExperimentalFlag;
+    const experimental = yield* legacyResolveExperimental;
     const yes = yield* LegacyYesFlag;
     const networkId = yield* LegacyNetworkIdFlag;
     const dnsResolver = yield* LegacyDnsResolverFlag;

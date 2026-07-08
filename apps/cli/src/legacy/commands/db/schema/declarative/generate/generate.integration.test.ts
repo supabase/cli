@@ -243,6 +243,36 @@ describe("legacy db schema declarative generate integration", () => {
     },
   );
 
+  it.effect(
+    "--local --linked with SUPABASE_EXPERIMENTAL env (no --experimental flag) fails with the mutex error",
+    () => {
+      // Go's gate reads viper.GetBool("EXPERIMENTAL") (db_schema_declarative.go:78),
+      // which picks up SUPABASE_EXPERIMENTAL via viper.AutomaticEnv (root.go:318-334),
+      // so an env-only experimental session still opens the gate and lets the mutex
+      // check fire. legacyResolveExperimental (not the raw LegacyExperimentalFlag) is
+      // what makes the TS gate honor the env var the same way.
+      const { layer } = setup(tmp.current, { experimental: false });
+      const ENV = "SUPABASE_EXPERIMENTAL";
+      return Effect.gen(function* () {
+        const saved = process.env[ENV];
+        process.env[ENV] = "1";
+        const exit = yield* Effect.exit(
+          legacyDbSchemaDeclarativeGenerate(
+            flags({ local: Option.some(true), linked: Option.some(true) }),
+          ),
+        );
+        if (saved === undefined) delete process.env[ENV];
+        else process.env[ENV] = saved;
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)).toMatchObject({
+          _tag: "LegacyDeclarativeMutuallyExclusiveFlagsError",
+          message:
+            "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("explicit --local: provisions baseline, exports, writes declarative files", () => {
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {

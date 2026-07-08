@@ -1,8 +1,8 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import {
-  LegacyExperimentalFlag,
   LegacyYesFlag,
+  legacyResolveExperimental,
 } from "../../../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
@@ -44,7 +44,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     const cliConfig = yield* LegacyCliConfig;
     const telemetryState = yield* LegacyTelemetryState;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
-    const experimental = yield* LegacyExperimentalFlag;
+    const experimental = yield* legacyResolveExperimental;
     const yes = yield* LegacyYesFlag;
 
     // The resolved linked ref (explicit `--linked` only), hoisted so the post-run

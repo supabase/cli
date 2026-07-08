@@ -238,6 +238,36 @@ describe("legacy db schema declarative sync integration", () => {
     },
   );
 
+  it.effect(
+    "--apply and --no-apply together with SUPABASE_EXPERIMENTAL env (no --experimental flag) fail with the mutex error",
+    () => {
+      // Go's gate reads viper.GetBool("EXPERIMENTAL") (db_schema_declarative.go:78),
+      // which picks up SUPABASE_EXPERIMENTAL via viper.AutomaticEnv (root.go:318-334),
+      // so an env-only experimental session still opens the gate and lets the mutex
+      // check fire. legacyResolveExperimental (not the raw LegacyExperimentalFlag) is
+      // what makes the TS gate honor the env var the same way.
+      const { layer } = setup(tmp.current, { experimental: false });
+      const ENV = "SUPABASE_EXPERIMENTAL";
+      return Effect.gen(function* () {
+        const saved = process.env[ENV];
+        process.env[ENV] = "1";
+        const exit = yield* Effect.exit(
+          legacyDbSchemaDeclarativeSync(
+            flags({ apply: Option.some(true), noApply: Option.some(true) }),
+          ),
+        );
+        if (saved === undefined) delete process.env[ENV];
+        else process.env[ENV] = saved;
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)).toMatchObject({
+          _tag: "LegacyDeclarativeMutuallyExclusiveFlagsError",
+          message:
+            "if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("rejects --apply=false --no-apply as a conflict (Go flag.Changed)", () => {
     // cobra keys the mutex off flag.Changed, so an explicit `--apply=false` still
     // counts as set and conflicts with `--no-apply`, even though its value is false.
