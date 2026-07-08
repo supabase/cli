@@ -1,4 +1,5 @@
 import type { CliError, Command, HelpDoc } from "effect/unstable/cli";
+import { formatInvalidValueMessage } from "./invalid-value-message.ts";
 
 export interface CliErrorSuggestionContext {
   readonly rootCommand: Command.Command.Any;
@@ -199,28 +200,6 @@ function buildSubcommandFlagHint(
   };
 }
 
-// Workaround for a doubled "Expected: Expected ..." prefix in
-// effect@4.0.0-beta.93's own primitive parsers. Several `Primitive`s under
-// `effect/unstable/cli` (`choice` — used by `Flag.choice`/
-// `Flag.choiceWithValue` — plus the schema-backed `integer`, `float`,
-// `boolean`, and `date`) fail with a raw message that already starts with
-// the word "Expected" (e.g. `Expected "micro" | "small", got "nano"` or
-// `Expected a valid date, got Invalid Date`), and `CliError.InvalidValue`'s
-// own `message` getter independently prepends its own `"Expected: "` label
-// on top of that — so any flag or argument backed by one of these
-// primitives renders "Expected: Expected ...". Detect this from
-// `error.expected` (the field the buggy primitives actually populate)
-// rather than searching the fully composed `error.message`: `error.value`
-// is user-controlled and interpolated into that same message (including a
-// second time inside `expected` itself, via `choice`'s "got <value>"
-// suffix), so a message-wide, first-occurrence string replace can target
-// the wrong spot if the value itself happens to contain the literal text
-// "Expected: Expected ". Anchoring on `error.expected` and rebuilding the
-// message from the same template `CliError.InvalidValue` uses avoids ever
-// scanning `error.value`. Remove once upstream `effect` fixes this (see
-// CLI-1898).
-const EXPECTED_PREFIX = "Expected ";
-
 export function formatCliErrorsForDisplay(
   errors: ReadonlyArray<CliError.CliError>,
   context?: CliErrorSuggestionContext,
@@ -250,19 +229,18 @@ export function formatCliErrorsForDisplay(
       continue;
     }
 
-    if (error._tag === "InvalidValue" && error.expected.startsWith(EXPECTED_PREFIX)) {
-      changed = true;
-      const message =
-        error.kind === "argument"
-          ? `Invalid value for argument <${error.option}>: "${error.value}". ${error.expected}`
-          : `Invalid value for flag --${error.option}: "${error.value}". ${error.expected}`;
-      formatted.push({
-        _tag: error._tag,
-        message,
-        source: error,
-        changed: true,
-      });
-      continue;
+    if (error._tag === "InvalidValue") {
+      const message = formatInvalidValueMessage(error);
+      if (message !== undefined) {
+        changed = true;
+        formatted.push({
+          _tag: error._tag,
+          message,
+          source: error,
+          changed: true,
+        });
+        continue;
+      }
     }
 
     formatted.push({ _tag: error._tag, message: error.message, source: error, changed: false });

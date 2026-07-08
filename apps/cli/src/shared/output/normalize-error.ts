@@ -1,4 +1,5 @@
 import { Cause, Option } from "effect";
+import { formatInvalidValueMessage } from "../cli/invalid-value-message.ts";
 
 type NormalizedCliError = {
   readonly code: string;
@@ -74,6 +75,31 @@ const mappedError = (error: ErrorRecord): NormalizedCliError | undefined => {
           ? `Error: required flag(s) "${option}" not set`
           : "Error: required flag(s) not set",
       };
+    }
+    case "InvalidValue": {
+      // `CliError.InvalidValue` for a `GlobalFlag.setting` flag (e.g.
+      // `--output-format`, or the legacy `--output`/`-o`, `--dns-resolver`,
+      // `--agent`) never reaches `CliOutput.Formatter` — `Command.runWith`
+      // validates those flags in a step that runs outside the `ShowHelp`
+      // path, so the failure lands here instead. Apply the same
+      // doubled-"Expected"-prefix workaround `subcommand-flag-suggestions.ts`
+      // applies for the `ShowHelp`-formatted case (see CLI-1898), so every
+      // `InvalidValue` failure — whichever path it takes — renders the same
+      // way.
+      const option = readString(error, "option");
+      const value = readString(error, "value");
+      const expected = readString(error, "expected");
+      const kind = readString(error, "kind");
+      if (
+        option !== undefined &&
+        value !== undefined &&
+        expected !== undefined &&
+        (kind === "flag" || kind === "argument")
+      ) {
+        const message = formatInvalidValueMessage({ option, value, expected, kind });
+        if (message !== undefined) return { code: tag, message };
+      }
+      return undefined;
     }
     case "ShowHelp": {
       // Effect CLI wraps parse errors in a ShowHelp envelope (`CliError.ts`)
