@@ -199,10 +199,11 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --apply and --no-apply together before the pg-delta gate", () => {
-    // cobra MarkFlagsMutuallyExclusive("apply", "no-apply") runs before PreRunE,
-    // so this fails even when pg-delta is not enabled.
-    const { layer } = setup(tmp.current, { experimental: false });
+  it.effect("--apply and --no-apply together with --experimental fail with the mutex error", () => {
+    // Go's declarative PersistentPreRunE gate (db_schema_declarative.go:49-99) runs
+    // BEFORE cobra's ValidateFlagGroups() mutex check (cobra@v1.10.2/command.go:985,
+    // 1010), so the mutex error only surfaces once the gate is open.
+    const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         legacyDbSchemaDeclarativeSync(
@@ -218,10 +219,31 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect(
+    "--apply and --no-apply together without --experimental fail with the gate error, not the mutex error",
+    () => {
+      // Mirrors storage's experimental-gate-vs-mutex ordering fix (CLI-1855 / CLI-1876):
+      // the pg-delta gate runs before the mutex check, so an unopened gate wins even
+      // when the flags would also violate mutual exclusivity.
+      const { layer } = setup(tmp.current, { experimental: false });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacyDbSchemaDeclarativeSync(
+            flags({ apply: Option.some(true), noApply: Option.some(true) }),
+          ),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeNotEnabledError");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.effect("rejects --apply=false --no-apply as a conflict (Go flag.Changed)", () => {
     // cobra keys the mutex off flag.Changed, so an explicit `--apply=false` still
     // counts as set and conflicts with `--no-apply`, even though its value is false.
-    const { layer } = setup(tmp.current, { experimental: false });
+    // The gate runs first (see legacyRequirePgDelta's doc comment), so --experimental
+    // is required here for the mutex error to be the one that surfaces.
+    const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         legacyDbSchemaDeclarativeSync(

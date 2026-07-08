@@ -52,9 +52,23 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     let linkedProjectRef: string | undefined;
 
     yield* Effect.gen(function* () {
+      const baseToml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      // Gate before the mutex check below — order matters; see
+      // legacyRequirePgDelta's doc comment for why. The pg-delta gate also runs on
+      // the BASE config: Go's declarative `PersistentPreRunE` gates before the root
+      // `ParseDatabaseConfig` reloads any `[remotes.<ref>]` block, so a remote
+      // `experimental.pgdelta.enabled = true` must NOT enable a base-disabled
+      // command without `--experimental`.
+      yield* legacyRequirePgDelta({
+        experimental,
+        pgDeltaEnabled: baseToml.pgDelta.enabled,
+        configPath: path.join("supabase", "config.toml"),
+      });
+
       // cobra `MarkFlagsMutuallyExclusive("db-url", "linked", "local")`
-      // (`apps/cli-go/cmd/db_schema_declarative.go:499`) runs before PreRunE/RunE,
-      // so reject conflicting targets before reading config or the pg-delta gate.
+      // (`apps/cli-go/cmd/db_schema_declarative.go:570`) runs via
+      // `ValidateFlagGroups()`, which cobra invokes AFTER `PersistentPreRunE` (the
+      // gate above) — see legacyRequirePgDelta's doc comment for the full ordering.
       // "Set" follows cobra's `Changed`: Option set when `Some`, boolean when `true`.
       const exclusive: Array<string> = [];
       if (Option.isSome(flags.dbUrl)) exclusive.push("db-url");
@@ -67,17 +81,6 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           }),
         );
       }
-
-      const baseToml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-      // The pg-delta gate runs on the BASE config: Go's declarative `PersistentPreRunE`
-      // gates before the root `ParseDatabaseConfig` reloads any `[remotes.<ref>]` block,
-      // so a remote `experimental.pgdelta.enabled = true` must NOT enable a
-      // base-disabled command without `--experimental`.
-      yield* legacyRequirePgDelta({
-        experimental,
-        pgDeltaEnabled: baseToml.pgDelta.enabled,
-        configPath: path.join("supabase", "config.toml"),
-      });
 
       // Explicit `--linked`: Go re-loads config with the resolved ref (root
       // `ParseDatabaseConfig` linked branch), so a matching `[remotes.<ref>]` block

@@ -45,11 +45,17 @@ as a new timestamped migration.
 | Code | Condition                                                                                           |
 | ---- | --------------------------------------------------------------------------------------------------- |
 | `0`  | success (migration created, applied, or "No schema changes found")                                  |
-| `1`  | conflicting `--apply`/`--no-apply` (mutually exclusive)                                             |
 | `1`  | pg-delta not enabled                                                                                |
+| `1`  | conflicting `--apply`/`--no-apply` (mutually exclusive)                                             |
 | `1`  | no declarative schema files found                                                                   |
 | `1`  | shadow-database / edge-runtime / diff failure                                                       |
 | `1`  | apply failure (when applied) — propagated from the native migration apply (`applyMigrationToLocal`) |
+
+The pg-delta gate and the mutex check are both raised before any side effects run,
+but the gate wins when both conditions apply simultaneously: Go's
+`PersistentPreRunE` runs before `ValidateFlagGroups()`
+(`cobra@v1.10.2/command.go:985,1010`), so a closed gate (missing `--experimental`)
+surfaces before an `--apply`/`--no-apply` conflict is ever checked.
 
 ## Output
 

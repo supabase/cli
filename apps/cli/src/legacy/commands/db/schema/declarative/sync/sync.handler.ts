@@ -89,10 +89,21 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     let linkedProjectRef: string | undefined;
 
     yield* Effect.gen(function* () {
+      const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      // Gate before the mutex check below — order matters; see
+      // legacyRequirePgDelta's doc comment for why.
+      yield* legacyRequirePgDelta({
+        experimental,
+        pgDeltaEnabled: toml.pgDelta.enabled,
+        configPath: path.join("supabase", "config.toml"),
+      });
+
       // cobra `MarkFlagsMutuallyExclusive("apply", "no-apply")`
-      // (`apps/cli-go/cmd/db_schema_declarative.go:490`) runs before PreRunE/RunE,
-      // so reject the conflict before reading config or the pg-delta gate, rather
-      // than letting `--no-apply` silently win in the apply-decision helper.
+      // (`apps/cli-go/cmd/db_schema_declarative.go:561`) runs via
+      // `ValidateFlagGroups()`, which cobra invokes AFTER `PersistentPreRunE` (the
+      // gate above) — see legacyRequirePgDelta's doc comment for the full ordering.
+      // Reject the conflict here rather than letting `--no-apply` silently win in
+      // the apply-decision helper.
       const exclusive: Array<string> = [];
       if (Option.isSome(flags.apply)) exclusive.push("apply");
       if (Option.isSome(flags.noApply)) exclusive.push("no-apply");
@@ -104,12 +115,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         );
       }
 
-      const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-      yield* legacyRequirePgDelta({
-        experimental,
-        pgDeltaEnabled: toml.pgDelta.enabled,
-        configPath: path.join("supabase", "config.toml"),
-      });
       // `path.resolve` (not `path.join`) so an absolute `declarative_schema_path` is
       // used as-is, matching Go's `config.resolve` (which only prefixes the workdir onto
       // a relative path). `path.join(workdir, abs)` would mangle the absolute path.

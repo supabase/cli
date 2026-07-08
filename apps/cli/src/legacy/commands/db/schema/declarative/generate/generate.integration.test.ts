@@ -204,10 +204,11 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects conflicting targets (--local --linked) before the pg-delta gate", () => {
-    // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local") runs before
-    // PreRunE, so this fails even when pg-delta is not enabled.
-    const { layer } = setup(tmp.current, { experimental: false });
+  it.effect("--local --linked with --experimental fails with the mutex error", () => {
+    // Go's declarative PersistentPreRunE gate (db_schema_declarative.go:49-99) runs
+    // BEFORE cobra's ValidateFlagGroups() mutex check (cobra@v1.10.2/command.go:985,
+    // 1010), so the mutex error only surfaces once the gate is open.
+    const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         legacyDbSchemaDeclarativeGenerate(
@@ -222,6 +223,25 @@ describe("legacy db schema declarative generate integration", () => {
       });
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "--local --linked without --experimental fails with the gate error, not the mutex error",
+    () => {
+      // Mirrors storage's experimental-gate-vs-mutex ordering fix (CLI-1855 / CLI-1876):
+      // the pg-delta gate runs before the mutex check, so an unopened gate wins even
+      // when the flags would also violate mutual exclusivity.
+      const { layer } = setup(tmp.current, { experimental: false });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacyDbSchemaDeclarativeGenerate(
+            flags({ local: Option.some(true), linked: Option.some(true) }),
+          ),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeNotEnabledError");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("explicit --local: provisions baseline, exports, writes declarative files", () => {
     const s = setup(tmp.current, { experimental: true });
