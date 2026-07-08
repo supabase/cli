@@ -305,6 +305,9 @@ export function statusCodeActionability(
   if (opts.upgradeSuggested === true && status !== undefined && status >= 400 && status < 500) {
     return { ...actionability.planLimit, fingerprint_suffix: "plan_limit" };
   }
+  if (status === 403) {
+    return { ...actionability.accountAccess, fingerprint_suffix: "forbidden" };
+  }
   if (status === undefined) {
     return { ...actionability.externalNetwork, fingerprint_suffix: "network" };
   }
@@ -432,6 +435,10 @@ const externalActionabilityByTag: Record<
   MissingProjectConfigValueError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
 
+  // @supabase/api — client construction failed before any request (missing
+  // access token / bad configuration); remediation is the token env var.
+  SupabaseApiConfigError: () => actionability.authToken,
+
   // effect/unstable/http — generated Management API client transport/decoding
   HttpClientError: (error) => {
     const reason = error["reason"];
@@ -439,6 +446,7 @@ const externalActionabilityByTag: Record<
     const response = error["response"];
     const status = isErrorRecord(response) ? readNumber(response, "status") : undefined;
     if (status === 401) return { ...actionability.authLogin, fingerprint_suffix: "auth" };
+    if (status === 403) return { ...actionability.accountAccess, fingerprint_suffix: "forbidden" };
     if (reasonTag === "StatusCodeError" || isErrorRecord(response)) {
       return { ...actionability.apiStatus, fingerprint_suffix: "api_status" };
     }
@@ -512,6 +520,20 @@ export function isClassifiedExternalErrorTag(tag: string): boolean {
   return Object.hasOwn(externalActionabilityByTag, tag);
 }
 
+/**
+ * A wrapper's preserved `cause`, but only when classifying it cannot degrade
+ * the result: the cause must carry its own declaration or a known external
+ * adapter tag, otherwise the wrapper's own classification is more truthful.
+ */
+function classifiableCause(error: ErrorRecord): ErrorRecord | undefined {
+  const cause = error["cause"];
+  if (!isErrorRecord(cause)) return undefined;
+  if (readDeclaration(cause) !== undefined) return cause;
+  const causeTag = readErrorTag(cause);
+  if (causeTag !== undefined && Object.hasOwn(externalActionabilityByTag, causeTag)) return cause;
+  return undefined;
+}
+
 function classifyShowHelp(error: ErrorRecord): CliErrorActionability | undefined {
   const errors = error["errors"];
   if (!Array.isArray(errors)) return undefined;
@@ -550,6 +572,21 @@ export function classifyCliErrorActionability(error: unknown): CliErrorActionabi
     return classifyCliErrorActionability(error["cause"]);
   }
 
+  // @supabase/stack wrapper errors preserve the underlying tagged failure in
+  // `cause`; classify it when it is more specific than the wrapper (e.g. a
+  // daemon-down DockerPullError inside an asset-preparation StackBuildError,
+  // or a local filesystem PlatformError inside a DownloadError).
+  if (
+    isErrorRecord(error) &&
+    (tag === "DownloadError" ||
+      (tag === "StackBuildError" && readString(error, "reason") === "asset_preparation"))
+  ) {
+    const cause = classifiableCause(error);
+    if (cause !== undefined) {
+      return classifyCliErrorActionability(cause);
+    }
+  }
+
   if (tag !== undefined && isErrorRecord(error)) {
     // Own-property lookup: a sanitized tag like "constructor" must not pick
     // up Object.prototype members as adapters.
@@ -566,8 +603,8 @@ export function classifyCliErrorActionability(error: unknown): CliErrorActionabi
     // The public Stack promise API wraps tagged failures via `toStackError`,
     // preserving the original in `cause` — classify that instead of the
     // wrapper whenever it is itself classifiable.
-    const cause = error["cause"];
-    if (readErrorTag(cause) !== undefined || readDeclaration(cause) !== undefined) {
+    const cause = classifiableCause(error);
+    if (cause !== undefined) {
       return classifyCliErrorActionability(cause);
     }
     const classify = externalActionabilityByTag["StackError"];

@@ -149,6 +149,7 @@ describe("apps/cli error classes declare their actionability", () => {
 
 describe("workspace package error tags have external adapters", () => {
   const packageRoots = [
+    "packages/api/src",
     "packages/stack/src",
     "packages/config/src",
     "packages/process-compose/src",

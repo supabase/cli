@@ -166,6 +166,61 @@ describe("classifyCliErrorActionability", () => {
     expect(result.error_fingerprint).toBe("tag:StackBuildError:invalid_config");
   });
 
+  it("treats forbidden API statuses as account permission failures", () => {
+    const forbidden = classifyCliErrorActionability(new DeclaredStatusError({ status: 403 }));
+    expect(forbidden.error_kind).toBe("user_actionable");
+    expect(forbidden.error_category).toBe("permission");
+    expect(forbidden.error_fingerprint).toBe("tag:DeclaredStatusError:forbidden");
+
+    const gated = classifyCliErrorActionability(
+      new DeclaredStatusError({ status: 403, upgradeSuggested: true }),
+    );
+    expect(gated.error_category).toBe("plan_limit");
+
+    const http = classifyCliErrorActionability({
+      _tag: "HttpClientError",
+      response: { status: 403 },
+    });
+    expect(http.error_category).toBe("permission");
+  });
+
+  it("classifies the preserved cause of stack wrapper errors", () => {
+    const daemonDown = classifyCliErrorActionability({
+      _tag: "StackBuildError",
+      detail: "Failed to prepare stack assets",
+      reason: "asset_preparation",
+      cause: { _tag: "DockerPullError", image: "postgres", daemonDown: true },
+    });
+    expect(daemonDown.error_category).toBe("docker_not_running");
+    expect(daemonDown.error_fingerprint).toBe("tag:DockerPullError:docker_not_running");
+
+    const localFs = classifyCliErrorActionability({
+      _tag: "DownloadError",
+      url: "filesystem error for /cache",
+      cause: { _tag: "PlatformError", reason: { _tag: "PermissionDenied" } },
+    });
+    expect(localFs.error_kind).toBe("user_actionable");
+    expect(localFs.error_category).toBe("permission");
+
+    // An unclassifiable cause keeps the wrapper's own bucket.
+    const opaque = classifyCliErrorActionability({
+      _tag: "DownloadError",
+      url: "https://example.com",
+      cause: new Error("boom"),
+    });
+    expect(opaque.error_kind).toBe("external_service");
+    expect(opaque.error_category).toBe("network");
+  });
+
+  it("classifies API client configuration failures as token problems", () => {
+    const result = classifyCliErrorActionability({
+      _tag: "SupabaseApiConfigError",
+      message: "Missing access token.",
+    });
+    expect(result.error_category).toBe("auth");
+    expect(result.suggestion_type).toBe("set_env_var");
+  });
+
   it("does not treat Object.prototype members as external adapters", () => {
     const result = classifyCliErrorActionability({ _tag: "constructor" });
     expect(result.error_kind).toBe("unknown");

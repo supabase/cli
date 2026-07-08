@@ -4,6 +4,7 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
 /**
@@ -62,6 +63,8 @@ export class LegacyStorageAuthTokenError extends Data.TaggedError("LegacyStorage
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.authLogin;
+    // The shared mapper wraps any non-200 in this tag; only a 401 is an auth
+    // failure the user fixes by re-logging in.
+    return statusCodeActionability(this.status);
   }
 }
