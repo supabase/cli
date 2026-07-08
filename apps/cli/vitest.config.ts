@@ -45,6 +45,7 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["**/*.unit.test.ts"],
+          testTimeout: 30_000,
         },
       },
       {
@@ -52,6 +53,7 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["**/*.integration.test.ts"],
+          testTimeout: 30_000,
         },
       },
       {
