@@ -2,7 +2,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
 
 import {
   LegacyYesFlag,
-  legacyResolveExperimental,
+  legacyResolveExperimentalWithProjectEnv,
 } from "../../../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
@@ -10,6 +10,7 @@ import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service
 import { legacyBold } from "../../../../../shared/legacy-colors.ts";
 import { legacyReadProjectRefFile } from "../../../../../shared/legacy-temp-paths.ts";
 import {
+  legacyLoadProjectEnv,
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
@@ -44,7 +45,14 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     const cliConfig = yield* LegacyCliConfig;
     const telemetryState = yield* LegacyTelemetryState;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
-    const experimental = yield* legacyResolveExperimental;
+    // Go's `dbDeclarativeCmd.PersistentPreRunE` calls `flags.LoadConfig` — which runs
+    // `loadNestedEnv` and `os.Setenv`s each project-.env key — BEFORE reading
+    // `viper.GetBool("EXPERIMENTAL")` for the gate below (`apps/cli-go/cmd/
+    // db_schema_declarative.go:73-78`, `pkg/config/config.go:789`). Load the project env
+    // first and resolve against it, as `db reset` does for its own experimental gate, so a
+    // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` opens the gate too.
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
     const yes = yield* LegacyYesFlag;
 
     // The resolved linked ref (explicit `--linked` only), hoisted so the post-run

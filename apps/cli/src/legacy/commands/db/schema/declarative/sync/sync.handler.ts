@@ -4,7 +4,7 @@ import {
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
   LegacyYesFlag,
-  legacyResolveExperimental,
+  legacyResolveExperimentalWithProjectEnv,
 } from "../../../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
@@ -13,6 +13,7 @@ import { legacyBold, legacyRed, legacyYellow } from "../../../../../shared/legac
 import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
 import { legacyGetHostname } from "../../../../../shared/legacy-hostname.ts";
 import {
+  legacyLoadProjectEnv,
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
@@ -72,7 +73,14 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     const path = yield* Path.Path;
     const cliConfig = yield* LegacyCliConfig;
     const telemetryState = yield* LegacyTelemetryState;
-    const experimental = yield* legacyResolveExperimental;
+    // Go's `dbDeclarativeCmd.PersistentPreRunE` calls `flags.LoadConfig` — which runs
+    // `loadNestedEnv` and `os.Setenv`s each project-.env key — BEFORE reading
+    // `viper.GetBool("EXPERIMENTAL")` for the gate below (`apps/cli-go/cmd/
+    // db_schema_declarative.go:73-78`, `pkg/config/config.go:789`). Load the project env
+    // first and resolve against it, as `db reset` does for its own experimental gate, so a
+    // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` opens the gate too.
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
     const yes = yield* LegacyYesFlag;
     const networkId = yield* LegacyNetworkIdFlag;
     const dnsResolver = yield* LegacyDnsResolverFlag;
