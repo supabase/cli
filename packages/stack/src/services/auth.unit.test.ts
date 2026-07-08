@@ -30,10 +30,11 @@ describe("auth external providers", () => {
       // Defaults survive beside the provider translation.
       GOTRUE_SITE_URL: "http://localhost:3000",
     });
-    expect(def.env).not.toHaveProperty("GOTRUE_EXTERNAL_GOOGLE_URL");
-    // Boolean defaults emit explicitly: native spawns extend the parent
-    // env, so an omitted var would inherit the shell's value.
+    // Defaults emit explicitly, url's empty string included: native
+    // spawns extend the parent env, so an omitted var would inherit the
+    // shell's value (GoTrue reads an empty URL as its provider default).
     expect(def.env).toMatchObject({
+      GOTRUE_EXTERNAL_GOOGLE_URL: "",
       GOTRUE_EXTERNAL_GOOGLE_SKIP_NONCE_CHECK: "false",
       GOTRUE_EXTERNAL_GOOGLE_EMAIL_OPTIONAL: "false",
     });
@@ -77,6 +78,26 @@ describe("auth external providers", () => {
     expect(def.env).toMatchObject({
       GOTRUE_EXTERNAL_APPLE_ENABLED: "true",
       GOTRUE_EXTERNAL_APPLE_SECRET: "",
+    });
+  });
+
+  test("empty redirectUri and url mean unset, like the classic surface", () => {
+    // The generated config.toml template ships redirect_uri = "" and
+    // url = "" — TOML strings can't be absent — and start.go substitutes
+    // the derived callback for an empty redirect_uri. The URL var still
+    // emits (empty = GoTrue's provider default) so a shell variable can
+    // never supply it under native-mode env extension.
+    const def = makeAuthServiceNative({
+      ...baseOptions,
+      binPath: "/opt/supabase",
+      external: {
+        gitlab: { clientId: "gl-id", secret: "gl-secret", redirectUri: "", url: "" },
+      },
+    });
+
+    expect(def.env).toMatchObject({
+      GOTRUE_EXTERNAL_GITLAB_REDIRECT_URI: "http://127.0.0.1:54321/auth/v1/callback",
+      GOTRUE_EXTERNAL_GITLAB_URL: "",
     });
   });
 

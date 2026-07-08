@@ -38,11 +38,18 @@ interface DockerAuthOptions extends AuthServiceOptions {
 }
 
 /** Mirrors the classic CLI's [auth.external.*] → GOTRUE_EXTERNAL_* env
- * translation. Every field except url emits explicitly, defaults
- * included: native-mode spawns extend the parent environment, so an
- * unset variable would inherit whatever the shell carries — the classic
- * CLI shadows the same way (start.go emits the booleans with %t). url
- * stays conditional, matching start.go. */
+ * translation. Every field emits explicitly, defaults included:
+ * native-mode spawns extend the parent environment, so an unset
+ * variable would inherit whatever the shell carries — the classic CLI
+ * shadows the same way (start.go emits the booleans with %t). The
+ * empty string is the classic surface's unset (TOML strings can't be
+ * absent; the generated template ships redirect_uri = "" and
+ * url = ""), so an empty redirectUri falls back to the derived
+ * callback like start.go. url emits even when empty — GoTrue reads an
+ * empty URL as unset (chooseHost falls back to each provider's
+ * default), so this matches start.go's skip-when-empty behaviorally
+ * while still shadowing the parent env; start.go can afford to skip
+ * because its containers never inherit a shell. */
 const externalProviderEnv = (opts: AuthServiceOptions): Record<string, string> => {
   const env: Record<string, string> = {};
   for (const [id, provider] of Object.entries(opts.external ?? {})) {
@@ -50,12 +57,10 @@ const externalProviderEnv = (opts: AuthServiceOptions): Record<string, string> =
     env[`${prefix}_ENABLED`] = String(provider.enabled ?? true);
     env[`${prefix}_CLIENT_ID`] = provider.clientId;
     env[`${prefix}_SECRET`] = provider.secret ?? "";
-    env[`${prefix}_REDIRECT_URI`] = provider.redirectUri ?? `${opts.externalUrl}/auth/v1/callback`;
+    env[`${prefix}_REDIRECT_URI`] = provider.redirectUri || `${opts.externalUrl}/auth/v1/callback`;
     env[`${prefix}_SKIP_NONCE_CHECK`] = String(provider.skipNonceCheck ?? false);
     env[`${prefix}_EMAIL_OPTIONAL`] = String(provider.emailOptional ?? false);
-    if (provider.url !== undefined) {
-      env[`${prefix}_URL`] = provider.url;
-    }
+    env[`${prefix}_URL`] = provider.url ?? "";
   }
   return env;
 };

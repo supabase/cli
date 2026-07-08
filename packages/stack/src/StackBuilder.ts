@@ -74,9 +74,13 @@ export interface AuthExternalProviderConfig {
    * google one-tap); emitted empty when absent, like the classic CLI. */
   readonly secret?: string;
   /** Defaults to `<externalUrl>/auth/v1/callback`, the classic CLI's
-   * issuer-derived default. */
+   * issuer-derived default. Empty means unset, like the classic surface
+   * (TOML strings can't be absent). */
   readonly redirectUri?: string;
-  /** Base URL for self-hosted providers (gitlab, azure, keycloak). */
+  /** Base URL for self-hosted providers (gitlab, azure, keycloak).
+   * Empty means unset, like the classic surface — GoTrue falls back to
+   * the provider's default; always emitted (empty included) so a shell
+   * variable can never supply it. */
   readonly url?: string;
   /** Default false — emitted explicitly so a shell variable can never
    * override the typed config (native spawns extend the parent env). */
