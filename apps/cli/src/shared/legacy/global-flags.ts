@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Option } from "effect";
 import { Flag, GlobalFlag } from "effect/unstable/cli";
 
 import { CliArgs } from "../cli/cli-args.service.ts";
@@ -94,6 +94,48 @@ export const LEGACY_GLOBAL_FLAGS = [
   LegacyCreateTicketFlag,
   LegacyAgentFlag,
 ] as const;
+
+/**
+ * Resolves the current value of every global/persistent flag above, keyed by
+ * its own CLI flag name (each flag's `.id`, e.g. `debug`, `workdir`). Used by
+ * `legacy/telemetry/legacy-command-instrumentation.ts` to mirror Go's
+ * `changedFlags()` walking `cmd.Parent()`'s `PersistentFlags()` in addition to
+ * a command's own flags (`cmd/root_analytics.go:53-76`) — global flags here
+ * live in a single Effect-context-wide registry rather than per-ancestor
+ * `pflag.FlagSet`s, so this reads all of them unconditionally instead of
+ * walking a parent chain (CLI-1896).
+ *
+ * Read via `Effect.serviceOption` (adds no `R` requirement) so a caller that
+ * hasn't wired the global-flag context — e.g. a focused unit test — simply
+ * gets an empty record instead of a missing-service defect; production always
+ * provides every global flag through `Command.withGlobalFlags` at the CLI
+ * root (`legacy/cli/root.ts`).
+ *
+ * Reads each flag individually (rather than looping `LEGACY_GLOBAL_FLAGS`)
+ * because each `Setting<Id, A>` has a distinct value type `A` — a homogeneous
+ * loop widens the union in a way `Effect.serviceOption` can't resolve back to
+ * a single service lookup without an `as` cast, which this codebase forbids.
+ * `global-flags.unit.test.ts` asserts the resolved id set stays exactly in
+ * sync with `LEGACY_GLOBAL_FLAGS` — extend both together when adding a new
+ * global flag.
+ */
+export const legacyGlobalFlagValues = Effect.gen(function* () {
+  const values: Record<string, unknown> = {};
+  const setIfPresent = (id: string, option: Option.Option<unknown>) => {
+    if (Option.isSome(option)) values[id] = option.value;
+  };
+  setIfPresent(LegacyAgentFlag.id, yield* Effect.serviceOption(LegacyAgentFlag));
+  setIfPresent(LegacyCreateTicketFlag.id, yield* Effect.serviceOption(LegacyCreateTicketFlag));
+  setIfPresent(LegacyDebugFlag.id, yield* Effect.serviceOption(LegacyDebugFlag));
+  setIfPresent(LegacyDnsResolverFlag.id, yield* Effect.serviceOption(LegacyDnsResolverFlag));
+  setIfPresent(LegacyExperimentalFlag.id, yield* Effect.serviceOption(LegacyExperimentalFlag));
+  setIfPresent(LegacyNetworkIdFlag.id, yield* Effect.serviceOption(LegacyNetworkIdFlag));
+  setIfPresent(LegacyOutputFlag.id, yield* Effect.serviceOption(LegacyOutputFlag));
+  setIfPresent(LegacyProfileFlag.id, yield* Effect.serviceOption(LegacyProfileFlag));
+  setIfPresent(LegacyWorkdirFlag.id, yield* Effect.serviceOption(LegacyWorkdirFlag));
+  setIfPresent(LegacyYesFlag.id, yield* Effect.serviceOption(LegacyYesFlag));
+  return values;
+});
 
 const PFLAG_FALSE_VALUES = new Set(["0", "f", "F", "false", "FALSE", "False"]);
 

@@ -2,7 +2,12 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option, Stdio } from "effect";
 import { Flag } from "effect/unstable/cli";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
-import { LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
+import {
+  LegacyDebugFlag,
+  LegacyDnsResolverFlag,
+  LegacyOutputFlag,
+  LegacyWorkdirFlag,
+} from "../../shared/legacy/global-flags.ts";
 import { CurrentAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
@@ -968,6 +973,150 @@ describe("withLegacyCommandInstrumentation", () => {
           expect(Object.keys(flags).sort()).toEqual(["db-url", "local"]);
           // "x" must not appear as a recorded flag name.
           expect(Object.keys(flags)).not.toContain("x");
+        }),
+      ),
+    );
+  });
+
+  // Global/persistent flag parity (CLI-1896): Go's changedFlags() walks
+  // cmd.Parent()'s PersistentFlags() in addition to the leaf's own flags
+  // (cmd/root_analytics.go:53-76), so a global flag like --debug resolves to
+  // its real value even though no command declares it locally. The wrapper
+  // reads shared/legacy/global-flags.ts itself rather than relying on the
+  // per-command `flags` option to carry global flag values.
+
+  it.live("records a changed global boolean flag's real value (e.g. --debug)", () => {
+    // Go reports `flags: {debug: true}` for `supabase --debug telemetry disable`
+    // (isBooleanFlag is always safe, regardless of markFlagTelemetrySafe) — the
+    // TS port previously had no way to resolve `debug` at all and fell back to
+    // "<redacted>" for every global flag, even booleans.
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({ flags: {} }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) })),
+      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(Layer.succeed(LegacyDebugFlag, true)),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ debug: true });
+        }),
+      ),
+    );
+  });
+
+  it.live("merges a changed global flag alongside the command's own local flags", () => {
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({
+        flags: { projectRef: Option.some("abcdefghijklmnopqrst") },
+      }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "secrets",
+            "list",
+            "--project-ref",
+            "abcdefghijklmnopqrst",
+            "--debug",
+          ]),
+        }),
+      ),
+      Effect.provide(commandRuntimeLayer(["secrets", "list"])),
+      Effect.provide(Layer.succeed(LegacyDebugFlag, true)),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({
+            "project-ref": "<redacted>",
+            debug: true,
+          });
+        }),
+      ),
+    );
+  });
+
+  it.live(
+    "still redacts a changed global string flag like --workdir (Go never marks it telemetry-safe)",
+    () => {
+      const analytics = mockContextualAnalytics();
+
+      return Effect.void.pipe(
+        withLegacyCommandInstrumentation({ flags: {} }),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(
+          Stdio.layerTest({
+            args: Effect.succeed(["backups", "list", "--workdir", "/tmp/project"]),
+          }),
+        ),
+        Effect.provide(commandRuntimeLayer(["backups", "list"])),
+        Effect.provide(Layer.succeed(LegacyWorkdirFlag, Option.some("/tmp/project"))),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const event = analytics.captured[0];
+            expect(event?.properties.flags).toEqual({ workdir: "<redacted>" });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live(
+    "still redacts a changed global choice flag like --dns-resolver (global EnumFlag safety is CLI-1904's scope, not this fix's)",
+    () => {
+      const analytics = mockContextualAnalytics();
+
+      return Effect.void.pipe(
+        withLegacyCommandInstrumentation({ flags: {} }),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(
+          Stdio.layerTest({
+            args: Effect.succeed(["backups", "list", "--dns-resolver", "https"]),
+          }),
+        ),
+        Effect.provide(commandRuntimeLayer(["backups", "list"])),
+        Effect.provide(Layer.succeed(LegacyDnsResolverFlag, "https" as const)),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const event = analytics.captured[0];
+            expect(event?.properties.flags).toEqual({ "dns-resolver": "<redacted>" });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live("falls back to redacted when a changed global flag's service isn't wired", () => {
+    // Defensive case: `Effect.serviceOption` must never throw/defect when a
+    // narrow harness (or, hypothetically, an incompletely-wired real command)
+    // doesn't provide a global flag's context — it degrades to the prior
+    // REDACTED_VALUE behavior instead of crashing.
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({ flags: {} }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) })),
+      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      // Note: no LegacyDebugFlag layer provided.
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          expect(event?.properties.flags).toEqual({ debug: "<redacted>" });
         }),
       ),
     );

@@ -6,7 +6,7 @@ import {
   getCommandRuntimeSpanName,
 } from "../../shared/runtime/command-runtime.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
+import { LegacyOutputFlag, legacyGlobalFlagValues } from "../../shared/legacy/global-flags.ts";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
 import { withAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
@@ -255,12 +255,18 @@ function getChoiceFlagNames(config: Record<string, Param.Any> | undefined): Read
   return names;
 }
 
-function buildFlagsMap<Flags extends Record<string, unknown>>(
-  flags: Flags | undefined,
-  safeFlagSet: ReadonlySet<string>,
-  changedFlagNames: ReadonlyArray<string>,
-  choiceFlagNames: ReadonlySet<string>,
-): Record<string, unknown> | undefined {
+function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
+  readonly flags: Flags | undefined;
+  // Live global/persistent flag values (`legacyGlobalFlagValues`), keyed by
+  // CLI flag name — the fallback source for a changed flag the handler never
+  // declared locally (e.g. `debug`), matching Go's `changedFlags()` walking
+  // `cmd.Parent()`'s `PersistentFlags()` (`cmd/root_analytics.go:53-76`).
+  readonly globalFlagValues: Record<string, unknown>;
+  readonly safeFlagSet: ReadonlySet<string>;
+  readonly changedFlagNames: ReadonlyArray<string>;
+  readonly choiceFlagNames: ReadonlySet<string>;
+}): Record<string, unknown> | undefined {
+  const { flags, globalFlagValues, safeFlagSet, changedFlagNames, choiceFlagNames } = options;
   if (changedFlagNames.length === 0) return undefined;
 
   const result: Record<string, unknown> = {};
@@ -272,15 +278,27 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(
   }
 
   for (const cliName of changedFlagNames) {
-    const rawValue = handlerFlagsByCliName.get(cliName);
+    // A command's own flag always wins over a global/persistent flag sharing
+    // the same CLI name — mirrored from Go's cobra flag-shadowing, e.g. `db
+    // diff`'s local `--output` file-path flag (`cmd/db.go:622`) shadows the
+    // root's global `--output` enum (`cmd/root.go:330`). Only fall back to
+    // the live global-flag value when the handler never declared this name.
+    const isFromHandler = handlerFlagsByCliName.has(cliName);
+    const rawValue = isFromHandler ? handlerFlagsByCliName.get(cliName) : globalFlagValues[cliName];
     const value = normalizeFlagValue(rawValue);
 
-    if (safeFlagSet.has(cliName) || choiceFlagNames.has(cliName) || typeof value === "boolean") {
-      result[cliName] = value ?? REDACTED_VALUE;
-      continue;
-    }
+    // `safeFlagSet`/`choiceFlagNames` classify a flag as safe by CLI NAME,
+    // sourced from this command's own `safeFlags`/`config` options — they may
+    // only vouch for a value that actually came from this command's own
+    // `flags` record. A value resolved from the global-flag fallback is safe
+    // solely because it's boolean (Go's `isBooleanFlag` branch applies
+    // unconditionally); it must never inherit a *different* command's
+    // per-flag safe/choice annotation just because the CLI name matches.
+    const isSafe =
+      typeof value === "boolean" ||
+      (isFromHandler && (safeFlagSet.has(cliName) || choiceFlagNames.has(cliName)));
 
-    result[cliName] = REDACTED_VALUE;
+    result[cliName] = isSafe ? (value ?? REDACTED_VALUE) : REDACTED_VALUE;
   }
 
   return result;
@@ -325,7 +343,14 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
         const args = yield* stdio.args;
         const startedAt = yield* Clock.currentTimeMillis;
         const changedFlagNames = extractChangedFlagNames(args, options?.aliases);
-        const flags = buildFlagsMap(options?.flags, safeFlagSet, changedFlagNames, choiceFlagNames);
+        const globalFlagValues = yield* legacyGlobalFlagValues;
+        const flags = buildFlagsMap({
+          flags: options?.flags,
+          globalFlagValues,
+          safeFlagSet,
+          changedFlagNames,
+          choiceFlagNames,
+        });
         const analyticsContext = {
           command_run_id: commandRuntime.commandRunId,
           command,
