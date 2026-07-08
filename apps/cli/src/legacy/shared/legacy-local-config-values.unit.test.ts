@@ -134,6 +134,57 @@ describe("legacyResolveLocalConfigValues", () => {
     );
   });
 
+  describe("encrypted auth secrets", () => {
+    // Go's test vector (`apps/cli-go/pkg/config/secret_test.go`): this ciphertext
+    // decrypts to "value" under the keypair below.
+    const VAULT_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+    const VAULT_ENCRYPTED =
+      "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+
+    afterEach(() => {
+      delete process.env["DOTENV_PRIVATE_KEY"];
+    });
+
+    it("decrypts an encrypted: jwt_secret when DOTENV_PRIVATE_KEY is set", () => {
+      // "value" is only 5 characters, shorter than Go's minimum JWT secret length,
+      // so pad it out the way a real deployment's decrypted secret would be sized.
+      process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+      const config = baseConfig({ auth: { jwt_secret: VAULT_ENCRYPTED } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        LegacyInvalidJwtSecretError,
+      );
+    });
+
+    it("decrypts an encrypted: publishable_key when DOTENV_PRIVATE_KEY is set", () => {
+      process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+      const config = baseConfig({ auth: { publishable_key: VAULT_ENCRYPTED } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.publishableKey).toBe("value");
+    });
+
+    it("fails config loading for an encrypted: secret with no private key, matching Go", () => {
+      // Go aborts the whole command with `failed to parse config: <error>` rather
+      // than silently using the ciphertext as literal key material
+      // (`secret.go:30-73`, `config.go:704`).
+      const config = baseConfig({ auth: { publishable_key: VAULT_ENCRYPTED } });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "failed to parse config: missing private key",
+      );
+    });
+
+    it("decrypts an encrypted: SUPABASE_AUTH_* env override, not just the config.toml value", () => {
+      // Go's decrypt hook runs on whatever value reaches the config.Secret field,
+      // whether it was sourced from config.toml or a Viper env override.
+      process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+      const config = baseConfig();
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, {
+        SUPABASE_AUTH_SECRET_KEY: VAULT_ENCRYPTED,
+      });
+      expect(values.secretKey).toBe("value");
+      delete process.env["DOTENV_PRIVATE_KEY"];
+    });
+  });
+
   it("rejects an explicit empty project_id, matching Go's Config.Validate", () => {
     // Go's Config.Validate checks ProjectId first, before any other field
     // (pkg/config/config.go:990-991). The workdir-basename default is merged

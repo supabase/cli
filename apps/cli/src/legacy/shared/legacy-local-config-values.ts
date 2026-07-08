@@ -38,6 +38,11 @@ import {
   legacyGenerateGoJwt,
   type LegacyJwk,
 } from "./legacy-go-jwt.ts";
+import {
+  legacyCollectDotenvPrivateKeys,
+  legacyDecryptSecret,
+  legacyIsEncryptedSecret,
+} from "./legacy-vault-decrypt.ts";
 
 /**
  * Go-parity derived local-dev config values, ported from `utils.Config`'s
@@ -310,6 +315,38 @@ function envOverrideAnalyticsBackend(
     throw new LegacyInvalidAnalyticsBackendEnvOverrideError("analytics.backend", value);
   }
   return value;
+}
+
+/**
+ * Decrypts a resolved auth identity-key field (`jwt_secret`, `publishable_key`,
+ * `secret_key`, `anon_key`, `service_role_key`) when it's a dotenvx `encrypted:`
+ * value, mirroring Go's `DecryptSecretHookFunc` (`pkg/config/secret.go:30-73`),
+ * which Go runs unconditionally during `UnmarshalExact` for every
+ * `config.Secret`-typed field (`pkg/config/auth.go:181-185` types these five as
+ * `Secret`) — an undecryptable value aborts config loading with
+ * `failed to parse config: <error>` (`config.go:704`) before `status`/`stop`
+ * continue. `@supabase/config`'s schema only tags these fields for later
+ * `Redacted` wrapping (`packages/config/src/lib/env.ts`) and never decrypts, so
+ * without this step a valid `encrypted:` secret would be used as literal (wrong)
+ * key material and a malformed one would silently pass through instead of
+ * failing like Go does.
+ *
+ * Applied AFTER {@link envOverride}, matching Go: an env-sourced override lands
+ * on the same `config.Secret` field and goes through the same decode hook as a
+ * TOML-sourced value, so `SUPABASE_AUTH_JWT_SECRET=encrypted:...` is decrypted
+ * too, not just the config.toml value.
+ */
+function decryptAuthSecret(
+  value: string | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): string | undefined {
+  if (value === undefined || !legacyIsEncryptedSecret(value)) return value;
+  const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnvValues, ...process.env });
+  const decrypted = legacyDecryptSecret(value, dotenvPrivateKeys);
+  if (!decrypted.ok) {
+    throw new LegacyConfigValidateError(`failed to parse config: ${decrypted.error}`);
+  }
+  return decrypted.value;
 }
 
 /** Go's `(a *auth) generateAPIKeys` (`pkg/config/apikeys.go:43-73`). */
@@ -744,7 +781,10 @@ export function legacyResolveLocalConfigValues(
     projectEnvValues,
   );
   const jwtSecret = resolveJwtSecret(
-    envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
+    decryptAuthSecret(
+      envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
+      projectEnvValues,
+    ),
   );
   const signingKeysPath = envOverride(
     "SUPABASE_AUTH_SIGNING_KEYS_PATH",
@@ -1042,22 +1082,38 @@ export function legacyResolveLocalConfigValues(
     mailpitUrl: `http://${hostname}:${mailpitPort}`,
     dbUrl: `postgresql://postgres:${DEFAULT_DB_PASSWORD}@${hostname}:${dbPort}/postgres`,
     publishableKey: resolveOpaqueKey(
-      envOverride("SUPABASE_AUTH_PUBLISHABLE_KEY", config.auth.publishable_key, projectEnvValues),
+      decryptAuthSecret(
+        envOverride("SUPABASE_AUTH_PUBLISHABLE_KEY", config.auth.publishable_key, projectEnvValues),
+        projectEnvValues,
+      ),
       defaultPublishableKey,
     ),
     secretKey: resolveOpaqueKey(
-      envOverride("SUPABASE_AUTH_SECRET_KEY", config.auth.secret_key, projectEnvValues),
+      decryptAuthSecret(
+        envOverride("SUPABASE_AUTH_SECRET_KEY", config.auth.secret_key, projectEnvValues),
+        projectEnvValues,
+      ),
       defaultSecretKey,
     ),
     jwtSecret,
     anonKey: resolveSignedKey(
-      envOverride("SUPABASE_AUTH_ANON_KEY", config.auth.anon_key, projectEnvValues),
+      decryptAuthSecret(
+        envOverride("SUPABASE_AUTH_ANON_KEY", config.auth.anon_key, projectEnvValues),
+        projectEnvValues,
+      ),
       jwtSecret,
       signingKey,
       "anon",
     ),
     serviceRoleKey: resolveSignedKey(
-      envOverride("SUPABASE_AUTH_SERVICE_ROLE_KEY", config.auth.service_role_key, projectEnvValues),
+      decryptAuthSecret(
+        envOverride(
+          "SUPABASE_AUTH_SERVICE_ROLE_KEY",
+          config.auth.service_role_key,
+          projectEnvValues,
+        ),
+        projectEnvValues,
+      ),
       jwtSecret,
       signingKey,
       "service_role",
