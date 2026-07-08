@@ -5,6 +5,11 @@ import { ENV_CAPTURE_REGEX, type ProjectConfig } from "@supabase/config";
 import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
 import { Schema } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
 import { legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import {
@@ -116,6 +121,9 @@ export class LegacyInvalidJwtSecretError extends Error {
     super("Invalid config for auth.jwt_secret. Must be at least 16 characters");
     this.name = "LegacyInvalidJwtSecretError";
   }
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
 }
 
 /** Go's minimum `auth.jwt_secret` length (`pkg/config/apikeys.go:46`). */
@@ -137,6 +145,9 @@ export class LegacyInvalidPortEnvOverrideError extends Error {
   constructor(dottedFieldPath: string, value: string) {
     super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a port`);
     this.name = "LegacyInvalidPortEnvOverrideError";
+  }
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 
@@ -234,6 +245,9 @@ export class LegacyInvalidBoolEnvOverrideError extends Error {
     super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a bool`);
     this.name = "LegacyInvalidBoolEnvOverrideError";
   }
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
 }
 
 /**
@@ -288,6 +302,9 @@ export class LegacyInvalidAnalyticsBackendEnvOverrideError extends Error {
       `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "postgres", "bigquery"`,
     );
     this.name = "LegacyInvalidAnalyticsBackendEnvOverrideError";
+  }
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 

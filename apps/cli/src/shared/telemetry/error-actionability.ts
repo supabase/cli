@@ -434,6 +434,7 @@ const externalActionabilityByTag: Record<
   ProjectEnvParseError: () => actionability.invalidConfig,
   MissingProjectConfigValueError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
+  InvalidRemoteProjectIdError: () => actionability.invalidConfig,
 
   // @supabase/api — client construction failed before any request (missing
   // access token / bad configuration); remediation is the token env var.

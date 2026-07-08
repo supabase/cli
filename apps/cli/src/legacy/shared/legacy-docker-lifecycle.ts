@@ -1,6 +1,11 @@
 import { Data, Effect, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import { legacyDescribeContainerCliFailure, spawnContainerCli } from "./legacy-container-cli.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -15,14 +20,34 @@ export class LegacyDockerLifecycleListError extends Data.TaggedError(
   "LegacyDockerLifecycleListError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  // `docker ps`/`docker volume ls` never fail because nothing matches the
+  // label filter — an empty match is a successful, empty result. Every real
+  // failure here is therefore a container-runtime problem: neither
+  // docker/podman could be spawned, or the daemon itself rejected the call.
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
-/** Inspecting a single container's state failed for a reason other than "not found". */
+/**
+ * Inspecting a single container's state failed for a reason other than "not
+ * found" — except Go's `assertContainerHealthy` (and this port, matching it,
+ * see `status.handler.ts`) never special-cases a missing container either: an
+ * absent container is just another non-zero `docker container inspect` exit,
+ * which is by far the dominant real trigger of this error (the user hasn't
+ * run `supabase start` yet) — same fix as the other "stack isn't running"
+ * errors elsewhere in this codebase.
+ */
 export class LegacyDockerLifecycleInspectError extends Data.TaggedError(
   "LegacyDockerLifecycleInspectError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
 
 function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
   const decoder = new TextDecoder();
