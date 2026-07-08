@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { ENV_CAPTURE_REGEX, type ProjectConfig } from "@supabase/config";
 import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
 import { Schema } from "effect";
 
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
+import { legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import {
   legacyApiTlsCertReadErrorMessage,
   legacyApiTlsKeyReadErrorMessage,
@@ -495,21 +496,39 @@ function readApiTlsFiles(
  * raw `document`, since `@supabase/config`'s `template`/`notification` schema
  * (`packages/config/src/auth/email.ts`) has no `content` field to see) and performs the read
  * when a path comes back.
+ *
+ * `auth.email.template.<name>.*`/`auth.email.notification.<name>.*` are Viper-bound like every
+ * other nested field once `[auth.email.template.<name>]`/`[auth.email.notification.<name>]` are
+ * present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`), so
+ * `SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_CONTENT_PATH`/`SUPABASE_AUTH_EMAIL_NOTIFICATION_<NAME>_
+ * ENABLED`/`_CONTENT_PATH` overrides apply before this read runs. Unlike the hook/passkey/smtp
+ * presence gates elsewhere in this file, no extra raw-document presence check is needed here to
+ * decide WHETHER to apply an override: `email.template`/`email.notification` are `Schema.Record`s
+ * (`packages/config/src/auth/email.ts`), which — unlike a fixed-shape struct with
+ * `withDecodingDefaultKey` — only ever contain a key when the TOML section was actually present,
+ * so `Object.entries` already reflects presence.
  */
 function readAuthEmailTemplateContent(
   email: ProjectConfig["auth"]["email"],
   workdir: string,
   authDocument: Record<string, unknown> | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): void {
   const emailDoc = asRecord(authDocument?.["email"]);
   const templatesDoc = asRecord(emailDoc?.["template"]);
   const notificationsDoc = asRecord(emailDoc?.["notification"]);
 
   for (const [name, tmpl] of Object.entries(email.template)) {
+    const contentPath =
+      envOverride(
+        `SUPABASE_AUTH_EMAIL_TEMPLATE_${name.toUpperCase()}_CONTENT_PATH`,
+        tmpl.content_path,
+        projectEnvValues,
+      ) ?? tmpl.content_path;
     const path = legacyResolveEmailTemplateContentPath({
       section: "template",
       name,
-      contentPath: tmpl.content_path,
+      contentPath,
       contentPresent: asRecord(templatesDoc?.[name])?.["content"] !== undefined,
       base: workdir,
     });
@@ -523,11 +542,21 @@ function readAuthEmailTemplateContent(
     }
   }
   for (const [name, tmpl] of Object.entries(email.notification)) {
-    if (!tmpl.enabled) continue;
+    const envPrefix = `SUPABASE_AUTH_EMAIL_NOTIFICATION_${name.toUpperCase()}`;
+    const enabled = legacyEnvOverrideBool(
+      `${envPrefix}_ENABLED`,
+      tmpl.enabled,
+      `auth.email.notification.${name}.enabled`,
+      projectEnvValues,
+    );
+    if (!enabled) continue;
+    const contentPath =
+      envOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
+      tmpl.content_path;
     const path = legacyResolveEmailTemplateContentPath({
       section: "notification",
       name,
-      contentPath: tmpl.content_path,
+      contentPath,
       contentPresent: asRecord(notificationsDoc?.[name])?.["content"] !== undefined,
       base: join(workdir, "supabase"),
     });
@@ -603,6 +632,82 @@ const LEGACY_HOOK_TYPE_ORDER = [
   "before_user_created",
 ] as const;
 
+/** Go's `(s *sms) validate()` fixed provider priority (`pkg/config/config.go:1348-1410`) — a
+ * `switch` that validates ONLY the first enabled provider in this order. */
+const LEGACY_SMS_PROVIDER_ORDER = [
+  "twilio",
+  "twilio_verify",
+  "messagebird",
+  "textlocal",
+  "vonage",
+] as const;
+
+/** Required fields per SMS provider, in the order Go checks them (`config.go:1349-1403`). */
+const LEGACY_SMS_REQUIRED_FIELDS: Record<
+  (typeof LEGACY_SMS_PROVIDER_ORDER)[number],
+  ReadonlyArray<string>
+> = {
+  twilio: ["account_sid", "message_service_sid", "auth_token"],
+  twilio_verify: ["account_sid", "message_service_sid", "auth_token"],
+  messagebird: ["originator", "access_key"],
+  textlocal: ["sender", "api_key"],
+  vonage: ["from", "api_key", "api_secret"],
+};
+
+/**
+ * Go's `(s *sms) validate()` (`pkg/config/config.go:1348-1410`): a boolean `switch` that inspects
+ * providers in the FIXED priority order above and validates ONLY the first one whose `enabled` is
+ * true — a later enabled-but-incomplete provider is never even looked at. `@supabase/config`'s
+ * `sms` schema (`packages/config/src/auth/sms.ts`) already implements this exact switch for the
+ * schema-decoded (pre-env-override) TOML value, which is Go-parity-correct for a config with no
+ * relevant `SUPABASE_AUTH_SMS_*` env override — but `@supabase/config`'s decode pipeline never
+ * resolves `SUPABASE_*` overrides at all (only this legacy-shell layer does, post-decode), so a
+ * `SUPABASE_AUTH_SMS_<PROVIDER>_ENABLED` override that flips a section's enabled state after
+ * decode is invisible to it. This re-runs the same switch against the RAW `authDocument` with
+ * env overrides applied first — same document-based, post-override pattern as
+ * {@link validateAuthExternalProviders} below, and the same "duplicate D's/the schema's check for
+ * the env-override-aware L path" tradeoff already accepted for that function.
+ *
+ * `auth.sms.<provider>.*` is Viper-bound like every other nested field once
+ * `[auth.sms.<provider>]` is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`,
+ * `config.go:581-586`), so `SUPABASE_AUTH_SMS_<PROVIDER>_ENABLED`/`_<FIELD>` overrides apply
+ * before this validation runs, gated on the raw provider section already being present, matching
+ * `AutomaticEnv` (which only intercepts keys already present in the merged config).
+ */
+function validateAuthSmsProviders(
+  authDocument: Record<string, unknown> | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): void {
+  const smsDoc = asRecord(authDocument?.["sms"]);
+  if (smsDoc === undefined) return;
+  for (const providerName of LEGACY_SMS_PROVIDER_ORDER) {
+    const providerDoc = asRecord(smsDoc[providerName]);
+    if (providerDoc === undefined) continue;
+    const envPrefix = `SUPABASE_AUTH_SMS_${providerName.toUpperCase()}`;
+    const enabled = legacyEnvOverrideBool(
+      `${envPrefix}_ENABLED`,
+      providerDoc["enabled"] === true,
+      `auth.sms.${providerName}.enabled`,
+      projectEnvValues,
+    );
+    if (!enabled) continue;
+    for (const field of LEGACY_SMS_REQUIRED_FIELDS[providerName]) {
+      const value = envOverride(
+        `${envPrefix}_${field.toUpperCase()}`,
+        typeof providerDoc[field] === "string" ? providerDoc[field] : undefined,
+        projectEnvValues,
+      );
+      if (value === undefined || value.length === 0) {
+        throw new LegacyConfigValidateError(
+          `Missing required field in config: auth.sms.${providerName}.${field}`,
+        );
+      }
+    }
+    // Go's switch stops at the first enabled provider — later providers are never inspected.
+    return;
+  }
+}
+
 /** Go's `external.validate()` deprecated-provider skip (`config.go:1419-1423`) — `linkedin`/
  * `slack` are deleted (and warned on, if enabled) before the required-field loop runs, so they
  * are never validated here. Mirrors `legacy-db-config.toml-read.ts`'s identical "B5: external
@@ -627,24 +732,49 @@ const DEPRECATED_EXTERNAL_PROVIDERS = new Set(["linkedin", "slack"]);
  * "unknown" a different way. `authDocument`'s values are already post-`env()`-interpolation (see
  * `LoadedProjectConfig.document`), so no `legacyExpandEnv`-style resolution is needed here,
  * unlike D's raw pre-interpolation document.
+ *
+ * `auth.external.<name>.*` is Viper-bound like every other nested field once
+ * `[auth.external.<name>]` is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`,
+ * `config.go:581-586`), so `SUPABASE_AUTH_EXTERNAL_<NAME>_ENABLED`/`_CLIENT_ID`/`_SECRET`
+ * overrides apply before this validation runs — same gap this schema's own `requiredWhenEnabled`
+ * check has for KNOWN providers too (that check only sees the decoded, pre-override TOML value),
+ * so this now covers both known and unmodeled provider names uniformly, matching Go not
+ * distinguishing between them either.
  */
-function validateAuthExternalProviders(authDocument: Record<string, unknown> | undefined): void {
+function validateAuthExternalProviders(
+  authDocument: Record<string, unknown> | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): void {
   const external = asRecord(authDocument?.["external"]);
   if (external === undefined) return;
   for (const name of Object.keys(external)) {
     if (DEPRECATED_EXTERNAL_PROVIDERS.has(name)) continue;
     const provider = asRecord(external[name]);
-    if (provider === undefined || provider["enabled"] !== true) continue;
-    if (typeof provider["client_id"] !== "string" || provider["client_id"].length === 0) {
+    if (provider === undefined) continue;
+    const envPrefix = `SUPABASE_AUTH_EXTERNAL_${name.toUpperCase()}`;
+    const enabled = legacyEnvOverrideBool(
+      `${envPrefix}_ENABLED`,
+      provider["enabled"] === true,
+      `auth.external.${name}.enabled`,
+      projectEnvValues,
+    );
+    if (!enabled) continue;
+    const clientId = envOverride(
+      `${envPrefix}_CLIENT_ID`,
+      typeof provider["client_id"] === "string" ? provider["client_id"] : undefined,
+      projectEnvValues,
+    );
+    if (clientId === undefined || clientId.length === 0) {
       throw new LegacyConfigValidateError(
         `Missing required field in config: auth.external.${name}.client_id`,
       );
     }
-    if (
-      name !== "apple" &&
-      name !== "google" &&
-      (typeof provider["secret"] !== "string" || provider["secret"].length === 0)
-    ) {
+    const secret = envOverride(
+      `${envPrefix}_SECRET`,
+      typeof provider["secret"] === "string" ? provider["secret"] : undefined,
+      projectEnvValues,
+    );
+    if (name !== "apple" && name !== "google" && (secret === undefined || secret.length === 0)) {
       throw new LegacyConfigValidateError(
         `Missing required field in config: auth.external.${name}.secret`,
       );
@@ -653,16 +783,25 @@ function validateAuthExternalProviders(authDocument: Record<string, unknown> | u
 }
 
 /**
- * @throws when `project_id` (post-override) is an explicit empty string. Go's
- * `Config.Validate` checks this FIRST, before every other field
- * (`pkg/config/config.go:990-991`): the workdir-basename default is merged in
- * as a viper default value BEFORE `config.toml` is merged
- * (`mergeDefaultValues`/`mergeFileConfig`, `config.go:587-593,690-699`), so an
- * explicit `project_id = ""` in the file overwrites that default with the
- * literal empty string rather than being treated as absent — Go fails outright
- * rather than falling back to the basename. A genuinely absent key decodes to
- * `undefined` (not `""`, see `packages/config/src/base.ts`'s `optionalKey`),
- * so it never trips this check.
+ * @throws when `project_id` (post-override, post-workdir-basename-fallback) is
+ * an explicit empty string. Go's `Config.Validate` checks this FIRST, before
+ * every other field (`pkg/config/config.go:990-991`): `mergeDefaultValues`
+ * merges `sanitizeProjectId(filepath.Base(cwd))` in as a viper DEFAULT value
+ * BEFORE `config.toml` is merged (`config.go:690-699`, via `Eject`,
+ * `config.go:561-570`) — so `c.ProjectId` is NEVER Go's zero value by the time
+ * `Validate` runs; it's always at least this sanitized basename. A workdir
+ * whose basename sanitizes to the empty string (e.g. `!!!`) therefore fails
+ * config loading in Go even with NO `project_id` key in the file at all. An
+ * explicit `project_id = ""` IN the file overwrites that default with the
+ * literal empty string the same way (rather than being treated as absent) —
+ * Go fails outright rather than falling back to the basename either way.
+ * `legacySanitizeProjectId` is only applied to the BASENAME fallback here,
+ * matching `Eject`'s pre-sanitized default — an explicit non-empty
+ * `config.project_id`/`SUPABASE_PROJECT_ID` value is intentionally NOT
+ * re-sanitized at this point, matching Go's `Validate` "auto-fix" branch
+ * (`config.go:992-996`) being a WARN-only rewrite with no throwing
+ * equivalent, same precedent as this module's other WARN-only omissions
+ * (`auth.captcha.secret`/`assertEnvLoaded`, SMS's `EnableSignup` case).
  * @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
  * @throws {LegacyInvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
  * override doesn't parse as a valid port.
@@ -708,12 +847,21 @@ export function legacyResolveLocalConfigValues(
 ): LegacyLocalConfigValues {
   // Go's `Config.Validate` checks `ProjectId` FIRST, before every other field
   // (`pkg/config/config.go:990-991`) — see this function's `@throws` doc above
-  // for why an explicit `project_id = ""` fails here while an absent key does
-  // not. `SUPABASE_PROJECT_ID` is checked via the same `envOverride` precedence
+  // for why a workdir basename that sanitizes to `""` fails here even when
+  // `project_id` is absent from the file entirely. `config.project_id` is
+  // `undefined` only when the key is genuinely absent (`optionalKey`, see
+  // `packages/config/src/base.ts`) — that's the ONE case where Go's own
+  // sanitized-basename viper default shows through instead of a file value,
+  // so the fallback belongs here, not as a third branch after `envOverride`.
+  // `SUPABASE_PROJECT_ID` is checked via the same `envOverride` precedence
   // every other field here uses, since Viper's `AutomaticEnv` binds it too
-  // (`config.go:529-535`) and it can turn an explicit-empty file value back
-  // into a valid override.
-  const resolvedProjectId = envOverride("SUPABASE_PROJECT_ID", config.project_id, projectEnvValues);
+  // (`config.go:529-535`) and it can turn an explicit-empty file value (or an
+  // unsanitizable basename fallback) back into a valid override.
+  const resolvedProjectId = envOverride(
+    "SUPABASE_PROJECT_ID",
+    config.project_id ?? legacySanitizeProjectId(basename(workdir)),
+    projectEnvValues,
+  );
 
   // Go's `status` reads `utils.Config.Api.Port`/`ExternalUrl`/`Tls.Enabled`
   // after Viper's AutomaticEnv has already applied any `SUPABASE_API_PORT`/
@@ -920,13 +1068,15 @@ export function legacyResolveLocalConfigValues(
   // `Auth.Email.validate()`, then `Auth.Sms.validate()`/`Auth.ThirdParty.validate()` (skipping
   // the D-only `external` step, ported separately below), all right after the signing-keys read
   // and still inside `if c.Auth.Enabled` (`pkg/config/config.go:1117-1153`). Sms
-  // (`config.go:1145-1147`/`1348-1417`) is enforced at decode time by `@supabase/config`'s
-  // `sms` schema instead of here — see `packages/config/src/auth/sms.ts`'s provider-switch
-  // check. External (`config.go:1148-1150`/`1419-1451`) is D-only per
-  // `legacy-config-validate.ts`'s module header; {@link validateAuthExternalProviders} ports D's
-  // identical inline check, called after the single `legacyValidateResolvedConfig` call below.
-  // This block only ACCUMULATES the inputs those checks need — the checks themselves run once,
-  // later, as part of the single `legacyValidateResolvedConfig` call below.
+  // (`config.go:1145-1147`/`1348-1417`) is enforced at decode time by `@supabase/config`'s `sms`
+  // schema (`packages/config/src/auth/sms.ts`'s provider-switch check) for the TOML-only case,
+  // AND re-checked here post-env-override by {@link validateAuthSmsProviders} (called alongside
+  // {@link validateAuthExternalProviders}, after the single `legacyValidateResolvedConfig` call
+  // below) — see that function's doc comment for why both are needed. External
+  // (`config.go:1148-1150`/`1419-1451`) is D-only per `legacy-config-validate.ts`'s module
+  // header; {@link validateAuthExternalProviders} ports D's identical inline check. This block
+  // only ACCUMULATES the inputs those checks need — the checks themselves run once, later, as
+  // part of the single `legacyValidateResolvedConfig` call below.
   let authInput: LegacyAuthInput | undefined;
   if (authEnabled) {
     // `@supabase/config`'s auth schema has no `passkey`/`webauthn` fields at all (see
@@ -1041,7 +1191,7 @@ export function legacyResolveLocalConfigValues(
     // Go's `Config.Validate` runs the email template/notification content read right after
     // `Auth.MFA.validate()`, still inside `if c.Auth.Enabled` (`config.go:1142`) — this I/O read
     // stays at this exact textual position (see this function's `@throws` doc for why).
-    readAuthEmailTemplateContent(config.auth.email, workdir, authDocument);
+    readAuthEmailTemplateContent(config.auth.email, workdir, authDocument, projectEnvValues);
 
     // Go's `[auth.email.smtp]` presence-based `enabled` default (`pkg/config/config.go:743-748`):
     // when the TOML table is present but omits `enabled`, Go treats it as `true` — a genuinely
@@ -1251,12 +1401,16 @@ export function legacyResolveLocalConfigValues(
     experimental: experimentalInput,
   };
   legacyValidateResolvedConfig(input);
-  // D-only per `legacy-config-validate.ts`'s module header ("auth.external ... stays 100%
-  // inline in D") — this is L's port of D's identical inline block, run after the single shared
-  // `legacyValidateResolvedConfig` call per the module's documented sms/external-vs-third_party
-  // ordering tradeoff (third_party is checked inside that call; external runs after it here).
+  // Both run after the single shared `legacyValidateResolvedConfig` call per the module's
+  // documented sms/external-vs-third_party ordering tradeoff (third_party is checked inside that
+  // call; sms/external run after it here) — in Go's own relative sms-then-external order
+  // (`config.go:1145-1150`). `validateAuthSmsProviders` re-runs `@supabase/config`'s schema-level
+  // switch with env overrides applied (see its doc comment); `validateAuthExternalProviders` is
+  // D-only per `legacy-config-validate.ts`'s module header ("auth.external ... stays 100% inline
+  // in D") — this is L's port of D's identical inline block.
   if (authEnabled) {
-    validateAuthExternalProviders(authDocument);
+    validateAuthSmsProviders(authDocument, projectEnvValues);
+    validateAuthExternalProviders(authDocument, projectEnvValues);
   }
 
   return {

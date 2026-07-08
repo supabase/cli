@@ -197,9 +197,30 @@ describe("legacyResolveLocalConfigValues", () => {
     );
   });
 
-  it("does not reject an absent project_id (the workdir-basename default applies elsewhere)", () => {
+  it("does not reject an absent project_id when the workdir basename sanitizes to a non-empty value", () => {
     const config = Schema.decodeUnknownSync(ProjectConfigSchema)({});
     expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+  });
+
+  it("rejects an absent project_id when the workdir basename sanitizes to empty, matching Go", () => {
+    // Go's `mergeDefaultValues` merges `sanitizeProjectId(filepath.Base(cwd))` in as a viper
+    // DEFAULT before config.toml is merged (config.go:690-699, via Eject at config.go:561-570) —
+    // so `c.ProjectId` is never Go's zero value by the time `Validate` runs. A workdir whose
+    // basename sanitizes to `""` (every character invalid, e.g. `!!!`) therefore still fails
+    // config loading in Go even with no `project_id` key in the file at all.
+    const config = Schema.decodeUnknownSync(ProjectConfigSchema)({});
+    expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", "/tmp/!!!")).toThrow(
+      "Missing required field in config: project_id",
+    );
+  });
+
+  it("lets SUPABASE_PROJECT_ID override an absent project_id whose basename sanitizes to empty", () => {
+    const config = Schema.decodeUnknownSync(ProjectConfigSchema)({});
+    expect(() =>
+      legacyResolveLocalConfigValues(config, "127.0.0.1", "/tmp/!!!", {
+        SUPABASE_PROJECT_ID: "env-project",
+      }),
+    ).not.toThrow();
   });
 
   it("lets SUPABASE_PROJECT_ID override an explicit empty project_id", () => {
@@ -1292,6 +1313,88 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
+  describe("auth.email.template/notification env overrides", () => {
+    // `auth.email.template.<name>.*`/`auth.email.notification.<name>.*` are Viper-bound like any
+    // other nested field once the section is present in config.toml. Unlike hook/passkey, no
+    // extra raw-document presence gate is needed: `email.template`/`email.notification` are
+    // `Schema.Record`s, so `Object.entries` on the decoded config already reflects presence.
+    const tempRoot = useLegacyTempWorkdir("supabase-email-template-env-test-");
+
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT_PATH"];
+      delete process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_ENABLED"];
+      delete process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT_PATH"];
+    });
+
+    it("lets an env-provided template content_path override a missing TOML content_path", () => {
+      writeFileSync(join(tempRoot.current, "invite.html"), "<html></html>");
+      process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_INVITE_CONTENT_PATH"] = "invite.html";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { template: { invite: {} } },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    it("rejects a notification enabled only via env with a missing content_path file", () => {
+      // Go applies SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_ENABLED before
+      // Auth.Email.validate() decides whether to read content_path — a notification disabled
+      // in TOML but enabled by env must still be checked.
+      process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_ENABLED"] = "true";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: {
+            notification: { password_changed: { enabled: false, content_path: "missing.html" } },
+          },
+        },
+      });
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current)).toThrow(
+        "Invalid config for auth.email.notification.password_changed.content_path: ",
+      );
+    });
+
+    it("does not validate a notification disabled only via env despite a TOML-enabled section", () => {
+      process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_ENABLED"] = "false";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: {
+            notification: { password_changed: { enabled: true, content_path: "missing.html" } },
+          },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+
+    it("lets an env-provided notification content_path override a missing TOML content_path", () => {
+      const supabaseDir = join(tempRoot.current, "supabase");
+      mkdirSync(supabaseDir, { recursive: true });
+      writeFileSync(join(supabaseDir, "pw-changed.html"), "<html></html>");
+      process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT_PATH"] =
+        "pw-changed.html";
+      const config = baseConfig({
+        auth: {
+          enabled: true,
+          site_url: "http://localhost:3000",
+          email: { notification: { password_changed: { enabled: true } } },
+        },
+      });
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", tempRoot.current),
+      ).not.toThrow();
+    });
+  });
+
   // auth.third_party.* (thirdParty.validate()) and functions.* (function-slug validation)
   // moved entirely to `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig`
   // calls) — L pre-filters to enabled-only third_party providers and derives function slugs
@@ -1346,6 +1449,97 @@ describe("legacyResolveLocalConfigValues", () => {
     });
 
     it("skips the check entirely when no document is threaded through", () => {
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  describe("auth.external env overrides", () => {
+    // `auth.external.<name>.*` is Viper-bound like any other nested field once
+    // `[auth.external.<name>]` is present in config.toml — same gap the schema's own
+    // `requiredWhenEnabled` check has for KNOWN providers too.
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_EXTERNAL_CUSTOM_ENABLED"];
+      delete process.env["SUPABASE_AUTH_EXTERNAL_CUSTOM_CLIENT_ID"];
+      delete process.env["SUPABASE_AUTH_EXTERNAL_CUSTOM_SECRET"];
+    });
+
+    it("rejects a provider enabled only via env with no client_id", () => {
+      process.env["SUPABASE_AUTH_EXTERNAL_CUSTOM_ENABLED"] = "true";
+      const config = baseConfig();
+      const document = { auth: { external: { custom: { enabled: false } } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow("Missing required field in config: auth.external.custom.client_id");
+    });
+
+    it("accepts env-provided client_id/secret overriding a TOML-enabled provider missing both", () => {
+      process.env["SUPABASE_AUTH_EXTERNAL_CUSTOM_CLIENT_ID"] = "abc";
+      process.env["SUPABASE_AUTH_EXTERNAL_CUSTOM_SECRET"] = "shh";
+      const config = baseConfig();
+      const document = { auth: { external: { custom: { enabled: true } } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("does not synthesize a provider purely from an env override when the section is absent from the document", () => {
+      process.env["SUPABASE_AUTH_EXTERNAL_CUSTOM_ENABLED"] = "true";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  describe("auth.sms env overrides (provider switch)", () => {
+    // Go's `(s *sms) validate()` (`pkg/config/config.go:1348-1410`) is a `switch` that validates
+    // ONLY the first enabled provider in a fixed priority order (twilio, twilio_verify,
+    // messagebird, textlocal, vonage). `@supabase/config`'s schema already implements this switch
+    // for the schema-decoded (pre-env-override) TOML value; this re-runs it against the raw
+    // document with `SUPABASE_AUTH_SMS_*` overrides applied, since the schema never sees them.
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"];
+      delete process.env["SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID"];
+      delete process.env["SUPABASE_AUTH_SMS_TWILIO_MESSAGE_SERVICE_SID"];
+      delete process.env["SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN"];
+      delete process.env["SUPABASE_AUTH_SMS_MESSAGEBIRD_ENABLED"];
+    });
+
+    it("rejects a provider enabled only via env with missing required fields", () => {
+      process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"] = "true";
+      const config = baseConfig();
+      const document = { auth: { sms: { twilio: { enabled: false } } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow("Missing required field in config: auth.sms.twilio.account_sid");
+    });
+
+    it("accepts env-provided credentials overriding a TOML-enabled provider missing them", () => {
+      process.env["SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID"] = "AC123";
+      process.env["SUPABASE_AUTH_SMS_TWILIO_MESSAGE_SERVICE_SID"] = "MG123";
+      process.env["SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN"] = "tok";
+      const config = baseConfig();
+      const document = { auth: { sms: { twilio: { enabled: true } } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("only validates the first enabled provider in Go's fixed priority order", () => {
+      // twilio is disabled via env; messagebird becomes the switch winner and is missing its
+      // required fields — twilio's own (still-missing) fields must never be inspected.
+      process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"] = "false";
+      process.env["SUPABASE_AUTH_SMS_MESSAGEBIRD_ENABLED"] = "true";
+      const config = baseConfig();
+      const document = {
+        auth: { sms: { twilio: { enabled: true }, messagebird: { enabled: false } } },
+      };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow("Missing required field in config: auth.sms.messagebird.originator");
+    });
+
+    it("does not synthesize a provider purely from an env override when the section is absent from the document", () => {
+      process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"] = "true";
       const config = baseConfig();
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
