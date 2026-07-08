@@ -227,6 +227,24 @@ describe("config io", () => {
     ).toThrow();
   });
 
+  test("decodes an unmodeled email template/notification name (Go map[string] parity)", () => {
+    // Go's `Auth.Email.Template`/`Notification` are genuine `map[string]emailTemplate`/
+    // `map[string]notification` (`apps/cli-go/pkg/config/auth.go:247-248`) — open maps with no
+    // key restriction; `(e *email) validate(fsys)` (`pkg/config/config.go:1293-1313`) iterates
+    // every entry regardless of name. An unrecognized key like `[auth.email.template.custom]`
+    // is a legitimate config shape Go accepts, not a decode error.
+    const config = decodeProjectConfig({
+      auth: {
+        email: {
+          template: { custom: { subject: "Hi" } },
+          notification: { custom_notice: { enabled: true, content_path: "custom.html" } },
+        },
+      },
+    });
+    expect(config.auth.email.template["custom"]?.subject).toBe("Hi");
+    expect(config.auth.email.notification["custom_notice"]?.enabled).toBe(true);
+  });
+
   test("requires enabled external provider credentials during decode", () => {
     expect(() =>
       decodeProjectConfig({
