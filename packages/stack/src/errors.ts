@@ -21,9 +21,11 @@ export class DockerPullError extends Data.TaggedError("DockerPullError")<{
   readonly detail: string;
   readonly cause: unknown;
   /**
-   * Whether the pull failed because the Docker daemon itself is unreachable,
-   * detected from the runtime's output at the boundary where it is produced.
-   * Consumers must branch on this instead of sniffing `detail` text.
+   * Whether the pull failed because the container runtime itself is unusable
+   * locally — the daemon is unreachable (detected from the runtime's output
+   * at the boundary where it is produced) or the docker binary could not be
+   * spawned at all. Consumers must branch on this instead of sniffing
+   * `detail` text.
    */
   readonly daemonDown: boolean;
 }> {}

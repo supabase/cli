@@ -37,6 +37,7 @@ export const CliErrorCategory = {
   MigrationDrift: "migration_drift",
   Permission: "permission",
   PlanLimit: "plan_limit",
+  ProjectPaused: "project_paused",
   InvalidInput: "invalid_input",
   Network: "network",
   ApiStatus: "api_status",
@@ -508,7 +509,7 @@ const externalActionabilityByTag: Record<
  * against the workspace packages.
  */
 export function isClassifiedExternalErrorTag(tag: string): boolean {
-  return tag in externalActionabilityByTag;
+  return Object.hasOwn(externalActionabilityByTag, tag);
 }
 
 function classifyShowHelp(error: ErrorRecord): CliErrorActionability | undefined {
@@ -550,14 +551,25 @@ export function classifyCliErrorActionability(error: unknown): CliErrorActionabi
   }
 
   if (tag !== undefined && isErrorRecord(error)) {
-    const external = externalActionabilityByTag[tag];
-    if (external !== undefined) {
-      return toActionability(external(error), "tag", tag);
+    // Own-property lookup: a sanitized tag like "constructor" must not pick
+    // up Object.prototype members as adapters.
+    if (Object.hasOwn(externalActionabilityByTag, tag)) {
+      const external = externalActionabilityByTag[tag];
+      if (external !== undefined) {
+        return toActionability(external(error), "tag", tag);
+      }
     }
     return toActionability(actionability.unknown, "tag", tag);
   }
 
   if (isErrorRecord(error) && readErrorName(error) === "StackError") {
+    // The public Stack promise API wraps tagged failures via `toStackError`,
+    // preserving the original in `cause` — classify that instead of the
+    // wrapper whenever it is itself classifiable.
+    const cause = error["cause"];
+    if (readErrorTag(cause) !== undefined || readDeclaration(cause) !== undefined) {
+      return classifyCliErrorActionability(cause);
+    }
     const classify = externalActionabilityByTag["StackError"];
     if (classify !== undefined) {
       return toActionability(classify(error), "error", "StackError");

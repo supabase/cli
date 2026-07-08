@@ -154,6 +154,24 @@ describe("classifyCliErrorActionability", () => {
     expect(classifyCliErrorActionability(other).error_kind).toBe("unknown");
   });
 
+  it("classifies the preserved tagged cause of a StackError wrapper", () => {
+    const wrapped = new Error("stack failure");
+    wrapped.name = "StackError";
+    Object.defineProperty(wrapped, "code", { value: "BUILD_ERROR" });
+    Object.defineProperty(wrapped, "cause", {
+      value: { _tag: "StackBuildError", detail: "x", reason: "invalid_config" },
+    });
+    const result = classifyCliErrorActionability(wrapped);
+    expect(result.error_category).toBe("invalid_config");
+    expect(result.error_fingerprint).toBe("tag:StackBuildError:invalid_config");
+  });
+
+  it("does not treat Object.prototype members as external adapters", () => {
+    const result = classifyCliErrorActionability({ _tag: "constructor" });
+    expect(result.error_kind).toBe("unknown");
+    expect(result.error_fingerprint).toBe("tag:constructor");
+  });
+
   it("buckets native JS exceptions as internal panics", () => {
     const result = classifyCliErrorActionability(new TypeError("x is not a function"));
     expect(result.error_kind).toBe("internal_bug");

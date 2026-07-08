@@ -3,6 +3,7 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  statusCodeActionability,
 } from "../telemetry/error-actionability.ts";
 
 export class InvalidFunctionSlugError extends Data.TaggedError("InvalidFunctionSlugError")<{
@@ -32,9 +33,10 @@ export class DeleteFunctionNetworkError extends Data.TaggedError("DeleteFunction
 export class DeleteFunctionUnexpectedStatusError extends Data.TaggedError(
   "DeleteFunctionUnexpectedStatusError",
 )<{
+  readonly status: number;
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.apiStatus;
+    return statusCodeActionability(this.status);
   }
 }

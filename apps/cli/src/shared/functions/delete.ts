@@ -72,6 +72,7 @@ export function deleteFunction<ResolveError, ResolveRequirements>(
         const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
         return yield* Effect.fail(
           new DeleteFunctionUnexpectedStatusError({
+            status: response.status,
             message: `unexpected delete function status ${response.status}: ${body}`,
           }),
         );

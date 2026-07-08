@@ -27,8 +27,14 @@ import {
  * forgot to classify".
  */
 
+// Matches every way an error class is defined in this workspace: direct
+// `Data.TaggedError("Tag")`, any local `*Error(...)` factory whose heritage
+// call carries the tag literal (`CliError("Tag")`, `LoginError("Tag")`, ...),
+// and plain `extends Error` classes (identified by class name). Error
+// factories must therefore be named `<Something>Error` to stay guarded —
+// which also keeps `Data.TaggedClass` event types out of the scan.
 const ERROR_DEFINITION_PATTERN =
-  /(?:TaggedError|CliError)\(\s*"([A-Za-z0-9_]+)"|class\s+([A-Za-z0-9_]+)\s+extends\s+Error\b/gs;
+  /TaggedError\(\s*"([A-Za-z0-9_]+)"|class\s+[A-Za-z0-9_]+\s+extends\s+[A-Za-z0-9_.]*Error\(\s*"([A-Za-z0-9_]+)"|class\s+([A-Za-z0-9_]+)\s+extends\s+Error\b/gs;
 
 function scanErrorTags(root: string): Map<string, Array<string>> {
   const tagsByFile = new Map<string, Array<string>>();
@@ -41,7 +47,7 @@ function scanErrorTags(root: string): Map<string, Array<string>> {
       }
       if (!path.endsWith(".ts") || path.endsWith(".test.ts")) continue;
       const tags = [...readFileSync(path, "utf8").matchAll(ERROR_DEFINITION_PATTERN)].map(
-        (match) => match[1] ?? match[2] ?? "",
+        (match) => match[1] ?? match[2] ?? match[3] ?? "",
       );
       if (tags.length > 0) tagsByFile.set(path, tags);
     }

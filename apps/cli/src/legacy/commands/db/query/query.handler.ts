@@ -210,6 +210,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       if (status !== 201) {
         return yield* Effect.fail(
           new LegacyDbQueryUnexpectedStatusError({
+            status,
             message: `unexpected status ${status}: ${body}`,
           }),
         );

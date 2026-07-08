@@ -209,6 +209,7 @@ const pullImage = (
     yield* callbacks?.onDownloadStart ?? Effect.void;
 
     const failures: PullAttemptFailure[] = [];
+    let spawnFailed = false;
 
     for (const image of images) {
       for (
@@ -233,6 +234,10 @@ const pullImage = (
             break;
           }
         } else {
+          // A failed effect (rather than a non-zero exit) means the container
+          // runtime could not be spawned at all — a local Docker setup
+          // problem, not a registry failure.
+          spawnFailed = true;
           const cause = Cause.squash(result.cause);
           const message = cause instanceof Error ? cause.message : String(cause);
           failures.push({ image, attempt, message });
@@ -258,7 +263,8 @@ const pullImage = (
         image: images[0] ?? "unknown",
         detail: `Failed to pull Docker image from all registries. ${detail}`,
         cause: new Error(detail),
-        daemonDown: failures.some((failure) => isDockerDaemonDownMessage(failure.message)),
+        daemonDown:
+          spawnFailed || failures.some((failure) => isDockerDaemonDownMessage(failure.message)),
       }),
     );
   });

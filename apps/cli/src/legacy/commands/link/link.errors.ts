@@ -2,6 +2,8 @@ import { Data } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
+  CliErrorCategory,
+  CliErrorKind,
   CliSuggestionType,
   ErrorActionabilityId,
   statusCodeActionability,
@@ -43,9 +45,11 @@ export class LegacyProjectPausedError extends Data.TaggedError("LegacyProjectPau
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     // The rendered remediation is "unpause it from the Supabase dashboard" —
-    // remote project state, not local config.
+    // remote project state, not local config and not an entitlement failure.
     return {
-      ...actionability.planLimit,
+      error_kind: CliErrorKind.UserActionable,
+      error_category: CliErrorCategory.ProjectPaused,
+      has_suggestion: true,
       suggestion_type: CliSuggestionType.OpenDashboard,
     };
   }
@@ -73,7 +77,9 @@ export class LegacyLinkAuthTokenError extends Data.TaggedError("LegacyLinkAuthTo
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.authLogin;
+    // The shared mapper wraps any non-200 in this tag; only a 401 is an auth
+    // failure the user fixes by re-logging in.
+    return statusCodeActionability(this.status);
   }
 }
 

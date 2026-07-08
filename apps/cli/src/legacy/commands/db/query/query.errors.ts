@@ -3,6 +3,7 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  statusCodeActionability,
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
@@ -93,9 +94,10 @@ export class LegacyDbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
 export class LegacyDbQueryUnexpectedStatusError extends Data.TaggedError(
   "LegacyDbQueryUnexpectedStatusError",
 )<{
+  readonly status: number;
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.apiStatus;
+    return statusCodeActionability(this.status);
   }
 }

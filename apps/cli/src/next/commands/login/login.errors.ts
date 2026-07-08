@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 
 function LoginError<Tag extends string>(tag: Tag) {
   return class extends Data.TaggedError(tag)<{
@@ -11,5 +16,13 @@ function LoginError<Tag extends string>(tag: Tag) {
   };
 }
 
-export class NoTtyError extends LoginError("NoTtyError") {}
-export class LoginFailedError extends LoginError("LoginFailedError") {}
+export class NoTtyError extends LoginError("NoTtyError") {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authToken;
+  }
+}
+export class LoginFailedError extends LoginError("LoginFailedError") {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.authLogin;
+  }
+}
