@@ -297,7 +297,7 @@ function resolveAuthConfig(
     port: ports.authPort,
     siteUrl: cfg.siteUrl ?? "http://localhost:3000",
     jwtExpiry: cfg.jwtExpiry ?? 3600,
-    externalUrl: cfg.externalUrl ?? `http://127.0.0.1:${apiPort}`,
+    externalUrl: cfg.externalUrl ?? `http://127.0.0.1:${apiPort}/auth/v1`,
     version: cfg.version ?? DEFAULT_VERSIONS.auth,
     external: cfg.external ?? {},
     additionalRedirectUrls: cfg.additionalRedirectUrls ?? [],

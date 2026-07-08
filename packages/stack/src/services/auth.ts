@@ -8,6 +8,11 @@ interface AuthServiceOptions {
   readonly siteUrl: string;
   readonly jwtSecret: string;
   readonly jwtExpiry: number;
+  /** The auth service's public URL through the API gateway, path
+   * included (`<api-root>/auth/v1`) — the classic CLI's
+   * auth.external_url. Emitted as API_EXTERNAL_URL (GoTrue builds
+   * outgoing URLs against it) and the base for the derived provider
+   * callback. */
   readonly externalUrl: string;
   readonly smtpHost?: string;
   readonly smtpPort?: number;
@@ -57,7 +62,7 @@ const externalProviderEnv = (opts: AuthServiceOptions): Record<string, string> =
     env[`${prefix}_ENABLED`] = String(provider.enabled ?? true);
     env[`${prefix}_CLIENT_ID`] = provider.clientId;
     env[`${prefix}_SECRET`] = provider.secret ?? "";
-    env[`${prefix}_REDIRECT_URI`] = provider.redirectUri || `${opts.externalUrl}/auth/v1/callback`;
+    env[`${prefix}_REDIRECT_URI`] = provider.redirectUri || `${opts.externalUrl}/callback`;
     env[`${prefix}_SKIP_NONCE_CHECK`] = String(provider.skipNonceCheck ?? false);
     env[`${prefix}_EMAIL_OPTIONAL`] = String(provider.emailOptional ?? false);
     env[`${prefix}_URL`] = provider.url ?? "";

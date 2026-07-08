@@ -267,7 +267,7 @@ describe("makeAuthServiceNative", () => {
       siteUrl: "http://localhost:3000",
       jwtSecret: JWT_SECRET,
       jwtExpiry: 3600,
-      externalUrl: `http://127.0.0.1:${API_PORT}`,
+      externalUrl: `http://127.0.0.1:${API_PORT}/auth/v1`,
       dependencies: [{ service: "postgres-init", condition: "completed" }],
     });
 
@@ -297,7 +297,7 @@ describe("makeAuthServiceDocker", () => {
       siteUrl: "http://localhost:3000",
       jwtSecret: JWT_SECRET,
       jwtExpiry: 3600,
-      externalUrl: `http://127.0.0.1:${API_PORT}`,
+      externalUrl: `http://127.0.0.1:${API_PORT}/auth/v1`,
       dbHost: "127.0.0.1",
       networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "9999:9999"],
       apiPort: API_PORT,

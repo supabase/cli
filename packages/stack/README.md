@@ -108,13 +108,15 @@ Optional. Omit to include with defaults, set to `false` to exclude.
 
 Optional. Omit to include with defaults, set to `false` to exclude.
 
-| Field         | Type     | Default                    | Description                        |
-| ------------- | -------- | -------------------------- | ---------------------------------- |
-| `port`        | `number` | auto                       | Auth service port                  |
-| `siteUrl`     | `string` | `http://localhost:3000`    | Auth redirect URL (your app's URL) |
-| `jwtExpiry`   | `number` | `3600`                     | JWT expiry in seconds              |
-| `externalUrl` | `string` | `http://127.0.0.1:${port}` | Auth external URL                  |
-| `version`     | `string` | `2.188.0-rc.15`            | Auth version                       |
+| Field                    | Type       | Default                            | Description                                              |
+| ------------------------ | ---------- | ---------------------------------- | -------------------------------------------------------- |
+| `port`                   | `number`   | auto                               | Auth service port                                         |
+| `siteUrl`                | `string`   | `http://localhost:3000`            | Auth redirect URL (your app's URL)                        |
+| `jwtExpiry`              | `number`   | `3600`                             | JWT expiry in seconds                                     |
+| `externalUrl`            | `string`   | `http://127.0.0.1:${port}/auth/v1` | Auth external URL (through the API gateway, path included) |
+| `version`                | `string`   | `2.188.0-rc.15`                    | Auth version                                              |
+| `external`               | `object`   | `{}`                               | External OAuth providers by GoTrue provider id            |
+| `additionalRedirectUrls` | `string[]` | `[]`                               | Extra allowed redirect URLs (`GOTRUE_URI_ALLOW_LIST`)     |
 
 ### Full config example
 

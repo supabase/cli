@@ -71,7 +71,7 @@ const defaultConfig: ResolvedStackConfig = {
     port: 9999,
     siteUrl: "http://localhost:3000",
     jwtExpiry: 3600,
-    externalUrl: "http://127.0.0.1:54321",
+    externalUrl: "http://127.0.0.1:54321/auth/v1",
     version: DEFAULT_VERSIONS.auth,
     external: {},
     additionalRedirectUrls: [],

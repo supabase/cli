@@ -7,7 +7,7 @@ const baseOptions = {
   siteUrl: "http://localhost:3000",
   jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
   jwtExpiry: 3600,
-  externalUrl: "http://127.0.0.1:54321",
+  externalUrl: "http://127.0.0.1:54321/auth/v1",
   dependencies: [],
 };
 

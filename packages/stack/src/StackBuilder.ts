@@ -70,10 +70,12 @@ export interface AuthExternalProviderConfig {
    * credentials wired but inactive with an explicit false. */
   readonly enabled?: boolean;
   readonly clientId: string;
-  /** Optional for providers GoTrue accepts without one (e.g. apple,
-   * google one-tap); emitted empty when absent, like the classic CLI. */
+  /** Optional: the id-token flow (google one-tap, apple sign-in)
+   * reads provider config without a secret; the /authorize OAuth flow
+   * still requires one and GoTrue refuses it at request time. Emitted
+   * empty when absent, like the classic CLI. */
   readonly secret?: string;
-  /** Defaults to `<externalUrl>/auth/v1/callback`, the classic CLI's
+  /** Defaults to `<externalUrl>/callback`, the classic CLI's
    * issuer-derived default. Empty means unset, like the classic surface
    * (TOML strings can't be absent). */
   readonly redirectUri?: string;
@@ -93,6 +95,11 @@ export interface AuthConfig {
   readonly port?: number;
   readonly siteUrl?: string;
   readonly jwtExpiry?: number;
+  /** The auth service's public URL through the API gateway, path
+   * included — the classic CLI's auth.external_url. Defaults to
+   * `http://127.0.0.1:<apiPort>/auth/v1`, matching the proxy's
+   * /auth/v1 routing; GoTrue receives it as API_EXTERNAL_URL and
+   * builds outgoing URLs (mail links, OAuth callbacks) against it. */
   readonly externalUrl?: string;
   readonly version?: string;
   readonly external?: Readonly<Record<string, AuthExternalProviderConfig>>;
