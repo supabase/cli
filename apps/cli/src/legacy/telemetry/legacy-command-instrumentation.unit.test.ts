@@ -1148,4 +1148,33 @@ describe("withLegacyCommandInstrumentation", () => {
       ),
     );
   });
+
+  // CLI-1896 review follow-up (Codex): a global flag's SHORTHAND must resolve
+  // through the same fallback its long form already does.
+
+  it.live("resolves a global flag's shorthand (-o) through the global fallback", () => {
+    // `-o json` must resolve to the canonical `output` flag the same way
+    // `--output json` already does: Go's `pflag.Visit` reports the canonical
+    // `flag.Name` for either form (`cmd/root_analytics.go:53-76`), and `-o` is
+    // `--output`'s only registered persistent shorthand (`cmd/root.go:330`).
+    const analytics = mockContextualAnalytics();
+
+    return Effect.void.pipe(
+      withLegacyCommandInstrumentation({ flags: {} }),
+      Effect.provide(analytics.layer),
+      Effect.provide(mockProcessControl().layer),
+      Effect.provide(mockOutput({ format: "text" }).layer),
+      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "json"]) })),
+      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(Layer.succeed(LegacyOutputFlag, Option.some("json" as const))),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const event = analytics.captured[0];
+          // `output` is a global choice flag — still redacted (CLI-1904's
+          // scope), but it must be PRESENT, not silently dropped.
+          expect(event?.properties.flags).toEqual({ output: "<redacted>" });
+        }),
+      ),
+    );
+  });
 });
