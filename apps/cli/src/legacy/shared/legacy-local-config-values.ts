@@ -812,21 +812,54 @@ export function legacyResolveLocalConfigValues(
   // (`Schema.withDecodingDefaultKey`), so an explicit `site_url = ""` decodes as
   // `""` with no schema-level error, same gap as `db.port === 0` above.
   const siteUrl = envOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues);
+  // `LoadedProjectConfig.document` (the raw, pre-schema-default TOML `config` was decoded from) —
+  // hoisted here (rather than inside the `authEnabled` block below, where it used to live) because
+  // the captcha presence check right below needs it too. `undefined` for callers that haven't
+  // threaded `document` through yet, in which case presence-based checks are simply skipped.
+  const authDocument = asRecord(document?.["auth"]);
   // Go's `Config.Validate` checks `auth.captcha` right after `auth.site_url`,
   // still inside `if c.Auth.Enabled` (`pkg/config/config.go:1099-1109`): an
-  // enabled CAPTCHA section requires both `provider` and `secret`. Read
-  // directly off `config.auth.captcha` (not through `envOverride`) — unlike
-  // the flat `auth.site_url`/`auth.signing_keys_path` fields, there's no
-  // established `SUPABASE_AUTH_CAPTCHA_*` env-override precedent elsewhere in
-  // this file for this nested optional auth sub-section. `config.auth.captcha`
-  // is genuinely `undefined` when `[auth.captcha]` is absent from config.toml
-  // (`Schema.optionalKey` in `packages/config/src/auth/index.ts`), matching
-  // Go's `*Captcha` pointer being nil.
+  // enabled CAPTCHA section requires both `provider` and `secret`. `auth.captcha.*`
+  // is Viper-bound like every other nested field once `[auth.captcha]` is present
+  // in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`),
+  // so `SUPABASE_AUTH_CAPTCHA_ENABLED`/`_PROVIDER`/`_SECRET` overrides apply before
+  // this validation runs. Unlike the flat `auth.site_url` field, `config.auth.captcha`
+  // does NOT decode to `undefined` when `[auth.captcha]` is absent from config.toml —
+  // `captcha.ts`'s own `withDecodingDefaultKey` fills in `{ enabled: false }` even
+  // through the outer `Schema.optionalKey` wrapper (`packages/config/src/auth/index.ts`),
+  // confirmed empirically; there is no schema-level presence signal here, unlike
+  // `auth.passkey`/`auth.webauthn` below. So, like those, presence is read from the raw
+  // `authDocument` instead — matching Go's `AutomaticEnv` (which only intercepts keys
+  // already present in the merged config), an absent `[auth.captcha]` section never
+  // picks up an env override alone.
+  const captchaDoc = asRecord(authDocument?.["captcha"]);
   const captchaInput: LegacyCaptchaInput | undefined = config.auth.captcha
     ? {
-        enabled: config.auth.captcha.enabled ?? false,
-        provider: config.auth.captcha.provider,
-        secret: config.auth.captcha.secret,
+        enabled:
+          captchaDoc !== undefined
+            ? legacyEnvOverrideBool(
+                "SUPABASE_AUTH_CAPTCHA_ENABLED",
+                config.auth.captcha.enabled ?? false,
+                "auth.captcha.enabled",
+                projectEnvValues,
+              )
+            : (config.auth.captcha.enabled ?? false),
+        provider:
+          captchaDoc !== undefined
+            ? envOverride(
+                "SUPABASE_AUTH_CAPTCHA_PROVIDER",
+                config.auth.captcha.provider,
+                projectEnvValues,
+              )
+            : config.auth.captcha.provider,
+        secret:
+          captchaDoc !== undefined
+            ? envOverride(
+                "SUPABASE_AUTH_CAPTCHA_SECRET",
+                config.auth.captcha.secret,
+                projectEnvValues,
+              )
+            : config.auth.captcha.secret,
       }
     : undefined;
   const signingKey =
@@ -846,33 +879,92 @@ export function legacyResolveLocalConfigValues(
   if (authEnabled) {
     // `@supabase/config`'s auth schema has no `passkey`/`webauthn` fields at all (see
     // `config-sync/auth.sync.ts`'s "not in `@supabase/config` schema" note), so passkey/webauthn
-    // are read from the RAW, post-`env()`-interpolation TOML document
-    // (`LoadedProjectConfig.document`) instead of the decoded `ProjectConfig` — same document-based
-    // approach already used on the `db`/migration config-load path
-    // (`legacy-db-config.toml-read.ts`'s `legacyValidateAuthConfig`, section A6). `authDocument` is
-    // `undefined` when a caller hasn't threaded `document` through yet, in which case passkey/smtp
-    // presence-based checks are simply skipped rather than guessed at.
-    const authDocument = asRecord(document?.["auth"]);
+    // are read from the RAW, post-`env()`-interpolation TOML document (`authDocument`, hoisted
+    // above) instead of the decoded `ProjectConfig` — same document-based approach already used
+    // on the `db`/migration config-load path (`legacy-db-config.toml-read.ts`'s
+    // `legacyValidateAuthConfig`, section A6). `authDocument` is `undefined` when a caller hasn't
+    // threaded `document` through yet, in which case passkey/smtp presence-based checks are
+    // simply skipped rather than guessed at.
     const passkeyDoc = asRecord(authDocument?.["passkey"]);
     const webauthnDoc = asRecord(authDocument?.["webauthn"]);
-    const passkey: LegacyPasskeyInput | undefined =
-      passkeyDoc?.["enabled"] === true
-        ? {
-            webauthnPresent: webauthnDoc !== undefined,
-            rpId: typeof webauthnDoc?.["rp_id"] === "string" ? webauthnDoc["rp_id"] : undefined,
-            rpOrigins: Array.isArray(webauthnDoc?.["rp_origins"])
-              ? webauthnDoc["rp_origins"]
-              : undefined,
-          }
+    // `auth.passkey.enabled`/`auth.webauthn.*` are Viper-bound like every other nested field once
+    // `[auth.passkey]`/`[auth.webauthn]` are present in config.toml (`ExperimentalBindStruct`/
+    // `AutomaticEnv`, `config.go:581-586`), so `SUPABASE_AUTH_PASSKEY_ENABLED` and
+    // `SUPABASE_AUTH_WEBAUTHN_RP_ID`/`_RP_ORIGINS` overrides apply before `Auth.Passkey`/
+    // `Auth.Webauthn` validation runs (`config.go:1117-1134`). Gated on the raw section already
+    // being present (`passkeyDoc`/`webauthnDoc !== undefined`), matching Go's `AutomaticEnv`
+    // (which only intercepts keys already present in the merged config) — an absent
+    // `[auth.passkey]`/`[auth.webauthn]` section is never synthesized from an env override alone.
+    const passkeyEnabled =
+      passkeyDoc !== undefined
+        ? legacyEnvOverrideBool(
+            "SUPABASE_AUTH_PASSKEY_ENABLED",
+            passkeyDoc["enabled"] === true,
+            "auth.passkey.enabled",
+            projectEnvValues,
+          )
+        : false;
+    const rpId =
+      webauthnDoc !== undefined
+        ? envOverride(
+            "SUPABASE_AUTH_WEBAUTHN_RP_ID",
+            typeof webauthnDoc["rp_id"] === "string" ? webauthnDoc["rp_id"] : undefined,
+            projectEnvValues,
+          )
         : undefined;
+    // Go decodes `rp_origins` (a `[]string`) through the same `StringToSliceHookFunc(",")`
+    // mapstructure hook as every other Go string-slice field (`config.go:775-784`), so a
+    // `SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS` override is comma-split the same way.
+    const rpOriginsOverride =
+      webauthnDoc !== undefined
+        ? envOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
+        : undefined;
+    const rpOrigins =
+      rpOriginsOverride !== undefined
+        ? rpOriginsOverride.split(",")
+        : Array.isArray(webauthnDoc?.["rp_origins"])
+          ? webauthnDoc["rp_origins"]
+          : undefined;
+    const passkey: LegacyPasskeyInput | undefined = passkeyEnabled
+      ? { webauthnPresent: webauthnDoc !== undefined, rpId, rpOrigins }
+      : undefined;
 
     // Go's `hook.validate()` fixed iteration order (`pkg/config/config.go:1453-1485`) — only
-    // enabled hooks are forwarded, in that order.
+    // enabled hooks are forwarded, in that order. `auth.hook.<type>.*` is Viper-bound like every
+    // other nested field (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`), so
+    // `SUPABASE_AUTH_HOOK_<TYPE>_ENABLED`/`_URI`/`_SECRETS` overrides apply before this
+    // validation runs. `@supabase/config`'s hook schema always decodes a `{ enabled: false }`
+    // default per type regardless of file presence (`packages/config/src/auth/hooks.ts`'s
+    // `withDecodingDefaultKey`), which erases the presence signal Go's `AutomaticEnv` needs (it
+    // only intercepts keys already present in the merged config) — so, like the passkey/webauthn
+    // overrides above, this reads the raw `[auth.hook.<type>]` document instead to gate the
+    // override on the section actually being present.
+    const hookDocument = asRecord(authDocument?.["hook"]);
     const hooks: Array<LegacyHookInput> = [];
     for (const hookType of LEGACY_HOOK_TYPE_ORDER) {
       const hook = config.auth.hook[hookType];
-      if (hook.enabled) {
-        hooks.push({ type: hookType, uri: hook.uri ?? "", secrets: hook.secrets ?? "" });
+      const hookSectionPresent = asRecord(hookDocument?.[hookType]) !== undefined;
+      const envPrefix = `SUPABASE_AUTH_HOOK_${hookType.toUpperCase()}`;
+      const hookEnabled = hookSectionPresent
+        ? legacyEnvOverrideBool(
+            `${envPrefix}_ENABLED`,
+            hook.enabled,
+            `auth.hook.${hookType}.enabled`,
+            projectEnvValues,
+          )
+        : hook.enabled;
+      if (hookEnabled) {
+        hooks.push({
+          type: hookType,
+          uri:
+            (hookSectionPresent
+              ? envOverride(`${envPrefix}_URI`, hook.uri, projectEnvValues)
+              : hook.uri) ?? "",
+          secrets:
+            (hookSectionPresent
+              ? envOverride(`${envPrefix}_SECRETS`, hook.secrets, projectEnvValues)
+              : hook.secrets) ?? "",
+        });
       }
     }
 
@@ -903,16 +995,52 @@ export function legacyResolveLocalConfigValues(
     // when the TOML table is present but omits `enabled`, Go treats it as `true` — a genuinely
     // presence-based default `@supabase/config`'s schema can't see (it always decodes
     // `smtp.enabled` to `false` when the key is absent), so this reads the raw `document` too.
+    // `auth.email.smtp.*` is Viper-bound like every other nested field once `[auth.email.smtp]`
+    // is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`),
+    // so `SUPABASE_AUTH_EMAIL_SMTP_ENABLED`/`_HOST`/`_PORT`/`_USER`/`_PASS`/`_ADMIN_EMAIL`
+    // overrides apply before `Auth.Email.validate` runs (`config.go:1325-1344`) — layered on top
+    // of the presence-aware raw-document read above, same `envOverride`/`envOverridePort`
+    // precedent as every other field in this file.
     const smtpDoc = asRecord(asRecord(authDocument?.["email"])?.["smtp"]);
     const smtp: LegacySmtpInput | undefined =
       smtpDoc !== undefined
         ? {
-            enabled: smtpDoc["enabled"] === undefined ? true : smtpDoc["enabled"] === true,
-            host: typeof smtpDoc["host"] === "string" ? smtpDoc["host"] : "",
-            port: typeof smtpDoc["port"] === "number" ? smtpDoc["port"] : 0,
-            user: typeof smtpDoc["user"] === "string" ? smtpDoc["user"] : "",
-            pass: typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
-            adminEmail: typeof smtpDoc["admin_email"] === "string" ? smtpDoc["admin_email"] : "",
+            enabled: legacyEnvOverrideBool(
+              "SUPABASE_AUTH_EMAIL_SMTP_ENABLED",
+              smtpDoc["enabled"] === undefined ? true : smtpDoc["enabled"] === true,
+              "auth.email.smtp.enabled",
+              projectEnvValues,
+            ),
+            host:
+              envOverride(
+                "SUPABASE_AUTH_EMAIL_SMTP_HOST",
+                typeof smtpDoc["host"] === "string" ? smtpDoc["host"] : "",
+                projectEnvValues,
+              ) ?? "",
+            port: envOverridePort(
+              "SUPABASE_AUTH_EMAIL_SMTP_PORT",
+              typeof smtpDoc["port"] === "number" ? smtpDoc["port"] : 0,
+              "auth.email.smtp.port",
+              projectEnvValues,
+            ),
+            user:
+              envOverride(
+                "SUPABASE_AUTH_EMAIL_SMTP_USER",
+                typeof smtpDoc["user"] === "string" ? smtpDoc["user"] : "",
+                projectEnvValues,
+              ) ?? "",
+            pass:
+              envOverride(
+                "SUPABASE_AUTH_EMAIL_SMTP_PASS",
+                typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
+                projectEnvValues,
+              ) ?? "",
+            adminEmail:
+              envOverride(
+                "SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL",
+                typeof smtpDoc["admin_email"] === "string" ? smtpDoc["admin_email"] : "",
+                projectEnvValues,
+              ) ?? "",
           }
         : undefined;
 

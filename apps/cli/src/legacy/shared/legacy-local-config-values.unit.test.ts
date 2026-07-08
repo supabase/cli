@@ -975,20 +975,194 @@ describe("legacyResolveLocalConfigValues", () => {
     });
   });
 
-  // auth.captcha (required fields when enabled) moved entirely to
+  // auth.captcha/passkey/webauthn/hook/smtp REQUIRED-FIELD checks (the actual `enabled` ⇒
+  // provider/secret/uri/host/etc. logic) live entirely in `legacy-config-validate.unit.test.ts`
+  // (direct `legacyValidateResolvedConfig` calls). Only the SUPABASE_*-env-override MECHANICS
+  // this resolver owns — layering an env/dotenv value on top of the TOML-decoded or
+  // raw-document-derived value before that validation ever runs — are tested here, same split as
+  // `auth.site_url` above.
+
+  describe("auth.captcha env overrides", () => {
+    // `auth.captcha.*` is Viper-bound like any other nested field once `[auth.captcha]` is
+    // present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`).
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"];
+      delete process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"];
+      delete process.env["SUPABASE_AUTH_CAPTCHA_SECRET"];
+    });
+
+    it("rejects a captcha section enabled only via env with no provider", () => {
+      process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = "true";
+      const config = baseConfig({ auth: { captcha: { enabled: false } } });
+      const document = { auth: { captcha: { enabled: false } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow("Missing required field in config: auth.captcha.provider");
+    });
+
+    it("does not throw when an incomplete enabled captcha section is disabled only via env", () => {
+      process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = "false";
+      const config = baseConfig({ auth: { captcha: { enabled: true } } });
+      const document = { auth: { captcha: { enabled: true } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("accepts env-provided provider/secret overriding an enabled captcha section", () => {
+      process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"] = "hcaptcha";
+      process.env["SUPABASE_AUTH_CAPTCHA_SECRET"] = "shh";
+      const config = baseConfig({ auth: { captcha: { enabled: true } } });
+      const document = { auth: { captcha: { enabled: true } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("does not synthesize a captcha section purely from an env override when [auth.captcha] is absent", () => {
+      process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = "true";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  describe("auth.passkey / auth.webauthn env overrides", () => {
+    // `auth.passkey.enabled`/`auth.webauthn.*` are Viper-bound like any other nested field once
+    // `[auth.passkey]`/`[auth.webauthn]` are present in config.toml. Both are read from the raw
+    // `document` (5th param), same as the presence-based defaulting above, so these tests thread
+    // a `document` object through explicitly instead of relying on `baseConfig`'s decoded schema
+    // (which has no `passkey`/`webauthn` fields at all).
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_PASSKEY_ENABLED"];
+      delete process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"];
+      delete process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"];
+    });
+
+    it("rejects a passkey section enabled only via env with no [auth.webauthn] section", () => {
+      process.env["SUPABASE_AUTH_PASSKEY_ENABLED"] = "true";
+      const config = baseConfig();
+      const document = { auth: { passkey: { enabled: false } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow(
+        "Missing required config section: auth.webauthn (required when auth.passkey.enabled is true)",
+      );
+    });
+
+    it("accepts env-provided rp_id/rp_origins overriding an incomplete [auth.webauthn] section", () => {
+      process.env["SUPABASE_AUTH_PASSKEY_ENABLED"] = "true";
+      process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"] = "localhost";
+      process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"] =
+        "http://localhost:3000,http://localhost:3001";
+      const config = baseConfig();
+      const document = { auth: { passkey: { enabled: false }, webauthn: {} } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("does not synthesize a passkey section purely from an env override when [auth.passkey] is absent from the document", () => {
+      process.env["SUPABASE_AUTH_PASSKEY_ENABLED"] = "true";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  describe("auth.hook.* env overrides", () => {
+    // `auth.hook.<type>.*` is Viper-bound like any other nested field once `[auth.hook.<type>]`
+    // is present in config.toml. `@supabase/config`'s hook schema always decodes a default
+    // `{ enabled: false }` regardless of file presence, so — like passkey/webauthn above — the
+    // presence gate is read from the raw `document`, not the decoded `config`.
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED"];
+      delete process.env["SUPABASE_AUTH_HOOK_SEND_EMAIL_URI"];
+      delete process.env["SUPABASE_AUTH_HOOK_SEND_EMAIL_SECRETS"];
+    });
+
+    it("rejects a hook section enabled only via env with no uri", () => {
+      process.env["SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED"] = "true";
+      const config = baseConfig();
+      const document = { auth: { hook: { send_email: { enabled: false } } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow("Missing required field in config: auth.hook.send_email.uri");
+    });
+
+    it("accepts an env-provided uri overriding a TOML-enabled hook missing its uri", () => {
+      process.env["SUPABASE_AUTH_HOOK_SEND_EMAIL_URI"] = "pg-functions://postgres/auth/hook";
+      const config = baseConfig({ auth: { hook: { send_email: { enabled: true } } } });
+      const document = { auth: { hook: { send_email: { enabled: true } } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("does not synthesize a hook enablement purely from an env override when the section is absent from the document", () => {
+      process.env["SUPABASE_AUTH_HOOK_SEND_EMAIL_ENABLED"] = "true";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  describe("auth.email.smtp env overrides", () => {
+    // `auth.email.smtp.*` is Viper-bound like any other nested field once `[auth.email.smtp]`
+    // is present in config.toml — layered on top of the presence-aware raw-document read that
+    // already exists here for Go's presence-based `enabled` default.
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_ENABLED"];
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_HOST"];
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_PORT"];
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_USER"];
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_PASS"];
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL"];
+    });
+
+    it("rejects an smtp section enabled only via env with no host", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_ENABLED"] = "true";
+      const config = baseConfig();
+      const document = { auth: { email: { smtp: { enabled: false } } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow("Missing required field in config: auth.email.smtp.host");
+    });
+
+    it("accepts env-provided host/port/user/pass/admin_email overriding an enabled-but-incomplete smtp section", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_HOST"] = "smtp.example.com";
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_PORT"] = "587";
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_USER"] = "user";
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_PASS"] = "pass";
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL"] = "admin@example.com";
+      const config = baseConfig();
+      const document = { auth: { email: { smtp: { enabled: true } } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("rejects an invalid SUPABASE_AUTH_EMAIL_SMTP_PORT override", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_HOST"] = "smtp.example.com";
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_PORT"] = "not-a-port";
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_USER"] = "user";
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_PASS"] = "pass";
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL"] = "admin@example.com";
+      const config = baseConfig();
+      const document = { auth: { email: { smtp: { enabled: true } } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow(LegacyInvalidPortEnvOverrideError);
+    });
+
+    it("does not synthesize an smtp section purely from an env override when [auth.email.smtp] is absent from the document", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_ENABLED"] = "true";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  // auth.mfa.* (enroll_enabled requires verify_enabled) moved entirely to
   // `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig` calls) — L
-  // reads `config.auth.captcha` directly with no env-override mechanics of its own.
-
-  // auth.passkey / auth.webauthn (WebAuthn requirement when passkey enabled) and
-  // auth.email.smtp (present-table-implies-enabled) moved entirely to
-  // `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig` calls,
-  // setting `auth.passkey`/`auth.smtp` directly instead of deriving them from a raw
-  // `document`) — both are pure, document-presence-based checks with no env-override variant.
-
-  // auth.hook.* (URI/secret validation when enabled) and auth.mfa.* (enroll_enabled requires
-  // verify_enabled) moved entirely to `legacy-config-validate.unit.test.ts` (direct
-  // `legacyValidateResolvedConfig` calls) — L pre-filters to enabled-only hooks/derives mfa
-  // directly off `config.auth.*` with no env-override mechanics of its own for these checks.
+  // derives mfa directly off `config.auth.*` with no env-override mechanics of its own for this
+  // check.
 
   describe("auth.email.template/notification (content_path validation)", () => {
     // Go's `(e *email) validate(fsys)` (`pkg/config/config.go:1293-1313`),
