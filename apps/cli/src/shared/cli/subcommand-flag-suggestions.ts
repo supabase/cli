@@ -208,13 +208,18 @@ function buildSubcommandFlagHint(
 // `Expected a valid date, got Invalid Date`), and `CliError.InvalidValue`'s
 // own `message` getter independently prepends its own `"Expected: "` label
 // on top of that — so any flag or argument backed by one of these
-// primitives renders "Expected: Expected ...". Collapsing the literal
-// doubled substring (rather than rebuilding the surrounding "Invalid value
-// for ..." template ourselves) keeps this tied to the exact defect and
-// covers every affected primitive uniformly, letting every other part of
-// the message keep tracking upstream's own wording. Remove once upstream
-// `effect` fixes this (see CLI-1898).
-const DOUBLED_EXPECTED_PREFIX = "Expected: Expected ";
+// primitives renders "Expected: Expected ...". Detect this from
+// `error.expected` (the field the buggy primitives actually populate)
+// rather than searching the fully composed `error.message`: `error.value`
+// is user-controlled and interpolated into that same message (including a
+// second time inside `expected` itself, via `choice`'s "got <value>"
+// suffix), so a message-wide, first-occurrence string replace can target
+// the wrong spot if the value itself happens to contain the literal text
+// "Expected: Expected ". Anchoring on `error.expected` and rebuilding the
+// message from the same template `CliError.InvalidValue` uses avoids ever
+// scanning `error.value`. Remove once upstream `effect` fixes this (see
+// CLI-1898).
+const EXPECTED_PREFIX = "Expected ";
 
 export function formatCliErrorsForDisplay(
   errors: ReadonlyArray<CliError.CliError>,
@@ -245,11 +250,15 @@ export function formatCliErrorsForDisplay(
       continue;
     }
 
-    if (error._tag === "InvalidValue" && error.message.includes(DOUBLED_EXPECTED_PREFIX)) {
+    if (error._tag === "InvalidValue" && error.expected.startsWith(EXPECTED_PREFIX)) {
       changed = true;
+      const message =
+        error.kind === "argument"
+          ? `Invalid value for argument <${error.option}>: "${error.value}". ${error.expected}`
+          : `Invalid value for flag --${error.option}: "${error.value}". ${error.expected}`;
       formatted.push({
         _tag: error._tag,
-        message: error.message.replace(DOUBLED_EXPECTED_PREFIX, "Expected "),
+        message,
         source: error,
         changed: true,
       });

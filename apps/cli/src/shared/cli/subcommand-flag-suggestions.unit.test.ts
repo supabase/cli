@@ -197,4 +197,26 @@ describe("subcommand flag placement suggestions", () => {
       'Invalid value for flag --define: "bogus". Expected: Invalid key=value format. Expected format: key=value, got: bogus',
     );
   });
+
+  it("does not corrupt a value that itself contains the literal 'Expected: Expected' text", () => {
+    // Regression test: the fix must anchor on `error.expected` (the field the
+    // buggy primitive actually populates) rather than searching the fully
+    // composed `error.message`, since `error.value` is user-controlled and is
+    // interpolated into that same message twice (once directly, once again
+    // inside `expected`'s "got <value>" suffix). A value that happens to
+    // contain the literal doubled-prefix text must be left untouched.
+    const errors = formatCliErrorsForDisplay([
+      new CliError.InvalidValue({
+        option: "env",
+        value: "Expected: Expected nano",
+        expected: 'Expected "dev" | "staging" | "prod", got "Expected: Expected nano"',
+        kind: "flag",
+      }),
+    ]);
+
+    expect(errors.changed).toBe(true);
+    expect(errors.errors[0]?.message).toBe(
+      'Invalid value for flag --env: "Expected: Expected nano". Expected "dev" | "staging" | "prod", got "Expected: Expected nano"',
+    );
+  });
 });
