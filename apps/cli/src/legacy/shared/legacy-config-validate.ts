@@ -463,7 +463,17 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
           `Missing required field in config: auth.hook.${hook.type}.uri`,
         );
       }
-      const scheme = (/^([a-zA-Z][a-zA-Z0-9+.-]*):/u.exec(hook.uri)?.[1] ?? "").toLowerCase();
+      // Go calls `url.Parse` before the scheme switch (`config.go:1497-1499`) and fails the
+      // whole load on a malformed URI (e.g. an unterminated IPv6 host like `http://[::1`) —
+      // a bare scheme-prefix regex would accept that. Reuse `legacyGoUrlParse` (the same
+      // `net/url.Parse` port already used for `studio.api_url` above) instead of re-deriving
+      // a scheme by hand.
+      let scheme: string;
+      try {
+        scheme = legacyGoUrlParse(hook.uri).scheme;
+      } catch (cause) {
+        throw new LegacyConfigValidateError(`failed to parse template url: ${messageOf(cause)}`);
+      }
       if (scheme === "http" || scheme === "https") {
         if (hook.secrets.length === 0) {
           throw new LegacyConfigValidateError(

@@ -755,6 +755,20 @@ describe("legacyValidateResolvedConfig", () => {
       ).toThrow("auth.hook.custom_access_token.uri should be a HTTP, HTTPS, or pg-functions URI");
     });
 
+    // Go calls `url.Parse` before the scheme switch (config.go:1497-1499) and fails the whole
+    // load on a malformed URI, rather than treating any `http:`/`https:` prefix as valid.
+    it("rejects a hook uri that fails Go's url.Parse (malformed IPv6 host)", () => {
+      expect(() =>
+        legacyValidateResolvedConfig(
+          minimalInput({
+            auth: minimalAuthInput({
+              hooks: [{ type: "custom_access_token", uri: "http://[::1", secrets: "" }],
+            }),
+          }),
+        ),
+      ).toThrow("failed to parse template url:");
+    });
+
     it("does not throw for a disabled hook, however incomplete", () => {
       // The caller pre-filters to enabled-only hooks — a disabled hook is simply absent from
       // `hooks`, matching an empty array here.
