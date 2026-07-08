@@ -92,6 +92,7 @@ ALTER USER supabase_auth_admin WITH PASSWORD :'pgpass';
 ALTER USER supabase_storage_admin WITH PASSWORD :'pgpass';
 ALTER USER supabase_replication_admin WITH PASSWORD :'pgpass';
 ALTER USER supabase_read_only_user WITH PASSWORD :'pgpass';
+ALTER USER pgbouncer WITH PASSWORD :'pgpass';
 create schema if not exists _realtime;
 alter schema _realtime owner to postgres;
 SELECT 'CREATE DATABASE _supabase WITH OWNER postgres'

@@ -46,6 +46,7 @@ describe("PodRegistry", () => {
       services: {},
       flags: { supautils: false },
       ports: ports(55000, 55001),
+      internalPorts: ports(45000, 45001),
       postgresPassword: "postgres",
       createdAt: "2026-07-08T00:00:00.000Z",
     };

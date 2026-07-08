@@ -50,11 +50,6 @@ interface WarmPod {
   readonly internalDbPort: number;
 }
 
-// Internal (in-process stack) ports are derived from the externally-visible,
-// PortRegistry-owned ports by a fixed lower offset so the proxy-owned public
-// range and the stack-owned internal range never collide.
-const INTERNAL_PORT_OFFSET = 10_000;
-
 /**
  * Public facade tying together TemplateStore/PodRegistry/PortRegistry/Provisioner
  * (pod lifecycle + storage) with EdgeProxy/IdleMonitor (wake-on-connect,
@@ -138,8 +133,6 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
       database: "postgres",
     });
 
-  const internalPort = (externalPort: number): number => externalPort - INTERNAL_PORT_OFFSET;
-
   const runPidFile = (id: string): string => join(pods.podDir(id), "run.pid");
 
   async function withPodLocks<T>(ids: ReadonlyArray<string>, body: () => Promise<T>): Promise<T> {
@@ -171,11 +164,12 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
         const manifest = await pods.read(id);
         if (manifest === undefined) throw new Error(`unknown pod: ${id}`);
         states.set(id, "waking");
-        const internalDbPort = internalPort(manifest.ports.dbPort);
+        const { internalPorts } = manifest;
+        const internalDbPort = internalPorts.dbPort;
         const stack = await createStack({
           mode: "native",
           stackRoot: join(pods.podDir(id), "stack"),
-          port: internalPort(manifest.ports.apiPort),
+          port: internalPorts.apiPort,
           lazyServices: true,
           postgres: {
             dataDir: pods.dataDir(id),
@@ -189,12 +183,12 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
             manifest.services.postgrest === true
               ? {
                   version: manifest.versions.postgrest,
-                  port: internalPort(manifest.ports.postgrestPort),
+                  port: internalPorts.postgrestPort,
                 }
               : false,
           auth:
             manifest.services.auth === true
-              ? { version: manifest.versions.auth, port: internalPort(manifest.ports.authPort) }
+              ? { version: manifest.versions.auth, port: internalPorts.authPort }
               : false,
           realtime: false,
           edgeRuntime: false,
@@ -284,7 +278,14 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   // or skipped pods are pruned during startup.
   try {
     const manifests = await pods.list();
-    await ports.reconcile(new Map(manifests.map((manifest) => [manifest.id, manifest.ports])));
+    await ports.reconcile(
+      new Map(
+        manifests.map((manifest) => [
+          manifest.id,
+          { ports: manifest.ports, internalPorts: manifest.internalPorts },
+        ]),
+      ),
+    );
     for (const manifest of manifests) {
       await reapStalePostmaster(pods.dataDir(manifest.id));
       await rm(runPidFile(manifest.id), { force: true });

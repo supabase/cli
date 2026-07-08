@@ -12,6 +12,7 @@ export interface PodManifest {
   readonly services: Partial<Record<ServiceName, boolean>>;
   readonly flags: { readonly supautils: boolean };
   readonly ports: AllocatedPorts;
+  readonly internalPorts: AllocatedPorts;
   readonly postgresPassword: string;
   readonly createdAt: string;
 }

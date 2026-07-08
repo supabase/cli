@@ -46,6 +46,7 @@ const MOCK_LOGS: ReadonlyArray<LogEntry> = [
 
 function mockStack() {
   let stopped = false;
+  let waitAllReadyCalls = 0;
   const serviceCalls: string[] = [];
 
   const layer = Layer.succeed(Stack, {
@@ -105,7 +106,10 @@ function mockStack() {
     allStateChanges: () => Stream.fromIterable(MOCK_STATES),
     waitReady: (name: string) =>
       name === "unknown" ? Effect.fail(new ServiceNotFoundError({ name })) : Effect.void,
-    waitAllReady: () => Effect.void,
+    waitAllReady: () =>
+      Effect.sync(() => {
+        waitAllReadyCalls += 1;
+      }),
     subscribeLogs: (name: string) =>
       Stream.fromIterable(MOCK_LOGS.filter((l) => l.service === name)),
     subscribeAllLogs: (services?: ReadonlyArray<string>) =>
@@ -129,6 +133,9 @@ function mockStack() {
     layer,
     get stopped() {
       return stopped;
+    },
+    get waitAllReadyCalls() {
+      return waitAllReadyCalls;
     },
     serviceCalls,
   };
@@ -214,6 +221,15 @@ describe("DaemonServer", () => {
     const text = await res.text();
     expect(text).toContain("event: state");
     expect(text).toContain("postgres");
+  });
+
+  test("GET /ready delegates readiness to the stack", async () => {
+    const before = mock.waitAllReadyCalls;
+    const res = await fetch(`${url}/ready`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+    expect(mock.waitAllReadyCalls).toBe(before + 1);
   });
 
   // -------------------------------------------------------------------------

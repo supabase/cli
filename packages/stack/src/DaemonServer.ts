@@ -76,6 +76,28 @@ export class DaemonServer extends Context.Service<
           ),
         ),
 
+        // Ready: delegate readiness semantics to the stack implementation
+        HttpRouter.route(
+          "GET",
+          "/ready",
+          Effect.gen(function* () {
+            yield* stack.waitAllReady();
+            return HttpServerResponse.jsonUnsafe({ ok: true });
+          }).pipe(
+            Effect.catchTag("ServiceReadyError", (e) =>
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: e.reason, service: e.name },
+                  { status: 500 },
+                ),
+              ),
+            ),
+            Effect.catchTag("StackBuildError", (e) =>
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.detail }, { status: 500 })),
+            ),
+          ),
+        ),
+
         // Start: begin service startup
         HttpRouter.route(
           "POST",

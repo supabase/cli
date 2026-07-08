@@ -2,17 +2,24 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { PORT_FIELDS, type AllocatedPorts } from "@supabase/stack";
 
-export type PodPorts = AllocatedPorts;
+export interface PodPorts {
+  readonly ports: AllocatedPorts;
+  readonly internalPorts: AllocatedPorts;
+}
 
 interface PortState {
   readonly basePort: number;
+  readonly internalBasePort: number;
   readonly pods: Record<string, PodPorts>;
 }
 
 const DEFAULT_BASE_PORT = 55000;
+const DEFAULT_INTERNAL_BASE_PORT = 45000;
+const INTERNAL_MAX_PORT = DEFAULT_BASE_PORT - 1;
+const MAX_PORT = 65_535;
 
 function freshState(): PortState {
-  return { basePort: DEFAULT_BASE_PORT, pods: {} };
+  return { basePort: DEFAULT_BASE_PORT, internalBasePort: DEFAULT_INTERNAL_BASE_PORT, pods: {} };
 }
 
 function getOwnPodPorts(pods: Record<string, PodPorts>, podId: string): PodPorts | undefined {
@@ -24,24 +31,51 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isFleetPort(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 10_000 && value <= 65_535;
+  return (
+    typeof value === "number" && Number.isInteger(value) && value > 10_000 && value <= MAX_PORT
+  );
 }
 
-function isValidState(value: unknown): value is PortState {
+function isValidPortSet(value: unknown): value is AllocatedPorts {
   if (!isRecord(value)) return false;
-  const { basePort, pods } = value;
-  if (!isFleetPort(basePort)) return false;
-  if (!isRecord(pods)) return false;
-  for (const ports of Object.values(pods)) {
-    if (!isRecord(ports)) return false;
-    for (const field of PORT_FIELDS) {
-      if (!isFleetPort(ports[field])) return false;
-    }
+  for (const field of PORT_FIELDS) {
+    if (!isFleetPort(value[field])) return false;
   }
   return true;
 }
 
-function allocatePortSet(next: () => number): PodPorts {
+function isValidPodPorts(value: unknown): value is PodPorts {
+  if (!isRecord(value)) return false;
+  return isValidPortSet(value.ports) && isValidPortSet(value.internalPorts);
+}
+
+function isValidState(value: unknown): value is PortState {
+  if (!isRecord(value)) return false;
+  const { basePort, internalBasePort, pods } = value;
+  if (!isFleetPort(basePort) || basePort < DEFAULT_BASE_PORT) return false;
+  if (!isFleetPort(internalBasePort) || internalBasePort > INTERNAL_MAX_PORT) return false;
+  if (!isRecord(pods)) return false;
+  for (const allocation of Object.values(pods)) {
+    if (!isValidPodPorts(allocation)) return false;
+  }
+  return true;
+}
+
+function allocatedPorts(allocation: PodPorts): ReadonlyArray<number> {
+  return [
+    ...PORT_FIELDS.map((field) => allocation.ports[field]),
+    ...PORT_FIELDS.map((field) => allocation.internalPorts[field]),
+  ];
+}
+
+function sameAllocation(a: PodPorts, b: PodPorts): boolean {
+  return PORT_FIELDS.every(
+    (field) =>
+      a.ports[field] === b.ports[field] && a.internalPorts[field] === b.internalPorts[field],
+  );
+}
+
+function allocatePortSet(next: () => number): AllocatedPorts {
   return {
     dbPort: next(),
     apiPort: next(),
@@ -76,7 +110,9 @@ function allocatePortSet(next: () => number): PodPorts {
  * - **No host-level port probing.** The registry never checks whether a port
  *   is actually free on the host; it only tracks what it has handed out
  *   itself. The daemon owns the 55000+ range by convention, so nothing else
- *   on the host is expected to bind those ports.
+ *   on the host is expected to bind those ports. Public proxy listeners use
+ *   the 55000+ range, while in-process stack services use separately allocated
+ *   ports below that public range.
  * - **Corrupt-state recovery.** If the state file is missing, unreadable as
  *   JSON, or structurally invalid, `load()` never throws. Instead it
  *   quarantines the bad file (renaming it to `<stateFile>.corrupt`, replacing
@@ -130,21 +166,37 @@ export class PortRegistry {
       const existing = getOwnPodPorts(this.state.pods, podId);
       if (existing) return existing;
       const used = new Set(
-        Object.values(this.state.pods).flatMap((p) => PORT_FIELDS.map((f) => p[f])),
+        Object.values(this.state.pods).flatMap((allocation) => allocatedPorts(allocation)),
       );
-      let candidate = this.state.basePort;
-      const next = (): number => {
-        while (used.has(candidate)) candidate += 1;
-        if (candidate > 65_535) {
+      let publicCandidate = this.state.basePort;
+      let internalCandidate = this.state.internalBasePort;
+      const nextPublic = (): number => {
+        while (used.has(publicCandidate)) publicCandidate += 1;
+        if (publicCandidate > MAX_PORT) {
           throw new Error("PortRegistry: exhausted fleet port range");
         }
-        used.add(candidate);
-        return candidate;
+        const port = publicCandidate;
+        used.add(port);
+        publicCandidate += 1;
+        return port;
       };
-      const ports = allocatePortSet(next);
-      this.state = { ...this.state, pods: { ...this.state.pods, [podId]: ports } };
+      const nextInternal = (): number => {
+        while (used.has(internalCandidate)) internalCandidate += 1;
+        if (internalCandidate > INTERNAL_MAX_PORT) {
+          throw new Error("PortRegistry: exhausted internal fleet port range");
+        }
+        const port = internalCandidate;
+        used.add(port);
+        internalCandidate += 1;
+        return port;
+      };
+      const allocation = {
+        ports: allocatePortSet(nextPublic),
+        internalPorts: allocatePortSet(nextInternal),
+      };
+      this.state = { ...this.state, pods: { ...this.state.pods, [podId]: allocation } };
       await this.persist();
-      return ports;
+      return allocation;
     });
   }
 
@@ -159,7 +211,7 @@ export class PortRegistry {
     await this.withMutation(async () => {
       const existing = getOwnPodPorts(this.state.pods, podId);
       if (existing) {
-        if (PORT_FIELDS.every((field) => existing[field] === ports[field])) {
+        if (sameAllocation(existing, ports)) {
           return;
         }
         throw new Error(
@@ -168,9 +220,16 @@ export class PortRegistry {
         );
       }
 
-      const restoredPorts = new Set(PORT_FIELDS.map((field) => ports[field]));
+      const restoredPorts = allocatedPorts(ports);
+      if (new Set(restoredPorts).size !== restoredPorts.length) {
+        throw new Error(
+          `PortRegistry: cannot restore pod "${podId}" with ports ${JSON.stringify(ports)}; ` +
+            "allocation contains duplicate ports",
+        );
+      }
+      const restoredPortSet = new Set(restoredPorts);
       for (const [otherPodId, otherPorts] of Object.entries(this.state.pods)) {
-        if (PORT_FIELDS.some((field) => restoredPorts.has(otherPorts[field]))) {
+        if (allocatedPorts(otherPorts).some((port) => restoredPortSet.has(port))) {
           throw new Error(
             `PortRegistry: cannot restore pod "${podId}" with ports ${JSON.stringify(ports)}; ` +
               `port already assigned to pod "${otherPodId}"`,
@@ -197,8 +256,7 @@ export class PortRegistry {
       const nextPods: Record<string, PodPorts> = {};
       const used = new Map<number, string>();
       for (const [podId, ports] of podPorts) {
-        for (const field of PORT_FIELDS) {
-          const port = ports[field];
+        for (const port of allocatedPorts(ports)) {
           const owner = used.get(port);
           if (owner !== undefined) {
             throw new Error(

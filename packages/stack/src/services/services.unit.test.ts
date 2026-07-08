@@ -267,6 +267,7 @@ describe("makePostgresServiceDocker", () => {
     expect(script).toContain("\\connect _supabase");
     expect(script).toContain("create schema if not exists _analytics;");
     expect(script).toContain("create schema if not exists _supavisor;");
+    expect(script).toContain("ALTER USER pgbouncer WITH PASSWORD :'pgpass';");
   });
 });
 
@@ -760,7 +761,10 @@ describe("docker-backed auxiliary services", () => {
     expect(def.args).toContain(`54329:${poolerContainerPorts.admin}`);
     expect(def.args).toContain(`54330:${poolerContainerPorts.transaction}`);
     const args = def.args ?? [];
-    expect(args.some((arg) => arg.startsWith("SUPAVISOR_TENANT_SCRIPT="))).toBe(true);
+    const tenantScriptArg = args.find((arg) => arg.startsWith("SUPAVISOR_TENANT_SCRIPT="));
+    expect(tenantScriptArg).toBeDefined();
+    expect(tenantScriptArg).toContain("Supavisor.Tenants.create_tenant(params)");
+    expect(tenantScriptArg).toContain("Supavisor.Tenants.update_tenant(tenant, params)");
     expect(args.join(" ")).toContain('supavisor eval "$SUPAVISOR_TENANT_SCRIPT"');
   });
 });

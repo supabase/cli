@@ -73,7 +73,8 @@ export class Provisioner {
         versions: resolvedVersions,
         services: opts.services ?? {},
         flags: { supautils: opts.flags?.supautils ?? false },
-        ports: allocated,
+        ports: allocated.ports,
+        internalPorts: allocated.internalPorts,
         postgresPassword,
         createdAt: new Date().toISOString(),
       };
@@ -137,7 +138,8 @@ export class Provisioner {
       const manifest: PodManifest = {
         ...source,
         id: newId,
-        ports: allocated,
+        ports: allocated.ports,
+        internalPorts: allocated.internalPorts,
         createdAt: new Date().toISOString(),
       };
       await pods.write(manifest);

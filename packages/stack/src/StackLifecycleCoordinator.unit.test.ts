@@ -351,6 +351,43 @@ describe("StackLifecycleCoordinator lazyServices", () => {
     );
   });
 
+  it.live("rejects on-demand service starts before start()", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-lazy-idle-test-"));
+    const config = makeLazyConfig(dataDir, defaultPorts.postgrestPort);
+    const { layer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const exit = yield* stack.startService("postgrest").pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("while the stack is idle");
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("rejects on-demand service starts after stop()", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-lazy-stopped-test-"));
+    const config = makeLazyConfig(dataDir, defaultPorts.postgrestPort);
+    const { layer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.start();
+      yield* stack.stop();
+
+      const exit = yield* stack.startService("postgrest").pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("while the stack is stopped");
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
+    );
+  });
+
   // Regression test: waitAllReady() used to unconditionally delegate to
   // orchestrator.waitAllReady() over the FULL graph startOrder. Under lazyServices, services
   // that were never started (e.g. postgrest, which stays "Pending" until the ApiProxy's

@@ -60,7 +60,10 @@ describe("Provisioner (unit, fake deps)", () => {
 
       expect(manifest.id).toBe("x");
       expect(manifest.postgresPassword).toBe("secret-password");
-      expect(ports.get("x")).toEqual(manifest.ports);
+      expect(ports.get("x")).toEqual({
+        ports: manifest.ports,
+        internalPorts: manifest.internalPorts,
+      });
       expect(await pods.read("x")).toEqual(manifest);
     });
 
@@ -88,7 +91,10 @@ describe("Provisioner (unit, fake deps)", () => {
 
       // The duplicate-id pre-check throws before any (re-)allocation, so the
       // original pod's ports must still be intact.
-      expect(ports.get("dup")).toEqual(first.ports);
+      expect(ports.get("dup")).toEqual({
+        ports: first.ports,
+        internalPorts: first.internalPorts,
+      });
     });
 
     it("records resolved default versions for enabled warm services", async () => {
@@ -173,7 +179,11 @@ describe("Provisioner (unit, fake deps)", () => {
 
       expect(forked.id).toBe("dst");
       expect(forked.ports).not.toEqual(source.ports);
-      expect(ports.get("dst")).toEqual(forked.ports);
+      expect(forked.internalPorts).not.toEqual(source.internalPorts);
+      expect(ports.get("dst")).toEqual({
+        ports: forked.ports,
+        internalPorts: forked.internalPorts,
+      });
       expect(await pods.read("dst")).toEqual(forked);
     });
 
@@ -209,8 +219,14 @@ describe("Provisioner (unit, fake deps)", () => {
 
       // The pre-check for an already-existing target throws before
       // (re-)allocating, so neither pod's ports should be disturbed.
-      expect(ports.get("src")).toEqual(source.ports);
-      expect(ports.get("dst")).toEqual(existing.ports);
+      expect(ports.get("src")).toEqual({
+        ports: source.ports,
+        internalPorts: source.internalPorts,
+      });
+      expect(ports.get("dst")).toEqual({
+        ports: existing.ports,
+        internalPorts: existing.internalPorts,
+      });
     });
   });
 });

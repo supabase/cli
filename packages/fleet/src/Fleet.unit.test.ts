@@ -59,6 +59,7 @@ function manifest(id: string, dbPort: number, apiPort: number): PodManifest {
     services: {},
     flags: { supautils: false },
     ports: ports(dbPort, apiPort),
+    internalPorts: ports(dbPort - 10_000, apiPort - 10_000),
     postgresPassword: "postgres",
     createdAt: "2026-07-08T00:00:00.000Z",
   };

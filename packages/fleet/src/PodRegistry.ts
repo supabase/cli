@@ -189,7 +189,15 @@ function parseManifest(value: unknown): PodManifest | undefined {
   const versions = parseVersions(value.versions);
   const services = parseServices(value.services);
   const ports = parsePorts(value.ports);
-  if (versions === undefined || services === undefined || ports === undefined) return undefined;
+  const internalPorts = parsePorts(value.internalPorts);
+  if (
+    versions === undefined ||
+    services === undefined ||
+    ports === undefined ||
+    internalPorts === undefined
+  ) {
+    return undefined;
+  }
   if (!isRecord(value.flags) || typeof value.flags.supautils !== "boolean") return undefined;
   if (typeof value.postgresPassword !== "string" || value.postgresPassword.length === 0) {
     return undefined;
@@ -203,6 +211,7 @@ function parseManifest(value: unknown): PodManifest | undefined {
     services,
     flags: { supautils: value.flags.supautils },
     ports,
+    internalPorts,
     postgresPassword: value.postgresPassword,
     createdAt: value.createdAt,
   };

@@ -292,6 +292,17 @@ export class StackLifecycleCoordinator extends Context.Service<
             }
             return match;
           });
+        const requireRunningForServiceStart = (name: string) =>
+          Effect.gen(function* () {
+            const phase = yield* Ref.get(phaseRef);
+            if (phase !== "running") {
+              return yield* Effect.fail(
+                new StackBuildError({
+                  detail: `Cannot start service "${name}" while the stack is ${phase}. Call start() first and retry after it finishes.`,
+                }),
+              );
+            }
+          });
 
         let preparedArtifacts: PreparedStackArtifacts | undefined;
         let prepareDeferred: Deferred.Deferred<PreparedStackArtifacts, StackBuildError> | undefined;
@@ -637,6 +648,7 @@ export class StackLifecycleCoordinator extends Context.Service<
           startService: (name) =>
             Effect.gen(function* () {
               yield* requireKnownService(name);
+              yield* requireRunningForServiceStart(name);
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.startService(name);
               yield* markStarted([name]);

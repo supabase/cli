@@ -3,6 +3,7 @@ import { Effect, Layer, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { Stack, StackInfoSchema } from "./Stack.ts";
+import { StackBuildError } from "./errors.ts";
 import { StackServiceState, StackServiceStatusSchema } from "./StackServiceState.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
 
@@ -34,6 +35,7 @@ const StatusResponseSchema = Schema.Struct({
 
 const ServiceErrorResponseSchema = Schema.Struct({
   error: Schema.String,
+  service: Schema.optionalKey(Schema.String),
 });
 
 const StatusServiceEventSchema = Schema.fromJsonString(StatusServiceSchema);
@@ -421,35 +423,20 @@ export const RemoteStack = {
           waitAllReady: () =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                // Check current state first
-                const { services } = yield* fetchStatus(socketPath, "/status");
-                const allReady = services.every(
-                  (s) => s.status === "Healthy" || s.status === "Running",
-                );
-                if (allReady) return;
-
-                // Track service readiness via SSE
-                const readySet = new Set(
-                  services
-                    .filter((s) => s.status === "Healthy" || s.status === "Running")
-                    .map((s) => s.name),
-                );
-                const totalCount = services.length;
-
-                yield* withUnixHttpClient(
-                  sseStream(socketPath, "/status/stream", (data) => {
-                    const raw = decodeStatusServiceEvent(data);
-                    return toServiceState(raw);
-                  }).pipe(
-                    Stream.takeUntil((s) => {
-                      if (s.status === "Healthy" || s.status === "Running") {
-                        readySet.add(s.name);
-                      }
-                      return readySet.size >= totalCount;
-                    }),
-                    Stream.runDrain,
-                  ),
-                );
+                const response = yield* unixResponse(socketPath, "/ready");
+                if (response.status === 500) {
+                  const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
+                    response,
+                  ).pipe(Effect.orDie);
+                  if (body.service !== undefined) {
+                    return yield* new ServiceReadyError({
+                      name: body.service,
+                      reason: body.error,
+                    });
+                  }
+                  return yield* new StackBuildError({ detail: body.error });
+                }
+                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
               }),
             ),
 
