@@ -271,6 +271,17 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
       Effect.catchTag("DuplicateRemoteProjectIdError", (cause) =>
         debugLogger.debug(cause.message).pipe(Effect.as(null)),
       ),
+      // A `[remotes.*]` block's `project_id` fails Go's ref-pattern check —
+      // raised from `Config.Validate` (`pkg/config/config.go:996-1001`), which
+      // runs inside the same `Config.Load()` call as the duplicate check above
+      // (`config.go:882`). Go's `flags.LoadConfig` swallows this the same
+      // non-fatal way (`internal/secrets/set/set.go:22-24`), so a malformed
+      // remote block must not abort an otherwise-valid `secrets set`.
+      // `cause.message` already matches Go's string verbatim (see
+      // `InvalidRemoteProjectIdError`'s field doc).
+      Effect.catchTag("InvalidRemoteProjectIdError", (cause) =>
+        debugLogger.debug(cause.message).pipe(Effect.as(null)),
+      ),
     );
     if (loadedConfig !== null) {
       const projectEnv = yield* loadProjectEnvironment({
