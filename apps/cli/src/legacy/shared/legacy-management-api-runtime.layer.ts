@@ -15,6 +15,7 @@ import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
 import { LegacyProjectRefResolver } from "../config/legacy-project-ref.service.ts";
 import { legacyProjectRefLayer } from "../config/legacy-project-ref.layer.ts";
+import { LegacyDebugLogger } from "./legacy-debug-logger.service.ts";
 import { legacyDebugLoggerLayer } from "./legacy-debug-logger.layer.ts";
 import { legacyDohFetchLayer } from "./legacy-http-dns.ts";
 import { LegacyIdentityStitch, legacyIdentityStitchLayer } from "./legacy-identity-stitch.ts";
@@ -104,6 +105,10 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
     // layer memoisation all three share one stitchAttempted guard — Go's one
     // root-context sync.Once.
     legacyIdentityStitchLayer,
+    // Expose the same memoised instance already provided into cliConfig/httpClient/etc.
+    // at the top level so handlers can log a swallowed, non-fatal error directly
+    // (Go's `fmt.Fprintln(utils.GetDebugLogger(), err)` pattern, e.g. `secrets set`).
+    legacyDebugLoggerLayer,
   );
 
   // Compile-time guarantee that the merged layer exposes every service a
@@ -148,7 +153,8 @@ type LegacyManagementApiServices =
   | LegacyLinkedProjectCache
   | LegacyTelemetryState
   | CommandRuntime
-  | LegacyIdentityStitch;
+  | LegacyIdentityStitch
+  | LegacyDebugLogger;
 
 /**
  * Runtime layer for the `--linked` db-config resolver path (`db dump`, `db query`,
