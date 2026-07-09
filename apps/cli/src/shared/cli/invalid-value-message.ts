@@ -19,6 +19,9 @@
 // scanning `error.value`. Remove once upstream `effect` fixes this (see
 // CLI-1898).
 //
+// TODO: remove once Effect-TS/effect#6312 is fixed upstream.
+// https://github.com/Effect-TS/effect/issues/6312
+//
 // Shared by two call sites that each see `InvalidValue` failures at a
 // different point in `effect`'s CLI runtime:
 // - `subcommand-flag-suggestions.ts` formats errors that reach the
