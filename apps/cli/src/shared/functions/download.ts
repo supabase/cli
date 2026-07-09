@@ -23,7 +23,7 @@ import {
   InvalidFunctionSlugError,
   UnsafeFunctionDownloadPathError,
 } from "./download.errors.ts";
-import { FunctionsApiStatusError } from "./functions-api.errors.ts";
+import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
 
 const legacyEntrypointPath = "file:///src/index.ts";
 
@@ -150,17 +150,17 @@ function validateDownloadFlags(
       );
 }
 
-function mapTransportError(prefix: string, error: unknown): Error {
+function mapTransportError(prefix: string, error: unknown): FunctionsApiTransportError {
   if (HttpClientError.isHttpClientError(error)) {
     const description = error.reason.description ?? error.reason._tag;
-    return new Error(`${prefix}: ${description}`);
+    return new FunctionsApiTransportError({ message: `${prefix}: ${description}` });
   }
 
   if (error instanceof Error) {
-    return new Error(`${prefix}: ${error.message}`);
+    return new FunctionsApiTransportError({ message: `${prefix}: ${error.message}` });
   }
 
-  return new Error(`${prefix}: ${String(error)}`);
+  return new FunctionsApiTransportError({ message: `${prefix}: ${String(error)}` });
 }
 
 function hasEntrypointPath(metadata: DownloadMetadata | undefined): metadata is {

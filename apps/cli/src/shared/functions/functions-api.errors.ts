@@ -1,5 +1,6 @@
 import { Data } from "effect";
 import {
+  actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
   statusCodeActionability,
@@ -19,5 +20,21 @@ export class FunctionsApiStatusError extends Data.TaggedError("FunctionsApiStatu
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return statusCodeActionability(this.status);
+  }
+}
+
+/**
+ * Shared error for a Management API request that failed before a response
+ * was received (DNS, connection reset, timeout, ...), used by both
+ * `deploy.ts` and `download.ts`'s `mapTransportError`. Keeping one class here
+ * (rather than duplicating it per file) lets both call sites classify
+ * identically as a network failure instead of falling back to a plain
+ * `Error` (which reports as `unknown` in the error actionability KPI).
+ */
+export class FunctionsApiTransportError extends Data.TaggedError("FunctionsApiTransportError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.externalNetwork, fingerprint_suffix: "network" };
   }
 }

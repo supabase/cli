@@ -56,6 +56,7 @@ export const makeApi = Effect.gen(function* () {
             return Effect.fail(
               new ApiError({
                 detail: error instanceof Error ? error.message : String(error),
+                decode: true,
               }),
             );
           }),

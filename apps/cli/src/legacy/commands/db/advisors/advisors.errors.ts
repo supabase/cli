@@ -80,12 +80,19 @@ export class LegacyDbAdvisorsQueryError extends Data.TaggedError("LegacyDbAdviso
   }
 }
 
-/** `failed to fetch security advisors: %w` (`advisors.go:165`). */
+/**
+ * `failed to fetch security advisors: %w` (`advisors.go:165`). Go folds a
+ * decode error into the same message path as a transport failure — `decode`
+ * distinguishes them for actionability so a 200-response decode failure
+ * classifies as an API response problem instead of a network problem.
+ */
 export class LegacyDbAdvisorsSecurityNetworkError extends Data.TaggedError(
   "LegacyDbAdvisorsSecurityNetworkError",
-)<{ readonly message: string }> {
+)<{ readonly message: string; readonly decode?: boolean }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -98,12 +105,19 @@ export class LegacyDbAdvisorsSecurityStatusError extends Data.TaggedError(
   }
 }
 
-/** `failed to fetch performance advisors: %w` (`advisors.go:176`). */
+/**
+ * `failed to fetch performance advisors: %w` (`advisors.go:176`). Go folds a
+ * decode error into the same message path as a transport failure — `decode`
+ * distinguishes them for actionability so a 200-response decode failure
+ * classifies as an API response problem instead of a network problem.
+ */
 export class LegacyDbAdvisorsPerformanceNetworkError extends Data.TaggedError(
   "LegacyDbAdvisorsPerformanceNetworkError",
-)<{ readonly message: string }> {
+)<{ readonly message: string; readonly decode?: boolean }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 

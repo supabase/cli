@@ -31,7 +31,7 @@ import {
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "./deploy.errors.ts";
-import { FunctionsApiStatusError } from "./functions-api.errors.ts";
+import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
 
 const COMPRESSED_ESZIP_MAGIC = "EZBR";
 const DENO1_EDGE_RUNTIME_VERSION = "1.68.4";
@@ -156,17 +156,17 @@ function decodeFunctionListResponse(value: unknown): ReadonlyArray<RemoteFunctio
   return decodeFunctionListResponseSchema(normalized);
 }
 
-function mapTransportError(prefix: string, error: unknown): Error {
+function mapTransportError(prefix: string, error: unknown): FunctionsApiTransportError {
   if (HttpClientError.isHttpClientError(error)) {
     const description = error.reason.description ?? error.reason._tag;
-    return new Error(`${prefix}: ${description}`);
+    return new FunctionsApiTransportError({ message: `${prefix}: ${description}` });
   }
 
   if (error instanceof Error) {
-    return new Error(`${prefix}: ${error.message}`);
+    return new FunctionsApiTransportError({ message: `${prefix}: ${error.message}` });
   }
 
-  return new Error(`${prefix}: ${String(error)}`);
+  return new FunctionsApiTransportError({ message: `${prefix}: ${String(error)}` });
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
