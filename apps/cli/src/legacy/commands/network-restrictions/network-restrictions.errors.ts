@@ -10,9 +10,12 @@ export class LegacyNetworkRestrictionsGetNetworkError extends Data.TaggedError(
   "LegacyNetworkRestrictionsGetNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -32,9 +35,12 @@ export class LegacyNetworkRestrictionsUpdateNetworkError extends Data.TaggedErro
   "LegacyNetworkRestrictionsUpdateNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 

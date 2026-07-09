@@ -17,9 +17,12 @@ export class LegacyBranchesListNetworkError extends Data.TaggedError(
   "LegacyBranchesListNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -39,9 +42,12 @@ export class LegacyBranchesCreateNetworkError extends Data.TaggedError(
   "LegacyBranchesCreateNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -63,9 +69,12 @@ export class LegacyBranchesFindNetworkError extends Data.TaggedError(
   "LegacyBranchesFindNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -92,9 +101,12 @@ export class LegacyBranchesGetNetworkError extends Data.TaggedError(
   "LegacyBranchesGetNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -106,6 +118,13 @@ export class LegacyBranchesGetUnexpectedStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 404 from `V1GetABranchConfig` means the user-supplied branch id/ref did
+    // not match any branch — user input, not an API failure. The resolver and
+    // `get` handler only call this endpoint with a user-provided UUID/ref, or
+    // the project_ref resolved from a user-provided branch name.
+    if (this.status === 404) {
+      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+    }
     return statusCodeActionability(this.status);
   }
 }
@@ -114,9 +133,12 @@ export class LegacyBranchesApiKeysNetworkError extends Data.TaggedError(
   "LegacyBranchesApiKeysNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -136,9 +158,12 @@ export class LegacyBranchesPoolerNetworkError extends Data.TaggedError(
   "LegacyBranchesPoolerNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -168,9 +193,12 @@ export class LegacyBranchesUpdateNetworkError extends Data.TaggedError(
   "LegacyBranchesUpdateNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -191,9 +219,12 @@ export class LegacyBranchesPauseNetworkError extends Data.TaggedError(
   "LegacyBranchesPauseNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -213,9 +244,12 @@ export class LegacyBranchesUnpauseNetworkError extends Data.TaggedError(
   "LegacyBranchesUnpauseNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -235,9 +269,12 @@ export class LegacyBranchesDeleteNetworkError extends Data.TaggedError(
   "LegacyBranchesDeleteNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -257,9 +294,12 @@ export class LegacyBranchesDisableNetworkError extends Data.TaggedError(
   "LegacyBranchesDisableNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 

@@ -6,20 +6,22 @@ import {
   statusCodeActionability,
 } from "../../shared/telemetry/error-actionability.ts";
 
-function CliError<Tag extends string>(tag: Tag) {
-  return class extends Data.TaggedError(tag)<{
-    readonly detail: string;
-    readonly suggestion: string;
-  }> {
-    override get message() {
-      return `${this.detail}\n  Suggestion: ${this.suggestion}`;
-    }
-  };
-}
-
-export class InvalidTokenError extends CliError("InvalidTokenError") {
+export class InvalidTokenError extends Data.TaggedError("InvalidTokenError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+  /**
+   * Where the malformed token came from. Direct-input tokens (`--token` flag,
+   * `SUPABASE_ACCESS_TOKEN`, piped stdin) cannot be fixed by `supabase login`,
+   * so their remediation is to correct that input. A token from the browser
+   * flow (no source) is fixable by logging in again.
+   */
+  readonly source?: "env" | "flag" | "stdin";
+}> {
+  override get message() {
+    return `${this.detail}\n  Suggestion: ${this.suggestion}`;
+  }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.authLogin;
+    return this.source === undefined ? actionability.authLogin : actionability.authToken;
   }
 }
 

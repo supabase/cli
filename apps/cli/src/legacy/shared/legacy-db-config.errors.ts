@@ -39,9 +39,11 @@ export class LegacyDbConfigLoadError extends Data.TaggedError("LegacyDbConfigLoa
 /** Transport failure creating a temporary login role (`V1CreateLoginRole`). */
 export class LegacyDbConfigLoginRoleNetworkError extends Data.TaggedError(
   "LegacyDbConfigLoginRoleNetworkError",
-)<{ readonly message: string }> {
+)<{ readonly message: string; readonly decode?: boolean }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -61,9 +63,11 @@ export class LegacyDbConfigLoginRoleStatusError extends Data.TaggedError(
 /** Transport failure listing network bans (`V1ListAllNetworkBans`). */
 export class LegacyDbConfigListBansNetworkError extends Data.TaggedError(
   "LegacyDbConfigListBansNetworkError",
-)<{ readonly message: string }> {
+)<{ readonly message: string; readonly decode?: boolean }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -83,9 +87,11 @@ export class LegacyDbConfigListBansStatusError extends Data.TaggedError(
 /** Transport failure removing network bans (`V1DeleteNetworkBans`). */
 export class LegacyDbConfigUnbanNetworkError extends Data.TaggedError(
   "LegacyDbConfigUnbanNetworkError",
-)<{ readonly message: string }> {
+)<{ readonly message: string; readonly decode?: boolean }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 

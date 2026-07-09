@@ -10,9 +10,12 @@ export class LegacyVanitySubdomainsGetNetworkError extends Data.TaggedError(
   "LegacyVanitySubdomainsGetNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -32,9 +35,12 @@ export class LegacyVanitySubdomainsCheckNetworkError extends Data.TaggedError(
   "LegacyVanitySubdomainsCheckNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -55,9 +61,12 @@ export class LegacyVanitySubdomainsActivateNetworkError extends Data.TaggedError
   "LegacyVanitySubdomainsActivateNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -78,9 +87,12 @@ export class LegacyVanitySubdomainsDeleteNetworkError extends Data.TaggedError(
   "LegacyVanitySubdomainsDeleteNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 

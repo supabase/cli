@@ -9,9 +9,17 @@ export class LegacyInvalidAccessTokenError extends Data.TaggedError(
   "LegacyInvalidAccessTokenError",
 )<{
   readonly message: string;
+  /**
+   * Where the malformed token was read from. An env-var token
+   * (`SUPABASE_ACCESS_TOKEN`) takes precedence over stored credentials, so
+   * `supabase login` cannot fix it — the remediation is to correct the env
+   * var. A stored (keyring/file) token, or an unknown source, is fixable by
+   * logging in again.
+   */
+  readonly source?: "env" | "stored";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.authLogin;
+    return this.source === "env" ? actionability.authToken : actionability.authLogin;
   }
 }
 

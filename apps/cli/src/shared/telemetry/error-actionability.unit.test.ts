@@ -31,6 +31,15 @@ class UndeclaredError extends Data.TaggedError("UndeclaredError")<{
   readonly message: string;
 }> {}
 
+class DeclaredNoSuggestionError extends Data.TaggedError("DeclaredNoSuggestionError")<{
+  readonly message: string;
+  readonly suggestion?: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
+
 describe("classifyCliErrorActionability", () => {
   it("uses the declaration co-located on the error class", () => {
     expect(
@@ -212,6 +221,26 @@ describe("classifyCliErrorActionability", () => {
     expect(opaque.error_category).toBe("network");
   });
 
+  it("splits daemon start failures from other daemon RPC failures", () => {
+    const start = classifyCliErrorActionability({
+      _tag: "UnixHttpClientError",
+      socketPath: "/tmp/daemon.sock",
+      path: "/start",
+    });
+    expect(start.error_category).toBe("invalid_config");
+    expect(start.suggested_command).toBe("supabase start");
+    expect(start.error_fingerprint).toBe("tag:UnixHttpClientError:daemon_start");
+
+    const status = classifyCliErrorActionability({
+      _tag: "UnixHttpClientError",
+      socketPath: "/tmp/daemon.sock",
+      path: "/status",
+    });
+    expect(status.error_category).toBe("invalid_config");
+    expect(status.suggested_command).toBe("supabase stop");
+    expect(status.error_fingerprint).toBe("tag:UnixHttpClientError");
+  });
+
   it("classifies API client configuration failures as token problems", () => {
     const result = classifyCliErrorActionability({
       _tag: "SupabaseApiConfigError",
@@ -284,6 +313,23 @@ describe("classifyCliErrorActionability", () => {
     expect(result.error_kind).toBe("internal_bug");
     expect(result.error_category).toBe("panic");
     expect(result.error_fingerprint).toBe("error:TypeError");
+  });
+
+  it("reconciles has_suggestion with an instance-level rendered suggestion", () => {
+    const withSuggestion = classifyCliErrorActionability(
+      new DeclaredNoSuggestionError({ message: "bad row", suggestion: "do X" }),
+    );
+    expect(withSuggestion.has_suggestion).toBe(true);
+
+    const withoutSuggestion = classifyCliErrorActionability(
+      new DeclaredNoSuggestionError({ message: "bad row" }),
+    );
+    expect(withoutSuggestion.has_suggestion).toBe(false);
+
+    // A declaration-level true is never downgraded, even with no instance
+    // suggestion field.
+    const declaredTrue = classifyCliErrorActionability(new DeclaredError({ message: "x" }));
+    expect(declaredTrue.has_suggestion).toBe(true);
   });
 
   it("never leaks raw text into fingerprints for unknown failures", () => {

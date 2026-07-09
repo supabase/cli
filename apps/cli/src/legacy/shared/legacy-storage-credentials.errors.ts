@@ -45,9 +45,12 @@ export class LegacyStorageApiKeysNetworkError extends Data.TaggedError(
   "LegacyStorageApiKeysNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 

@@ -10,9 +10,12 @@ export class LegacySnippetsListNetworkError extends Data.TaggedError(
   "LegacySnippetsListNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -54,9 +57,12 @@ export class LegacySnippetsDownloadNetworkError extends Data.TaggedError(
   "LegacySnippetsDownloadNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -68,6 +74,11 @@ export class LegacySnippetsDownloadUnexpectedStatusError extends Data.TaggedErro
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 404 from `GET /v1/snippets/{id}` means the user-supplied snippet id did
+    // not match any snippet — user input, not an API failure.
+    if (this.status === 404) {
+      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+    }
     return statusCodeActionability(this.status);
   }
 }

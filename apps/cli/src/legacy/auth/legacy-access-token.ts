@@ -17,9 +17,13 @@ const LEGACY_INVALID_ACCESS_TOKEN_MESSAGE =
  */
 export const validateLegacyAccessToken = (
   token: string,
+  source?: "env" | "stored",
 ): Effect.Effect<string, LegacyInvalidAccessTokenError> =>
   LEGACY_ACCESS_TOKEN_PATTERN.test(token)
     ? Effect.succeed(token)
     : Effect.fail(
-        new LegacyInvalidAccessTokenError({ message: LEGACY_INVALID_ACCESS_TOKEN_MESSAGE }),
+        new LegacyInvalidAccessTokenError({
+          message: LEGACY_INVALID_ACCESS_TOKEN_MESSAGE,
+          source,
+        }),
       );

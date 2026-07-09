@@ -128,6 +128,9 @@ export const legacySnippetsList = Effect.fn("legacy.snippets.list")(function* (
           (cause) =>
             new LegacySnippetsListNetworkError({
               message: `failed to list snippets: ${String(cause)}`,
+              // 200-response body decode failure — an API-response problem, not
+              // a transport/network failure.
+              decode: true,
             }),
         ),
       );

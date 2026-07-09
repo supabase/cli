@@ -15,9 +15,12 @@ export class LegacySecretsListNetworkError extends Data.TaggedError(
   "LegacySecretsListNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -35,9 +38,12 @@ export class LegacySecretsListUnexpectedStatusError extends Data.TaggedError(
 
 export class LegacySecretsSetNetworkError extends Data.TaggedError("LegacySecretsSetNetworkError")<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -57,9 +63,12 @@ export class LegacySecretsUnsetNetworkError extends Data.TaggedError(
   "LegacySecretsUnsetNetworkError",
 )<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 

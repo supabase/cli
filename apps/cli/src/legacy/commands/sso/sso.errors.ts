@@ -41,9 +41,12 @@ export class LegacySsoInvalidUuidError extends Data.TaggedError("LegacySsoInvali
 // `sso list`
 export class LegacySsoListNetworkError extends Data.TaggedError("LegacySsoListNetworkError")<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -166,9 +169,12 @@ export class LegacySsoMetadataUrlNonUtf8Error extends Data.TaggedError(
 // `sso show`
 export class LegacySsoShowNetworkError extends Data.TaggedError("LegacySsoShowNetworkError")<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -205,9 +211,12 @@ export class LegacySsoShowEnvNotSupportedError extends Data.TaggedError(
 // `sso update`
 export class LegacySsoUpdateNetworkError extends Data.TaggedError("LegacySsoUpdateNetworkError")<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
@@ -256,9 +265,12 @@ export class LegacySsoUpdateAttributeMappingFileError extends Data.TaggedError(
 // `sso remove`
 export class LegacySsoRemoveNetworkError extends Data.TaggedError("LegacySsoRemoveNetworkError")<{
   readonly message: string;
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 

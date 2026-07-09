@@ -41,17 +41,36 @@ export class LegacyLoginMissingTokenError extends Data.TaggedError("LegacyLoginM
  */
 export class LegacyLoginVerificationError extends Data.TaggedError("LegacyLoginVerificationError")<{
   readonly message: string;
+  /** HTTP status of a non-200 poll response, when one was received. */
+  readonly statusCode?: number;
+  /** Set when the poll failed at the transport layer (connection/timeout). */
+  readonly network?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.authLogin;
   }
 }
 
-/** All verification retries exhausted (`login.go:214-216`). */
+/**
+ * All verification retries exhausted (`login.go:214-216`). Carries the LAST
+ * poll failure's discriminant so classification distinguishes "the user never
+ * completed the browser flow" (the endpoint keeps returning a pending 4xx, or
+ * no signal) from a genuine platform problem (5xx / transport). See the Go
+ * poll protocol: `pollForAccessToken` treats every non-200 as a retryable
+ * error (`login.go:132-157`, `pkg/fetcher/http.go:102-113`).
+ */
 export class LegacyLoginFailedError extends Data.TaggedError("LegacyLoginFailedError")<{
   readonly message: string;
+  readonly statusCode?: number;
+  readonly network?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.network === true) {
+      return { ...actionability.externalNetwork, fingerprint_suffix: "network" };
+    }
+    if (this.statusCode !== undefined && this.statusCode >= 500) {
+      return { ...actionability.apiStatus, fingerprint_suffix: "api_status" };
+    }
     return actionability.authLogin;
   }
 }

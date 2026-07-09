@@ -110,6 +110,9 @@ export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(func
           (cause) =>
             new LegacySnippetsDownloadNetworkError({
               message: `failed to download snippet: ${String(cause)}`,
+              // 200-response body decode failure — an API-response problem, not
+              // a transport/network failure.
+              decode: true,
             }),
         ),
       );

@@ -38,6 +38,7 @@ export const legacyLoginApiLayer = Layer.effect(
             return yield* Effect.fail(
               new LegacyLoginVerificationError({
                 message: `Error status ${response.status}: ${body}`,
+                statusCode: response.status,
               }),
             );
           }
@@ -56,6 +57,7 @@ export const legacyLoginApiLayer = Layer.effect(
             Effect.fail(
               new LegacyLoginVerificationError({
                 message: `failed to execute http request: ${cause.message}`,
+                network: true,
               }),
             ),
           ),
@@ -65,6 +67,7 @@ export const legacyLoginApiLayer = Layer.effect(
               Effect.fail(
                 new LegacyLoginVerificationError({
                   message: "failed to execute http request: request timed out",
+                  network: true,
                 }),
               ),
           }),

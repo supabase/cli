@@ -98,34 +98,48 @@ const captureLoginCompleted = Effect.fnUntraced(function* (
   );
 });
 
-const saveDirectToken = Effect.fnUntraced(function* (token: Redacted.Redacted<string>) {
+const saveDirectToken = Effect.fnUntraced(function* (
+  token: Redacted.Redacted<string>,
+  source: "env" | "flag" | "stdin",
+) {
   const credentials = yield* Credentials;
   const output = yield* Output;
-  yield* validateToken(revealToken(token));
+  yield* validateToken(revealToken(token), source);
   yield* credentials.saveAccessToken(token);
   const distinctId = yield* resolveAuthenticatedDistinctId(token);
   yield* output.success("Logged in successfully.", { command: "login" });
   yield* captureLoginCompleted({ login_method: "token" }, distinctId);
 });
 
+interface ResolvedToken {
+  readonly token: Redacted.Redacted<string>;
+  readonly source: "env" | "flag" | "stdin";
+}
+
 // Token resolution priority: --token flag > SUPABASE_ACCESS_TOKEN env > piped stdin > interactive browser flow
 const resolveToken = Effect.fnUntraced(function* (tokenFlag: Option.Option<string>) {
-  if (Option.isSome(tokenFlag)) return Option.some(Redacted.make(tokenFlag.value));
+  if (Option.isSome(tokenFlag)) {
+    return Option.some<ResolvedToken>({ token: Redacted.make(tokenFlag.value), source: "flag" });
+  }
 
   const cliConfig = yield* CliConfig;
-  if (Option.isSome(cliConfig.accessToken)) return cliConfig.accessToken;
+  if (Option.isSome(cliConfig.accessToken)) {
+    return Option.some<ResolvedToken>({ token: cliConfig.accessToken.value, source: "env" });
+  }
 
   const stdin = yield* Stdin;
   if (!stdin.isTTY) {
     const piped = yield* stdin.readPipedText;
-    if (Option.isSome(piped)) return Option.some(Redacted.make(piped.value));
+    if (Option.isSome(piped)) {
+      return Option.some<ResolvedToken>({ token: Redacted.make(piped.value), source: "stdin" });
+    }
     return yield* new NoTtyError({
       detail: "Cannot prompt for token in non-interactive mode",
       suggestion: "Pass --token or set SUPABASE_ACCESS_TOKEN",
     });
   }
 
-  return Option.none();
+  return Option.none<ResolvedToken>();
 });
 
 // ---------------------------------------------------------------------------
@@ -196,14 +210,22 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
     remainingRetries: number,
   ): Effect.Effect<LoginSessionResponse, LoginFailedError | NonInteractiveError> =>
     verifyCode.pipe(
-      Effect.catchTag("LoginVerificationError", () =>
+      Effect.catchTag("LoginVerificationError", (err) =>
         Effect.gen(function* () {
           yield* output.error("Verification failed");
           if (remainingRetries <= 0) {
+            // Thread the last poll failure's discriminant: a received status
+            // classifies by code (5xx → platform outage), a status-less/decode
+            // failure means transport (network) unless it carried a decoded
+            // body, and a pending 4xx / no signal stays "run supabase login".
+            const { statusCode, decode } = err.cause;
+            const network = statusCode === undefined && decode !== true;
             return yield* Effect.fail(
               new LoginFailedError({
                 detail: "Login failed after maximum retries",
                 suggestion: "Try running `supabase login` again",
+                statusCode,
+                network,
               }),
             );
           }
@@ -248,7 +270,7 @@ export const login = Effect.fnUntraced(function* (flags: LoginFlags) {
 
   const resolved = yield* resolveToken(flags.token);
   if (Option.isSome(resolved)) {
-    return yield* saveDirectToken(resolved.value);
+    return yield* saveDirectToken(resolved.value.token, resolved.value.source);
   }
   return yield* browserOAuthFlow(flags);
 });

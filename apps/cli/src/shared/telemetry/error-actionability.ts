@@ -109,9 +109,14 @@ export interface CliErrorActionabilityDeclaration {
    * Whether this failure class has a canonical remediation. This is the
    * taxonomy-level claim, not a guarantee that the CLI rendered a
    * `Suggestion:` line for a given instance — some errors convey the fix in
-   * the message itself. When CLI-1561 wires capture, the emitted
-   * `has_suggestion` should be reconciled with what the output layer actually
-   * rendered so telemetry can never disagree with what the user saw.
+   * the message itself. Instance-level rendered suggestions (a non-empty
+   * `suggestion` field on the error, the same field `normalize-error.ts`
+   * renders as the `Suggestion:` line) are already reconciled with this
+   * declaration at classify time in `toActionability`: a false declaration
+   * flips to true when the instance carries one, but a true declaration is
+   * never flipped to false. Capture-time reconciliation remains necessary
+   * only for errors that convey remediation in the message text itself,
+   * which classify-time has no way to see.
    */
   readonly has_suggestion: boolean;
   readonly suggestion_type: CliSuggestionType;
@@ -388,14 +393,26 @@ function fingerprint(prefix: string, identifier: string | undefined, suffix?: st
   return suffix === undefined ? base : `${base}:${suffix}`;
 }
 
+/**
+ * Whether the classified error instance carries a non-empty `suggestion`
+ * field — the same field `shared/output/normalize-error.ts` renders as the
+ * `Suggestion:` line. Used to reconcile a declaration's `has_suggestion`
+ * with what the user actually saw, without ever downgrading a declared true.
+ */
+function hasInstanceSuggestion(error: unknown): boolean {
+  return isErrorRecord(error) && readString(error, "suggestion") !== undefined;
+}
+
 function toActionability(
   declaration: CliErrorActionabilityDeclaration,
   fingerprintPrefix: string,
   identifier: string | undefined,
+  error?: unknown,
 ): CliErrorActionability {
   const { fingerprint_suffix, ...rest } = declaration;
   return {
     ...rest,
+    has_suggestion: rest.has_suggestion || hasInstanceSuggestion(error),
     error_fingerprint: fingerprint(fingerprintPrefix, identifier, fingerprint_suffix),
   };
 }
@@ -509,7 +526,15 @@ const externalActionabilityByTag: Record<
   StackAlreadyRunningError: () => actionability.stopStack,
   DaemonStartError: () => actionability.startStack,
   DaemonStillRunningError: () => actionability.stopStack,
-  UnixHttpClientError: () => actionability.stopStack,
+  // A `/start` RPC failure means the daemon never came up; every other path
+  // (status/logs/stop/dispose) means a running-but-broken daemon.
+  UnixHttpClientError: (error) => {
+    const path = readString(error, "path");
+    if (path !== undefined && path.startsWith("/start")) {
+      return { ...actionability.startStack, fingerprint_suffix: "daemon_start" };
+    }
+    return actionability.stopStack;
+  },
 
   // @supabase/process-compose — the CLI generates the process graph, so graph
   // invariants are internal bugs; runtime service failures are stack-state
@@ -549,7 +574,7 @@ function classifyShowHelp(error: ErrorRecord, depth: number): CliErrorActionabil
   const errors = error["errors"];
   if (!Array.isArray(errors)) return undefined;
   if (errors.length === 1) return classifyAtDepth(errors[0], depth + 1);
-  return toActionability(actionability.invalidInput, "tag", "ShowHelp");
+  return toActionability(actionability.invalidInput, "tag", "ShowHelp", error);
 }
 
 function isNativeJsExceptionName(name: string | undefined): boolean {
@@ -578,13 +603,13 @@ export function classifyCliErrorActionability(error: unknown): CliErrorActionabi
 
 function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   if (depth >= MAX_CAUSE_DEPTH) {
-    return toActionability(actionability.unknown, "error", "CauseChainLimit");
+    return toActionability(actionability.unknown, "error", "CauseChainLimit", error);
   }
   const tag = readErrorTag(error);
 
   const declared = readDeclaration(error);
   if (declared !== undefined) {
-    return toActionability(declared, "tag", tag ?? readErrorName(error));
+    return toActionability(declared, "tag", tag ?? readErrorName(error), error);
   }
 
   if (tag === "ShowHelp" && isErrorRecord(error)) {
@@ -632,10 +657,10 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     if (Object.hasOwn(externalActionabilityByTag, tag)) {
       const external = externalActionabilityByTag[tag];
       if (external !== undefined) {
-        return toActionability(external(error), "tag", tag);
+        return toActionability(external(error), "tag", tag, error);
       }
     }
-    return toActionability(actionability.unknown, "tag", tag);
+    return toActionability(actionability.unknown, "tag", tag, error);
   }
 
   if (isErrorRecord(error) && readErrorName(error) === "StackError") {
@@ -648,7 +673,7 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     }
     const classify = externalActionabilityByTag["StackError"];
     if (classify !== undefined) {
-      return toActionability(classify(error), "error", "StackError");
+      return toActionability(classify(error), "error", "StackError", error);
     }
   }
 
@@ -658,10 +683,10 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
 
   const name = readErrorName(error);
   if (isNativeJsExceptionName(name)) {
-    return toActionability(actionability.internalPanic, "error", name);
+    return toActionability(actionability.internalPanic, "error", name, error);
   }
 
-  return toActionability(actionability.unknown, "error", name);
+  return toActionability(actionability.unknown, "error", name, error);
 }
 
 export function classifyCliCauseActionability(cause: Cause.Cause<unknown>): CliErrorActionability {

@@ -369,14 +369,14 @@ const makeLegacyCredentials = Effect.gen(function* () {
       // Env takes precedence (matches access_token.go:38).
       if (Option.isSome(cliConfig.accessToken)) {
         yield* debugLogger.debug("Using access token from env var...");
-        yield* validateLegacyAccessToken(Redacted.value(cliConfig.accessToken.value));
+        yield* validateLegacyAccessToken(Redacted.value(cliConfig.accessToken.value), "env");
         return Option.some(cliConfig.accessToken.value);
       }
 
       // Keyring (profile key, then legacy key). Skipped on WSL.
       const keyringValue = yield* readKeyring;
       if (Option.isSome(keyringValue)) {
-        yield* validateLegacyAccessToken(keyringValue.value);
+        yield* validateLegacyAccessToken(keyringValue.value, "stored");
         return Option.some(Redacted.make(keyringValue.value));
       }
 
@@ -384,7 +384,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
       const fileValue = yield* readFile;
       if (Option.isSome(fileValue)) {
         yield* debugLogger.debug(`Using access token from file: ${fallbackPath}`);
-        yield* validateLegacyAccessToken(fileValue.value);
+        yield* validateLegacyAccessToken(fileValue.value, "stored");
         return Option.some(Redacted.make(fileValue.value));
       }
 

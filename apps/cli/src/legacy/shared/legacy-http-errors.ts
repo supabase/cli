@@ -47,7 +47,10 @@ function sanitizeErrorBody(input: string): string {
   return out;
 }
 
-export type NetworkErrorFactory<E> = new (args: { readonly message: string }) => E;
+export type NetworkErrorFactory<E> = new (args: {
+  readonly message: string;
+  readonly decode?: boolean;
+}) => E;
 
 export type StatusErrorFactory<E> = new (args: {
   readonly status: number;
@@ -92,9 +95,12 @@ export function mapLegacyHttpError<N, S>(opts: {
           new opts.networkError({ message: opts.networkMessage(description) }),
         );
       }
-      // SchemaError or HttpBodyError — treat as transport-level network error.
+      // SchemaError or HttpBodyError — the server returned a response whose
+      // body failed schema decoding (a 200 the generated client could not
+      // parse). This is not a transport failure, so flag `decode` to classify
+      // it as an API-response problem rather than a network problem.
       return yield* Effect.fail(
-        new opts.networkError({ message: opts.networkMessage(String(cause)) }),
+        new opts.networkError({ message: opts.networkMessage(String(cause)), decode: true }),
       );
     });
 }
