@@ -295,6 +295,14 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   // to exactly the valid manifests on disk so stale allocations from deleted
   // or skipped pods are pruned during startup.
   try {
+    // Reap over EVERY pod directory on disk — not just parseable manifests. A
+    // corrupt pod.json is exactly the case where the previous daemon may have
+    // died uncleanly, and skipping it would leave its stale postmaster bound
+    // to ports that the reconcile below is about to prune and hand out again.
+    for (const id of await pods.listIds()) {
+      await reapStalePostmaster(pods.dataDir(id));
+      await rm(runPidFile(id), { force: true });
+    }
     const manifests = await pods.list();
     await ports.reconcile(
       new Map(
@@ -305,8 +313,6 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
       ),
     );
     for (const manifest of manifests) {
-      await reapStalePostmaster(pods.dataDir(manifest.id));
-      await rm(runPidFile(manifest.id), { force: true });
       await registerEdge(manifest);
     }
   } catch (err) {

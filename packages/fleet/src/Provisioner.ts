@@ -17,6 +17,21 @@ function errorCode(error: unknown): string | undefined {
 }
 
 const NATIVE_FLEET_SERVICES = new Set<ServiceName>(["postgres", "postgrest", "auth"]);
+const SERVICE_NAME_SET = new Set<string>(SERVICE_NAMES);
+
+/**
+ * JS callers can pass junk despite the types; anything unknown or non-boolean
+ * would be persisted into pod.json only for PodRegistry's strict parser to
+ * reject the whole manifest on the next read, turning the pod into an
+ * unreadable "unknown pod". Reject it up front instead.
+ */
+function validateServices(services: Partial<Record<ServiceName, boolean>>): void {
+  for (const [name, enabled] of Object.entries(services)) {
+    if (!SERVICE_NAME_SET.has(name) || typeof enabled !== "boolean") {
+      throw new Error(`invalid service entry: ${name}=${String(enabled)}`);
+    }
+  }
+}
 
 export interface CreatePodOptions {
   readonly id: string;
@@ -49,6 +64,7 @@ export class Provisioner {
     }
     const pgVersion = opts.versions.postgres;
     if (pgVersion === undefined) throw new Error("versions.postgres is required");
+    validateServices(opts.services ?? {});
     const enabled = SERVICE_NAMES.filter((name) => opts.services?.[name] === true);
     const dependencyError = validateEnabledServiceDependencies(new Set(enabled));
     if (dependencyError !== undefined) {

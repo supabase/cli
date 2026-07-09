@@ -3,6 +3,12 @@ import { basename, join } from "node:path";
 import { SERVICE_NAMES } from "@supabase/stack";
 import type { AllocatedPorts, ServiceName } from "@supabase/stack";
 import type { PodManifest } from "./PodManifest.ts";
+import { FLEET_INTERNAL_PORT_RANGE, FLEET_PUBLIC_PORT_RANGE } from "./PortRegistry.ts";
+
+interface PortRange {
+  readonly min: number;
+  readonly max: number;
+}
 
 const POD_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const SERVICE_NAME_SET = new Set<string>(SERVICE_NAMES);
@@ -43,31 +49,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isFleetPort(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value) && value > 10_000 && value <= 65_535;
+// Public and internal ports live in disjoint ranges (proxy listeners vs
+// in-process stack services); a "parseable but corrupt" manifest whose
+// internal ports drifted into the public range would make wake() bind
+// postgres on a proxy-owned port, so each set is validated against its range.
+function isFleetPort(value: unknown, range: PortRange): value is number {
+  return (
+    typeof value === "number" && Number.isInteger(value) && value >= range.min && value <= range.max
+  );
 }
 
-function parsePorts(value: unknown): AllocatedPorts | undefined {
+function parsePorts(value: unknown, range: PortRange): AllocatedPorts | undefined {
   if (!isRecord(value)) return undefined;
   if (
-    !isFleetPort(value.dbPort) ||
-    !isFleetPort(value.apiPort) ||
-    !isFleetPort(value.authPort) ||
-    !isFleetPort(value.postgrestPort) ||
-    !isFleetPort(value.postgrestAdminPort) ||
-    !isFleetPort(value.edgeRuntimePort) ||
-    !isFleetPort(value.edgeRuntimeInspectorPort) ||
-    !isFleetPort(value.realtimePort) ||
-    !isFleetPort(value.storagePort) ||
-    !isFleetPort(value.imgproxyPort) ||
-    !isFleetPort(value.mailpitPort) ||
-    !isFleetPort(value.mailpitSmtpPort) ||
-    !isFleetPort(value.mailpitPop3Port) ||
-    !isFleetPort(value.pgmetaPort) ||
-    !isFleetPort(value.studioPort) ||
-    !isFleetPort(value.analyticsPort) ||
-    !isFleetPort(value.poolerPort) ||
-    !isFleetPort(value.poolerApiPort)
+    !isFleetPort(value.dbPort, range) ||
+    !isFleetPort(value.apiPort, range) ||
+    !isFleetPort(value.authPort, range) ||
+    !isFleetPort(value.postgrestPort, range) ||
+    !isFleetPort(value.postgrestAdminPort, range) ||
+    !isFleetPort(value.edgeRuntimePort, range) ||
+    !isFleetPort(value.edgeRuntimeInspectorPort, range) ||
+    !isFleetPort(value.realtimePort, range) ||
+    !isFleetPort(value.storagePort, range) ||
+    !isFleetPort(value.imgproxyPort, range) ||
+    !isFleetPort(value.mailpitPort, range) ||
+    !isFleetPort(value.mailpitSmtpPort, range) ||
+    !isFleetPort(value.mailpitPop3Port, range) ||
+    !isFleetPort(value.pgmetaPort, range) ||
+    !isFleetPort(value.studioPort, range) ||
+    !isFleetPort(value.analyticsPort, range) ||
+    !isFleetPort(value.poolerPort, range) ||
+    !isFleetPort(value.poolerApiPort, range)
   ) {
     return undefined;
   }
@@ -188,8 +200,8 @@ function parseManifest(value: unknown): PodManifest | undefined {
   if (typeof value.id !== "string" || !isValidPodId(value.id)) return undefined;
   const versions = parseVersions(value.versions);
   const services = parseServices(value.services);
-  const ports = parsePorts(value.ports);
-  const internalPorts = parsePorts(value.internalPorts);
+  const ports = parsePorts(value.ports, FLEET_PUBLIC_PORT_RANGE);
+  const internalPorts = parsePorts(value.internalPorts, FLEET_INTERNAL_PORT_RANGE);
   if (
     versions === undefined ||
     services === undefined ||
@@ -263,9 +275,19 @@ export class PodRegistry {
     await rename(tmp, join(dir, "pod.json"));
   }
 
-  async list(): Promise<PodManifest[]> {
+  /**
+   * All pod directory ids on disk, INCLUDING those whose pod.json is missing
+   * or malformed — startup reconciliation must reap stale postmasters even
+   * for pods it can no longer parse.
+   */
+  async listIds(): Promise<string[]> {
     const entries = await readdir(this.podsRoot).catch(() => [] as string[]);
-    const manifests = await Promise.all(entries.filter(isValidPodId).map((id) => this.read(id)));
+    return entries.filter(isValidPodId);
+  }
+
+  async list(): Promise<PodManifest[]> {
+    const ids = await this.listIds();
+    const manifests = await Promise.all(ids.map((id) => this.read(id)));
     return manifests.filter((m): m is PodManifest => m !== undefined);
   }
 

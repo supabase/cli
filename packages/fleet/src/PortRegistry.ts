@@ -18,6 +18,11 @@ const DEFAULT_INTERNAL_BASE_PORT = 45000;
 const INTERNAL_MAX_PORT = DEFAULT_BASE_PORT - 1;
 const MAX_PORT = 65_535;
 
+/** Proxy-owned listeners bind here; manifest `ports` must stay in this range. */
+export const FLEET_PUBLIC_PORT_RANGE = { min: DEFAULT_BASE_PORT, max: MAX_PORT } as const;
+/** In-process stack services bind here; manifest `internalPorts` must stay in this range. */
+export const FLEET_INTERNAL_PORT_RANGE = { min: 10_001, max: INTERNAL_MAX_PORT } as const;
+
 function freshState(): PortState {
   return { basePort: DEFAULT_BASE_PORT, internalBasePort: DEFAULT_INTERNAL_BASE_PORT, pods: {} };
 }

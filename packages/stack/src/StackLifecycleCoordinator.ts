@@ -688,16 +688,29 @@ export class StackLifecycleCoordinator extends Context.Service<
                 if (!PRELOAD_REQUIRED_EXTENSIONS.has(name)) {
                   return;
                 }
-                yield* Effect.promise(() => installPodConfOverlay(config.postgres.dataDir));
-                const currentLibraries = yield* Effect.promise(() =>
-                  readPreloadLibraries(config.postgres.dataDir),
+                // PGDATA I/O failures (missing dir, bad permissions) surface as
+                // typed StackBuildErrors so daemon routes serialize them instead
+                // of dying with an unstructured 500.
+                const podConfIo = <A>(detail: string, io: () => Promise<A>) =>
+                  Effect.tryPromise({
+                    try: io,
+                    catch: (cause) => new StackBuildError({ detail, cause }),
+                  });
+                yield* podConfIo(
+                  `Failed to install the pod.conf overlay while enabling extension "${name}"`,
+                  () => installPodConfOverlay(config.postgres.dataDir),
+                );
+                const currentLibraries = yield* podConfIo(
+                  `Failed to read preload libraries while enabling extension "${name}"`,
+                  () => readPreloadLibraries(config.postgres.dataDir),
                 );
                 const plan = planEnableExtension(name, currentLibraries);
                 if (plan.action === "none") {
                   return;
                 }
-                yield* Effect.promise(() =>
-                  writePreloadLibraries(config.postgres.dataDir, plan.libraries),
+                yield* podConfIo(
+                  `Failed to write preload libraries while enabling extension "${name}"`,
+                  () => writePreloadLibraries(config.postgres.dataDir, plan.libraries),
                 );
                 if ((yield* Ref.get(phaseRef)) !== "running") {
                   return;

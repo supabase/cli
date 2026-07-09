@@ -1,6 +1,17 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildMicroConf, buildPodConf } from "./micro.ts";
+
+/**
+ * All conf writes go through a temp-file + rename so a crash mid-write can
+ * never leave a truncated postgresql.conf/pod.conf behind — postgres would
+ * fail to boot (or silently drop preload libraries) on the next start.
+ */
+async function writeFileAtomic(path: string, content: string): Promise<void> {
+  const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+  await writeFile(tmp, content);
+  await rename(tmp, path);
+}
 
 const INCLUDE_BLOCK = [
   "",
@@ -18,16 +29,16 @@ const ACTIVE_POD_INCLUDE_RE = /^\s*include_if_exists = 'pod\.conf'/m;
 const PRELOAD_LIBRARIES_RE = /^\s*shared_preload_libraries\s*=\s*['"]([^'"]*)['"]/m;
 
 export async function installMicroProfile(pgdata: string): Promise<void> {
-  await writeFile(join(pgdata, "micro.conf"), buildMicroConf());
+  await writeFileAtomic(join(pgdata, "micro.conf"), buildMicroConf());
   const podConf = join(pgdata, "pod.conf");
   const existing = await readFile(podConf, "utf8").catch(() => undefined);
   if (existing === undefined) {
-    await writeFile(podConf, buildPodConf([]));
+    await writeFileAtomic(podConf, buildPodConf([]));
   }
   const mainPath = join(pgdata, "postgresql.conf");
   const main = await readFile(mainPath, "utf8");
   if (!ACTIVE_INCLUDE_RE.test(main)) {
-    await writeFile(mainPath, main + INCLUDE_BLOCK);
+    await writeFileAtomic(mainPath, main + INCLUDE_BLOCK);
   }
 }
 
@@ -35,13 +46,13 @@ export async function installPodConfOverlay(pgdata: string): Promise<void> {
   const podConf = join(pgdata, "pod.conf");
   const existing = await readFile(podConf, "utf8").catch(() => undefined);
   if (existing === undefined) {
-    await writeFile(podConf, buildPodConf([]));
+    await writeFileAtomic(podConf, buildPodConf([]));
   }
   const mainPath = join(pgdata, "postgresql.conf");
   const main = await readFile(mainPath, "utf8");
   if (!ACTIVE_POD_INCLUDE_RE.test(main)) {
     const separator = main.endsWith("\n") || main === "" ? "" : "\n";
-    await writeFile(mainPath, `${main}${separator}include_if_exists = 'pod.conf'\n`);
+    await writeFileAtomic(mainPath, `${main}${separator}include_if_exists = 'pod.conf'\n`);
   }
 }
 
@@ -60,14 +71,14 @@ export async function writePreloadLibraries(
   const existing = await readFile(podConf, "utf8").catch(() => undefined);
   const line = `shared_preload_libraries = '${libs.join(",")}'`;
   if (existing === undefined) {
-    await writeFile(podConf, `${line}\n`);
+    await writeFileAtomic(podConf, `${line}\n`);
     return;
   }
   if (PRELOAD_LIBRARIES_RE.test(existing)) {
     const updated = existing.replace(PRELOAD_LIBRARIES_RE, line);
-    await writeFile(podConf, updated);
+    await writeFileAtomic(podConf, updated);
     return;
   }
   const separator = existing.endsWith("\n") || existing === "" ? "" : "\n";
-  await writeFile(podConf, `${existing}${separator}${line}\n`);
+  await writeFileAtomic(podConf, `${existing}${separator}${line}\n`);
 }

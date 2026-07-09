@@ -68,6 +68,47 @@ describe("PodRegistry", () => {
     await expect(pods.list()).resolves.toEqual([]);
   });
 
+  it("rejects manifests whose ports drifted out of their fleet ranges", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pods-"));
+    const pods = new PodRegistry(root);
+    const base = {
+      versions: { postgres: "17.6.1.143" },
+      services: {},
+      flags: { supautils: false },
+      warm: false,
+      postgresPassword: "postgres",
+      createdAt: "2026-07-08T00:00:00.000Z",
+    };
+
+    // Internal ports in the public proxy range: wake would bind postgres on a
+    // proxy-owned port.
+    await mkdir(join(root, "bad-internal"));
+    await writeFile(
+      join(root, "bad-internal", "pod.json"),
+      JSON.stringify({
+        ...base,
+        id: "bad-internal",
+        ports: ports(55000, 55001),
+        internalPorts: ports(55100, 55101),
+      }),
+    );
+    // Public ports below the proxy range.
+    await mkdir(join(root, "bad-public"));
+    await writeFile(
+      join(root, "bad-public", "pod.json"),
+      JSON.stringify({
+        ...base,
+        id: "bad-public",
+        ports: ports(45000, 45001),
+        internalPorts: ports(46000, 46001),
+      }),
+    );
+
+    await expect(pods.read("bad-internal")).resolves.toBeUndefined();
+    await expect(pods.read("bad-public")).resolves.toBeUndefined();
+    await expect(pods.list()).resolves.toEqual([]);
+  });
+
   it("rejects manifests missing versions for postgres or enabled services", async () => {
     const root = await mkdtemp(join(tmpdir(), "pods-"));
     const pods = new PodRegistry(root);

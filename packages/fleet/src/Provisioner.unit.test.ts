@@ -5,7 +5,7 @@ import { DEFAULT_VERSIONS, type ServiceName, type VersionManifest } from "@supab
 import { describe, expect, it } from "vitest";
 import { PodRegistry } from "./PodRegistry.ts";
 import { PortRegistry } from "./PortRegistry.ts";
-import { Provisioner } from "./Provisioner.ts";
+import { Provisioner, type CreatePodOptions } from "./Provisioner.ts";
 import type { TemplateStore } from "./TemplateStore.ts";
 
 const PG_VERSION = "17.6.1.143";
@@ -131,6 +131,22 @@ describe("Provisioner (unit, fake deps)", () => {
           services: { imgproxy: true },
         }),
       ).rejects.toThrow(/imgproxy requires storage/);
+
+      expect(ports.get("bad")).toBeUndefined();
+      expect(await podsRootEntries(podsRoot)).not.toContain("bad");
+    });
+
+    it("rejects unknown or non-boolean service entries before provisioning", async () => {
+      const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
+      await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
+      const { p, ports, podsRoot } = await makeHarness(templateDir);
+
+      // Simulates an untyped JS caller: persisting "postrest" would make the
+      // registry's strict parser reject the whole manifest on the next read.
+      const junkServices = { postrest: true } as unknown as CreatePodOptions["services"];
+      await expect(
+        p.create({ id: "bad", versions: { postgres: PG_VERSION }, services: junkServices }),
+      ).rejects.toThrow(/invalid service entry/);
 
       expect(ports.get("bad")).toBeUndefined();
       expect(await podsRootEntries(podsRoot)).not.toContain("bad");

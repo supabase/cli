@@ -1,4 +1,4 @@
-import { type AddressInfo, createServer } from "node:net";
+import { createServer } from "node:net";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,15 +8,27 @@ import { createFleet } from "./Fleet.ts";
 import { PodRegistry } from "./PodRegistry.ts";
 import type { PodManifest } from "./PodManifest.ts";
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
+function tryListen(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
     const server = createServer();
-    server.on("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address() as AddressInfo;
-      server.close(() => resolve(address.port));
+    server.on("error", () => resolve(false));
+    server.listen(port, "127.0.0.1", () => {
+      server.close(() => resolve(true));
     });
   });
+}
+
+// Manifest ports must sit in the fleet's public range (55000+), with the
+// derived internal set (port - 10_000) inside the internal range (< 55000).
+// The OS ephemeral range may sit entirely below 55000, so probe candidates
+// in the fleet range directly instead of asking for port 0.
+async function freeFleetPort(): Promise<number> {
+  const start = 55000 + Math.floor(Math.random() * 9000);
+  for (let offset = 0; offset < 200; offset += 1) {
+    const candidate = start + offset;
+    if (await tryListen(candidate)) return candidate;
+  }
+  throw new Error("could not find a free port in the fleet public range");
 }
 
 function expectPortAvailable(port: number): Promise<void> {
@@ -71,8 +83,8 @@ describe("createFleet", () => {
     const root = await mkdtemp(join(tmpdir(), "fleet-unit-"));
     try {
       const pods = new PodRegistry(join(root, "pods"));
-      const dbPort = await freePort();
-      const apiPort = await freePort();
+      const dbPort = await freeFleetPort();
+      const apiPort = await freeFleetPort();
 
       await pods.write(manifest("pod-a", dbPort, apiPort));
       await pods.write(manifest("pod-b", dbPort, apiPort + 1));
