@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: 📖 Contribution workflow
+    url: https://github.com/supabase/cli/blob/develop/CONTRIBUTING.md
+    about: Read this before opening an issue or pull request — PRs must link a labeled, open issue.
   - name: Supabase support
     url: https://supabase.com/support
     about: Get help with your Supabase project, account, billing, or hosted services.
