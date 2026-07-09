@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import * as http from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -216,6 +216,24 @@ describe("StackLifecycleCoordinator enableExtension", () => {
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live("treats non-preload extensions as a no-op without touching the data dir", () => {
+    // Deliberately point at a data dir that doesn't exist and never start the
+    // stack: enabling e.g. pgvector must not read or create anything in PGDATA.
+    const root = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-nopreload-test-"));
+    const dataDir = join(root, "missing");
+    const config = makeConfig(dataDir);
+    const { layer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.enableExtension("vector");
+      expect(existsSync(dataDir)).toBe(false);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
     );
   });
 

@@ -38,7 +38,12 @@ export const makePostgresInitService = (opts: PostgresInitOptions): ServiceDef =
   const migrationsDir = `${opts.postgresDir}/share/supabase-cli/migrations`;
 
   const psql = `${pgBinDir}/psql -h 127.0.0.1 -p ${opts.dbPort}`;
-  const psqlOpts = `-v ON_ERROR_STOP=1 --no-password --no-psqlrc -v pgpass="$TARGET_PGPASSWORD"`;
+  const psqlOpts = `-v ON_ERROR_STOP=1 --no-password --no-psqlrc`;
+  // The pgpass psql variable is set inside each SQL heredoc via a psql
+  // backtick command reading the exported env var, NOT via `-v pgpass=...`:
+  // a -v flag would expand the password into psql's argv, which any local
+  // user can read through ps / /proc/<pid>/cmdline while psql runs.
+  const setPgpass = `\\set pgpass \`printf '%s' "$TARGET_PGPASSWORD"\``;
 
   const revokeStep = opts.autoExposeNewTables
     ? ""
@@ -82,10 +87,22 @@ fi
 if [ "$initialized" = "true" ]; then
   echo "Database already initialized, updating passwords..."
 else
+  # Not initialized as far as we can tell — but distinguish "fresh data dir"
+  # (supabase_admin authenticates with the target password, set by initdb)
+  # from "initialized with some OTHER password" (neither the target nor the
+  # default authenticates). Running the migration path in the latter case
+  # would just cascade confusing psql auth failures.
+  if ! ${psql} ${psqlOpts} -U supabase_admin -d postgres -tAc "SELECT 1" >/dev/null 2>&1; then
+    echo "postgres data dir rejects both POSTGRES_PASSWORD and the default password;" >&2
+    echo "it was initialized with a different password. Set POSTGRES_PASSWORD to the" >&2
+    echo "password the data dir was created with, or re-create the data dir." >&2
+    exit 1
+  fi
   echo "Running Supabase migrations..."
 
   # Create postgres role if missing (as supabase_admin)
   ${psql} ${psqlOpts} -U supabase_admin -d postgres <<'EOSQL'
+${setPgpass}
 SELECT format('CREATE ROLE postgres SUPERUSER LOGIN PASSWORD %L', :'pgpass')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres')\\gexec
 ALTER DATABASE postgres OWNER TO postgres;
@@ -102,6 +119,7 @@ EOSQL
 
   # Set supabase_admin password (as postgres)
   ${psql} ${psqlOpts} -U postgres -d postgres <<'EOSQL'
+${setPgpass}
 SELECT format('ALTER ROLE supabase_admin WITH PASSWORD %L', :'pgpass')\\gexec
 EOSQL
 
@@ -120,6 +138,7 @@ ${revokeStep}fi
 
 # Always update role passwords (idempotent)
 ${psql} ${psqlOpts} -U supabase_admin -d postgres <<'EOSQL'
+${setPgpass}
 SELECT format('ALTER ROLE %I WITH PASSWORD %L', rolname, :'pgpass')
 FROM pg_roles
 WHERE rolname = ANY (ARRAY[

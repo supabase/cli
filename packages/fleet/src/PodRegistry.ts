@@ -255,9 +255,11 @@ export class PodRegistry {
 
   async write(manifest: PodManifest): Promise<void> {
     const dir = this.podDir(manifest.id);
-    await mkdir(dir, { recursive: true });
+    // The manifest holds the pod's postgres password in plaintext, so keep the
+    // directory and file owner-only regardless of the process umask.
+    await mkdir(dir, { recursive: true, mode: 0o700 });
     const tmp = join(dir, `pod.json.tmp-${process.pid}-${Date.now()}`);
-    await writeFile(tmp, JSON.stringify(manifest, null, 2));
+    await writeFile(tmp, JSON.stringify(manifest, null, 2), { mode: 0o600 });
     await rename(tmp, join(dir, "pod.json"));
   }
 

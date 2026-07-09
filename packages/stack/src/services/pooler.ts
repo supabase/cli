@@ -35,6 +35,9 @@ const poolerHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
   failureThreshold: 60,
 });
 
+// The password is embedded base64-encoded: this script is evaluated as Elixir
+// code, where a double-quoted string still performs #{} interpolation, so a
+// JSON.stringify'd literal would let password bytes execute as Elixir.
 const tenantScript = (
   opts: DockerPoolerOptions,
 ) => `{:ok, _} = Application.ensure_all_started(:supavisor)
@@ -56,7 +59,7 @@ params = %{
   "default_parameter_status" => %{"server_version" => version},
   "users" => [%{
     "db_user" => "pgbouncer",
-    "db_password" => ${JSON.stringify(opts.dbPassword)},
+    "db_password" => Base.decode64!("${Buffer.from(opts.dbPassword, "utf8").toString("base64")}"),
     "mode_type" => "${opts.poolMode}",
     "pool_size" => ${opts.defaultPoolSize},
     "is_manager" => true

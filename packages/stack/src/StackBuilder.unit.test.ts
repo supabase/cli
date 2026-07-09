@@ -1,12 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { Deferred, Effect, Exit, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import { StackBuilder } from "./StackBuilder.ts";
 import type { BuildResult } from "./StackBuilder.ts";
 import type { ResolvedStackConfig } from "./StackBuilder.ts";
-import { enabledServicesForConfig, versionsForConfig } from "./StackBuilder.ts";
+import {
+  enabledServicesForConfig,
+  validateResolvedConfig,
+  versionsForConfig,
+} from "./StackBuilder.ts";
 import { nativePostgresNeedsDockerAccess } from "./StackBuilder.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { StackPreparation } from "./StackPreparation.ts";
@@ -490,4 +494,20 @@ describe("StackBuilder", () => {
       );
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect("rejects the micro profile on non-provisioned data dirs", () =>
+    Effect.gen(function* () {
+      const exit = yield* validateResolvedConfig({
+        ...baseConfig,
+        postgres: { ...baseConfig.postgres, profile: "micro" },
+      }).pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+
+      yield* validateResolvedConfig({
+        ...baseConfig,
+        postgres: { ...baseConfig.postgres, profile: "micro", provisioned: true },
+      });
+    }),
+  );
 });

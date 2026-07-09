@@ -81,9 +81,9 @@ const runtimeArgsForProfile = (
 const orphanCleanup = (opts: PostgresServiceOptions) =>
   opts.cleanupDataDirOnExit ? removePathOnOrphanCleanup(opts.dataDir) : [];
 
-const DOCKER_POSTGRES_SCHEMA_SQL = `\\set pgpass \`echo "$PGPASSWORD"\`
-\\set jwt_secret \`echo "$JWT_SECRET"\`
-\\set jwt_exp \`echo "$JWT_EXP"\`
+const DOCKER_POSTGRES_SCHEMA_SQL = `\\set pgpass \`printf '%s' "$PGPASSWORD"\`
+\\set jwt_secret \`printf '%s' "$JWT_SECRET"\`
+\\set jwt_exp \`printf '%s' "$JWT_EXP"\`
 ALTER DATABASE postgres SET "app.settings.jwt_secret" TO :'jwt_secret';
 ALTER DATABASE postgres SET "app.settings.jwt_exp" TO :'jwt_exp';
 ALTER USER postgres WITH PASSWORD :'pgpass';

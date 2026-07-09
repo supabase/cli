@@ -393,6 +393,18 @@ export const validateResolvedConfig = (
   config: ResolvedStackConfig,
 ): Effect.Effect<void, StackBuildError> =>
   Effect.gen(function* () {
+    // The micro conf overlay (micro.conf/pod.conf includes) is only installed
+    // when template data dirs are built; on a fresh data dir the profile would
+    // silently fall back to default settings, so reject it up front.
+    if (config.postgres.profile === "micro" && config.postgres.provisioned !== true) {
+      return yield* Effect.fail(
+        new StackBuildError({
+          detail:
+            'postgres.profile "micro" requires a provisioned data dir cloned from a template with the micro conf overlay installed; a fresh data dir would silently run with default settings.',
+        }),
+      );
+    }
+
     if (config.mode === "native") {
       const enabledDockerOnly = dockerOnlyServices.filter(
         (service) => resolvedConfigForService(config, service) !== false,

@@ -526,12 +526,15 @@ describe("makePostgresInitService", () => {
     const script = def.args?.[1] as string;
 
     // The target password must only travel via the process env, never inside
-    // the script itself (a bash -c argv entry is visible in process listings).
+    // the script itself (a bash -c argv entry is visible in process listings)
+    // and never through psql argv (-v pgpass=... would expand the secret into
+    // the psql child's cmdline).
     expect(script).not.toContain("new-password");
     expect(def.env?.PGPASSWORD).toBe("new-password");
     expect(script).toContain('export TARGET_PGPASSWORD="$PGPASSWORD"');
     expect(script).toContain('export PGPASSWORD="$DEFAULT_PGPASSWORD"');
-    expect(script).toContain('-v pgpass="$TARGET_PGPASSWORD"');
+    expect(script).not.toContain("-v pgpass=");
+    expect(script).toContain("\\set pgpass `printf '%s' \"$TARGET_PGPASSWORD\"`");
 
     const updateRoles = script.indexOf("# Always update role passwords");
     const useTargetPassword = script.indexOf('export PGPASSWORD="$TARGET_PGPASSWORD"', updateRoles);
@@ -769,6 +772,11 @@ describe("docker-backed auxiliary services", () => {
     expect(tenantScriptArg).toBeDefined();
     expect(tenantScriptArg).toContain("Supavisor.Tenants.create_tenant(params)");
     expect(tenantScriptArg).toContain("Supavisor.Tenants.update_tenant(tenant, params)");
+    // The password is embedded base64-encoded so no byte sequence (e.g. #{})
+    // can be interpolated as Elixir code by `supavisor eval`.
+    expect(tenantScriptArg).toContain(
+      `Base.decode64!("${Buffer.from(DB_PASSWORD, "utf8").toString("base64")}")`,
+    );
     expect(args.join(" ")).toContain('supavisor eval "$SUPAVISOR_TENANT_SCRIPT"');
   });
 });

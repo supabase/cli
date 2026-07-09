@@ -17,6 +17,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { cleanupLocalStackResources } from "./cleanup.ts";
 import { planEnableExtension } from "./enableExtension.ts";
+import { PRELOAD_REQUIRED_EXTENSIONS } from "./micro.ts";
 import { StackBuildError } from "./errors.ts";
 import { configureFunctionsRuntime, type FunctionsConfig } from "./functions.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
@@ -681,6 +682,11 @@ export class StackLifecycleCoordinator extends Context.Service<
                       detail: `Cannot enable extension "${name}" while the stack is starting. Wait for start() to finish and retry.`,
                     }),
                   );
+                }
+                // Non-preload extensions are a pure no-op: bail before touching
+                // PGDATA, which may not even exist yet on a never-started stack.
+                if (!PRELOAD_REQUIRED_EXTENSIONS.has(name)) {
+                  return;
                 }
                 yield* Effect.promise(() => installPodConfOverlay(config.postgres.dataDir));
                 const currentLibraries = yield* Effect.promise(() =>
