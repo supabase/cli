@@ -23,7 +23,7 @@ function tryListen(port: number): Promise<boolean> {
 // The OS ephemeral range may sit entirely below 55000, so probe candidates
 // in the fleet range directly instead of asking for port 0.
 async function freeFleetPort(): Promise<number> {
-  const start = 55000 + Math.floor(Math.random() * 9000);
+  const start = 55000 + Math.floor(Math.random() * 8000);
   for (let offset = 0; offset < 200; offset += 1) {
     const candidate = start + offset;
     if (await tryListen(candidate)) return candidate;
@@ -84,7 +84,9 @@ describe("createFleet", () => {
     try {
       const pods = new PodRegistry(join(root, "pods"));
       const dbPort = await freeFleetPort();
-      const apiPort = await freeFleetPort();
+      // Derived with a fixed offset (never bound by the test) so it can't
+      // collide with dbPort's field range within the same manifest.
+      const apiPort = dbPort + 100;
 
       await pods.write(manifest("pod-a", dbPort, apiPort));
       await pods.write(manifest("pod-b", dbPort, apiPort + 1));

@@ -23,8 +23,12 @@ interface DockerRunServiceOptions {
   readonly orphanCleanup?: ReadonlyArray<any>;
 }
 
+// Name-only `-e KEY` flags: docker reads each value from the docker CLI's own
+// environment (ServiceDef.env, merged over the parent env at spawn), so
+// secrets like DB passwords and JWT keys never appear in the `docker run`
+// argv, which any local user can read via ps / /proc/<pid>/cmdline.
 const envArgs = (env: Record<string, string>): ReadonlyArray<string> =>
-  Object.entries(env).flatMap(([key, value]) => ["-e", `${key}=${value}`]);
+  Object.keys(env).flatMap((key) => ["-e", key]);
 
 export const hostHttpHealthCheck = (
   port: number,
@@ -74,6 +78,7 @@ export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
     name: opts.name,
     command: "docker",
     args: dockerArgs,
+    env: opts.env,
     dependencies: opts.dependsOn,
     healthCheck: opts.healthCheck,
     shutdown: opts.shutdown,

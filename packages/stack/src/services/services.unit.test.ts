@@ -146,14 +146,15 @@ describe("makeStudioServiceDocker", () => {
       dependencies: [{ service: "pgmeta", condition: "healthy" }],
     });
 
-    expect(def.args).toContain("SUPABASE_ANON_KEY=sb_publishable_test");
-    expect(def.args).toContain("SUPABASE_SERVICE_KEY=sb_secret_test");
-    expect(def.args).toContain("SUPABASE_PUBLISHABLE_KEY=sb_publishable_test");
-    expect(def.args).toContain("SUPABASE_SECRET_KEY=sb_secret_test");
-    expect(def.args).toContain(`S3_PROTOCOL_ACCESS_KEY_ID=${LOCAL_S3_PROTOCOL_ACCESS_KEY_ID}`);
-    expect(def.args).toContain(
-      `S3_PROTOCOL_ACCESS_KEY_SECRET=${LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET}`,
-    );
+    // Values travel via the docker CLI's environment; argv only names the keys.
+    expect(def.env?.SUPABASE_ANON_KEY).toBe("sb_publishable_test");
+    expect(def.env?.SUPABASE_SERVICE_KEY).toBe("sb_secret_test");
+    expect(def.env?.SUPABASE_PUBLISHABLE_KEY).toBe("sb_publishable_test");
+    expect(def.env?.SUPABASE_SECRET_KEY).toBe("sb_secret_test");
+    expect(def.env?.S3_PROTOCOL_ACCESS_KEY_ID).toBe(LOCAL_S3_PROTOCOL_ACCESS_KEY_ID);
+    expect(def.env?.S3_PROTOCOL_ACCESS_KEY_SECRET).toBe(LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET);
+    expect(def.args).toContain("SUPABASE_SECRET_KEY");
+    expect(def.args?.join(" ")).not.toContain("sb_secret_test");
   });
 });
 
@@ -245,6 +246,11 @@ describe("makePostgresServiceDocker", () => {
     expect(def.supervision).toEqual({
       orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-postgres-${API_PORT}` }],
     });
+    // Secrets travel via the docker CLI's environment; argv only names the keys.
+    expect(def.env?.POSTGRES_PASSWORD).toBe(DB_PASSWORD);
+    expect(def.args).toContain("POSTGRES_PASSWORD");
+    expect(def.args?.join(" ")).not.toContain(`POSTGRES_PASSWORD=${DB_PASSWORD}`);
+    expect(def.args?.join(" ")).not.toContain("test-jwt-secret-with-at-least-32-characters");
   });
 
   it("bootstraps auxiliary databases and schemas used by docker-backed services", () => {
@@ -702,10 +708,10 @@ describe("docker-backed auxiliary services", () => {
       scheme: "http",
     });
     expect(def.healthCheck?.initialDelaySeconds).toBe(10);
-    expect(args).toContain("PORT=4000");
-    expect(args).toContain("PHX_HTTP_PORT=4000");
+    expect(def.env?.PORT).toBe("4000");
+    expect(def.env?.PHX_HTTP_PORT).toBe("4000");
     expect(args).toContain("54328:4000");
-    expect(args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
+    expect(def.env?.LOGFLARE_NODE_HOST).toBe("0.0.0.0");
   });
 
   it("keeps analytics on its container port when Linux uses bridge networking", () => {
@@ -724,9 +730,9 @@ describe("docker-backed auxiliary services", () => {
       dependencies: [{ service: "postgres", condition: "healthy" }],
     });
 
-    expect(def.args).toContain("PORT=4000");
-    expect(def.args).toContain("PHX_HTTP_PORT=4000");
-    expect(def.args).toContain("LOGFLARE_NODE_HOST=0.0.0.0");
+    expect(def.env?.PORT).toBe("4000");
+    expect(def.env?.PHX_HTTP_PORT).toBe("4000");
+    expect(def.env?.LOGFLARE_NODE_HOST).toBe("0.0.0.0");
     expect(def.args).toContain("host.docker.internal:host-gateway");
     expect(def.args).toContain("54328:4000");
   });
@@ -762,21 +768,25 @@ describe("docker-backed auxiliary services", () => {
       path: "/api/health",
       scheme: "http",
     });
-    expect(def.args).toContain(`PORT=${poolerContainerPorts.admin}`);
-    expect(def.args).toContain(`PROXY_PORT_SESSION=${poolerContainerPorts.session}`);
-    expect(def.args).toContain(`PROXY_PORT_TRANSACTION=${poolerContainerPorts.transaction}`);
+    expect(def.env?.PORT).toBe(String(poolerContainerPorts.admin));
+    expect(def.env?.PROXY_PORT_SESSION).toBe(String(poolerContainerPorts.session));
+    expect(def.env?.PROXY_PORT_TRANSACTION).toBe(String(poolerContainerPorts.transaction));
     expect(def.args).toContain(`54329:${poolerContainerPorts.admin}`);
     expect(def.args).toContain(`54330:${poolerContainerPorts.transaction}`);
     const args = def.args ?? [];
-    const tenantScriptArg = args.find((arg) => arg.startsWith("SUPAVISOR_TENANT_SCRIPT="));
-    expect(tenantScriptArg).toBeDefined();
-    expect(tenantScriptArg).toContain("Supavisor.Tenants.create_tenant(params)");
-    expect(tenantScriptArg).toContain("Supavisor.Tenants.update_tenant(tenant, params)");
+    const tenantScript = def.env?.SUPAVISOR_TENANT_SCRIPT;
+    expect(tenantScript).toBeDefined();
+    expect(tenantScript).toContain("Supavisor.Tenants.create_tenant(params)");
+    expect(tenantScript).toContain("Supavisor.Tenants.update_tenant(tenant, params)");
     // The password is embedded base64-encoded so no byte sequence (e.g. #{})
     // can be interpolated as Elixir code by `supavisor eval`.
-    expect(tenantScriptArg).toContain(
+    expect(tenantScript).toContain(
       `Base.decode64!("${Buffer.from(DB_PASSWORD, "utf8").toString("base64")}")`,
     );
+    // The script itself reaches docker via the CLI's environment; argv only
+    // names the variable, so the embedded credentials stay out of ps output.
+    expect(args).toContain("SUPAVISOR_TENANT_SCRIPT");
+    expect(args.join(" ")).not.toContain("Supavisor.Tenants.create_tenant");
     expect(args.join(" ")).toContain('supavisor eval "$SUPAVISOR_TENANT_SCRIPT"');
   });
 });

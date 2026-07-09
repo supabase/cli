@@ -109,6 +109,34 @@ describe("PodRegistry", () => {
     await expect(pods.list()).resolves.toEqual([]);
   });
 
+  it("rejects manifests with duplicate ports and non-directory pod entries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pods-"));
+    const pods = new PodRegistry(root);
+    const duplicated = ports(55000, 55001);
+
+    await mkdir(join(root, "dup-ports"));
+    await writeFile(
+      join(root, "dup-ports", "pod.json"),
+      JSON.stringify({
+        id: "dup-ports",
+        versions: { postgres: "17.6.1.143" },
+        services: {},
+        flags: { supautils: false },
+        warm: false,
+        ports: { ...duplicated, apiPort: duplicated.dbPort },
+        internalPorts: ports(45000, 45001),
+        postgresPassword: "postgres",
+        createdAt: "2026-07-08T00:00:00.000Z",
+      }),
+    );
+    // A stray regular file matching the id regex must not surface as a pod id.
+    await writeFile(join(root, "not-a-pod"), "just a file");
+
+    await expect(pods.read("dup-ports")).resolves.toBeUndefined();
+    await expect(pods.listIds()).resolves.toEqual(["dup-ports"]);
+    await expect(pods.list()).resolves.toEqual([]);
+  });
+
   it("rejects manifests missing versions for postgres or enabled services", async () => {
     const root = await mkdtemp(join(tmpdir(), "pods-"));
     const pods = new PodRegistry(root);

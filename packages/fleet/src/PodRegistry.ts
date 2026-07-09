@@ -210,6 +210,11 @@ function parseManifest(value: unknown): PodManifest | undefined {
   ) {
     return undefined;
   }
+  // Duplicate ports within a manifest would make PortRegistry.reconcile()
+  // throw at startup and abort the whole fleet; treat the manifest as corrupt
+  // (dropped, like every other malformed-manifest case) instead.
+  const allPorts = [...Object.values(ports), ...Object.values(internalPorts)];
+  if (new Set(allPorts).size !== allPorts.length) return undefined;
   // Provisioning always records the exact versions a pod was initialized
   // with (see resolveTemplateVersions); a manifest missing them would make
   // the next wake silently boot whatever the CURRENT defaults are against
@@ -293,8 +298,12 @@ export class PodRegistry {
    * for pods it can no longer parse.
    */
   async listIds(): Promise<string[]> {
-    const entries = await readdir(this.podsRoot).catch(() => [] as string[]);
-    return entries.filter(isValidPodId);
+    const entries = await readdir(this.podsRoot, { withFileTypes: true }).catch(() => []);
+    // Only directories: a stray regular file whose name matches the id regex
+    // would make startup cleanup paths fail with ENOTDIR.
+    return entries
+      .filter((entry) => entry.isDirectory() && isValidPodId(entry.name))
+      .map((entry) => entry.name);
   }
 
   async list(): Promise<PodManifest[]> {

@@ -208,7 +208,10 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
 
 export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceDef => {
   const env = postgresDockerEnv(opts);
-  const envArgs = Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
+  // Name-only `-e KEY`: docker reads the values from the docker CLI's own
+  // environment (the `env` on the ServiceDef below), keeping the password and
+  // JWT secret out of the `docker run` argv visible in process listings.
+  const envArgs = Object.keys(env).flatMap((k) => ["-e", k]);
   const containerName = `supabase-postgres-${opts.apiPort}`;
   const dockerArgs = [
     "run",
@@ -229,6 +232,7 @@ export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceD
     name: "postgres",
     command: "docker",
     args: dockerArgs,
+    env,
     healthCheck: postgresDockerHealthCheck(containerName, opts.port),
     shutdown: { signal: "SIGTERM", timeoutSeconds: 10 },
     cleanup: dockerServiceCleanup(containerName),
