@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
   evaluateAllOpenPrs,
   evaluateGate,
+  fetchAuthorPermission,
   GATE_LABEL,
   type GateIo,
   isInternalAuthor,
@@ -248,5 +249,49 @@ describe("evaluateAllOpenPrs", () => {
     expect(entries).toHaveLength(1);
     expect(closed).toHaveLength(0);
     expect(entries[0]?.result.pass).toBe(true);
+  });
+});
+
+describe("fetchAuthorPermission", () => {
+  const fetchSpy = spyOn(globalThis, "fetch");
+  afterEach(() => {
+    fetchSpy.mockReset();
+  });
+
+  function stubFetch(status: number, body: unknown): void {
+    // `typeof fetch` carries a static `preconnect`, so attach a no-op to keep
+    // the implementation assignable without casting.
+    fetchSpy.mockImplementation(
+      Object.assign(() => Promise.resolve(new Response(JSON.stringify(body), { status })), {
+        preconnect: () => {},
+      }),
+    );
+  }
+
+  test("returns the effective permission for a collaborator", async () => {
+    stubFetch(200, { permission: "admin" });
+    const permission = await fetchAuthorPermission("t", "supabase", "cli", "maint");
+    expect(permission).toBe("admin");
+  });
+
+  test("maps a 404 (non-collaborator fork author) to undefined", async () => {
+    // The endpoint 404s for users who are not collaborators — the common case
+    // for the external contributors the gate targets. It must map to external,
+    // not abort the run.
+    stubFetch(404, { message: "Not Found" });
+    const permission = await fetchAuthorPermission("t", "supabase", "cli", "ext");
+    expect(permission).toBeUndefined();
+  });
+
+  test("throws on other API failures so the run aborts without closing PRs", async () => {
+    stubFetch(403, { message: "Forbidden" });
+    await expect(fetchAuthorPermission("t", "supabase", "cli", "ext")).rejects.toThrow(/403/);
+  });
+
+  test("skips the network call for a blank login", async () => {
+    stubFetch(200, { permission: "admin" });
+    const permission = await fetchAuthorPermission("t", "supabase", "cli", "");
+    expect(permission).toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

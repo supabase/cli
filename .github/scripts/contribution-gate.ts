@@ -252,6 +252,8 @@ async function githubFetch(
   url: string,
   token: string,
   init: Omit<RequestInit, "headers"> = {},
+  /** Non-OK statuses to return to the caller instead of throwing on. */
+  allowStatuses: readonly number[] = [],
 ): Promise<Response> {
   const response = await fetch(url, {
     ...init,
@@ -262,7 +264,7 @@ async function githubFetch(
       "Content-Type": "application/json",
     },
   });
-  if (!response.ok) {
+  if (!response.ok && !allowStatuses.includes(response.status)) {
     const body = await response.text();
     throw new Error(`GitHub request failed (${response.status}) for ${url}: ${body}`);
   }
@@ -357,10 +359,14 @@ async function fetchOpenPullRequests(
  * granted directly or through a team/org membership, so it recognises private
  * org members that `author_association` reports only as `CONTRIBUTOR`. This
  * endpoint needs just `Metadata: read` (covered by the workflow's
- * `contents: read`), and returns `permission: "none"` for strangers rather
- * than erroring.
+ * `contents: read`).
+ *
+ * A 404 means the author is not a collaborator at all — the common case for
+ * external fork contributors, who are exactly who the gate targets — so it maps
+ * to `undefined` (external) rather than throwing. Other failures still throw so
+ * a transient API error aborts the run without wrongly closing PRs.
  */
-async function fetchAuthorPermission(
+export async function fetchAuthorPermission(
   token: string,
   owner: string,
   repo: string,
@@ -372,7 +378,10 @@ async function fetchAuthorPermission(
   const url =
     `https://api.github.com/repos/${owner}/${repo}/collaborators/` +
     `${encodeURIComponent(login)}/permission`;
-  const response = await githubFetch(url, token);
+  const response = await githubFetch(url, token, {}, [404]);
+  if (response.status === 404) {
+    return undefined;
+  }
   const payload = (await response.json()) as { permission?: string };
   return payload.permission;
 }
