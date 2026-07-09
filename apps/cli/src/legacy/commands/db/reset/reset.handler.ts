@@ -280,15 +280,24 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       const storageReady = yield* seam.awaitStorageReady();
       if (storageReady) {
         // Go's `buckets.Run(ctx, "", false, fsys)` — non-interactive: overwrite/prune
-        // confirmations take their defaults instead of blocking on input. Go's own
-        // `resetDatabase` (`internal/db/reset/reset.go:66-68`) propagates ANY
-        // `buckets.Run` error as a full command failure (no "Finished ..." line,
-        // non-zero exit) — Go loads `config.toml` exactly once into memory, so it can
-        // never reach "recreate succeeded, then a later reload of the same file fails."
-        // Match that contract here: a `LegacySeedConfigLoadError` from this reload is
-        // not swallowed. `config push` hard-fails on the identical `@supabase/config`
-        // strictness gap (CLI-1489) rather than warning-and-continuing; do the same here
-        // for consistency, instead of carving out a reset-only exception.
+        // confirmations take their defaults instead of blocking on input.
+        //
+        // `legacyCheckDbToml` above resolves `env(VAR)` via `legacyLoadProjectEnv`,
+        // which mirrors Go's full nested-env walk (`.env.<SUPABASE_ENV>.local`,
+        // `.env.local`, `.env.<SUPABASE_ENV>`, `.env`, across both `supabase/` and the
+        // project root — `pkg/config/config.go:1220-1257`). This reload instead goes
+        // through `@supabase/config`'s `loadProjectConfig` → `loadProjectEnvironment`,
+        // which only ever reads `supabase/.env`/`.env.local` plus ambient env
+        // (`packages/config/src/project.ts:209-245`) — regardless of `goViperCompat`,
+        // which only widens `env(VAR)` matching, not the file set consulted. So a
+        // config whose `env(VAR)` reference is backed by e.g. `supabase/.env.development`
+        // is genuinely Go-valid (Go's `godotenv.Load` calls `os.Setenv`, so the value is
+        // real ambient env by the time Go resolves it — `config.go:1260-1261`) and
+        // already passed `legacyCheckDbToml` and the real recreate above, but this
+        // narrower reload can still reject it. A `LegacySeedConfigLoadError` here is
+        // that env-file-set gap, not a genuinely invalid config — and recreate already
+        // dropped/rebuilt the DB, so aborting now would leave the reset half-done; warn
+        // and skip buckets so `db reset` finishes like Go instead.
         yield* legacySeedBucketsRun({
           projectRef: "",
           emitSummary: false,
@@ -297,7 +306,14 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
           // auto-confirms bucket/vector/analytics prune prompts. Pass the project-env-resolved
           // `yes` (the shared runner's own `legacyResolveYes` only sees the shell env).
           yes,
-        });
+        }).pipe(
+          Effect.catchTag("LegacySeedConfigLoadError", (error) =>
+            output.raw(
+              `${legacyYellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,
+              "stderr",
+            ),
+          ),
+        );
       }
 
       // "Finished supabase db reset on branch <branch>." (both Aqua).

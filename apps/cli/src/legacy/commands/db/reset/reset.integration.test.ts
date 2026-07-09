@@ -490,6 +490,38 @@ describe("legacy db reset", () => {
     );
   });
 
+  it.live(
+    "finishes a local reset when bucket seeding can't see an env(VAR) value the pre-recreate gate saw",
+    () => {
+      // `legacyCheckDbToml` (the pre-recreate gate) resolves `env(VAR)` via
+      // `legacyLoadProjectEnv`, which mirrors Go's full nested-env walk and sees
+      // `supabase/.env.development` — a real, Go-valid env source
+      // (`pkg/config/config.go:1220-1257`; `godotenv.Load` calls `os.Setenv`, so this
+      // is genuinely ambient env by the time Go itself resolves `env(VAR)`,
+      // `config.go:1260-1261`). The post-recreate bucket-seed reload instead goes
+      // through `@supabase/config`'s `loadProjectEnvironment`, which only ever reads
+      // `supabase/.env`/`.env.local` + ambient env (`packages/config/src/project.ts:
+      // 209-245) — it can't see `.env.development` at all. So this Go-valid config
+      // passes the gate and the real recreate, then can't be re-resolved by the
+      // reload; the reset must still finish (warn-and-skip), not hard-fail after the
+      // local database has already been dropped and rebuilt.
+      const { layer, out, seam } = setup(tmp.current, {
+        toml: 'project_id = "test"\n\n[db.seed]\nenabled = "env(SEED_ENABLED)"\n',
+        files: { "supabase/.env.development": "SEED_ENABLED=true\n" },
+        args: ["db", "reset"],
+        isLocal: true,
+        running: true,
+        storageReady: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(seam.recreateCalls).toHaveLength(1);
+        expect(out.stderrText).toContain("skipped seeding storage buckets");
+        expect(out.stderrText).toContain("Finished ");
+      });
+    },
+  );
+
   it.live("uses the detected git branch in the Finished line", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
