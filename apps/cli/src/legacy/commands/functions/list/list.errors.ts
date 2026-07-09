@@ -27,6 +27,11 @@ export class LegacyFunctionsListUnexpectedStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 404 means the user-supplied or stale linked project ref matched no
+    // project — user input, consistent with the other functions paths.
+    if (this.status === 404) {
+      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+    }
     return statusCodeActionability(this.status);
   }
 }

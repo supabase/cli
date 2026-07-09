@@ -175,6 +175,17 @@ describe("classifyCliErrorActionability", () => {
     expect(result.error_fingerprint).toBe("tag:StackBuildError:invalid_config");
   });
 
+  it("classifies a native exception wrapped by StackError as an internal bug", () => {
+    const wrapped = new Error("boom");
+    wrapped.name = "StackError";
+    Object.defineProperty(wrapped, "code", { value: "UNKNOWN" });
+    Object.defineProperty(wrapped, "cause", { value: new TypeError("x is not a function") });
+    const result = classifyCliErrorActionability(wrapped);
+    expect(result.error_kind).toBe("internal_bug");
+    expect(result.error_category).toBe("panic");
+    expect(result.error_fingerprint).toBe("error:TypeError");
+  });
+
   it("treats forbidden API statuses as account permission failures", () => {
     const forbidden = classifyCliErrorActionability(new DeclaredStatusError({ status: 403 }));
     expect(forbidden.error_kind).toBe("user_actionable");

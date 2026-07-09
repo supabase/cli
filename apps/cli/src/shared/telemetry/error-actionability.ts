@@ -671,6 +671,12 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     if (cause !== undefined) {
       return classifyAtDepth(cause, depth + 1);
     }
+    // toStackError wraps arbitrary thrown errors with code "UNKNOWN"; a
+    // native JS exception cause is a stack-internal crash and must land in
+    // the internal-bug bucket, matching the top-level native-exception rule.
+    if (isNativeJsExceptionName(readErrorName(error["cause"]))) {
+      return classifyAtDepth(error["cause"], depth + 1);
+    }
     const classify = externalActionabilityByTag["StackError"];
     if (classify !== undefined) {
       return toActionability(classify(error), "error", "StackError", error);

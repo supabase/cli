@@ -99,6 +99,11 @@ export class LegacyDbQueryUnexpectedStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // The endpoint executes the user's SQL: a 400 is the remote twin of the
+    // local LegacyDbQueryExecError (syntax/constraint failures in user SQL).
+    if (this.status === 400) {
+      return { ...actionability.dbFinding, fingerprint_suffix: "query" };
+    }
     return statusCodeActionability(this.status);
   }
 }
