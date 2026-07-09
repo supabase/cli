@@ -102,6 +102,24 @@ function dieOnNonOkStatus<A>(
   );
 }
 
+/**
+ * Reads a schema-decoded JSON body from the daemon, mapping a body-decode
+ * failure (`SchemaError` / `HttpBodyError` — daemon JSON corruption or
+ * version skew) into a `UnixHttpClientError` before dying, so the CLI's error
+ * classifier attributes it to the stack daemon instead of treating it as a raw
+ * Management-API-shaped decode error.
+ */
+function dieOnBodyDecodeError<A, E, R>(
+  socketPath: string,
+  path: string,
+  effect: Effect.Effect<A, E, R>,
+) {
+  return effect.pipe(
+    Effect.mapError((cause) => new UnixHttpClientError({ socketPath, path, cause })),
+    Effect.orDie,
+  );
+}
+
 /** Fetch JSON from the daemon, dying on HTTP errors. */
 function fetchStatus(socketPath: string, path: string, method = "GET") {
   return Effect.gen(function* () {
@@ -111,8 +129,10 @@ function fetchStatus(socketPath: string, path: string, method = "GET") {
       path,
       HttpClientResponse.filterStatusOk(response),
     );
-    return yield* HttpClientResponse.schemaBodyJson(StatusResponseSchema)(okResponse).pipe(
-      Effect.orDie,
+    return yield* dieOnBodyDecodeError(
+      socketPath,
+      path,
+      HttpClientResponse.schemaBodyJson(StatusResponseSchema)(okResponse),
     );
   });
 }
@@ -125,8 +145,10 @@ function fetchLogEntries(socketPath: string, path: string) {
       path,
       HttpClientResponse.filterStatusOk(response),
     );
-    return yield* HttpClientResponse.schemaBodyJson(Schema.Array(LogEntrySchema))(okResponse).pipe(
-      Effect.orDie,
+    return yield* dieOnBodyDecodeError(
+      socketPath,
+      path,
+      HttpClientResponse.schemaBodyJson(Schema.Array(LogEntrySchema))(okResponse),
     );
   });
 }
@@ -283,9 +305,11 @@ export const RemoteStack = {
                   return yield* new ServiceNotFoundError({ name });
                 }
                 if (response.status === 500) {
-                  const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
-                    response,
-                  ).pipe(Effect.orDie);
+                  const body = yield* dieOnBodyDecodeError(
+                    socketPath,
+                    path,
+                    HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(response),
+                  );
                   return yield* new ServiceReadyError({ name, reason: body.error });
                 }
                 yield* dieOnNonOkStatus(
@@ -345,9 +369,11 @@ export const RemoteStack = {
                   return yield* new ServiceNotFoundError({ name: "edge-runtime" });
                 }
                 if (response.status === 500) {
-                  const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
-                    response,
-                  ).pipe(Effect.orDie);
+                  const body = yield* dieOnBodyDecodeError(
+                    socketPath,
+                    path,
+                    HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(response),
+                  );
                   return yield* new ServiceReadyError({
                     name: "edge-runtime",
                     reason: body.error,
@@ -374,9 +400,11 @@ export const RemoteStack = {
                   return yield* new ServiceNotFoundError({ name: "edge-runtime" });
                 }
                 if (response.status === 500) {
-                  const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
-                    response,
-                  ).pipe(Effect.orDie);
+                  const body = yield* dieOnBodyDecodeError(
+                    socketPath,
+                    path,
+                    HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(response),
+                  );
                   return yield* new ServiceReadyError({
                     name: "edge-runtime",
                     reason: body.error,

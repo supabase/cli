@@ -156,6 +156,19 @@ function decodeFunctionListResponse(value: unknown): ReadonlyArray<RemoteFunctio
   return decodeFunctionListResponseSchema(normalized);
 }
 
+// Format a raw response body for an unexpected-status error message. When the
+// body is JSON, re-stringify it so the message stays byte-identical to the
+// previous `JSON.stringify(parsedBody)` form; otherwise fall back to the raw
+// text (a non-JSON body was previously impossible because the response was
+// eagerly JSON-decoded before the status check).
+function formatUnexpectedStatusBody(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text));
+  } catch {
+    return text;
+  }
+}
+
 function mapTransportError(prefix: string, error: unknown): FunctionsApiTransportError {
   if (HttpClientError.isHttpClientError(error)) {
     const description = error.reason.description ?? error.reason._tag;
@@ -1561,12 +1574,14 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
         },
       })
       .pipe(
+        // Read the body as text (never failing) so the status check below wins:
+        // a non-201 with a non-JSON body, or a 201 with malformed JSON, must
+        // classify as a status/response problem — not fall through
+        // `mapTransportError` as a network failure.
         Effect.map((raw) => ({
           status: raw.status,
           headers: raw.headers,
-          body: raw.json.pipe(
-            Effect.mapError((error) => mapTransportError("failed to deploy function", error)),
-          ),
+          body: raw.text.pipe(Effect.orElseSucceed(() => "")),
         })),
         Effect.mapError((error) => mapTransportError("failed to deploy function", error)),
       ),
@@ -1576,16 +1591,20 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
     return yield* Effect.fail(
       new FunctionsApiStatusError({
         status: response.status,
-        message: `unexpected deploy status ${response.status}: ${JSON.stringify(body)}`,
+        message: `unexpected deploy status ${response.status}: ${formatUnexpectedStatusBody(body)}`,
       }),
     );
   }
+  // A 201 whose body is not the expected JSON is an API-response problem, not a
+  // transport failure — surface it via FunctionsApiStatusError so it classifies
+  // as api_status rather than network.
   return yield* Effect.try({
-    try: () => decodeDeployFunctionResponse(body),
+    try: () => decodeDeployFunctionResponse(JSON.parse(body)),
     catch: (error) =>
-      new Error(
-        `failed to read deploy response: ${error instanceof Error ? error.message : String(error)}`,
-      ),
+      new FunctionsApiStatusError({
+        status: response.status,
+        message: `failed to read deploy response: ${error instanceof Error ? error.message : String(error)}`,
+      }),
   });
 });
 
@@ -1619,12 +1638,12 @@ const bulkUpdateRemoteFunctions = Effect.fnUntraced(function* (
           body: functions.map(toBulkUpdateItem),
         })
         .pipe(
+          // Read the body as text (never failing) so the status check wins even
+          // if the body cannot be read.
           Effect.map((raw) => ({
             status: raw.status,
             headers: raw.headers,
-            body: raw.text.pipe(
-              Effect.mapError((error) => mapTransportError("failed to bulk update", error)),
-            ),
+            body: raw.text.pipe(Effect.orElseSucceed(() => "")),
           })),
           Effect.mapError((error) => mapTransportError("failed to bulk update", error)),
         ),
@@ -1708,10 +1727,18 @@ const upsertBundledFunction = Effect.fnUntraced(function* (
     if (response.success) {
       const expectedStatus = shouldUpdate ? 200 : 201;
       if (response.value.status === expectedStatus) {
-        const body = yield* response.value.json.pipe(
-          Effect.mapError((error) => mapTransportError("failed to read function response", error)),
-        );
-        return decodeDeployFunctionResponse(body);
+        // A success status with a malformed / unexpected JSON body is an
+        // API-response problem, not a transport failure — surface it via
+        // FunctionsApiStatusError so it classifies as api_status not network.
+        const body = yield* response.value.text.pipe(Effect.orElseSucceed(() => ""));
+        return yield* Effect.try({
+          try: () => decodeDeployFunctionResponse(JSON.parse(body)),
+          catch: (error) =>
+            new FunctionsApiStatusError({
+              status: response.value.status,
+              message: `failed to read function response: ${error instanceof Error ? error.message : String(error)}`,
+            }),
+        });
       }
 
       const body = yield* response.value.text.pipe(Effect.orElseSucceed(() => ""));

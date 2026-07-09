@@ -88,6 +88,12 @@ export class LegacyLinkAuthTokenError extends Data.TaggedError("LegacyLinkAuthTo
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 404 here means the api-keys endpoint did not find the user-supplied /
+    // stale `--project-ref` (the earlier getProject 404 is tolerated as a
+    // possible branch ref) — user input, not an API failure.
+    if (this.status === 404) {
+      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+    }
     // The shared mapper wraps any non-200 in this tag; only a 401 is an auth
     // failure the user fixes by re-logging in.
     return statusCodeActionability(this.status);
