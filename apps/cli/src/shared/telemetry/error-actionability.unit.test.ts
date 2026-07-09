@@ -222,7 +222,11 @@ describe("classifyCliErrorActionability", () => {
   });
 
   it("caps cause-chain recursion instead of overflowing on cycles", () => {
-    const a: Record<string, unknown> = { _tag: "DownloadError", url: "x" };
+    const a: Record<string, unknown> = {
+      _tag: "StackBuildError",
+      detail: "x",
+      reason: "asset_preparation",
+    };
     const b: Record<string, unknown> = {
       _tag: "StackBuildError",
       detail: "y",
@@ -247,6 +251,26 @@ describe("classifyCliErrorActionability", () => {
     });
     expect(result.error_category).toBe("invalid_config");
     expect(result.error_fingerprint).toBe("tag:ProjectConfigParseError");
+  });
+
+  it("keeps HTTP download causes in the download bucket", () => {
+    // GitHub/CDN 401/403 during asset download must NOT hit the
+    // Management-API auth/permission policy of the HttpClientError adapter.
+    const forbidden = classifyCliErrorActionability({
+      _tag: "DownloadError",
+      url: "https://github.com/releases/x",
+      cause: { _tag: "HttpClientError", response: { status: 403 } },
+    });
+    expect(forbidden.error_kind).toBe("external_service");
+    expect(forbidden.error_category).toBe("network");
+    expect(forbidden.error_fingerprint).toBe("tag:DownloadError");
+
+    const localFs = classifyCliErrorActionability({
+      _tag: "DownloadError",
+      url: "filesystem error for /cache",
+      cause: { _tag: "PlatformError", reason: { _tag: "PermissionDenied" } },
+    });
+    expect(localFs.error_category).toBe("permission");
   });
 
   it("does not treat Object.prototype members as external adapters", () => {

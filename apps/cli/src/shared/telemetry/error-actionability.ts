@@ -601,17 +601,27 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   // @supabase/stack wrapper errors preserve the underlying tagged failure in
   // `cause`; classify it when it is more specific than the wrapper (e.g. a
   // daemon-down DockerPullError inside an asset-preparation StackBuildError,
-  // a user's ProjectConfigParseError inside a reason-less StackBuildError, or
-  // a local filesystem PlatformError inside a DownloadError). Explicit
-  // `invalid_config` StackBuildErrors are deliberate user-facing config
-  // verdicts and are never overridden by their cause.
+  // or a user's ProjectConfigParseError inside a reason-less StackBuildError).
+  // Explicit `invalid_config` StackBuildErrors are deliberate user-facing
+  // config verdicts and are never overridden by their cause.
   if (
     isErrorRecord(error) &&
-    (tag === "DownloadError" ||
-      (tag === "StackBuildError" && readString(error, "reason") !== "invalid_config"))
+    tag === "StackBuildError" &&
+    readString(error, "reason") !== "invalid_config"
   ) {
     const cause = classifiableCause(error);
     if (cause !== undefined) {
+      return classifyAtDepth(cause, depth + 1);
+    }
+  }
+
+  // DownloadError recurses ONLY into local filesystem causes (PlatformError:
+  // unwritable cache, extraction failure). HTTP causes stay on the wrapper —
+  // the HttpClientError adapter's 401/403 → auth/permission policy is
+  // Management-API-specific and must not apply to GitHub/CDN asset downloads.
+  if (isErrorRecord(error) && tag === "DownloadError") {
+    const cause = error["cause"];
+    if (isErrorRecord(cause) && readErrorTag(cause) === "PlatformError") {
       return classifyAtDepth(cause, depth + 1);
     }
   }

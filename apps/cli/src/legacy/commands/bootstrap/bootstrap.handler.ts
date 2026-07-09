@@ -332,5 +332,7 @@ const mapHealthError = (cause: unknown): Effect.Effect<never, LegacyBootstrapHea
       ),
     );
   }
-  return Effect.fail(new LegacyBootstrapHealthError({ message: `Error status 0: ${cause}` }));
+  return Effect.fail(
+    new LegacyBootstrapHealthError({ message: `Error status 0: ${cause}`, transport: true }),
+  );
 };
