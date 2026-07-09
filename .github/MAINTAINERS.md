@@ -10,12 +10,9 @@ that carries the **`open-for-contribution`** label. This is enforced by the
 [`Contribution Gate`](./workflows/contribution-gate.yml) workflow, whose decision logic
 lives in [`scripts/contribution-gate.ts`](./scripts/contribution-gate.ts).
 
-The gate runs **reactively on each PR** via `pull_request_target`
-(`opened`/`reopened`/`edited`) so a non-conforming PR is closed right away, and can also
-be **swept across every open PR on demand** via the workflow's *Run workflow* button
-(`workflow_dispatch`). Both paths only ever run trusted base-branch code with the
-repository token: `pull_request_target` checks out the base branch (not the PR head), and
-the script only makes GitHub API calls — it never checks out or executes a fork's code.
+The gate runs **reactively on each PR** so a non-conforming PR is closed right away, and
+can also be **swept across every open PR on demand** via the workflow's *Run workflow*
+button.
 
 A pull request is **auto-closed with an explanatory comment** when the author is external
 and any of these is true:
