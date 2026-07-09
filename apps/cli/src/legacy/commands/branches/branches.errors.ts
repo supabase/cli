@@ -77,6 +77,11 @@ export class LegacyBranchesFindUnexpectedStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 404 on branch lookup means the user-supplied branch name/ref did not
+    // match — user input, not an API failure.
+    if (this.status === 404) {
+      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+    }
     return statusCodeActionability(this.status);
   }
 }

@@ -37,6 +37,12 @@ export class LegacyStorageGatewayStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // The tenant Storage gateway is not the Management API: a 401/403 here
+    // means stale local service keys, which `supabase login` cannot fix, so
+    // the Management-API auth/permission policy must not apply.
+    if (this.status === 401 || this.status === 403) {
+      return { ...actionability.apiStatus, fingerprint_suffix: "gateway_auth" };
+    }
     return statusCodeActionability(this.status);
   }
 }
