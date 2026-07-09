@@ -112,7 +112,6 @@ export class Provisioner {
       );
       await rename(tmpDataDir, dataDir);
       await pods.write({ ...manifest, postgresPassword });
-      await rm(backupDataDir, { recursive: true, force: true });
     } catch (error) {
       if (backedUp) {
         await rm(dataDir, { recursive: true, force: true }).catch(() => {});
@@ -122,6 +121,10 @@ export class Provisioner {
     } finally {
       await rm(tmpDataDir, { recursive: true, force: true }).catch(() => {});
     }
+    // The reset is committed once the manifest is rewritten; a failure to
+    // delete the old data dir must not trigger the rollback above (which
+    // would restore the old data under the new manifest's credentials).
+    await rm(backupDataDir, { recursive: true, force: true }).catch(() => {});
   }
 
   /** Caller must ensure the source pod is stopped/suspended first. */

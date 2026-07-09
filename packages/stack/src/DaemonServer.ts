@@ -185,8 +185,15 @@ export class DaemonServer extends Context.Service<
                 ),
               ),
             ),
+            // `service` doubles as the discriminant clients use to tell
+            // ServiceReadyError (has it) from StackBuildError (lacks it).
             Effect.catchTag("ServiceReadyError", (e) =>
-              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.reason }, { status: 500 })),
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: e.reason, service: e.name },
+                  { status: 500 },
+                ),
+              ),
             ),
             Effect.catchTag("StackBuildError", (e) =>
               Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.detail }, { status: 500 })),
@@ -249,7 +256,12 @@ export class DaemonServer extends Context.Service<
               ),
             ),
             Effect.catchTag("ServiceReadyError", (e) =>
-              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.reason }, { status: 500 })),
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: e.reason, service: e.name },
+                  { status: 500 },
+                ),
+              ),
             ),
             Effect.catchTag("StackBuildError", (e) =>
               Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.detail }, { status: 500 })),
@@ -277,7 +289,15 @@ export class DaemonServer extends Context.Service<
               ),
             ),
             Effect.catchTag("ServiceReadyError", (e) =>
-              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.reason }, { status: 500 })),
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: e.reason, service: e.name },
+                  { status: 500 },
+                ),
+              ),
+            ),
+            Effect.catchTag("StackBuildError", (e) =>
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.detail }, { status: 500 })),
             ),
           ),
         ),
@@ -299,10 +319,15 @@ export class DaemonServer extends Context.Service<
               ),
             ),
             Effect.catchTag("ServiceReadyError", (e) =>
-              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.reason }, { status: 500 })),
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: e.reason, service: e.name },
+                  { status: 500 },
+                ),
+              ),
             ),
             Effect.catchTag("StackBuildError", (e) =>
-              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.message }, { status: 500 })),
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.detail }, { status: 500 })),
             ),
           ),
         ),

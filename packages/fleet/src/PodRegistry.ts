@@ -198,6 +198,14 @@ function parseManifest(value: unknown): PodManifest | undefined {
   ) {
     return undefined;
   }
+  // Provisioning always records the exact versions a pod was initialized
+  // with (see resolveTemplateVersions); a manifest missing them would make
+  // the next wake silently boot whatever the CURRENT defaults are against
+  // an existing data dir, so treat it as corrupt.
+  if (versions.postgres === undefined) return undefined;
+  for (const service of SERVICE_NAMES) {
+    if (services[service] === true && versions[service] === undefined) return undefined;
+  }
   if (!isRecord(value.flags) || typeof value.flags.supautils !== "boolean") return undefined;
   if (typeof value.postgresPassword !== "string" || value.postgresPassword.length === 0) {
     return undefined;

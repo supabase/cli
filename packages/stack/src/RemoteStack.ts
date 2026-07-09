@@ -38,6 +38,19 @@ const ServiceErrorResponseSchema = Schema.Struct({
   service: Schema.optionalKey(Schema.String),
 });
 
+/**
+ * Deserialize a daemon 500 body back into the typed error the stack raised:
+ * the daemon includes `service` exactly when the underlying error was a
+ * ServiceReadyError, so its absence means a StackBuildError.
+ */
+function daemonServiceError(
+  body: typeof ServiceErrorResponseSchema.Type,
+): ServiceReadyError | StackBuildError {
+  return body.service !== undefined
+    ? new ServiceReadyError({ name: body.service, reason: body.error })
+    : new StackBuildError({ detail: body.error });
+}
+
 const StatusServiceEventSchema = Schema.fromJsonString(StatusServiceSchema);
 const LogEntryEventSchema = Schema.fromJsonString(LogEntrySchema);
 const decodeStatusServiceEvent = Schema.decodeUnknownSync(StatusServiceEventSchema);
@@ -248,7 +261,7 @@ export const RemoteStack = {
                   const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
                     response,
                   ).pipe(Effect.orDie);
-                  return yield* new ServiceReadyError({ name, reason: body.error });
+                  return yield* daemonServiceError(body);
                 }
                 yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
               }),
@@ -293,7 +306,7 @@ export const RemoteStack = {
                   const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
                     response,
                   ).pipe(Effect.orDie);
-                  return yield* new ServiceReadyError({ name, reason: body.error });
+                  return yield* daemonServiceError(body);
                 }
                 yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
               }),
@@ -318,10 +331,7 @@ export const RemoteStack = {
                   const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
                     response,
                   ).pipe(Effect.orDie);
-                  return yield* new ServiceReadyError({
-                    name: "edge-runtime",
-                    reason: body.error,
-                  });
+                  return yield* daemonServiceError(body);
                 }
                 yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
               }),
@@ -342,10 +352,7 @@ export const RemoteStack = {
                   const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
                     response,
                   ).pipe(Effect.orDie);
-                  return yield* new ServiceReadyError({
-                    name: "edge-runtime",
-                    reason: body.error,
-                  });
+                  return yield* daemonServiceError(body);
                 }
                 yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
               }),
@@ -428,13 +435,7 @@ export const RemoteStack = {
                   const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
                     response,
                   ).pipe(Effect.orDie);
-                  if (body.service !== undefined) {
-                    return yield* new ServiceReadyError({
-                      name: body.service,
-                      reason: body.error,
-                    });
-                  }
-                  return yield* new StackBuildError({ detail: body.error });
+                  return yield* daemonServiceError(body);
                 }
                 yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
               }),

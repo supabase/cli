@@ -1,5 +1,5 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { ServiceNotFoundError, type LogEntry } from "@supabase/process-compose";
+import { ServiceNotFoundError, ServiceReadyError, type LogEntry } from "@supabase/process-compose";
 import { Effect, Layer, ManagedRuntime, Stream } from "effect";
 import * as http from "node:http";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
@@ -63,9 +63,13 @@ function mockStack() {
     startService: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
-        : Effect.sync(() => {
-            serviceCalls.push(`start:${name}`);
-          }),
+        : name === "bad-build"
+          ? Effect.fail(new StackBuildError({ detail: "stack is stopped" }))
+          : name === "not-ready"
+            ? Effect.fail(new ServiceReadyError({ name, reason: "healthcheck failed" }))
+            : Effect.sync(() => {
+                serviceCalls.push(`start:${name}`);
+              }),
     stopService: (name: string) =>
       name === "unknown"
         ? Effect.fail(new ServiceNotFoundError({ name }))
@@ -343,8 +347,25 @@ describe("DaemonServer", () => {
   test("POST /extensions/:name/enable maps build errors to JSON 500", async () => {
     const res = await fetch(`${url}/extensions/bad-build/enable`, { method: "POST" });
     expect(res.status).toBe(500);
-    const body = (await res.json()) as { error: string };
+    const body = (await res.json()) as { error: string; service?: string };
     expect(body.error).toContain("cannot enable while starting");
+    expect(body.service).toBeUndefined();
+  });
+
+  test("POST /services/:name/start maps build errors to JSON 500 without a service field", async () => {
+    const res = await fetch(`${url}/services/bad-build/start`, { method: "POST" });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string; service?: string };
+    expect(body.error).toContain("stack is stopped");
+    expect(body.service).toBeUndefined();
+  });
+
+  test("POST /services/:name/start maps readiness errors to JSON 500 with a service field", async () => {
+    const res = await fetch(`${url}/services/not-ready/start`, { method: "POST" });
+    expect(res.status).toBe(500);
+    const body = (await res.json()) as { error: string; service?: string };
+    expect(body.error).toContain("healthcheck failed");
+    expect(body.service).toBe("not-ready");
   });
 
   // -------------------------------------------------------------------------

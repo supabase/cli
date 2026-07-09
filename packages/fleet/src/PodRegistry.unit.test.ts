@@ -66,4 +66,37 @@ describe("PodRegistry", () => {
     await expect(pods.read("bad")).resolves.toBeUndefined();
     await expect(pods.list()).resolves.toEqual([]);
   });
+
+  it("rejects manifests missing versions for postgres or enabled services", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pods-"));
+    const pods = new PodRegistry(root);
+    const base = {
+      services: {},
+      flags: { supautils: false },
+      ports: ports(55000, 55001),
+      internalPorts: ports(45000, 45001),
+      postgresPassword: "postgres",
+      createdAt: "2026-07-08T00:00:00.000Z",
+    };
+
+    await mkdir(join(root, "no-postgres"));
+    await writeFile(
+      join(root, "no-postgres", "pod.json"),
+      JSON.stringify({ ...base, id: "no-postgres", versions: {} }),
+    );
+    await mkdir(join(root, "no-auth-version"));
+    await writeFile(
+      join(root, "no-auth-version", "pod.json"),
+      JSON.stringify({
+        ...base,
+        id: "no-auth-version",
+        versions: { postgres: "17.6.1.143" },
+        services: { auth: true },
+      }),
+    );
+
+    await expect(pods.read("no-postgres")).resolves.toBeUndefined();
+    await expect(pods.read("no-auth-version")).resolves.toBeUndefined();
+    await expect(pods.list()).resolves.toEqual([]);
+  });
 });

@@ -1,8 +1,8 @@
 import { Cause, Data, Effect, Exit, Layer, Queue, Context, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
-import type { ChecksumMismatchError } from "./errors.ts";
-import { DockerPullError } from "./errors.ts";
+import type { BinaryNotFoundError, ChecksumMismatchError, DownloadError } from "./errors.ts";
+import { DockerPullError, StackBuildError } from "./errors.ts";
 import type { ServiceResolution } from "./resolve.ts";
 import {
   DEFAULT_VERSIONS,
@@ -38,6 +38,13 @@ type StackPreparationEvent =
   | ServiceDownloadStarted
   | ServiceDownloadFinished
   | PreparationCompleted;
+
+export type StackPreparationError =
+  | DockerPullError
+  | ChecksumMismatchError
+  | StackBuildError
+  | BinaryNotFoundError
+  | DownloadError;
 
 const dockerOnlyServices = new Set<ServiceName>([
   "edge-runtime",
@@ -86,7 +93,7 @@ export const prepareAssetsWithDependencies = (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   input?: StackPreparationInput,
   publishEvent?: (event: StackPreparationEvent) => Effect.Effect<void>,
-): Effect.Effect<PreparedStackArtifacts, DockerPullError | ChecksumMismatchError> =>
+): Effect.Effect<PreparedStackArtifacts, StackPreparationError> =>
   Effect.gen(function* () {
     const versions = { ...DEFAULT_VERSIONS, ...input?.versions };
     const services: ReadonlyArray<ServiceName> = input?.services ?? SERVICE_NAMES;
@@ -94,9 +101,7 @@ export const prepareAssetsWithDependencies = (
 
     type Entry = readonly [ServiceName, ServiceResolution];
 
-    const resolveService = (
-      service: ServiceName,
-    ): Effect.Effect<Entry, DockerPullError | ChecksumMismatchError> => {
+    const resolveService = (service: ServiceName): Effect.Effect<Entry, StackPreparationError> => {
       let isDownloading = false;
       const markDownloadStart = () =>
         Effect.sync(() => {
@@ -118,6 +123,29 @@ export const prepareAssetsWithDependencies = (
           Effect.map((image): Entry => [service, { type: "docker", image }]),
           Effect.ensuring(markDownloadFinished()),
         );
+      }
+
+      if (mode === "native") {
+        // Native mode is a hard requirement, not a preference: callers like
+        // fleet pods key process reconciliation off host postmaster pids, so
+        // silently booting a Docker container instead would leave crashed
+        // pods unreapable. Fail fast rather than fall back.
+        if (dockerOnlyServices.has(service)) {
+          return Effect.fail(
+            new StackBuildError({
+              detail: `Service "${service}" has no native distribution and cannot run with mode "native".`,
+            }),
+          );
+        }
+        return resolver
+          .resolveWithMetadata(
+            { service, version: versions[service] },
+            { onDownloadStart: markDownloadStart() },
+          )
+          .pipe(
+            Effect.map(({ path }): Entry => [service, { type: "binary", path }]),
+            Effect.ensuring(markDownloadFinished()),
+          );
       }
 
       if (dockerOnlyServices.has(service)) {
@@ -157,10 +185,10 @@ export class StackPreparation extends Context.Service<
   {
     readonly prepare: (
       input?: StackPreparationInput,
-    ) => Effect.Effect<PreparedStackArtifacts, DockerPullError | ChecksumMismatchError>;
+    ) => Effect.Effect<PreparedStackArtifacts, StackPreparationError>;
     readonly prepareEvents: (
       input?: StackPreparationInput,
-    ) => Stream.Stream<StackPreparationEvent, DockerPullError | ChecksumMismatchError>;
+    ) => Stream.Stream<StackPreparationEvent, StackPreparationError>;
   }
 >()("stack/StackPreparation") {
   static layer: Layer.Layer<
@@ -177,7 +205,7 @@ export class StackPreparation extends Context.Service<
         prepare: (input?: StackPreparationInput) =>
           prepareAssetsWithDependencies(resolver, spawner, input),
         prepareEvents: (input?: StackPreparationInput) =>
-          Stream.callback<StackPreparationEvent, DockerPullError | ChecksumMismatchError>((queue) =>
+          Stream.callback<StackPreparationEvent, StackPreparationError>((queue) =>
             prepareAssetsWithDependencies(resolver, spawner, input, (event) =>
               Queue.offer(queue, event),
             ).pipe(

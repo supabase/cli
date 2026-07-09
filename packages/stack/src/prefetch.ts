@@ -1,8 +1,10 @@
 import { Effect } from "effect";
-import type { ChecksumMismatchError } from "./errors.ts";
-import type { DockerPullError } from "./errors.ts";
-import { type PreparedStackArtifacts, type StackPreparationInput } from "./StackPreparation.ts";
-import { StackPreparation } from "./StackPreparation.ts";
+import {
+  StackPreparation,
+  type PreparedStackArtifacts,
+  type StackPreparationError,
+  type StackPreparationInput,
+} from "./StackPreparation.ts";
 import type { ServiceResolution } from "./resolve.ts";
 
 export interface PrefetchOptions extends StackPreparationInput {}
@@ -14,7 +16,7 @@ const toPrefetchResult = (artifacts: PreparedStackArtifacts): PrefetchResult =>
 
 export const prefetch = (
   options?: PrefetchOptions,
-): Effect.Effect<PrefetchResult, DockerPullError | ChecksumMismatchError, StackPreparation> =>
+): Effect.Effect<PrefetchResult, StackPreparationError, StackPreparation> =>
   Effect.gen(function* () {
     const preparation = yield* StackPreparation;
     return yield* preparation.prepare(options).pipe(Effect.map(toPrefetchResult));

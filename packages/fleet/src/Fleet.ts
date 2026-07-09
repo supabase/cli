@@ -114,7 +114,7 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   const monitor = new IdleMonitor({
     idleMs,
     onIdle: (podId) => {
-      void suspend(podId).catch(() => {});
+      void idleSuspend(podId).catch(() => {});
     },
   });
 
@@ -240,6 +240,24 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
     // source-pod lock) call the LOCKED body directly instead of this
     // function — see `suspendLocked` usage below.
     return podLocks.withLock(id, () => suspendLocked(id));
+  }
+
+  // Idle-triggered suspend: unlike an explicit suspend, this must yield to
+  // clients that connected between the idle timer firing (which untracks the
+  // pod, making their recordActivity a no-op) and this body acquiring the pod
+  // lock. Those connections were already accepted by the proxy — and any
+  // connection accepted AFTER the openConnections check below can no longer
+  // grab the warm upstream, because the check and `warm.delete` in
+  // suspendLocked run in the same synchronous block.
+  async function idleSuspend(id: string): Promise<void> {
+    return podLocks.withLock(id, async () => {
+      if (proxy.openConnections(id) > 0 && warm.has(id)) {
+        monitor.track(id);
+        monitor.recordActivity(id, proxy.openConnections(id));
+        return;
+      }
+      await suspendLocked(id);
+    });
   }
 
   async function suspendLocked(id: string): Promise<void> {

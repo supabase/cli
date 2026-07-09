@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { Deferred, Effect, Exit, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { BinaryResolver } from "./BinaryResolver.ts";
@@ -300,5 +300,47 @@ describe("prefetch", () => {
       image: `public.ecr.aws/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
     });
     expect(resolver.resolved).toEqual([]);
+  });
+
+  test("native mode fails instead of falling back to docker when a binary is missing", async () => {
+    const resolver = mockBinaryResolver({ failServices: ["auth"] });
+    const spawner = mockSequenceSpawner([]);
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const resolverService = yield* BinaryResolver;
+        const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
+        return yield* Effect.exit(
+          prepareAssetsWithDependencies(resolverService, spawnerService, {
+            mode: "native",
+            services: ["auth"],
+          }),
+        );
+      }).pipe(Effect.provide(resolver.layer), Effect.provide(spawner.layer)),
+    );
+
+    expect(Exit.isFailure(result)).toBe(true);
+    expect(spawner.spawned).toEqual([]);
+  });
+
+  test("native mode rejects docker-only services", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner([]);
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const resolverService = yield* BinaryResolver;
+        const spawnerService = yield* ChildProcessSpawner.ChildProcessSpawner;
+        return yield* Effect.exit(
+          prepareAssetsWithDependencies(resolverService, spawnerService, {
+            mode: "native",
+            services: ["realtime"],
+          }),
+        );
+      }).pipe(Effect.provide(resolver.layer), Effect.provide(spawner.layer)),
+    );
+
+    expect(Exit.isFailure(result)).toBe(true);
+    expect(spawner.spawned).toEqual([]);
   });
 });
