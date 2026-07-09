@@ -10,6 +10,7 @@ const emptyConfig = decodeProjectConfig({});
 export const edgeFunctionsDirectoryName = "functions";
 export const edgeFunctionEntrypointFileName = "index.ts";
 export const edgeFunctionDenoConfigFileName = "deno.json";
+export const edgeFunctionPackageManifestFileName = "package.json";
 
 export interface ResolvedFunctionConfig {
   readonly enabled: boolean;

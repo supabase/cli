@@ -1,7 +1,7 @@
 import { dirname } from "node:path";
 import {
-  edgeFunctionDenoConfigFileName,
   edgeFunctionEntrypointFileName,
+  edgeFunctionPackageManifestFileName,
   edgeFunctionsDirectoryName,
   findProjectPaths,
 } from "@supabase/config";
@@ -16,20 +16,28 @@ import {
 
 const functionSlugPattern = /^[A-Za-z0-9_-]+$/;
 
-const denoJson = `${JSON.stringify(
+const packageJson = `${JSON.stringify(
   {
-    imports: {
-      "@supabase/functions-js": "jsr:@supabase/functions-js@^2",
+    private: true,
+    type: "module",
+    dependencies: {
+      nanoid: "^5.1.16",
     },
   },
   null,
   2,
 )}\n`;
 
-const entrypointSource = `Deno.serve(async (req) => {
-  const { name } = await req.json();
-  return Response.json({ message: \`Hello \${name}!\` });
-});
+const entrypointSource = `import { nanoid } from "nanoid";
+
+export default {
+  async fetch(request: Request): Promise<Response> {
+    const name = new URL(request.url).searchParams.get("name") ?? nanoid();
+    return new Response(\`Hello \${name}\`, {
+      headers: { "content-type": "text/plain" },
+    });
+  },
+};
 `;
 
 function validateSlugMessage(slug: string): string | undefined {
@@ -91,7 +99,7 @@ export const functionsNew = Effect.fnUntraced(function* (slugInput: Option.Optio
     projectPaths === null ? runtimeInfo.cwd : projectRootForConfigPath(projectPaths.configPath);
   const functionDir = path.join(projectRoot, "supabase", edgeFunctionsDirectoryName, slug);
   const entrypointPath = path.join(functionDir, edgeFunctionEntrypointFileName);
-  const denoConfigPath = path.join(functionDir, edgeFunctionDenoConfigFileName);
+  const packageManifestPath = path.join(functionDir, edgeFunctionPackageManifestFileName);
 
   if (yield* fs.exists(entrypointPath)) {
     return yield* Effect.fail(
@@ -104,15 +112,15 @@ export const functionsNew = Effect.fnUntraced(function* (slugInput: Option.Optio
 
   yield* fs.makeDirectory(functionDir, { recursive: true });
   yield* fs.writeFileString(entrypointPath, entrypointSource);
-  if (!(yield* fs.exists(denoConfigPath))) {
-    yield* fs.writeFileString(denoConfigPath, denoJson);
+  if (!(yield* fs.exists(packageManifestPath))) {
+    yield* fs.writeFileString(packageManifestPath, packageJson);
   }
 
   yield* output.success("Created Edge Function.", {
     function_slug: slug,
     function_dir: functionDir,
     entrypoint_path: entrypointPath,
-    deno_config_path: denoConfigPath,
+    package_manifest_path: packageManifestPath,
   });
   yield* output.outro(`Created ${path.join("supabase", edgeFunctionsDirectoryName, slug)}.`);
 });

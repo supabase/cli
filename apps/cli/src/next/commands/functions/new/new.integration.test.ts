@@ -98,22 +98,33 @@ describe("functions new", () => {
         yield* Effect.tryPromise(() =>
           readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
         ),
-      ).toBe(`Deno.serve(async (req) => {
-  const { name } = await req.json();
-  return Response.json({ message: \`Hello \${name}!\` });
-});
+      ).toBe(`import { nanoid } from "nanoid";
+
+export default {
+  async fetch(request: Request): Promise<Response> {
+    const name = new URL(request.url).searchParams.get("name") ?? nanoid();
+    return new Response(\`Hello \${name}\`, {
+      headers: { "content-type": "text/plain" },
+    });
+  },
+};
 `);
       expect(
         JSON.parse(
           yield* Effect.tryPromise(() =>
-            readFile(join(tempDir, "supabase", "functions", "hello-world", "deno.json"), "utf8"),
+            readFile(join(tempDir, "supabase", "functions", "hello-world", "package.json"), "utf8"),
           ),
         ),
       ).toEqual({
-        imports: {
-          "@supabase/functions-js": "jsr:@supabase/functions-js@^2",
+        private: true,
+        type: "module",
+        dependencies: {
+          nanoid: "^5.1.16",
         },
       });
+      expect(existsSync(join(tempDir, "supabase", "functions", "hello-world", "deno.json"))).toBe(
+        false,
+      );
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "Created Edge Function." }),
       );
@@ -151,7 +162,7 @@ describe("functions new", () => {
         yield* Effect.tryPromise(() =>
           readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
         ),
-      ).toContain("Deno.serve");
+      ).toContain("export default");
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
@@ -175,7 +186,7 @@ describe("functions new", () => {
         yield* Effect.tryPromise(() =>
           readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
         ),
-      ).toContain("Deno.serve");
+      ).toContain("export default");
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
@@ -239,7 +250,7 @@ describe("functions new", () => {
         yield* Effect.tryPromise(() =>
           readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
         ),
-      ).toContain("Deno.serve");
+      ).toContain("export default");
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );

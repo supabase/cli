@@ -22,6 +22,7 @@ export {
 export {
   edgeFunctionDenoConfigFileName,
   edgeFunctionEntrypointFileName,
+  edgeFunctionPackageManifestFileName,
   edgeFunctionsDirectoryName,
   type FunctionsManifest,
   type ResolvedFunctionConfig,
