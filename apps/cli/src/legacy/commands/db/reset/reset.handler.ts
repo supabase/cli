@@ -227,6 +227,36 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     }
 
     const connType = target.connType ?? "local";
+    // Single source of truth for "does this reset delegate to the Go child?" —
+    // checked at both delegation sites below (before `resolve()` for a linked
+    // target, after it for a `--db-url` target) so the two call sites can never
+    // drift apart.
+    const shouldDelegateExperimental = experimental && resolvedVersion === "";
+
+    // Delegates the remaining `--experimental` schema-files apply path
+    // (`apply.MigrateAndSeed`, not ported) to the Go child. In text mode inherit
+    // its stdio. Under a machine-output mode (`--output-format json|stream-json`)
+    // the Go child emits no TS envelope, so suppress its stdout (capture + discard)
+    // and emit the same structured success the native local and remote paths do,
+    // keeping the JSON contract consistent across all reset paths.
+    const delegateExperimentalReset = () =>
+      Effect.gen(function* () {
+        const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
+        if (output.format === "text") {
+          yield* proxy.exec(buildResetArgs(flags, connType, yes), { env });
+        } else {
+          // Machine-output mode is non-interactive: give the Go child a non-TTY stdin
+          // (`stdin: "ignore"`) so it can't block on (or be answered at) Go's
+          // destructive reset prompt — it takes the default `false`, matching the
+          // native reset path which suppresses prompts under json/stream-json.
+          yield* proxy.execCapture(buildResetArgs(flags, connType, yes), { env, stdin: "ignore" });
+          yield* output.success("Reset remote database.", {
+            target: "remote",
+            version: resolvedVersion,
+          });
+        }
+      });
+
     // Go's ParseDatabaseConfig runs LoadProjectRef BEFORE the fallible linked
     // resolution (db_url.go:87-95), and Execute() writes the linked-project cache
     // even when a later step errors (root.go:171-181). Pre-load the ref so the
@@ -235,7 +265,23 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     if (connType === "linked") {
       const refResolver = yield* LegacyProjectRefResolver;
       linkedRefForCache = yield* refResolver.loadProjectRef(Option.none());
+
+      // A linked target is never local (`resolver.resolve()`'s "linked" branch
+      // always returns `isLocal: false`), so the delegated-experimental check can
+      // run BEFORE calling `resolve()`. This matters: for `connType === "linked"`,
+      // `resolve()` mints/verifies a temporary Postgres login role over the
+      // Management API — and the delegated Go child re-runs that exact same
+      // `ParseDatabaseConfig` work itself once delegation happens. Calling
+      // `resolve()` here would mint the temp role twice for zero downstream use on
+      // this branch (Go's own reset flow mints it exactly once, as part of the code
+      // path being delegated to — confirmed against `apps/cli-go/internal/utils/
+      // flags/db_url.go`'s `NewDbConfigWithPassword`/`initLoginRole`). CLI-1879.
+      if (shouldDelegateExperimental) {
+        yield* delegateExperimentalReset();
+        return;
+      }
     }
+
     const cfg = yield* resolver.resolve({ dbUrl: flags.dbUrl, connType, dnsResolver });
 
     // Local target → native local reset. The container-recreate primitives live
@@ -308,34 +354,20 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       return;
     }
 
-    // Resolve the linked ref before any return so the post-run cache (Go's
-    // `PersistentPostRun` `ensureProjectGroupsCached`) is written even on the
-    // delegated `--experimental` path below — the Go child runs with telemetry
-    // disabled and skips that cache, so the TS finalizer must own it.
+    // Re-confirm `linkedRefForCache` from the now-resolved `cfg.ref` for the native
+    // remote linked path below (a linked+experimental+versionless target already
+    // delegated and returned above, before `resolve()` was ever called — see the
+    // `connType === "linked"` block earlier in this function). A `connType ===
+    // "db-url"` target leaves `linkedRefForCache` as whatever the pre-load block
+    // set (nothing, for `db-url`), since this assignment only fires when linked.
     const linkedRef = Option.getOrUndefined(cfg.ref ?? Option.none());
     if (connType === "linked" && linkedRef !== undefined) linkedRefForCache = linkedRef;
 
-    // Remote path. The niche `--experimental` schema-files apply path
-    // (`apply.MigrateAndSeed`) is not ported; delegate it to the Go child. In text
-    // mode inherit its stdio. Under a machine-output mode (`--output-format
-    // json|stream-json`) the Go child emits no TS envelope, so suppress its stdout
-    // (capture + discard) and emit the same structured success the native local and
-    // remote paths do, keeping the JSON contract consistent across all reset paths.
-    if (experimental && resolvedVersion === "") {
-      const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
-      if (output.format === "text") {
-        yield* proxy.exec(buildResetArgs(flags, connType, yes), { env });
-      } else {
-        // Machine-output mode is non-interactive: give the Go child a non-TTY stdin
-        // (`stdin: "ignore"`) so it can't block on (or be answered at) Go's
-        // destructive reset prompt — it takes the default `false`, matching the
-        // native reset path which suppresses prompts under json/stream-json.
-        yield* proxy.execCapture(buildResetArgs(flags, connType, yes), { env, stdin: "ignore" });
-        yield* output.success("Reset remote database.", {
-          target: "remote",
-          version: resolvedVersion,
-        });
-      }
+    // Remaining remote target: a `--db-url` pointing at a non-local host (the
+    // `connType === "linked"` case already delegated above, before `resolve()`,
+    // without resolving a connection at all).
+    if (shouldDelegateExperimental) {
+      yield* delegateExperimentalReset();
       return;
     }
 

@@ -81,18 +81,23 @@ seeded over the Storage gateway (reusing the `seed buckets` local path).
 
 ## Exit Codes
 
-| Code | Condition                                                        |
-| ---- | ---------------------------------------------------------------- |
-| `0`  | success                                                          |
-| `1`  | mutually exclusive target flags (`[db-url linked local]`)        |
-| `1`  | `--version` + `--last` together (`[last version]`)               |
-| `1`  | `--version` not an integer (`invalid version number`)            |
-| `1`  | `--version` has no matching migration file                       |
-| `1`  | local: database not running (`supabase start is not running.`)   |
-| `1`  | user declined the reset confirmation (`context canceled`)        |
-| `1`  | `config.toml` parse failure                                      |
-| `1`  | drop / migrate / seed / vault apply failure, or connection error |
-| `1`  | local: container recreate / storage health-gate failure (seam)   |
+| Code                 | Condition                                                                                                                  |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `0`                  | success                                                                                                                    |
+| `1`                  | mutually exclusive target flags (`[db-url linked local]`)                                                                  |
+| `1`                  | `--version` + `--last` together (`[last version]`)                                                                         |
+| `1`                  | `--version` not an integer (`invalid version number`)                                                                      |
+| `1`                  | `--version` has no matching migration file                                                                                 |
+| `1`                  | local: database not running (`supabase start is not running.`)                                                             |
+| `1`                  | user declined the reset confirmation (`context canceled`)                                                                  |
+| `1`                  | `config.toml` parse failure                                                                                                |
+| `1`                  | drop / migrate / seed / vault apply failure, or connection error                                                           |
+| child's exact code\* | local: container recreate / storage health-gate failure (seam), or `--experimental`/`--linked` delegate (proxy) child exit |
+
+\* The `db __db-bootstrap` seam and the `--experimental` remote delegate both
+propagate the spawned `supabase-go` child's real exit code (e.g. `130` after a
+Ctrl-C mid-recreate) instead of collapsing every failure to `1` — in every
+`--output-format` (CLI-1879).
 
 ## Output
 

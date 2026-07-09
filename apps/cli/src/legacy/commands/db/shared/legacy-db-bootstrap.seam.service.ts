@@ -1,5 +1,6 @@
 import { Context, type Effect } from "effect";
 
+import type { LegacyGoChildExitError } from "../../../../shared/legacy/legacy-go-child-exit.error.ts";
 import type { LegacyDbBootstrapError } from "./legacy-db-bootstrap.errors.ts";
 
 /**
@@ -35,7 +36,7 @@ interface LegacyDbBootstrapSeamShape {
    */
   readonly startDatabase: (opts: {
     readonly fromBackup?: string;
-  }) => Effect.Effect<void, LegacyDbBootstrapError>;
+  }) => Effect.Effect<void, LegacyDbBootstrapError | LegacyGoChildExitError>;
   /**
    * The PG14/PG15 container-recreate half of local `db reset`
    * (`reset.RecreateLocalDatabase`): recreate the db container/volume, init schema,
@@ -51,7 +52,7 @@ interface LegacyDbBootstrapSeamShape {
     readonly version: string;
     readonly noSeed: boolean;
     readonly sqlPaths: ReadonlyArray<string>;
-  }) => Effect.Effect<void, LegacyDbBootstrapError>;
+  }) => Effect.Effect<void, LegacyDbBootstrapError | LegacyGoChildExitError>;
   /**
    * The storage health gate local `db reset` runs before seeding buckets
    * (`reset.AwaitStorageReady`): if the storage container exists but is unhealthy,
@@ -59,7 +60,10 @@ interface LegacyDbBootstrapSeamShape {
    * the caller should run the ported bucket seeding) and `false` when it does not
    * — matching Go, which silently skips buckets when storage is absent.
    */
-  readonly awaitStorageReady: () => Effect.Effect<boolean, LegacyDbBootstrapError>;
+  readonly awaitStorageReady: () => Effect.Effect<
+    boolean,
+    LegacyDbBootstrapError | LegacyGoChildExitError
+  >;
 }
 
 export class LegacyDbBootstrapSeam extends Context.Service<

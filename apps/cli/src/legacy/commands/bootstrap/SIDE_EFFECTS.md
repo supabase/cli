@@ -99,10 +99,11 @@ Human banners are suppressed; a single structured result is emitted:
 - **Interim Go-proxy delegation for migration push.** The push step shells out to the bundled
   Go binary (`db push --include-roles --include-seed`) until `db push` gets its own native port
   (separate Linear issue). The sub-step is **not** instrumentation-wrapped (the subprocess fires
-  its own push telemetry). Known divergence: `LegacyGoProxy.exec` propagates the exit code, so Go's
-  push backoff is **not** reproduced (single attempt) — to be restored when `db push` is natively
-  ported. (`LegacyGoProxy.exec` exits the process on a non-zero exit rather than returning a
-  failure, so the step cannot be wrapped in `Effect.retry`.)
+  its own push telemetry). Known divergence: Go's push backoff is **not** reproduced (single
+  attempt) — to be restored when `db push` is natively ported. (`LegacyGoProxy.exec` fails with a
+  typed `LegacyGoChildExitError` on a non-zero exit rather than exiting the process — CLI-1879 — so
+  the step COULD now be wrapped in `Effect.retry`; leaving that unimplemented here is a deliberate
+  scope decision for the native `db push` port, not a technical blocker.)
 - **DB password is forwarded on the same channel the user supplied it (CLI-1617).** The proxy must
   be called 1:1 with the user's input: a flag stays a flag, an env var stays an env var. So when the
   user passed `-p/--password`, the push sub-step receives `--password <value>` (flag → flag); when

@@ -1,11 +1,15 @@
 import type { Effect } from "effect";
 import { Context } from "effect";
+import type { LegacyGoChildExitError } from "./legacy-go-child-exit.error.ts";
 
 interface LegacyGoProxyShape {
   /**
    * Forward the given args to the Go binary, inheriting stdin/stdout/stderr
-   * and propagating the exit code. On a non-zero exit the process exits with
-   * the same code — callers do not need to handle the failure case.
+   * and propagating the exit code. On a non-zero exit (or when the binary
+   * cannot be resolved at all), fails with `LegacyGoChildExitError` carrying
+   * the child's exact exit code; callers don't need to special-case it — it
+   * flows through the normal Effect failure channel up to `runCli`, which
+   * maps it to the real process exit code after running any finalizers.
    *
    * `opts.cwd` overrides the working directory for this call (falls back to the
    * layer's construction-time cwd). `opts.env` overlays extra environment
@@ -17,13 +21,16 @@ interface LegacyGoProxyShape {
   readonly exec: (
     args: ReadonlyArray<string>,
     opts?: { readonly cwd?: string; readonly env?: Record<string, string> },
-  ) => Effect.Effect<void>;
+  ) => Effect.Effect<void, LegacyGoChildExitError>;
 
   /**
    * Like `exec`, but captures the child's stdout and returns it as a string
    * instead of inheriting stdout. stderr is still inherited (so progress /
-   * diagnostics pass straight through), and a non-zero exit still terminates the
-   * process with the same code.
+   * diagnostics pass straight through). On a non-zero exit (or when the binary
+   * cannot be resolved at all), fails with `LegacyGoChildExitError` carrying
+   * the child's exact exit code; callers don't need to special-case it — it
+   * flows through the normal Effect failure channel up to `runCli`, which
+   * maps it to the real process exit code after running any finalizers.
    *
    * `opts.stdin` controls the child's stdin: `"inherit"` (default) keeps the
    * child interactive (its prompts reach the terminal); `"ignore"` gives it a
@@ -43,7 +50,7 @@ interface LegacyGoProxyShape {
       readonly env?: Record<string, string>;
       readonly stdin?: "inherit" | "ignore";
     },
-  ) => Effect.Effect<string>;
+  ) => Effect.Effect<string, LegacyGoChildExitError>;
 }
 
 export class LegacyGoProxy extends Context.Service<LegacyGoProxy, LegacyGoProxyShape>()(

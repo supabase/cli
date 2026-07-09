@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -11,6 +11,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { LegacyGoChildExitError } from "../../../../shared/legacy/legacy-go-child-exit.error.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyDbBootstrapError } from "../shared/legacy-db-bootstrap.errors.ts";
 import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
@@ -22,22 +23,40 @@ const DEFAULT_FLAGS: LegacyDbStartFlags = { fromBackup: Option.none() };
 /**
  * Stateful mock of the container-bootstrap seam. `running` drives
  * `AssertSupabaseDbIsRunning`; `runningFails` / `startFails` make the respective
- * call fail (Docker daemon down / StartDatabase error). Records the args passed to
- * `startDatabase`.
+ * call fail (Docker daemon down / StartDatabase error). `startExitCode`, when set,
+ * fails `startDatabase` with a `LegacyGoChildExitError` carrying that code instead —
+ * simulating the seam's real bootstrap child (`db __db-bootstrap --mode start`)
+ * exiting non-zero (CLI-1879). Records the args passed to `startDatabase`.
  */
-function mockSeam(opts: { running?: boolean; runningFails?: boolean; startFails?: boolean } = {}) {
+function mockSeam(
+  opts: {
+    running?: boolean;
+    runningFails?: boolean;
+    startFails?: boolean;
+    startExitCode?: number;
+  } = {},
+) {
   const startCalls: Array<{ fromBackup?: string }> = [];
   const layer = Layer.succeed(LegacyDbBootstrapSeam, {
     isDbRunning: () =>
       opts.runningFails === true
         ? Effect.fail(new LegacyDbBootstrapError({ message: "failed to inspect service" }))
         : Effect.succeed(opts.running ?? false),
-    startDatabase: (args: { fromBackup?: string }) =>
-      opts.startFails === true
+    startDatabase: (args: { fromBackup?: string }) => {
+      if (opts.startExitCode !== undefined) {
+        return Effect.fail(
+          new LegacyGoChildExitError({
+            exitCode: opts.startExitCode,
+            message: `failed to bootstrap the local database: exit ${opts.startExitCode}`,
+          }),
+        );
+      }
+      return opts.startFails === true
         ? Effect.fail(new LegacyDbBootstrapError({ message: "failed to bootstrap" }))
         : Effect.sync(() => {
             startCalls.push(args);
-          }),
+          });
+    },
     recreateDatabase: () => Effect.void,
     awaitStorageReady: () => Effect.succeed(false),
   });
@@ -57,6 +76,7 @@ function setup(
     running?: boolean;
     runningFails?: boolean;
     startFails?: boolean;
+    startExitCode?: number;
     /** Caller cwd (Go's `CurrentDirAbs`) for relative `--from-backup` resolution. */
     cwd?: string;
   },
@@ -210,6 +230,32 @@ describe("legacy db start", () => {
       }
     });
   });
+
+  it.live(
+    "propagates the bootstrap child's exact exit code as LegacyGoChildExitError and still flushes telemetry",
+    () => {
+      // The bootstrap seam's `startDatabase` (the `!captureStdout` bootstrap-child
+      // path) failing non-zero must reach the handler as the exact `LegacyGoChildExitError`
+      // it fails with — not a generic `LegacyDbBootstrapError` collapsing every exit code to
+      // 1 — and the handler's own `Effect.ensuring(telemetryState.flush)` finalizer must
+      // still run despite the typed failure (CLI-1879).
+      const { layer, telemetry } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        running: false,
+        startExitCode: 3,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.squash(exit.cause);
+          expect(error).toBeInstanceOf(LegacyGoChildExitError);
+          expect((error as LegacyGoChildExitError).exitCode).toBe(3);
+        }
+        expect(telemetry.flushed).toBe(true);
+      });
+    },
+  );
 
   it.live("emits a json result when the database is already running", () => {
     const { layer, out } = setup(tmp.current, {

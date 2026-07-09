@@ -8,6 +8,7 @@ import {
   legacyResolveExperimental,
 } from "../../../../shared/legacy/global-flags.ts";
 import { resolveBinary } from "../../../../shared/legacy/go-proxy.layer.ts";
+import { LegacyGoChildExitError } from "../../../../shared/legacy/legacy-go-child-exit.error.ts";
 import { ProcessControl } from "../../../../shared/runtime/process-control.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
@@ -112,15 +113,19 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
               .exitCode(command)
               .pipe(Effect.mapError(() => seamFailure("failed to run supabase-go.")));
             if (exitCode !== 0) {
-              // Fail (rather than `processControl.exit`) so the handler's finalizers —
-              // `Effect.ensuring(telemetryState.flush)` + the legacy command
-              // instrumentation — still run; an immediate `process.exit` here would
-              // skip them. Go likewise exits non-zero on a bootstrap error only after
-              // its `PersistentPostRun`. The child's detailed failure is already on the
-              // inherited stderr. (Preserving the child's *exact* exit code while still
-              // running finalizers would require a shared `runCli` change — deferred.)
+              // `LegacyGoChildExitError` (not `seamFailure`/`processControl.exit`) so the
+              // handler's finalizers — `Effect.ensuring(telemetryState.flush)` + the legacy
+              // command instrumentation — still run (an immediate `process.exit` would skip
+              // them), AND the child's exact exit code (e.g. 130 after Ctrl-C cleanup) reaches
+              // `runCli`'s `processControl.exit()` instead of collapsing to a generic 1. The
+              // child's detailed failure is already on the inherited stderr, so `runCli`
+              // special-cases this error class to suppress its own normally-would-print
+              // generic stderr line — Go itself never prints a second line here. CLI-1879.
               return yield* Effect.fail(
-                seamFailure(`failed to bootstrap the local database: exit ${exitCode}`),
+                new LegacyGoChildExitError({
+                  exitCode,
+                  message: `failed to bootstrap the local database: exit ${exitCode}`,
+                }),
               );
             }
             return "";
@@ -138,8 +143,14 @@ export const legacyDbBootstrapSeamLayer = Layer.effect(
             Effect.mapError(() => seamFailure("failed to bootstrap the local database.")),
           );
           if (exitCode !== 0) {
+            // See the `!captureStdout` branch above for why `LegacyGoChildExitError`
+            // replaces `seamFailure` here — same exact-code + finalizer + no-duplicate-line
+            // reasoning (CLI-1879).
             return yield* Effect.fail(
-              seamFailure(`failed to bootstrap the local database: exit ${exitCode}`),
+              new LegacyGoChildExitError({
+                exitCode,
+                message: `failed to bootstrap the local database: exit ${exitCode}`,
+              }),
             );
           }
           return decodeChunks(chunks);
