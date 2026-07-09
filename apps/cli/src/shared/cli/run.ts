@@ -305,14 +305,24 @@ export function classifyParseErrorConsoleOutput(
  * Safe to wrap the entire `runWith` call — parsing AND the eventual command
  * handler, not just the parse phase that can actually raise `ShowHelp`: no
  * command handler in this codebase writes through `effect`'s `Console`
- * service directly (they go through the `Output` service instead), so
- * buffering here never delays or drops real command output. Note that
- * Effect's OWN default logger (`Effect.log*`) DOES resolve through this same
- * `Console` reference (`Logger.withConsoleLog`/`withConsoleError`) — this
- * codebase has no `Effect.log*` call sites today, but if one is ever added
- * to a handler, its output would be buffered too (deferred to end-of-run on
- * the "flush unchanged" path, or dropped on a genuine parse failure — which
- * never runs a handler in the first place, so that half is moot).
+ * service directly (they go through the `Output` service instead). One
+ * indirect exception is known — `@supabase/config`'s `loadProjectConfigFile`
+ * emits its deprecated-config-section warnings via `Console.error`, and is
+ * reachable from handlers through `ProjectConfigStore`/`loadProjectConfig` —
+ * so it pins itself to the real console (`Effect.provideService(Console.Console,
+ * globalThis.console)`) rather than relying on whatever `Console.Console` is
+ * ambient here; see CLI-1901 and that package's `io.ts` for why (a
+ * long-running command like `functions serve` would otherwise have the
+ * warning buffered for its entire session instead of shown at startup).
+ * Any other handler writing through `Console` directly would need the same
+ * treatment — buffering here never delays or drops real command output
+ * ONLY as long as that invariant holds. Note that Effect's OWN default
+ * logger (`Effect.log*`) DOES resolve through this same `Console` reference
+ * (`Logger.withConsoleLog`/`withConsoleError`) — this codebase has no
+ * `Effect.log*` call sites today, but if one is ever added to a handler, its
+ * output would be buffered too (deferred to end-of-run on the "flush
+ * unchanged" path, or dropped on a genuine parse failure — which never runs
+ * a handler in the first place, so that half is moot).
  */
 export function withoutParseErrorHelpDump<A, E, R>(
   effect: Effect.Effect<A, E, R>,

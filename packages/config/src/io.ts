@@ -667,12 +667,19 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   });
   const { document: normalized, deprecatedSections } = normalizeDeprecatedSMTPSections(document);
   // Warn on stderr (matching Go's normalizeDeprecatedSMTPConfig) so the notice
-  // never pollutes machine-readable stdout payloads.
+  // never pollutes machine-readable stdout payloads. Pinned to the real
+  // console (bypassing whatever `Console.Console` is ambient) so this always
+  // writes immediately, matching Go's synchronous `fmt.Fprintln(os.Stderr, ...)`
+  // (config.go:618,630) — a caller wrapping this in a deferred/buffered
+  // `Console.Console` (e.g. `apps/cli/src/shared/cli/run.ts`'s
+  // `withoutParseErrorHelpDump`, which only buffers the CLI parser's own
+  // duplicate-render writes and must never delay a handler's real output; see
+  // CLI-1901) must not silently swallow or delay it.
   for (const section of deprecatedSections) {
     const replacement = section.replace(/inbucket$/, "local_smtp");
     yield* Console.error(
       `WARN: config section [${section}] is deprecated. Please use [${replacement}] instead.`,
-    );
+    ).pipe(Effect.provideService(Console.Console, globalThis.console));
   }
 
   // Substitute `env(VAR)` references against `.env`/`.env.local`/ambient env
@@ -750,11 +757,13 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   // artifact, not the parity-relevant part, same call already made for
   // `LegacyInvalidPortEnvOverrideError` in the legacy shell. Not reproduced
   // byte-for-byte; `Console.error` supplies a normal trailing newline instead.
+  // Pinned to the real console for the same reason as the `[inbucket]`
+  // warning above — see that comment.
   if (goViperCompat) {
     for (const ext of deprecatedProviders) {
       yield* Console.error(
         `WARN: disabling deprecated "${ext}" provider. Please use [auth.external.${ext}_oidc] instead`,
-      );
+      ).pipe(Effect.provideService(Console.Console, globalThis.console));
     }
   }
 
