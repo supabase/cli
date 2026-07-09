@@ -105,7 +105,7 @@ export const verifyLegacyCname = Effect.fnUntraced(function* (args: {
     Effect.timeout("10 seconds"),
     Effect.mapError((cause) => {
       const failure: LegacyCnameFailure =
-        typeof cause === "object" && "transport" in cause && "detail" in cause
+        typeof cause === "object" && cause !== null && "transport" in cause
           ? cause
           : transportFailure(cause);
       return new LegacyDomainsCnameError({

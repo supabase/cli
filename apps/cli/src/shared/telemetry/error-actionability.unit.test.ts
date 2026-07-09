@@ -221,6 +221,34 @@ describe("classifyCliErrorActionability", () => {
     expect(result.suggestion_type).toBe("set_env_var");
   });
 
+  it("caps cause-chain recursion instead of overflowing on cycles", () => {
+    const a: Record<string, unknown> = { _tag: "DownloadError", url: "x" };
+    const b: Record<string, unknown> = {
+      _tag: "StackBuildError",
+      detail: "y",
+      reason: "asset_preparation",
+      cause: a,
+    };
+    a["cause"] = b;
+    const result = classifyCliErrorActionability(a);
+    expect(result.error_kind).toBe("unknown");
+    expect(result.error_fingerprint).toBe("error:CauseChainLimit");
+
+    const self: Record<string, unknown> = { _tag: "UserError" };
+    self["cause"] = self;
+    expect(classifyCliErrorActionability(self).error_fingerprint).toBe("error:CauseChainLimit");
+  });
+
+  it("classifies the user config cause of a reason-less StackBuildError", () => {
+    const result = classifyCliErrorActionability({
+      _tag: "StackBuildError",
+      detail: "Failed to configure Edge Functions",
+      cause: { _tag: "ProjectConfigParseError", path: "supabase/config.toml" },
+    });
+    expect(result.error_category).toBe("invalid_config");
+    expect(result.error_fingerprint).toBe("tag:ProjectConfigParseError");
+  });
+
   it("does not treat Object.prototype members as external adapters", () => {
     const result = classifyCliErrorActionability({ _tag: "constructor" });
     expect(result.error_kind).toBe("unknown");

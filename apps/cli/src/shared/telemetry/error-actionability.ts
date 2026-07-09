@@ -290,6 +290,16 @@ export const actionability = {
 } as const satisfies Record<string, CliErrorActionabilityDeclaration>;
 
 /**
+ * The declaration for a failure confirmed plan-gated by the entitlement
+ * check (`legacySuggestUpgrade`). Shared so every gated surface groups under
+ * the same fingerprint family.
+ */
+export const planLimitGatedActionability: CliErrorActionabilityDeclaration = {
+  ...actionability.planLimit,
+  fingerprint_suffix: "plan_limit",
+};
+
+/**
  * Classification policy for errors that carry a Management API status code.
  * `upgradeSuggested` is the typed result of the entitlement gate
  * (`legacySuggestUpgrade`) threaded through the error constructor — never
@@ -303,7 +313,7 @@ export function statusCodeActionability(
     return { ...actionability.authLogin, fingerprint_suffix: "auth" };
   }
   if (opts.upgradeSuggested === true && status !== undefined && status >= 400 && status < 500) {
-    return { ...actionability.planLimit, fingerprint_suffix: "plan_limit" };
+    return planLimitGatedActionability;
   }
   if (status === 403) {
     return { ...actionability.accountAccess, fingerprint_suffix: "forbidden" };
@@ -535,10 +545,10 @@ function classifiableCause(error: ErrorRecord): ErrorRecord | undefined {
   return undefined;
 }
 
-function classifyShowHelp(error: ErrorRecord): CliErrorActionability | undefined {
+function classifyShowHelp(error: ErrorRecord, depth: number): CliErrorActionability | undefined {
   const errors = error["errors"];
   if (!Array.isArray(errors)) return undefined;
-  if (errors.length === 1) return classifyCliErrorActionability(errors[0]);
+  if (errors.length === 1) return classifyAtDepth(errors[0], depth + 1);
   return toActionability(actionability.invalidInput, "tag", "ShowHelp");
 }
 
@@ -554,7 +564,22 @@ function isNativeJsExceptionName(name: string | undefined): boolean {
   );
 }
 
+/**
+ * Hard cap on cause-chain recursion (ShowHelp, UserError, and stack wrapper
+ * causes). Real chains are 1-2 deep; the cap exists so a cyclic or
+ * adversarial cause chain can never stack-overflow the failure-telemetry
+ * path itself.
+ */
+const MAX_CAUSE_DEPTH = 8;
+
 export function classifyCliErrorActionability(error: unknown): CliErrorActionability {
+  return classifyAtDepth(error, 0);
+}
+
+function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
+  if (depth >= MAX_CAUSE_DEPTH) {
+    return toActionability(actionability.unknown, "error", "CauseChainLimit");
+  }
   const tag = readErrorTag(error);
 
   const declared = readDeclaration(error);
@@ -563,28 +588,31 @@ export function classifyCliErrorActionability(error: unknown): CliErrorActionabi
   }
 
   if (tag === "ShowHelp" && isErrorRecord(error)) {
-    const classified = classifyShowHelp(error);
+    const classified = classifyShowHelp(error, depth);
     if (classified !== undefined) return classified;
   }
 
   // effect cli wraps handler failures in UserError({ cause }) — classify the
   // actual failure instead of the wrapper.
   if (tag === "UserError" && isErrorRecord(error) && error["cause"] !== undefined) {
-    return classifyCliErrorActionability(error["cause"]);
+    return classifyAtDepth(error["cause"], depth + 1);
   }
 
   // @supabase/stack wrapper errors preserve the underlying tagged failure in
   // `cause`; classify it when it is more specific than the wrapper (e.g. a
   // daemon-down DockerPullError inside an asset-preparation StackBuildError,
-  // or a local filesystem PlatformError inside a DownloadError).
+  // a user's ProjectConfigParseError inside a reason-less StackBuildError, or
+  // a local filesystem PlatformError inside a DownloadError). Explicit
+  // `invalid_config` StackBuildErrors are deliberate user-facing config
+  // verdicts and are never overridden by their cause.
   if (
     isErrorRecord(error) &&
     (tag === "DownloadError" ||
-      (tag === "StackBuildError" && readString(error, "reason") === "asset_preparation"))
+      (tag === "StackBuildError" && readString(error, "reason") !== "invalid_config"))
   ) {
     const cause = classifiableCause(error);
     if (cause !== undefined) {
-      return classifyCliErrorActionability(cause);
+      return classifyAtDepth(cause, depth + 1);
     }
   }
 
@@ -606,7 +634,7 @@ export function classifyCliErrorActionability(error: unknown): CliErrorActionabi
     // wrapper whenever it is itself classifiable.
     const cause = classifiableCause(error);
     if (cause !== undefined) {
-      return classifyCliErrorActionability(cause);
+      return classifyAtDepth(cause, depth + 1);
     }
     const classify = externalActionabilityByTag["StackError"];
     if (classify !== undefined) {

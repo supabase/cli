@@ -26,3 +26,4 @@ export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export type { ReadyOptions, StackHandle } from "./createStack.ts";
 export type { FunctionsConfig, FunctionsRuntimeConfig } from "./functions.ts";
 export { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
+export { isDockerDaemonDownMessage } from "./errors.ts";

@@ -3,6 +3,7 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  planLimitGatedActionability,
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
 
@@ -16,15 +17,13 @@ const samlDisabledActionability = (
   upgradeSuggested: boolean | undefined,
 ): CliErrorActionabilityDeclaration =>
   upgradeSuggested === true
-    ? { ...actionability.planLimit, fingerprint_suffix: "plan_limit" }
+    ? planLimitGatedActionability
     : { ...actionability.invalidConfig, fingerprint_suffix: "saml_disabled" };
 
 const gatedNotFoundActionability = (
   upgradeSuggested: boolean | undefined,
 ): CliErrorActionabilityDeclaration =>
-  upgradeSuggested === true
-    ? { ...actionability.planLimit, fingerprint_suffix: "plan_limit" }
-    : actionability.invalidInput;
+  upgradeSuggested === true ? planLimitGatedActionability : actionability.invalidInput;
 
 // Shared across show / update / remove: Go's `uuid.Parse` failure.
 // Message intentionally diverges from Go's verbose `failed to parse provider ID: invalid UUID …`

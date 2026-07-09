@@ -2,7 +2,7 @@ import { Cause, Data, Effect, Exit, Layer, Queue, Context, Stream } from "effect
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { ChecksumMismatchError } from "./errors.ts";
-import { DockerPullError } from "./errors.ts";
+import { DockerPullError, isDockerDaemonDownMessage } from "./errors.ts";
 import type { ServiceResolution } from "./resolve.ts";
 import {
   DEFAULT_VERSIONS,
@@ -220,6 +220,9 @@ const pullImage = (
         const attempt = attemptIndex + 1;
         const result = yield* Effect.exit(runPullCommand(spawner, image));
         if (Exit.isSuccess(result)) {
+          // A successful spawn proves the runtime is usable; an earlier
+          // transient spawn failure must not taint the final classification.
+          spawnFailed = false;
           if (result.value.exitCode === 0) {
             return image;
           }
@@ -269,20 +272,6 @@ const pullImage = (
     );
   });
 
-/**
- * Whether the container runtime's output indicates the daemon itself is not
- * running. This is the boundary where docker's text output is produced, so it
- * is the one place allowed to interpret it.
- */
-const isDockerDaemonDownMessage = (message: string): boolean => {
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("cannot connect to the docker daemon") ||
-    normalized.includes("docker daemon is not running") ||
-    normalized.includes("docker desktop is not running") ||
-    normalized.includes("is the docker daemon running")
-  );
-};
 
 const resolveServiceWithMetadata = (
   resolver: BinaryResolver["Service"],

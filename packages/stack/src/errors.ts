@@ -30,6 +30,22 @@ export class DockerPullError extends Data.TaggedError("DockerPullError")<{
   readonly daemonDown: boolean;
 }> {}
 
+/**
+ * Whether a container runtime's output indicates the daemon itself is not
+ * running. This is the boundary vocabulary for `DockerPullError.daemonDown`
+ * and shared with the CLI's legacy docker-run layer so both paths agree on
+ * what "daemon down" looks like.
+ */
+export const isDockerDaemonDownMessage = (message: string): boolean => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("cannot connect to the docker daemon") ||
+    normalized.includes("docker daemon is not running") ||
+    normalized.includes("docker desktop is not running") ||
+    normalized.includes("is the docker daemon running")
+  );
+};
+
 export class StackBuildError extends Data.TaggedError("StackBuildError")<{
   readonly detail: string;
   readonly cause?: unknown;
@@ -70,6 +86,7 @@ export function toStackError(err: unknown): StackError {
         return new StackError({
           code: "SERVICE_NOT_FOUND",
           message: taggedMessage,
+          cause: err,
         });
       case "StackBuildError":
         return new StackError({

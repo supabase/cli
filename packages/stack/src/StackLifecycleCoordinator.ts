@@ -347,7 +347,6 @@ export class StackLifecycleCoordinator extends Context.Service<
                   new StackBuildError({
                     detail: "Failed to persist stack cleanup metadata",
                     cause,
-                    reason: "invalid_config",
                   }),
               ),
             );

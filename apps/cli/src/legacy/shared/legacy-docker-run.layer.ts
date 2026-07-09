@@ -1,3 +1,4 @@
+import { isDockerDaemonDownMessage } from "@supabase/stack";
 import { Effect, Exit, Layer, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
@@ -31,22 +32,6 @@ const RETRYABLE_PULL_PATTERNS = [
   /tls handshake timeout/i,
   /i\/o timeout/i,
 ] as const;
-
-/**
- * Whether the container runtime's output indicates the daemon itself is not
- * running. This is the boundary where docker's text output is produced, so it
- * is the one place allowed to interpret it (feeds
- * `LegacyDockerRunError.daemonDown`).
- */
-const legacyIsDockerDaemonDownMessage = (message: string): boolean => {
-  const normalized = message.toLowerCase();
-  return (
-    normalized.includes("cannot connect to the docker daemon") ||
-    normalized.includes("docker daemon is not running") ||
-    normalized.includes("docker desktop is not running") ||
-    normalized.includes("is the docker daemon running")
-  );
-};
 
 export const legacyDockerRunLayer: Layer.Layer<
   LegacyDockerRun,
@@ -188,7 +173,7 @@ export const legacyDockerRunLayer: Layer.Layer<
           new LegacyDockerRunError({
             message: `failed to pull docker image from all registries: ${failures.join("; ")}`,
             reason: "pull",
-            daemonDown: failures.some(legacyIsDockerDaemonDownMessage),
+            daemonDown: failures.some(isDockerDaemonDownMessage),
           }),
         );
       });

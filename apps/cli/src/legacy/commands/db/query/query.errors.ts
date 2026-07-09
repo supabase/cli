@@ -67,7 +67,8 @@ export class LegacyDbQueryExecError extends Data.TaggedError("LegacyDbQueryExecE
     if (this.transport === true) {
       return { ...actionability.externalNetwork, fingerprint_suffix: "network" };
     }
-    return actionability.invalidInput;
+    // The user's own SQL failed — same bucket as every sibling exec error.
+    return actionability.dbFinding;
   }
 }
 
