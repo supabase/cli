@@ -60,6 +60,13 @@ export class LegacyBranchesCreateUnexpectedStatusError extends Data.TaggedError(
   readonly upgradeSuggested?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 404 means the user-supplied project ref (resolved from `--project-ref`
+    // / env / linked-project file) did not match a project — user input, not
+    // an API failure. Guard against shadowing a confirmed plan gate, since a
+    // gated 4xx is a plan limit rather than a bad ref.
+    if (this.upgradeSuggested !== true && this.status === 404) {
+      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+    }
     return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
   }
 }
@@ -211,6 +218,13 @@ export class LegacyBranchesUpdateUnexpectedStatusError extends Data.TaggedError(
   readonly upgradeSuggested?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 404 means the user-supplied branch id/ref (or ref-shaped input, which
+    // bypasses the resolver lookup) did not match — user input, not an API
+    // failure. Guard against shadowing a confirmed plan gate, since a gated
+    // 4xx is a plan limit rather than a bad ref.
+    if (this.upgradeSuggested !== true && this.status === 404) {
+      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+    }
     return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
   }
 }
@@ -236,6 +250,12 @@ export class LegacyBranchesPauseUnexpectedStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 404 means the user-supplied branch id/ref (or ref-shaped input, which
+    // bypasses the resolver lookup) did not match — user input, not an API
+    // failure.
+    if (this.status === 404) {
+      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+    }
     return statusCodeActionability(this.status);
   }
 }
@@ -261,6 +281,12 @@ export class LegacyBranchesUnpauseUnexpectedStatusError extends Data.TaggedError
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 404 means the user-supplied branch id/ref (or ref-shaped input, which
+    // bypasses the resolver lookup) did not match — user input, not an API
+    // failure.
+    if (this.status === 404) {
+      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+    }
     return statusCodeActionability(this.status);
   }
 }
@@ -286,6 +312,12 @@ export class LegacyBranchesDeleteUnexpectedStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 404 means the user-supplied branch id/ref (or ref-shaped input, which
+    // bypasses the resolver lookup) did not match — user input, not an API
+    // failure.
+    if (this.status === 404) {
+      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+    }
     return statusCodeActionability(this.status);
   }
 }

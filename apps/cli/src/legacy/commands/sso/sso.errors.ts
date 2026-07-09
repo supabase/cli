@@ -152,7 +152,11 @@ export class LegacySsoMetadataUrlNetworkError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    // Fired only during preflight validation of the USER-SUPPLIED
+    // `--metadata-url` (a third-party SAML IDP endpoint), never a Supabase
+    // service — a bad URL that times out / non-200s / is too large is user
+    // input, like its `MetadataUrlInvalid` / `NonUtf8` siblings.
+    return actionability.provideFlags;
   }
 }
 

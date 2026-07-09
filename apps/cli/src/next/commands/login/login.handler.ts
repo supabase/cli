@@ -226,6 +226,7 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
                 suggestion: "Try running `supabase login` again",
                 statusCode,
                 network,
+                decode,
               }),
             );
           }

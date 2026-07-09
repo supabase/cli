@@ -15,12 +15,18 @@ export const LEGACY_LOGIN_MISSING_TOKEN_MESSAGE =
   `Cannot use automatic login flow inside non-TTY environments. ` +
   `Please provide --token flag or set the SUPABASE_ACCESS_TOKEN environment variable.`;
 
-/** Token-path save failure — Go's `cannot save provided token: %w` (`login.go:171`). */
+/**
+ * Token-path save failure — Go's `cannot save provided token: %w`
+ * (`login.go:171`). Only ever constructed on the provided-token paths (`--token`
+ * / `SUPABASE_ACCESS_TOKEN` / piped stdin); the browser flow saves via the raw
+ * `credentials.saveAccessToken`. A malformed provided token is not fixable by
+ * `supabase login`, so the remediation is to correct that input.
+ */
 export class LegacyLoginSaveTokenError extends Data.TaggedError("LegacyLoginSaveTokenError")<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.authLogin;
+    return actionability.authToken;
   }
 }
 
@@ -45,6 +51,11 @@ export class LegacyLoginVerificationError extends Data.TaggedError("LegacyLoginV
   readonly statusCode?: number;
   /** Set when the poll failed at the transport layer (connection/timeout). */
   readonly network?: boolean;
+  /**
+   * Set when the poll response arrived but its body could not be decoded — an
+   * API response problem rather than a transport (network) one.
+   */
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.authLogin;
@@ -63,8 +74,17 @@ export class LegacyLoginFailedError extends Data.TaggedError("LegacyLoginFailedE
   readonly message: string;
   readonly statusCode?: number;
   readonly network?: boolean;
+  /**
+   * Set when the last poll response arrived but its body could not be decoded —
+   * an API response problem rather than a transport (network) one or an
+   * incomplete browser flow.
+   */
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.decode === true) {
+      return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+    }
     if (this.network === true) {
       return { ...actionability.externalNetwork, fingerprint_suffix: "network" };
     }

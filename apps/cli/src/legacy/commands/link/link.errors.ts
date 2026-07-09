@@ -9,14 +9,22 @@ import {
   statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
 
-/** Transport failure while fetching `GET /v1/projects/{ref}`. */
+/** Transport (or body-decode) failure while fetching `GET /v1/projects/{ref}`. */
 export class LegacyLinkProjectStatusNetworkError extends Data.TaggedError(
   "LegacyLinkProjectStatusNetworkError",
 )<{
   readonly message: string;
+  /**
+   * Set when the failure was the generated client rejecting the response body
+   * (`SchemaError` / `HttpBodyError`) rather than a transport failure — an API
+   * response problem instead of a network one.
+   */
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 

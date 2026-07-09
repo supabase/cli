@@ -142,6 +142,7 @@ export const legacyBrowserLogin = Effect.fnUntraced(function* (opts: LegacyBrows
                 message: err.message,
                 statusCode: err.statusCode,
                 network: err.network,
+                decode: err.decode,
               }),
             );
           }

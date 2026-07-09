@@ -32,11 +32,20 @@ export class LoginFailedError extends Data.TaggedError("LoginFailedError")<{
   readonly suggestion: string;
   readonly statusCode?: number;
   readonly network?: boolean;
+  /**
+   * Set when the last poll failed decoding an otherwise-received response body
+   * (no status code to classify by) — an API response problem rather than a
+   * transport (network) one or an incomplete browser flow.
+   */
+  readonly decode?: boolean;
 }> {
   override get message() {
     return `${this.detail}\n  Suggestion: ${this.suggestion}`;
   }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.decode === true) {
+      return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+    }
     if (this.network === true) {
       return { ...actionability.externalNetwork, fingerprint_suffix: "network" };
     }
