@@ -1,3 +1,4 @@
+import { isDockerDaemonDownMessage } from "@supabase/stack";
 import { Data, Effect, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
@@ -43,8 +44,19 @@ export class LegacyDockerLifecycleInspectError extends Data.TaggedError(
   "LegacyDockerLifecycleInspectError",
 )<{
   readonly message: string;
+  /**
+   * Set at the docker boundary when the runtime's own output indicates the
+   * daemon itself is unreachable (detected via `isDockerDaemonDownMessage`, so
+   * consumers never sniff `message` text). Daemon-down is docker-not-running;
+   * every other inspect failure (the dominant "stack isn't running yet" case)
+   * keeps the `startStack` classification.
+   */
+  readonly daemonDown?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.daemonDown === true) {
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    }
     return actionability.startStack;
   }
 }
@@ -155,12 +167,13 @@ export const legacyInspectContainerState = (spawner: Spawner, containerId: strin
           stderr: "pipe",
         },
       ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new LegacyDockerLifecycleInspectError({
-              message: `failed to inspect container health: ${legacyDescribeContainerCliFailure(cause)}`,
-            }),
-        ),
+        Effect.mapError((cause) => {
+          const description = legacyDescribeContainerCliFailure(cause);
+          return new LegacyDockerLifecycleInspectError({
+            message: `failed to inspect container health: ${description}`,
+            daemonDown: isDockerDaemonDownMessage(description),
+          });
+        }),
       );
       // Concurrency is required, not cosmetic — see the matching comment in
       // `legacyListContainersByLabel` above.
@@ -187,6 +200,7 @@ export const legacyInspectContainerState = (spawner: Spawner, containerId: strin
               message.length > 0
                 ? `failed to inspect container health: ${message}`
                 : "failed to inspect container health",
+            daemonDown: isDockerDaemonDownMessage(message),
           }),
         );
       }

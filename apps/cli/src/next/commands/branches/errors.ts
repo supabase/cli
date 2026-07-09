@@ -17,9 +17,16 @@ export class BranchNotFoundError extends Data.TaggedError("BranchNotFoundError")
 export class NoBranchNameError extends Data.TaggedError("NoBranchNameError")<{
   readonly detail: string;
   readonly suggestion: string;
+  /**
+   * Set when the user declined the "create branch named …?" prompt: the
+   * failure is a deliberate cancellation, not missing input. Left unset for
+   * the genuine "no name and no way to obtain one" paths, which stay
+   * `provideFlags`.
+   */
+  readonly cancelled?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
+    return this.cancelled === true ? actionability.cancelled : actionability.provideFlags;
   }
 }
 

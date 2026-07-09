@@ -17,8 +17,19 @@ import {
 export class FunctionsApiStatusError extends Data.TaggedError("FunctionsApiStatusError")<{
   readonly status: number;
   readonly message: string;
+  /**
+   * Set when the failure is a successful-status response whose body could not
+   * be decoded (status is 200/201 but the JSON is malformed / unexpected).
+   * That is an API-response problem, not a raw status failure, so it classifies
+   * as `api_status` with the `api_response` fingerprint ahead of the
+   * status-code policy.
+   */
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.decode === true) {
+      return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+    }
     return statusCodeActionability(this.status);
   }
 }

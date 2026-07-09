@@ -14,8 +14,22 @@ import {
  */
 export class LegacyMigraDiffError extends Data.TaggedError("LegacyMigraDiffError")<{
   readonly message: string;
+  /**
+   * Threaded from a wrapped `LegacyDockerRunError` in the OOM bash fallback so a
+   * docker-boundary failure (docker daemon down or registry pull) does not
+   * misclassify as a user-SQL (`dbFinding`) failure. `daemon` maps to
+   * docker-not-running, `pull` to an external network problem. `undefined` for
+   * genuine diff/script failures, which keep the user-SQL classification.
+   */
+  readonly docker?: "daemon" | "pull";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.docker === "daemon") {
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    }
+    if (this.docker === "pull") {
+      return { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" };
+    }
     return actionability.dbFinding;
   }
 }

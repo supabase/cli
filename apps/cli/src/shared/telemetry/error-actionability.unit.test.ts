@@ -127,6 +127,14 @@ describe("classifyCliErrorActionability", () => {
     });
     expect(auth.error_category).toBe("auth");
 
+    const notFound = classifyCliErrorActionability({
+      _tag: "HttpClientError",
+      response: { status: 404 },
+    });
+    expect(notFound.error_kind).toBe("user_actionable");
+    expect(notFound.error_category).toBe("invalid_input");
+    expect(notFound.error_fingerprint).toBe("tag:HttpClientError:not_found");
+
     const status = classifyCliErrorActionability({
       _tag: "HttpClientError",
       response: { status: 503 },
@@ -264,6 +272,16 @@ describe("classifyCliErrorActionability", () => {
     });
     expect(result.error_category).toBe("auth");
     expect(result.suggestion_type).toBe("set_env_var");
+  });
+
+  it("classifies API client input-schema rejections as invalid user input", () => {
+    const result = classifyCliErrorActionability({
+      _tag: "SupabaseApiInputError",
+      message: "ref must match pattern",
+    });
+    expect(result.error_kind).toBe("user_actionable");
+    expect(result.error_category).toBe("invalid_input");
+    expect(result.error_fingerprint).toBe("tag:SupabaseApiInputError:request_input");
   });
 
   it("caps cause-chain recursion instead of overflowing on cycles", () => {

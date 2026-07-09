@@ -25,4 +25,17 @@ describe("FunctionsApiStatusError actionability", () => {
     );
     expect(result.error_category).toBe("api_status");
   });
+
+  it("classifies a successful-status decode failure as an api-response problem", () => {
+    const result = classifyCliErrorActionability(
+      new FunctionsApiStatusError({
+        status: 201,
+        message: "failed to read deploy response: unexpected token",
+        decode: true,
+      }),
+    );
+    expect(result.error_kind).toBe("external_service");
+    expect(result.error_category).toBe("api_status");
+    expect(result.error_fingerprint).toBe("tag:FunctionsApiStatusError:api_response");
+  });
 });

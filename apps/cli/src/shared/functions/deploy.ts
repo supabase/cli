@@ -1604,6 +1604,7 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
       new FunctionsApiStatusError({
         status: response.status,
         message: `failed to read deploy response: ${error instanceof Error ? error.message : String(error)}`,
+        decode: true,
       }),
   });
 });
@@ -1737,6 +1738,7 @@ const upsertBundledFunction = Effect.fnUntraced(function* (
             new FunctionsApiStatusError({
               status: response.value.status,
               message: `failed to read function response: ${error instanceof Error ? error.message : String(error)}`,
+              decode: true,
             }),
         });
       }

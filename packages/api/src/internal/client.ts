@@ -47,7 +47,8 @@ export interface SupabaseApiClientOptions {
 export type SupabaseApiError =
   | HttpBody.HttpBodyError
   | HttpClientError.HttpClientError
-  | SchemaError;
+  | SchemaError
+  | SupabaseApiInputError;
 
 export interface SupabaseApiClientShape {
   readonly execute: <Id extends OperationId>(
@@ -79,6 +80,23 @@ export class SupabaseApiConfigError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "SupabaseApiConfigError";
+  }
+}
+
+/**
+ * The generated client's input schema rejected the request input before any
+ * request was sent (e.g. a user-supplied project ref that violates the `ref`
+ * pattern). Raised only on the request-input encoding/validation phase, so it
+ * is distinguishable from a response-decode {@link SchemaError}: the former is
+ * a user-input problem, the latter an API-response problem. The original
+ * schema failure is preserved as `cause`.
+ */
+export class SupabaseApiInputError extends Error {
+  readonly _tag = "SupabaseApiInputError";
+
+  constructor(message: string, options?: { readonly cause?: unknown }) {
+    super(message, options);
+    this.name = "SupabaseApiInputError";
   }
 }
 
@@ -516,7 +534,9 @@ export function makeSupabaseApiClient(
     return {
       execute: (definition, input) =>
         Effect.gen(function* () {
-          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input);
+          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input).pipe(
+            Effect.mapError((error) => new SupabaseApiInputError(error.message, { cause: error })),
+          );
           const response = yield* executeRequest(prepared, definition, validated);
           if (isJsonOperation(definition)) {
             return yield* decodeJsonResponse(definition, response);
@@ -531,7 +551,9 @@ export function makeSupabaseApiClient(
         }),
       executeRaw: (definition, input, headers) =>
         Effect.gen(function* () {
-          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input);
+          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input).pipe(
+            Effect.mapError((error) => new SupabaseApiInputError(error.message, { cause: error })),
+          );
           const request = yield* buildRequest(definition, validated).pipe(
             Effect.map((request) =>
               headers === undefined ? request : HttpClientRequest.setHeaders(request, headers),

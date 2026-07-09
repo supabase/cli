@@ -86,8 +86,15 @@ export class LegacyDbPullWriteError extends Data.TaggedError("LegacyDbPullWriteE
 export class LegacyDbPullDumpError extends Data.TaggedError("LegacyDbPullDumpError")<{
   readonly message: string;
   readonly suggestion?: string;
+  /**
+   * Set when the failure is opening/truncating the local migration file before
+   * any pg_dump attempt — a filesystem permission problem, not a database
+   * connection failure. The actual pg_dump-run failures leave it unset and keep
+   * the `dbConnection` classification.
+   */
+  readonly fileOpen?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbConnection;
+    return this.fileOpen === true ? actionability.permission : actionability.dbConnection;
   }
 }

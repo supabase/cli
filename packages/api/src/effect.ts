@@ -12,7 +12,7 @@ import {
 } from "./generated/effect-client.ts";
 
 export type { SupabaseApiError, SupabaseApiRetryOptions } from "./internal/client.ts";
-export { SupabaseApiConfigError } from "./internal/client.ts";
+export { SupabaseApiConfigError, SupabaseApiInputError } from "./internal/client.ts";
 export type { SupabaseApiClientOptions, SupabaseApiConfig } from "./internal/client.ts";
 export { apiConfigLayer, DEFAULT_SUPABASE_API_URL } from "./config/api-config.layer.ts";
 export { ApiConfig } from "./config/api-config.service.ts";

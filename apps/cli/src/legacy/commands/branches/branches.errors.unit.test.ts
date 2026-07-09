@@ -89,3 +89,26 @@ describe("gated branch operation 404s", () => {
     expect(result.suggestion_type).toBe("upgrade_plan");
   });
 });
+
+describe("branches create 409 = duplicate branch name", () => {
+  it("create 409 without an upgrade gate → invalid input (conflict)", () => {
+    const result = classifyCliErrorActionability(
+      new LegacyBranchesCreateUnexpectedStatusError({ status: 409, ...body }),
+    );
+    expect(result.error_kind).toBe("user_actionable");
+    expect(result.error_category).toBe("invalid_input");
+    expect(result.error_fingerprint).toBe("tag:LegacyBranchesCreateUnexpectedStatusError:conflict");
+  });
+
+  it("create: a confirmed plan gate is not shadowed by the 409 branch", () => {
+    const result = classifyCliErrorActionability(
+      new LegacyBranchesCreateUnexpectedStatusError({
+        status: 409,
+        ...body,
+        upgradeSuggested: true,
+      }),
+    );
+    expect(result.error_category).toBe("plan_limit");
+    expect(result.suggestion_type).toBe("upgrade_plan");
+  });
+});

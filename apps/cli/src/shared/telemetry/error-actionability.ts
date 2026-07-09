@@ -476,6 +476,15 @@ const externalActionabilityByTag: Record<
   // access token / bad configuration); remediation is the token env var.
   SupabaseApiConfigError: () => actionability.authToken,
 
+  // @supabase/api — the generated client's input schema rejected the request
+  // input before any request was sent (e.g. a user-supplied project ref that
+  // violates the `ref` pattern). The fix is the user's own input, so this is
+  // invalid input — distinct from the response-decode SchemaError below.
+  SupabaseApiInputError: () => ({
+    ...actionability.invalidInput,
+    fingerprint_suffix: "request_input",
+  }),
+
   // effect/unstable/http — generated Management API client transport/decoding
   HttpClientError: (error) => {
     const reason = error["reason"];
@@ -484,6 +493,7 @@ const externalActionabilityByTag: Record<
     const status = isErrorRecord(response) ? readNumber(response, "status") : undefined;
     if (status === 401) return { ...actionability.authLogin, fingerprint_suffix: "auth" };
     if (status === 403) return { ...actionability.accountAccess, fingerprint_suffix: "forbidden" };
+    if (status === 404) return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
     if (reasonTag === "StatusCodeError" || isErrorRecord(response)) {
       return { ...actionability.apiStatus, fingerprint_suffix: "api_status" };
     }
