@@ -1,6 +1,8 @@
 import * as nodePath from "node:path";
 import { Option } from "effect";
 
+import { legacyToDockerPath } from "../../../shared/legacy-docker-path.ts";
+
 export interface LegacyPgProveArgs {
   /** Full `pg_prove` argv (without the leading binary, which the image provides). */
   readonly cmd: ReadonlyArray<string>;
@@ -8,17 +10,6 @@ export interface LegacyPgProveArgs {
   readonly binds: ReadonlyArray<string>;
   /** Container working directory (dir of the first test path). */
   readonly workingDir: Option.Option<string>;
-}
-
-/**
- * Translate an absolute host path to its in-container mount path. Mirrors Go's
- * `utils.ToDockerPath` (`apps/cli-go/internal/utils/deno.go:268`): strip a
- * Windows volume name (`C:`) and convert backslashes to forward slashes.
- */
-export function legacyToDockerPath(absHostPath: string): string {
-  const slashed = absHostPath.replaceAll("\\", "/");
-  const volumeMatch = /^[A-Za-z]:/.exec(absHostPath);
-  return volumeMatch === null ? slashed : slashed.slice(volumeMatch[0].length);
 }
 
 /**

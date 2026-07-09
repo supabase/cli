@@ -1,12 +1,12 @@
 import type { ProjectConfig } from "@supabase/config";
 
-import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
-import { legacyServiceContainerIds } from "../../shared/legacy-docker-ids.ts";
+import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
+import { legacyServiceContainerIds } from "./legacy-docker-ids.ts";
 import {
   legacyEnvOverrideBool,
   legacyResolveLocalConfigValues,
   type LegacyLocalConfigValues,
-} from "../../shared/legacy-local-config-values.ts";
+} from "./legacy-local-config-values.ts";
 
 /**
  * Port of Go's `status.CustomName` + `toValues()` (`internal/status/status.go:29-97`).

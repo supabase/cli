@@ -27,6 +27,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
 import { parseDotEnv } from "../../legacy/shared/legacy-dotenv.ts";
+import { resolveRemoteJwks, resolveThirdPartyIssuerUrl, toPublicJwk } from "../auth/jwks.ts";
 import { Output } from "../output/output.service.ts";
 import {
   FileWatcher,
@@ -82,11 +83,9 @@ const ignoredDirNames = new Set([
 ]);
 const dockerLogRetryDelay = Duration.millis(400);
 const dockerLogDiagnosticTailLength = 4_096;
-const remoteJwksTimeoutMs = 10_000;
 const legacyDefaultEdgeRuntimeVersion = "v1.74.2";
 const defaultSupabaseEnv = "development";
 const serveMainContainerPath = "/root/index.ts";
-const clerkDomainPattern = /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/;
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 let cachedLegacyFunctionsServeMainTemplate: string | undefined;
 const watchIgnoreGlobs = [
@@ -140,7 +139,7 @@ interface PlainServeAuthConfig {
   readonly third_party: ProjectConfig["auth"]["third_party"];
 }
 
-interface PlainServeEdgeRuntimeConfig {
+export interface PlainServeEdgeRuntimeConfig {
   readonly policy: ProjectConfig["edge_runtime"]["policy"];
   readonly inspector_port: number;
   readonly deno_version?: number;
@@ -171,10 +170,90 @@ interface WatchSpec {
   readonly matchPaths?: ReadonlySet<string>;
 }
 
-interface StartedRuntime {
+export interface StartedRuntime {
   readonly containerId: string;
   readonly cleanup: Effect.Effect<void>;
   readonly watchSpecs: ReadonlyArray<WatchSpec>;
+}
+
+/**
+ * Every already-resolved secret/key {@link startEdgeRuntimeContainer} needs,
+ * matching {@link resolveAuthArtifacts}'s return shape. Named and exported so
+ * a caller outside this module (`start`'s own edge-runtime bring-up,
+ * `legacy/commands/start/services/edge-runtime.service.ts`) can build the
+ * exact same shape from values it has already resolved itself, instead of
+ * calling {@link resolveAuthArtifacts} (which re-reads `config.toml`/signing
+ * keys independently — correct for the standalone `functions serve` command,
+ * but would risk resolving different secrets than the rest of a `start`
+ * stack for a caller that already has these values).
+ */
+export interface ServeAuthArtifacts {
+  readonly publishableKey: string;
+  readonly secretKey: string;
+  readonly jwtSecret: string;
+  readonly anonKey: string;
+  readonly serviceRoleKey: string;
+  readonly jwks: string;
+}
+
+/**
+ * Everything {@link startEdgeRuntimeContainer} needs from `config.toml`
+ * beyond auth (see {@link ServeAuthArtifacts}) — a narrowed, exported view of
+ * {@link ServeResolvedConfig} (which also carries `auth`/`configPath`, used
+ * only to resolve {@link ServeAuthArtifacts} and therefore irrelevant once
+ * those are already resolved). `start`'s own bring-up builds this directly
+ * from its own already-loaded `ProjectConfig` via {@link toPlainEdgeRuntimeConfig}/
+ * {@link toPlainFunctionRecord}/`inferFunctionsManifest` (`@supabase/config`)
+ * rather than going through {@link resolveServeConfig}'s independent
+ * config-loading pipeline.
+ */
+export interface ServeEdgeRuntimeContainerConfig {
+  readonly projectId: string;
+  readonly apiPort: number;
+  readonly edgeRuntimePolicy: string;
+  readonly edgeRuntimeInspectorPort: number;
+  readonly edgeRuntimeSecrets: Readonly<Record<string, string>>;
+  readonly configDeclaredFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
+  readonly configFunctions: Readonly<Record<string, ManifestFunctionConfig>>;
+  readonly rawConfigFunctions: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+}
+
+/**
+ * Input to {@link startEdgeRuntimeContainer} — the reusable "bring up one
+ * Edge Runtime container" core extracted from `serveFunctions`'s interactive
+ * loop, kept independent of BOTH `functions serve`'s own config-loading
+ * (`resolveServeConfig`/`resolveAuthArtifacts`) and its file-watch/log-stream
+ * loop, so `start`'s bring-up can call it directly with values it has already
+ * resolved through its own pipeline (see `internal-db-connection.ts` for why
+ * {@link dbUrl} specifically must be caller-supplied rather than hardcoded).
+ */
+export interface StartEdgeRuntimeContainerInput {
+  readonly config: ServeEdgeRuntimeContainerConfig;
+  readonly authArtifacts: ServeAuthArtifacts;
+  /**
+   * `SUPABASE_DB_URL`. Deliberately NOT hardcoded in the shared core: Go's own
+   * two callers resolve this differently — standalone `functions serve`
+   * (`restartEdgeRuntime`, `serve.go:122`) always uses the `db` network alias
+   * (`postgresql://postgres:postgres@db:5432/postgres`, matching
+   * {@link legacyDefaultServeDbUrl} below), while `start`'s direct call
+   * (`start.go:66-72,1103`) uses the real `dbConfig` — the `db` container's
+   * own sanitized name and `config.db.password` — NOT the alias. Every caller
+   * must supply its own Go-accurate value; this module does not choose one.
+   */
+  readonly dbUrl: string;
+  /** Already-resolved edge-runtime image reference (registry-mapped, tag/deno-version already applied). */
+  readonly image: string;
+  readonly projectRoot: string;
+  readonly supabaseDir: string;
+  readonly flagCwd: string;
+  readonly platform: NodeJS.Platform;
+  readonly debug: boolean;
+  readonly networkId: string;
+  readonly envFile: Option.Option<string>;
+  readonly importMap: Option.Option<string>;
+  readonly noVerifyJwt: Option.Option<boolean>;
+  readonly inspectMode: FunctionsServeInspectMode | undefined;
+  readonly inspectMain: boolean;
 }
 
 type SigningKeyJwk = JsonWebKeyInput["key"] & {
@@ -294,7 +373,14 @@ function toPlainAuthConfig(
   };
 }
 
-function toPlainEdgeRuntimeConfig(
+/**
+ * Exported so `start`'s own edge-runtime bring-up
+ * (`legacy/commands/start/services/edge-runtime.service.ts`) can reuse this
+ * exact `Redacted`-unwrapping/key-uppercasing logic against its own,
+ * already-loaded `ProjectConfig` instead of duplicating it — see
+ * {@link ServeEdgeRuntimeContainerConfig}'s doc comment.
+ */
+export function toPlainEdgeRuntimeConfig(
   edgeRuntime: ProjectConfig["edge_runtime"] | ResolvedProjectValue<ProjectConfig["edge_runtime"]>,
 ): PlainServeEdgeRuntimeConfig {
   return {
@@ -309,7 +395,8 @@ function toPlainEdgeRuntimeConfig(
   };
 }
 
-function toPlainFunctionRecord(
+/** Exported for the same reason as {@link toPlainEdgeRuntimeConfig}. */
+export function toPlainFunctionRecord(
   functions: ProjectConfig["functions"] | ResolvedProjectValue<ProjectConfig["functions"]>,
 ): Readonly<Record<string, ManifestFunctionConfig>> {
   return Object.fromEntries(
@@ -394,137 +481,6 @@ async function readSigningKeys(pathname: string): Promise<ReadonlyArray<SigningK
   return decoded as ReadonlyArray<SigningKeyJwk>;
 }
 
-function toPublicSigningKey(signingKey: SigningKeyJwk): SigningKeyJwk {
-  if (signingKey.kty === "RSA") {
-    return {
-      kty: "RSA",
-      kid: signingKey.kid,
-      use: signingKey.use,
-      key_ops: signingKey.key_ops?.filter((operation: string) => operation === "verify"),
-      alg: signingKey.alg,
-      ext: signingKey.ext,
-      n: signingKey.n,
-      e: signingKey.e,
-    };
-  }
-
-  return {
-    kty: "EC",
-    kid: signingKey.kid,
-    use: signingKey.use,
-    key_ops: signingKey.key_ops?.filter((operation: string) => operation === "verify"),
-    alg: signingKey.alg,
-    ext: signingKey.ext,
-    crv: signingKey.crv,
-    x: signingKey.x,
-    y: signingKey.y,
-  };
-}
-
-function enabledThirdPartyIssuer(thirdParty: PlainServeAuthConfig["third_party"]) {
-  const enabledProviders = [
-    thirdParty.firebase.enabled ? "firebase" : undefined,
-    thirdParty.auth0.enabled ? "auth0" : undefined,
-    thirdParty.aws_cognito.enabled ? "aws_cognito" : undefined,
-    thirdParty.clerk.enabled ? "clerk" : undefined,
-    thirdParty.workos.enabled ? "workos" : undefined,
-  ].filter((value): value is NonNullable<typeof value> => value !== undefined);
-
-  if (enabledProviders.length > 1) {
-    throw new Error(
-      "Invalid config: Only one third_party provider allowed to be enabled at a time.",
-    );
-  }
-
-  if (thirdParty.firebase.enabled) {
-    if ((thirdParty.firebase.project_id ?? "").length === 0) {
-      throw new Error(
-        "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
-      );
-    }
-    return `https://securetoken.google.com/${thirdParty.firebase.project_id}`;
-  }
-
-  if (thirdParty.auth0.enabled) {
-    if ((thirdParty.auth0.tenant ?? "").length === 0) {
-      throw new Error("Invalid config: auth.third_party.auth0 is enabled but without a tenant.");
-    }
-    return thirdParty.auth0.tenant_region
-      ? `https://${thirdParty.auth0.tenant}.${thirdParty.auth0.tenant_region}.auth0.com`
-      : `https://${thirdParty.auth0.tenant}.auth0.com`;
-  }
-
-  if (thirdParty.aws_cognito.enabled) {
-    if ((thirdParty.aws_cognito.user_pool_id ?? "").length === 0) {
-      throw new Error(
-        "Invalid config: auth.third_party.cognito is enabled but without a user_pool_id.",
-      );
-    }
-    if ((thirdParty.aws_cognito.user_pool_region ?? "").length === 0) {
-      throw new Error(
-        "Invalid config: auth.third_party.cognito is enabled but without a user_pool_region.",
-      );
-    }
-    return `https://cognito-idp.${thirdParty.aws_cognito.user_pool_region}.amazonaws.com/${thirdParty.aws_cognito.user_pool_id}`;
-  }
-
-  if (thirdParty.clerk.enabled) {
-    const domain = thirdParty.clerk.domain;
-    if (domain === undefined || domain.length === 0) {
-      throw new Error("Invalid config: auth.third_party.clerk is enabled but without a domain.");
-    }
-    if (!clerkDomainPattern.test(domain)) {
-      throw new Error(
-        "Invalid config: auth.third_party.clerk has invalid domain, it usually is like clerk.example.com or example.clerk.accounts.dev. Check https://clerk.com/setup/supabase on how to find the correct value.",
-      );
-    }
-    return `https://${domain}`;
-  }
-
-  if (thirdParty.workos.enabled) {
-    if ((thirdParty.workos.issuer_url ?? "").length === 0) {
-      throw new Error(
-        "Invalid config: auth.third_party.workos is enabled but without a issuer_url.",
-      );
-    }
-    return thirdParty.workos.issuer_url;
-  }
-
-  return undefined;
-}
-
-async function resolveRemoteJwks(issuerUrl: string): Promise<ReadonlyArray<unknown>> {
-  const discoveryResponse = await fetch(`${issuerUrl}/.well-known/openid-configuration`, {
-    signal: AbortSignal.timeout(remoteJwksTimeoutMs),
-  });
-  if (!discoveryResponse.ok) {
-    throw new Error(`Failed to fetch ${issuerUrl}/.well-known/openid-configuration`);
-  }
-
-  const discovery = (await discoveryResponse.json()) as { jwks_uri?: string };
-  if (typeof discovery.jwks_uri !== "string" || discovery.jwks_uri.length === 0) {
-    throw new Error(
-      `auth.third_party: OIDC configuration at URL "${issuerUrl}/.well-known/openid-configuration" does not expose a jwks_uri property`,
-    );
-  }
-
-  const jwksResponse = await fetch(discovery.jwks_uri, {
-    signal: AbortSignal.timeout(remoteJwksTimeoutMs),
-  });
-  if (!jwksResponse.ok) {
-    throw new Error(`Failed to fetch ${discovery.jwks_uri}`);
-  }
-
-  const jwks = (await jwksResponse.json()) as { keys?: ReadonlyArray<unknown> };
-  if (!Array.isArray(jwks.keys) || jwks.keys.length === 0) {
-    throw new Error(
-      `auth.third_party: JWKS at URL "${discovery.jwks_uri}" as discovered from "${issuerUrl}/.well-known/openid-configuration" does not contain any JWK keys`,
-    );
-  }
-
-  return jwks.keys;
-}
-
 const resolveAuthArtifacts = Effect.fnUntraced(function* (
   auth: PlainServeAuthConfig,
   configPath: string | undefined,
@@ -576,7 +532,7 @@ const resolveAuthArtifacts = Effect.fnUntraced(function* (
   const shouldUseJwtSecretFallback = signingKeysPath.length === 0;
 
   const keys: unknown[] = [];
-  const issuerUrl = enabledThirdPartyIssuer(auth.third_party);
+  const issuerUrl = resolveThirdPartyIssuerUrl(auth.third_party);
   if (issuerUrl !== undefined) {
     const remoteJwks = yield* Effect.tryPromise({
       try: () => resolveRemoteJwks(issuerUrl),
@@ -586,7 +542,7 @@ const resolveAuthArtifacts = Effect.fnUntraced(function* (
   }
   keys.push(
     ...(signingKeys.length > 0
-      ? signingKeys.map(toPublicSigningKey)
+      ? signingKeys.map(toPublicJwk)
       : shouldUseJwtSecretFallback
         ? [defaultSigningKey]
         : []),
@@ -692,7 +648,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
     configFunctions,
     rawConfigFunctions: rawFunctionConfigRecord(loadedConfig?.document),
     configPath: loadedConfig?.path,
-  };
+  } satisfies ServeResolvedConfig;
 });
 
 export function resolveFunctionsServeInspectMode(
@@ -1268,7 +1224,10 @@ function edgeRuntimeImageTag(version: string) {
 const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
   projectRoot: string,
   supabaseDir: string,
-  config: ServeResolvedConfig,
+  config: Pick<
+    ServeEdgeRuntimeContainerConfig,
+    "configDeclaredFunctions" | "configFunctions" | "rawConfigFunctions"
+  >,
   importMapOverride: Option.Option<string>,
   noVerifyJwtOverride: Option.Option<boolean>,
   flagCwd: string,
@@ -1287,62 +1246,38 @@ const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
   });
 });
 
-const startEdgeRuntime = Effect.fnUntraced(function* (input: {
-  readonly flags: FunctionsServeFlags;
-  readonly dependencies: FunctionsServeDependencies;
-  readonly debug: boolean;
-  readonly networkId: Option.Option<string>;
-  readonly inspectMode: FunctionsServeInspectMode | undefined;
-}) {
-  const output = yield* Output;
-
-  if (!(yield* isDockerRunning())) {
-    return yield* Effect.fail(
-      new Error(
-        "failed to run docker. Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop",
-      ),
-    );
-  }
-
-  const resolved = yield* resolveServeConfig(
-    input.dependencies.projectRoot,
-    input.dependencies.projectIdOverride,
-    input.dependencies.goViperCompat,
-  );
-  const projectId = resolved.projectId;
-  const containerId = localDockerId("edge_runtime", projectId);
-  let ownsRuntime = false;
-  return yield* Effect.gen(function* () {
-    const networkMode = Option.getOrElse(input.networkId, () =>
-      localDockerId("network", projectId),
-    );
-    const authArtifacts = yield* resolveAuthArtifacts(resolved.auth, resolved.configPath);
-    const edgeRuntimeVersionOverride = yield* Effect.tryPromise(() =>
-      readFile(join(input.dependencies.supabaseDir, ".temp", "edge-runtime-version"), "utf8"),
-    ).pipe(
-      Effect.map((value) => value.trim()),
-      Effect.catch(() => Effect.succeed("")),
-      Effect.map((value) => value || legacyDefaultEdgeRuntimeVersion),
-    );
-    const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
-      resolved.edgeRuntime.deno_version,
-      edgeRuntimeVersionOverride,
-    );
-
-    yield* assertLocalDbRunning(projectId);
-    yield* bestEffortRemoveContainer(containerId);
-    ownsRuntime = true;
+/**
+ * The reusable "bring up one Edge Runtime container" core — Go's
+ * `ServeFunctions` (`internal/functions/serve/serve.go:135-252`), called both
+ * by standalone `functions serve` (indirectly, via `startEdgeRuntime` below,
+ * mirroring Go's `restartEdgeRuntime` wrapper) and directly by `start`'s own
+ * bring-up (`internal/start/start.go:1101-1108`, no wrapper step in between).
+ * Deliberately excludes everything `ServeFunctions` itself excludes too: no
+ * config-loading (caller resolves {@link StartEdgeRuntimeContainerInput.config}/
+ * {@link StartEdgeRuntimeContainerInput.authArtifacts} itself, matching how
+ * Go's two callers each resolve `config.toml`/secrets once, independently, and
+ * pass already-resolved values/strings into this shared core — see
+ * `serve.go:141-151` vs. `start.go:66-72`), no file-watching, and no log
+ * streaming (`serveFunctions`'s own loop, below, still owns both of those for
+ * the standalone command).
+ */
+export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeContainer")(
+  function* (input: StartEdgeRuntimeContainerInput) {
+    const output = yield* Output;
+    const projectId = input.config.projectId;
+    const containerId = localDockerId("edge_runtime", projectId);
+    const networkMode = input.networkId;
 
     const functionConfigs = yield* resolveServeFunctionConfigs(
-      input.dependencies.projectRoot,
-      input.dependencies.supabaseDir,
-      resolved,
-      input.flags.importMap,
-      input.flags.noVerifyJwt,
-      input.dependencies.flagCwd,
+      input.projectRoot,
+      input.supabaseDir,
+      input.config,
+      input.importMap,
+      input.noVerifyJwt,
+      input.flagCwd,
     );
 
-    const functionsDir = join(input.dependencies.projectRoot, functionsDirName);
+    const functionsDir = join(input.projectRoot, functionsDirName);
     const functionBinds = new Set<string>();
     const functionsConfig: Record<string, ServeFunctionContainerConfig> = {};
 
@@ -1355,7 +1290,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       const bindWarnings: string[] = [];
       for (const bind of yield* Effect.promise(() =>
         buildDockerBinds(projectId, functionsDir, functionsDir, config, {
-          additionalModuleRoots: [input.dependencies.flagCwd],
+          additionalModuleRoots: [input.flagCwd],
           skipMissingImportMapTargets: true,
           onWarning: async (message) => {
             bindWarnings.push(message);
@@ -1372,10 +1307,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
           new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
         );
       }
-      functionsConfig[config.slug] = toFunctionContainerConfig(
-        input.dependencies.projectRoot,
-        config,
-      );
+      functionsConfig[config.slug] = toFunctionContainerConfig(input.projectRoot, config);
     }
 
     const binds = new Set(functionBinds);
@@ -1385,20 +1317,20 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
 
     const env = [
       ...(yield* parseCustomEnvFile(
-        input.flags.envFile,
-        input.dependencies.projectRoot,
-        input.dependencies.flagCwd,
-        resolved.edgeRuntime.secrets,
+        input.envFile,
+        input.projectRoot,
+        input.flagCwd,
+        input.config.edgeRuntimeSecrets,
       )),
       "SUPABASE_URL=http://kong:8000",
-      `SUPABASE_ANON_KEY=${authArtifacts.anonKey}`,
-      `SUPABASE_SERVICE_ROLE_KEY=${authArtifacts.serviceRoleKey}`,
-      "SUPABASE_DB_URL=postgresql://postgres:postgres@db:5432/postgres",
-      `SUPABASE_INTERNAL_PUBLISHABLE_KEY=${authArtifacts.publishableKey}`,
-      `SUPABASE_INTERNAL_SECRET_KEY=${authArtifacts.secretKey}`,
-      `SUPABASE_INTERNAL_JWT_SECRET=${authArtifacts.jwtSecret}`,
-      `SUPABASE_JWKS=${authArtifacts.jwks}`,
-      `SUPABASE_INTERNAL_HOST_PORT=${resolved.apiPort}`,
+      `SUPABASE_ANON_KEY=${input.authArtifacts.anonKey}`,
+      `SUPABASE_SERVICE_ROLE_KEY=${input.authArtifacts.serviceRoleKey}`,
+      `SUPABASE_DB_URL=${input.dbUrl}`,
+      `SUPABASE_INTERNAL_PUBLISHABLE_KEY=${input.authArtifacts.publishableKey}`,
+      `SUPABASE_INTERNAL_SECRET_KEY=${input.authArtifacts.secretKey}`,
+      `SUPABASE_INTERNAL_JWT_SECRET=${input.authArtifacts.jwtSecret}`,
+      `SUPABASE_JWKS=${input.authArtifacts.jwks}`,
+      `SUPABASE_INTERNAL_HOST_PORT=${input.config.apiPort}`,
       `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${JSON.stringify(functionsConfig)}`,
       ...(input.debug ? ["SUPABASE_INTERNAL_DEBUG=true"] : []),
     ];
@@ -1424,8 +1356,8 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       "start",
       "--main-service=/root",
       `--port=${dockerRuntimeServerPort}`,
-      `--policy=${resolved.edgeRuntime.policy}`,
-      ...buildFunctionsServeInspectArgs(input.inspectMode, input.flags.inspectMain),
+      `--policy=${input.config.edgeRuntimePolicy}`,
+      ...buildFunctionsServeInspectArgs(input.inspectMode, input.inspectMain),
       ...(input.debug ? ["--verbose"] : []),
     ];
     const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());
@@ -1442,7 +1374,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       "--network-alias",
       "edge_runtime",
       "--workdir",
-      toDockerPath(input.dependencies.projectRoot),
+      toDockerPath(input.projectRoot),
       "--ulimit",
       "nofile=65536:65536",
       "--label",
@@ -1454,15 +1386,13 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       ...([...binds] as ReadonlyArray<string>).flatMap((bind) => ["-v", bind]),
       ...(dockerMultilineEnvScript === undefined ? [] : ["-v", dockerMultilineEnvScript.bind]),
       ...(dockerEnvFile === undefined ? [] : ["--env-file", dockerEnvFile.path]),
-      ...(input.dependencies.platform === "linux"
-        ? ["--add-host", "host.docker.internal:host-gateway"]
-        : []),
+      ...(input.platform === "linux" ? ["--add-host", "host.docker.internal:host-gateway"] : []),
       ...(input.inspectMode === undefined
         ? []
-        : ["-p", `${resolved.edgeRuntime.inspector_port}:${dockerRuntimeInspectorPort}`]),
+        : ["-p", `${input.config.edgeRuntimeInspectorPort}:${dockerRuntimeInspectorPort}`]),
       "--entrypoint",
       "sh",
-      legacyGetRegistryImageUrl(`supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`),
+      input.image,
       "-c",
       buildServeEntrypointCommand(runtimeCommand, dockerMultilineEnvScript?.scriptPath),
     ];
@@ -1498,6 +1428,102 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
         watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...functionBinds])),
       } satisfies StartedRuntime;
     }).pipe(Effect.onInterrupt(() => cleanupRuntimeArtifacts));
+  },
+);
+
+/**
+ * `SUPABASE_DB_URL`'s value for standalone `functions serve` — Go's
+ * `restartEdgeRuntime` (`internal/functions/serve/serve.go:121-122`): "Use
+ * network alias because Deno cannot resolve `_` in hostname", always
+ * `postgresql://postgres:postgres@db:5432/postgres` regardless of
+ * project/config (`db`, `utils.DbAliases[0]`, is a fixed network alias, and
+ * `db.Password` is `toml:"-"` — never configurable, always the `"postgres"`
+ * literal default, `pkg/config/config.go:459`). This is genuinely NOT the
+ * same value `start`'s own bring-up uses — see
+ * {@link StartEdgeRuntimeContainerInput.dbUrl}'s doc comment.
+ */
+const legacyDefaultServeDbUrl = "postgresql://postgres:postgres@db:5432/postgres";
+
+/**
+ * Go's `restartEdgeRuntime` (`internal/functions/serve/serve.go:108-133`):
+ * resolves `functions serve`'s own config/secrets/image independently on
+ * every (re)start, then delegates the actual bring-up to
+ * {@link startEdgeRuntimeContainer} (Go's `ServeFunctions`) exactly like
+ * `start`'s own bring-up will.
+ */
+const startEdgeRuntime = Effect.fnUntraced(function* (input: {
+  readonly flags: FunctionsServeFlags;
+  readonly dependencies: FunctionsServeDependencies;
+  readonly debug: boolean;
+  readonly networkId: Option.Option<string>;
+  readonly inspectMode: FunctionsServeInspectMode | undefined;
+}) {
+  if (!(yield* isDockerRunning())) {
+    return yield* Effect.fail(
+      new Error(
+        "failed to run docker. Docker Desktop is a prerequisite for local development. Follow the official docs to install: https://docs.docker.com/desktop",
+      ),
+    );
+  }
+
+  const resolved = yield* resolveServeConfig(
+    input.dependencies.projectRoot,
+    input.dependencies.projectIdOverride,
+    input.dependencies.goViperCompat,
+  );
+  const projectId = resolved.projectId;
+  const containerId = localDockerId("edge_runtime", projectId);
+  let ownsRuntime = false;
+  return yield* Effect.gen(function* () {
+    const networkMode = Option.getOrElse(input.networkId, () =>
+      localDockerId("network", projectId),
+    );
+    const authArtifacts = yield* resolveAuthArtifacts(resolved.auth, resolved.configPath);
+    const edgeRuntimeVersionOverride = yield* Effect.tryPromise(() =>
+      readFile(join(input.dependencies.supabaseDir, ".temp", "edge-runtime-version"), "utf8"),
+    ).pipe(
+      Effect.map((value) => value.trim()),
+      Effect.catch(() => Effect.succeed("")),
+      Effect.map((value) => value || legacyDefaultEdgeRuntimeVersion),
+    );
+    const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
+      resolved.edgeRuntime.deno_version,
+      edgeRuntimeVersionOverride,
+    );
+    const image = legacyGetRegistryImageUrl(
+      `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
+    );
+
+    yield* assertLocalDbRunning(projectId);
+    yield* bestEffortRemoveContainer(containerId);
+    ownsRuntime = true;
+
+    return yield* startEdgeRuntimeContainer({
+      config: {
+        projectId,
+        apiPort: resolved.apiPort,
+        edgeRuntimePolicy: resolved.edgeRuntime.policy,
+        edgeRuntimeInspectorPort: resolved.edgeRuntime.inspector_port,
+        edgeRuntimeSecrets: resolved.edgeRuntime.secrets,
+        configDeclaredFunctions: resolved.configDeclaredFunctions,
+        configFunctions: resolved.configFunctions,
+        rawConfigFunctions: resolved.rawConfigFunctions,
+      },
+      authArtifacts,
+      dbUrl: legacyDefaultServeDbUrl,
+      image,
+      projectRoot: input.dependencies.projectRoot,
+      supabaseDir: input.dependencies.supabaseDir,
+      flagCwd: input.dependencies.flagCwd,
+      platform: input.dependencies.platform,
+      debug: input.debug,
+      networkId: networkMode,
+      envFile: input.flags.envFile,
+      importMap: input.flags.importMap,
+      noVerifyJwt: input.flags.noVerifyJwt,
+      inspectMode: input.inspectMode,
+      inspectMain: input.flags.inspectMain,
+    });
   }).pipe(
     Effect.onInterrupt(() => (ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void)),
   );

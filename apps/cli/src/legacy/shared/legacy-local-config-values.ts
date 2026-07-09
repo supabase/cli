@@ -5,6 +5,12 @@ import { ENV_CAPTURE_REGEX, type ProjectConfig } from "@supabase/config";
 import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
 import { Schema } from "effect";
 
+import {
+  resolveRemoteJwks,
+  resolveThirdPartyIssuerUrl,
+  toPublicJwk,
+  type ThirdPartyProvidersLike,
+} from "../../shared/auth/jwks.ts";
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
 import { legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import {
@@ -35,6 +41,7 @@ import {
   legacyValidateResolvedConfig,
 } from "./legacy-config-validate.ts";
 import {
+  LEGACY_DEFAULT_SIGNING_KEY,
   legacyGenerateAsymmetricGoJwt,
   legacyGenerateGoJwt,
   type LegacyJwk,
@@ -239,7 +246,7 @@ export class LegacyInvalidBoolEnvOverrideError extends Error {
 /**
  * Boolean-flavored sibling of {@link envOverride} for `SUPABASE_*` fields Go
  * decodes as a native bool (`api.tls.enabled`, `auth.enabled`, and every other
- * `<section>.enabled` gate `status`/`stop` read — see `status.values.ts`)
+ * `<section>.enabled` gate `status`/`stop` read — see `legacy-status-values.ts`)
  * rather than a string/number — those are bound by the same generic Viper
  * mechanism (`ExperimentalBindStruct` + `SetEnvPrefix("SUPABASE")` +
  * `AutomaticEnv()`, `pkg/config/config.go:582-586`), but the override string
@@ -251,7 +258,7 @@ export class LegacyInvalidBoolEnvOverrideError extends Error {
  * {@link LegacyInvalidPortEnvOverrideError} for ports: Go never proceeds with
  * the pre-override value on a decode error, it fails config loading outright.
  *
- * Exported (not just used internally) because `status.values.ts`'s own
+ * Exported (not just used internally) because `legacy-status-values.ts`'s own
  * `<section>.enabled` gates need this same override treatment — Go's
  * `status.toValues()` reads `utils.Config.*.Enabled` post-Viper-override for
  * every gated service, not only auth.
@@ -397,8 +404,11 @@ const decodeLegacyJwks = Schema.decodeUnknownSync(Schema.Array(LegacyJwkSchema))
 /**
  * Go's `Config.Validate` (`pkg/config/config.go:877-878,1059-1062`): a relative
  * `signing_keys_path` resolves against `<workdir>/supabase`, then the file is
- * read and JSON-decoded into `[]JWK`. Only the first key is ever used
- * ({@link resolveSignedKey}), matching `generateJWT`'s `a.SigningKeys[0]`.
+ * read and JSON-decoded into `[]JWK`. Shared by {@link loadFirstSigningKey} (only the
+ * first key is used to sign anon/service_role, matching `generateJWT`'s
+ * `a.SigningKeys[0]` — see {@link resolveSignedKey}) and {@link loadSigningKeys} (the
+ * full array, matching `ResolveJWKS`'s `a.SigningKeys` loop — see
+ * {@link legacyResolveLocalJwks}).
  *
  * Uses `node:fs` directly (not the `FileSystem` Effect service other Go-parity
  * resolvers in `legacy/` use for file reads) so this function — and its large
@@ -418,7 +428,7 @@ const decodeLegacyJwks = Schema.decodeUnknownSync(Schema.Array(LegacyJwkSchema))
  * that same post-override value, so a disabled auth section never touches
  * `signing_keys_path`, however stale or missing that file is.
  */
-function loadFirstSigningKey(workdir: string, signingKeysPath: string): LegacyJwk | undefined {
+function readSigningKeysFile(workdir: string, signingKeysPath: string): ReadonlyArray<LegacyJwk> {
   const absolutePath = legacyResolveSigningKeysPath(workdir, signingKeysPath);
 
   let contents: string;
@@ -428,13 +438,59 @@ function loadFirstSigningKey(workdir: string, signingKeysPath: string): LegacyJw
     throw new LegacyConfigValidateError(legacySigningKeysReadErrorMessage(cause));
   }
 
-  let jwks: ReadonlyArray<LegacyJwk>;
   try {
-    jwks = decodeLegacyJwks(JSON.parse(contents));
+    return decodeLegacyJwks(JSON.parse(contents));
   } catch (cause) {
     throw new LegacyConfigValidateError(legacySigningKeysDecodeErrorMessage(cause));
   }
-  return jwks[0];
+}
+
+/** See {@link readSigningKeysFile}. */
+function loadFirstSigningKey(workdir: string, signingKeysPath: string): LegacyJwk | undefined {
+  return readSigningKeysFile(workdir, signingKeysPath)[0];
+}
+
+/** See {@link readSigningKeysFile}. */
+function loadSigningKeys(workdir: string, signingKeysPath: string): ReadonlyArray<LegacyJwk> {
+  return readSigningKeysFile(workdir, signingKeysPath);
+}
+
+/**
+ * Go's `Auth.SigningKeys` config-load gating (`pkg/config/config.go:1087,1110-
+ * 1116`): `auth.signing_keys_path`'s file is read only when auth is enabled
+ * (the `SUPABASE_AUTH_ENABLED`-overridden value) AND a path is actually
+ * configured. Returns `undefined` in every other case — Go's `Auth.SigningKeys`
+ * then keeps its `NewConfig()`-seeded single default ES256 key
+ * ({@link LEGACY_DEFAULT_SIGNING_KEY}); callers fall back to their own default
+ * instead of this function choosing one, since `legacyResolveLocalJwks` and
+ * `gotrue.service.ts`'s `GOTRUE_JWT_KEYS` each spell their own default slightly
+ * differently (a bare JWKS-shaped key vs. a full `LegacyGotrueSigningKey`).
+ *
+ * Shared by {@link legacyResolveLocalJwks} (the full JWKS document) and
+ * `start.handler.ts`'s `GOTRUE_JWT_KEYS` env (Go's `GOTRUE_JWT_KEYS =
+ * utils.Config.Auth.SigningKeys`) so the two resolvers can never disagree on
+ * which signing key(s) apply — a prerequisite for GoTrue-issued tokens to
+ * verify against the published JWKS at all.
+ */
+export function legacyResolveConfiguredSigningKeys(
+  config: ProjectConfig,
+  workdir: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ReadonlyArray<LegacyJwk> | undefined {
+  const authEnabled = legacyEnvOverrideBool(
+    "SUPABASE_AUTH_ENABLED",
+    config.auth.enabled,
+    "auth.enabled",
+    projectEnvValues,
+  );
+  const signingKeysPath = envOverride(
+    "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+    config.auth.signing_keys_path,
+    projectEnvValues,
+  );
+  return authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0
+    ? loadSigningKeys(workdir, signingKeysPath)
+    : undefined;
 }
 
 /**
@@ -1570,4 +1626,184 @@ export function legacyResolveLocalConfigValues(
     storageS3SecretAccessKey: DEFAULT_S3_SECRET_ACCESS_KEY,
     storageS3Region: DEFAULT_S3_REGION,
   };
+}
+
+/**
+ * Go's `(a *auth) ResolveJWKS(ctx)` (`apps/cli-go/pkg/config/config.go:1727-1806`) — reached only
+ * from the future native `start` port (`internal/start/start.go:274-277`: a fetch failure there
+ * fails the whole `start` command outright). Deliberately NOT folded into
+ * {@link LegacyLocalConfigValues}/{@link legacyResolveLocalConfigValues}: that resolver is
+ * synchronous and runs on every `stop`/`status` invocation (see `legacy-status-values.ts`/
+ * `stop.handler.ts`), so adding this function's network round-trip (the OIDC discovery + remote
+ * JWKS fetch) there would tax two commands that never render a JWKS. This is a standalone sibling
+ * `start`-only callers invoke separately, alongside (not instead of) `legacyResolveLocalConfigValues`.
+ *
+ * Divergences from the structurally similar (but functionally unrelated) `resolveAuthArtifacts` in
+ * `shared/functions/serve.ts` (Go's equivalent call site for THAT function is
+ * `internal/functions/serve/`, out of scope for this port) — deliberately NOT copied here:
+ *  - a remote-JWKS fetch failure is a hard, propagating error here (matching `start.go:274-277`
+ *    returning the error outright); `serve.ts` instead swallows the failure and continues with
+ *    zero remote keys, a `functions serve`-only leniency with no equivalent in `ResolveJWKS`.
+ *  - this never injects `serve.ts`'s `defaultSigningKey` EC key — that key exists only for
+ *    `functions serve`'s own local-dev defaults and has no equivalent in `ResolveJWKS`.
+ *
+ * Reuses {@link toPublicJwk}/{@link resolveThirdPartyIssuerUrl}/{@link resolveRemoteJwks}
+ * (`shared/auth/jwks.ts`) rather than re-implementing them a second time — see that module's
+ * header. `jwtSecret` is accepted as a parameter (the same value already resolved onto
+ * {@link LegacyLocalConfigValues.jwtSecret} by {@link legacyResolveLocalConfigValues}/
+ * {@link resolveJwtSecret}) rather than recomputed, so the two functions never disagree on it.
+ *
+ * `authEnabled`/`signingKeysPath` ARE recomputed here (cheap, pure `envOverride`/
+ * `legacyEnvOverrideBool` calls, no I/O) rather than threaded through from the caller's own
+ * computation of the same values, keeping this function self-contained. Only `auth.signing_keys_
+ * path`'s FULL key array matters here (unlike `legacyResolveLocalConfigValues`'s
+ * `loadFirstSigningKey`, which only needs the first key to sign anon/service_role) — see
+ * {@link loadSigningKeys}.
+ *
+ * `signingKeysPath`'s effect on the oct-JWT-secret fallback below matches Go's literal field
+ * checks exactly, NOT "is auth enabled": Go's `a.SigningKeysPath` (`pkg/config/config.go:928-929`)
+ * is resolved to an absolute path unconditionally, regardless of `auth.enabled` — only the file
+ * read INTO `a.SigningKeys` is gated on `c.Auth.Enabled` (`config.go:1087,1110-1116`). So a config
+ * with `auth.enabled = false` and a configured `signing_keys_path` resolves `signingKeys: []`
+ * (never read) with `signingKeysPath` still non-empty — Go's fallback check
+ * (`len(a.SigningKeysPath) == 0`) is then FALSE, so the oct fallback is skipped too, matching this
+ * function's `signingKeysPath` emptiness check below rather than `!authEnabled`.
+ *
+ * @throws {LegacyConfigValidateError} when more than one `auth.third_party.*` provider is
+ * enabled, an enabled provider is missing a required field, or the remote JWKS fetch (OIDC
+ * discovery or the JWKS document itself) fails — matching Go's `ResolveJWKS` returning that error
+ * outright, propagated here as this file's own error type rather than a bare `Error`.
+ */
+export async function legacyResolveLocalJwks(
+  config: ProjectConfig,
+  workdir: string,
+  jwtSecret: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+): Promise<string> {
+  const signingKeysPath = envOverride(
+    "SUPABASE_AUTH_SIGNING_KEYS_PATH",
+    config.auth.signing_keys_path,
+    projectEnvValues,
+  );
+  // Go's `a.SigningKeys` is UNCONDITIONALLY seeded with the single default ES256 key at
+  // `NewConfig()` time (`pkg/config/config.go:504-515`) — every resolved config carries it,
+  // regardless of `auth.enabled`. It is only ever REPLACED by a configured
+  // `signing_keys_path` file, and only when that file is actually read (gated on
+  // `auth.enabled && signing_keys_path set`, `config.go:1087,1110-1116` — see
+  // {@link legacyResolveConfiguredSigningKeys}). So `ResolveJWKS` (which iterates
+  // `a.SigningKeys` with no `auth.enabled` gate of its own) always publishes either the
+  // file's keys or this default — never neither. `GOTRUE_JWT_KEYS` signs with the same
+  // default (`services/gotrue.service.ts`'s `LEGACY_GOTRUE_DEFAULT_SIGNING_KEY`), so the
+  // two must never disagree on which key applies here.
+  const signingKeys: ReadonlyArray<LegacyJwk> = legacyResolveConfiguredSigningKeys(
+    config,
+    workdir,
+    projectEnvValues,
+  ) ?? [LEGACY_DEFAULT_SIGNING_KEY];
+
+  // Same fixed provider order + `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_*` overrides as the
+  // `thirdParty: Array<LegacyThirdPartyInput>` block in `legacyResolveLocalConfigValues` above,
+  // but built as a `ThirdPartyProvidersLike` (every provider's full field set, including auth0's
+  // `tenant_region`) rather than `LegacyThirdPartyInput` (a validation-only shape with no
+  // `tenant_region` field) — {@link resolveThirdPartyIssuerUrl} needs the full set to build the
+  // issuer URL, not just validate presence.
+  const thirdParty: ThirdPartyProvidersLike = {
+    firebase: {
+      enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED",
+        config.auth.third_party.firebase.enabled,
+        "auth.third_party.firebase.enabled",
+        projectEnvValues,
+      ),
+      project_id: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_FIREBASE_PROJECT_ID",
+        config.auth.third_party.firebase.project_id,
+        projectEnvValues,
+      ),
+    },
+    auth0: {
+      enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_ENABLED",
+        config.auth.third_party.auth0.enabled,
+        "auth.third_party.auth0.enabled",
+        projectEnvValues,
+      ),
+      tenant: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT",
+        config.auth.third_party.auth0.tenant,
+        projectEnvValues,
+      ),
+      tenant_region: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AUTH0_TENANT_REGION",
+        config.auth.third_party.auth0.tenant_region,
+        projectEnvValues,
+      ),
+    },
+    aws_cognito: {
+      enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_ENABLED",
+        config.auth.third_party.aws_cognito.enabled,
+        "auth.third_party.aws_cognito.enabled",
+        projectEnvValues,
+      ),
+      user_pool_id: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_ID",
+        config.auth.third_party.aws_cognito.user_pool_id,
+        projectEnvValues,
+      ),
+      user_pool_region: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_AWS_COGNITO_USER_POOL_REGION",
+        config.auth.third_party.aws_cognito.user_pool_region,
+        projectEnvValues,
+      ),
+    },
+    clerk: {
+      enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_CLERK_ENABLED",
+        config.auth.third_party.clerk.enabled,
+        "auth.third_party.clerk.enabled",
+        projectEnvValues,
+      ),
+      domain: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_CLERK_DOMAIN",
+        config.auth.third_party.clerk.domain,
+        projectEnvValues,
+      ),
+    },
+    workos: {
+      enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ENABLED",
+        config.auth.third_party.workos.enabled,
+        "auth.third_party.workos.enabled",
+        projectEnvValues,
+      ),
+      issuer_url: envOverride(
+        "SUPABASE_AUTH_THIRD_PARTY_WORKOS_ISSUER_URL",
+        config.auth.third_party.workos.issuer_url,
+        projectEnvValues,
+      ),
+    },
+  };
+
+  let issuerUrl: string | undefined;
+  try {
+    issuerUrl = resolveThirdPartyIssuerUrl(thirdParty);
+  } catch (cause) {
+    throw new LegacyConfigValidateError(cause instanceof Error ? cause.message : String(cause));
+  }
+
+  const keys: unknown[] = [];
+  if (issuerUrl !== undefined) {
+    try {
+      keys.push(...(await resolveRemoteJwks(issuerUrl)));
+    } catch (cause) {
+      throw new LegacyConfigValidateError(cause instanceof Error ? cause.message : String(cause));
+    }
+  }
+  keys.push(...signingKeys.map(toPublicJwk));
+  if (signingKeysPath === undefined || signingKeysPath.length === 0) {
+    keys.push({ kty: "oct", k: Buffer.from(jwtSecret).toString("base64url") });
+  }
+
+  return JSON.stringify({ keys });
 }

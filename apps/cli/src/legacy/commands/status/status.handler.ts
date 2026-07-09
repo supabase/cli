@@ -1,6 +1,5 @@
-import { loadProjectConfig, loadProjectEnvironment, ProjectConfigSchema } from "@supabase/config";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, FileSystem, Option, Schema } from "effect";
+import { Effect, FileSystem, Option } from "effect";
 
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
@@ -9,8 +8,6 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { legacyAqua } from "../../shared/legacy-colors.ts";
 import {
   legacyCliProjectFilterValue,
-  legacyResolveLocalProjectId,
-  legacySanitizeProjectId,
   legacyServiceContainerIds,
   localDbContainerId,
 } from "../../shared/legacy-docker-ids.ts";
@@ -24,10 +21,7 @@ import {
   encodeToml,
   encodeYaml,
 } from "../../shared/legacy-go-output.encoders.ts";
-import { legacyGetHostname } from "../../shared/legacy-hostname.ts";
-import { legacyResolveProjectEnvironmentValues } from "../../shared/legacy-project-environment.ts";
-import { legacyValidateWorkdirIsDirectory } from "../../shared/legacy-workdir-validation.ts";
-import type { LegacyStatusFlags } from "./status.command.ts";
+import { legacyLoadLocalProjectContext } from "../../shared/legacy-local-project-context.ts";
 import {
   LegacyStatusConfigLoadError,
   LegacyStatusDbInspectError,
@@ -37,15 +31,17 @@ import {
   LegacyStatusListError,
   LegacyStatusOverrideParseError,
   LegacyStatusWorkdirError,
-} from "./status.errors.ts";
-import { legacyRenderStatusPretty } from "./status.pretty.ts";
+} from "../../shared/legacy-status-errors.ts";
+import { legacyRenderStatusPretty } from "../../shared/legacy-status-pretty.ts";
 import {
   LEGACY_STATUS_FIELDS,
   legacyGateStatusState,
   legacyResolveStatusLocalState,
   legacyStatusContainerIds,
   legacyStatusValuesFromState,
-} from "./status.values.ts";
+} from "../../shared/legacy-status-values.ts";
+import { legacyValidateWorkdirIsDirectory } from "../../shared/legacy-workdir-validation.ts";
+import type { LegacyStatusFlags } from "./status.command.ts";
 
 /**
  * Parses `--override-name api.url=NEXT_PUBLIC_SUPABASE_URL` entries into a
@@ -123,79 +119,15 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // file as a no-op (`os.ErrNotExist` -> nil, pkg/config/config.go:655-656)
     // and proceeds with template defaults (`mergeDefaultValues`,
     // pkg/config/config.go:639-648). Only a MALFORMED file is a hard error.
-    // Mirror that by decoding an empty document through the schema for its
-    // defaults (matching `packages/config/src/functions-manifest.ts`'s
-    // `decodeProjectConfig({})` pattern) instead of failing.
-    // `search: false` on both loaders below: `cliConfig.workdir` already IS
-    // Go's fully-resolved chdir target (`legacy-cli-config.layer.ts`'s
-    // `resolveWorkdir` mirrors `ChangeWorkDir`'s explicit-exact-vs-default-
-    // searched resolution, `apps/cli-go/internal/utils/misc.go:231-247`), so
-    // letting `@supabase/config`'s `findProjectPaths` climb ancestors again on
-    // top of that would let an unrelated ancestor project's config.toml win
-    // when `--workdir`/`SUPABASE_WORKDIR` points at a subdirectory with no
-    // `supabase/config.toml` of its own — Go never searches past the exact
-    // (explicit or defaulted) workdir (`NewPathBuilder`, `pkg/config/utils.go:
-    // 43-48`).
-    const projectEnv = yield* loadProjectEnvironment({
-      cwd: cliConfig.workdir,
-      baseEnv: process.env,
-      search: false,
-      // Go's `loadDefaultEnv` (`apps/cli-go/pkg/config/config.go:1243-1250`)
-      // omits `.env.local` from its candidate list whenever
-      // `SUPABASE_ENV=test` — a malformed or intentionally non-test
-      // `supabase/.env.local` is then invisible to Go and must not fail
-      // config loading here either. `legacyResolveProjectEnvironmentValues`
-      // below already applies this same gate for the project-root pass (see
-      // its `candidateDotenvFilenames`); this mirrors it for the
-      // `supabase/`-dir pass `loadProjectEnvironment` itself performs.
-      skipEnvLocal: (process.env["SUPABASE_ENV"] || "development") === "test",
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new LegacyStatusConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
-      ),
+    // `legacyLoadLocalProjectContext` mirrors that (decoding an empty document
+    // through the schema for its defaults) and also resolves the sanitized,
+    // config/env-derived project id used below — see its own doc comment for
+    // the full Go-parity rationale (including why workdir validation stays out
+    // of it and is instead handled by step 0 above).
+    const context = yield* legacyLoadLocalProjectContext(
+      cliConfig.workdir,
+      (message) => new LegacyStatusConfigLoadError({ message }),
     );
-
-    // `legacyResolveProjectEnvironmentValues` fills the gap between
-    // `loadProjectEnvironment` (supabase/.env(.local) + ambient only) and Go's
-    // `loadNestedEnv`, which also loads project-root and `SUPABASE_ENV`-selected
-    // dotenv files (`pkg/config/config.go:1169-1207`) — see its doc comment for
-    // the full precedence chain. Resolved BEFORE `loadProjectConfig` decodes
-    // config.toml (not after) because Go's `Config.Load` runs `loadNestedEnv`
-    // before `LoadEnvHook` decodes `env(...)` references (`config.go:735-738`);
-    // an `env(...)` value sourced only from a project-root/`SUPABASE_ENV`-
-    // selected file must already be visible to the decoder, not just to the
-    // `SUPABASE_PROJECT_ID`/`SUPABASE_AUTH_*` overrides read further below.
-    // A malformed extra dotenv file throws here (see `readDotEnvFile`),
-    // matching Go's `loadNestedEnv` propagating `godotenv`'s parse error
-    // instead of silently skipping the bad line. `workdir` is passed through so
-    // dotenv files under `<workdir>/supabase`/`workdir` are still discovered
-    // even when `projectEnv` is `null` (no config.toml there) — Go's own
-    // `loadNestedEnv` runs unconditionally, before `config.toml` is ever
-    // opened (`pkg/config/config.go:786-793`).
-    const projectEnvValues = yield* Effect.try({
-      try: () => legacyResolveProjectEnvironmentValues(projectEnv, cliConfig.workdir),
-      catch: (cause) =>
-        new LegacyStatusConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
-    });
-
-    const loaded = yield* loadProjectConfig(cliConfig.workdir, {
-      projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
-      search: false,
-      // Go's `NewPathBuilder`/`Config.Load` (`pkg/config/utils.go:43-48`) only
-      // ever resolves `supabase/config.toml` — it has no concept of a JSON
-      // project config file. Without this, a workdir with a stray
-      // `config.json` would make `loadProjectConfig` prefer it over
-      // `config.toml`, reporting ports/keys for a config Go never reads.
-      tomlOnly: true,
-      goViperCompat: true,
-    }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new LegacyStatusConfigLoadError({ message: `failed to read config: ${String(cause)}` }),
-      ),
-    );
-    const config = loaded?.config ?? Schema.decodeUnknownSync(ProjectConfigSchema)({});
 
     // 3. Resolve + VALIDATE config-derived state before any Docker call —
     // matching Go's `flags.LoadConfig` (config load + `Validate`,
@@ -207,17 +139,15 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // (a malformed `SUPABASE_*_PORT`/`SUPABASE_*_ENABLED` override), or a
     // signing-keys-file read/parse error — all of these must fail here, not
     // be masked by a Docker/DB error when the local stack happens to be
-    // unavailable. `hostname` has no Docker dependency either, so it's
-    // resolved here rather than later.
-    const hostname = legacyGetHostname();
+    // unavailable.
     const localState = yield* Effect.try({
       try: () =>
         legacyResolveStatusLocalState(
-          config,
-          hostname,
+          context.config,
+          context.hostname,
           cliConfig.workdir,
-          projectEnvValues,
-          loaded?.document,
+          context.projectEnvValues,
+          context.loaded?.document,
         ),
       catch: (cause) =>
         new LegacyStatusInvalidConfigError({
@@ -232,13 +162,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // LABEL `start` writes (`internal/utils/docker.go:375`), sees that same
     // sanitized string, so `status` must filter on it too (see
     // `legacyCliProjectFilterValue`'s doc comment).
-    const projectId = legacySanitizeProjectId(
-      legacyResolveLocalProjectId(
-        projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
-        config.project_id,
-        cliConfig.workdir,
-      ),
-    );
+    const projectId = context.projectId;
     const dbContainerId = localDbContainerId(projectId);
 
     // 5. Health check, skipped entirely with --ignore-health-check (status.go:104-108).

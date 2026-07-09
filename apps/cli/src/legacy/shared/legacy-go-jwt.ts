@@ -26,6 +26,36 @@ export interface LegacyJwk {
 }
 
 /**
+ * Go's `NewConfig()` default `Auth.SigningKeys` (`apps/cli-go/pkg/config/config.go:504-515`) —
+ * a single ES256 key, unconditionally present on every resolved config UNLESS overwritten by a
+ * real `auth.signing_keys_path` file (and only then when `auth.enabled` — see
+ * `config.go:1087,1110-1116`). Go's `ResolveJWKS` iterates `a.SigningKeys` regardless of
+ * `auth.enabled`, so this default key is always part of the published JWKS unless a configured
+ * file overrides it — callers must not skip it just because auth happens to be disabled or no
+ * `signing_keys_path` is set. Shared by GoTrue's own env building (`services/gotrue.service.ts`,
+ * which signs tokens with it) and JWKS resolution (`legacyResolveLocalJwks`, which must publish
+ * its public form) so the two can never disagree on the default key.
+ *
+ * Deliberately NOT typed as `LegacyJwk` (which omits `use`/`key_ops`/`ext` so it stays
+ * assignable to Node's `createPrivateKey`/`jose`'s `JWK`, both of which want a mutable
+ * `key_ops: string[]`, not `readonly string[]`) — left to infer its own wider literal type,
+ * which is still structurally assignable everywhere a `LegacyJwk` or a `JwkLike`
+ * (`shared/auth/jwks.ts`) is expected.
+ */
+export const LEGACY_DEFAULT_SIGNING_KEY = {
+  kty: "EC",
+  kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
+  use: "sig",
+  key_ops: ["sign", "verify"],
+  alg: "ES256",
+  ext: true,
+  crv: "P-256",
+  x: "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+  y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+  d: "dIhR8wywJlqlua4y_yMq2SLhlFXDZJBCvFrY1DCHyVU",
+};
+
+/**
  * Go-byte-exact HS256 signer for the default local-dev `anon`/`service_role`
  * keys, ported from `CustomClaims`/`generateJWT` (`apps/cli-go/pkg/config/apikeys.go:23-40,75-86`).
  * {@link legacyGenerateAsymmetricGoJwt} below covers the RS256/ES256 branch of

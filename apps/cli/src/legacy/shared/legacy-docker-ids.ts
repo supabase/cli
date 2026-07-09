@@ -54,18 +54,25 @@ export function legacySanitizeProjectId(src: string) {
   return truncateText(sanitized, MAX_PROJECT_ID_LENGTH);
 }
 
-function localDockerId(name: string, projectId: string) {
-  return `supabase_${name}_${legacySanitizeProjectId(projectId)}`;
+/**
+ * `supabase_<suffix>_<sanitizedProjectId>` — the naming scheme shared by every
+ * local Docker resource (`utils.GetId`, `apps/cli-go/internal/utils/config.go`).
+ * Exported so callers building a single service's container name (e.g. a
+ * future `legacy-service-catalog.ts` consumer) don't need to go through
+ * {@link legacyServiceContainerIds}'s fixed 13-element array.
+ */
+export function legacyServiceContainerName(suffix: string, projectId: string): string {
+  return `supabase_${suffix}_${legacySanitizeProjectId(projectId)}`;
 }
 
 /** `utils.DbId` — the local Postgres container name. */
 export function localDbContainerId(projectId: string) {
-  return localDockerId("db", projectId);
+  return legacyServiceContainerName("db", projectId);
 }
 
 /** `utils.NetId` fallback — the default generated docker network name. */
 export function localNetworkId(projectId: string) {
-  return localDockerId("network", projectId);
+  return legacyServiceContainerName("network", projectId);
 }
 
 /** Go's `utils.CliProjectLabel` (`apps/cli-go/internal/utils/docker.go:59`) — the
@@ -80,19 +87,19 @@ export const LEGACY_CLI_PROJECT_LABEL = "com.supabase.cli.project";
  */
 export function legacyServiceContainerIds(projectId: string): ReadonlyArray<string> {
   return [
-    localDockerId("kong", projectId),
-    localDockerId("auth", projectId),
-    localDockerId("inbucket", projectId),
-    localDockerId("realtime", projectId),
-    localDockerId("rest", projectId),
-    localDockerId("storage", projectId),
-    localDockerId("imgproxy", projectId),
-    localDockerId("pg_meta", projectId),
-    localDockerId("studio", projectId),
-    localDockerId("edge_runtime", projectId),
-    localDockerId("analytics", projectId),
-    localDockerId("vector", projectId),
-    localDockerId("pooler", projectId),
+    legacyServiceContainerName("kong", projectId),
+    legacyServiceContainerName("auth", projectId),
+    legacyServiceContainerName("inbucket", projectId),
+    legacyServiceContainerName("realtime", projectId),
+    legacyServiceContainerName("rest", projectId),
+    legacyServiceContainerName("storage", projectId),
+    legacyServiceContainerName("imgproxy", projectId),
+    legacyServiceContainerName("pg_meta", projectId),
+    legacyServiceContainerName("studio", projectId),
+    legacyServiceContainerName("edge_runtime", projectId),
+    legacyServiceContainerName("analytics", projectId),
+    legacyServiceContainerName("vector", projectId),
+    legacyServiceContainerName("pooler", projectId),
   ];
 }
 

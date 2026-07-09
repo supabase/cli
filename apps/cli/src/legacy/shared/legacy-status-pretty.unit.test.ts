@@ -5,8 +5,8 @@ import {
   legacyStatusColumnLayout,
   legacyStatusHeaderWidth,
   legacyWrapStatusLabel,
-} from "./status.pretty.ts";
-import type { LegacyStatusOutputNames } from "./status.values.ts";
+} from "./legacy-status-pretty.ts";
+import type { LegacyStatusOutputNames } from "./legacy-status-values.ts";
 
 // The renderer applies Go-parity ANSI styling via `legacy-colors.ts`, which
 // no-ops on a real non-TTY stream but the vitest process presents its stderr
@@ -16,7 +16,7 @@ import type { LegacyStatusOutputNames } from "./status.values.ts";
 // eslint-disable-next-line no-control-regex
 const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
 
-// Default (un-overridden) output names, matching `status.values.ts`'s
+// Default (un-overridden) output names, matching `legacy-status-values.ts`'s
 // `resolveOutputNames` with an empty override map — the KEYs the pretty
 // renderer looks values up by.
 const NAMES: LegacyStatusOutputNames = {
@@ -143,7 +143,7 @@ describe("legacyRenderStatusPretty", () => {
 
   it("skips a row whose value is missing from the value map", () => {
     // Only Studio present; Mailpit/MCP absent from the map entirely (excluded
-    // or disabled upstream in `status.values.ts`) — same as an empty string.
+    // or disabled upstream in `legacy-status-values.ts`) — same as an empty string.
     const out = stripAnsi(
       legacyRenderStatusPretty({ STUDIO_URL: "http://127.0.0.1:54323" }, NAMES),
     );
@@ -197,7 +197,7 @@ describe("legacyRenderStatusPretty", () => {
 // None of `status`'s 18 fixed field labels or 5 fixed group titles are wide
 // enough to exercise these two branches through the public
 // `legacyRenderStatusPretty` API today (see the file-level doc comment on
-// `status.pretty.ts`) — covered directly here as defensive Go-parity logic.
+// `legacy-status-pretty.ts`) — covered directly here as defensive Go-parity logic.
 describe("legacyWrapStatusLabel", () => {
   it("returns the text unwrapped when it fits within the width", () => {
     expect(legacyWrapStatusLabel("Edge Functions", 16)).toEqual(["Edge Functions"]);

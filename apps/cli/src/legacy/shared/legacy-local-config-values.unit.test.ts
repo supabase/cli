@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ProjectConfigSchema, type ProjectConfig } from "@supabase/config";
 import { Schema } from "effect";
 import { importJWK, jwtVerify } from "jose";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 import {
@@ -14,6 +14,7 @@ import {
   LegacyInvalidJwtSecretError,
   LegacyInvalidPortEnvOverrideError,
   legacyResolveLocalConfigValues,
+  legacyResolveLocalJwks,
 } from "./legacy-local-config-values.ts";
 
 const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
@@ -1711,6 +1712,177 @@ describe("legacyResolveLocalConfigValues", () => {
           "Missing required field in config: api.tls.key_path",
         );
       });
+    });
+  });
+});
+
+describe("legacyResolveLocalJwks", () => {
+  const tempRoot = useLegacyTempWorkdir("supabase-local-jwks-test-");
+
+  it("includes the default ES256 signing key and the oct JWT-secret fallback when no signing_keys_path is configured", async () => {
+    // Go's `a.SigningKeys` defaults to this single ES256 key at `NewConfig()` time
+    // (`pkg/config/config.go:504-515`), unconditionally — `ResolveJWKS` always publishes it
+    // (in public form) unless a configured `signing_keys_path` file overrides it.
+    const config = baseConfig();
+    const jwks = await legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32));
+    expect(JSON.parse(jwks)).toEqual({
+      keys: [
+        {
+          kty: "EC",
+          kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
+          use: "sig",
+          key_ops: ["verify"],
+          alg: "ES256",
+          ext: true,
+          crv: "P-256",
+          x: "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+          y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+        },
+        { kty: "oct", k: Buffer.from("a".repeat(32)).toString("base64url") },
+      ],
+    });
+  });
+
+  it("publishes the public form of every signing key and omits the oct fallback", async () => {
+    const jwk = generateRsaJwk();
+    writeSigningKeys(tempRoot.current, [jwk]);
+    const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+    const jwks = await legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32));
+    const parsed = JSON.parse(jwks) as { keys: ReadonlyArray<Record<string, unknown>> };
+
+    expect(parsed.keys).toHaveLength(1);
+    expect(parsed.keys[0]).toMatchObject({
+      kty: "RSA",
+      kid: "test-rsa-kid",
+      n: jwk["n"],
+      e: jwk["e"],
+    });
+    expect(parsed.keys[0]).not.toHaveProperty("d");
+    expect(parsed.keys[0]).not.toHaveProperty("p");
+    expect(parsed.keys.some((key) => key["kty"] === "oct")).toBe(false);
+  });
+
+  // Go quirk this reproduces: `a.SigningKeysPath` is resolved to an absolute path
+  // unconditionally (`pkg/config/config.go:928-929`), but the FILE is only read into
+  // `a.SigningKeys` when auth is enabled (`Config.Validate`'s file read is nested inside
+  // `if c.Auth.Enabled`, `config.go:1087,1110-1116`) — so a disabled-auth config with a
+  // configured `signing_keys_path` never reads the file, and `a.SigningKeys` stays at its
+  // unconditional `NewConfig()` default (the single ES256 key) rather than becoming empty.
+  // The oct fallback is still skipped (`len(a.SigningKeysPath) == 0` is false), so the
+  // default ES256 key is the ONLY entry — neither the file's keys nor the oct key appear.
+  it("falls back to the default ES256 signing key (not the configured file, not the oct fallback) when auth is disabled but signing_keys_path is set", async () => {
+    writeSigningKeys(tempRoot.current, [generateRsaJwk()]);
+    const config = baseConfig({
+      auth: { enabled: false, signing_keys_path: "signing_keys.json" },
+    });
+    const jwks = await legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32));
+    expect(JSON.parse(jwks)).toEqual({
+      keys: [
+        {
+          kty: "EC",
+          kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
+          use: "sig",
+          key_ops: ["verify"],
+          alg: "ES256",
+          ext: true,
+          crv: "P-256",
+          x: "M5Sjqn5zwC9Kl1zVfUUGvv9boQjCGd45G8sdopBExB4",
+          y: "P6IXMvA2WYXSHSOMTBH2jsw_9rrzGy89FjPf6oOsIxQ",
+        },
+      ],
+    });
+  });
+
+  it("throws a Go-worded error when the signing keys file does not exist", async () => {
+    const config = baseConfig({ auth: { signing_keys_path: "missing.json" } });
+    await expect(legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32))).rejects.toThrow(
+      "failed to read signing keys: ",
+    );
+  });
+
+  it("throws a Go-worded error when the signing keys file is malformed JSON", async () => {
+    const supabaseDir = join(tempRoot.current, "supabase");
+    mkdirSync(supabaseDir, { recursive: true });
+    writeFileSync(join(supabaseDir, "signing_keys.json"), "not valid json");
+    const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+    await expect(legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32))).rejects.toThrow(
+      "failed to decode signing keys: ",
+    );
+  });
+
+  describe("auth.third_party", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("rejects an enabled third-party provider missing its required field", async () => {
+      const config = baseConfig({ auth: { third_party: { firebase: { enabled: true } } } });
+      await expect(legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
+        "Invalid config: auth.third_party.firebase is enabled but without a project_id.",
+      );
+    });
+
+    it("rejects more than one enabled third-party provider", async () => {
+      const config = baseConfig({
+        auth: {
+          third_party: {
+            firebase: { enabled: true, project_id: "my-project" },
+            workos: { enabled: true, issuer_url: "https://issuer.example" },
+          },
+        },
+      });
+      await expect(legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
+        "Invalid config: Only one third_party provider allowed to be enabled at a time.",
+      );
+    });
+
+    it("fetches and includes the remote JWKS for an enabled third-party provider", async () => {
+      const remoteKeys = [{ kty: "RSA", kid: "remote-key", n: "abc", e: "AQAB" }];
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === "https://issuer.example/.well-known/openid-configuration") {
+          return new Response(JSON.stringify({ jwks_uri: "https://issuer.example/jwks.json" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url === "https://issuer.example/jwks.json") {
+          return new Response(JSON.stringify({ keys: remoteKeys }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected fetch url: ${url}`);
+      });
+
+      const config = baseConfig({
+        auth: { third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } } },
+      });
+      const jwks = await legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32));
+      const parsed = JSON.parse(jwks) as { keys: ReadonlyArray<Record<string, unknown>> };
+
+      expect(parsed.keys).toEqual(
+        expect.arrayContaining([expect.objectContaining({ kid: "remote-key" })]),
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    // The key divergence from `shared/functions/serve.ts`'s own (unrelated)
+    // `resolveAuthArtifacts`: Go's `start` treats a remote-JWKS fetch failure as a hard,
+    // command-failing error (`internal/start/start.go:274-277`) — `legacyResolveLocalJwks`
+    // must propagate it too, not swallow it and continue with zero remote keys.
+    it("fails the whole resolution when the remote JWKS fetch fails, unlike functions serve's leniency", async () => {
+      vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+        throw new Error("oidc discovery failed");
+      });
+
+      const config = baseConfig({
+        auth: { third_party: { workos: { enabled: true, issuer_url: "https://issuer.example" } } },
+      });
+      await expect(legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
+        "oidc discovery failed",
+      );
     });
   });
 });

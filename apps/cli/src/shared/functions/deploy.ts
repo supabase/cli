@@ -1755,8 +1755,9 @@ export const discoverFunctionSlugs = Effect.fnUntraced(function* (
     readdir(functionsDir, { withFileTypes: true }),
   ).pipe(
     Effect.catch((error) => {
-      const cause =
-        typeof error === "object" && error !== null && "error" in error ? error.error : error;
+      // `Effect.tryPromise`'s default failure is a `Cause.UnknownError`, which stores the
+      // original rejection on `.cause` (inherited from `Error`) — NOT `.error`.
+      const cause = error.cause;
       return cause instanceof Error && "code" in cause && cause.code === "ENOENT"
         ? Effect.succeed(undefined)
         : Effect.fail(error);
