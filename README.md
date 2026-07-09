@@ -149,7 +149,11 @@ pnpm repos:install
 
 ## Contributing
 
-We love focused pull requests with a clear problem, a small surface area, and tests that match the user-facing behavior. Before opening a PR, run the checks for the workspace you touched.
+We love focused pull requests with a clear problem, a small surface area, and tests that match the user-facing behavior.
+
+Open an issue first and wait for a maintainer to add the `open-for-contribution` label before starting work — external pull requests that don't link a labeled, open issue are closed automatically. See [CONTRIBUTING.md](./CONTRIBUTING.md#contribution-workflow) for the full workflow.
+
+Before opening a PR, run the checks for the workspace you touched.
 
 ```sh
 pnpm check:all

@@ -100,6 +100,57 @@ describe("legacy storage rm", () => {
     });
   });
 
+  it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
+    // SUPABASE_YES lives only in supabase/.env, not the shell — both the `--local` and
+    // (default) `--linked` branches of Go's `ParseDatabaseConfig` load the project `.env`
+    // files before `rm.Run`'s confirmation prompt (root.go:118), so the deletion
+    // auto-confirms with no --yes flag and no env var set in the shell (CLI-1878).
+    const { layer, out, requests } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      files: { "supabase/.env": "SUPABASE_YES=true\n" },
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: true,
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("[y/N] y");
+      expect(requests.some((r) => r.method === "DELETE")).toBe(true);
+    });
+  });
+
+  it.live(
+    "surfaces not-linked guidance before a malformed project .env (Go LoadProjectRef-before-LoadConfig)",
+    () => {
+      // Go's `ParseDatabaseConfig` `case linked:` (db_url.go:87-93) calls `LoadProjectRef`
+      // strictly before `LoadConfig` (which reads the project `.env` files), so an unlinked
+      // workdir must fail with the not-linked guidance even when `supabase/.env` is malformed
+      // — the malformed file must never be reached (CLI-1878).
+      const { layer, requests } = setupLegacyStorage(tmp.current, {
+        toml: 'project_id = "test"\n',
+        linkedFails: true,
+        files: { "supabase/.env": "!=\n" },
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyStorageRm({
+          files: ["ss:///private/a.pdf"],
+          recursive: false,
+          linked: true,
+          local: false,
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain("Cannot find project ref");
+        expect(JSON.stringify(exit)).not.toContain("failed to parse environment file");
+        expect(requests).toHaveLength(0);
+      });
+    },
+  );
+
   it.live("skips the bucket when the confirmation is declined", () => {
     const { layer, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',

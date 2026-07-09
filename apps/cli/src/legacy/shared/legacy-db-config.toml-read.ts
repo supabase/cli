@@ -279,6 +279,7 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "db.migrations.enabled",
   "db.seed.enabled",
   "db.seed.sql_paths",
+  "auth.enabled",
   "edge_runtime.deno_version",
   "experimental.pgdelta.enabled",
   "experimental.pgdelta.declarative_schema_path",
@@ -1267,13 +1268,16 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // Go's config.Validate runs the full `if c.Auth.Enabled` block (`config.go:1036-1102`) after
   // the bucket/function checks. Gated on `auth.enabled` (default true); Go's viper AutomaticEnv
   // binds `auth.enabled` to `SUPABASE_AUTH_ENABLED` before Validate (`config.go:529-535`), so the
-  // env override decides whether the auth block is validated.
+  // env override decides whether the auth block is validated — UNLESS a matched `[remotes.*]`
+  // block supplies `auth.enabled` itself, in which case `mergeRemoteConfig`'s `v.Set` (override
+  // tier, above `AutomaticEnv`) wins, matching the same suppression every other
+  // `LEGACY_ENV_OVERRIDABLE_KEYS` entry gets below.
   const authEnabled = yield* resolveBoolOrFail(
     "auth.enabled",
     authRaw?.["enabled"],
     true,
     lookup,
-    envOverride("SUPABASE_AUTH_ENABLED"),
+    remoteOverrideKeys.has("auth.enabled") ? undefined : envOverride("SUPABASE_AUTH_ENABLED"),
   );
 
   // Local helpers mirroring the deleted `legacyValidateAuthConfig`'s closures — its Go-parity

@@ -1,6 +1,9 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyDnsResolverFlag, legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDnsResolverFlag,
+  legacyResolveYesWithProjectEnv,
+} from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
@@ -8,6 +11,7 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
+import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyReadMigrationTable } from "../../../shared/legacy-migration-history.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -31,8 +35,10 @@ const runFetch = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
-  const yes = yield* legacyResolveYes; // --yes OR SUPABASE_YES (Go viper AutomaticEnv, root.go:318-334).
 
+  // Flag-group mutual-exclusion first: cobra's `MarkFlagsMutuallyExclusive` validates at
+  // parse time, ahead of the root `PersistentPreRunE` (same ordering as `migration down`/
+  // `repair`).
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
       new LegacyMigrationTargetFlagsError({
@@ -54,6 +60,14 @@ const runFetch = Effect.fnUntraced(function* (
     connType,
     dnsResolver,
   });
+
+  // Go loads the project .env via loadNestedEnv INSIDE ParseDatabaseConfig (config.go:701),
+  // i.e. after the parse-time flag-group validation above — so a SUPABASE_YES set only in
+  // supabase/.env auto-confirms, but a flag conflict still surfaces before any .env read.
+  // Resolve --yes against the project env here, not just process.env (root.go:318-334).
+  // Same ordering as `migration down`/`repair`.
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   // Linked fetch caches the project ref on success (Go's `PersistentPostRun`). The ref is
   // loaded now (pre-run), but the cache write is attached to the body via `Effect.ensuring`,

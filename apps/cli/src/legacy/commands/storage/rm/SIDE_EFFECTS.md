@@ -7,12 +7,13 @@ when `-r` is set. With no paths and `-r`, every bucket is cleared and deleted.
 
 ## Files Read
 
-| Path                                     | Format     | When                                                  |
-| ---------------------------------------- | ---------- | ----------------------------------------------------- |
-| `<workdir>/supabase/config.toml`         | TOML       | always (local creds; `[remotes.*]` merge when linked) |
-| `~/.supabase/access-token`               | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset       |
-| `~/.supabase/<hash>/linked-project.json` | JSON       | linked path, to resolve the project ref               |
-| local Kong TLS cert/key                  | PEM        | local + `api.enabled` + `api.tls.enabled`             |
+| Path                                          | Format     | When                                                               |
+| --------------------------------------------- | ---------- | ------------------------------------------------------------------ |
+| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[remotes.*]` merge when linked)              |
+| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                    |
+| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                            |
+| local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                          |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878; Go's `loadNestedEnv`) |
 
 ## Files Written
 
@@ -36,7 +37,9 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 ## Environment Variables
 
 `SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_AUTH_JWT_SECRET`, `SUPABASE_ACCESS_TOKEN`,
-`SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME`, plus `SUPABASE_YES` (auto-confirm).
+`SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME`, plus `SUPABASE_YES` (auto-confirm) —
+read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files
+(shell wins; CLI-1878, matching Go's `loadNestedEnv` before `viper.GetBool("YES")`).
 
 `storage` is an experimental command (Go `root.go:63`): `rm` requires `--experimental`
 (or `SUPABASE_EXPERIMENTAL`), else it exits 1 with

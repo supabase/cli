@@ -43,6 +43,8 @@ interface SetupOpts {
   readonly confirm?: boolean;
   readonly rows?: ReadonlyArray<MigrationRow>;
   readonly resolveFails?: boolean;
+  /** Raw argv seen by `resolveLegacyDbTargetFlags` (e.g. to exercise a flag conflict). */
+  readonly cliArgs?: ReadonlyArray<string>;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -109,7 +111,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockLegacyCliConfig({ workdir }),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
-    Layer.succeed(CliArgs, { args: [] }),
+    Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
     mockStdin(
       opts.isTTY ?? true,
@@ -237,6 +239,27 @@ describe("legacy migration fetch", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "auto-confirms the overwrite prompt from SUPABASE_YES in the project .env (Go loadNestedEnv)",
+    () => {
+      // SUPABASE_YES lives only in supabase/.env, not the shell — `fetch` defaults to
+      // `--linked` (Go: migration.go:161), and root's `ParseDatabaseConfig` loads the project
+      // `.env` files before `fetch.Run`'s overwrite prompt (root.go:118), so the overwrite
+      // auto-confirms with no --yes flag and no piped stdin answer (CLI-1878).
+      mkdirSync(migrationsDir(tmp.current), { recursive: true });
+      writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
+      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
+      const { layer, out } = setup(tmp.current, {
+        rows: [{ version: "20240101000000", name: "init", statements: ["create table a"] }],
+      });
+      return Effect.gen(function* () {
+        yield* legacyMigrationFetch(flags());
+        expect(out.stderrText).toContain("[Y/n] y");
+        expect(readdirSync(migrationsDir(tmp.current))).toContain("20240101000000_init.sql");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("still prompts on stderr in json mode and proceeds on a piped yes", () => {
     // Go writes the prompt to stderr and reads stdin regardless of --output (console.go),
     // so --output-format json must NOT silently auto-accept: the overwrite prompt fires on
@@ -332,8 +355,12 @@ describe("legacy migration fetch", () => {
   });
 
   it.live("reports a write failure", () => {
-    // A file at <workdir>/supabase makes `makeDirectory(supabase/migrations)` fail.
-    writeFileSync(join(tmp.current, "supabase"), "not a directory");
+    // A file at <workdir>/supabase/migrations makes `makeDirectory` fail. `supabase` itself
+    // must stay a real directory here: the handler's project-env load (CLI-1878, honoring
+    // Go's `loadNestedEnv`) reads `<workdir>/supabase/.env*` before this mkdir, and a plain
+    // file at `<workdir>/supabase` would make that read fail first (ENOTDIR) instead.
+    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "migrations"), "not a directory");
     const { layer } = setup(tmp.current, { rows: [] });
     return Effect.gen(function* () {
       const exit = yield* legacyMigrationFetch(flags()).pipe(Effect.exit);
@@ -362,4 +389,33 @@ describe("legacy migration fetch", () => {
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "rejects --db-url combined with --linked before reading the project .env (CLI-1878)",
+    () => {
+      // Cobra's `MarkFlagsMutuallyExclusive` validates at parse time, ahead of the root
+      // `PersistentPreRunE` that runs `ParseDatabaseConfig`/`loadNestedEnv` — so a flag
+      // conflict must surface even when `supabase/.env` is malformed (which would abort a
+      // project-env load with a DIFFERENT error, `LegacyDbConfigLoadError`, if the env load
+      // ran first). Locks in the fix that reordered the project-env load in `fetch.handler.ts`
+      // to run after this flag-group check.
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", ".env"), "!=broken\n");
+      const { layer } = setup(tmp.current, {
+        cliArgs: ["--db-url", "postgresql://x", "--linked"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyMigrationFetch(
+          flags({ dbUrl: Option.some("postgresql://x") }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(failure) && failure.value._tag).toBe(
+            "LegacyMigrationTargetFlagsError",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

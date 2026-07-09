@@ -453,6 +453,61 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("an explicit remote auth.enabled beats its SUPABASE_AUTH_ENABLED env var", () => {
+    // Same v.Set-above-AutomaticEnv precedence as db.migrations.enabled / pgdelta.enabled
+    // (config.go:635-637), but for auth.enabled specifically (CLI-1878): a matched remote
+    // block's auth.enabled must win over SUPABASE_AUTH_ENABLED.
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_AUTH_ENABLED"];
+    process.env["SUPABASE_AUTH_ENABLED"] = "true";
+    const dir = withConfig(
+      [
+        "[remotes.prod]",
+        `project_id = "${ref}"`,
+        "[remotes.prod.auth]",
+        "enabled = false",
+        "",
+      ].join("\n"),
+    );
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.baseline.authEnabled).toBe(false);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_AUTH_ENABLED"];
+          else process.env["SUPABASE_AUTH_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("SUPABASE_AUTH_ENABLED still wins when the remote block omits auth.enabled", () => {
+    // Control: the env override is suppressed only for keys the matched block explicitly
+    // set; a block that omits auth.enabled leaves the env override in force.
+    const ref = "abcdefghijklmnopqrst";
+    const previous = process.env["SUPABASE_AUTH_ENABLED"];
+    process.env["SUPABASE_AUTH_ENABLED"] = "false";
+    const dir = withConfig(["[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"));
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.baseline.authEnabled).toBe(false);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previous === undefined) delete process.env["SUPABASE_AUTH_ENABLED"];
+          else process.env["SUPABASE_AUTH_ENABLED"] = previous;
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("matches a remote block by a SUPABASE_REMOTES_<NAME>_PROJECT_ID env override", () => {
     // Viper AutomaticEnv supplies/overrides remotes.prod.project_id, so the block merges
     // even with no TOML project_id (here it lifts major_version 15 over the base default).

@@ -2,11 +2,12 @@
 
 ## Files Read
 
-| Path                                            | Format                      | When                                                                                 |
-| ----------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------ |
-| `supabase/config.toml` / `supabase/config.json` | TOML / JSON                 | always when present in the active workdir; used to discover `auth.signing_keys_path` |
-| `<resolved signing_keys_path>`                  | JSON array of JWKs          | when `auth.signing_keys_path` is configured; loaded before overwrite or append       |
-| git ignore rules                                | git metadata / ignore files | best-effort after a successful write when the resulting file contains exactly 1 key  |
+| Path                                            | Format                      | When                                                                                  |
+| ----------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------- |
+| `supabase/config.toml` / `supabase/config.json` | TOML / JSON                 | always when present in the active workdir; used to discover `auth.signing_keys_path`  |
+| `<resolved signing_keys_path>`                  | JSON array of JWKs          | when `auth.signing_keys_path` is configured; loaded before overwrite or append        |
+| git ignore rules                                | git metadata / ignore files | best-effort after a successful write when the resulting file contains exactly 1 key   |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*`   | dotenv                      | always, to resolve `SUPABASE_YES` (CLI-1878; Go's `flags.LoadConfig`/`loadNestedEnv`) |
 
 ## Files Written
 
@@ -22,9 +23,9 @@
 
 ## Environment Variables
 
-| Variable       | Purpose                                                                            | Required? |
-| -------------- | ---------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_YES` | Auto-confirms the overwrite prompt, same as `--yes` (Go's `viper.GetBool("YES")`). | No        |
+| Variable       | Purpose                                                                                                                                                                                          | Required? |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
+| `SUPABASE_YES` | Auto-confirms the overwrite prompt, same as `--yes` (Go's `viper.GetBool("YES")`). Read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files (shell wins; CLI-1878). | No        |
 
 ## Exit Codes
 
@@ -57,7 +58,7 @@ Same as `--output-format json` above.
 
 - `--algorithm` accepts `ES256` (default, recommended) or `RS256`.
 - `--append` appends the new key to an existing keys file instead of overwriting.
-- The overwrite prompt honors `SUPABASE_YES` and an explicit `--yes=false` override, matching Go's `viper.GetBool("YES")` precedence (flag wins over env; an omitted flag falls back to the env var). On non-TTY stdin, a piped `y`/`n` line is read within a 100ms timeout and honored before falling back to the default (`y`), matching Go's `Console.ReadLine`/`PromptYesNo` — a piped answer other than an exact `y`/`yes`/`n`/`no` (case-insensitive) also falls back to the default.
+- The overwrite prompt honors `SUPABASE_YES` (shell env or the project `.env`/`.env.local`/`.env.<env>[.local]` files, shell wins) and an explicit `--yes=false` override, matching Go's `viper.GetBool("YES")` precedence (flag wins over env; an omitted flag falls back to the env var, resolved after `flags.LoadConfig` loads the project env — CLI-1878). On non-TTY stdin, a piped `y`/`n` line is read within a 100ms timeout and honored before falling back to the default (`y`), matching Go's `Console.ReadLine`/`PromptYesNo` — a piped answer other than an exact `y`/`yes`/`n`/`no` (case-insensitive) also falls back to the default.
 - `auth.signing_keys_path` is resolved relative to the active `supabase/config.toml` or `supabase/config.json`.
 - Generated keys are JWKs, not PEM files.
 - No network or Management API calls are involved.

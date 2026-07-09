@@ -8,9 +8,10 @@ import { FetchHttpClient } from "effect/unstable/http";
 import type { PlatformError } from "effect/PlatformError";
 
 import { Output } from "../../shared/output/output.service.ts";
-import { legacyResolveYes } from "../../shared/legacy/global-flags.ts";
+import { legacyResolveYesWithProjectEnv } from "../../shared/legacy/global-flags.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyBold, legacyYellow } from "./legacy-colors.ts";
+import { legacyLoadProjectEnv } from "./legacy-db-config.toml-read.ts";
 import { legacyPromptYesNo } from "./legacy-prompt-yes-no.ts";
 import {
   legacyResolveStorageCredentials,
@@ -127,9 +128,13 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   /**
    * Pre-resolved auto-confirm value. `db reset` resolves `yes` with the nested project
    * `.env` loaded (Go's `loadNestedEnv` runs before `buckets.Run`), so pass it through here
-   * — the internal `legacyResolveYes` only sees the shell env and would skip the
-   * bucket/vector/analytics prune that a `SUPABASE_YES` in `supabase/.env` should confirm.
-   * When omitted (the standalone `seed buckets` command), fall back to `legacyResolveYes`.
+   * — the internal fallback below only loads whatever THIS command's own project would
+   * supply. When omitted (the standalone `seed buckets` command), fall back to
+   * `legacyResolveYesWithProjectEnv`, loading the project env ourselves — `seed buckets`
+   * defaults to `--local` (Go's `seedFlags.Bool("local", true, ...)`, `cmd/seed.go:31`),
+   * and root's `ParseDatabaseConfig` calls `LoadConfig` — loading the project `.env` files
+   * — before `buckets.Run`'s overwrite/prune prompts (`root.go:118`), so a `SUPABASE_YES`
+   * set only in `supabase/.env` must auto-confirm here too.
    */
   readonly yes?: boolean;
 }) {
@@ -138,7 +143,11 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
-  const yes = opts.yes ?? (yield* legacyResolveYes);
+  const yes =
+    opts.yes ??
+    (yield* legacyResolveYesWithProjectEnv(
+      yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir),
+    ));
   const { projectRef, emitSummary } = opts;
   const interactive = opts.interactive ?? true;
 
