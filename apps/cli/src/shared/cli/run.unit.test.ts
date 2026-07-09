@@ -280,6 +280,36 @@ describe("classifyParseErrorConsoleOutput", () => {
     ).toBe("flush-help-doc-to-stderr");
   });
 
+  // Codex review finding (CLI-1901 follow-up): `sso add --project-ref --type`
+  // omits `--type`'s value, but `--type` immediately follows `--project-ref`
+  // (a value-taking `Flag.string`, `add.command.ts`). Verified against the
+  // real `apps/cli-go/supabase-go` binary: pflag's `parseLongArg`
+  // (`flag.go`) unconditionally consumes the very next argv entry as
+  // `--project-ref`'s value, even though it looks like another flag — so
+  // `--type` is never seen as its own occurrence, and Go shows no usage at
+  // all (only its own "type" required-flag error, `SilenceUsage`-suppressed).
+  // The vendored `effect` parser does NOT eagerly consume a flag-shaped
+  // token as a value (`internal/parser.ts`'s `consumeFlagValueWithTokens`
+  // only consumes a following `Value`-tagged token), so `--type` remains its
+  // own token and raises its own `MissingOption` here too — but the raw scan
+  // must still recognize that `--type` was effectively consumed as
+  // `--project-ref`'s value, matching Go, instead of concluding `--type` is
+  // present but missing its value (which would wrongly flush the help doc).
+  it("drops the help dump when a required flag's own token is consumed as a preceding value-taking flag's value", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["supabase", "sso", "add"],
+        errors: [new CliError.MissingOption({ option: "type" })],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: testRoot,
+        args: ["sso", "add", "--project-ref", "--type"],
+      }),
+    ).toBe("drop");
+  });
+
   it("still drops the help dump for a missing required flag even when an unrelated flag shares a substring of its name", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({

@@ -30,7 +30,7 @@ import { tracingLayer } from "../telemetry/tracing.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
-import { flagAliasesFor } from "./subcommand-flag-suggestions.ts";
+import { flagAliasesFor, isValueTakingFlagTokenFor } from "./subcommand-flag-suggestions.ts";
 
 // Global flags that consume the following argv token as their value. Keep this in
 // sync with the value-taking global flags defined in `shared/cli/global-flags.ts`
@@ -252,18 +252,46 @@ export type ParseErrorConsoleDisposition = "flush-unchanged" | "drop" | "flush-h
  * flag was given, flipping a genuinely-absent-flag failure (Go: no usage
  * shown) into a "present but missing its value" one (Go: usage shown) — see
  * CLI-1901.
+ *
+ * `isValueTakingToken` (from `isValueTakingFlagTokenFor`) lets the scan skip
+ * a token immediately consumed as the VALUE of a preceding value-taking
+ * flag, instead of mistaking that consumed token for `option`'s own
+ * occurrence. Go/pflag's `parseLongArg` (`flag.go`) unconditionally consumes
+ * the very next argv entry as a value-taking flag's value, even when that
+ * entry itself looks like another flag — e.g. `sso add --project-ref --type`
+ * hands the literal string `--type` to `--project-ref`, so `--type` is never
+ * seen as its own occurrence in Go, and its `MissingOption` failure keeps
+ * Go's `SilenceUsage` treatment (no usage shown). The vendored `effect`
+ * parser does NOT replicate that eager consumption (it only treats a
+ * following token as a value when the lexer tags it `Value`, never a
+ * flag-shaped token — `internal/parser.ts`'s `consumeFlagValueWithTokens`),
+ * so without this skip the raw scan would find the literal `--type` token
+ * and wrongly flush the help doc for an input Go shows no usage for — a
+ * Codex review finding on CLI-1901.
  */
 function isMissingFlagTokenPresent(
   option: string,
   args: ReadonlyArray<string>,
   aliases: ReadonlyArray<string> = [],
+  isValueTakingToken: (token: string) => boolean = () => false,
 ): boolean {
   const tokens = [`--${option}`, ...aliases];
   const terminatorIndex = args.indexOf("--");
   const scannedArgs = terminatorIndex === -1 ? args : args.slice(0, terminatorIndex);
-  return scannedArgs.some((arg) =>
-    tokens.some((token) => arg === token || arg.startsWith(`${token}=`)),
-  );
+  for (let index = 0; index < scannedArgs.length; index++) {
+    const arg = scannedArgs[index];
+    if (arg === undefined) continue;
+    if (tokens.some((token) => arg === token || arg.startsWith(`${token}=`))) return true;
+    const equalIndex = arg.indexOf("=");
+    const bareToken = equalIndex === -1 ? arg : arg.slice(0, equalIndex);
+    if (equalIndex === -1 && isValueTakingToken(bareToken)) {
+      // Go/pflag consumes the following argv entry as `bareToken`'s value
+      // unconditionally — skip it so it can't be mistaken for `option` being
+      // present.
+      index++;
+    }
+  }
+  return false;
 }
 
 export function classifyParseErrorConsoleOutput(
@@ -274,12 +302,14 @@ export function classifyParseErrorConsoleOutput(
   if (!CliError.isCliError(error) || error._tag !== "ShowHelp" || error.errors.length === 0) {
     return "flush-unchanged";
   }
+  const isValueTakingToken = isValueTakingFlagTokenFor(context.rootCommand, error.commandPath);
   const isSuppressedMissingFlag = (inner: (typeof error.errors)[number]) =>
     inner._tag === "MissingOption" &&
     !isMissingFlagTokenPresent(
       inner.option,
       context.args,
       flagAliasesFor(context.rootCommand, error.commandPath, inner.option),
+      isValueTakingToken,
     );
   return error.errors.every(isSuppressedMissingFlag) ? "drop" : "flush-help-doc-to-stderr";
 }
