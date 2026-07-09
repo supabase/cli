@@ -98,6 +98,39 @@ export class DaemonServer extends Context.Service<
           ),
         ),
 
+        // Per-service ready: delegates to the stack so lazy-service guards
+        // (e.g. failing fast on never-started services) apply to remote
+        // callers exactly as they do in-process.
+        HttpRouter.route(
+          "GET",
+          "/services/:name/ready",
+          Effect.gen(function* () {
+            const routeParams = yield* HttpRouter.params;
+            yield* stack.waitReady(routeParams.name!);
+            return HttpServerResponse.jsonUnsafe({ ok: true });
+          }).pipe(
+            Effect.catchTag("ServiceNotFoundError", (e) =>
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: `Service not found: ${e.name}` },
+                  { status: 404 },
+                ),
+              ),
+            ),
+            Effect.catchTag("ServiceReadyError", (e) =>
+              Effect.succeed(
+                HttpServerResponse.jsonUnsafe(
+                  { error: e.reason, service: e.name },
+                  { status: 500 },
+                ),
+              ),
+            ),
+            Effect.catchTag("StackBuildError", (e) =>
+              Effect.succeed(HttpServerResponse.jsonUnsafe({ error: e.detail }, { status: 500 })),
+            ),
+          ),
+        ),
+
         // Start: begin service startup
         HttpRouter.route(
           "POST",

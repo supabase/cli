@@ -227,6 +227,15 @@ describe("DaemonServer", () => {
     expect(text).toContain("postgres");
   });
 
+  test("GET /services/:name/ready delegates to the stack and 404s unknown services", async () => {
+    const ok = await fetch(`${url}/services/postgres/ready`);
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { ok: boolean }).ok).toBe(true);
+
+    const missing = await fetch(`${url}/services/unknown/ready`);
+    expect(missing.status).toBe(404);
+  });
+
   test("GET /ready delegates readiness to the stack", async () => {
     const before = mock.waitAllReadyCalls;
     const res = await fetch(`${url}/ready`);

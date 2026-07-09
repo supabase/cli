@@ -628,7 +628,7 @@ describe("Orchestrator", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
-  it.live("restartService traverses stopped one-shot helpers to restart live dependents", () => {
+  it.live("restartService re-runs one-shot helpers that connect to live dependents", () => {
     const { layer, proc } = setupOrchestrator(
       [
         svc("postgres"),
@@ -661,10 +661,13 @@ describe("Orchestrator", () => {
         counts[record.command] = (counts[record.command] ?? 0) + 1;
         return counts;
       }, {});
+      // postgres-init re-runs: api's "postgres-init completed" dependency must
+      // gate on a FRESH completion that itself waited for the restarted
+      // postgres, not on the stale pre-restart deferred.
       expect(spawnCounts).toEqual({
         api: 2,
         postgres: 2,
-        "postgres-init": 1,
+        "postgres-init": 2,
       });
     }).pipe(Effect.provide(layer), Effect.scoped);
   });

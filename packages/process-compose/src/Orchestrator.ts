@@ -532,6 +532,7 @@ export class Orchestrator extends Context.Service<
         const restartClosureFor = (name: string): ReadonlyArray<ServiceDef> => {
           const names = new Set<string>([name]);
           const visited = new Set<string>([name]);
+          const traversedThrough = new Set<string>();
           const collectDependents = (current: string): void => {
             for (const dependent of graph.dependentsOf(current)) {
               if (visited.has(dependent.name)) continue;
@@ -541,21 +542,41 @@ export class Orchestrator extends Context.Service<
               // A user-stopped service CUTS restart propagation: its own
               // dependents no longer consume the restarted dependency through
               // it, and restarting them would boot against the stopped backend
-              // (their dependency deferreds are stale-succeeded). Completed
-              // one-shot helpers (Stopped but not user-stopped, e.g.
-              // postgres-init) stay transparent instead: they aren't restarted
-              // themselves, but live dependents behind them still are.
+              // (their dependency deferreds are stale-succeeded).
               if (svc.stoppedByUser) continue;
               const status = SubscriptionRef.getUnsafe(svc.state).status;
               const shouldRestart =
                 status === "Pending" ? launchedServices.has(dependent.name) : status !== "Stopped";
               if (shouldRestart) {
                 names.add(dependent.name);
+              } else if ((dependent.restart ?? defaults.restart) === "no" && status === "Stopped") {
+                traversedThrough.add(dependent.name);
               }
               collectDependents(dependent.name);
             }
           };
           collectDependents(name);
+          // Completed one-shot helpers (Stopped but not user-stopped, e.g.
+          // postgres-init) are transparent to traversal, but when a live
+          // dependent behind one is restarting the helper must re-run too:
+          // otherwise that dependent's dependency wait would resolve against
+          // the helper's stale already-completed deferred and it would boot
+          // without waiting for the restarted dependency to be ready again.
+          const connectsToRestarting = (helper: string): boolean => {
+            const stack = graph.dependentsOf(helper).map((def) => def.name);
+            const seen = new Set<string>();
+            while (stack.length > 0) {
+              const current = stack.pop()!;
+              if (seen.has(current)) continue;
+              seen.add(current);
+              if (names.has(current)) return true;
+              stack.push(...graph.dependentsOf(current).map((def) => def.name));
+            }
+            return false;
+          };
+          for (const helper of traversedThrough) {
+            if (connectsToRestarting(helper)) names.add(helper);
+          }
           return graph.startOrder.filter((def) => names.has(def.name));
         };
 

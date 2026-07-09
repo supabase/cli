@@ -405,25 +405,21 @@ export const RemoteStack = {
           waitReady: (name: string) =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                // Check current state first
-                const { services } = yield* fetchStatus(socketPath, "/status");
-                const match = services.find((s) => s.name === name);
-                if (!match) {
+                // Delegate to the daemon so the coordinator's readiness
+                // semantics apply — in particular the lazy-service guard that
+                // fails never-started services instead of hanging forever on
+                // a state event that will never come.
+                const response = yield* unixResponse(socketPath, `/services/${name}/ready`);
+                if (response.status === 404) {
                   return yield* new ServiceNotFoundError({ name });
                 }
-                if (match.status === "Healthy" || match.status === "Running") return;
-
-                // Wait for state change via SSE
-                yield* withUnixHttpClient(
-                  sseStream(socketPath, "/status/stream", (data) => {
-                    const raw = decodeStatusServiceEvent(data);
-                    return toServiceState(raw);
-                  }).pipe(
-                    Stream.filter((s) => s.name === name),
-                    Stream.takeUntil((s) => s.status === "Healthy" || s.status === "Running"),
-                    Stream.runDrain,
-                  ),
-                );
+                if (response.status === 500) {
+                  const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
+                    response,
+                  ).pipe(Effect.orDie);
+                  return yield* daemonServiceError(body);
+                }
+                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
               }),
             ),
 
