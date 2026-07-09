@@ -158,6 +158,7 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
   const runBranches = (args: ReadonlyArray<string>, console: Console.Console) =>
     withoutParseErrorHelpDump(
       Command.runWith(legacyBranchesCommand, { version: "0.0.0-test" })(args),
+      args,
     ).pipe(Effect.provide(layerFor(args, console)));
 
   const requiredFlagCommand = Command.make("test-required-flag", {
@@ -167,6 +168,7 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
   const runRequiredFlagCommand = (args: ReadonlyArray<string>, console: Console.Console) =>
     withoutParseErrorHelpDump(
       Command.runWith(requiredFlagCommand, { version: "0.0.0-test" })(args),
+      args,
     ).pipe(Effect.provide(layerFor(args, console)));
 
   test("an unrecognized flag: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause", async () => {
@@ -213,6 +215,24 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
     expect(exitCodeForFailure(exit.cause)).toBe(1);
   });
 
+  // CLI-1901 (Codex review finding): the vendored library can't tell "flag
+  // never given" apart from "flag given with no value following it" — both
+  // raise `MissingOption`. Go's pflag DOES distinguish these (a present-but-
+  // valueless flag is a `ParseFlags`-time error, before `SilenceUsage` is
+  // set) — verified against the real `apps/cli-go/supabase-go` binary, which
+  // still prints its usage block for this input. `--type` as the LAST token
+  // (no value token follows it) reproduces that "present but valueless" case.
+  test("a required flag present on argv but missing its value: replays the help dump to stderr instead of dropping it", async () => {
+    const { console, calls } = fakeConsole();
+    const exit = await Effect.runPromiseExit(runRequiredFlagCommand(["--type"], console));
+
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.startsWith("error:"))).toBe(true);
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (!Exit.isFailure(exit)) return;
+    expect(exitCodeForFailure(exit.cause)).toBe(1);
+  });
+
   test("an invalid Flag.choice value: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause", async () => {
     const { console, calls } = fakeConsole();
     const exit = await Effect.runPromiseExit(runRequiredFlagCommand(["--type", "bogus"], console));
@@ -248,7 +268,7 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
     });
 
     const result = await Effect.runPromise(
-      withoutParseErrorHelpDump(program).pipe(
+      withoutParseErrorHelpDump(program, []).pipe(
         Effect.provide(Layer.succeed(Console.Console, console)),
       ),
     );

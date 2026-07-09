@@ -197,7 +197,18 @@ function bufferingConsole(sink: Array<BufferedConsoleWrite>): Console.Console {
  *   `PersistentPreRunE` already suppresses usage for: `ValidateRequiredFlags`
  *   (cobra `command.go:1007`), which sets `cmd.SilenceUsage = true`
  *   (`apps/cli-go/cmd/root.go:97`) BEFORE it runs. This library's
- *   `MissingOption` is the one tag that maps to that stage — see CLI-1901.
+ *   `MissingOption` is the one tag that maps to that stage — see CLI-1901 —
+ *   but ONLY when the flag was never given at all. A required flag that IS
+ *   present on argv but missing its value (e.g. `sso add --type` with
+ *   nothing after it) also raises `MissingOption` in this library (it has no
+ *   distinct "value required" tag), yet Go's own pflag raises a DIFFERENT,
+ *   earlier `ParseFlags`-time error for that input (`flag needs an
+ *   argument: --type`) which does NOT get `SilenceUsage` treatment — verified
+ *   against the real binary (`apps/cli-go/supabase-go sso add --type`: full
+ *   usage block on stderr, vs `sso add --project-ref x` with `--type` never
+ *   mentioned at all: bare `required flag(s) "type" not set`, no usage). See
+ *   `isMissingFlagTokenPresent` below for how this case is distinguished from
+ *   a genuinely-absent flag.
  * - `"flush-help-doc-to-stderr"` — every other genuine parse/validation
  *   failure (`UnrecognizedOption`, `InvalidValue`, `MissingArgument`,
  *   `UnknownSubcommand`; multiple simultaneous errors also lands here).
@@ -217,15 +228,37 @@ function bufferingConsole(sink: Array<BufferedConsoleWrite>): Console.Console {
  */
 export type ParseErrorConsoleDisposition = "flush-unchanged" | "drop" | "flush-help-doc-to-stderr";
 
+/**
+ * Whether `option`'s long-form flag token (`--option` or `--option=...`)
+ * appears anywhere in the raw argv this run was invoked with — used to tell
+ * a genuinely-absent required flag (Go: `SilenceUsage`-suppressed) apart from
+ * one that's present but missing its value (Go: a `ParseFlags`-time error,
+ * usage still shown). See the `"drop"` case on `ParseErrorConsoleDisposition`
+ * above for the full rationale.
+ *
+ * Known gap: this only recognizes the flag's canonical long-form name, not a
+ * short alias (e.g. `sso add -t` with no value would still be misclassified
+ * as "absent"). Resolving aliases requires walking the command tree for the
+ * failing `commandPath` (the same lookup `subcommand-flag-suggestions.ts`
+ * does for hint placement) — left as a follow-up rather than threading a
+ * `rootCommand`/`CliErrorSuggestionContext` into this call site too.
+ */
+function isMissingFlagTokenPresent(option: string, args: ReadonlyArray<string>): boolean {
+  const token = `--${option}`;
+  return args.some((arg) => arg === token || arg.startsWith(`${token}=`));
+}
+
 export function classifyParseErrorConsoleOutput(
   cause: Cause.Cause<unknown>,
+  args: ReadonlyArray<string>,
 ): ParseErrorConsoleDisposition {
   const error = Cause.squash(cause);
   if (!CliError.isCliError(error) || error._tag !== "ShowHelp" || error.errors.length === 0) {
     return "flush-unchanged";
   }
-  const isMissingRequiredFlag = error.errors.every((inner) => inner._tag === "MissingOption");
-  return isMissingRequiredFlag ? "drop" : "flush-help-doc-to-stderr";
+  const isSuppressedMissingFlag = (inner: (typeof error.errors)[number]) =>
+    inner._tag === "MissingOption" && !isMissingFlagTokenPresent(inner.option, args);
+  return error.errors.every(isSuppressedMissingFlag) ? "drop" : "flush-help-doc-to-stderr";
 }
 
 /**
@@ -260,6 +293,7 @@ export function classifyParseErrorConsoleOutput(
  */
 export function withoutParseErrorHelpDump<A, E, R>(
   effect: Effect.Effect<A, E, R>,
+  args: ReadonlyArray<string>,
 ): Effect.Effect<A, E, R> {
   return Effect.gen(function* () {
     const sink: Array<BufferedConsoleWrite> = [];
@@ -268,7 +302,7 @@ export function withoutParseErrorHelpDump<A, E, R>(
       Effect.exit,
     );
     const disposition = Exit.isFailure(exit)
-      ? classifyParseErrorConsoleOutput(exit.cause)
+      ? classifyParseErrorConsoleOutput(exit.cause, args)
       : "flush-unchanged";
     if (disposition === "drop") {
       return yield* exit;
@@ -347,6 +381,7 @@ function cliProgramFor(
   );
   return withoutParseErrorHelpDump(
     Command.runWith(rootCommand, { version: CLI_VERSION })(args),
+    args,
   ).pipe(
     Effect.provide(formatterLayerFor(rootCommand, args, outputFormat)),
     Effect.provide(options.analyticsLayer),

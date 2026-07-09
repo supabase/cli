@@ -169,7 +169,10 @@ describe("classifyParseErrorConsoleOutput", () => {
         errors: [new CliError.MissingOption({ option: "type" })],
       }),
     );
-    expect(classifyParseErrorConsoleOutput(cause)).toBe("drop");
+    // `--type` never appears on argv at all — genuinely absent.
+    expect(classifyParseErrorConsoleOutput(cause, ["sso", "add", "--project-ref", "x"])).toBe(
+      "drop",
+    );
   });
 
   // Multiple simultaneously-missing required flags: still `ValidateRequiredFlags`,
@@ -184,7 +187,41 @@ describe("classifyParseErrorConsoleOutput", () => {
         ],
       }),
     );
-    expect(classifyParseErrorConsoleOutput(cause)).toBe("drop");
+    expect(classifyParseErrorConsoleOutput(cause, ["sso", "add"])).toBe("drop");
+  });
+
+  // CLI-1901 (Codex review finding): the vendored library raises the SAME
+  // `MissingOption` tag whether a required flag was never given at all, or
+  // given with no value following it (e.g. `sso add --type` as the last
+  // token) — it has no distinct "value required" error. Go's own pflag does
+  // distinguish these: a present-but-valueless flag is a `ParseFlags`-time
+  // error (`flag needs an argument: --type`), raised BEFORE
+  // `PersistentPreRunE` sets `SilenceUsage` — verified against the real
+  // `apps/cli-go/supabase-go` binary, which still prints its full usage block
+  // to stderr for this input. `isMissingFlagTokenPresent` recovers this
+  // distinction from raw argv so this case flushes the help doc instead of
+  // silently dropping it like a genuinely-absent flag.
+  it("flushes the help dump to stderr for a required flag present on argv but missing its value", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["migration", "repair"],
+        errors: [new CliError.MissingOption({ option: "status" })],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, ["migration", "repair", "20230101000000", "--status"]),
+    ).toBe("flush-help-doc-to-stderr");
+  });
+
+  it("still drops the help dump for a missing required flag even when an unrelated flag shares a substring of its name", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["sso", "add"],
+        errors: [new CliError.MissingOption({ option: "type" })],
+      }),
+    );
+    // `--type-hint` is a different flag token — must not false-positive-match `--type`.
+    expect(classifyParseErrorConsoleOutput(cause, ["sso", "add", "--type-hint", "x"])).toBe("drop");
   });
 
   // Go's `ParseFlags` (`command.go:919`) validates `Flag.choice` values BEFORE
@@ -205,7 +242,9 @@ describe("classifyParseErrorConsoleOutput", () => {
         ],
       }),
     );
-    expect(classifyParseErrorConsoleOutput(cause)).toBe("flush-help-doc-to-stderr");
+    expect(classifyParseErrorConsoleOutput(cause, ["sso", "add", "--type", "bogus"])).toBe(
+      "flush-help-doc-to-stderr",
+    );
   });
 
   it("flushes the help dump to stderr for an unrecognized flag", () => {
@@ -215,7 +254,9 @@ describe("classifyParseErrorConsoleOutput", () => {
         errors: [new CliError.UnrecognizedOption({ option: "--bogus", suggestions: [] })],
       }),
     );
-    expect(classifyParseErrorConsoleOutput(cause)).toBe("flush-help-doc-to-stderr");
+    expect(classifyParseErrorConsoleOutput(cause, ["branches", "--bogus"])).toBe(
+      "flush-help-doc-to-stderr",
+    );
   });
 
   it("flushes the help dump to stderr for a missing positional argument", () => {
@@ -225,7 +266,9 @@ describe("classifyParseErrorConsoleOutput", () => {
         errors: [new CliError.MissingArgument({ argument: "id" })],
       }),
     );
-    expect(classifyParseErrorConsoleOutput(cause)).toBe("flush-help-doc-to-stderr");
+    expect(classifyParseErrorConsoleOutput(cause, ["sso", "show"])).toBe(
+      "flush-help-doc-to-stderr",
+    );
   });
 
   // A mix (e.g. a missing required flag alongside an unrecognized flag) can't
@@ -242,24 +285,28 @@ describe("classifyParseErrorConsoleOutput", () => {
         ],
       }),
     );
-    expect(classifyParseErrorConsoleOutput(cause)).toBe("flush-help-doc-to-stderr");
+    expect(classifyParseErrorConsoleOutput(cause, ["sso", "add", "--bogus"])).toBe(
+      "flush-help-doc-to-stderr",
+    );
   });
 
   it("flushes unchanged for a clean ShowHelp failure (bare group command / explicit --help)", () => {
     const cause = Cause.fail(new CliError.ShowHelp({ commandPath: ["branches"], errors: [] }));
-    expect(classifyParseErrorConsoleOutput(cause)).toBe("flush-unchanged");
+    expect(classifyParseErrorConsoleOutput(cause, ["branches"])).toBe("flush-unchanged");
   });
 
   it("flushes unchanged for a non-ShowHelp failure", () => {
-    expect(classifyParseErrorConsoleOutput(Cause.fail(new Error("boom")))).toBe("flush-unchanged");
+    expect(classifyParseErrorConsoleOutput(Cause.fail(new Error("boom")), [])).toBe(
+      "flush-unchanged",
+    );
   });
 
   it("flushes unchanged for an interrupt", () => {
-    expect(classifyParseErrorConsoleOutput(Cause.interrupt())).toBe("flush-unchanged");
+    expect(classifyParseErrorConsoleOutput(Cause.interrupt(), [])).toBe("flush-unchanged");
   });
 
   it("flushes unchanged for a defect with no typed failure", () => {
-    expect(classifyParseErrorConsoleOutput(Cause.die(new Error("unexpected crash")))).toBe(
+    expect(classifyParseErrorConsoleOutput(Cause.die(new Error("unexpected crash")), [])).toBe(
       "flush-unchanged",
     );
   });
