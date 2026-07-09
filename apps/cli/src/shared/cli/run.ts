@@ -29,6 +29,8 @@ import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
+import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
+import { flagAliasesFor } from "./subcommand-flag-suggestions.ts";
 
 // Global flags that consume the following argv token as their value. Keep this in
 // sync with the value-taking global flags defined in `shared/cli/global-flags.ts`
@@ -229,35 +231,40 @@ function bufferingConsole(sink: Array<BufferedConsoleWrite>): Console.Console {
 export type ParseErrorConsoleDisposition = "flush-unchanged" | "drop" | "flush-help-doc-to-stderr";
 
 /**
- * Whether `option`'s long-form flag token (`--option` or `--option=...`)
- * appears anywhere in the raw argv this run was invoked with — used to tell
- * a genuinely-absent required flag (Go: `SilenceUsage`-suppressed) apart from
+ * Whether `option`'s canonical long-form flag token (`--option` or
+ * `--option=...`), or one of its short/long `aliases` (e.g. `-t`), appears
+ * anywhere in the raw argv this run was invoked with — used to tell a
+ * genuinely-absent required flag (Go: `SilenceUsage`-suppressed) apart from
  * one that's present but missing its value (Go: a `ParseFlags`-time error,
  * usage still shown). See the `"drop"` case on `ParseErrorConsoleDisposition`
- * above for the full rationale.
- *
- * Known gap: this only recognizes the flag's canonical long-form name, not a
- * short alias (e.g. `sso add -t` with no value would still be misclassified
- * as "absent"). Resolving aliases requires walking the command tree for the
- * failing `commandPath` (the same lookup `subcommand-flag-suggestions.ts`
- * does for hint placement) — left as a follow-up rather than threading a
- * `rootCommand`/`CliErrorSuggestionContext` into this call site too.
+ * above for the full rationale. `aliases` come from `flagAliasesFor` (see
+ * `classifyParseErrorConsoleOutput` below), already formatted with their
+ * leading dash(es).
  */
-function isMissingFlagTokenPresent(option: string, args: ReadonlyArray<string>): boolean {
-  const token = `--${option}`;
-  return args.some((arg) => arg === token || arg.startsWith(`${token}=`));
+function isMissingFlagTokenPresent(
+  option: string,
+  args: ReadonlyArray<string>,
+  aliases: ReadonlyArray<string> = [],
+): boolean {
+  const tokens = [`--${option}`, ...aliases];
+  return args.some((arg) => tokens.some((token) => arg === token || arg.startsWith(`${token}=`)));
 }
 
 export function classifyParseErrorConsoleOutput(
   cause: Cause.Cause<unknown>,
-  args: ReadonlyArray<string>,
+  context: CliErrorSuggestionContext,
 ): ParseErrorConsoleDisposition {
   const error = Cause.squash(cause);
   if (!CliError.isCliError(error) || error._tag !== "ShowHelp" || error.errors.length === 0) {
     return "flush-unchanged";
   }
   const isSuppressedMissingFlag = (inner: (typeof error.errors)[number]) =>
-    inner._tag === "MissingOption" && !isMissingFlagTokenPresent(inner.option, args);
+    inner._tag === "MissingOption" &&
+    !isMissingFlagTokenPresent(
+      inner.option,
+      context.args,
+      flagAliasesFor(context.rootCommand, error.commandPath, inner.option),
+    );
   return error.errors.every(isSuppressedMissingFlag) ? "drop" : "flush-help-doc-to-stderr";
 }
 
@@ -293,7 +300,7 @@ export function classifyParseErrorConsoleOutput(
  */
 export function withoutParseErrorHelpDump<A, E, R>(
   effect: Effect.Effect<A, E, R>,
-  args: ReadonlyArray<string>,
+  context: CliErrorSuggestionContext,
 ): Effect.Effect<A, E, R> {
   return Effect.gen(function* () {
     const sink: Array<BufferedConsoleWrite> = [];
@@ -302,7 +309,7 @@ export function withoutParseErrorHelpDump<A, E, R>(
       Effect.exit,
     );
     const disposition = Exit.isFailure(exit)
-      ? classifyParseErrorConsoleOutput(exit.cause, args)
+      ? classifyParseErrorConsoleOutput(exit.cause, context)
       : "flush-unchanged";
     if (disposition === "drop") {
       return yield* exit;
@@ -379,10 +386,10 @@ function cliProgramFor(
       }),
     ),
   );
-  return withoutParseErrorHelpDump(
-    Command.runWith(rootCommand, { version: CLI_VERSION })(args),
+  return withoutParseErrorHelpDump(Command.runWith(rootCommand, { version: CLI_VERSION })(args), {
+    rootCommand,
     args,
-  ).pipe(
+  }).pipe(
     Effect.provide(formatterLayerFor(rootCommand, args, outputFormat)),
     Effect.provide(options.analyticsLayer),
     Effect.provide(tracingLayer),

@@ -1,7 +1,10 @@
 import { Cause } from "effect";
-import { CliError } from "effect/unstable/cli";
+import { CliError, Command } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 
+import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
+import { legacyMigrationCommand } from "../../legacy/commands/migration/migration.command.ts";
+import { legacySsoCommand } from "../../legacy/commands/sso/sso.command.ts";
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import {
   classifyParseErrorConsoleOutput,
@@ -10,6 +13,13 @@ import {
   shouldReportFailure,
   shouldUseGlobalSignalInterrupt,
 } from "./run.ts";
+
+// Real command tree (not a hand-rolled stand-in) so `classifyParseErrorConsoleOutput`'s
+// alias resolution (`flagAliasesFor`, via `context.rootCommand`) has real `Flag.withAlias`
+// declarations to walk — e.g. `sso add`'s `type` flag aliases to `-t` (`add.command.ts`).
+const testRoot = Command.make("supabase").pipe(
+  Command.withSubcommands([legacyBranchesCommand, legacyMigrationCommand, legacySsoCommand]),
+);
 
 describe("extractCommandPath", () => {
   it("returns positional command-path tokens", () => {
@@ -165,14 +175,17 @@ describe("classifyParseErrorConsoleOutput", () => {
   it("drops the help dump for a missing required flag", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
-        commandPath: ["sso", "add"],
+        commandPath: ["supabase", "sso", "add"],
         errors: [new CliError.MissingOption({ option: "type" })],
       }),
     );
-    // `--type` never appears on argv at all — genuinely absent.
-    expect(classifyParseErrorConsoleOutput(cause, ["sso", "add", "--project-ref", "x"])).toBe(
-      "drop",
-    );
+    // `--type` (nor its `-t` alias) never appears on argv at all — genuinely absent.
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: testRoot,
+        args: ["sso", "add", "--project-ref", "x"],
+      }),
+    ).toBe("drop");
   });
 
   // Multiple simultaneously-missing required flags: still `ValidateRequiredFlags`,
@@ -180,14 +193,16 @@ describe("classifyParseErrorConsoleOutput", () => {
   it("drops the help dump when every error is a missing required flag", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
-        commandPath: ["sso", "add"],
+        commandPath: ["supabase", "sso", "add"],
         errors: [
           new CliError.MissingOption({ option: "type" }),
           new CliError.MissingOption({ option: "project-ref" }),
         ],
       }),
     );
-    expect(classifyParseErrorConsoleOutput(cause, ["sso", "add"])).toBe("drop");
+    expect(
+      classifyParseErrorConsoleOutput(cause, { rootCommand: testRoot, args: ["sso", "add"] }),
+    ).toBe("drop");
   });
 
   // CLI-1901 (Codex review finding): the vendored library raises the SAME
@@ -204,24 +219,54 @@ describe("classifyParseErrorConsoleOutput", () => {
   it("flushes the help dump to stderr for a required flag present on argv but missing its value", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
-        commandPath: ["migration", "repair"],
+        commandPath: ["supabase", "migration", "repair"],
         errors: [new CliError.MissingOption({ option: "status" })],
       }),
     );
     expect(
-      classifyParseErrorConsoleOutput(cause, ["migration", "repair", "20230101000000", "--status"]),
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: testRoot,
+        args: ["migration", "repair", "20230101000000", "--status"],
+      }),
+    ).toBe("flush-help-doc-to-stderr");
+  });
+
+  // Codex review finding (CLI-1901 follow-up): `sso add`'s `type` flag also has
+  // a short alias, `-t` (`add.command.ts`). Go's pflag treats a present-but-
+  // valueless SHORT flag exactly like the long form — `parseSingleShortArg`
+  // raises the same `ValueRequiredError` as `parseLongArg`, same timing, same
+  // "usage still shown" outcome — verified against the real
+  // `apps/cli-go/supabase-go` binary (`sso add -t`: full usage block on
+  // stderr, byte-parallel to `sso add --type`). `flagAliasesFor` resolves
+  // `type`'s aliases from the real command tree (via `context.rootCommand`)
+  // so `isMissingFlagTokenPresent` recognizes `-t` here too, instead of
+  // misclassifying it as a genuinely-absent flag.
+  it("flushes the help dump to stderr for a required flag present on argv by its short alias but missing its value", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["supabase", "sso", "add"],
+        errors: [new CliError.MissingOption({ option: "type" })],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, { rootCommand: testRoot, args: ["sso", "add", "-t"] }),
     ).toBe("flush-help-doc-to-stderr");
   });
 
   it("still drops the help dump for a missing required flag even when an unrelated flag shares a substring of its name", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
-        commandPath: ["sso", "add"],
+        commandPath: ["supabase", "sso", "add"],
         errors: [new CliError.MissingOption({ option: "type" })],
       }),
     );
     // `--type-hint` is a different flag token — must not false-positive-match `--type`.
-    expect(classifyParseErrorConsoleOutput(cause, ["sso", "add", "--type-hint", "x"])).toBe("drop");
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: testRoot,
+        args: ["sso", "add", "--type-hint", "x"],
+      }),
+    ).toBe("drop");
   });
 
   // Go's `ParseFlags` (`command.go:919`) validates `Flag.choice` values BEFORE
@@ -231,7 +276,7 @@ describe("classifyParseErrorConsoleOutput", () => {
   it("flushes the help dump to stderr for an invalid Flag.choice value", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
-        commandPath: ["sso", "add"],
+        commandPath: ["supabase", "sso", "add"],
         errors: [
           new CliError.InvalidValue({
             option: "type",
@@ -242,33 +287,39 @@ describe("classifyParseErrorConsoleOutput", () => {
         ],
       }),
     );
-    expect(classifyParseErrorConsoleOutput(cause, ["sso", "add", "--type", "bogus"])).toBe(
-      "flush-help-doc-to-stderr",
-    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: testRoot,
+        args: ["sso", "add", "--type", "bogus"],
+      }),
+    ).toBe("flush-help-doc-to-stderr");
   });
 
   it("flushes the help dump to stderr for an unrecognized flag", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
-        commandPath: ["branches"],
+        commandPath: ["supabase", "branches"],
         errors: [new CliError.UnrecognizedOption({ option: "--bogus", suggestions: [] })],
       }),
     );
-    expect(classifyParseErrorConsoleOutput(cause, ["branches", "--bogus"])).toBe(
-      "flush-help-doc-to-stderr",
-    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: testRoot,
+        args: ["branches", "--bogus"],
+      }),
+    ).toBe("flush-help-doc-to-stderr");
   });
 
   it("flushes the help dump to stderr for a missing positional argument", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
-        commandPath: ["sso", "show"],
+        commandPath: ["supabase", "sso", "show"],
         errors: [new CliError.MissingArgument({ argument: "id" })],
       }),
     );
-    expect(classifyParseErrorConsoleOutput(cause, ["sso", "show"])).toBe(
-      "flush-help-doc-to-stderr",
-    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, { rootCommand: testRoot, args: ["sso", "show"] }),
+    ).toBe("flush-help-doc-to-stderr");
   });
 
   // A mix (e.g. a missing required flag alongside an unrecognized flag) can't
@@ -278,36 +329,51 @@ describe("classifyParseErrorConsoleOutput", () => {
   it("flushes the help dump to stderr for a mix of error tags", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
-        commandPath: ["sso", "add"],
+        commandPath: ["supabase", "sso", "add"],
         errors: [
           new CliError.MissingOption({ option: "type" }),
           new CliError.UnrecognizedOption({ option: "--bogus", suggestions: [] }),
         ],
       }),
     );
-    expect(classifyParseErrorConsoleOutput(cause, ["sso", "add", "--bogus"])).toBe(
-      "flush-help-doc-to-stderr",
-    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: testRoot,
+        args: ["sso", "add", "--bogus"],
+      }),
+    ).toBe("flush-help-doc-to-stderr");
   });
 
   it("flushes unchanged for a clean ShowHelp failure (bare group command / explicit --help)", () => {
-    const cause = Cause.fail(new CliError.ShowHelp({ commandPath: ["branches"], errors: [] }));
-    expect(classifyParseErrorConsoleOutput(cause, ["branches"])).toBe("flush-unchanged");
+    const cause = Cause.fail(
+      new CliError.ShowHelp({ commandPath: ["supabase", "branches"], errors: [] }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, { rootCommand: testRoot, args: ["branches"] }),
+    ).toBe("flush-unchanged");
   });
 
   it("flushes unchanged for a non-ShowHelp failure", () => {
-    expect(classifyParseErrorConsoleOutput(Cause.fail(new Error("boom")), [])).toBe(
-      "flush-unchanged",
-    );
+    expect(
+      classifyParseErrorConsoleOutput(Cause.fail(new Error("boom")), {
+        rootCommand: testRoot,
+        args: [],
+      }),
+    ).toBe("flush-unchanged");
   });
 
   it("flushes unchanged for an interrupt", () => {
-    expect(classifyParseErrorConsoleOutput(Cause.interrupt(), [])).toBe("flush-unchanged");
+    expect(
+      classifyParseErrorConsoleOutput(Cause.interrupt(), { rootCommand: testRoot, args: [] }),
+    ).toBe("flush-unchanged");
   });
 
   it("flushes unchanged for a defect with no typed failure", () => {
-    expect(classifyParseErrorConsoleOutput(Cause.die(new Error("unexpected crash")), [])).toBe(
-      "flush-unchanged",
-    );
+    expect(
+      classifyParseErrorConsoleOutput(Cause.die(new Error("unexpected crash")), {
+        rootCommand: testRoot,
+        args: [],
+      }),
+    ).toBe("flush-unchanged");
   });
 });

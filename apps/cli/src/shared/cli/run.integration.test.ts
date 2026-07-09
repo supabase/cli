@@ -158,17 +158,23 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
   const runBranches = (args: ReadonlyArray<string>, console: Console.Console) =>
     withoutParseErrorHelpDump(
       Command.runWith(legacyBranchesCommand, { version: "0.0.0-test" })(args),
-      args,
+      { rootCommand: legacyBranchesCommand, args },
     ).pipe(Effect.provide(layerFor(args, console)));
 
+  // `type`'s `-t` alias mirrors the real `sso add --type`/`-t` flag
+  // (`add.command.ts`) so the short-alias "present but missing its value"
+  // case below (Codex review finding, CLI-1901 follow-up) exercises the same
+  // shape end to end, without pulling in `sso add`'s own management-API
+  // runtime layer graph (see the suite-level comment above for why that's
+  // avoided here).
   const requiredFlagCommand = Command.make("test-required-flag", {
-    type: Flag.choice("type", ["saml"] as const),
+    type: Flag.choice("type", ["saml"] as const).pipe(Flag.withAlias("t")),
   });
 
   const runRequiredFlagCommand = (args: ReadonlyArray<string>, console: Console.Console) =>
     withoutParseErrorHelpDump(
       Command.runWith(requiredFlagCommand, { version: "0.0.0-test" })(args),
-      args,
+      { rootCommand: requiredFlagCommand, args },
     ).pipe(Effect.provide(layerFor(args, console)));
 
   test("an unrecognized flag: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause", async () => {
@@ -233,6 +239,27 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
     expect(exitCodeForFailure(exit.cause)).toBe(1);
   });
 
+  // Codex review finding (CLI-1901 follow-up): the same "present but missing
+  // its value" case, but supplied via the flag's SHORT ALIAS (`-t`) instead of
+  // its canonical long form. Go's pflag treats a present-but-valueless
+  // shorthand exactly like the long form (`parseSingleShortArg` raises the
+  // same `ValueRequiredError` as `parseLongArg`, same pre-`SilenceUsage`
+  // timing) — verified against the real `apps/cli-go/supabase-go` binary
+  // (`sso add -t`: full usage block on stderr, byte-parallel to `sso add
+  // --type`). Before this fix, `isMissingFlagTokenPresent` only recognized
+  // the canonical `--type` token and misclassified `-t` as absent, silently
+  // dropping the help dump instead.
+  test("a required flag present on argv by its short alias but missing its value: replays the help dump to stderr instead of dropping it", async () => {
+    const { console, calls } = fakeConsole();
+    const exit = await Effect.runPromiseExit(runRequiredFlagCommand(["-t"], console));
+
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.startsWith("error:"))).toBe(true);
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (!Exit.isFailure(exit)) return;
+    expect(exitCodeForFailure(exit.cause)).toBe(1);
+  });
+
   test("an invalid Flag.choice value: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause", async () => {
     const { console, calls } = fakeConsole();
     const exit = await Effect.runPromiseExit(runRequiredFlagCommand(["--type", "bogus"], console));
@@ -268,7 +295,7 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
     });
 
     const result = await Effect.runPromise(
-      withoutParseErrorHelpDump(program, []).pipe(
+      withoutParseErrorHelpDump(program, { rootCommand: requiredFlagCommand, args: [] }).pipe(
         Effect.provide(Layer.succeed(Console.Console, console)),
       ),
     );

@@ -102,6 +102,32 @@ function flagMatchesOption(flag: HelpDoc.FlagDoc, option: string): boolean {
   return flag.aliases.includes(option);
 }
 
+/**
+ * Every argv token (e.g. `-t`, alongside the canonical `--type`) that also
+ * resolves to `option` for the command at `commandPath`, by walking the
+ * command tree the same way `buildSubcommandFlagHint` does. Returns `[]` if
+ * `commandPath` doesn't resolve to a real command or that command has no
+ * flag named `option` — callers should treat that as "no aliases", not an
+ * error, since a synthetic/test command path is a legitimate input.
+ *
+ * Used by `run.ts`'s `isMissingFlagTokenPresent` to recognize a required
+ * flag supplied by its short alias but missing its value (Go/pflag still
+ * shows usage for that case — see CLI-1901) instead of misclassifying it as
+ * genuinely absent (Go: `SilenceUsage`-suppressed, no usage shown).
+ */
+export function flagAliasesFor(
+  rootCommand: Command.Command.Any,
+  commandPath: ReadonlyArray<string>,
+  option: string,
+): ReadonlyArray<string> {
+  const command = findCommand(rootCommand, commandPath.slice(1));
+  if (!command) return [];
+  const flag = helpDocFor(command, commandPath)?.flags.find(
+    (candidate) => candidate.name === option,
+  );
+  return flag?.aliases ?? [];
+}
+
 function findPathEndIndex(
   args: ReadonlyArray<string>,
   pathWithoutRoot: ReadonlyArray<string>,
