@@ -45,6 +45,7 @@ describe("PodRegistry", () => {
       versions: { postgres: "17.6.1.143" },
       services: {},
       flags: { supautils: false },
+      warm: false,
       ports: ports(55000, 55001),
       internalPorts: ports(45000, 45001),
       postgresPassword: "postgres",
@@ -73,6 +74,7 @@ describe("PodRegistry", () => {
     const base = {
       services: {},
       flags: { supautils: false },
+      warm: false,
       ports: ports(55000, 55001),
       internalPorts: ports(45000, 45001),
       postgresPassword: "postgres",

@@ -207,6 +207,7 @@ function parseManifest(value: unknown): PodManifest | undefined {
     if (services[service] === true && versions[service] === undefined) return undefined;
   }
   if (!isRecord(value.flags) || typeof value.flags.supautils !== "boolean") return undefined;
+  if (typeof value.warm !== "boolean") return undefined;
   if (typeof value.postgresPassword !== "string" || value.postgresPassword.length === 0) {
     return undefined;
   }
@@ -218,6 +219,7 @@ function parseManifest(value: unknown): PodManifest | undefined {
     versions,
     services,
     flags: { supautils: value.flags.supautils },
+    warm: value.warm,
     ports,
     internalPorts,
     postgresPassword: value.postgresPassword,

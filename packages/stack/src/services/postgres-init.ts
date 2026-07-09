@@ -55,8 +55,10 @@ EOSQL
   // postgres-init time from ~5s to ~1s.
   const script = `
 export PATH="${pgBinDir}:$PATH"
-export TARGET_PGPASSWORD=${shellQuote(opts.dbPassword)}
-export PGPASSWORD="$TARGET_PGPASSWORD"
+# The target password arrives via the PGPASSWORD env var (see env below), never
+# interpolated into this script: the script is a "bash -c" argv entry, which any
+# local user can read via ps / /proc/<pid>/cmdline.
+export TARGET_PGPASSWORD="$PGPASSWORD"
 DEFAULT_PGPASSWORD=${shellQuote(DEFAULT_POSTGRES_PASSWORD)}
 db="${migrationsDir}"
 

@@ -17,15 +17,17 @@ const PG_VERSION = "17.6.1.143";
  * Cast through `unknown` because `TemplateStore` has private members that a
  * structural object literal can never satisfy.
  */
-function fakeTemplateStore(templateDir: string): TemplateStore {
+function fakeTemplateStore(templateDir: string, calls: string[]): TemplateStore {
   return {
     async ensureBaseTemplate(_postgresVersion: string): Promise<string> {
+      calls.push("base");
       return templateDir;
     },
     async ensureWarmTemplate(
       _versions: Partial<VersionManifest>,
-      _enabledServices: ReadonlyArray<ServiceName>,
+      enabledServices: ReadonlyArray<ServiceName>,
     ): Promise<string> {
+      calls.push(`warm:${[...enabledServices].sort().join(",")}`);
       return templateDir;
     },
   } as unknown as TemplateStore;
@@ -36,12 +38,14 @@ async function makeHarness(templateDir: string) {
   const podsRoot = join(root, "pods");
   const pods = new PodRegistry(podsRoot);
   const ports = await PortRegistry.load(join(root, "fleet-state.json"));
-  const templates = fakeTemplateStore(templateDir);
+  const templateCalls: string[] = [];
+  const templates = fakeTemplateStore(templateDir, templateCalls);
   return {
     p: new Provisioner({ templates, pods, ports, postgresPassword: "secret-password" }),
     pods,
     ports,
     podsRoot,
+    templateCalls,
   };
 }
 
@@ -151,6 +155,37 @@ describe("Provisioner (unit, fake deps)", () => {
   });
 
   describe("reset", () => {
+    it("re-clones the warm template for warm-created pods", async () => {
+      const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
+      await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
+      const { p, templateCalls } = await makeHarness(templateDir);
+
+      await p.create({
+        id: "warm",
+        versions: { postgres: PG_VERSION },
+        services: { postgrest: true, auth: true },
+        warm: true,
+      });
+      await p.reset("warm");
+
+      expect(templateCalls.at(-1)).toBe("warm:auth,postgrest");
+    });
+
+    it("re-clones the base template for cold-created pods with enabled services", async () => {
+      const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
+      await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
+      const { p, templateCalls } = await makeHarness(templateDir);
+
+      await p.create({
+        id: "cold",
+        versions: { postgres: PG_VERSION },
+        services: { postgrest: true },
+      });
+      await p.reset("cold");
+
+      expect(templateCalls.at(-1)).toBe("base");
+    });
+
     it("keeps the live data dir when cloning the replacement template fails", async () => {
       const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
       await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);

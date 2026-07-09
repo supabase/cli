@@ -73,6 +73,7 @@ export class Provisioner {
         versions: resolvedVersions,
         services: opts.services ?? {},
         flags: { supautils: opts.flags?.supautils ?? false },
+        warm: opts.warm === true,
         ports: allocated.ports,
         internalPorts: allocated.internalPorts,
         postgresPassword,
@@ -88,14 +89,17 @@ export class Provisioner {
     }
   }
 
-  /** Re-clones the pod's data dir from the base template of its postgres version. */
+  /** Re-clones the pod's data dir from the same kind of template it was created from. */
   async reset(id: string): Promise<void> {
     const { templates, pods, postgresPassword } = this.deps;
     const manifest = await pods.read(id);
     if (manifest === undefined) throw new Error(`unknown pod: ${id}`);
     const pgVersion = manifest.versions.postgres;
     if (pgVersion === undefined) throw new Error(`pod ${id} has no postgres version`);
-    const template = await templates.ensureBaseTemplate(pgVersion);
+    const enabled = SERVICE_NAMES.filter((name) => manifest.services[name] === true);
+    const template = manifest.warm
+      ? await templates.ensureWarmTemplate(manifest.versions, enabled)
+      : await templates.ensureBaseTemplate(pgVersion);
     const dataDir = pods.dataDir(id);
     const tmpDataDir = `${dataDir}.reset-${process.pid}-${Date.now()}`;
     const backupDataDir = `${dataDir}.backup-${process.pid}-${Date.now()}`;

@@ -525,7 +525,11 @@ describe("makePostgresInitService", () => {
     });
     const script = def.args?.[1] as string;
 
-    expect(script).toContain("export TARGET_PGPASSWORD='new-password'");
+    // The target password must only travel via the process env, never inside
+    // the script itself (a bash -c argv entry is visible in process listings).
+    expect(script).not.toContain("new-password");
+    expect(def.env?.PGPASSWORD).toBe("new-password");
+    expect(script).toContain('export TARGET_PGPASSWORD="$PGPASSWORD"');
     expect(script).toContain('export PGPASSWORD="$DEFAULT_PGPASSWORD"');
     expect(script).toContain('-v pgpass="$TARGET_PGPASSWORD"');
 

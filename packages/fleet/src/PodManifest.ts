@@ -11,6 +11,8 @@ export interface PodManifest {
   readonly versions: Partial<VersionManifest>;
   readonly services: Partial<Record<ServiceName, boolean>>;
   readonly flags: { readonly supautils: boolean };
+  /** Whether the pod was provisioned from a warm (service-premigrated) template; reset re-clones the same kind. */
+  readonly warm: boolean;
   readonly ports: AllocatedPorts;
   readonly internalPorts: AllocatedPorts;
   readonly postgresPassword: string;

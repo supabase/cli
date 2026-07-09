@@ -58,6 +58,7 @@ function manifest(id: string, dbPort: number, apiPort: number): PodManifest {
     versions: { postgres: "17.6.1.143" },
     services: {},
     flags: { supautils: false },
+    warm: false,
     ports: ports(dbPort, apiPort),
     internalPorts: ports(dbPort - 10_000, apiPort - 10_000),
     postgresPassword: "postgres",
