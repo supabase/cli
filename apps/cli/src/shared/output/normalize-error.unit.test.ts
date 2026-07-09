@@ -1,7 +1,10 @@
 import { describe, expect, test } from "vitest";
 import { Cause } from "effect";
-import { CliError } from "effect/unstable/cli";
+import { CliError, Command } from "effect/unstable/cli";
+import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
 import { formatCliError, normalizeCause, normalizeCliError } from "./normalize-error.ts";
+
+const testRoot = Command.make("supabase").pipe(Command.withSubcommands([legacyBranchesCommand]));
 
 describe("normalizeCliError", () => {
   test("maps NoRunningStackError to a user-facing message", () => {
@@ -181,6 +184,41 @@ describe("normalizeCliError", () => {
       code: "UnrecognizedOption",
       message: "Unrecognized flag: --bogus in command branches",
     });
+  });
+
+  // Regression test for a Codex review finding on CLI-1901: `run.ts`'s
+  // `withoutParseErrorHelpDump` suppresses the vendored library's own
+  // `Console.error` render, which used to be the only place a subcommand-flag
+  // placement hint (`buildSubcommandFlagHint` /
+  // `subcommand-flag-suggestions.ts`) reached the user. When a
+  // `CliErrorSuggestionContext` is supplied, this fallback must reuse
+  // `formatCliErrorsForDisplay` — the same helper the text/json formatters
+  // use — so that hint still survives through the single-render path.
+  test("ShowHelp envelope unwraps a single UnrecognizedOption and preserves its subcommand-flag hint when a suggestion context is supplied", () => {
+    const error = {
+      _tag: "ShowHelp",
+      commandPath: ["branches"],
+      errors: [
+        new CliError.UnrecognizedOption({
+          option: "--persistent",
+          command: ["supabase", "branches"],
+          suggestions: [],
+        }),
+      ],
+    };
+
+    const result = normalizeCliError(error, {
+      rootCommand: testRoot,
+      args: ["branches", "--persistent", "create"],
+    });
+
+    expect(result.code).toBe("UnrecognizedOption");
+    expect(result.message).toContain(
+      "Unrecognized flag: --persistent in command supabase branches",
+    );
+    expect(result.message).toContain(
+      "Hint: --persistent is available on `supabase branches create` and `supabase branches update`. Pass it after the subcommand",
+    );
   });
 
   // The same fallback also covers an InvalidValue that does NOT have the

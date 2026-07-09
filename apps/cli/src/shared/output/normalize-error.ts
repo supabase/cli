@@ -1,5 +1,8 @@
 import { Cause, Option } from "effect";
+import { CliError } from "effect/unstable/cli";
 import { formatInvalidValueMessage } from "../cli/invalid-value-message.ts";
+import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
+import { formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
 
 type NormalizedCliError = {
   readonly code: string;
@@ -28,7 +31,10 @@ const readRawString = (value: ErrorRecord, key: string): string | undefined => {
   return typeof field === "string" ? field : undefined;
 };
 
-const mappedError = (error: ErrorRecord): NormalizedCliError | undefined => {
+const mappedError = (
+  error: ErrorRecord,
+  context?: CliErrorSuggestionContext,
+): NormalizedCliError | undefined => {
   const tag = readString(error, "_tag");
   switch (tag) {
     case "NoRunningStackError":
@@ -126,7 +132,7 @@ const mappedError = (error: ErrorRecord): NormalizedCliError | undefined => {
       if (Array.isArray(errors) && errors.length === 1) {
         const inner = errors[0];
         if (isErrorRecord(inner)) {
-          const innerMapped = mappedError(inner);
+          const innerMapped = mappedError(inner, context);
           if (innerMapped) return innerMapped;
           // No Go-parity-specific mapping exists for this inner tag (e.g.
           // UnrecognizedOption, DuplicateOption, MissingArgument,
@@ -136,7 +142,16 @@ const mappedError = (error: ErrorRecord): NormalizedCliError | undefined => {
           // useless "Help requested": since CLI-1901 (`run.ts`'s
           // `withoutParseErrorHelpDump`) stopped the vendored library from
           // also `Console.error`-ing this same text, this is now the ONLY
-          // place it reaches the user.
+          // place it reaches the user. Reuse the same `formatCliErrorsForDisplay`
+          // the text/json formatters use (rather than the raw `.message`
+          // getter) so a subcommand-flag hint (e.g. "Hint: --foo is available
+          // on `branches create`. Pass it after the subcommand") that used to
+          // reach the user via the library's now-suppressed duplicate render
+          // still survives through this single-render path.
+          if (CliError.isCliError(inner)) {
+            const [formatted] = formatCliErrorsForDisplay([inner], context).errors;
+            if (formatted) return { code: formatted._tag, message: formatted.message };
+          }
           const code = readString(inner, "_tag");
           const message = readString(inner, "message");
           if (code && message) return { code, message };
@@ -147,9 +162,12 @@ const mappedError = (error: ErrorRecord): NormalizedCliError | undefined => {
   }
 };
 
-export function normalizeCliError(error: unknown): NormalizedCliError {
+export function normalizeCliError(
+  error: unknown,
+  context?: CliErrorSuggestionContext,
+): NormalizedCliError {
   if (isErrorRecord(error)) {
-    const mapped = mappedError(error);
+    const mapped = mappedError(error, context);
     if (mapped) {
       return mapped;
     }
@@ -186,9 +204,15 @@ export function normalizeCliError(error: unknown): NormalizedCliError {
   };
 }
 
-export function normalizeCause(cause: Cause.Cause<unknown>): NormalizedCliError {
+export function normalizeCause(
+  cause: Cause.Cause<unknown>,
+  context?: CliErrorSuggestionContext,
+): NormalizedCliError {
   const errorOption = Cause.findErrorOption(cause);
-  return normalizeCliError(Option.getOrElse(errorOption, () => Cause.squash(cause)));
+  return normalizeCliError(
+    Option.getOrElse(errorOption, () => Cause.squash(cause)),
+    context,
+  );
 }
 
 export function formatCliError(error: NormalizedCliError): string {

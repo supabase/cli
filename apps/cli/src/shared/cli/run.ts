@@ -372,6 +372,12 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
     }).pipe(Effect.provide(BunServices.layer)),
   );
 
+  // Same `{ rootCommand, args }` shape `formatterLayerFor` builds below, so
+  // `normalizeCause`'s single-render fallback path (CLI-1901) can reuse
+  // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the
+  // text/json formatters would have shown before the vendored library's own
+  // duplicate render was suppressed.
+  const suggestionContext = { rootCommand, args };
   const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(args);
   const outputFormat = await Effect.runPromise(
     Effect.gen(function* () {
@@ -425,7 +431,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
         // below. See `exitCodeForFailure` for why a "clean" ShowHelp failure
         // (e.g. a bare group command with no subcommand) also maps to exit 0.
         if (shouldReportFailure(exit.cause, exitCode)) {
-          yield* output.fail(normalizeCause(exit.cause));
+          yield* output.fail(normalizeCause(exit.cause, suggestionContext));
         }
         return yield* processControl.exit(exitCode);
       }
