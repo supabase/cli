@@ -524,6 +524,7 @@ function resolveDownloadDestination(
   return Effect.fail(
     new UnsafeFunctionDownloadPathError({
       message: `refusing to extract Function file outside ${functionsRoot}: ${partPath}`,
+      unsafeResponsePath: true,
     }),
   );
 }
@@ -536,6 +537,7 @@ function ensureContainedPath(root: string, candidate: string, sourcePath: string
   return Effect.fail(
     new UnsafeFunctionDownloadPathError({
       message: `refusing to extract Function file outside ${root}: ${sourcePath}`,
+      unsafeResponsePath: true,
     }),
   );
 }

@@ -27,7 +27,9 @@ export class NoProjectApiKeyError extends Data.TaggedError("NoProjectApiKeyError
   readonly projectRef: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.permission;
+    // A successful api-keys response with no usable key — an API response
+    // problem, not a raw status failure.
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
 }
 

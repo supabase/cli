@@ -173,7 +173,9 @@ export class LegacyBranchesPrimaryNotFoundError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.apiStatus;
+    // A successful pooler-config response with no PRIMARY entry — an API
+    // response problem, not a raw status failure.
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
 }
 

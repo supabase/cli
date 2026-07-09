@@ -16,7 +16,7 @@ export class LegacyDbConfigParseUrlError extends Data.TaggedError("LegacyDbConfi
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
+    return actionability.provideFlags;
   }
 }
 

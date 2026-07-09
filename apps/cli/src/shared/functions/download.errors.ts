@@ -49,8 +49,18 @@ export class UnsafeFunctionDownloadPathError extends Data.TaggedError(
   "UnsafeFunctionDownloadPathError",
 )<{
   readonly message: string;
+  /**
+   * True when a 200 response's multipart filename/metadata entrypoint
+   * resolved outside `supabase/functions` — an API response problem, not a
+   * local write/rename failure (the other construction sites, which keep the
+   * default `permission` classification).
+   */
+  readonly unsafeResponsePath?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.unsafeResponsePath === true) {
+      return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+    }
     return actionability.permission;
   }
 }
