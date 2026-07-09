@@ -241,6 +241,27 @@ describe("StackLifecycleCoordinator enableExtension", () => {
     );
   });
 
+  it.live("rejects lazy restarts of services that were never started", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-restart-test-"));
+    writeFileSync(join(dataDir, "postgresql.conf"), "# stock conf\n");
+    const config = makeLazyConfig(dataDir, defaultPorts.postgrestPort);
+    const { layer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      yield* stack.start();
+
+      // postgrest is enabled but lazy and never started: restart only brings
+      // up the target and its dependents, so it would boot waiting on
+      // dependencies that stay Pending forever.
+      const exit = yield* stack.restartService("postgrest").pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
+    );
+  });
+
   it.live("treats non-preload extensions as a no-op without touching the data dir", () => {
     // Deliberately point at a data dir that doesn't exist and never start the
     // stack: enabling e.g. pgvector must not read or create anything in PGDATA.

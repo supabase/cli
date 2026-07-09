@@ -1,5 +1,5 @@
 import { createServer } from "node:net";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -79,6 +79,35 @@ function manifest(id: string, dbPort: number, apiPort: number): PodManifest {
 }
 
 describe("createFleet", () => {
+  it("refuses to start a second daemon for the same fleet root", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fleet-unit-"));
+    try {
+      const fleet = await createFleet({ root });
+      try {
+        await expect(createFleet({ root })).rejects.toThrow(/already owns/);
+      } finally {
+        await fleet.dispose();
+      }
+      // Once the owner releases the lock, the root is startable again.
+      const second = await createFleet({ root });
+      await second.dispose();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("takes over a stale fleet lock left by a dead daemon", async () => {
+    const root = await mkdtemp(join(tmpdir(), "fleet-unit-"));
+    try {
+      // No live process has this pid (well above typical pid ranges).
+      await writeFile(join(root, "fleet.lock"), "999999");
+      const fleet = await createFleet({ root });
+      await fleet.dispose();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("closes registered edge listeners when startup reconciliation fails", async () => {
     const root = await mkdtemp(join(tmpdir(), "fleet-unit-"));
     try {

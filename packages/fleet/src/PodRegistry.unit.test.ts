@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -135,6 +135,23 @@ describe("PodRegistry", () => {
     await expect(pods.read("dup-ports")).resolves.toBeUndefined();
     await expect(pods.listIds()).resolves.toEqual(["dup-ports"]);
     await expect(pods.list()).resolves.toEqual([]);
+  });
+
+  it("propagates pod-root scan failures instead of reporting an empty fleet", async () => {
+    if (typeof process.getuid === "function" && process.getuid() === 0) return; // root ignores modes
+    const root = await mkdtemp(join(tmpdir(), "pods-"));
+    const pods = new PodRegistry(root);
+    try {
+      await chmod(root, 0o000);
+      // Treating EACCES as "no pods" would let startup free every port
+      // reservation while pod dirs still exist behind the unreadable root.
+      await expect(pods.listIds()).rejects.toThrow();
+    } finally {
+      await chmod(root, 0o700);
+    }
+    // A genuinely missing root still means "no pods".
+    const missing = new PodRegistry(join(root, "does-not-exist"));
+    await expect(missing.listIds()).resolves.toEqual([]);
   });
 
   it("rejects manifests missing versions for postgres or enabled services", async () => {

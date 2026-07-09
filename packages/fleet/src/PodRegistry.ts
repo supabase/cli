@@ -49,6 +49,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function errorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+  return typeof error.code === "string" ? error.code : undefined;
+}
+
 // Public and internal ports live in disjoint ranges (proxy listeners vs
 // in-process stack services); a "parseable but corrupt" manifest whose
 // internal ports drifted into the public range would make wake() bind
@@ -298,7 +303,16 @@ export class PodRegistry {
    * for pods it can no longer parse.
    */
   async listIds(): Promise<string[]> {
-    const entries = await readdir(this.podsRoot, { withFileTypes: true }).catch(() => []);
+    // Only a MISSING root means "no pods". Any other scan failure (EACCES,
+    // ENOTDIR, transient I/O) must propagate: reporting an empty fleet would
+    // let startup reconciliation free every port reservation while the pod
+    // directories still exist behind the unreadable root.
+    const entries = await readdir(this.podsRoot, { withFileTypes: true }).catch(
+      (error: unknown) => {
+        if (errorCode(error) === "ENOENT") return [];
+        throw error;
+      },
+    );
     // Only directories: a stray regular file whose name matches the id regex
     // would make startup cleanup paths fail with ENOTDIR.
     return entries

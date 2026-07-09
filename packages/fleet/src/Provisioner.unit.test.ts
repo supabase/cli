@@ -157,6 +157,24 @@ describe("Provisioner (unit, fake deps)", () => {
       expect(await podsRootEntries(podsRoot)).not.toContain("bad");
     });
 
+    it("rejects non-string version entries before provisioning", async () => {
+      const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
+      await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
+      const { p, ports, podsRoot } = await makeHarness(templateDir);
+
+      // Simulates an untyped JS caller: a numeric version would persist into a
+      // pod.json the registry's strict parser refuses to read back.
+      const junkVersions = { postgres: PG_VERSION, auth: 123 } as unknown as Partial<
+        Record<ServiceName, string>
+      >;
+      await expect(
+        p.create({ id: "bad", versions: junkVersions, services: { auth: true } }),
+      ).rejects.toThrow(/invalid version entry/);
+
+      expect(ports.get("bad")).toBeUndefined();
+      expect(await podsRootEntries(podsRoot)).not.toContain("bad");
+    });
+
     it("rejects unknown or non-boolean service entries before provisioning", async () => {
       const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
       await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);

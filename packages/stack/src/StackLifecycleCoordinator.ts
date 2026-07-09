@@ -669,6 +669,20 @@ export class StackLifecycleCoordinator extends Context.Service<
           restartService: (name) =>
             Effect.gen(function* () {
               yield* requireKnownService(name);
+              // Restart only restarts the target and its dependents, never the
+              // dependency closure — a never-started lazy service would come up
+              // waiting on dependencies that stay Pending forever. Reject it,
+              // mirroring the waitReady guard; callers want startService here.
+              if (config.lazyServices === true) {
+                const startedServices = yield* Ref.get(startedServicesRef);
+                if (!startedServices.has(name)) {
+                  return yield* Effect.fail(
+                    new StackBuildError({
+                      detail: `Cannot restart service "${name}": it has not been started (lazyServices starts it on the first proxied request or via startService()).`,
+                    }),
+                  );
+                }
+              }
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.restartService(name);
               // Idempotent: the service was necessarily already in the started set (you can't

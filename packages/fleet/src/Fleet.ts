@@ -11,6 +11,7 @@ import {
   type StackHandle,
 } from "@supabase/stack";
 import { EdgeProxy, type PodUpstream } from "./EdgeProxy.ts";
+import { acquireFleetLock } from "./fleetLock.ts";
 import { IdleMonitor } from "./IdleMonitor.ts";
 import type { PodManifest } from "./PodManifest.ts";
 import { PodLock } from "./podLock.ts";
@@ -99,6 +100,11 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
   // this password in the data dir, and pod connection URLs need to use the same
   // value when exposing the suspended/warm pod.
   const postgresPassword = resolvePostgresPassword();
+
+  // Single daemon per root, acquired BEFORE any pod state is touched: the
+  // startup reconciliation below kills postmasters it finds under pod dirs,
+  // which would include a live sibling daemon's warm pods.
+  const fleetLock = await acquireFleetLock(join(root, "fleet.lock"));
 
   const templates = new TemplateStore(join(root, "templates"), postgresPassword);
   const pods = new PodRegistry(join(root, "pods"));
@@ -317,6 +323,7 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
     }
   } catch (err) {
     await proxy.close().catch(() => {});
+    await fleetLock.release().catch(() => {});
     throw err;
   }
 
@@ -411,6 +418,7 @@ export async function createFleet(opts: FleetOptions = {}): Promise<FleetHandle>
       await proxy.close();
       await Promise.allSettled(wakesInFlight.values());
       for (const id of warm.keys()) await suspend(id);
+      await fleetLock.release();
     },
     async [Symbol.asyncDispose]() {
       await handle.dispose();

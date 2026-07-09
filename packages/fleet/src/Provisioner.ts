@@ -33,6 +33,15 @@ function validateServices(services: Partial<Record<ServiceName, boolean>>): void
   }
 }
 
+/** Same rationale as validateServices: junk versions would persist into a pod.json the registry's strict parser then refuses to read back. */
+function validateVersions(versions: Partial<VersionManifest>): void {
+  for (const [name, version] of Object.entries(versions)) {
+    if (!SERVICE_NAME_SET.has(name) || typeof version !== "string" || version.length === 0) {
+      throw new Error(`invalid version entry: ${name}=${String(version)}`);
+    }
+  }
+}
+
 export interface CreatePodOptions {
   readonly id: string;
   readonly versions: Partial<VersionManifest>;
@@ -68,6 +77,7 @@ export class Provisioner {
     }
     const pgVersion = opts.versions.postgres;
     if (pgVersion === undefined) throw new Error("versions.postgres is required");
+    validateVersions(opts.versions);
     validateServices(opts.services ?? {});
     const enabled = SERVICE_NAMES.filter((name) => opts.services?.[name] === true);
     const dependencyError = validateEnabledServiceDependencies(new Set(enabled));
