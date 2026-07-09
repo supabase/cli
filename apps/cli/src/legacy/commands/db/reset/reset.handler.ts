@@ -243,6 +243,19 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     // (running check, messages, bucket seeding, git-branch line, output shaping).
     // Mirrors `internal/db/reset/reset.go:57-77`.
     if (cfg.isLocal) {
+      // Go's `flags.LoadConfig` (root `PersistentPreRunE` → the local target's
+      // per-connType `LoadConfig`, `internal/utils/flags/db_url.go:77-80`) runs full
+      // config validation before `reset.Run` ever reaches `AssertSupabaseDbIsRunning`
+      // / the destructive `resetDatabase` (`internal/db/reset/reset.go:57-61`). The
+      // resolver's own local read (above) already performs that same validation
+      // internally, but repeat it here as an explicit, independent gate — the same
+      // pattern `db start` and `db push` use for their own pre-destructive-work
+      // checks — so a malformed config.toml (bad bucket name, undecryptable secret,
+      // empty project_id) is guaranteed to abort before the local database is
+      // recreated, and that guarantee stays covered by a handler-level test even if
+      // the resolver's own internal read is ever mocked, relaxed, or refactored.
+      yield* legacyCheckDbToml(fs, path, workdir);
+
       // AssertSupabaseDbIsRunning — error if the local db container is down.
       const running = yield* seam.isDbRunning();
       if (!running) {
@@ -268,13 +281,16 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         // Go's `buckets.Run(ctx, "", false, fsys)` — non-interactive: overwrite/prune
         // confirmations take their defaults instead of blocking on input.
         //
-        // Bucket seeding re-loads config.toml through the strict `@supabase/config`
-        // loader, which (unlike the Go-parity reader used elsewhere in reset) rejects some
-        // Go-valid configs — e.g. `[db.seed] enabled = "env(SEED_ENABLED)"`. The seam's Go
-        // `recreate` has already run Go's full `LoadConfig`+`Validate` on this same config,
-        // so a parse failure HERE is that loader-strictness gap, not a genuinely invalid
-        // config. Recreate already dropped/rebuilt the DB, so aborting now would leave the
-        // reset half-done; warn and skip buckets so `db reset` finishes like Go instead.
+        // Bucket seeding re-loads config.toml through the strict `@supabase/config` loader
+        // (in `goViperCompat` mode), which is usually in lockstep with the Go-parity
+        // reader used earlier in reset (both now resolve `env(VAR)` booleans via Go's
+        // `strconv.ParseBool` acceptance set) — but a genuinely invalid config would
+        // already have failed the earlier `legacyCheckDbToml` gate before the destructive
+        // recreate. A parse failure reaching HERE means the two loaders have drifted out
+        // of lockstep for some config shape, not that the config is invalid: the seam's Go
+        // `recreate` has already run Go's full `LoadConfig`+`Validate` on this same config.
+        // Recreate already dropped/rebuilt the DB, so aborting now would leave the reset
+        // half-done; warn and skip buckets so `db reset` finishes like Go instead.
         yield* legacySeedBucketsRun({
           projectRef: "",
           emitSummary: false,

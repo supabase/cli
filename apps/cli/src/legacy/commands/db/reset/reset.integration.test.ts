@@ -329,6 +329,86 @@ describe("legacy db reset", () => {
     });
   });
 
+  it.live("proceeds with a local reset when no config file is present", () => {
+    // Go's `Config.Load` tolerates a missing `config.toml`: `Eject` defaults an empty
+    // `project_id` to the cwd basename (`pkg/config/config.go:563-570`), so `Validate`
+    // never sees an empty required field and the CLI proceeds — exactly the mechanism
+    // the cli-e2e parity suite relies on when it runs `db reset --local` from a project
+    // with no config.toml. A missing config must not become a hard failure here.
+    const { layer, seam } = setup(tmp.current, {
+      args: ["db", "reset"],
+      isLocal: true,
+      running: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(seam.recreateCalls).toHaveLength(1);
+    });
+  });
+
+  it.live("fails a local reset before the destructive recreate on a malformed config.toml", () => {
+    // Go's `flags.LoadConfig` (the local target's `LoadConfig`, `db_url.go:77-80`) runs
+    // full config validation before `reset.Run` reaches `AssertSupabaseDbIsRunning` /
+    // `resetDatabase` (`internal/db/reset/reset.go:57-61`). A broken config.toml must
+    // abort before the local database is ever recreated.
+    const { layer, seam } = setup(tmp.current, {
+      toml: 'project_id = "unterminated\n',
+      args: ["db", "reset"],
+      isLocal: true,
+      running: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+      }
+      expect(seam.recreateCalls).toHaveLength(0);
+    });
+  });
+
+  it.live("fails a local reset before the destructive recreate on an undecryptable secret", () => {
+    // Regression: Go's `flags.LoadConfig` decrypts every `encrypted:` secret before
+    // `reset.Run` recreates the local database, so an undecryptable secret must abort
+    // before the destructive recreate, not surface later (or never) during bucket
+    // seeding.
+    const { layer, seam } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:anything"\n',
+      args: ["db", "reset"],
+      isLocal: true,
+      running: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("failed to parse config: missing private key");
+      }
+      expect(seam.recreateCalls).toHaveLength(0);
+    });
+  });
+
+  it.live("fails a local reset before the destructive recreate on an empty project_id", () => {
+    // Go's `config.Validate` rejects an explicit `project_id = ""` (a present override
+    // that resolved to empty, unlike an absent field) before the local recreate.
+    const { layer, seam } = setup(tmp.current, {
+      toml: 'project_id = ""\n',
+      args: ["db", "reset"],
+      isLocal: true,
+      running: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "Missing required field in config: project_id",
+        );
+      }
+      expect(seam.recreateCalls).toHaveLength(0);
+    });
+  });
+
   it.live("seeds buckets after a local reset when storage is ready", () => {
     const { layer, seam } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -346,16 +426,16 @@ describe("legacy db reset", () => {
     });
   });
 
-  it.live("finishes a local reset when bucket seeding hits a strict-loader-rejected config", () => {
-    // The bucket-seeding core re-loads config via the strict `@supabase/config` loader.
-    // `SEED_ENABLED=maybe` is invalid for both Go's `strconv.ParseBool` and the TS
-    // loader's coercion, so the reload fails during decode (unlike e.g. `1`/`true`,
-    // which both now accept). The seam's Go recreate already validated + rebuilt the
-    // DB, so aborting here would leave the reset half-done — warn and skip buckets so
-    // reset finishes like Go.
+  it.live("fails a local reset before the destructive recreate on an unparseable boolean", () => {
+    // `SEED_ENABLED=maybe` cannot be resolved by Go's `strconv.ParseBool`, so
+    // `flags.LoadConfig` aborts on this config before `reset.Run` ever reaches
+    // `AssertSupabaseDbIsRunning`/`resetDatabase`. Previously this surfaced only much
+    // later (if at all) via the bucket-seeding core's own reload, AFTER the local
+    // database had already been recreated — this must now abort up front instead,
+    // via the pre-recreate `legacyCheckDbToml` gate.
     const previous = process.env["SEED_ENABLED"];
     process.env["SEED_ENABLED"] = "maybe";
-    const { layer, out, seam } = setup(tmp.current, {
+    const { layer, seam } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.seed]\nenabled = "env(SEED_ENABLED)"\n',
       args: ["db", "reset"],
       isLocal: true,
@@ -363,10 +443,12 @@ describe("legacy db reset", () => {
       storageReady: true,
     });
     return Effect.gen(function* () {
-      yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(out.stderrText).toContain("skipped seeding storage buckets");
-      expect(out.stderrText).toContain("Finished ");
-      expect(seam.recreateCalls).toHaveLength(1);
+      const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("invalid db.seed.enabled");
+      }
+      expect(seam.recreateCalls).toHaveLength(0);
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
