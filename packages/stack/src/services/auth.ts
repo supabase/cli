@@ -90,13 +90,17 @@ export const makeAuthServiceNative = (opts: NativeAuthOptions): ServiceDef => ({
 
 export const makeAuthServiceDocker = (opts: DockerAuthOptions): ServiceDef => {
   const env = authEnv(opts, opts.dbHost);
-  const envArgs = Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
+  // Name-only `-e KEY`: docker reads values from the docker CLI's environment
+  // (the `env` below), keeping the DB URL's password and the JWT secret out of
+  // the `docker run` argv visible in process listings.
+  const envArgs = Object.keys(env).flatMap((k) => ["-e", k]);
   const containerName = `supabase-auth-${opts.apiPort}`;
 
   return {
     name: "auth",
     command: "docker",
     args: ["run", "--rm", "--name", containerName, ...opts.networkArgs, ...envArgs, opts.image],
+    env,
     dependencies: opts.dependencies,
     healthCheck: authHealthCheck(opts.authPort),
     cleanup: dockerServiceCleanup(containerName),

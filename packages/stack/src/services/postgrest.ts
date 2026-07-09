@@ -72,13 +72,17 @@ export const makePostgrestServiceDocker = (opts: DockerPostgrestOptions): Servic
     ...postgrestEnv(opts, opts.dbHost),
     PGRST_ADMIN_SERVER_PORT: String(opts.adminPort),
   };
-  const envArgs = Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
+  // Name-only `-e KEY`: docker reads values from the docker CLI's environment
+  // (the `env` below), keeping the DB URI's password and the JWT secret out of
+  // the `docker run` argv visible in process listings.
+  const envArgs = Object.keys(env).flatMap((k) => ["-e", k]);
   const containerName = `supabase-postgrest-${opts.apiPort}`;
 
   return {
     name: "postgrest",
     command: "docker",
     args: ["run", "--rm", "--name", containerName, ...opts.networkArgs, ...envArgs, opts.image],
+    env,
     dependencies: postgrestDependencies,
     healthCheck: postgrestHealthCheck(opts.port),
     cleanup: dockerServiceCleanup(containerName),

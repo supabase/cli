@@ -108,6 +108,11 @@ export async function reapStalePostmaster(dataDir: string): Promise<void> {
   signalPostmaster(pid, "SIGTERM");
   if (await waitUntilExited(pid, TERM_TIMEOUT_MS)) return;
 
+  // Re-verify before escalating: the 5s grace period is exactly the window
+  // where the postmaster may have exited on its own and the OS reused its
+  // pid for an unrelated process — SIGKILLing that would be unrecoverable.
+  if (!(await isPostmasterForDataDir(pid, dataDir, raw))) return;
+
   signalPostmaster(pid, "SIGKILL");
   await waitUntilExited(pid, TERM_TIMEOUT_MS);
 }

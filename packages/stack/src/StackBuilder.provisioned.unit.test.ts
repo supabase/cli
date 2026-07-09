@@ -20,6 +20,7 @@ describe("provisioned postgres", () => {
     try {
       writeFileSync(join(dataDir, "postgresql.conf"), "include_if_exists = 'micro.conf'\n");
       const services = await buildServicesForTest({
+        mode: "native",
         postgres: { dataDir, provisioned: true, profile: "micro" },
       });
       const pg = services.find((s) => s.name === "postgres");

@@ -785,6 +785,19 @@ export class StackLifecycleCoordinator extends Context.Service<
           waitReady: (name) =>
             Effect.gen(function* () {
               yield* requireKnownService(name);
+              // Lazy services that were never started keep their health
+              // deferreds unresolved forever, so waiting would hang; fail
+              // with a clear error instead.
+              if (config.lazyServices === true) {
+                const startedServices = yield* Ref.get(startedServicesRef);
+                if (!startedServices.has(name)) {
+                  return yield* Effect.fail(
+                    new StackBuildError({
+                      detail: `Service "${name}" has not been started (lazyServices starts it on the first proxied request or via startService()).`,
+                    }),
+                  );
+                }
+              }
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.waitReady(name);
             }),

@@ -124,14 +124,15 @@ const baseConfig: ResolvedStackConfig = {
  * Builds the ServiceDef list produced by `StackBuilder.build()` for a partial
  * `StackConfig`, with every service other than postgres disabled by default and no real
  * process spawning (BinaryResolver and ChildProcessSpawner are both mocked). Only the
- * `postgres` sub-config is honored from the provided partial config; this stays intentionally
- * narrow because it currently only backs the `provisioned`/`profile` wiring tests.
+ * `postgres` sub-config and `mode` are honored from the provided partial config; this stays
+ * intentionally narrow because it currently only backs the `provisioned`/`profile` wiring tests.
  */
 export async function buildServicesForTest(
-  partial: Pick<StackConfig, "postgres">,
+  partial: Pick<StackConfig, "postgres"> & Pick<Partial<StackConfig>, "mode">,
 ): Promise<ReadonlyArray<ServiceDef>> {
   const config: ResolvedStackConfig = {
     ...baseConfig,
+    mode: partial.mode ?? baseConfig.mode,
     postgres: {
       ...baseConfig.postgres,
       ...partial.postgres,

@@ -404,6 +404,17 @@ export const validateResolvedConfig = (
         }),
       );
     }
+    // Only the native postgres service applies the micro profile; under "auto"
+    // a missing native binary would fall back to a Docker postgres that
+    // silently ignores it, so the profile demands native mode (which fails
+    // fast during preparation instead of falling back).
+    if (config.postgres.profile === "micro" && config.mode !== "native") {
+      return yield* Effect.fail(
+        new StackBuildError({
+          detail: `postgres.profile "micro" requires mode "native"; mode "${config.mode}" may resolve postgres to Docker, which does not apply the micro conf overlay.`,
+        }),
+      );
+    }
 
     if (config.mode === "native") {
       const enabledDockerOnly = dockerOnlyServices.filter(

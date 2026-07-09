@@ -495,17 +495,27 @@ describe("StackBuilder", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects the micro profile on non-provisioned data dirs", () =>
+  it.effect("rejects the micro profile on non-provisioned data dirs or non-native modes", () =>
     Effect.gen(function* () {
-      const exit = yield* validateResolvedConfig({
+      const nonProvisioned = yield* validateResolvedConfig({
         ...baseConfig,
+        mode: "native",
         postgres: { ...baseConfig.postgres, profile: "micro" },
       }).pipe(Effect.exit);
+      expect(Exit.isFailure(nonProvisioned)).toBe(true);
 
-      expect(Exit.isFailure(exit)).toBe(true);
+      // "auto" could resolve postgres to Docker, which ignores the profile.
+      const autoMode = yield* validateResolvedConfig({
+        ...baseConfig,
+        postgres: { ...baseConfig.postgres, profile: "micro", provisioned: true },
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(autoMode)).toBe(true);
 
       yield* validateResolvedConfig({
         ...baseConfig,
+        mode: "native",
+        postgrest: false,
+        auth: false,
         postgres: { ...baseConfig.postgres, profile: "micro", provisioned: true },
       });
     }),
