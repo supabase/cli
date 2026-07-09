@@ -157,6 +157,32 @@ describe("normalizeCliError", () => {
     });
   });
 
+  // CLI-1901: before this fix, the vendored `effect` CLI library's own
+  // `showHelp()` also printed this same message (via `Console.error`) as a
+  // duplicate of whatever `normalizeCause` rendered here — so a tag with no
+  // Go-parity-specific mapping (e.g. UnrecognizedOption) still had SOME
+  // informative text visible, just twice. Now that CLI-1901's `run.ts` fix
+  // suppresses the library's own duplicate print entirely, this generic
+  // fallback is the ONLY place the message reaches the user — it must not
+  // regress to the useless "Help requested" envelope message.
+  test("ShowHelp envelope unwraps a single UnrecognizedOption to its own message (no Go-parity mapping exists yet)", () => {
+    const error = {
+      _tag: "ShowHelp",
+      commandPath: ["branches"],
+      errors: [
+        new CliError.UnrecognizedOption({
+          option: "--bogus",
+          command: ["branches"],
+          suggestions: [],
+        }),
+      ],
+    };
+    expect(normalizeCliError(error)).toEqual({
+      code: "UnrecognizedOption",
+      message: "Unrecognized flag: --bogus in command branches",
+    });
+  });
+
   test("ShowHelp with multiple errors does not unwrap (falls back to generic)", () => {
     const error = {
       _tag: "ShowHelp",

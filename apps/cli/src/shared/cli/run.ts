@@ -1,8 +1,8 @@
 import { BunServices } from "@effect/platform-bun";
 import { ProjectConfigStore } from "@supabase/config";
 import { unixHttpClientLayer } from "@supabase/stack";
-import { Cause, Effect, Exit, Fiber, Layer, Runtime, Stdio } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import { Cause, Console, Effect, Exit, Fiber, Layer, Runtime, Stdio } from "effect";
+import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import { CLI_VERSION } from "./version.ts";
 import { Credentials } from "../../next/auth/credentials.service.ts";
 import { jsonCliOutputFormatter } from "../output/json-formatter.ts";
@@ -137,6 +137,125 @@ export function shouldReportFailure(cause: Cause.Cause<unknown>, exitCode: numbe
   return !(Cause.squash(cause) instanceof LegacyGoChildExitError);
 }
 
+/**
+ * A single `Console.log`/`Console.error` call captured while
+ * `withoutParseErrorHelpDump` runs, so it can be replayed once the run's
+ * outcome is known instead of being written immediately.
+ */
+interface BufferedConsoleWrite {
+  readonly method: "log" | "error";
+  readonly args: ReadonlyArray<unknown>;
+}
+
+/**
+ * A `Console.Console` that captures `log`/`error` calls into `sink` instead
+ * of writing them, and forwards every other method straight through to the
+ * real console. The vendored `effect` CLI library's parser only ever calls
+ * `log`/`error` (`showHelp()` and the `Help`/`Version`/`Completions`
+ * `GlobalFlag.Action`s in `Command.ts`) — the rest are implemented so this
+ * stays a faithful `Console.Console` rather than a partial stand-in.
+ */
+function bufferingConsole(sink: Array<BufferedConsoleWrite>): Console.Console {
+  const real = globalThis.console;
+  return {
+    assert: real.assert.bind(real),
+    clear: real.clear.bind(real),
+    count: real.count.bind(real),
+    countReset: real.countReset.bind(real),
+    debug: real.debug.bind(real),
+    dir: real.dir.bind(real),
+    dirxml: real.dirxml.bind(real),
+    error: (...args: ReadonlyArray<unknown>) => {
+      sink.push({ method: "error", args });
+    },
+    group: real.group.bind(real),
+    groupCollapsed: real.groupCollapsed.bind(real),
+    groupEnd: real.groupEnd.bind(real),
+    info: real.info.bind(real),
+    log: (...args: ReadonlyArray<unknown>) => {
+      sink.push({ method: "log", args });
+    },
+    table: real.table.bind(real),
+    time: real.time.bind(real),
+    timeEnd: real.timeEnd.bind(real),
+    timeLog: real.timeLog.bind(real),
+    trace: real.trace.bind(real),
+    warn: real.warn.bind(real),
+  };
+}
+
+/**
+ * Whether `withoutParseErrorHelpDump`'s buffered `Console.log`/`Console.error`
+ * writes should be dropped rather than flushed, given how the wrapped effect
+ * failed.
+ *
+ * True only for a genuine parse/validation failure: `CliError.ShowHelp`
+ * carrying a non-empty `errors` array. That is the ONLY shape whose buffered
+ * writes are the CLI-1901 bug — the vendored `effect` CLI library's own
+ * `showHelp()` (the single `catchFilter` in `Command.ts`'s `runWith`) always
+ * `Console.log`s the full help doc and, when `errors.length > 0`, ALSO
+ * `Console.error`s the same errors this repo's own `normalizeCause` already
+ * renders correctly afterward (`handledProgram` below). Go cobra never shows
+ * this dump for the equivalent case: `PersistentPreRunE` sets
+ * `SilenceUsage = true` (`apps/cli-go/cmd/root.go:97`) before
+ * `ValidateRequiredFlags` (cobra `command.go:1007`), so a missing required
+ * flag is a single clean stderr line with nothing on stdout — see CLI-1901.
+ *
+ * False for success, for a "clean" `ShowHelp` (`errors: []` — an explicit
+ * `--help` or a bare group command with no subcommand, both of which map to
+ * exit `0` per `exitCodeForFailure` above), and for any other failure —
+ * those buffered writes (if any, there normally are none) are the actual
+ * intended output and must reach the user.
+ */
+export function shouldSuppressShowHelpConsoleOutput(cause: Cause.Cause<unknown>): boolean {
+  const error = Cause.squash(cause);
+  return CliError.isCliError(error) && error._tag === "ShowHelp" && error.errors.length > 0;
+}
+
+/**
+ * Wraps `Command.runWith(rootCommand, ...)(args)` so the vendored `effect`
+ * CLI library's OWN `Console.log`/`Console.error` writes (see
+ * `shouldSuppressShowHelpConsoleOutput`) are captured instead of reaching the
+ * real console, and are dropped entirely for a genuine parse-error failure.
+ * This repo's own `handledProgram` + `normalizeCause` already render the
+ * single Go-parity line for that case, so dropping the library's writes
+ * fixes both halves of CLI-1901 (the stdout help dump and the duplicate
+ * error line) from this one call site, without patching the vendored
+ * library itself.
+ *
+ * Every other outcome (success, or a "clean" `errors: []` `ShowHelp`) flushes
+ * the buffered writes unchanged, so `--help`, `--version`, `--completions`,
+ * and the bare-group-command help dump are all untouched.
+ *
+ * Safe to wrap the entire `runWith` call — parsing AND the eventual command
+ * handler, not just the parse phase that can actually raise `ShowHelp`: no
+ * command handler in this codebase writes through `effect`'s `Console`
+ * service directly (they go through the `Output` service instead), so
+ * buffering here never delays or drops real command output.
+ */
+export function withoutParseErrorHelpDump<A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
+  return Effect.gen(function* () {
+    const sink: Array<BufferedConsoleWrite> = [];
+    const exit = yield* effect.pipe(
+      Effect.provideService(Console.Console, bufferingConsole(sink)),
+      Effect.exit,
+    );
+    if (Exit.isFailure(exit) && shouldSuppressShowHelpConsoleOutput(exit.cause)) {
+      return yield* exit;
+    }
+    for (const write of sink) {
+      yield* Console.consoleWith((console) =>
+        Effect.sync(() => {
+          console[write.method](...write.args);
+        }),
+      );
+    }
+    return yield* exit;
+  });
+}
+
 function projectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
   return projectContextLayer.pipe(Layer.provide(runtimeLayer), Layer.provide(BunServices.layer));
 }
@@ -193,7 +312,9 @@ function cliProgramFor(
       }),
     ),
   );
-  return Command.runWith(rootCommand, { version: CLI_VERSION })(args).pipe(
+  return withoutParseErrorHelpDump(
+    Command.runWith(rootCommand, { version: CLI_VERSION })(args),
+  ).pipe(
     Effect.provide(formatterLayerFor(rootCommand, args, outputFormat)),
     Effect.provide(options.analyticsLayer),
     Effect.provide(tracingLayer),

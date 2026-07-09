@@ -7,6 +7,7 @@ import {
   exitCodeForFailure,
   extractCommandPath,
   shouldReportFailure,
+  shouldSuppressShowHelpConsoleOutput,
   shouldUseGlobalSignalInterrupt,
 } from "./run.ts";
 
@@ -143,5 +144,71 @@ describe("shouldReportFailure", () => {
       }),
     );
     expect(shouldReportFailure(cause, 1)).toBe(true);
+  });
+});
+
+// CLI-1901: a required-flag/choice parse failure used to dump the full help
+// doc to stdout AND print the error twice (once from the vendored `effect`
+// CLI library's own `showHelp()`, once from this repo's own Go-parity
+// renderer). `withoutParseErrorHelpDump` fixes this by buffering the
+// library's own `Console.log`/`Console.error` writes and dropping them
+// entirely for exactly this cause shape — this suite covers that predicate;
+// `run.integration.test.ts` covers the end-to-end buffering/suppression
+// behavior against a real command definition.
+describe("shouldSuppressShowHelpConsoleOutput", () => {
+  it("suppresses a ShowHelp failure carrying a genuine validation error (missing required flag)", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["sso", "add"],
+        errors: [new CliError.MissingOption({ option: "type" })],
+      }),
+    );
+    expect(shouldSuppressShowHelpConsoleOutput(cause)).toBe(true);
+  });
+
+  it("suppresses a ShowHelp failure carrying an invalid Flag.choice value", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["sso", "add"],
+        errors: [
+          new CliError.InvalidValue({
+            option: "type",
+            value: "bogus",
+            expected: 'Expected "saml", got "bogus"',
+            kind: "flag",
+          }),
+        ],
+      }),
+    );
+    expect(shouldSuppressShowHelpConsoleOutput(cause)).toBe(true);
+  });
+
+  it("suppresses a ShowHelp failure carrying an unrecognized flag", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["branches"],
+        errors: [new CliError.UnrecognizedOption({ option: "--bogus", suggestions: [] })],
+      }),
+    );
+    expect(shouldSuppressShowHelpConsoleOutput(cause)).toBe(true);
+  });
+
+  it("does not suppress a clean ShowHelp failure (bare group command / explicit --help)", () => {
+    const cause = Cause.fail(new CliError.ShowHelp({ commandPath: ["branches"], errors: [] }));
+    expect(shouldSuppressShowHelpConsoleOutput(cause)).toBe(false);
+  });
+
+  it("does not suppress a non-ShowHelp failure", () => {
+    expect(shouldSuppressShowHelpConsoleOutput(Cause.fail(new Error("boom")))).toBe(false);
+  });
+
+  it("does not suppress an interrupt", () => {
+    expect(shouldSuppressShowHelpConsoleOutput(Cause.interrupt())).toBe(false);
+  });
+
+  it("does not suppress a defect with no typed failure", () => {
+    expect(shouldSuppressShowHelpConsoleOutput(Cause.die(new Error("unexpected crash")))).toBe(
+      false,
+    );
   });
 });

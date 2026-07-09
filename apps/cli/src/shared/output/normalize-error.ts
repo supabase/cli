@@ -128,6 +128,18 @@ const mappedError = (error: ErrorRecord): NormalizedCliError | undefined => {
         if (isErrorRecord(inner)) {
           const innerMapped = mappedError(inner);
           if (innerMapped) return innerMapped;
+          // No Go-parity-specific mapping exists for this inner tag (e.g.
+          // UnrecognizedOption, DuplicateOption, MissingArgument,
+          // UnknownSubcommand, UserError — or an InvalidValue that doesn't
+          // hit CLI-1898's doubled-"Expected"-prefix bug). Surface the inner
+          // error's own message rather than falling through to ShowHelp's
+          // useless "Help requested": since CLI-1901 (`run.ts`'s
+          // `withoutParseErrorHelpDump`) stopped the vendored library from
+          // also `Console.error`-ing this same text, this is now the ONLY
+          // place it reaches the user.
+          const code = readString(inner, "_tag");
+          const message = readString(inner, "message");
+          if (code && message) return { code, message };
         }
       }
       return undefined;
