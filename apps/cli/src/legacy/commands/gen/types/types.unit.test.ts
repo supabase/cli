@@ -2,9 +2,9 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit } from "effect";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
+import { defaultSchemas } from "../legacy-gen-schemas.ts";
 import {
   buildPostgresUrl,
-  defaultSchemas,
   legacyRootCaBundle,
   localDbContainerId,
   localDbPassword,

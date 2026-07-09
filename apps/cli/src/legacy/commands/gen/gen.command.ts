@@ -3,6 +3,7 @@ import { legacyGenTypesCommand } from "./types/types.command.ts";
 import { legacyGenSigningKeyCommand } from "./signing-key/signing-key.command.ts";
 import { legacyGenBearerJwtCommand } from "./bearer-jwt/bearer-jwt.command.ts";
 import { legacyGenKeysCommand } from "./keys/keys.command.ts";
+import { legacyGenTanstackDbCommand } from "./tanstack-db/tanstack-db.command.ts";
 
 export const legacyGenCommand = Command.make("gen").pipe(
   Command.withDescription("Run code generation tools."),
@@ -12,5 +13,6 @@ export const legacyGenCommand = Command.make("gen").pipe(
     legacyGenSigningKeyCommand,
     legacyGenBearerJwtCommand,
     legacyGenKeysCommand,
+    legacyGenTanstackDbCommand,
   ]),
 );

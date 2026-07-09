@@ -8,7 +8,7 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
-  cobraMutuallyExclusiveErrorMessage,
+  ensureMutuallyExclusive,
   hasExplicitLongFlag,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
@@ -40,8 +40,8 @@ import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
+import { defaultSchemas } from "../legacy-gen-schemas.ts";
 import {
-  defaultSchemas,
   buildPostgresUrl,
   localDbContainerId,
   localDbPassword,
@@ -84,16 +84,6 @@ function isProjectNotFound(cause: unknown) {
 }
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
-
-function ensureMutuallyExclusive(
-  group: ReadonlyArray<string>,
-  present: ReadonlyArray<string>,
-): Effect.Effect<void, Error> {
-  if (present.length <= 1) {
-    return Effect.void;
-  }
-  return Effect.fail(new Error(cobraMutuallyExclusiveErrorMessage(group, present)));
-}
 
 function forwardByteStream(
   stream: Stream.Stream<Uint8Array, unknown>,

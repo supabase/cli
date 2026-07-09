@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+
 /**
  * Whether `--<flagName>` (or `--<flagName>=`) appears in the raw argv after
  * the command path, matching cobra's `pflag.Changed` semantics — a flag
@@ -94,4 +96,20 @@ export function cobraMutuallyExclusiveErrorMessage(
   const flagList = group.join(" ");
   const set = [...changed].sort().join(" ");
   return `if any flags in the group [${flagList}] are set none of the others can be; [${set}] were all set`;
+}
+
+/**
+ * Fails with cobra's mutually-exclusive-flag-group message when more than one
+ * flag in `present` (the subset of `group` that was actually set) is set.
+ * Shared by every command whose target-selection flags (e.g. `--local`,
+ * `--linked`, `--project-id`) form a cobra exclusive flag group.
+ */
+export function ensureMutuallyExclusive(
+  group: ReadonlyArray<string>,
+  present: ReadonlyArray<string>,
+): Effect.Effect<void, Error> {
+  if (present.length <= 1) {
+    return Effect.void;
+  }
+  return Effect.fail(new Error(cobraMutuallyExclusiveErrorMessage(group, present)));
 }
