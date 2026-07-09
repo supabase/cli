@@ -882,6 +882,39 @@ my_secret = "${DOTENVX_ENCRYPTED_VALUE}"
     );
   });
 
+  it.live(
+    "aborts on an undecryptable secret in a deprecated [auth.external.slack] block (CLI-1881)",
+    () => {
+      // `@supabase/config` strips `auth.external.{linkedin,slack}` from `loaded.document`
+      // before returning it (`normalizeDeprecatedExternalProviders`), matching Go's
+      // `external.validate()` — but Go's decrypt hook runs at DECODE time, strictly before
+      // that later validate-time deletion, so a `secret` hiding in one of these deprecated
+      // blocks still aborts Go's load. This proves the pre-check folds
+      // `removedDeprecatedExternalProviders` back in rather than missing it.
+      const toml = `project_id = "test"
+[storage]
+enabled = false
+[auth]
+enabled = false
+[auth.external.slack]
+secret = "${DOTENVX_ENCRYPTED_VALUE}"
+`;
+      const { layer, api } = setup({ toml, yes: true });
+      return withDotenvPrivateKey(
+        undefined,
+        Effect.gen(function* () {
+          const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+            Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+              Effect.succeed(error.message),
+            ),
+          );
+          expect(message).toBe("failed to parse config: missing private key");
+          expect(api.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer)),
+      );
+    },
+  );
+
   it.live("pushes storage when enabled and changed", () => {
     const toml = `project_id = "test"
 [auth]

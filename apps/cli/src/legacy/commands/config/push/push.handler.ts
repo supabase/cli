@@ -169,11 +169,21 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // the document (even one `config push` never itself pushes, e.g.
     // `studio.openai_api_key`) aborts here with Go's own `failed to parse
     // config: <cause>` message, before any remote service is read or updated.
-    const secretError = legacyAssertDecryptableSecrets(
-      loaded.document,
-      secretEnvLookup,
-      dotenvPrivateKeys,
-    );
+    //
+    // `loaded.document` has already had Go's deprecated `auth.external.{linkedin,slack}`
+    // blocks stripped by `@supabase/config` (`normalizeDeprecatedExternalProviders`), but
+    // Go's decrypt hook runs at decode time — before its own later `external.validate()`
+    // deletes those blocks — so an `encrypted:` secret hiding in one of them still aborts
+    // Go's load. Fold `removedDeprecatedExternalProviders` back into a synthetic
+    // `auth.external` view and scan that too, reusing the same path list rather than a
+    // second scanner.
+    const secretError =
+      legacyAssertDecryptableSecrets(loaded.document, secretEnvLookup, dotenvPrivateKeys) ??
+      legacyAssertDecryptableSecrets(
+        { auth: { external: loaded.removedDeprecatedExternalProviders ?? {} } },
+        secretEnvLookup,
+        dotenvPrivateKeys,
+      );
     if (secretError !== undefined) {
       return yield* new LegacyConfigPushLoadConfigError({ message: secretError });
     }
