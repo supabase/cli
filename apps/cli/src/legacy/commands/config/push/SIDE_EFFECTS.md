@@ -10,7 +10,7 @@ local → if changed, print the unified diff and confirm → PATCH/PUT/POST.
 | Path                                           | Format                    | When                                                                                                                                                                               |
 | ---------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml`               | TOML                      | always, before any network call (parse error aborts, exit 1)                                                                                                                       |
-| `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml`                                                                                                                      |
+| `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml` and to collect `DOTENV_PRIVATE_KEY`(`_*`) values for decrypting `encrypted:` secrets                                 |
 | Auth email template HTML (`content_path`)      | HTML                      | when `auth.enabled`; paths resolved per Go rules (see below)                                                                                                                       |
 | `<workdir>/supabase/.temp/project-ref`         | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file)                                                                                                                    |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check only, to decide whether the cache write below is skipped (mirrors Go's `ensureProjectGroupsCached` telemetry cache — see `db/lint`'s Notes for the full mechanism) |
@@ -51,13 +51,14 @@ when its local gate is off.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                  | Required?                                               |
-| ----------------------- | -------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_PROJECT_ID`   | project ref (flag → this → `.temp/project-ref` → prompt) | no                                                      |
-| `SUPABASE_YES`          | auto-confirm prompts (`--yes`)                           | no                                                      |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)     | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | API profile selection                                    | no                                                      |
-| `env(VAR)` references   | interpolated into `config.toml` values at load           | no                                                      |
+| Variable                                     | Purpose                                                                                                   | Required?                                               |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_PROJECT_ID`                        | project ref (flag → this → `.temp/project-ref` → prompt)                                                  | no                                                      |
+| `SUPABASE_YES`                               | auto-confirm prompts (`--yes`)                                                                            | no                                                      |
+| `SUPABASE_ACCESS_TOKEN`                      | auth token (bypasses credential file/keyring lookup)                                                      | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`                           | API profile selection                                                                                     | no                                                      |
+| `env(VAR)` references                        | interpolated into `config.toml` values at load                                                            | no                                                      |
+| `DOTENV_PRIVATE_KEY`, `DOTENV_PRIVATE_KEY_*` | decrypt `encrypted:` (dotenvx) secret values before hashing/pushing; comma-split, first matching key wins | only if `config.toml` contains an `encrypted:` value    |
 
 ## Exit Codes
 
@@ -65,6 +66,7 @@ when its local gate is off.
 | ---- | ------------------------------------------------------------------------------------------ |
 | `0`  | success, **including** declining a confirmation prompt (Go returns nil and continues)      |
 | `1`  | malformed `config.toml`                                                                    |
+| `1`  | an `encrypted:` (dotenvx) secret anywhere in the document cannot be decrypted (see below)  |
 | `1`  | invalid `auth.email.*.content_path` (missing/unreadable template file when `auth.enabled`) |
 | `1`  | two `[remotes.*]` blocks declare the same `project_id` as the target ref                   |
 | `1`  | list-addons failure (network or non-200)                                                   |
@@ -115,5 +117,6 @@ keys mirror `config.toml` paths.
 - Diff bytes are byte-for-byte identical to the Go CLI (BurntSushi TOML encoder + anchored diff ports).
 - Optional `*pointer` sections (`db.ssl_enforcement`, `storage.image_transformation`, `storage.s3_protocol`) are decoded as defaulted-present by `@supabase/config`; their true presence is recovered from the raw (merged) config document so they are skipped when absent, matching Go's nil-pointer behaviour.
 - **`[remotes.*]` overrides are merged before push.** When a `[remotes.<name>]` block declares `project_id == <ref>`, `@supabase/config` merges that block's subtree over the base config at the raw (pre-decode) level — Go's `mergeRemoteConfig` (`apps/cli-go/pkg/config/config.go:550`) — so only the keys the block declares override the base. `Loading config override: [remotes.<name>]` prints to stderr. Two remotes sharing the target `project_id` abort with Go's `duplicate project_id for [remotes.<b>] and [remotes.<a>]` message.
+- **`encrypted:` (dotenvx) secrets are decrypted, hashed, and pushed as plaintext**, matching Go's `Secret.Decrypt`/`DecryptSecretHookFunc`: `DOTENV_PRIVATE_KEY`(`_*`) values from the shell + `supabase/.env` decrypt the ciphertext, the decrypted plaintext is what gets hashed for the diff and sent as `Secret.Value` in the update body — the ciphertext itself is never pushed. Before any network call (including the cost-matrix list-addons request), every `config.Secret`-typed value in the document — not just `auth.*`, matching Go's document-wide decode hook — is asserted decryptable; an undecryptable one aborts with Go's `failed to parse config: <cause>` message, exit code `1`.
 - KNOWN GAPS:
-  - **`encrypted:` (dotenvx) secret decryption is not reproduced.** The Go CLI decrypts `encrypted:` values before hashing and pushes the plaintext; we cannot decrypt here. Rather than push the ciphertext (which would overwrite the remote secret with garbage), `encrypted:` values are treated as unresolved — exactly like `env()` refs: they hash to `""`, so the empty hash gates them out of both the diff and the update body and the remote secret is left untouched.
+  - The document-wide decrypt-or-abort pre-check scans the config document `@supabase/config` hands back, which has the _matched_ `[remotes.<name>]` block already merged in and its `remotes` key removed. An `encrypted:` secret that's undecryptable inside a **different, non-matching** `[remotes.*]` block is therefore not caught here (Go's decode hook runs over the whole parsed document, including every remote, so it would abort in that case too). Narrow edge case: it only matters when a project declares multiple remotes and the _unused_ one has a broken secret.

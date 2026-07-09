@@ -8,9 +8,13 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
+import {
+  legacyAssertDecryptableSecrets,
+  legacyLoadProjectEnv,
+} from "../../../shared/legacy-db-config.toml-read.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
+import { legacyCollectDotenvPrivateKeys } from "../../../shared/legacy-vault-decrypt.ts";
 import { apiSubsetFromConfig, apiToUpdateBody, diffApiWithRemote } from "./config-sync/api.sync.ts";
 import {
   applyRemoteAuthConfig,
@@ -101,6 +105,12 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   const projectRoot = (yield* findProjectRoot(runtimeInfo.cwd)) ?? runtimeInfo.cwd;
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, projectRoot);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+  // dotenvx private keys for decrypting `encrypted:` secrets (Go's
+  // `DecryptSecretHookFunc`), from the shell + project env — same source/precedence
+  // as `legacy-db-config.toml-read.ts` (`process.env` wins over `supabase/.env`).
+  const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...process.env });
+  const secretEnvLookup = (name: string): string | undefined =>
+    process.env[name] ?? projectEnv[name];
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -143,6 +153,23 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     }
     const projectId = ref;
     const config = loaded.config;
+
+    // 1b. Assert every `config.Secret`-typed `encrypted:` value in the document
+    // (not just auth.*) can be decrypted, mirroring Go's global
+    // `DecryptSecretHookFunc`, which runs as part of `config.Load` — before
+    // `internal/config/push.Run` ever reads the cost matrix (`push.go:16` vs.
+    // `push.go:25`) or touches any service. An undecryptable secret anywhere in
+    // the document (even one `config push` never itself pushes, e.g.
+    // `studio.openai_api_key`) aborts here with Go's own `failed to parse
+    // config: <cause>` message, before any remote service is read or updated.
+    const secretError = legacyAssertDecryptableSecrets(
+      loaded.document,
+      secretEnvLookup,
+      dotenvPrivateKeys,
+    );
+    if (secretError !== undefined) {
+      return yield* new LegacyConfigPushLoadConfigError({ message: secretError });
+    }
 
     // Optional `*pointer` sections (ssl_enforcement, image_transformation,
     // s3_protocol) are defaulted-present by @supabase/config and cannot be
@@ -363,7 +390,24 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
             }),
           ),
         );
-        let local = authSubsetFromConfig(config, projectId, presence.auth, authEmailContent);
+        // `dotenvPrivateKeys` decrypts any `encrypted:` auth secret before it's
+        // hashed/copied into the update body. The document-wide check above
+        // (step 1b) already guarantees decryptability, so this `Effect.try` is a
+        // defensive backstop, not the primary abort path.
+        let local = yield* Effect.try({
+          try: () =>
+            authSubsetFromConfig(
+              config,
+              projectId,
+              presence.auth,
+              authEmailContent,
+              dotenvPrivateKeys,
+            ),
+          catch: (cause) =>
+            new LegacyConfigPushLoadConfigError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        });
         const projected = applyRemoteAuthConfig(local, remote);
         // MFA phone/webauthn are paid addons: confirm cost before enabling.
         if (mfaPhoneNewlyEnabled(local, projected) && !(yield* keep("auth_mfa_phone"))) {

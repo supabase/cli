@@ -785,19 +785,17 @@ const legacyCollectSecretStrings = (
   }
 };
 
-/** Fails when a single `encrypted:` secret value cannot be decrypted (Go's hook error). */
+/** Returns Go's hook-error message when a single `encrypted:` secret value cannot be decrypted. */
 const legacyAssertSecretValue = (
   value: string,
   lookup: EnvLookup,
   dotenvPrivateKeys: ReadonlyArray<string>,
-): LegacyDbConfigLoadError | undefined => {
+): string | undefined => {
   const expanded = legacyExpandEnv(value, lookup);
   // Unset `env(...)` and plain strings are returned verbatim by Go's hook (no error).
   if (ENV_PATTERN.test(expanded) || !legacyIsEncryptedSecret(expanded)) return undefined;
   const decrypted = legacyDecryptSecret(expanded, dotenvPrivateKeys);
-  return decrypted.ok
-    ? undefined
-    : new LegacyDbConfigLoadError({ message: `failed to parse config: ${decrypted.error}` });
+  return decrypted.ok ? undefined : `failed to parse config: ${decrypted.error}`;
 };
 
 /**
@@ -807,15 +805,20 @@ const legacyAssertSecretValue = (
  * `Secret` field paths ({@link LEGACY_SECRET_PATHS}) are scanned — a non-secret string that
  * merely starts with `encrypted:` (e.g. an auth email-template `subject`) stays plain text
  * in Go and must not block the load. Go decodes every `[remotes.<name>]` block into the same
- * struct, so the same paths are checked under each remote too. Returns the failure (or
- * `undefined`); the caller surfaces it via `Effect.fail`.
+ * struct, so the same paths are checked under each remote too. Returns Go's error message (or
+ * `undefined`); callers surface it as their own domain error (e.g. `Effect.fail`).
+ *
+ * Shared across command families: the db-config reader below uses it for `db push`/`db
+ * reset`/`migration up|down`/etc, and `config push`'s handler reuses it directly against its
+ * own (`@supabase/config`-decoded) document — both need the exact same "decrypt-or-abort before
+ * anything else runs" behaviour Go gets for free from `config.Load`.
  */
-const legacyAssertDecryptableSecrets = (
+export const legacyAssertDecryptableSecrets = (
   doc: unknown,
   lookup: EnvLookup,
   dotenvPrivateKeys: ReadonlyArray<string>,
-): LegacyDbConfigLoadError | undefined => {
-  const scan = (node: unknown): LegacyDbConfigLoadError | undefined => {
+): string | undefined => {
+  const scan = (node: unknown): string | undefined => {
     for (const segs of LEGACY_SECRET_PATHS) {
       const values: Array<string> = [];
       legacyCollectSecretStrings(node, segs, 0, values);
@@ -993,7 +996,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     // assert decryptability across the whole document to match Go (a recursive scan tracks
     // Go's "decode the entire config" better than a hand-listed set of Secret paths).
     const secretError = legacyAssertDecryptableSecrets(effectiveDoc, lookup, dotenvPrivateKeys);
-    if (secretError !== undefined) return yield* Effect.fail(secretError);
+    if (secretError !== undefined) {
+      return yield* Effect.fail(new LegacyDbConfigLoadError({ message: secretError }));
+    }
   }
 
   // Go: `config.go:626` — read the linked pooler URL from `.temp/pooler-url` and
