@@ -214,6 +214,24 @@ function snapshotChangedFiles(dir: string): FileRecord[] {
 // RunResult collection
 // ---------------------------------------------------------------------------
 
+/**
+ * Docker Engine API calls carry two client-negotiation artifacts that reflect
+ * nothing about CLI behavior: an `HEAD /_ping` handshake the real `docker` CLI
+ * issues before every subprocess invocation (Go's SDK pings once per command
+ * via a persistent client; ts-legacy shells out to `docker` per operation, so
+ * it pings once per operation), and a negotiated API version segment in the
+ * URL path (`/v1.51/...` vs `/v1.53/...`) that reflects the installed docker
+ * CLI/daemon version, not anything the command controls. Strip both so parity
+ * comparisons reflect actual Docker operations (list, stop, prune, inspect,
+ * with their filters) rather than client plumbing. Mirrors the equivalent
+ * normalization in `apps/cli-e2e/src/server/placeholder.ts`'s
+ * `normalizeUrlPath`, applied here to the request-log comparison instead of
+ * fixture matching.
+ */
+function normalizeDockerRequestPath(pathname: string): string {
+  return pathname.replace(/\/v1\.\d+(\/|$)/g, "/__DOCKER_VERSION__$1");
+}
+
 async function fetchRequestLog(apiUrl: string): Promise<RequestRecord[]> {
   const res = await fetch(`${apiUrl}/_ctrl/requests`);
   const raw = (await res.json()) as Array<{
@@ -222,12 +240,14 @@ async function fetchRequestLog(apiUrl: string): Promise<RequestRecord[]> {
     query: Record<string, string>;
     body: unknown;
   }>;
-  return raw.map(({ method, pathname, query, body }) => ({
-    method,
-    pathname,
-    query,
-    body,
-  }));
+  return raw
+    .filter(({ method, pathname }) => !(method === "HEAD" && pathname === "/_ping"))
+    .map(({ method, pathname, query, body }) => ({
+      method,
+      pathname: normalizeDockerRequestPath(pathname),
+      query,
+      body,
+    }));
 }
 
 async function collectRunResult(

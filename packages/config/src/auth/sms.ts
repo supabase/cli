@@ -32,19 +32,114 @@ const defaultTextlocalEnabled = false;
 const defaultVonage = {};
 const defaultVonageEnabled = false;
 
-function requiredWhenEnabled<
-  T extends Record<string, string | number | boolean | undefined> & { enabled: boolean },
->(path: string, predicate: (value: T) => boolean, message: string) {
-  return Schema.makeFilter((value: T) => {
-    if (!value.enabled || predicate(value)) {
-      return undefined;
-    }
+interface SmsProviderSwitchInput {
+  readonly twilio: {
+    readonly enabled: boolean;
+    readonly account_sid: string;
+    readonly message_service_sid: string;
+    readonly auth_token?: string;
+  };
+  readonly twilio_verify: {
+    readonly enabled: boolean;
+    readonly account_sid?: string;
+    readonly message_service_sid?: string;
+    readonly auth_token?: string;
+  };
+  readonly messagebird: {
+    readonly enabled: boolean;
+    readonly originator?: string;
+    readonly access_key?: string;
+  };
+  readonly textlocal: {
+    readonly enabled: boolean;
+    readonly sender?: string;
+    readonly api_key?: string;
+  };
+  readonly vonage: {
+    readonly enabled: boolean;
+    readonly from?: string;
+    readonly api_key?: string;
+    readonly api_secret?: string;
+  };
+}
 
-    return {
-      path: [path],
-      issue: message,
-    };
-  });
+function missing(provider: string, field: string) {
+  return {
+    path: [provider, field],
+    issue: `Missing required field in config: auth.sms.${provider}.${field}`,
+  };
+}
+
+/**
+ * Go's `(s *sms) validate()` (`apps/cli-go/pkg/config/config.go:1348-1410`): a boolean `switch`
+ * that inspects providers in a FIXED priority order — twilio, twilio_verify, messagebird,
+ * textlocal, vonage — and validates ONLY the first one whose `enabled` is true, matching Go's
+ * `switch` short-circuit semantics. A later enabled-but-incomplete provider is never even looked
+ * at. This replaces five independent per-provider `requiredWhenEnabled` checks (one per provider
+ * sub-struct) that used to validate EVERY enabled provider table regardless of priority — a real
+ * Go-parity gap, since a stale secondary `[auth.sms.*]` block Go silently ignores could make this
+ * schema reject a config Go accepts. `s.EnableSignup`'s own switch case (`config.go:1408-1410`, a
+ * WARN-only "no SMS provider enabled" notice with no throwing equivalent) isn't reproduced here,
+ * matching this package's established precedent of not porting WARN-only branches (e.g. the
+ * `auth.captcha.secret`/`assertEnvLoaded` case).
+ */
+function validateSmsProviderSwitch(value: SmsProviderSwitchInput) {
+  if (value.twilio.enabled) {
+    if (value.twilio.account_sid === "") return missing("twilio", "account_sid");
+    if (value.twilio.message_service_sid === "") {
+      return missing("twilio", "message_service_sid");
+    }
+    if (value.twilio.auth_token === undefined || value.twilio.auth_token === "") {
+      return missing("twilio", "auth_token");
+    }
+    return undefined;
+  }
+  if (value.twilio_verify.enabled) {
+    if (value.twilio_verify.account_sid === undefined || value.twilio_verify.account_sid === "") {
+      return missing("twilio_verify", "account_sid");
+    }
+    if (
+      value.twilio_verify.message_service_sid === undefined ||
+      value.twilio_verify.message_service_sid === ""
+    ) {
+      return missing("twilio_verify", "message_service_sid");
+    }
+    if (value.twilio_verify.auth_token === undefined || value.twilio_verify.auth_token === "") {
+      return missing("twilio_verify", "auth_token");
+    }
+    return undefined;
+  }
+  if (value.messagebird.enabled) {
+    if (value.messagebird.originator === undefined || value.messagebird.originator === "") {
+      return missing("messagebird", "originator");
+    }
+    if (value.messagebird.access_key === undefined || value.messagebird.access_key === "") {
+      return missing("messagebird", "access_key");
+    }
+    return undefined;
+  }
+  if (value.textlocal.enabled) {
+    if (value.textlocal.sender === undefined || value.textlocal.sender === "") {
+      return missing("textlocal", "sender");
+    }
+    if (value.textlocal.api_key === undefined || value.textlocal.api_key === "") {
+      return missing("textlocal", "api_key");
+    }
+    return undefined;
+  }
+  if (value.vonage.enabled) {
+    if (value.vonage.from === undefined || value.vonage.from === "") {
+      return missing("vonage", "from");
+    }
+    if (value.vonage.api_key === undefined || value.vonage.api_key === "") {
+      return missing("vonage", "api_key");
+    }
+    if (value.vonage.api_secret === undefined || value.vonage.api_secret === "") {
+      return missing("vonage", "api_secret");
+    }
+    return undefined;
+  }
+  return undefined;
 }
 
 export const sms = Schema.Struct({
@@ -100,25 +195,7 @@ export const sms = Schema.Struct({
         links: [links.phoneLogin("Twilio")],
       }),
     ),
-  })
-    .check(
-      requiredWhenEnabled(
-        "account_sid",
-        (value) => value.account_sid !== "",
-        "Missing required field in config: auth.sms.twilio.account_sid",
-      ),
-      requiredWhenEnabled(
-        "message_service_sid",
-        (value) => value.message_service_sid !== "",
-        "Missing required field in config: auth.sms.twilio.message_service_sid",
-      ),
-      requiredWhenEnabled(
-        "auth_token",
-        (value) => value.auth_token !== undefined && value.auth_token !== "",
-        "Missing required field in config: auth.sms.twilio.auth_token",
-      ),
-    )
-    .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultTwilio }))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultTwilio }))),
   twilio_verify: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultTwilioVerifyEnabled,
@@ -147,25 +224,7 @@ export const sms = Schema.Struct({
         links: [links.phoneLogin("Twilio")],
       }),
     ),
-  })
-    .check(
-      requiredWhenEnabled(
-        "account_sid",
-        (value) => value.account_sid !== undefined && value.account_sid !== "",
-        "Missing required field in config: auth.sms.twilio_verify.account_sid",
-      ),
-      requiredWhenEnabled(
-        "message_service_sid",
-        (value) => value.message_service_sid !== undefined && value.message_service_sid !== "",
-        "Missing required field in config: auth.sms.twilio_verify.message_service_sid",
-      ),
-      requiredWhenEnabled(
-        "auth_token",
-        (value) => value.auth_token !== undefined && value.auth_token !== "",
-        "Missing required field in config: auth.sms.twilio_verify.auth_token",
-      ),
-    )
-    .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultTwilioVerify }))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultTwilioVerify }))),
   messagebird: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultMessagebirdEnabled,
@@ -187,20 +246,7 @@ export const sms = Schema.Struct({
         links: [links.phoneLogin("MessageBird")],
       }),
     ),
-  })
-    .check(
-      requiredWhenEnabled(
-        "originator",
-        (value) => value.originator !== undefined && value.originator !== "",
-        "Missing required field in config: auth.sms.messagebird.originator",
-      ),
-      requiredWhenEnabled(
-        "access_key",
-        (value) => value.access_key !== undefined && value.access_key !== "",
-        "Missing required field in config: auth.sms.messagebird.access_key",
-      ),
-    )
-    .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultMessagebird }))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultMessagebird }))),
   textlocal: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultTextlocalEnabled,
@@ -222,20 +268,7 @@ export const sms = Schema.Struct({
         links: [links.phoneLogin("Textlocal%2520(Community%2520Supported)")],
       }),
     ),
-  })
-    .check(
-      requiredWhenEnabled(
-        "sender",
-        (value) => value.sender !== undefined && value.sender !== "",
-        "Missing required field in config: auth.sms.textlocal.sender",
-      ),
-      requiredWhenEnabled(
-        "api_key",
-        (value) => value.api_key !== undefined && value.api_key !== "",
-        "Missing required field in config: auth.sms.textlocal.api_key",
-      ),
-    )
-    .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultTextlocal }))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultTextlocal }))),
   vonage: Schema.Struct({
     enabled: Schema.Boolean.annotate({
       default: defaultVonageEnabled,
@@ -264,25 +297,7 @@ export const sms = Schema.Struct({
         links: [links.phoneLogin("Vonage")],
       }),
     ),
-  })
-    .check(
-      requiredWhenEnabled(
-        "from",
-        (value) => value.from !== undefined && value.from !== "",
-        "Missing required field in config: auth.sms.vonage.from",
-      ),
-      requiredWhenEnabled(
-        "api_key",
-        (value) => value.api_key !== undefined && value.api_key !== "",
-        "Missing required field in config: auth.sms.vonage.api_key",
-      ),
-      requiredWhenEnabled(
-        "api_secret",
-        (value) => value.api_secret !== undefined && value.api_secret !== "",
-        "Missing required field in config: auth.sms.vonage.api_secret",
-      ),
-    )
-    .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultVonage }))),
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultVonage }))),
   test_otp: Schema.optionalKey(
     Schema.Record(Schema.String, Schema.String).annotate({
       description: "Use pre-defined map of phone number to OTP for testing.",
@@ -290,4 +305,6 @@ export const sms = Schema.Struct({
       links: [links.auth],
     }),
   ),
-}).pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultSms })));
+})
+  .check(Schema.makeFilter(validateSmsProviderSwitch))
+  .pipe(Schema.withDecodingDefaultKey(Effect.succeed({ ...defaultSms })));

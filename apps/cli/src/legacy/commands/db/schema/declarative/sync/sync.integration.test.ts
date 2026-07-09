@@ -11,6 +11,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../../../tests/helpers/legacy-mocks.ts";
+import { CliArgs } from "../../../../../../shared/cli/cli-args.service.ts";
 import {
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
@@ -44,6 +45,7 @@ const EXPORT_JSON = JSON.stringify({
 
 interface SetupOpts {
   experimental?: boolean;
+  args?: ReadonlyArray<string>;
   yes?: boolean;
   stdinIsTty?: boolean;
   diffSql?: string;
@@ -151,6 +153,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
+    Layer.succeed(CliArgs, { args: opts.args ?? ["db", "schema", "declarative", "sync"] }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(
       LegacyNetworkIdFlag,
@@ -199,10 +202,11 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("rejects --apply and --no-apply together before the pg-delta gate", () => {
-    // cobra MarkFlagsMutuallyExclusive("apply", "no-apply") runs before PreRunE,
-    // so this fails even when pg-delta is not enabled.
-    const { layer } = setup(tmp.current, { experimental: false });
+  it.effect("--apply and --no-apply together with --experimental fail with the mutex error", () => {
+    // Go's declarative PersistentPreRunE gate (db_schema_declarative.go:49-99) runs
+    // BEFORE cobra's ValidateFlagGroups() mutex check (cobra@v1.10.2/command.go:985,
+    // 1010), so the mutex error only surfaces once the gate is open.
+    const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         legacyDbSchemaDeclarativeSync(
@@ -218,10 +222,122 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect(
+    "--apply and --no-apply together without --experimental fail with the gate error, not the mutex error",
+    () => {
+      // Mirrors storage's experimental-gate-vs-mutex ordering fix (CLI-1855 / CLI-1876):
+      // the pg-delta gate runs before the mutex check, so an unopened gate wins even
+      // when the flags would also violate mutual exclusivity.
+      const { layer } = setup(tmp.current, { experimental: false });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacyDbSchemaDeclarativeSync(
+            flags({ apply: Option.some(true), noApply: Option.some(true) }),
+          ),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeNotEnabledError");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "--apply and --no-apply together with SUPABASE_EXPERIMENTAL env (no --experimental flag) fail with the mutex error",
+    () => {
+      // Go's gate reads viper.GetBool("EXPERIMENTAL") (db_schema_declarative.go:78),
+      // which picks up SUPABASE_EXPERIMENTAL via viper.AutomaticEnv (root.go:318-334),
+      // so an env-only experimental session still opens the gate and lets the mutex
+      // check fire. legacyResolveExperimental (not the raw LegacyExperimentalFlag) is
+      // what makes the TS gate honor the env var the same way.
+      const { layer } = setup(tmp.current, { experimental: false });
+      const ENV = "SUPABASE_EXPERIMENTAL";
+      return Effect.gen(function* () {
+        const saved = process.env[ENV];
+        process.env[ENV] = "1";
+        const exit = yield* Effect.exit(
+          legacyDbSchemaDeclarativeSync(
+            flags({ apply: Option.some(true), noApply: Option.some(true) }),
+          ),
+        );
+        if (saved === undefined) delete process.env[ENV];
+        else process.env[ENV] = saved;
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)).toMatchObject({
+          _tag: "LegacyDeclarativeMutuallyExclusiveFlagsError",
+          message:
+            "if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set",
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "an explicit --experimental=false closes the gate even when SUPABASE_EXPERIMENTAL is set",
+    () => {
+      // viper's bound-pflag lookup returns the flag value whenever Changed is true —
+      // BEFORE falling back to AutomaticEnv (viper@v1.21.0/viper.go:1176-1178) — so an
+      // explicit --experimental=false must win over SUPABASE_EXPERIMENTAL=1, closing the
+      // gate instead of letting the env value override it.
+      const { layer } = setup(tmp.current, {
+        experimental: false,
+        args: ["db", "schema", "declarative", "sync", "--experimental=false"],
+      });
+      const ENV = "SUPABASE_EXPERIMENTAL";
+      return Effect.gen(function* () {
+        const saved = process.env[ENV];
+        process.env[ENV] = "1";
+        const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags()));
+        if (saved === undefined) delete process.env[ENV];
+        else process.env[ENV] = saved;
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeNotEnabledError");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "--apply and --no-apply together with SUPABASE_EXPERIMENTAL set only in the project .env fail with the mutex error",
+    () => {
+      // Go's flags.LoadConfig runs loadNestedEnv (which os.Setenv's each project-.env key)
+      // before dbDeclarativeCmd.PersistentPreRunE reads viper.GetBool("EXPERIMENTAL")
+      // (apps/cli-go/cmd/db_schema_declarative.go:73-78, pkg/config/config.go:789), so a
+      // SUPABASE_EXPERIMENTAL set only in supabase/.env opens the gate and lets the mutex
+      // check fire, same as the shell-env case above.
+      const saved = process.env["SUPABASE_EXPERIMENTAL"];
+      delete process.env["SUPABASE_EXPERIMENTAL"];
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_EXPERIMENTAL=true\n");
+      const { layer } = setup(tmp.current, { experimental: false });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacyDbSchemaDeclarativeSync(
+            flags({ apply: Option.some(true), noApply: Option.some(true) }),
+          ),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)).toMatchObject({
+          _tag: "LegacyDeclarativeMutuallyExclusiveFlagsError",
+          message:
+            "if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set",
+        });
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (saved === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
+            else process.env["SUPABASE_EXPERIMENTAL"] = saved;
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("rejects --apply=false --no-apply as a conflict (Go flag.Changed)", () => {
     // cobra keys the mutex off flag.Changed, so an explicit `--apply=false` still
     // counts as set and conflicts with `--no-apply`, even though its value is false.
-    const { layer } = setup(tmp.current, { experimental: false });
+    // The gate runs first (see legacyRequirePgDelta's doc comment), so --experimental
+    // is required here for the mutex error to be the one that surfaces.
+    const { layer } = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         legacyDbSchemaDeclarativeSync(

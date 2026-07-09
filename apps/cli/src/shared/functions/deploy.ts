@@ -62,6 +62,7 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly projectRoot: string;
   readonly supabaseDir: string;
   readonly dashboardUrl: string;
+  readonly goViperCompat: boolean;
   readonly yes?: boolean;
   readonly rawArgs: ReadonlyArray<string>;
   readonly edgeRuntimeVersion: string;
@@ -2150,7 +2151,10 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     // `@supabase/config` merges the matching `[remotes.*]` block over the base
     // config (Go's `loadFromFile` with `Config.ProjectId` set), so the resolved
     // config already reflects any remote function/edge_runtime overrides.
-    const loadedConfig = yield* loadProjectConfig(dependencies.projectRoot, { projectRef });
+    const loadedConfig = yield* loadProjectConfig(dependencies.projectRoot, {
+      projectRef,
+      goViperCompat: dependencies.goViperCompat,
+    });
     const deployConfig = loadedConfig?.config;
     const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
       deployConfig?.edge_runtime.deno_version,

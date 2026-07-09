@@ -55,15 +55,30 @@ const remoteProjectConfig = Schema.Struct({
   experimental,
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 
+/**
+ * Exported separately (not inlined into {@link ProjectConfigSchema}) so
+ * `packages/config/src/io.ts` can decode it on its own with
+ * `disableChecks: true`. Go's `Config.Validate` only ever checks
+ * `remotes.*.project_id` format for every remote block
+ * (`apps/cli-go/pkg/config/config.go:996-1001`, "Since remote config is merged
+ * to base, we only need to validate the project_id field") — every other
+ * business-rule check (`Auth.External.validate()`, `Auth.Sms.validate()`,
+ * etc.) runs exactly once, against the merged effective config
+ * (`config.go:1136-1152`), never iterated over `c.Remotes[*]`. Decoding this
+ * schema normally (checks enabled) would apply those same business-rule
+ * `.check()`s — embedded in `auth`/`db`/etc. — to every remote regardless of
+ * selection, rejecting configs Go accepts (e.g. an unselected
+ * `[remotes.prod.auth.external.github] enabled = true` stub with no secret).
+ */
+export const RemotesSchema = Schema.Record(Schema.String, remoteProjectConfig).annotate({
+  default: {},
+  description: "Remote branch-specific project configuration.",
+  tags: ["general"],
+});
+
 export const ProjectConfigSchema = Schema.Struct({
   ...baseProjectConfigFields,
-  remotes: Schema.Record(Schema.String, remoteProjectConfig)
-    .annotate({
-      default: {},
-      description: "Remote branch-specific project configuration.",
-      tags: ["general"],
-    })
-    .pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  remotes: RemotesSchema.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 
 export type ProjectConfig = typeof ProjectConfigSchema.Type;

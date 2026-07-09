@@ -33,7 +33,7 @@ const config = {
     Flag.optional,
   ),
   // cobra's `MarkFlagsMutuallyExclusive("apply", "no-apply")` keys off `flag.Changed`,
-  // not the value (`cmd/db_schema_declarative.go:490`), so model presence with `Option`
+  // not the value (`cmd/db_schema_declarative.go:561`), so model presence with `Option`
   // so `--apply=false --no-apply` still trips the conflict. The apply decision below
   // reads the resolved value via `Option.getOrElse`.
   apply: Flag.boolean("apply").pipe(

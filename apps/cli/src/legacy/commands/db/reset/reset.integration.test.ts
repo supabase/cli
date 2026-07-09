@@ -347,12 +347,14 @@ describe("legacy db reset", () => {
   });
 
   it.live("finishes a local reset when bucket seeding hits a strict-loader-rejected config", () => {
-    // The bucket-seeding core re-loads config via the strict `@supabase/config` loader,
-    // which rejects some Go-valid configs (e.g. `[db.seed] enabled = "env(SEED_ENABLED)"`).
-    // The seam's Go recreate already validated + rebuilt the DB, so aborting here would
-    // leave the reset half-done — warn and skip buckets so reset finishes like Go.
+    // The bucket-seeding core re-loads config via the strict `@supabase/config` loader.
+    // `SEED_ENABLED=maybe` is invalid for both Go's `strconv.ParseBool` and the TS
+    // loader's coercion, so the reload fails during decode (unlike e.g. `1`/`true`,
+    // which both now accept). The seam's Go recreate already validated + rebuilt the
+    // DB, so aborting here would leave the reset half-done — warn and skip buckets so
+    // reset finishes like Go.
     const previous = process.env["SEED_ENABLED"];
-    process.env["SEED_ENABLED"] = "1";
+    process.env["SEED_ENABLED"] = "maybe";
     const { layer, out, seam } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.seed]\nenabled = "env(SEED_ENABLED)"\n',
       args: ["db", "reset"],

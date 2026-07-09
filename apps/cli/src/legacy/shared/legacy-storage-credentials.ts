@@ -4,6 +4,7 @@ import { Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
 import { legacyMapTenantApiKeysError } from "./legacy-get-tenant-api-keys.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
 import { legacyExtractServiceKeys } from "./legacy-tenant-keys.ts";
@@ -122,23 +123,11 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
 });
 
 /**
- * Local API URL, mirroring Go's `config.go:634-644` + `misc.go:298`: an explicit
- * `api.external_url` wins, otherwise `<scheme>://<host>:<port>` where the scheme
- * follows `api.tls.enabled`, the host is `legacyGetHostname` (Go's
- * `utils.GetHostname`), and the port is `api.port`.
+ * Local API URL: `legacyResolveApiExternalUrl` with `legacyGetHostname` (Go's
+ * `utils.GetHostname`) supplying the host when `api.external_url` is unset.
  */
 function resolveLocalBaseUrl(config: LegacyStorageConfigView): string {
-  if (config.api.external_url !== undefined && config.api.external_url.length > 0) {
-    return config.api.external_url;
-  }
-  const host = legacyGetHostname();
-  const scheme = config.api.tls.enabled ? "https" : "http";
-  // Go builds host:port with net.JoinHostPort (config.go:636-638), bracketing an
-  // IPv6 host. legacyGetHostname returns the unbracketed host, so bracket here.
-  const hostPort = host.includes(":")
-    ? `[${host}]:${config.api.port}`
-    : `${host}:${config.api.port}`;
-  return `${scheme}://${hostPort}`;
+  return legacyResolveApiExternalUrl(config.api, legacyGetHostname());
 }
 
 /**

@@ -116,7 +116,10 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // Pass `ref` so a matching `[remotes.*]` block is merged over the base config
     // before decode (Go's `loadFromFile` with `Config.ProjectId` set). A duplicate
     // `project_id` across remotes surfaces Go's verbatim message.
-    const loaded = yield* loadProjectConfig(runtimeInfo.cwd, { projectRef: ref }).pipe(
+    const loaded = yield* loadProjectConfig(runtimeInfo.cwd, {
+      projectRef: ref,
+      goViperCompat: true,
+    }).pipe(
       Effect.catchTag(
         "ProjectConfigParseError",
         (cause) =>

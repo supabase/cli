@@ -1,8 +1,8 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import {
-  LegacyExperimentalFlag,
   LegacyYesFlag,
+  legacyResolveExperimentalWithProjectEnv,
 } from "../../../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
@@ -10,6 +10,7 @@ import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service
 import { legacyBold } from "../../../../../shared/legacy-colors.ts";
 import { legacyReadProjectRefFile } from "../../../../../shared/legacy-temp-paths.ts";
 import {
+  legacyLoadProjectEnv,
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
@@ -44,7 +45,14 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     const cliConfig = yield* LegacyCliConfig;
     const telemetryState = yield* LegacyTelemetryState;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
-    const experimental = yield* LegacyExperimentalFlag;
+    // Go's `dbDeclarativeCmd.PersistentPreRunE` calls `flags.LoadConfig` — which runs
+    // `loadNestedEnv` and `os.Setenv`s each project-.env key — BEFORE reading
+    // `viper.GetBool("EXPERIMENTAL")` for the gate below (`apps/cli-go/cmd/
+    // db_schema_declarative.go:73-78`, `pkg/config/config.go:789`). Load the project env
+    // first and resolve against it, as `db reset` does for its own experimental gate, so a
+    // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` opens the gate too.
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
     const yes = yield* LegacyYesFlag;
 
     // The resolved linked ref (explicit `--linked` only), hoisted so the post-run
@@ -52,9 +60,23 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
     let linkedProjectRef: string | undefined;
 
     yield* Effect.gen(function* () {
+      const baseToml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      // Gate before the mutex check below — order matters; see
+      // legacyRequirePgDelta's doc comment for why. The pg-delta gate also runs on
+      // the BASE config: Go's declarative `PersistentPreRunE` gates before the root
+      // `ParseDatabaseConfig` reloads any `[remotes.<ref>]` block, so a remote
+      // `experimental.pgdelta.enabled = true` must NOT enable a base-disabled
+      // command without `--experimental`.
+      yield* legacyRequirePgDelta({
+        experimental,
+        pgDeltaEnabled: baseToml.pgDelta.enabled,
+        configPath: path.join("supabase", "config.toml"),
+      });
+
       // cobra `MarkFlagsMutuallyExclusive("db-url", "linked", "local")`
-      // (`apps/cli-go/cmd/db_schema_declarative.go:499`) runs before PreRunE/RunE,
-      // so reject conflicting targets before reading config or the pg-delta gate.
+      // (`apps/cli-go/cmd/db_schema_declarative.go:570`) runs via
+      // `ValidateFlagGroups()`, which cobra invokes AFTER `PersistentPreRunE` (the
+      // gate above) — see legacyRequirePgDelta's doc comment for the full ordering.
       // "Set" follows cobra's `Changed`: Option set when `Some`, boolean when `true`.
       const exclusive: Array<string> = [];
       if (Option.isSome(flags.dbUrl)) exclusive.push("db-url");
@@ -67,17 +89,6 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           }),
         );
       }
-
-      const baseToml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-      // The pg-delta gate runs on the BASE config: Go's declarative `PersistentPreRunE`
-      // gates before the root `ParseDatabaseConfig` reloads any `[remotes.<ref>]` block,
-      // so a remote `experimental.pgdelta.enabled = true` must NOT enable a
-      // base-disabled command without `--experimental`.
-      yield* legacyRequirePgDelta({
-        experimental,
-        pgDeltaEnabled: baseToml.pgDelta.enabled,
-        configPath: path.join("supabase", "config.toml"),
-      });
 
       // Explicit `--linked`: Go re-loads config with the resolved ref (root
       // `ParseDatabaseConfig` linked branch), so a matching `[remotes.<ref>]` block

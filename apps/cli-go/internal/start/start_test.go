@@ -162,6 +162,20 @@ func TestStartCommand(t *testing.T) {
 	})
 }
 
+func TestShouldMountRootDockerSocket(t *testing.T) {
+	t.Run("returns true for Docker Desktop and Colima sockets", func(t *testing.T) {
+		assert.True(t, shouldMountRootDockerSocket("/Users/test/.docker/run/docker.sock"))
+		assert.True(t, shouldMountRootDockerSocket("/Users/test/.docker/desktop/docker.sock"))
+		assert.True(t, shouldMountRootDockerSocket("/Users/test/.colima/default/docker.sock"))
+		assert.True(t, shouldMountRootDockerSocket("/Users/test/.colima/local/docker.sock"))
+		assert.True(t, shouldMountRootDockerSocket("/Users/test/.colima/docker.sock"))
+	})
+
+	t.Run("returns false for directly mountable sockets", func(t *testing.T) {
+		assert.False(t, shouldMountRootDockerSocket("/Users/test/.orbstack/run/docker.sock"))
+	})
+}
+
 func TestDatabaseStart(t *testing.T) {
 	t.Run("starts database locally", func(t *testing.T) {
 		// Setup in-memory fs

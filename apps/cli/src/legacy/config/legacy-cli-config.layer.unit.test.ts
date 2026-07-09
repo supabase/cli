@@ -278,6 +278,43 @@ describe("legacyCliConfigLayer", () => {
     ),
   );
 
+  // Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`) always
+  // `os.Chdir`s the raw flag/env value, but every later reader — including the
+  // `Config.ProjectId` cwd-basename default (`Eject`, `pkg/config/config.go:
+  // 561-570`) — reads `os.Getwd()`, the real absolute directory, never the raw
+  // string. A relative `--workdir .`/`SUPABASE_WORKDIR=.` must therefore resolve
+  // to an absolute path here too, not stay `"."` (which would later basename to
+  // an empty project id).
+  it.effect("resolves a relative --workdir flag against the real cwd", () =>
+    Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.workdir).toBe(tempRoot);
+    }).pipe(Effect.provide(makeLayer({ workdirFlag: Option.some("."), cwd: tempRoot }))),
+  );
+
+  it.effect("resolves a relative --workdir flag with a subdirectory against the real cwd", () =>
+    Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.workdir).toBe(join(tempRoot, "sub"));
+    }).pipe(Effect.provide(makeLayer({ workdirFlag: Option.some("sub"), cwd: tempRoot }))),
+  );
+
+  it.effect("resolves a relative SUPABASE_WORKDIR env value against the real cwd", () =>
+    Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.workdir).toBe(tempRoot);
+    }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_WORKDIR: "." }, cwd: tempRoot }))),
+  );
+
+  it.effect("keeps an absolute --workdir flag unchanged", () =>
+    Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.workdir).toBe("/flag/workdir");
+    }).pipe(
+      Effect.provide(makeLayer({ workdirFlag: Option.some("/flag/workdir"), cwd: tempRoot })),
+    ),
+  );
+
   it.effect("walks up from CWD looking for supabase/config.toml", () => {
     const projectRoot = join(tempRoot, "project");
     const nested = join(projectRoot, "deep", "child");

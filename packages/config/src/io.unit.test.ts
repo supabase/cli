@@ -16,6 +16,7 @@ import {
   loadProjectConfig,
   loadProjectConfigFile,
   saveProjectConfig,
+  type LoadProjectConfigOptions,
 } from "./io.ts";
 import { loadProjectConfig as loadProjectConfigFromNode } from "./node.ts";
 import { projectConfigStoreLayer } from "./project-config.layer.ts";
@@ -173,6 +174,45 @@ describe("config io", () => {
     ).toThrow();
   });
 
+  test("only validates the highest-priority enabled sms provider during decode (Go switch parity)", () => {
+    // Go's `(s *sms) validate()` (`apps/cli-go/pkg/config/config.go:1348-1410`) is a boolean
+    // `switch` that inspects providers in a fixed priority order (twilio, twilio_verify,
+    // messagebird, textlocal, vonage) and validates ONLY the first enabled one — a later
+    // enabled-but-incomplete provider is never even looked at. A complete, higher-priority
+    // `twilio` block plus an incomplete, lower-priority `messagebird` block must decode fine.
+    const config = decodeProjectConfig({
+      auth: {
+        sms: {
+          twilio: {
+            enabled: true,
+            account_sid: "AC123",
+            message_service_sid: "MG123",
+            auth_token: "secret",
+          },
+          messagebird: {
+            enabled: true,
+          },
+        },
+      },
+    });
+    expect(config.auth.sms.twilio.enabled).toBe(true);
+    expect(config.auth.sms.messagebird.enabled).toBe(true);
+  });
+
+  test("rejects an incomplete sms provider when no higher-priority provider is enabled", () => {
+    expect(() =>
+      decodeProjectConfig({
+        auth: {
+          sms: {
+            messagebird: {
+              enabled: true,
+            },
+          },
+        },
+      }),
+    ).toThrow(/auth\.sms\.messagebird\.originator/);
+  });
+
   test("requires enabled smtp fields during decode", () => {
     expect(() =>
       decodeProjectConfig({
@@ -185,6 +225,24 @@ describe("config io", () => {
         },
       }),
     ).toThrow();
+  });
+
+  test("decodes an unmodeled email template/notification name (Go map[string] parity)", () => {
+    // Go's `Auth.Email.Template`/`Notification` are genuine `map[string]emailTemplate`/
+    // `map[string]notification` (`apps/cli-go/pkg/config/auth.go:247-248`) — open maps with no
+    // key restriction; `(e *email) validate(fsys)` (`pkg/config/config.go:1293-1313`) iterates
+    // every entry regardless of name. An unrecognized key like `[auth.email.template.custom]`
+    // is a legitimate config shape Go accepts, not a decode error.
+    const config = decodeProjectConfig({
+      auth: {
+        email: {
+          template: { custom: { subject: "Hi" } },
+          notification: { custom_notice: { enabled: true, content_path: "custom.html" } },
+        },
+      },
+    });
+    expect(config.auth.email.template["custom"]?.subject).toBe("Hi");
+    expect(config.auth.email.notification["custom_notice"]?.enabled).toBe(true);
   });
 
   test("requires enabled external provider credentials during decode", () => {
@@ -318,6 +376,50 @@ major_version = 16
       expect(loaded?.format).toBe("json");
       expect(loaded?.config.project_id).toBe("ref_123");
       expect(loaded?.ignoredPaths).toEqual([tomlPath]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  // Go's `NewPathBuilder`/`Config.Load` (`apps/cli-go/pkg/config/utils.go:
+  // 43-48`) only ever resolves `supabase/config.toml` — it has no concept of a
+  // JSON project config file. Go-parity callers (legacy `status`/`stop`) pass
+  // `tomlOnly: true` so a stray `config.json` never wins over `config.toml`.
+  test("loads TOML instead of JSON when tomlOnly is set, even if JSON exists", async () => {
+    const cwd = makeTempProject();
+    const jsonPath = await runConfigEffect(configJsonPath(cwd));
+    const tomlPath = await runConfigEffect(configTomlPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(jsonPath, encodeProjectConfigToJson(sampleConfig));
+      await writeFile(
+        tomlPath,
+        `project_id = "toml-ref"
+
+[db]
+major_version = 16
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { tomlOnly: true }));
+      expect(loaded?.format).toBe("toml");
+      expect(loaded?.config.project_id).toBe("toml-ref");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("returns null when tomlOnly is set and only JSON exists", async () => {
+    const cwd = makeTempProject();
+    const jsonPath = await runConfigEffect(configJsonPath(cwd));
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(jsonPath, encodeProjectConfigToJson(sampleConfig));
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { tomlOnly: true }));
+      expect(loaded).toBeNull();
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
@@ -889,6 +991,128 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
     }
   });
 
+  test.each([
+    ["1", true],
+    ["TRUE", true],
+    ["T", true],
+    ["True", true],
+    ["0", false],
+    ["f", false],
+    ["FALSE", false],
+  ] as const)(
+    "resolves env() on boolean fields using Go's strconv.ParseBool acceptance set (%s -> %s)",
+    async (envValue, expected) => {
+      const cwd = makeTempProject();
+
+      try {
+        await mkdir(join(cwd, "supabase"), { recursive: true });
+        await writeFile(
+          join(cwd, "supabase", "config.toml"),
+          `project_id = "ref_123"
+
+[analytics]
+enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
+`,
+        );
+        await writeFile(join(cwd, "supabase", ".env"), `SUPABASE_ANALYTICS_ENABLED=${envValue}\n`);
+
+        const loaded = await runConfigEffect(loadProjectConfig(cwd));
+        expect(loaded!.config.analytics.enabled).toBe(expected);
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test("splits a comma-separated string literal into a slice (Go's StringToSliceHookFunc)", async () => {
+    // Go's `newDecodeHook` (`apps/cli-go/pkg/config/config.go:775-784`) wires
+    // `mapstructure.StringToSliceHookFunc(",")` unconditionally, so a plain
+    // string value for a `[]string` field like `additional_redirect_urls`
+    // decodes fine in Go — not just via `env(...)`.
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+additional_redirect_urls = "http://a,http://b"
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { goViperCompat: true }));
+      expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("splits an env()-substituted comma-separated string into a slice", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+additional_redirect_urls = "env(SUPABASE_REDIRECT_URLS)"
+`,
+      );
+      await writeFile(join(cwd, "supabase", ".env"), "SUPABASE_REDIRECT_URLS=http://a,http://b\n");
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { goViperCompat: true }));
+      expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("an empty string literal for a slice field decodes to an empty array", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+additional_redirect_urls = ""
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { goViperCompat: true }));
+      expect(loaded!.config.auth.additional_redirect_urls).toEqual([]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("an actual array value for a slice field is left untouched", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+additional_redirect_urls = ["http://a", "http://b"]
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.auth.additional_redirect_urls).toEqual(["http://a", "http://b"]);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("preserves env() literals on string fields when the var is unset (Go parity)", async () => {
     const cwd = makeTempProject();
 
@@ -902,6 +1126,28 @@ enabled = "env(SUPABASE_ANALYTICS_ENABLED)"
 jwt_secret = "env(MISSING_SECRET)"
 `,
       );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.auth.jwt_secret).toBe("env(MISSING_SECRET)");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("preserves env() literals on string fields when the var is set but empty (Go parity)", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+jwt_secret = "env(MISSING_SECRET)"
+`,
+      );
+      await writeFile(join(cwd, "supabase", ".env"), "MISSING_SECRET=\n");
 
       const loaded = await runConfigEffect(loadProjectConfig(cwd));
       expect(loaded!.config.auth.jwt_secret).toBe("env(MISSING_SECRET)");
@@ -968,6 +1214,163 @@ port = "env(SUPABASE_DB_PORT_TEST)"
       await rm(cwd, { recursive: true, force: true });
     }
   });
+
+  // Regression coverage for the default-off (`goViperCompat` omitted) path —
+  // these pin pre-PR-#5765 behavior so `next/`, `packages/stack`, and the
+  // functions manifest (none of which pass `goViperCompat`) don't inherit the
+  // Go-parity legacy shell's stricter/wider semantics.
+  test("loads successfully with a duplicate [remotes.*] project_id when goViperCompat is omitted", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "baseref"
+
+[remotes.a]
+project_id = "dupref"
+
+[remotes.b]
+project_id = "dupref"
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded).not.toBeNull();
+      expect(loaded!.config.project_id).toBe("baseref");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("loads successfully with an invalid [remotes.*] project_id format when goViperCompat is omitted", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "baseref"
+
+[remotes.bad]
+project_id = "not-a-ref"
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded).not.toBeNull();
+      expect(loaded!.config.project_id).toBe("baseref");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("does not split a comma-separated string literal for an array field when goViperCompat is omitted", async () => {
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "ref_123"
+
+[auth]
+additional_redirect_urls = "http://a,http://b"
+`,
+      );
+
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfig(cwd).pipe(Effect.provide(BunServices.layer)),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect((error.value as { _tag: string })._tag).toBe("ProjectConfigParseError");
+        }
+      }
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("does not warn on a deprecated provider (but still strips it) when goViperCompat is omitted", async () => {
+    const cwd = makeTempProject();
+    const warnings: Array<string> = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    });
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "abc123"
+
+[auth.external.slack]
+enabled = true
+`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect("slack" in loaded!.config.auth.external).toBe(false);
+      expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("does not resolve a lowercase-named env() reference when goViperCompat is omitted", async () => {
+    const previous = process.env.lowercase_ref_default_off_test;
+    process.env.lowercase_ref_default_off_test = "lowercase-ref-value";
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "env(lowercase_ref_default_off_test)"\n`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.config.project_id).toBe("env(lowercase_ref_default_off_test)");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.lowercase_ref_default_off_test;
+      } else {
+        process.env.lowercase_ref_default_off_test = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves a lowercase-named env() reference when goViperCompat is true", async () => {
+    const previous = process.env.lowercase_ref_default_on_test;
+    process.env.lowercase_ref_default_on_test = "lowercase-ref-value";
+    const cwd = makeTempProject();
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await writeFile(
+        join(cwd, "supabase", "config.toml"),
+        `project_id = "env(lowercase_ref_default_on_test)"\n`,
+      );
+
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { goViperCompat: true }));
+      expect(loaded!.config.project_id).toBe("lowercase-ref-value");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.lowercase_ref_default_on_test;
+      } else {
+        process.env.lowercase_ref_default_on_test = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("config io [remotes.*] merge", () => {
@@ -977,6 +1380,14 @@ describe("config io [remotes.*] merge", () => {
     await writeFile(join(cwd, "supabase", "config.toml"), toml);
     return cwd;
   }
+
+  // Remote `project_id`s below are valid 20-lowercase-letter refs (Go's
+  // `refPattern`, `config.go:558`) — `Config.Validate` rejects every
+  // `[remotes.*].project_id` against that pattern unconditionally on every
+  // config load (`config.go:996-1001`), so test fixtures must satisfy it too,
+  // even for scenarios that don't care about the ref's specific value.
+  const PREVIEW_REF = "previewrefaaaaaaaaaa";
+  const STAGING_REF = "stagingrefaaaaaaaaaa";
 
   const BASE_WITH_REMOTES = `project_id = "baseref"
 
@@ -989,13 +1400,13 @@ max_rows = 123
 major_version = 15
 
 [remotes.preview]
-project_id = "previewref"
+project_id = "${PREVIEW_REF}"
 [remotes.preview.api]
 schemas = ["remote_only"]
 max_rows = 999
 
 [remotes.staging]
-project_id = "stagingref"
+project_id = "${STAGING_REF}"
 [remotes.staging.api]
 enabled = false
 `;
@@ -1003,10 +1414,10 @@ enabled = false
   test("merges the matching remote subtree over the base before decode", async () => {
     const cwd = await writeTomlProject(BASE_WITH_REMOTES);
     try {
-      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
       expect(loaded!.appliedRemote).toBe("preview");
       // remote block's project_id overrides the base
-      expect(loaded!.config.project_id).toBe("previewref");
+      expect(loaded!.config.project_id).toBe(PREVIEW_REF);
       // remote scalar wins
       expect(loaded!.config.api.max_rows).toBe(999);
       // array replaced wholesale (not element-merged)
@@ -1037,9 +1448,7 @@ major_version = "not-a-number"
     );
     try {
       const exit = await Effect.runPromiseExit(
-        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
-          Effect.provide(BunServices.layer),
-        ),
+        loadProjectConfig(cwd, { projectRef: PREVIEW_REF }).pipe(Effect.provide(BunServices.layer)),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (!Exit.isFailure(exit)) {
@@ -1069,7 +1478,10 @@ major_version = "not-a-number"
     }
   });
 
-  test("does not merge remotes when no projectRef is requested", async () => {
+  test("does not merge remotes when no projectRef is requested and none has an empty project_id", async () => {
+    // `projectRef` defaults to "" (Go's own `Config.ProjectId` default for
+    // commands with no `--project-ref` flag), so this only stays unmerged
+    // because neither remote's `project_id` is empty.
     const cwd = await writeTomlProject(BASE_WITH_REMOTES);
     try {
       const loaded = await runConfigEffect(loadProjectConfig(cwd));
@@ -1081,6 +1493,42 @@ major_version = "not-a-number"
     }
   });
 
+  test("rejects duplicate project_id across remotes even when no projectRef is requested", async () => {
+    // Go's duplicate-project_id check (config.go:594-602) runs unconditionally
+    // on every config load, inside the same loop that resolves the [remotes.*]
+    // override — it is not gated on a caller actually selecting a remote.
+    // status/stop (internal/utils/flags/config_path.go:11) never bind a
+    // `--project-ref` flag, so they hit this check with `Config.ProjectId == ""`,
+    // and it must still fail on a config-wide duplicate.
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.a]
+project_id = "dupref"
+
+[remotes.b]
+project_id = "dupref"
+`);
+    try {
+      const message = await Effect.runPromise(
+        loadProjectConfig(cwd, { goViperCompat: true }).pipe(
+          Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
+            Effect.succeed(error.message),
+          ),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(message).toBe("duplicate project_id for [remotes.b] and [remotes.a]");
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  // `goViperCompat` is required even though a `projectRef` is passed: the
+  // duplicate/format checks in `applyRemoteOverride` are gated solely on
+  // `goViperCompat`, not on whether a remote is being selected — the remote
+  // match/merge itself stays unconditional, but pre-PR-#5765 callers that
+  // pass a `projectRef` without opting into Go parity no longer get these
+  // checks for free.
   test("rejects duplicate project_id across remotes with Go's message", async () => {
     const cwd = await writeTomlProject(`project_id = "baseref"
 
@@ -1092,7 +1540,7 @@ project_id = "dupref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadProjectConfig(cwd, { projectRef: "dupref" }).pipe(
+        loadProjectConfig(cwd, { projectRef: "dupref", goViperCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -1122,7 +1570,7 @@ project_id = "dupref"
 `);
     try {
       const message = await Effect.runPromise(
-        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
+        loadProjectConfig(cwd, { projectRef: "previewref", goViperCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -1150,7 +1598,7 @@ max_rows = 2
 `);
     try {
       const message = await Effect.runPromise(
-        loadProjectConfig(cwd, { projectRef: "previewref" }).pipe(
+        loadProjectConfig(cwd, { projectRef: "previewref", goViperCompat: true }).pipe(
           Effect.catchTag("DuplicateRemoteProjectIdError", (error) =>
             Effect.succeed(error.message),
           ),
@@ -1163,16 +1611,41 @@ max_rows = 2
     }
   });
 
+  test("rejects a remote project_id that is not a valid 20-letter ref, even with no projectRef requested", async () => {
+    // Go's Config.Validate (config.go:996-1001) checks every [remotes.*].project_id
+    // against refPattern unconditionally on every config load — not only the one
+    // that ends up selected — so this must fail closed before status/stop reach
+    // Docker, exactly like Go, even when the caller never selects a remote.
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.bad]
+project_id = "not-a-ref"
+`);
+    try {
+      const message = await Effect.runPromise(
+        loadProjectConfig(cwd, { goViperCompat: true }).pipe(
+          Effect.catchTag("InvalidRemoteProjectIdError", (error) => Effect.succeed(error.message)),
+          Effect.provide(BunServices.layer),
+        ),
+      );
+      expect(message).toBe(
+        "Invalid config for remotes.bad.project_id. Must be like: abcdefghijklmnopqrst",
+      );
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   test("the merged document carries pointer sections introduced by the remote", async () => {
     const cwd = await writeTomlProject(`project_id = "baseref"
 
 [remotes.preview]
-project_id = "previewref"
+project_id = "${PREVIEW_REF}"
 [remotes.preview.db.ssl_enforcement]
 enabled = true
 `);
     try {
-      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
       // `legacyPresenceIn` reads `document` to detect optional pointer sections;
       // a remote-introduced `db.ssl_enforcement` must be present there.
       const db = loaded!.document?.db;
@@ -1189,12 +1662,12 @@ enabled = true
 enabled = true
 
 [remotes.preview]
-project_id = "previewref"
+project_id = "${PREVIEW_REF}"
 [remotes.preview.api]
 max_rows = 5
 `);
     try {
-      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
       expect(loaded!.config.db.seed.enabled).toBe(false);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -1205,14 +1678,99 @@ max_rows = 5
     const cwd = await writeTomlProject(`project_id = "baseref"
 
 [remotes.preview]
-project_id = "previewref"
+project_id = "${PREVIEW_REF}"
 [remotes.preview.db.seed]
 enabled = true
 `);
     try {
-      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
       expect(loaded!.config.db.seed.enabled).toBe(true);
     } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("resolves env() on a lowercase-named variable, matching Go's case-agnostic matcher", async () => {
+    // Go's `LoadEnvHook` (`apps/cli-go/pkg/config/decode_hooks.go:11`) is
+    // `^env\((.*)\)$` — it doesn't restrict the captured name's case, so
+    // `project_id = "env(project_id)"` resolves against a same-case env var
+    // in the Go CLI. This isn't specific to `project_id`; any string field
+    // goes through the same pre-decode walk. This case-agnostic matching is
+    // itself one of the four Go-viper-parity behaviors gated by
+    // `goViperCompat` — without it, the strict SCREAMING_SNAKE_CASE matcher
+    // wouldn't match this lowercase name at all.
+    const previous = process.env.project_id;
+    process.env.project_id = "lowercase-ref";
+    const cwd = await writeTomlProject(`project_id = "env(project_id)"\n`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { goViperCompat: true }));
+      expect(loaded!.config.project_id).toBe("lowercase-ref");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.project_id;
+      } else {
+        process.env.project_id = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("does not match a remote whose project_id is env(REF) against the resolved ref (Go parity)", async () => {
+    // Go's `loadFromFile` duplicate-check/selection loop reads viper's RAW
+    // string values (`config.go:596-610`) and only calls `c.load(v)` — which
+    // resolves `env(...)` via `LoadEnvHook` — afterward (`config.go:611`,
+    // `decode_hooks.go:13-26`). So a `[remotes.x] project_id = "env(REF)"`
+    // never matches a caller-supplied, already-resolved `REF`: Go compares the
+    // literal `env(REF)` string, not what it resolves to.
+    const previous = process.env.SUPABASE_REMOTE_ENV_REF_TEST;
+    process.env.SUPABASE_REMOTE_ENV_REF_TEST = PREVIEW_REF;
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[api]
+max_rows = 1
+
+[remotes.preview]
+project_id = "env(SUPABASE_REMOTE_ENV_REF_TEST)"
+[remotes.preview.api]
+max_rows = 999
+`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
+      expect(loaded!.appliedRemote).toBeUndefined();
+      expect(loaded!.config.api.max_rows).toBe(1);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SUPABASE_REMOTE_ENV_REF_TEST;
+      } else {
+        process.env.SUPABASE_REMOTE_ENV_REF_TEST = previous;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("validates a remote's env(REF) project_id format against its resolved value, not the literal", async () => {
+    // Go's `Config.Validate` (`config.go:989-1001`) runs entirely after the
+    // struct decode, by which point `LoadEnvHook` has already resolved
+    // `env(...)` — so it validates the RESOLVED project_id against the
+    // 20-lowercase-letter pattern, not the literal `env(REF)` string (which
+    // would never match the pattern itself).
+    const previous = process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST;
+    process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST = PREVIEW_REF;
+    const cwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.preview]
+project_id = "env(SUPABASE_REMOTE_ENV_REF_FORMAT_TEST)"
+`);
+    try {
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.appliedRemote).toBeUndefined();
+      expect(loaded!.config.project_id).toBe("baseref");
+    } finally {
+      if (previous === undefined) {
+        delete process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST;
+      } else {
+        process.env.SUPABASE_REMOTE_ENV_REF_FORMAT_TEST = previous;
+      }
       await rm(cwd, { recursive: true, force: true });
     }
   });
@@ -1226,12 +1784,12 @@ enabled = true
 max_rows = 1
 
 [remotes.preview]
-project_id = "previewref"
+project_id = "${PREVIEW_REF}"
 [remotes.preview.api]
 max_rows = "env(SUPABASE_REMOTE_MAX_ROWS_TEST)"
 `);
     try {
-      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: "previewref" }));
+      const loaded = await runConfigEffect(loadProjectConfig(cwd, { projectRef: PREVIEW_REF }));
       expect(loaded!.config.api.max_rows).toBe(777);
     } finally {
       if (previous === undefined) {
@@ -1239,6 +1797,81 @@ max_rows = "env(SUPABASE_REMOTE_MAX_ROWS_TEST)"
       } else {
         process.env.SUPABASE_REMOTE_MAX_ROWS_TEST = previous;
       }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  // Go's `Config.Validate` only checks `remotes.*.project_id` format for
+  // every remote (`config.go:996-1001`, "Since remote config is merged to
+  // base, we only need to validate the project_id field") — every other
+  // business-rule check (`Auth.External.validate()`, etc.) runs exactly once,
+  // against the merged effective config (`config.go:1136-1152`), never
+  // iterated over `c.Remotes[*]`. A non-selected `[remotes.*]` block's own
+  // business-rule violations must not fail the whole config load.
+  test("loads an unselected remote whose external provider is enabled without a secret", async () => {
+    const cwd = await writeTomlProject(
+      `project_id = "baseref"
+
+[remotes.staging]
+project_id = "${STAGING_REF}"
+
+[remotes.staging.auth.external.github]
+enabled = true
+`,
+    );
+    try {
+      // No projectRef requested, so [remotes.staging] is never selected/merged —
+      // Go would never business-rule-validate it, even though it decodes fine
+      // structurally.
+      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      expect(loaded!.appliedRemote).toBeUndefined();
+      expect(loaded!.config.remotes.staging?.auth.external.github.enabled).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("still validates the same remote's external provider once it is selected", async () => {
+    const cwd = await writeTomlProject(
+      `project_id = "baseref"
+
+[remotes.staging]
+project_id = "${STAGING_REF}"
+
+[remotes.staging.auth.external.github]
+enabled = true
+`,
+    );
+    try {
+      // Selecting [remotes.staging] merges it into the effective config, which
+      // Go DOES business-rule-validate (config.go:1136-1152) — a required
+      // `client_id`/`secret` is missing, so this must still fail.
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfig(cwd, { projectRef: STAGING_REF }).pipe(Effect.provide(BunServices.layer)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("still fails on a structurally malformed value inside an unselected remote", async () => {
+    // Go's `UnmarshalExact` always structurally decodes every remote
+    // (`config.go:246,749-756`) regardless of selection — only the
+    // merged-config-only business rules are skipped for a non-selected
+    // remote, not type/shape decoding.
+    const cwd = await writeTomlProject(
+      `${BASE_WITH_REMOTES}
+[remotes.staging.db]
+major_version = "not-a-number"
+`,
+    );
+    try {
+      const exit = await Effect.runPromiseExit(
+        loadProjectConfig(cwd).pipe(Effect.provide(BunServices.layer)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+    } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });
@@ -1341,7 +1974,7 @@ port = 22222
       `project_id = "abc123"
 
 [remotes.staging]
-project_id = "stagingref"
+project_id = "stagingrefaaaaaaaaaa"
 
 [remotes.staging.inbucket]
 enabled = true
@@ -1373,6 +2006,127 @@ port = 54324
     );
 
     expect(loaded.config.local_smtp.port).toBe(54324);
+    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+  });
+});
+
+describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", () => {
+  let warnings: Array<string> = [];
+  let errorSpy: ReturnType<typeof vi.spyOn> | undefined;
+
+  function captureWarnings() {
+    warnings = [];
+    errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+      warnings.push(args.map((a) => String(a)).join(" "));
+    });
+  }
+
+  afterEach(() => {
+    errorSpy?.mockRestore();
+    errorSpy = undefined;
+  });
+
+  async function loadToml(contents: string, options?: LoadProjectConfigOptions) {
+    const cwd = makeTempProject();
+    const path = await runConfigEffect(configTomlPath(cwd));
+    await mkdir(join(cwd, "supabase"), { recursive: true });
+    await writeFile(path, contents);
+    try {
+      return await runConfigEffect(loadProjectConfigFile(path, options));
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }
+
+  test("loads a bare [auth.external.slack] block without required fields", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[auth.external.slack]
+enabled = true
+`,
+      { goViperCompat: true },
+    );
+
+    expect("slack" in loaded.config.auth.external).toBe(false);
+    expect(loaded.document).not.toHaveProperty("auth.external.slack");
+    expect(
+      warnings.some((m) =>
+        m.includes(
+          'WARN: disabling deprecated "slack" provider. Please use [auth.external.slack_oidc] instead',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("loads a bare [auth.external.linkedin] block without required fields", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[auth.external.linkedin]
+enabled = true
+`,
+      { goViperCompat: true },
+    );
+
+    expect("linkedin" in loaded.config.auth.external).toBe(false);
+    expect(
+      warnings.some((m) =>
+        m.includes(
+          'WARN: disabling deprecated "linkedin" provider. Please use [auth.external.linkedin_oidc] instead',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("does not warn when the deprecated section is present but disabled", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[auth.external.slack]
+enabled = false
+`,
+    );
+
+    expect("slack" in loaded.config.auth.external).toBe(false);
+    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+  });
+
+  test("does not warn when only [auth.external.slack_oidc] is used", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[auth.external.slack_oidc]
+enabled = true
+client_id = "abc"
+secret = "shh"
+`,
+    );
+
+    expect(loaded.config.auth.external.slack_oidc.enabled).toBe(true);
+    expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
+  });
+
+  test("strips a deprecated [remotes.*.auth.external.slack] block without warning for an unselected remote", async () => {
+    captureWarnings();
+    const loaded = await loadToml(
+      `project_id = "abc123"
+
+[remotes.staging]
+project_id = "stagingrefaaaaaaaaaa"
+
+[remotes.staging.auth.external.slack]
+enabled = true
+`,
+    );
+
+    // Not requesting `projectRef` means no remote is selected, so `remotes` survives
+    // decode verbatim (minus the deprecated key) rather than being merged/dropped.
+    expect(loaded.config.remotes.staging?.auth.external).not.toHaveProperty("slack");
     expect(warnings.some((m) => m.includes("is deprecated"))).toBe(false);
   });
 });

@@ -47,10 +47,16 @@ pg-delta catalog (source) against the target database's catalog (target).
 | Code | Condition                                                             |
 | ---- | --------------------------------------------------------------------- |
 | `0`  | success (files written, or skipped after a declined prompt)           |
-| `1`  | conflicting `--db-url`/`--linked`/`--local` (mutually exclusive)      |
 | `1`  | pg-delta not enabled (no `--experimental` / `[experimental.pgdelta]`) |
+| `1`  | conflicting `--db-url`/`--linked`/`--local` (mutually exclusive)      |
 | `1`  | non-interactive mode with no explicit target                          |
 | `1`  | shadow-database / edge-runtime / export failure                       |
+
+The pg-delta gate and the mutex check are both raised before any side effects run,
+but the gate wins when both conditions apply simultaneously: Go's
+`PersistentPreRunE` runs before `ValidateFlagGroups()`
+(`cobra@v1.10.2/command.go:985,1010`), so a closed gate (missing `--experimental`)
+surfaces before a `--db-url`/`--linked`/`--local` conflict is ever checked.
 
 ## Output
 

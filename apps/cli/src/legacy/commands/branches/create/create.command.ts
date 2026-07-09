@@ -44,7 +44,6 @@ const BRANCH_SIZES = [
   "48xlarge_optimized_memory",
   "4xlarge",
   "8xlarge",
-  "nano",
   "small",
   "xlarge",
 ] as const;
