@@ -1,4 +1,4 @@
-import { operationDefinitions, type ApiClient } from "@supabase/api/effect";
+import { operationDefinitions, SupabaseApiInputError, type ApiClient } from "@supabase/api/effect";
 import { randomUUID } from "node:crypto";
 import { open, rename, rm } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
@@ -150,7 +150,19 @@ function validateDownloadFlags(
       );
 }
 
-function mapTransportError(prefix: string, error: unknown): FunctionsApiTransportError {
+function mapTransportError(
+  prefix: string,
+  error: unknown,
+): FunctionsApiTransportError | SupabaseApiInputError {
+  // The generated client's input schema rejected the request before any
+  // request was sent (e.g. a user-supplied ref failing the `ref` pattern).
+  // That is an input-phase failure, not a transport failure — pass it through
+  // unchanged so the actionability adapter classifies it as invalid input
+  // instead of network.
+  if (error instanceof SupabaseApiInputError) {
+    return error;
+  }
+
   if (HttpClientError.isHttpClientError(error)) {
     const description = error.reason.description ?? error.reason._tag;
     return new FunctionsApiTransportError({ message: `${prefix}: ${description}` });

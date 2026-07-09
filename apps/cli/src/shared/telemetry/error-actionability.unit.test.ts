@@ -1,5 +1,6 @@
 import { Cause, Data } from "effect";
 import { describe, expect, it } from "vitest";
+import { LegacyBootstrapHealthError } from "../../legacy/commands/bootstrap/bootstrap.errors.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -401,5 +402,39 @@ describe("classifyCliCauseActionability", () => {
   it("classifies defects", () => {
     const cause = Cause.die(new TypeError("boom"));
     expect(classifyCliCauseActionability(cause).error_category).toBe("panic");
+  });
+});
+
+describe("LegacyBootstrapHealthError actionability", () => {
+  it("classifies a non-200 health poll on the status-code policy", () => {
+    const result = classifyCliErrorActionability(
+      new LegacyBootstrapHealthError({ message: "Error status 500: boom", status: 500 }),
+    );
+    expect(result.error_category).toBe("api_status");
+  });
+
+  it("classifies a 200 the generated client could not decode as an api-response problem", () => {
+    const result = classifyCliErrorActionability(
+      new LegacyBootstrapHealthError({ message: "Error status 0: boom", decode: true }),
+    );
+    expect(result.error_kind).toBe("external_service");
+    expect(result.error_category).toBe("api_status");
+    expect(result.error_fingerprint).toBe("tag:LegacyBootstrapHealthError:api_response");
+  });
+
+  it("classifies a responseless health poll failure as network", () => {
+    const result = classifyCliErrorActionability(
+      new LegacyBootstrapHealthError({ message: "Error status 0: boom", transport: true }),
+    );
+    expect(result.error_kind).toBe("external_service");
+    expect(result.error_category).toBe("network");
+    expect(result.error_fingerprint).toBe("tag:LegacyBootstrapHealthError:network");
+  });
+
+  it("falls back to the api-status policy for an unhealthy service report", () => {
+    const result = classifyCliErrorActionability(
+      new LegacyBootstrapHealthError({ message: "Service not healthy: db (unhealthy)" }),
+    );
+    expect(result.error_category).toBe("api_status");
   });
 });

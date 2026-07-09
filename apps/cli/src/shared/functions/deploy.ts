@@ -3,7 +3,12 @@ import { chmod, mkdtemp, readFile, readdir, realpath, rm, stat } from "node:fs/p
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { URL } from "node:url";
-import { FunctionResponse, operationDefinitions, type ApiClient } from "@supabase/api/effect";
+import {
+  FunctionResponse,
+  operationDefinitions,
+  SupabaseApiInputError,
+  type ApiClient,
+} from "@supabase/api/effect";
 import {
   inferFunctionsManifest,
   loadProjectConfig,
@@ -169,7 +174,19 @@ function formatUnexpectedStatusBody(text: string): string {
   }
 }
 
-function mapTransportError(prefix: string, error: unknown): FunctionsApiTransportError {
+function mapTransportError(
+  prefix: string,
+  error: unknown,
+): FunctionsApiTransportError | SupabaseApiInputError {
+  // The generated client's input schema rejected the request before any
+  // request was sent (e.g. a user-supplied ref failing the `ref` pattern).
+  // That is an input-phase failure, not a transport failure — pass it through
+  // unchanged so the actionability adapter classifies it as invalid input
+  // instead of network.
+  if (error instanceof SupabaseApiInputError) {
+    return error;
+  }
+
   if (HttpClientError.isHttpClientError(error)) {
     const description = error.reason.description ?? error.reason._tag;
     return new FunctionsApiTransportError({ message: `${prefix}: ${description}` });
@@ -1458,12 +1475,17 @@ const listRemoteFunctions = Effect.fnUntraced(function* (api: ApiClient, project
     if (result.success) {
       const body = yield* result.response.text.pipe(Effect.orElseSucceed(() => ""));
       if (result.response.status === 200) {
+        // A 200 whose body is not the expected JSON is an API-response problem,
+        // not a transport failure — surface it via FunctionsApiStatusError so it
+        // classifies as api_status rather than network.
         return yield* Effect.try({
           try: () => decodeFunctionListResponse(JSON.parse(body)),
           catch: (error) =>
-            new Error(
-              `failed to read functions list: ${error instanceof Error ? error.message : String(error)}`,
-            ),
+            new FunctionsApiStatusError({
+              status: result.response.status,
+              message: `failed to read functions list: ${error instanceof Error ? error.message : String(error)}`,
+              decode: true,
+            }),
         });
       }
       lastError = new FunctionsApiStatusError({

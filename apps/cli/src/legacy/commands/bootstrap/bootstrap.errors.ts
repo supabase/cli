@@ -80,12 +80,19 @@ export class LegacyBootstrapHealthError extends Data.TaggedError("LegacyBootstra
   /** Set when the health poll itself failed with a non-200; absent when the
    * service reported unhealthy. */
   readonly status?: number;
+  /** Set when the health poll's response came back with a 200 the generated
+   * client could not decode (`SchemaError`/`HttpBodyError`) — an API-response
+   * problem, not a transport failure. */
+  readonly decode?: boolean;
   /** Set when the health poll failed without any HTTP response (DNS, TLS,
    * timeout) — a network failure, not an API status. */
   readonly transport?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.status !== undefined) return statusCodeActionability(this.status);
+    if (this.decode === true) {
+      return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+    }
     if (this.transport === true) {
       return { ...actionability.externalNetwork, fingerprint_suffix: "network" };
     }
