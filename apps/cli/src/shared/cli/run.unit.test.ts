@@ -310,6 +310,58 @@ describe("classifyParseErrorConsoleOutput", () => {
     ).toBe("drop");
   });
 
+  // Codex review finding (CLI-1901 follow-up): `isValueTakingFlagTokenFor`
+  // only inspects the resolved LEAF command's own flags, so it doesn't know
+  // `--network-id` (a value-taking GLOBAL flag, `globalFlagsWithValues` in
+  // `run.ts`) consumes the very next argv entry. Verified against pflag's
+  // `parseLongArg` (`flag.go`): `--network-id --status` hands the literal
+  // string `--status` to `--network-id` as its value, so the required
+  // `status` flag (`migration repair`, `Flag.choice`) is never seen as its
+  // own occurrence and keeps Go's `SilenceUsage` treatment (no usage shown).
+  // Without OR-ing `globalFlagsWithValues` into the scan's value-taking
+  // predicate, the raw `--status` token would be found anyway and wrongly
+  // flush the help doc.
+  it("drops the help dump when a required flag's own token is consumed as a global value-taking flag's value", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["supabase", "migration", "repair"],
+        errors: [new CliError.MissingOption({ option: "status" })],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: testRoot,
+        args: ["migration", "repair", "--network-id", "--status", "--local", "20230101000000"],
+      }),
+    ).toBe("drop");
+  });
+
+  // Codex review finding (CLI-1901 follow-up): a literal `--` immediately
+  // after a value-taking flag is NOT a genuine operand terminator in Go —
+  // pflag's `parseLongArg` (`flag.go`) pops the very next raw token as the
+  // flag's value with no shape check at all, so `--project-ref --` hands the
+  // literal string `--` to `--project-ref`. Parsing then resumes normally on
+  // `--type`, which (nothing follows it) raises pflag's own
+  // `ValueRequiredError` — a `ParseFlags`-time error, usage still shown, NOT
+  // `SilenceUsage`-suppressed. Precomputing `args.indexOf("--")` before the
+  // value-consumption scan would wrongly treat that consumed `--` as the
+  // terminator and drop `--type` from the scan entirely, misclassifying
+  // `type` as genuinely absent.
+  it("flushes the help dump to stderr for a required flag whose own token follows a -- consumed as a preceding value-taking flag's value", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["supabase", "sso", "add"],
+        errors: [new CliError.MissingOption({ option: "type" })],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: testRoot,
+        args: ["sso", "add", "--project-ref", "--", "--type"],
+      }),
+    ).toBe("flush-help-doc-to-stderr");
+  });
+
   it("still drops the help dump for a missing required flag even when an unrelated flag shares a substring of its name", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({

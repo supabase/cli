@@ -253,9 +253,26 @@ export type ParseErrorConsoleDisposition = "flush-unchanged" | "drop" | "flush-h
  * shown) into a "present but missing its value" one (Go: usage shown) — see
  * CLI-1901.
  *
- * `isValueTakingToken` (from `isValueTakingFlagTokenFor`) lets the scan skip
- * a token immediately consumed as the VALUE of a preceding value-taking
- * flag, instead of mistaking that consumed token for `option`'s own
+ * That `--` cutoff is only genuine when the scan reaches `--` as a LIVE
+ * token, not when it was itself consumed as the VALUE of an immediately
+ * preceding value-taking flag. Go/pflag's `parseArgs` (`flag.go`) only
+ * recognizes `--` as the terminator when it's at the FRONT of the remaining
+ * args on a fresh iteration; `parseLongArg`'s value branch pops the very
+ * next raw token with no shape check at all, so a literal `--` right after a
+ * value-taking flag gets swallowed as that flag's value and never reaches
+ * the terminator check — e.g. `sso add --project-ref -- --type` hands the
+ * literal string `--` to `--project-ref`, and parsing resumes normally on
+ * `--type` (which then fails with pflag's OWN `ValueRequiredError` — a
+ * `ParseFlags`-time error, usage still shown — since nothing follows it).
+ * The scan below therefore folds the terminator check into the very same
+ * loop that already skips consumed-value tokens, rather than precomputing
+ * `args.indexOf("--")` up front — a Codex review finding on CLI-1901.
+ *
+ * `isValueTakingToken` (from `isValueTakingFlagTokenFor`, OR'd with
+ * `globalFlagsWithValues` at the `classifyParseErrorConsoleOutput` call site
+ * below) lets the scan skip a token immediately consumed as the VALUE of a
+ * preceding value-taking flag — local OR global — instead of mistaking that
+ * consumed token (or a consumed literal `--`, per above) for `option`'s own
  * occurrence. Go/pflag's `parseLongArg` (`flag.go`) unconditionally consumes
  * the very next argv entry as a value-taking flag's value, even when that
  * entry itself looks like another flag — e.g. `sso add --project-ref --type`
@@ -276,18 +293,21 @@ function isMissingFlagTokenPresent(
   isValueTakingToken: (token: string) => boolean = () => false,
 ): boolean {
   const tokens = [`--${option}`, ...aliases];
-  const terminatorIndex = args.indexOf("--");
-  const scannedArgs = terminatorIndex === -1 ? args : args.slice(0, terminatorIndex);
-  for (let index = 0; index < scannedArgs.length; index++) {
-    const arg = scannedArgs[index];
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index];
     if (arg === undefined) continue;
+    // A literal "--" only terminates flag parsing when reached as a LIVE
+    // token here — if the previous iteration already skipped it as a
+    // value-taking flag's consumed value (below), this line never runs for
+    // it, matching pflag's own ordering (see the doc comment above).
+    if (arg === "--") break;
     if (tokens.some((token) => arg === token || arg.startsWith(`${token}=`))) return true;
     const equalIndex = arg.indexOf("=");
     const bareToken = equalIndex === -1 ? arg : arg.slice(0, equalIndex);
     if (equalIndex === -1 && isValueTakingToken(bareToken)) {
       // Go/pflag consumes the following argv entry as `bareToken`'s value
-      // unconditionally — skip it so it can't be mistaken for `option` being
-      // present.
+      // unconditionally — even a literal "--" — so skip it here too, before
+      // the next iteration's terminator check ever sees it.
       index++;
     }
   }
@@ -302,7 +322,18 @@ export function classifyParseErrorConsoleOutput(
   if (!CliError.isCliError(error) || error._tag !== "ShowHelp" || error.errors.length === 0) {
     return "flush-unchanged";
   }
-  const isValueTakingToken = isValueTakingFlagTokenFor(context.rootCommand, error.commandPath);
+  // `isValueTakingFlagTokenFor` only inspects the resolved LEAF command's own
+  // flags, so it has no visibility into value-taking GLOBAL flags (`--network-id`,
+  // `--profile`, etc. — see `globalFlagsWithValues` above). Without OR-ing those
+  // in, a global value flag consuming the very next token (e.g.
+  // `migration repair --network-id --status --local <version>` handing the
+  // literal `--status` to `--network-id`, per pflag's `parseLongArg`) would
+  // leave the required `status` flag looking "present" to the scan below, even
+  // though Go/pflag never sees it as its own occurrence and suppresses usage
+  // for it (`SilenceUsage`) — a Codex review finding on CLI-1901.
+  const isLeafValueTakingToken = isValueTakingFlagTokenFor(context.rootCommand, error.commandPath);
+  const isValueTakingToken = (token: string) =>
+    globalFlagsWithValues.has(token) || isLeafValueTakingToken(token);
   const isSuppressedMissingFlag = (inner: (typeof error.errors)[number]) =>
     inner._tag === "MissingOption" &&
     !isMissingFlagTokenPresent(
