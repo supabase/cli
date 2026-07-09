@@ -272,7 +272,6 @@ const pullImage = (
     );
   });
 
-
 const resolveServiceWithMetadata = (
   resolver: BinaryResolver["Service"],
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],

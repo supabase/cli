@@ -76,7 +76,13 @@ pnpm test
 
 If a workspace exposes a different script set, use that workspace's `package.json` as the source of truth.
 
-## Nx
+Before finishing any task that touches more than one workspace — or any `packages/*` workspace that other workspaces depend on — also run the monorepo-wide gate that CI's `Check code quality` job runs, from the repo root, and confirm it passes:
+
+```sh
+npx nx run-many -t types:check lint:check fmt:check knip:check
+```
+
+Per-workspace `check:all` runs are not a substitute: CI runs these targets across all projects, so a formatting or lint failure in any touched workspace fails the PR even when the workspace you focused on is green. Read the Nx `Failed tasks` list at the end of the output verbatim — do not judge success by grepping for passing lines, and beware that piping a check command through `tail`/`grep` masks its exit code.
 
 This repo uses Nx for task orchestration. Prefer Nx commands over running scripts directly when working across projects or when you need to understand project structure.
 
