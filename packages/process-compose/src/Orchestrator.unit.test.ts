@@ -669,6 +669,43 @@ describe("Orchestrator", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.live("restartService does not restart dependents beyond a user-stopped service", () => {
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("postgres"),
+        svc("pgmeta", {
+          dependencies: [{ service: "postgres", condition: "started" }],
+        }),
+        svc("studio", {
+          dependencies: [{ service: "pgmeta", condition: "started" }],
+        }),
+      ],
+      { exitDelay: "5 seconds" },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.start();
+      yield* proc.waitForSpawn("studio");
+
+      // Explicitly stopping pgmeta must cut restart propagation: studio's
+      // only path to postgres runs through it, so restarting postgres should
+      // neither resurrect pgmeta nor restart studio against a stopped backend.
+      yield* orc.stopService("pgmeta");
+      yield* orc.restartService("postgres");
+      yield* proc.waitForSpawn("postgres", 2);
+
+      const spawnCounts = proc.spawned.reduce<Record<string, number>>((counts, record) => {
+        counts[record.command] = (counts[record.command] ?? 0) + 1;
+        return counts;
+      }, {});
+      expect(spawnCounts).toEqual({
+        postgres: 2,
+        pgmeta: 1,
+        studio: 1,
+      });
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.live("restartService includes launched dependents that are still pending", () => {
     let dbReady = false;
     const { layer, proc } = setupOrchestrator(

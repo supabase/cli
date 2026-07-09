@@ -532,18 +532,24 @@ export class Orchestrator extends Context.Service<
         const restartClosureFor = (name: string): ReadonlyArray<ServiceDef> => {
           const names = new Set<string>([name]);
           const visited = new Set<string>([name]);
-          const shouldRestartDependent = (dependentName: string): boolean => {
-            const svc = services.get(dependentName);
-            if (svc === undefined) return false;
-            const status = SubscriptionRef.getUnsafe(svc.state).status;
-            if (status === "Pending") return launchedServices.has(dependentName);
-            return status !== "Stopped";
-          };
           const collectDependents = (current: string): void => {
             for (const dependent of graph.dependentsOf(current)) {
               if (visited.has(dependent.name)) continue;
               visited.add(dependent.name);
-              if (shouldRestartDependent(dependent.name)) {
+              const svc = services.get(dependent.name);
+              if (svc === undefined) continue;
+              // A user-stopped service CUTS restart propagation: its own
+              // dependents no longer consume the restarted dependency through
+              // it, and restarting them would boot against the stopped backend
+              // (their dependency deferreds are stale-succeeded). Completed
+              // one-shot helpers (Stopped but not user-stopped, e.g.
+              // postgres-init) stay transparent instead: they aren't restarted
+              // themselves, but live dependents behind them still are.
+              if (svc.stoppedByUser) continue;
+              const status = SubscriptionRef.getUnsafe(svc.state).status;
+              const shouldRestart =
+                status === "Pending" ? launchedServices.has(dependent.name) : status !== "Stopped";
+              if (shouldRestart) {
                 names.add(dependent.name);
               }
               collectDependents(dependent.name);

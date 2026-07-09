@@ -59,7 +59,11 @@ export class Provisioner {
 
   async create(opts: CreatePodOptions): Promise<PodManifest> {
     const { templates, pods, ports, postgresPassword } = this.deps;
-    if ((await pods.read(opts.id)) !== undefined) {
+    // `exists` (not just `read`) so a pod directory with a corrupt/older
+    // manifest also counts as occupied — otherwise the failed clone below
+    // would hit the existing data dir and the catch-block cleanup would
+    // delete pod data this create never made.
+    if (await pods.exists(opts.id)) {
       throw new Error(`pod already exists: ${opts.id}`);
     }
     const pgVersion = opts.versions.postgres;
@@ -152,7 +156,7 @@ export class Provisioner {
     const { pods, ports } = this.deps;
     const source = await pods.read(sourceId);
     if (source === undefined) throw new Error(`unknown pod: ${sourceId}`);
-    if ((await pods.read(newId)) !== undefined) {
+    if (await pods.exists(newId)) {
       throw new Error(`pod already exists: ${newId}`);
     }
     const allocated = await ports.allocate(newId);

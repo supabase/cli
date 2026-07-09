@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { SERVICE_NAMES } from "@supabase/stack";
 import type { AllocatedPorts, ServiceName } from "@supabase/stack";
@@ -252,6 +252,18 @@ export class PodRegistry {
 
   dataDir(id: string): string {
     return join(this.podDir(id), "data");
+  }
+
+  /**
+   * Whether ANY pod directory exists for `id`, even one whose pod.json is
+   * missing or unreadable — provisioning must treat those as occupied rather
+   * than as free ids whose data it may clobber.
+   */
+  async exists(id: string): Promise<boolean> {
+    return stat(this.podDir(id)).then(
+      () => true,
+      () => false,
+    );
   }
 
   async read(id: string): Promise<PodManifest | undefined> {

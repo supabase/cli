@@ -652,7 +652,11 @@ export class StackLifecycleCoordinator extends Context.Service<
               yield* requireRunningForServiceStart(name);
               const runtime = yield* ensureRuntime;
               yield* runtime.orchestrator.startService(name);
-              yield* markStarted([name]);
+              // The orchestrator starts the full dependency closure of `name`,
+              // so the started set must record every service it brought up —
+              // otherwise waitAllReady()'s lazy semantics would ignore a
+              // failing dependency (e.g. pgmeta started implicitly by studio).
+              yield* markStarted(runtime.graph.startOrderFor(name).map((def) => def.name));
               yield* runtime.orchestrator.waitReady(name);
             }),
           stopService: (name) =>

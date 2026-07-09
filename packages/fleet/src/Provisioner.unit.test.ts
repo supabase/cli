@@ -83,6 +83,27 @@ describe("Provisioner (unit, fake deps)", () => {
       expect(await podsRootEntries(podsRoot)).not.toContain("x");
     });
 
+    it("refuses to create over a corrupt pod directory without deleting it", async () => {
+      const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
+      await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
+      const { p, ports, podsRoot } = await makeHarness(templateDir);
+
+      // A leftover pod dir whose manifest no longer parses: read() sees
+      // nothing, but the data underneath must survive a create attempt.
+      await mkdir(join(podsRoot, "zombie", "data"), { recursive: true });
+      await writeFile(join(podsRoot, "zombie", "pod.json"), "not-json");
+      await writeFile(join(podsRoot, "zombie", "data", "keep.txt"), "keep");
+
+      await expect(p.create({ id: "zombie", versions: { postgres: PG_VERSION } })).rejects.toThrow(
+        /exists/,
+      );
+
+      expect(ports.get("zombie")).toBeUndefined();
+      await expect(readFile(join(podsRoot, "zombie", "data", "keep.txt"), "utf8")).resolves.toBe(
+        "keep",
+      );
+    });
+
     it("does not release ports belonging to a pre-existing pod on the duplicate-id path", async () => {
       const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
       await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
@@ -241,21 +262,37 @@ describe("Provisioner (unit, fake deps)", () => {
     it("releases the allocated ports and cleans up when the clone fails", async () => {
       const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
       await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
-      const { p, ports, podsRoot } = await makeHarness(templateDir);
+      const { p, pods, ports, podsRoot } = await makeHarness(templateDir);
 
       await p.create({ id: "src", versions: { postgres: PG_VERSION } });
 
-      // Force the fork's clone step to fail deterministically: cloneDir
-      // refuses to clone into a destination that already exists.
-      await mkdir(join(podsRoot, "dst", "data"), { recursive: true });
+      // Force the fork's clone step to fail deterministically: delete the
+      // source data dir out from under it.
+      await rm(pods.dataDir("src"), { recursive: true, force: true });
 
       await expect(p.fork("src", "dst")).rejects.toThrow();
 
       expect(ports.get("dst")).toBeUndefined();
-      // The pre-created dest dir is removed as part of failure cleanup too.
       expect(await podsRootEntries(podsRoot)).toContain("src");
-      const dstDataEntries = await readdir(join(podsRoot, "dst", "data")).catch(() => undefined);
-      expect(dstDataEntries).toBeUndefined();
+      expect(await podsRootEntries(podsRoot)).not.toContain("dst");
+    });
+
+    it("refuses to fork onto an existing pod directory without deleting it", async () => {
+      const templateDir = await mkdtemp(join(tmpdir(), "fleet-template-"));
+      await writeFile(join(templateDir, "PG_VERSION"), PG_VERSION);
+      const { p, ports, podsRoot } = await makeHarness(templateDir);
+
+      await p.create({ id: "src", versions: { postgres: PG_VERSION } });
+      // An occupied directory whose manifest is unreadable still counts.
+      await mkdir(join(podsRoot, "dst", "data"), { recursive: true });
+      await writeFile(join(podsRoot, "dst", "data", "keep.txt"), "keep");
+
+      await expect(p.fork("src", "dst")).rejects.toThrow(/exists/);
+
+      expect(ports.get("dst")).toBeUndefined();
+      await expect(readFile(join(podsRoot, "dst", "data", "keep.txt"), "utf8")).resolves.toBe(
+        "keep",
+      );
     });
 
     it("does not release the source pod's ports when the new id already exists", async () => {
