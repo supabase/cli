@@ -112,11 +112,14 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
             })
             // A spawn failure (e.g. Docker not installed) carries no container
             // stderr; wrap it with the caller's prefix like Go's `%s: %w`.
+            // Thread the docker discriminant so a daemon-down / registry-pull
+            // failure at the docker boundary is not misclassified as user SQL.
             .pipe(
               Effect.mapError(
                 (cause) =>
                   new LegacyEdgeRuntimeScriptError({
                     message: `${opts.errPrefix}: ${cause.message}`,
+                    docker: cause.reason === "spawn" || cause.daemonDown ? "daemon" : "pull",
                   }),
               ),
             );

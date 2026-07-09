@@ -137,6 +137,7 @@ export interface LegacyStorageGateway {
 function failParse(detail: string): LegacyStorageGatewayNetworkError {
   return new LegacyStorageGatewayNetworkError({
     message: `failed to parse response body: ${detail}`,
+    decode: true,
   });
 }
 

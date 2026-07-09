@@ -36,7 +36,9 @@ export class LegacyStorageMissingApiKeyError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.apiStatus;
+    // A 200 api-keys response with no usable key — an API response problem, not
+    // a raw status failure.
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
 }
 

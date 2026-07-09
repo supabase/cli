@@ -34,7 +34,9 @@ export class LegacyPostgresConfigGetUnmarshalError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.apiStatus;
+    // Constructed only after a 200 status check when `parseJsonObject` fails —
+    // an API response problem, not a raw status failure.
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
 }
 
@@ -66,7 +68,9 @@ export class LegacyPostgresConfigUpdateUnmarshalError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.apiStatus;
+    // Constructed only after a 200 status check when `parseJsonObject` fails —
+    // an API response problem, not a raw status failure.
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
 }
 
@@ -108,7 +112,9 @@ export class LegacyPostgresConfigDeleteUnmarshalError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.apiStatus;
+    // Constructed only after a 200 status check when `parseJsonObject` fails —
+    // an API response problem, not a raw status failure.
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
 }
 

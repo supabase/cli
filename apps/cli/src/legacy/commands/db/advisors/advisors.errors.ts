@@ -47,9 +47,20 @@ export class LegacyDbAdvisorsNotLoggedInError extends Data.TaggedError(
  */
 export class LegacyDbAdvisorsInvalidTokenError extends Data.TaggedError(
   "LegacyDbAdvisorsInvalidTokenError",
-)<{ readonly message: string; readonly suggestion: string }> {
+)<{
+  readonly message: string;
+  readonly suggestion: string;
+  /**
+   * Copied from the wrapped `LegacyInvalidAccessTokenError`: an env-var token
+   * (`SUPABASE_ACCESS_TOKEN`) takes precedence over stored credentials, so
+   * `supabase login` cannot fix it — the remediation is to correct the env
+   * var. A stored (keyring/file) token, or an unknown source, is fixable by
+   * logging in again.
+   */
+  readonly source?: "env" | "stored";
+}> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.authLogin;
+    return this.source === "env" ? actionability.authToken : actionability.authLogin;
   }
 }
 

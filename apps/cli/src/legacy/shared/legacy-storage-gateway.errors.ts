@@ -23,9 +23,17 @@ export class LegacyStorageGatewayNetworkError extends Data.TaggedError(
   "LegacyStorageGatewayNetworkError",
 )<{
   readonly message: string;
+  /**
+   * Set when this failure is a 200-response body that failed to decode
+   * (`failParse`) rather than a transport failure — so a malformed-body decode
+   * classifies as an API response problem instead of a network problem.
+   */
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.externalNetwork;
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
   }
 }
 
