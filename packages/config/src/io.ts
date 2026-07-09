@@ -35,6 +35,18 @@ export interface LoadedProjectConfig {
    * `undefined` when no `projectRef` was requested or none matched.
    */
   readonly appliedRemote?: string;
+  /**
+   * The top-level `auth.external.{linkedin,slack}` sub-objects that were stripped from
+   * {@link document} before it was returned (provider id → the removed object), keyed by
+   * provider id. Empty when neither deprecated block was present. See
+   * `normalizeDeprecatedExternalProviders`'s doc comment for why a caller doing its own
+   * Go-parity scan over `document` (e.g. a decrypt-or-abort secret check) may need to fold
+   * this back in — Go's decode-time decrypt hook sees these blocks before its later
+   * validate-time deletion, so `document` alone under-reports what Go would have decrypted.
+   * Present (possibly `{}`) whenever {@link document} is; absent from `saveProjectConfig`'s
+   * result, which has no document to strip from.
+   */
+  readonly removedDeprecatedExternalProviders?: Readonly<Record<string, unknown>>;
 }
 
 /**
@@ -441,6 +453,19 @@ interface NormalizedExternalProvidersDocument {
   readonly document: unknown;
   /** Provider ids (`"linkedin"` | `"slack"`) whose deprecated top-level block was `enabled` — drives the WARN. */
   readonly deprecatedProviders: ReadonlyArray<string>;
+  /**
+   * The removed top-level `auth.external.{linkedin,slack}` sub-objects (provider id → the
+   * object that was deleted), regardless of `enabled`. Go's global `DecryptSecretHookFunc`
+   * runs during decode — strictly BEFORE `Config.Validate()` → `external.validate()` (which
+   * this function mirrors) ever deletes these blocks (`config.go:753,775-783` decode vs.
+   * `config.go:882,1148,1419-1425` validate) — so an `encrypted:` secret hiding in one of
+   * these blocks still gets decrypted-or-aborted in Go. A caller that needs to reproduce that
+   * decrypt-or-abort check against the returned (already-stripped) {@link LoadedProjectConfig.document}
+   * (e.g. `config push`'s pre-check) can fold this back in. Only the top-level blocks are
+   * captured, not any surviving `remotes.*.auth.external.{linkedin,slack}` — that's the
+   * separate, already-documented "non-matching remote" gap.
+   */
+  readonly removedProviders: Readonly<Record<string, unknown>>;
 }
 
 const DEPRECATED_EXTERNAL_PROVIDERS = ["linkedin", "slack"] as const;
@@ -476,15 +501,17 @@ function normalizeDeprecatedExternalProviders(
   document: unknown,
 ): NormalizedExternalProvidersDocument {
   if (!isObject(document)) {
-    return { document, deprecatedProviders: [] };
+    return { document, deprecatedProviders: [], removedProviders: {} };
   }
   const normalized = { ...document };
   const deprecatedProviders: Array<string> = [];
+  const removedProviders: Record<string, unknown> = {};
   if (isObject(normalized.auth) && isObject(normalized.auth.external)) {
     const external = { ...normalized.auth.external };
     for (const ext of DEPRECATED_EXTERNAL_PROVIDERS) {
       const provider = external[ext];
       if (provider === undefined) continue;
+      removedProviders[ext] = provider;
       if (isObject(provider) && provider.enabled === true) {
         deprecatedProviders.push(ext);
       }
@@ -506,7 +533,7 @@ function normalizeDeprecatedExternalProviders(
       }),
     );
   }
-  return { document: normalized, deprecatedProviders };
+  return { document: normalized, deprecatedProviders, removedProviders };
 }
 
 /**
@@ -740,8 +767,11 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   // Strip Go's deprecated `auth.external.{linkedin,slack}` provider ids from
   // the POST-remote-merge document, matching `external.validate()` running
   // once on the final effective config (see `normalizeDeprecatedExternalProviders`).
-  const { document: normalizedForDecode, deprecatedProviders } =
-    normalizeDeprecatedExternalProviders(documentForDecode);
+  const {
+    document: normalizedForDecode,
+    deprecatedProviders,
+    removedProviders,
+  } = normalizeDeprecatedExternalProviders(documentForDecode);
   // Warn on stderr, matching Go's `external.validate()` (`config.go:1418-1423`).
   // Go's own format string is a raw string literal ending in a literal
   // backslash-n (raw string literals never process escapes, and `Fprintf`
@@ -768,6 +798,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     ignoredPaths: [],
     document: isObject(normalizedForDecode) ? normalizedForDecode : undefined,
     appliedRemote,
+    removedDeprecatedExternalProviders: removedProviders,
   } satisfies LoadedProjectConfig;
 });
 
