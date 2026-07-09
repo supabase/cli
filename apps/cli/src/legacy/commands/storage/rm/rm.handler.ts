@@ -57,19 +57,25 @@ export const legacyStorageRm = Effect.fn("legacy.storage.rm")(function* (
   const resolver = yield* LegacyProjectRefResolver;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320). Both the
-  // `--local` and (default) `--linked` branches of `ParseDatabaseConfig` call
-  // `LoadConfig` — which loads the project `.env` files — before `rm.Run`'s
-  // confirmation prompt (`root.go:118` → `db_url.go:78` (`local`) / `:91` (`linked`)),
-  // so a `SUPABASE_YES` set only in `supabase/.env` must auto-confirm here too.
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
-  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
+    // Resolve the project ref BEFORE reading the project `.env`, matching Go's
+    // `ParseDatabaseConfig` `case linked:` (`db_url.go:87-93`), which calls
+    // `LoadProjectRef` strictly before `LoadConfig` (the `.env`/`loadNestedEnv`
+    // work). An unlinked workdir must fail fast with the not-linked guidance
+    // before a malformed/unreadable `supabase/.env` gets a chance to mask it
+    // with an env-parse error.
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(Option.none());
     linkedRef = projectRef;
+    // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320). Both the
+    // `--local` and (default) `--linked` branches of `ParseDatabaseConfig` call
+    // `LoadConfig` — which loads the project `.env` files — before `rm.Run`'s
+    // confirmation prompt (`root.go:118` → `db_url.go:78` (`local`) / `:91` (`linked`)),
+    // so a `SUPABASE_YES` set only in `supabase/.env` must auto-confirm here too.
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
     const loaded = yield* legacyLoadStorageConfig(cliConfig.workdir, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
