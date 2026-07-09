@@ -811,6 +811,20 @@ export class StackLifecycleCoordinator extends Context.Service<
                 yield* runtime.orchestrator.waitAllReady();
                 return;
               }
+              // Lazy readiness is only meaningful once start() has completed: before that the
+              // started set may still be empty (start() records the eager postgres set only
+              // after launching it), so an early snapshot would vacuously report "ready" while
+              // postgres is still coming up. Fail instead — the daemon /ready route serializes
+              // this as a 500, which is what a health poller should see mid-start (or after
+              // stop).
+              const phase = yield* Ref.get(phaseRef);
+              if (phase !== "running") {
+                return yield* Effect.fail(
+                  new StackBuildError({
+                    detail: `Stack is not running (phase: "${phase}"); lazy readiness is only defined once start() has completed.`,
+                  }),
+                );
+              }
               // Lazy: "ready" means "every service that has been started is ready". Services
               // that were never started (e.g. postgrest, still Pending until the ApiProxy's
               // ensureService calls startService on demand) never resolve their `healthy`

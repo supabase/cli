@@ -219,6 +219,28 @@ describe("StackLifecycleCoordinator enableExtension", () => {
     );
   });
 
+  it.live("lazy waitAllReady fails before start() completes instead of reporting ready", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "stack-lifecycle-coordinator-ready-test-"));
+    writeFileSync(join(dataDir, "postgresql.conf"), "# stock conf\n");
+    const config: ResolvedStackConfig = { ...makeConfig(dataDir), lazyServices: true };
+    const { layer } = setupLayer(config);
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+
+      // Before start(): the started set is empty; reporting "ready" here would
+      // let a daemon /ready poll observe ok while postgres is still down.
+      const early = yield* stack.waitAllReady().pipe(Effect.exit);
+      expect(Exit.isFailure(early)).toBe(true);
+
+      yield* stack.start();
+      yield* stack.waitAllReady();
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(dataDir, { recursive: true, force: true }))),
+    );
+  });
+
   it.live("treats non-preload extensions as a no-op without touching the data dir", () => {
     // Deliberately point at a data dir that doesn't exist and never start the
     // stack: enabling e.g. pgvector must not read or create anything in PGDATA.
