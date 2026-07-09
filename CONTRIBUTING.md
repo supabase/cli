@@ -7,7 +7,7 @@ Bun monorepo for exploring the next generation of the Supabase CLI and local dev
 Before you open a pull request:
 
 1. **Open an issue first**, using one of the [issue templates](https://github.com/supabase/cli/issues/new/choose).
-2. **Wait for maintainer triage.** A maintainer categorizes the issue (`✨ Feature`, `🐛 Bug`, or `📘 Docs`) and adds the **`open-for-contribution`** label once it is ready to be worked on. New issues start with `needs-triage`.
+2. **Wait for maintainer triage.** A maintainer categorizes the issue (`✨ Feature`, `🐛 Bug`, or `📘 Docs`) and adds the **`open-for-contribution`** label once it is ready to be worked on.
 3. **Open a pull request only after the `open-for-contribution` label is set**, and link the issue with a closing keyword (for example `Closes #123`).
 
 Until the `open-for-contribution` label is present, the issue is still in triage, so work should not start and a pull request should not be opened.

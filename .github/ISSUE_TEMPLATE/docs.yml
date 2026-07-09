@@ -2,7 +2,6 @@ name: Documentation
 description: Suggest an improvement to Supabase CLI documentation.
 labels:
   - 📘 Docs
-  - needs-triage
 body:
   - type: markdown
     attributes:

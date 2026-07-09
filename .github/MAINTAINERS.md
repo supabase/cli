@@ -42,12 +42,11 @@ closing anything; run again with `dry_run` unchecked to apply the decisions.
 During triage:
 
 1. Categorize the issue with one of `✨ Feature`, `🐛 Bug`, or `📘 Docs`. Issues opened
-   via the templates start with both their category label and `needs-triage`.
-2. When the issue is ready to be worked on, add the **`open-for-contribution`** label and
-   remove `needs-triage`.
+   via the templates start with their category label already applied.
+2. When the issue is ready to be worked on, add the **`open-for-contribution`** label.
 
-Both `needs-triage` and `open-for-contribution` must exist as repository labels for this
-workflow to function; create them once from **Issues → Labels** if they are missing.
+The `open-for-contribution` label must exist as a repository label for this workflow to
+function; create it once from **Issues → Labels** if it is missing.
 
 Applying `open-for-contribution` is currently a **manual step** — do it on the GitHub
 issue directly (from the GitHub UI, or from the Linear-linked issue).

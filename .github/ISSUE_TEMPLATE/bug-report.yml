@@ -2,7 +2,6 @@ name: Bug report
 description: Report a reproducible problem with the Supabase CLI.
 labels:
   - 🐛 Bug
-  - needs-triage
 body:
   - type: markdown
     attributes:
