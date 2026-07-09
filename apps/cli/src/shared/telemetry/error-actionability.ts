@@ -309,6 +309,12 @@ export const planLimitGatedActionability: CliErrorActionabilityDeclaration = {
  * `upgradeSuggested` is the typed result of the entitlement gate
  * (`legacySuggestUpgrade`) threaded through the error constructor — never
  * inferred from message text.
+ *
+ * On Management API endpoints the request path is keyed by user-supplied or
+ * linked identifiers (project refs, slugs, ids), so an ungated 404 means the
+ * user-named resource was not found — user input, not an API failure. The
+ * entitlement-gate branch stays ahead of the 404 branch so a confirmed
+ * plan-limited 404 still classifies as `plan_limit`.
  */
 export function statusCodeActionability(
   status: number | undefined,
@@ -322,6 +328,9 @@ export function statusCodeActionability(
   }
   if (status === 403) {
     return { ...actionability.accountAccess, fingerprint_suffix: "forbidden" };
+  }
+  if (status === 404) {
+    return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
   }
   if (status === undefined) {
     return { ...actionability.externalNetwork, fingerprint_suffix: "network" };

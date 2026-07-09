@@ -66,13 +66,9 @@ export class LegacyStorageAuthTokenError extends Data.TaggedError("LegacyStorage
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // A 404 here means the api-keys endpoint did not find the user-supplied /
-    // linked project ref — user input, not an API failure.
-    if (this.status === 404) {
-      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
-    }
-    // The shared mapper wraps any non-200 in this tag; only a 401 is an auth
-    // failure the user fixes by re-logging in.
+    // The shared mapper wraps any non-200 in this tag; the status policy maps
+    // 401 → re-login, 404 → user-supplied ref not found, everything else →
+    // API status.
     return statusCodeActionability(this.status);
   }
 }

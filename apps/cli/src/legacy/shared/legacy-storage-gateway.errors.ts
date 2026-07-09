@@ -37,15 +37,12 @@ export class LegacyStorageGatewayStatusError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // A 404 is a user-supplied ss:///bucket/path that matched nothing (the
-    // friendly bucket-not-found cases are intercepted by the handlers before
-    // this error propagates).
-    if (this.status === 404) {
-      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
-    }
     // The tenant Storage gateway is not the Management API: a 401/403 here
     // means stale local service keys, which `supabase login` cannot fix, so
-    // the Management-API auth/permission policy must not apply.
+    // the Management-API auth/permission policy must not apply. A 404 is a
+    // user-supplied ss:///bucket/path that matched nothing (the friendly
+    // bucket-not-found cases are intercepted by the handlers before this error
+    // propagates), which the status policy classifies as user input.
     if (this.status === 401 || this.status === 403) {
       return { ...actionability.apiStatus, fingerprint_suffix: "gateway_auth" };
     }

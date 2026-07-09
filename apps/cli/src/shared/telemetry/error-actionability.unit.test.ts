@@ -66,6 +66,11 @@ describe("classifyCliErrorActionability", () => {
     expect(gated.suggestion_type).toBe("upgrade_plan");
     expect(gated.error_fingerprint).toBe("tag:DeclaredStatusError:plan_limit");
 
+    const notFound = classifyCliErrorActionability(new DeclaredStatusError({ status: 404 }));
+    expect(notFound.error_kind).toBe("user_actionable");
+    expect(notFound.error_category).toBe("invalid_input");
+    expect(notFound.error_fingerprint).toBe("tag:DeclaredStatusError:not_found");
+
     const status = classifyCliErrorActionability(new DeclaredStatusError({ status: 500 }));
     expect(status.error_kind).toBe("external_service");
     expect(status.error_category).toBe("api_status");

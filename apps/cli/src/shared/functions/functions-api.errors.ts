@@ -19,12 +19,6 @@ export class FunctionsApiStatusError extends Data.TaggedError("FunctionsApiStatu
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // Every construction site targets a functions endpoint keyed by a
-    // user-supplied project ref / function slug, so a 404 means that ref/slug
-    // did not match — user input, not an API failure.
-    if (this.status === 404) {
-      return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
-    }
     return statusCodeActionability(this.status);
   }
 }

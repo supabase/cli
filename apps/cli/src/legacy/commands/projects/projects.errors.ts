@@ -28,8 +28,17 @@ export class LegacyProjectsListUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
+  /**
+   * Set when the failure is a 200 response whose body could not be decoded
+   * (unparseable JSON / not an array) rather than a genuine non-200 status —
+   * an API response problem, not a bad status code.
+   */
+  readonly decode?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.decode === true) {
+      return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+    }
     return statusCodeActionability(this.status);
   }
 }
