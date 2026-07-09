@@ -1411,6 +1411,37 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live(
+    "auto-confirms the overwrite from SUPABASE_YES in the project .env (Go loadNestedEnv, CLI-1878)",
+    () => {
+      // SUPABASE_YES lives only in supabase/.env, not the shell or the --yes flag. `seed
+      // buckets` defaults to `--local` (Go: `cmd/seed.go:31`), and root's
+      // `ParseDatabaseConfig` loads the project `.env` files before `buckets.Run`'s
+      // overwrite prompt (`root.go:118`), so the standalone command's own fallback
+      // resolution (not the `db reset`-passed `opts.yes`) must read it too.
+      const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
+        toml: "[storage.buckets.assets]\npublic = true\n",
+        files: { "supabase/.env": "SUPABASE_YES=true\n" },
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [{ name: "assets", id: "assets" }] },
+          { method: "PUT", match: "/storage/v1/bucket/assets", body: {} },
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain(
+          "already exists. Do you want to overwrite its properties? [Y/n] y",
+        );
+        expect(out.stderrText).toContain("Updating Storage bucket: assets");
+        expect(requests.some((r) => r.method === "PUT")).toBe(true);
+      });
+    },
+  );
+
   it.live("--yes prunes a stale vector bucket and echoes Go's prompt line", () => {
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.vector]\nenabled = true\n[storage.vector.buckets.vec1]\n",

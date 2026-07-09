@@ -618,6 +618,49 @@ describe("legacy gen signing-key integration", () => {
     );
   });
 
+  it.live(
+    "auto-confirms from SUPABASE_YES in the project .env, even with a piped 'n' (CLI-1878)",
+    () => {
+      // SUPABASE_YES lives only in supabase/.env, not the shell. Go's `flags.LoadConfig`
+      // (`signingkeys.go:99`) loads the project `.env` files before the overwrite prompt reads
+      // `viper.GetBool("YES")` (`signingkeys.go:130`), so the overwrite auto-confirms and the
+      // piped `n` is never consumed — same precedence as the shell-env case above.
+      //
+      // Defensively clear a shell SUPABASE_YES: this test must prove the project-.env source
+      // specifically, not accidentally pass because a prior test in this file left the shell
+      // env set (the sibling shell-env tests above save/restore theirs).
+      const prev = process.env["SUPABASE_YES"];
+      delete process.env["SUPABASE_YES"];
+      const { layer } = setup({ stdinIsTty: false, pipedAnswer: "n" });
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() =>
+          writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
+        );
+        yield* Effect.tryPromise(() =>
+          writeFile(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n"),
+        );
+
+        yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
+
+        const saved = yield* Effect.tryPromise(() =>
+          readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
+        );
+        const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+        expect(parsed).toHaveLength(1);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev !== undefined) process.env["SUPABASE_YES"] = prev;
+          }),
+        ),
+        Effect.provide(layer),
+      );
+    },
+  );
+
   it.live("an explicit --yes=false overrides SUPABASE_YES and honors a piped 'n'", () => {
     const prev = process.env["SUPABASE_YES"];
     process.env["SUPABASE_YES"] = "1";
@@ -659,6 +702,30 @@ describe("legacy gen signing-key integration", () => {
     const { layer, telemetry } = setup({ trackTelemetry: true });
     return Effect.gen(function* () {
       yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
+      expect(telemetry?.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("flushes telemetry state even when the project .env is malformed (Codex review)", () => {
+    // Go attaches the telemetry service in root's `PersistentPreRunE` (cmd/root.go:131-155),
+    // before this command's own `RunE` runs `flags.LoadConfig` (signingkeys.go:99), so
+    // `service.Capture` still fires even when that project-.env load fails. The project-env
+    // resolution here must live inside the `Effect.ensuring(telemetryState.flush)`-wrapped
+    // block for the same reason — locks in that fix.
+    const { layer, telemetry } = setup({ trackTelemetry: true });
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(tempRoot.current, "supabase", ".env"), "!=broken\n"),
+      );
+
+      const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+      }
       expect(telemetry?.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });

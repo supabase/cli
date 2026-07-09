@@ -8,6 +8,7 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import { CLI_VERSION } from "../cli/version.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
+import { LegacyGoChildExitError } from "./legacy-go-child-exit.error.ts";
 import { LegacyGoProxy } from "./go-proxy.service.ts";
 
 // ---------------------------------------------------------------------------
@@ -139,8 +140,8 @@ export function makeGoProxyLayer(opts?: {
    * Override binary resolution. Primarily a test seam so specs don't have to
    * mutate `process.env.SUPABASE_GO_BINARY` or stub the filesystem:
    *  - `string`              — treat as the resolved Go binary path.
-   *  - `{ notFound: [...] }` — simulate the not-found path; `.exec` will
-   *                            print the diagnostic and exit non-zero.
+   *  - `{ notFound: [...] }` — simulate the not-found path; `.exec` will print
+   *                            the diagnostic and fail with a non-zero exit code.
    *
    * In production, leave unset and let `resolveBinary()` pick the right
    * artifact for the host platform.
@@ -166,12 +167,16 @@ export function makeGoProxyLayer(opts?: {
                 // CLI-1488: never silently fall back to `supabase` on PATH —
                 // when the shim is on PATH and `supabase-go` is not co-located,
                 // that fallback resolves to the shim itself and fork-bombs.
-                // Print a specific diagnostic and exit non-zero instead.
+                // Print a specific diagnostic and fail non-zero instead.
                 yield* Effect.sync(() => {
                   process.stderr.write(`${formatGoBinaryNotFoundError(resolved.notFound)}\n`);
                 });
-                yield* processControl.exit(1);
-                return;
+                return yield* Effect.fail(
+                  new LegacyGoChildExitError({
+                    exitCode: 1,
+                    message: "supabase-go binary not found",
+                  }),
+                );
               }
               const binary = resolved.found;
 
@@ -212,7 +217,12 @@ export function makeGoProxyLayer(opts?: {
               });
               const exitCode = yield* spawner.exitCode(command).pipe(Effect.orDie);
               if (exitCode !== 0) {
-                yield* processControl.exit(exitCode);
+                return yield* Effect.fail(
+                  new LegacyGoChildExitError({
+                    exitCode,
+                    message: `supabase-go exited with code ${exitCode} (see stderr for details)`,
+                  }),
+                );
               }
             }),
           ),
@@ -223,7 +233,12 @@ export function makeGoProxyLayer(opts?: {
                 yield* Effect.sync(() => {
                   process.stderr.write(`${formatGoBinaryNotFoundError(resolved.notFound)}\n`);
                 });
-                return yield* processControl.exit(1);
+                return yield* Effect.fail(
+                  new LegacyGoChildExitError({
+                    exitCode: 1,
+                    message: "supabase-go binary not found",
+                  }),
+                );
               }
               const binary = resolved.found;
               yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
@@ -252,7 +267,12 @@ export function makeGoProxyLayer(opts?: {
               );
               const exitCode = yield* handle.exitCode.pipe(Effect.orDie);
               if (exitCode !== 0) {
-                return yield* processControl.exit(exitCode);
+                return yield* Effect.fail(
+                  new LegacyGoChildExitError({
+                    exitCode,
+                    message: `supabase-go exited with code ${exitCode} (see stderr for details)`,
+                  }),
+                );
               }
               return captured;
             }),

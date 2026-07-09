@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Effect, Exit, Layer, Option } from "effect";
 import { mockProcessControl } from "../../../tests/helpers/mocks.ts";
+import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import { Output } from "./output.service.ts";
 import { withJsonErrorHandling } from "./json-error-handling.ts";
 
@@ -179,6 +180,25 @@ describe("withJsonErrorHandling", () => {
         expect(out.failCalls).toHaveLength(1);
         expect(out.failCalls[0]?.code).toBe("UnknownError");
         expect(out.failCalls[0]?.message).toBe("plain error message");
+      }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
+    });
+
+    // CLI-1879: a delegated Go child's exact exit code must reach the user under
+    // json/stream-json too, not just a generic 1 — matching the exit code
+    // `runCli`'s text-mode path already propagates via the same
+    // `[Runtime.errorExitCode]` marker.
+    it.live("sets the exact exit code for a LegacyGoChildExitError, not a generic 1", () => {
+      const out = mockOutput("json");
+      const processControl = mockProcessControl();
+      return Effect.gen(function* () {
+        const error = new LegacyGoChildExitError({
+          exitCode: 130,
+          message: "supabase-go exited with code 130 (see stderr for details)",
+        });
+        yield* withJsonErrorHandling(Effect.fail(error)).pipe(Effect.provide(out.layer));
+        expect(out.failCalls).toHaveLength(1);
+        expect(out.failCalls[0]?.code).toBe("LegacyGoChildExitError");
+        expect(processControl.exitCode).toBe(130);
       }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
     });
   });

@@ -1,4 +1,5 @@
 import type { CliError, Command, HelpDoc } from "effect/unstable/cli";
+import { formatInvalidValueMessage } from "./invalid-value-message.ts";
 
 export interface CliErrorSuggestionContext {
   readonly rootCommand: Command.Command.Any;
@@ -226,6 +227,20 @@ export function formatCliErrorsForDisplay(
     if (error._tag === "UnknownSubcommand" && suppressedUnknownSubcommands.has(error.subcommand)) {
       changed = true;
       continue;
+    }
+
+    if (error._tag === "InvalidValue") {
+      const message = formatInvalidValueMessage(error);
+      if (message !== undefined) {
+        changed = true;
+        formatted.push({
+          _tag: error._tag,
+          message,
+          source: error,
+          changed: true,
+        });
+        continue;
+      }
     }
 
     formatted.push({ _tag: error._tag, message: error.message, source: error, changed: false });

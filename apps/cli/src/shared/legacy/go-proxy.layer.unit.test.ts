@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import { Deferred, Effect, Fiber, Layer, Sink, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { type CliProcessSignal, ProcessControl } from "../runtime/process-control.service.ts";
+import { LegacyGoChildExitError } from "./legacy-go-child-exit.error.ts";
 import { LegacyGoProxy } from "./go-proxy.service.ts";
 import { formatGoBinaryNotFoundError, makeGoProxyLayer } from "./go-proxy.layer.ts";
 
@@ -54,12 +55,14 @@ type HoldEvent =
  * event log. Each acquire gets a monotonically increasing id so tests can
  * pair an acquire with its release and distinguish concurrent scopes.
  *
- * `exitBehavior`:
- *   - "never"          → exit() blocks on Effect.never (test manages the fiber)
- *   - "terminateDie"   → exit() dies with a tagged defect so callers can
- *                        observe via Effect.exit without juggling fibers
+ * The layer under test no longer calls `ProcessControl.exit()` itself on a
+ * non-zero exit or an unresolved binary (CLI-1879 routes both through
+ * `LegacyGoChildExitError` instead, so `runCli` can run finalizers before
+ * exiting) — `exit()` here only guards against a future regression that
+ * reintroduces a direct call; it blocks on `Effect.never` since nothing in
+ * this file exercises it.
  */
-function mockProcessControl(opts: { exitBehavior?: "never" | "terminateDie" } = {}) {
+function mockProcessControl() {
   const holdEvents: HoldEvent[] = [];
   const exitCalls: number[] = [];
   let nextHoldId = 0;
@@ -67,11 +70,7 @@ function mockProcessControl(opts: { exitBehavior?: "never" | "terminateDie" } = 
   const exit = (code: number) =>
     Effect.sync(() => {
       exitCalls.push(code);
-    }).pipe(
-      Effect.flatMap(() =>
-        opts.exitBehavior === "terminateDie" ? Effect.die("EXIT_CALLED" as const) : Effect.never,
-      ),
-    );
+    }).pipe(Effect.flatMap(() => Effect.never));
 
   return {
     get holdEvents() {
@@ -284,18 +283,52 @@ describe("makeGoProxyLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("propagates non-zero exit codes via ProcessControl.exit", () => {
+  it.effect("propagates non-zero exit codes via LegacyGoChildExitError", () => {
     const spawner = mockSpawner({ kind: "success", code: 7 });
-    // Use the terminating exit variant so we can observe via Effect.exit
-    // without juggling forked fibers around Effect.never.
-    const pc = mockProcessControl({ exitBehavior: "terminateDie" });
+    const pc = mockProcessControl();
     const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
       Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
     );
     return Effect.gen(function* () {
       const proxy = yield* LegacyGoProxy;
-      yield* proxy.exec(["some", "command"]).pipe(Effect.exit);
-      expect(pc.exitCalls).toEqual([7]);
+      const exit = yield* proxy.exec(["some", "command"]).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.squash(exit.cause);
+        expect(error).toBeInstanceOf(LegacyGoChildExitError);
+        expect((error as LegacyGoChildExitError).exitCode).toBe(7);
+      }
+      // The layer itself never calls `ProcessControl.exit` — that's now
+      // `runCli`'s job, after finalizers have run.
+      expect(pc.exitCalls).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lets an Effect.ensuring finalizer run after a non-zero exit (CLI-1879)", () => {
+    // The whole point of routing a non-zero exit through `LegacyGoChildExitError`
+    // instead of `ProcessControl.exit()` (a real `process.exit()` in production):
+    // a caller's own `Effect.ensuring` finalizer — e.g. a handler's
+    // `Effect.ensuring(telemetryState.flush)` — must still run. Under the old
+    // `processControl.exit()`-based implementation this finalizer would never fire
+    // (production: the process would already be dead; this mock's `exit()` blocks
+    // forever on `Effect.never`, so the fiber never reaches `Effect.exit` either).
+    const spawner = mockSpawner({ kind: "success", code: 5 });
+    const pc = mockProcessControl();
+    const layer = makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
+      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+    );
+    let finalizerRan = false;
+    return Effect.gen(function* () {
+      const proxy = yield* LegacyGoProxy;
+      yield* proxy.exec(["some", "command"]).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            finalizerRan = true;
+          }),
+        ),
+        Effect.exit,
+      );
+      expect(finalizerRan).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
@@ -401,36 +434,75 @@ describe("makeGoProxyLayer", () => {
   // literal string "supabase" when no Go binary was found, which when run from
   // a PATH that contained the shim would fork-bomb the shim against itself
   // (silent multi-minute hang in CI followed by SIGTERM). The layer must now
-  // refuse to spawn anything and surface a specific diagnostic + non-zero exit.
-  it.effect("prints a diagnostic and exits 1 when supabase-go cannot be resolved", () => {
-    const spawner = mockSpawner({ kind: "success", code: 0 });
-    const pc = mockProcessControl({ exitBehavior: "terminateDie" });
-    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
-    const tried = [
-      "$SUPABASE_GO_BINARY (unset)",
-      "/usr/local/bin/supabase-go (not found alongside the shim)",
-    ];
-    const layer = makeGoProxyLayer({ binary: { notFound: tried } }).pipe(
-      Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
-    );
-    return Effect.gen(function* () {
-      const proxy = yield* LegacyGoProxy;
-      yield* proxy.exec(["db", "start"]).pipe(Effect.exit);
+  // refuse to spawn anything and surface a specific diagnostic + a
+  // `LegacyGoChildExitError` carrying exit code 1.
+  it.effect(
+    "prints a diagnostic and fails with exit code 1 when supabase-go cannot be resolved",
+    () => {
+      const spawner = mockSpawner({ kind: "success", code: 0 });
+      const pc = mockProcessControl();
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const tried = [
+        "$SUPABASE_GO_BINARY (unset)",
+        "/usr/local/bin/supabase-go (not found alongside the shim)",
+      ];
+      const layer = makeGoProxyLayer({ binary: { notFound: tried } }).pipe(
+        Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      );
+      return Effect.gen(function* () {
+        const proxy = yield* LegacyGoProxy;
+        const exit = yield* proxy.exec(["db", "start"]).pipe(Effect.exit);
 
-      // Did NOT spawn anything — the whole point is to refuse the fork-bomb.
-      expect(spawner.spawned).toHaveLength(0);
-      // Exited with code 1 via ProcessControl.exit.
-      expect(pc.exitCalls).toEqual([1]);
-      // Wrote the diagnostic to stderr, including each tried location.
-      expect(stderr).toHaveBeenCalledTimes(1);
-      const written = String(stderr.mock.calls[0]![0]);
-      expect(written).toContain("Could not find the `supabase-go` binary");
-      expect(written).toContain("$SUPABASE_GO_BINARY (unset)");
-      expect(written).toContain("/usr/local/bin/supabase-go");
-      expect(written).toContain("SUPABASE_GO_BINARY");
-      stderr.mockRestore();
-    }).pipe(Effect.provide(layer));
-  });
+        // Did NOT spawn anything — the whole point is to refuse the fork-bomb.
+        expect(spawner.spawned).toHaveLength(0);
+        // Failed with a LegacyGoChildExitError carrying exit code 1, rather than
+        // calling `ProcessControl.exit` directly — that's now `runCli`'s job.
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.squash(exit.cause);
+          expect(error).toBeInstanceOf(LegacyGoChildExitError);
+          expect((error as LegacyGoChildExitError).exitCode).toBe(1);
+        }
+        expect(pc.exitCalls).toEqual([]);
+        // Wrote the diagnostic to stderr, including each tried location.
+        expect(stderr).toHaveBeenCalledTimes(1);
+        const written = String(stderr.mock.calls[0]![0]);
+        expect(written).toContain("Could not find the `supabase-go` binary");
+        expect(written).toContain("$SUPABASE_GO_BINARY (unset)");
+        expect(written).toContain("/usr/local/bin/supabase-go");
+        expect(written).toContain("SUPABASE_GO_BINARY");
+        stderr.mockRestore();
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "execCapture also prints a diagnostic and fails with exit code 1 when supabase-go cannot be resolved",
+    () => {
+      const spawner = mockSpawner({ kind: "success", code: 0 });
+      const pc = mockProcessControl();
+      const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      const tried = ["$SUPABASE_GO_BINARY (unset)"];
+      const layer = makeGoProxyLayer({ binary: { notFound: tried } }).pipe(
+        Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      );
+      return Effect.gen(function* () {
+        const proxy = yield* LegacyGoProxy;
+        const exit = yield* proxy.execCapture(["db", "dump"]).pipe(Effect.exit);
+
+        expect(spawner.spawned).toHaveLength(0);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.squash(exit.cause);
+          expect(error).toBeInstanceOf(LegacyGoChildExitError);
+          expect((error as LegacyGoChildExitError).exitCode).toBe(1);
+        }
+        expect(pc.exitCalls).toEqual([]);
+        expect(stderr).toHaveBeenCalledTimes(1);
+        stderr.mockRestore();
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("opens and closes a fresh hold scope per sequential exec call", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });

@@ -53,4 +53,22 @@ describe("textCliOutputFormatter", () => {
     expect(text).toContain("Did you mean this?");
     expect(text).toContain("--plan");
   });
+
+  it("does not double the 'Expected' prefix for an invalid choice flag value", () => {
+    const formatter = textCliOutputFormatter();
+
+    const text = formatter.formatErrors([
+      new CliError.InvalidValue({
+        option: "size",
+        value: "nano",
+        expected: 'Expected "micro" | "small" | "medium", got "nano"',
+        kind: "flag",
+      }),
+    ]);
+
+    expect(text).toContain(
+      'Invalid value for flag --size: "nano". Expected "micro" | "small" | "medium", got "nano"',
+    );
+    expect(text).not.toMatch(/Expected:\s*Expected/);
+  });
 });

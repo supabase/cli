@@ -6,7 +6,11 @@ import {
   getCommandRuntimeSpanName,
 } from "../../shared/runtime/command-runtime.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
+import {
+  LEGACY_GLOBAL_FLAGS,
+  LegacyOutputFlag,
+  legacyGlobalFlagValues,
+} from "../../shared/legacy/global-flags.ts";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
 import { withAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
@@ -50,11 +54,15 @@ interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unkno
   // re-validates against the command's own set and rejects out-of-enum values
   // exactly as Go's flag parser does. See `legacy-go-output-flag.ts`.
   readonly outputFormats?: ReadonlyArray<string>;
-  // Short-flag → canonical-flag-name map (e.g. `{ s: "schema" }`). Go's
-  // `changedFlags()` uses pflag's `Visit`, which reports the CANONICAL flag name
-  // whether the user typed the long form (`--schema`) or the registered shorthand
-  // (`-s`). Pass a command's shorthands here so a `-s public` invocation records
-  // the `schema` flag in telemetry, matching Go (cmd/root_analytics.go:53-76).
+  // Short-flag → canonical-flag-name map (e.g. `{ s: "schema" }`) for this
+  // command's OWN flags. Go's `changedFlags()` uses pflag's `Visit`, which
+  // reports the CANONICAL flag name whether the user typed the long form
+  // (`--schema`) or the registered shorthand (`-s`). Pass a command's
+  // shorthands here so a `-s public` invocation records the `schema` flag in
+  // telemetry, matching Go (cmd/root_analytics.go:53-76). Global shorthands
+  // (currently just `-o` for `--output`, cmd/root.go:330) are merged in
+  // automatically via `GLOBAL_SHORT_ALIASES` below — no per-command wiring
+  // needed for those (CLI-1896 review follow-up).
   readonly aliases?: Readonly<Record<string, string>>;
 }
 
@@ -226,41 +234,79 @@ function isWrappedParam(param: Param.Any): param is Param.Any & WrappedParam {
   return "param" in param;
 }
 
+// Unwraps down to the underlying `Single` param the same way `--help`
+// rendering does. Shared by `getChoiceFlagNames` and `GLOBAL_SHORT_ALIASES`
+// below — both need the leaf `Single` to read its type-visible `name`/
+// `aliases`/`primitiveType` fields. Returns `undefined` only if the variant
+// union gains an unrecognized future case (fails closed, see the
+// `isWrappedParam` doc above for why this hand-rolled unwrap exists instead of
+// the `@internal` `Param.extractSingleParams`).
+function unwrapToSingleParam(param: Param.Any): Param.Single<Param.ParamKind, unknown> | undefined {
+  if (Param.isSingle(param)) return param;
+  if (isWrappedParam(param)) return unwrapToSingleParam(param.param);
+  return undefined;
+}
+
 // Mirrors Go's `isEnumFlag` (`cmd/root_analytics.go:110-116`), which checks
 // `flag.Value.(*utils.EnumFlag)` unconditionally — every enum flag is
-// telemetry-safe, no per-flag annotation needed. Unwraps down to the
-// underlying `Single` param the same way `--help` rendering does, then checks
-// its primitive's `_tag` for `Flag.choice`/`Flag.choiceWithValue`. Restricted to
-// `kind === Param.flagKind` so a same-named `Argument.choice` positional (none
-// exist today) can never be mistaken for a `--flag`.
+// telemetry-safe, no per-flag annotation needed. Checks the unwrapped
+// `Single`'s primitive `_tag` for `Flag.choice`/`Flag.choiceWithValue`.
+// Restricted to `kind === Param.flagKind` so a same-named `Argument.choice`
+// positional (none exist today) can never be mistaken for a `--flag`.
 function getChoiceFlagNames(config: Record<string, Param.Any> | undefined): ReadonlySet<string> {
   const names = new Set<string>();
   if (config === undefined) return names;
 
-  const visit = (param: Param.Any): void => {
-    if (Param.isSingle(param)) {
-      if (param.kind === Param.flagKind && param.primitiveType._tag === "Choice") {
-        names.add(param.name);
-      }
-      return;
-    }
-    if (isWrappedParam(param)) {
-      visit(param.param);
-    }
-  };
-
   for (const param of Object.values(config)) {
-    visit(param);
+    const single = unwrapToSingleParam(param);
+    if (
+      single !== undefined &&
+      single.kind === Param.flagKind &&
+      single.primitiveType._tag === "Choice"
+    ) {
+      names.add(single.name);
+    }
   }
   return names;
 }
 
-function buildFlagsMap<Flags extends Record<string, unknown>>(
-  flags: Flags | undefined,
-  safeFlagSet: ReadonlySet<string>,
-  changedFlagNames: ReadonlyArray<string>,
-  choiceFlagNames: ReadonlySet<string>,
-): Record<string, unknown> | undefined {
+// Short-flag → canonical-name entries for every global/persistent flag that
+// declares a shorthand alias, derived from `LEGACY_GLOBAL_FLAGS` itself so
+// this never drifts from the single source of truth — today that resolves to
+// just `{ o: "output" }`, from `LegacyOutputFlag`'s own `Flag.withAlias("o")`.
+// Mirrors Go's persistent-flag shorthand registration: `-o` is the only
+// global with a real shorthand (`cmd/root.go:330` registers it on
+// `--output`; every other persistent flag has none). `pflag.Visit` reports
+// the canonical `flag.Name` for either form (`cmd/root_analytics.go:53-76`),
+// so `-o json` must resolve to `output` here the same way `--output json`
+// already does. Merged ahead of each command's own `aliases` in
+// `extractChangedFlagNames` so a command's own alias still wins on conflict,
+// consistent with `buildFlagsMap`'s local-flag-shadows-global rule
+// (CLI-1896 review follow-up).
+const GLOBAL_SHORT_ALIASES: Readonly<Record<string, string>> = (() => {
+  const aliases: Record<string, string> = {};
+  for (const globalFlag of LEGACY_GLOBAL_FLAGS) {
+    const single = unwrapToSingleParam(globalFlag.flag);
+    if (single === undefined) continue;
+    for (const alias of single.aliases) {
+      aliases[alias] = single.name;
+    }
+  }
+  return aliases;
+})();
+
+function buildFlagsMap<Flags extends Record<string, unknown>>(options: {
+  readonly flags: Flags | undefined;
+  // Live global/persistent flag values (`legacyGlobalFlagValues`), keyed by
+  // CLI flag name — the fallback source for a changed flag the handler never
+  // declared locally (e.g. `debug`), matching Go's `changedFlags()` walking
+  // `cmd.Parent()`'s `PersistentFlags()` (`cmd/root_analytics.go:53-76`).
+  readonly globalFlagValues: Record<string, unknown>;
+  readonly safeFlagSet: ReadonlySet<string>;
+  readonly changedFlagNames: ReadonlyArray<string>;
+  readonly choiceFlagNames: ReadonlySet<string>;
+}): Record<string, unknown> | undefined {
+  const { flags, globalFlagValues, safeFlagSet, changedFlagNames, choiceFlagNames } = options;
   if (changedFlagNames.length === 0) return undefined;
 
   const result: Record<string, unknown> = {};
@@ -272,15 +318,27 @@ function buildFlagsMap<Flags extends Record<string, unknown>>(
   }
 
   for (const cliName of changedFlagNames) {
-    const rawValue = handlerFlagsByCliName.get(cliName);
+    // A command's own flag always wins over a global/persistent flag sharing
+    // the same CLI name — mirrored from Go's cobra flag-shadowing, e.g. `db
+    // diff`'s local `--output` file-path flag (`cmd/db.go:622`) shadows the
+    // root's global `--output` enum (`cmd/root.go:330`). Only fall back to
+    // the live global-flag value when the handler never declared this name.
+    const isFromHandler = handlerFlagsByCliName.has(cliName);
+    const rawValue = isFromHandler ? handlerFlagsByCliName.get(cliName) : globalFlagValues[cliName];
     const value = normalizeFlagValue(rawValue);
 
-    if (safeFlagSet.has(cliName) || choiceFlagNames.has(cliName) || typeof value === "boolean") {
-      result[cliName] = value ?? REDACTED_VALUE;
-      continue;
-    }
+    // `safeFlagSet`/`choiceFlagNames` classify a flag as safe by CLI NAME,
+    // sourced from this command's own `safeFlags`/`config` options — they may
+    // only vouch for a value that actually came from this command's own
+    // `flags` record. A value resolved from the global-flag fallback is safe
+    // solely because it's boolean (Go's `isBooleanFlag` branch applies
+    // unconditionally); it must never inherit a *different* command's
+    // per-flag safe/choice annotation just because the CLI name matches.
+    const isSafe =
+      typeof value === "boolean" ||
+      (isFromHandler && (safeFlagSet.has(cliName) || choiceFlagNames.has(cliName)));
 
-    result[cliName] = REDACTED_VALUE;
+    result[cliName] = isSafe ? (value ?? REDACTED_VALUE) : REDACTED_VALUE;
   }
 
   return result;
@@ -324,8 +382,18 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
         const stdio = yield* Stdio.Stdio;
         const args = yield* stdio.args;
         const startedAt = yield* Clock.currentTimeMillis;
-        const changedFlagNames = extractChangedFlagNames(args, options?.aliases);
-        const flags = buildFlagsMap(options?.flags, safeFlagSet, changedFlagNames, choiceFlagNames);
+        const changedFlagNames = extractChangedFlagNames(args, {
+          ...GLOBAL_SHORT_ALIASES,
+          ...options?.aliases,
+        });
+        const globalFlagValues = yield* legacyGlobalFlagValues;
+        const flags = buildFlagsMap({
+          flags: options?.flags,
+          globalFlagValues,
+          safeFlagSet,
+          changedFlagNames,
+          choiceFlagNames,
+        });
         const analyticsContext = {
           command_run_id: commandRuntime.commandRunId,
           command,

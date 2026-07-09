@@ -11,6 +11,7 @@ import { outputLayerFor } from "../output/output.layer.ts";
 import { normalizeCause } from "../output/normalize-error.ts";
 import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
+import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
 import { projectHomeLayer } from "../../next/config/project-home.layer.ts";
 import { ProjectLocalServiceVersions } from "../../next/config/project-local-service-versions.service.ts";
@@ -113,6 +114,27 @@ function formatterLayerFor(
 export function exitCodeForFailure(cause: Cause.Cause<unknown>): number {
   if (Cause.hasInterruptsOnly(cause)) return 130;
   return Runtime.getErrorExitCode(Cause.squash(cause));
+}
+
+/**
+ * Whether `handledProgram` should render its generic `output.fail` stderr line
+ * for a failed run, given the run's cause and the exit code `exitCodeForFailure`
+ * already computed for it. False for a clean exit (`0`), an interrupt (`130`),
+ * and a `LegacyGoChildExitError` (CLI-1879) — a delegated Go child already wrote
+ * its own detailed failure to the inherited stderr, so a second generic line
+ * here would be a line Go itself never prints.
+ *
+ * Checked by concrete type, NOT Effect's shared `[Runtime.errorReported]`
+ * marker: `CliError.ShowHelp` also sets that marker to `false`, for an
+ * unrelated reason (the CLI framework already rendered help/usage text) —
+ * gating on the marker would ALSO suppress `normalizeCause`'s Go-parity
+ * rendering for a `MissingOption` wrapped in `ShowHelp` (e.g. `Error: required
+ * flag(s) "type" not set`), a real parity regression. See the test suite for
+ * the regression this guards.
+ */
+export function shouldReportFailure(cause: Cause.Cause<unknown>, exitCode: number): boolean {
+  if (exitCode === 0 || exitCode === 130) return false;
+  return !(Cause.squash(cause) instanceof LegacyGoChildExitError);
 }
 
 function projectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
@@ -242,13 +264,13 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       const exit = yield* program.pipe(Effect.exit);
       if (Exit.isFailure(exit)) {
         const exitCode = exitCodeForFailure(exit.cause);
-        // Skip reporting for an interrupted run (130 — a signal, not a
-        // reportable error) and for a clean `ShowHelp` failure (0). Literal
-        // `--help` never reaches this branch — it's handled as a successful
-        // `GlobalFlag.Action` and exits 0 via the success path below. See
-        // `exitCodeForFailure` for why a "clean" ShowHelp failure (e.g. a bare
-        // group command with no subcommand) also maps to exit 0.
-        if (exitCode !== 0 && exitCode !== 130) {
+        // See `shouldReportFailure` for the reporting rules (and why they're
+        // NOT keyed on Effect's shared `[Runtime.errorReported]` marker).
+        // Literal `--help` never reaches this branch — it's handled as a
+        // successful `GlobalFlag.Action` and exits 0 via the success path
+        // below. See `exitCodeForFailure` for why a "clean" ShowHelp failure
+        // (e.g. a bare group command with no subcommand) also maps to exit 0.
+        if (shouldReportFailure(exit.cause, exitCode)) {
           yield* output.fail(normalizeCause(exit.cause));
         }
         return yield* processControl.exit(exitCode);

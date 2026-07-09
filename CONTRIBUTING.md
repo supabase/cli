@@ -2,6 +2,18 @@
 
 Bun monorepo for exploring the next generation of the Supabase CLI and local development stack.
 
+## Contribution workflow
+
+Before you open a pull request:
+
+1. **Open an issue first**, using one of the [issue templates](https://github.com/supabase/cli/issues/new/choose).
+2. **Wait for maintainer triage.** A maintainer categorizes the issue (`✨ Feature`, `🐛 Bug`, or `📘 Docs`) and adds the **`open-for-contribution`** label once it is ready to be worked on.
+3. **Open a pull request only after the `open-for-contribution` label is set**, and link the issue with a closing keyword (for example `Closes #123`).
+
+Until the `open-for-contribution` label is present, the issue is still in triage, so work should not start and a pull request should not be opened.
+
+Pull requests from external contributors that do not follow this workflow are commented on and closed automatically by the [Contribution Gate](.github/workflows/contribution-gate.yml). Supabase members are exempt, so they can work from Linear tickets that are not public on GitHub. Maintainers: see [`.github/MAINTAINERS.md`](.github/MAINTAINERS.md).
+
 ## Setup
 
 ### Tool versions

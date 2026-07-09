@@ -63,8 +63,12 @@ function decryptWithKey(keyHex: string, encryptedValue: string): LegacyDecrypted
   let privateKeyHex: string;
   try {
     privateKeyHex = PrivateKey.fromHex(keyHex).toHex();
-  } catch (cause) {
-    return { ok: false, error: `failed to hex decode private key: ${errorMessage(cause)}` };
+  } catch {
+    // Fixed message rather than the underlying error (Go's `ecies.NewPrivateKeyFromHex`
+    // returns the generic "cannot decode hex string" too): the fallback hex decoder some
+    // runtimes take for a malformed key can otherwise echo a fragment of the bad input
+    // (offending character + index) into this error, which reaches the user's stderr.
+    return { ok: false, error: "failed to hex decode private key: cannot decode hex string" };
   }
   const encoded = encryptedValue.slice(ENCRYPTED_PREFIX.length);
   // Node's `Buffer.from(s, "base64")` silently drops invalid characters, unlike

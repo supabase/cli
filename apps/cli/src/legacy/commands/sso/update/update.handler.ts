@@ -1,5 +1,5 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Result } from "effect";
+import { Effect, Option, Result, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -7,6 +7,10 @@ import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts"
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
+import {
+  cobraMutuallyExclusiveErrorMessage,
+  hasExplicitValueFlag,
+} from "../../../../shared/cli/cobra-flag-groups.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
   encodeGoJson,
@@ -47,6 +51,40 @@ const mapGetStatusOrNetwork = mapLegacyHttpError({
   networkMessage: (cause) => `failed to get sso provider: ${cause}`,
   statusMessage: (_status, body) => `unexpected error fetching identity provider: ${body}`,
 });
+
+const SSO_UPDATE_COMMAND_PATH = ["sso", "update"] as const;
+
+/**
+ * Registration order mirrors Go's `cmd/sso.go:178-180` — three independent
+ * `MarkFlagsMutuallyExclusive` groups (`metadata-file`/`metadata-url` plus two
+ * 2-element groups sharing `--domains`, not one 3-way group). Cobra checks
+ * groups in `sort.Strings`-order of the joined group key (`flag_groups.go:189`),
+ * which happens to match registration order here: "domains add-domains" <
+ * "domains remove-domains" < "metadata-file metadata-url" alphabetically.
+ */
+const SSO_UPDATE_MUTEX_GROUPS = [
+  ["domains", "add-domains"],
+  ["domains", "remove-domains"],
+  ["metadata-file", "metadata-url"],
+] as const;
+
+/**
+ * Every value-taking (non-boolean) flag `sso update` declares
+ * (`update.command.ts`) — tells `hasExplicitValueFlag` which bare tokens
+ * consume the next argv token as their value. `--skip-url-validation` is this
+ * command's only boolean flag and is deliberately excluded; booleans never
+ * consume a following token.
+ */
+const SSO_UPDATE_VALUE_FLAG_NAMES = new Set([
+  "project-ref",
+  "domains",
+  "add-domains",
+  "remove-domains",
+  "metadata-file",
+  "metadata-url",
+  "attribute-mapping-file",
+  "name-id-format",
+]);
 
 const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError) =>
   Effect.gen(function* () {
@@ -104,33 +142,49 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
+  const stdio = yield* Stdio.Stdio;
+  const rawArgs = yield* stdio.args;
 
   yield* Effect.gen(function* () {
+    // cobra runs `ValidateFlagGroups` (`command.go:1010`) before `RunE`
+    // (`command.go:1014`), and Go's provider-ID format check lives inside
+    // `RunE` (`cmd/sso.go:90-91`) — so a mutex violation must win over an
+    // invalid provider ID when both apply. Keep this block ahead of
+    // `validateUuid` below to match that precedence.
+    //
+    // "Set" follows cobra's `pflag.Changed` — whether the flag was passed at
+    // all — not the resulting value. `--domains`/`--add-domains`/
+    // `--remove-domains` all default to `[]`, so `--domains=` (parses to an
+    // empty array) must still count as "set"; gating on `.length > 0` would
+    // miss it, the same "changed vs truthy" gap CLI-1860 fixed for
+    // `functions download`'s `--use-docker`.
+    //
+    // `hasExplicitValueFlag` (not the simpler `hasExplicitLongFlag`) is
+    // required here because every flag in these groups takes a value: a bare
+    // `--metadata-file --metadata-url` is pflag consuming `--metadata-url` as
+    // `metadata-file`'s (oddly named) value, not two flags being set — see
+    // that function's doc comment.
+    for (const group of SSO_UPDATE_MUTEX_GROUPS) {
+      const changed = group.filter((flagName) =>
+        hasExplicitValueFlag(
+          rawArgs,
+          SSO_UPDATE_COMMAND_PATH,
+          SSO_UPDATE_VALUE_FLAG_NAMES,
+          flagName,
+        ),
+      );
+      if (changed.length > 1) {
+        return yield* Effect.fail(
+          new LegacySsoMutexFlagError({
+            message: cobraMutuallyExclusiveErrorMessage(group, changed),
+          }),
+        );
+      }
+    }
+
     const providerId = yield* validateUuid(flags.providerId).pipe(
       Result.match({ onFailure: Effect.fail, onSuccess: Effect.succeed }),
     );
-
-    if (flags.domains.length > 0 && flags.addDomains.length > 0) {
-      return yield* Effect.fail(
-        new LegacySsoMutexFlagError({
-          message: "only one of --domains or --add-domains may be set",
-        }),
-      );
-    }
-    if (flags.domains.length > 0 && flags.removeDomains.length > 0) {
-      return yield* Effect.fail(
-        new LegacySsoMutexFlagError({
-          message: "only one of --domains or --remove-domains may be set",
-        }),
-      );
-    }
-    if (Option.isSome(flags.metadataFile) && Option.isSome(flags.metadataUrl)) {
-      return yield* Effect.fail(
-        new LegacySsoMutexFlagError({
-          message: "only one of --metadata-file or --metadata-url may be set",
-        }),
-      );
-    }
 
     const ref = yield* resolver.resolve(flags.projectRef);
 

@@ -169,9 +169,10 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
   }
   if (shouldReset) {
     // Go runs reset in-process and returns the error (`cmd/db_schema_declarative.go:262-267`).
-    // Use the non-exiting seam (not LegacyGoProxy.exec, which process.exits on a
-    // non-zero child and would skip the handler's telemetry flush / error handling),
-    // and propagate a failure on a non-zero reset exit.
+    // `execInherit` (not `LegacyGoProxy.exec`) returns the child's exit code as a
+    // catchable value rather than exiting the host process — the same
+    // typed-failure design CLI-1879 gave `LegacyGoProxy.exec` itself, predating
+    // it here as its own seam. Propagate a failure on a non-zero reset exit.
     const seam = yield* LegacyDeclarativeSeam;
     // Forward --network-id: Go's in-process reset.Run honors the root viper
     // network-id (`apps/cli-go/internal/utils/docker.go:267-271`), so the

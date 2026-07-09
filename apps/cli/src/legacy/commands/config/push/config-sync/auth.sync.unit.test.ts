@@ -1418,10 +1418,11 @@ describe("authToUpdateBody secrets", () => {
     expect("security_captcha_secret" in body).toBe(false);
   });
 
-  it("never pushes dotenvx ciphertext (encrypted: hashes to '' so the gate drops it)", () => {
-    // secretHash returns "" for `encrypted:` values, so the projected captcha
-    // secret is empty even though the raw (ciphertext) value is still present.
-    // The empty hash must gate the ciphertext out of the update body.
+  it("gates the raw secret out of the body when the hashed field is empty", () => {
+    // `authToUpdateBody` itself only knows the pre-computed hash/rawSecrets
+    // pair — this exercises the empty-hash gate directly (a decrypt failure
+    // for a real `encrypted:` value aborts earlier, in `authSubsetFromConfig` /
+    // the handler's document-wide pre-check; see push.integration.test.ts).
     const local = bareAuth({
       enabled: true,
       captcha: { enabled: true, provider: "hcaptcha", secret: "" },

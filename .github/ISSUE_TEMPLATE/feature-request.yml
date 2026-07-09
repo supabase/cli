@@ -3,6 +3,11 @@ description: Suggest an improvement or new capability for the Supabase CLI.
 labels:
   - ✨ Feature
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion! Open this issue **before** starting work — a maintainer will add the `open-for-contribution` label once it is triaged and ready. Pull requests from external contributors that don't link an open, `open-for-contribution` issue are closed automatically. See [CONTRIBUTING.md](../blob/develop/CONTRIBUTING.md).
+
   - type: checkboxes
     id: existing-issues
     attributes:

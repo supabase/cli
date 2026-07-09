@@ -122,4 +122,101 @@ describe("subcommand flag placement suggestions", () => {
     );
     expect(errors.errors[0]?.message).not.toContain("--project-ref=jacraenyzrorgjhsdvvf <value>");
   });
+
+  it("collapses the doubled 'Expected: Expected' prefix for an invalid choice flag value", () => {
+    const errors = formatCliErrorsForDisplay([
+      new CliError.InvalidValue({
+        option: "size",
+        value: "nano",
+        expected: 'Expected "micro" | "small" | "medium", got "nano"',
+        kind: "flag",
+      }),
+    ]);
+
+    expect(errors.changed).toBe(true);
+    expect(errors.errors).toHaveLength(1);
+    expect(errors.errors[0]?.message).toBe(
+      'Invalid value for flag --size: "nano". Expected "micro" | "small" | "medium", got "nano"',
+    );
+    expect(errors.errors[0]?.message).not.toMatch(/Expected:\s*Expected/);
+  });
+
+  it("collapses the doubled 'Expected: Expected' prefix for an invalid choice argument value", () => {
+    const errors = formatCliErrorsForDisplay([
+      new CliError.InvalidValue({
+        option: "level",
+        value: "bogus",
+        expected: 'Expected "debug" | "info", got "bogus"',
+        kind: "argument",
+      }),
+    ]);
+
+    expect(errors.changed).toBe(true);
+    expect(errors.errors[0]?.message).toBe(
+      'Invalid value for argument <level>: "bogus". Expected "debug" | "info", got "bogus"',
+    );
+    expect(errors.errors[0]?.message).not.toMatch(/Expected:\s*Expected/);
+  });
+
+  it("also collapses the doubled prefix for a non-choice primitive whose failure text starts with 'Expected' (e.g. an invalid integer flag value)", () => {
+    // Real failure text from effect@4.0.0-beta.93's schema-backed `Primitive.integer`
+    // (also affects `float`, `boolean`, and `date` — every primitive whose parse
+    // failure happens to start with the word "Expected" hits the same doubling).
+    const errors = formatCliErrorsForDisplay([
+      new CliError.InvalidValue({
+        option: "port",
+        value: "abc",
+        expected: 'Expected a string representing a finite number, got "abc"',
+        kind: "flag",
+      }),
+    ]);
+
+    expect(errors.changed).toBe(true);
+    expect(errors.errors[0]?.message).toBe(
+      'Invalid value for flag --port: "abc". Expected a string representing a finite number, got "abc"',
+    );
+    expect(errors.errors[0]?.message).not.toMatch(/Expected:\s*Expected/);
+  });
+
+  it("leaves invalid-value errors whose expected text does not start with 'Expected' unchanged", () => {
+    // Real failure text from effect@4.0.0-beta.93's `Primitive.keyValuePair` —
+    // it never starts with the word "Expected", so it isn't doubled by
+    // `CliError.InvalidValue`'s own "Expected: " prefix and needs no rewriting.
+    const errors = formatCliErrorsForDisplay([
+      new CliError.InvalidValue({
+        option: "define",
+        value: "bogus",
+        expected: "Invalid key=value format. Expected format: key=value, got: bogus",
+        kind: "flag",
+      }),
+    ]);
+
+    expect(errors.changed).toBe(false);
+    expect(errors.errors[0]?.changed).toBe(false);
+    expect(errors.errors[0]?.message).toBe(
+      'Invalid value for flag --define: "bogus". Expected: Invalid key=value format. Expected format: key=value, got: bogus',
+    );
+  });
+
+  it("does not corrupt a value that itself contains the literal 'Expected: Expected' text", () => {
+    // Regression test: the fix must anchor on `error.expected` (the field the
+    // buggy primitive actually populates) rather than searching the fully
+    // composed `error.message`, since `error.value` is user-controlled and is
+    // interpolated into that same message twice (once directly, once again
+    // inside `expected`'s "got <value>" suffix). A value that happens to
+    // contain the literal doubled-prefix text must be left untouched.
+    const errors = formatCliErrorsForDisplay([
+      new CliError.InvalidValue({
+        option: "env",
+        value: "Expected: Expected nano",
+        expected: 'Expected "dev" | "staging" | "prod", got "Expected: Expected nano"',
+        kind: "flag",
+      }),
+    ]);
+
+    expect(errors.changed).toBe(true);
+    expect(errors.errors[0]?.message).toBe(
+      'Invalid value for flag --env: "Expected: Expected nano". Expected "dev" | "staging" | "prod", got "Expected: Expected nano"',
+    );
+  });
 });

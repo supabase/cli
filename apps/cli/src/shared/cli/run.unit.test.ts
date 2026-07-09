@@ -2,7 +2,13 @@ import { Cause } from "effect";
 import { CliError } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 
-import { exitCodeForFailure, extractCommandPath, shouldUseGlobalSignalInterrupt } from "./run.ts";
+import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
+import {
+  exitCodeForFailure,
+  extractCommandPath,
+  shouldReportFailure,
+  shouldUseGlobalSignalInterrupt,
+} from "./run.ts";
 
 describe("extractCommandPath", () => {
   it("returns positional command-path tokens", () => {
@@ -86,5 +92,56 @@ describe("exitCodeForFailure", () => {
 
   it("exits 130 when interrupted, regardless of any other failure reason", () => {
     expect(exitCodeForFailure(Cause.interrupt())).toBe(130);
+  });
+
+  // CLI-1879: a delegated Go child's exact exit code (not just a generic 1)
+  // must reach the user, via the `LegacyGoChildExitError`'s
+  // `[Runtime.errorExitCode]` marker.
+  it("exits with a LegacyGoChildExitError's exact exit code", () => {
+    const cause = Cause.fail(
+      new LegacyGoChildExitError({ exitCode: 130, message: "supabase-go exited with code 130" }),
+    );
+    expect(exitCodeForFailure(cause)).toBe(130);
+  });
+});
+
+describe("shouldReportFailure", () => {
+  it("does not report a clean exit (0)", () => {
+    expect(shouldReportFailure(Cause.fail(new Error("unused")), 0)).toBe(false);
+  });
+
+  it("does not report an interrupt (130)", () => {
+    expect(shouldReportFailure(Cause.interrupt(), 130)).toBe(false);
+  });
+
+  // CLI-1879: the child already wrote its own detailed failure to the
+  // inherited stderr, so `runCli`'s generic line would be a duplicate Go
+  // itself never prints.
+  it("does not report a LegacyGoChildExitError", () => {
+    const cause = Cause.fail(
+      new LegacyGoChildExitError({ exitCode: 1, message: "supabase-go exited with code 1" }),
+    );
+    expect(shouldReportFailure(cause, 1)).toBe(false);
+  });
+
+  it("reports a non-ShowHelp failure", () => {
+    expect(shouldReportFailure(Cause.fail(new Error("boom")), 1)).toBe(true);
+  });
+
+  // Regression guard: `CliError.ShowHelp` ALSO sets Effect's shared
+  // `[Runtime.errorReported]` marker to `false` (for an unrelated reason — the
+  // CLI framework already rendered help/usage text). `shouldReportFailure`
+  // must NOT key on that shared marker, or it would also suppress
+  // `normalizeCause`'s Go-parity rendering for a `MissingOption` wrapped in
+  // `ShowHelp` (e.g. `Error: required flag(s) "type" not set`) — silently
+  // dropping that message for every command with a required flag.
+  it("still reports a ShowHelp failure carrying a genuine validation error (e.g. a missing required flag)", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["sso", "add"],
+        errors: [new CliError.MissingOption({ option: "--type" })],
+      }),
+    );
+    expect(shouldReportFailure(cause, 1)).toBe(true);
   });
 });

@@ -49,12 +49,16 @@ fresh PG15 volume; that is internal to the seam, not the TS handler.)
 
 ## Exit Codes
 
-| Code | Condition                                                             |
-| ---- | --------------------------------------------------------------------- |
-| `0`  | success — database started, or already running                        |
-| `1`  | malformed `supabase/config.toml`                                      |
-| `1`  | Docker daemon unreachable / inspect failure                           |
-| `1`  | container bootstrap failed (the seam cleans up via `DockerRemoveAll`) |
+| Code                 | Condition                                                             |
+| -------------------- | --------------------------------------------------------------------- |
+| `0`                  | success — database started, or already running                        |
+| `1`                  | malformed `supabase/config.toml`                                      |
+| `1`                  | Docker daemon unreachable / inspect failure                           |
+| child's exact code\* | container bootstrap failed (the seam cleans up via `DockerRemoveAll`) |
+
+\* The `db __db-bootstrap` seam propagates the spawned `supabase-go` child's
+real exit code (e.g. `130` after a Ctrl-C mid-bootstrap) instead of collapsing
+every failure to `1` — in every `--output-format` (CLI-1879).
 
 ## Output
 

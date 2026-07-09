@@ -1,4 +1,5 @@
 import { Cause, Option } from "effect";
+import { formatInvalidValueMessage } from "../cli/invalid-value-message.ts";
 
 type NormalizedCliError = {
   readonly code: string;
@@ -15,6 +16,16 @@ const isErrorRecord = (value: unknown): value is ErrorRecord =>
 const readString = (value: ErrorRecord, key: string): string | undefined => {
   const field = value[key];
   return typeof field === "string" && field.trim().length > 0 ? field.trim() : undefined;
+};
+
+// Unlike `readString`, does not trim or reject empty strings. Use this for
+// fields that carry raw user input (e.g. `CliError.InvalidValue#value`),
+// where an empty string or meaningful surrounding whitespace is a legitimate
+// value the user typed (`supabase --output-format ''`) and must be preserved
+// and reported verbatim rather than normalized away.
+const readRawString = (value: ErrorRecord, key: string): string | undefined => {
+  const field = value[key];
+  return typeof field === "string" ? field : undefined;
 };
 
 const mappedError = (error: ErrorRecord): NormalizedCliError | undefined => {
@@ -74,6 +85,35 @@ const mappedError = (error: ErrorRecord): NormalizedCliError | undefined => {
           ? `Error: required flag(s) "${option}" not set`
           : "Error: required flag(s) not set",
       };
+    }
+    case "InvalidValue": {
+      // `CliError.InvalidValue` for a `GlobalFlag.setting` flag (e.g.
+      // `--output-format`, or the legacy `--output`/`-o`, `--dns-resolver`,
+      // `--agent`) never reaches `CliOutput.Formatter` — `Command.runWith`
+      // validates those flags in a step that runs outside the `ShowHelp`
+      // path, so the failure lands here instead. Apply the same
+      // doubled-"Expected"-prefix workaround `subcommand-flag-suggestions.ts`
+      // applies for the `ShowHelp`-formatted case (see CLI-1898), so every
+      // `InvalidValue` failure — whichever path it takes — renders the same
+      // way.
+      const option = readString(error, "option");
+      // Raw read: `value` is the exact argv token the user typed and can
+      // legitimately be `""` or carry surrounding whitespace — `readString`
+      // would trim it or drop it entirely, either masking the bug this case
+      // exists to fix or misreporting what the user actually typed.
+      const value = readRawString(error, "value");
+      const expected = readString(error, "expected");
+      const kind = readString(error, "kind");
+      if (
+        option !== undefined &&
+        value !== undefined &&
+        expected !== undefined &&
+        (kind === "flag" || kind === "argument")
+      ) {
+        const message = formatInvalidValueMessage({ option, value, expected, kind });
+        if (message !== undefined) return { code: tag, message };
+      }
+      return undefined;
     }
     case "ShowHelp": {
       // Effect CLI wraps parse errors in a ShowHelp envelope (`CliError.ts`)

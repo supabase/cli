@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Layer, Option, Stdio } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -45,6 +45,13 @@ interface SetupOpts {
   putStatus?: number;
   putBody?: unknown;
   upgradeGate?: "gated" | "notGated";
+  /**
+   * Raw argv the handler sees via `Stdio.Stdio` — drives the
+   * `hasExplicitLongFlag`-based mutex checks. Defaults to a bare invocation
+   * with none of the mutually-exclusive domain flags present; tests that
+   * exercise those checks must pass the matching flags explicitly here.
+   */
+  cliArgs?: ReadonlyArray<string>;
 }
 
 function jsonResponse(
@@ -122,15 +129,20 @@ function setup(opts: SetupOpts = {}) {
   });
 
   const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({
-    out,
-    api: { layer: api.layer, httpClientLayer: api.httpClientLayer },
-    cliConfig,
-    telemetry: telemetry.layer,
-    linkedProjectCache: cache.layer,
-    analytics,
-    goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
-  });
+  const layer = Layer.mergeAll(
+    buildLegacyTestRuntime({
+      out,
+      api: { layer: api.layer, httpClientLayer: api.httpClientLayer },
+      cliConfig,
+      telemetry: telemetry.layer,
+      linkedProjectCache: cache.layer,
+      analytics,
+      goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+    }),
+    Stdio.layerTest({
+      args: Effect.succeed(opts.cliArgs ?? ["sso", "update", VALID_PROVIDER_ID]),
+    }),
+  );
 
   return { layer, out, api, analytics, telemetry, cache };
 }
@@ -200,40 +212,237 @@ describe("legacy sso update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("mutex check: --domains + --add-domains fails", () => {
-    const { layer } = setup();
+  it.live("mutex check: --domains + --add-domains fails with cobra's exact error text", () => {
+    const { layer } = setup({
+      cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains", "a.com", "--add-domains", "b.com"],
+    });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         legacySsoUpdate({ ...defaultFlags, domains: ["a.com"], addDomains: ["b.com"] }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoMutexFlagError");
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoMutexFlagError");
+        // Byte-matches cobra's `validateExclusiveFlagGroups` template
+        // (`flag_groups.go:204`): group in registration order, changed flags
+        // sorted alphabetically — "add-domains" < "domains".
+        expect(dump).toContain(
+          "if any flags in the group [domains add-domains] are set none of the others can be; [add-domains domains] were all set",
+        );
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("mutex check: --domains + --remove-domains fails", () => {
-    const { layer } = setup();
+  it.live("mutex check: --domains + --remove-domains fails with cobra's exact error text", () => {
+    const { layer } = setup({
+      cliArgs: [
+        "sso",
+        "update",
+        VALID_PROVIDER_ID,
+        "--domains",
+        "a.com",
+        "--remove-domains",
+        "b.com",
+      ],
+    });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         legacySsoUpdate({ ...defaultFlags, domains: ["a.com"], removeDomains: ["b.com"] }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoMutexFlagError");
+        expect(dump).toContain(
+          "if any flags in the group [domains remove-domains] are set none of the others can be; [domains remove-domains] were all set",
+        );
+      }
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("mutex check: --metadata-file + --metadata-url fails", () => {
-    const { layer } = setup();
+  it.live(
+    "mutex check: an explicit but empty --domains= still conflicts with --add-domains (changed, not truthy)",
+    () => {
+      // `--domains=` parses to an empty array, but cobra's `pflag.Changed`
+      // tracks that the flag was passed at all, not the resulting value — the
+      // same "changed vs truthy" gap CLI-1860 fixed for `functions download`'s
+      // `--use-docker`. Gating on `.length > 0` would miss this combination.
+      const { layer } = setup({
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains=", "--add-domains", "b.com"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoUpdate({ ...defaultFlags, domains: [], addDomains: ["b.com"] }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain("LegacySsoMutexFlagError");
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "mutex check: --add-domains and --remove-domains together are not mutually exclusive",
+    () => {
+      // Go only registers ("domains","add-domains") and ("domains","remove-domains")
+      // as separate 2-element groups (`cmd/sso.go:179-180`) — add-domains and
+      // remove-domains together, without --domains, is not a violation.
+      const { layer } = setup({
+        cliArgs: [
+          "sso",
+          "update",
+          VALID_PROVIDER_ID,
+          "--add-domains",
+          "b.com",
+          "--remove-domains",
+          "c.com",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoUpdate({ ...defaultFlags, addDomains: ["b.com"], removeDomains: ["c.com"] }),
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("mutex check: all three domain flags set reports the --add-domains group first", () => {
+    // Pins the `SSO_UPDATE_MUTEX_GROUPS` array order: cobra's sorted-key
+    // iteration ("domains add-domains" < "domains remove-domains") means the
+    // add-domains group is checked — and its error returned — first when all
+    // three domain flags collide at once.
+    const { layer } = setup({
+      cliArgs: [
+        "sso",
+        "update",
+        VALID_PROVIDER_ID,
+        "--domains",
+        "a.com",
+        "--add-domains",
+        "b.com",
+        "--remove-domains",
+        "c.com",
+      ],
+    });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
         legacySsoUpdate({
           ...defaultFlags,
-          metadataFile: Option.some("/tmp/x.xml"),
-          metadataUrl: Option.some("https://idp.example.com/m"),
+          domains: ["a.com"],
+          addDomains: ["b.com"],
+          removeDomains: ["c.com"],
         }),
       );
       expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain(
+          "if any flags in the group [domains add-domains] are set none of the others can be; [add-domains domains] were all set",
+        );
+        expect(dump).not.toContain("remove-domains");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("mutex check: a flag-group violation wins over an invalid provider ID", () => {
+    // Cobra runs `ValidateFlagGroups` before `RunE` (`command.go:1010,1014`);
+    // Go's provider-ID format check lives inside `RunE` (`cmd/sso.go:90-91`).
+    // So an invalid UUID combined with a mutex violation must surface the
+    // mutex error, not `LegacySsoInvalidUuidError`.
+    const { layer } = setup({
+      cliArgs: ["sso", "update", "not-a-uuid", "--domains", "a.com", "--add-domains", "b.com"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySsoUpdate({
+          ...defaultFlags,
+          providerId: "not-a-uuid",
+          domains: ["a.com"],
+          addDomains: ["b.com"],
+        }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoMutexFlagError");
+        expect(dump).not.toContain("LegacySsoInvalidUuidError");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "mutex check: --metadata-file + --metadata-url fails with cobra's exact error text",
+    () => {
+      const { layer } = setup({
+        cliArgs: [
+          "sso",
+          "update",
+          VALID_PROVIDER_ID,
+          "--metadata-file",
+          "/tmp/x.xml",
+          "--metadata-url",
+          "https://idp.example.com/m",
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySsoUpdate({
+            ...defaultFlags,
+            metadataFile: Option.some("/tmp/x.xml"),
+            metadataUrl: Option.some("https://idp.example.com/m"),
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const dump = JSON.stringify(exit.cause);
+          expect(dump).toContain("LegacySsoMutexFlagError");
+          // Go registers this pair too (`cmd/sso.go:178`) — it was left emitting
+          // a hand-written message alongside the domains groups' custom text
+          // before this fix; now all three of `sso update`'s mutex groups on
+          // this command share the same byte-exact cobra template.
+          expect(dump).toContain(
+            "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
+          );
+        }
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
+    "mutex check: a bare --metadata-file followed by --metadata-url is not a violation",
+    () => {
+      // pflag's `--flag arg` branch consumes the very next argv token as the
+      // value unconditionally (`flag.go:1013-1031`), so real cobra parses this
+      // as `metadata-file` receiving the literal value `"--metadata-url"` —
+      // `metadata-url` is never parsed as its own flag and stays unset. The
+      // TS CLI's own parser (unlike pflag) never hands a dash-prefixed token
+      // to a non-boolean flag as a bare value, so here both flags resolve to
+      // `Option.none()` — but the raw-argv mutex scan must reach the same
+      // "not a violation" conclusion pflag does, not double-count the
+      // `--metadata-url` token as a second explicit flag.
+      const { layer } = setup({
+        cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--metadata-file", "--metadata-url"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+        expect(Exit.isSuccess(exit)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("mutex check: a bare --add-domains followed by --domains=... is not a violation", () => {
+    // Same consumed-value class as the metadata-file/metadata-url case
+    // above, but for the domains group: pflag would hand `add-domains` the
+    // literal value `"--domains=x.com"` and never parse `--domains` at all.
+    const { layer } = setup({
+      cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--add-domains", "--domains=x.com"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacySsoUpdate(defaultFlags));
+      expect(Exit.isSuccess(exit)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 

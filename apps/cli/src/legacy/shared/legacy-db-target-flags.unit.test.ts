@@ -1,5 +1,12 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { resolveLegacyDbTargetFlags } from "./legacy-db-target-flags.ts";
+import {
+  resolveLegacyDbTargetFlags,
+  VALUE_CONSUMING_LONG_FLAGS,
+  VALUE_CONSUMING_SHORT_FLAGS,
+} from "./legacy-db-target-flags.ts";
 
 describe("resolveLegacyDbTargetFlags", () => {
   it("returns empty setFlags and undefined connType when no args", () => {
@@ -183,5 +190,103 @@ describe("resolveLegacyDbTargetFlags", () => {
     const result = resolveLegacyDbTargetFlags(["--password=pwd", "--local"]);
     expect(result.connType).toBe("local");
     expect(result.setFlags).toEqual(["local"]);
+  });
+});
+
+describe("VALUE_CONSUMING_LONG_FLAGS / VALUE_CONSUMING_SHORT_FLAGS completeness (CLI-1896 review)", () => {
+  // `legacy/telemetry/legacy-command-instrumentation.ts`'s `extractChangedFlagNames`
+  // relies on these two sets to know which flag consumes the next raw-argv
+  // token as its value, across EVERY legacy command (not just the db-target
+  // subset this file's other describe block covers) — see the doc comment on
+  // `VALUE_CONSUMING_LONG_FLAGS` in `legacy-db-target-flags.ts`. This scan is
+  // static-source-based (same technique as
+  // `shared/cli/code-structure.unit.test.ts`) rather than importing every
+  // command module, so it can only see flag names declared as a literal
+  // string argument to `Flag.string`/`Flag.integer`/`Flag.choice`/
+  // `Flag.choiceWithValue`/`Flag.float` — it cannot trace a name passed
+  // through a helper function (`issue.command.ts`'s
+  // `legacyIssueOptionalTextFlag`, `status.command.ts`'s
+  // `csvStringSliceFlag`), so those two files are excluded below; their flag
+  // names are registered by hand in `VALUE_CONSUMING_LONG_FLAGS` instead.
+  const commandsDir = fileURLToPath(new URL("../commands", import.meta.url));
+  const INDIRECT_NAME_FILES = new Set(["issue.command.ts", "status.command.ts"]);
+  const VALUE_FLAG_KINDS = ["string", "integer", "choice", "choiceWithValue", "float"];
+
+  function walk(dir: string): Array<string> {
+    return readdirSync(dir).flatMap((entry) => {
+      const fullPath = path.join(dir, entry);
+      const stats = statSync(fullPath);
+      if (stats.isDirectory()) return walk(fullPath);
+      return entry.endsWith(".command.ts") ? [fullPath] : [];
+    });
+  }
+
+  interface DeclaredFlag {
+    readonly file: string;
+    readonly name: string;
+    readonly alias: string | undefined;
+  }
+
+  function extractDeclaredFlags(filePath: string): Array<DeclaredFlag> {
+    const source = readFileSync(filePath, "utf8");
+    const callRegex = /Flag\.(string|integer|choice|choiceWithValue|float|boolean)\(/g;
+    const calls = Array.from(source.matchAll(callRegex), (match) => ({
+      index: match.index,
+      kind: match[1]!,
+    }));
+
+    const declared: Array<DeclaredFlag> = [];
+    for (let i = 0; i < calls.length; i++) {
+      const current = calls[i]!;
+      if (!VALUE_FLAG_KINDS.includes(current.kind)) continue;
+
+      // Name declared as a literal string (e.g. `Flag.string("schema")`).
+      // A name passed as an identifier (`Flag.string(name)`) doesn't match
+      // and is silently skipped — see INDIRECT_NAME_FILES above.
+      const remainder = source.slice(current.index);
+      const nameMatch = remainder.match(/^Flag\.\w+\(\s*"([a-zA-Z0-9-]+)"/);
+      if (!nameMatch) continue;
+
+      // The alias, if any, is somewhere in the `.pipe(...)` chain between
+      // this flag declaration and the next one.
+      const windowEnd = i + 1 < calls.length ? calls[i + 1]!.index : source.length;
+      const window = source.slice(current.index, windowEnd);
+      const aliasMatch = window.match(/withAlias\(\s*"([a-zA-Z0-9])"\s*\)/);
+
+      declared.push({ file: filePath, name: nameMatch[1]!, alias: aliasMatch?.[1] });
+    }
+    return declared;
+  }
+
+  it("registers every directly-declared value-consuming flag name in VALUE_CONSUMING_LONG_FLAGS", () => {
+    const missing: Array<string> = [];
+
+    for (const filePath of walk(commandsDir)) {
+      if (INDIRECT_NAME_FILES.has(path.basename(filePath))) continue;
+
+      for (const flag of extractDeclaredFlags(filePath)) {
+        if (!VALUE_CONSUMING_LONG_FLAGS.has(flag.name)) {
+          missing.push(`${flag.name} (${path.relative(commandsDir, flag.file)})`);
+        }
+      }
+    }
+
+    expect(missing).toEqual([]);
+  });
+
+  it("registers every directly-declared value-consuming flag's shorthand in VALUE_CONSUMING_SHORT_FLAGS", () => {
+    const missing: Array<string> = [];
+
+    for (const filePath of walk(commandsDir)) {
+      if (INDIRECT_NAME_FILES.has(path.basename(filePath))) continue;
+
+      for (const flag of extractDeclaredFlags(filePath)) {
+        if (flag.alias !== undefined && !VALUE_CONSUMING_SHORT_FLAGS.has(flag.alias)) {
+          missing.push(`-${flag.alias} (--${flag.name}, ${path.relative(commandsDir, flag.file)})`);
+        }
+      }
+    }
+
+    expect(missing).toEqual([]);
   });
 });

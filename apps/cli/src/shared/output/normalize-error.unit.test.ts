@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Cause } from "effect";
+import { CliError } from "effect/unstable/cli";
 import { formatCliError, normalizeCause, normalizeCliError } from "./normalize-error.ts";
 
 describe("normalizeCliError", () => {
@@ -47,6 +48,98 @@ describe("normalizeCliError", () => {
     expect(normalizeCliError(error)).toEqual({
       code: "MissingOption",
       message: "Error: required flag(s) not set",
+    });
+  });
+
+  test("InvalidValue collapses the doubled 'Expected: Expected' prefix (e.g. a bad GlobalFlag.setting value)", () => {
+    // Regression test for CLI-1898: `--output-format`/`--dns-resolver`/`--agent`/
+    // legacy `--output` are `GlobalFlag.setting` flags backed by `Flag.choice`.
+    // `Command.runWith` validates their values in a step that runs outside the
+    // `ShowHelp` path, so a bad value never reaches `CliOutput.Formatter` (and
+    // `subcommand-flag-suggestions.ts`'s fix) — it surfaces here instead.
+    const error = new CliError.InvalidValue({
+      option: "output-format",
+      value: "bogus",
+      expected: 'Expected "text" | "json" | "stream-json", got "bogus"',
+      kind: "flag",
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "InvalidValue",
+      message:
+        'Invalid value for flag --output-format: "bogus". Expected "text" | "json" | "stream-json", got "bogus"',
+    });
+  });
+
+  test("InvalidValue preserves an empty invalid value (e.g. `--output-format ''`)", () => {
+    // Regression test for a Codex review finding on CLI-1898: `value` is raw
+    // user input read straight off argv, so `''` is a legitimate way to
+    // trigger this failure. Reading it through the trim-and-reject-empty
+    // `readString` helper would fail the guard and leak the original
+    // doubled "Expected: Expected" message instead of fixing it.
+    const error = new CliError.InvalidValue({
+      option: "output-format",
+      value: "",
+      expected: 'Expected "text" | "json" | "stream-json", got ""',
+      kind: "flag",
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "InvalidValue",
+      message:
+        'Invalid value for flag --output-format: "". Expected "text" | "json" | "stream-json", got ""',
+    });
+  });
+
+  test("InvalidValue preserves surrounding whitespace in the invalid value (e.g. `--output-format ' json'`)", () => {
+    // Regression test for the same Codex finding: trimming `value` would
+    // report a different string than what the user actually typed.
+    const error = new CliError.InvalidValue({
+      option: "output-format",
+      value: " json",
+      expected: 'Expected "text" | "json" | "stream-json", got " json"',
+      kind: "flag",
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "InvalidValue",
+      message:
+        'Invalid value for flag --output-format: " json". Expected "text" | "json" | "stream-json", got " json"',
+    });
+  });
+
+  test("InvalidValue leaves an already-clean 'expected' message untouched", () => {
+    const error = new CliError.InvalidValue({
+      option: "define",
+      value: "bogus",
+      expected: "Invalid key=value format. Expected format: key=value, got: bogus",
+      kind: "flag",
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "InvalidValue",
+      message:
+        'Invalid value for flag --define: "bogus". Expected: Invalid key=value format. Expected format: key=value, got: bogus',
+    });
+  });
+
+  test("ShowHelp envelope unwraps a single InvalidValue with the same doubled-prefix fix", () => {
+    const error = {
+      _tag: "ShowHelp",
+      commandPath: ["db", "lint"],
+      errors: [
+        new CliError.InvalidValue({
+          option: "level",
+          value: "bogus",
+          expected: 'Expected "warning" | "error", got "bogus"',
+          kind: "flag",
+        }),
+      ],
+    };
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "InvalidValue",
+      message: 'Invalid value for flag --level: "bogus". Expected "warning" | "error", got "bogus"',
     });
   });
 

@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -31,6 +31,7 @@ import {
   LegacyYesFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
+import { LegacyGoChildExitError } from "../../../../shared/legacy/legacy-go-child-exit.error.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
@@ -69,15 +70,24 @@ const DEFAULT_FLAGS: LegacyDbResetFlags = {
   last: Option.none(),
 };
 
+/**
+ * Tracks every `resolve`/`resolvePoolerFallback` invocation so tests can prove a
+ * connection was (or, for the delegated-experimental path, was NOT) resolved —
+ * `resolve()` mints/verifies a temporary Postgres login role over the Management
+ * API, so calling it on a path that immediately discards the result is wasted
+ * (and duplicated) work (CLI-1879).
+ */
 function mockResolver(opts: {
   isLocal: boolean;
   ref?: string;
   omitRef?: boolean;
   resolveFails?: boolean;
 }) {
-  return Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (_flags: LegacyDbConfigFlags) =>
-      opts.resolveFails === true
+  let calls = 0;
+  const layer = Layer.succeed(LegacyDbConfigResolver, {
+    resolve: (_flags: LegacyDbConfigFlags) => {
+      calls++;
+      return opts.resolveFails === true
         ? Effect.fail(
             new LegacyDbConfigConnectTempRoleError({
               message: "failed to create login role: network error",
@@ -91,9 +101,19 @@ function mockResolver(opts: {
                   isLocal: opts.isLocal,
                   ref: opts.ref !== undefined ? Option.some(opts.ref) : Option.none(),
                 }) satisfies LegacyResolvedDbConfig,
-          ),
-    resolvePoolerFallback: () => Effect.succeed(Option.none()),
+          );
+    },
+    resolvePoolerFallback: () => {
+      calls++;
+      return Effect.succeed(Option.none());
+    },
   });
+  return {
+    layer,
+    get calls() {
+      return calls;
+    },
+  };
 }
 
 function mockConnection(opts: { remoteSeeds?: Readonly<Record<string, string>> }) {
@@ -142,8 +162,15 @@ function mockConnection(opts: { remoteSeeds?: Readonly<Record<string, string>> }
  * Stateful mock of the container-bootstrap seam. `running` drives
  * `AssertSupabaseDbIsRunning`; `storageReady` drives the bucket-seed gate. Records
  * the recreate args so tests can assert version / `--no-seed` propagation.
+ * `awaitStorageReadyExitCode`, when set, fails `awaitStorageReady` with a
+ * `LegacyGoChildExitError` carrying that code — simulating the seam's real
+ * `captureStdout` bootstrap-child path exiting non-zero (CLI-1879).
  */
-function mockBootstrapSeam(opts: { running?: boolean; storageReady?: boolean }) {
+function mockBootstrapSeam(opts: {
+  running?: boolean;
+  storageReady?: boolean;
+  awaitStorageReadyExitCode?: number;
+}) {
   const recreateCalls: Array<{
     version: string;
     noSeed: boolean;
@@ -164,8 +191,18 @@ function mockBootstrapSeam(opts: { running?: boolean; storageReady?: boolean }) 
     awaitStorageReady: () =>
       Effect.sync(() => {
         storageChecked = true;
-        return opts.storageReady ?? false;
-      }),
+      }).pipe(
+        Effect.flatMap(() =>
+          opts.awaitStorageReadyExitCode !== undefined
+            ? Effect.fail(
+                new LegacyGoChildExitError({
+                  exitCode: opts.awaitStorageReadyExitCode,
+                  message: `failed to bootstrap the local database: exit ${opts.awaitStorageReadyExitCode}`,
+                }),
+              )
+            : Effect.succeed(opts.storageReady ?? false),
+        ),
+      ),
   });
   return {
     layer,
@@ -188,14 +225,33 @@ const mockStorageHttp = Layer.succeed(
   ),
 );
 
-function mockProxy() {
+/**
+ * `execCaptureExitCode`, when set, makes `execCapture` fail with a
+ * `LegacyGoChildExitError` carrying that code instead of succeeding — simulating
+ * a delegated Go child exiting non-zero under a machine-output mode (CLI-1879).
+ */
+function mockProxy(opts: { execCaptureExitCode?: number } = {}) {
   const calls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
   const layer = Layer.succeed(LegacyGoProxy, {
-    exec: (args, opts) =>
+    exec: (args, execOpts) =>
       Effect.sync(() => {
-        calls.push({ args, env: opts?.env });
+        calls.push({ args, env: execOpts?.env });
       }),
-    execCapture: () => Effect.succeed(""),
+    execCapture: (args, execOpts) =>
+      Effect.sync(() => {
+        calls.push({ args, env: execOpts?.env });
+      }).pipe(
+        Effect.flatMap(() =>
+          opts.execCaptureExitCode !== undefined
+            ? Effect.fail(
+                new LegacyGoChildExitError({
+                  exitCode: opts.execCaptureExitCode,
+                  message: `supabase-go exited with code ${opts.execCaptureExitCode}`,
+                }),
+              )
+            : Effect.succeed(""),
+        ),
+      ),
   });
   return {
     layer,
@@ -222,6 +278,8 @@ function setup(
     resolveFails?: boolean;
     running?: boolean;
     storageReady?: boolean;
+    awaitStorageReadyExitCode?: number;
+    execCaptureExitCode?: number;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -236,25 +294,30 @@ function setup(
 
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
-  const proxy = mockProxy();
-  const seam = mockBootstrapSeam({ running: opts.running, storageReady: opts.storageReady });
+  const proxy = mockProxy({ execCaptureExitCode: opts.execCaptureExitCode });
+  const seam = mockBootstrapSeam({
+    running: opts.running,
+    storageReady: opts.storageReady,
+    awaitStorageReadyExitCode: opts.awaitStorageReadyExitCode,
+  });
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedCache = mockLegacyLinkedProjectCacheTracked();
   // The local-reset bucket-seed core statically requires the (lazy) Management-API
   // factory; never invoked on `--local` (projectRef === "").
   const platformApi = mockLegacyPlatformApiService({});
+  const resolver = mockResolver({
+    isLocal: opts.isLocal ?? false,
+    ref: opts.ref ?? LEGACY_VALID_REF,
+    omitRef: opts.omitRef,
+    resolveFails: opts.resolveFails,
+  });
 
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
     proxy.layer,
     seam.layer,
-    mockResolver({
-      isLocal: opts.isLocal ?? false,
-      ref: opts.ref ?? LEGACY_VALID_REF,
-      omitRef: opts.omitRef,
-      resolveFails: opts.resolveFails,
-    }),
+    resolver.layer,
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
     mockRuntimeInfo(),
@@ -284,7 +347,7 @@ function setup(
     telemetry.layer,
     linkedCache.layer,
   );
-  return { layer, out, conn, proxy, seam, telemetry, linkedCache };
+  return { layer, out, conn, proxy, seam, telemetry, linkedCache, resolver };
 }
 
 const migrationFile = (version: string, body = "create table t ();") => ({
@@ -329,6 +392,117 @@ describe("legacy db reset", () => {
     });
   });
 
+  it.live("proceeds with a local reset when no config file is present", () => {
+    // Go's `Config.Load` tolerates a missing `config.toml`: `Eject` defaults an empty
+    // `project_id` to the cwd basename (`pkg/config/config.go:563-570`), so `Validate`
+    // never sees an empty required field and the CLI proceeds — exactly the mechanism
+    // the cli-e2e parity suite relies on when it runs `db reset --local` from a project
+    // with no config.toml. A missing config must not become a hard failure here.
+    const { layer, seam } = setup(tmp.current, {
+      args: ["db", "reset"],
+      isLocal: true,
+      running: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(seam.recreateCalls).toHaveLength(1);
+    });
+  });
+
+  it.live("fails a local reset before the destructive recreate on a malformed config.toml", () => {
+    // Go's `flags.LoadConfig` (the local target's `LoadConfig`, `db_url.go:77-80`) runs
+    // full config validation before `reset.Run` reaches `AssertSupabaseDbIsRunning` /
+    // `resetDatabase` (`internal/db/reset/reset.go:57-61`). A broken config.toml must
+    // abort before the local database is ever recreated.
+    const { layer, seam } = setup(tmp.current, {
+      toml: 'project_id = "unterminated\n',
+      args: ["db", "reset"],
+      isLocal: true,
+      running: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+      }
+      expect(seam.recreateCalls).toHaveLength(0);
+    });
+  });
+
+  it.live(
+    "fails a local reset on a malformed config.toml even when the database is not running",
+    () => {
+      // Pins Go's exact ordering: `flags.LoadConfig` runs in the root `PersistentPreRunE`,
+      // strictly before `reset.Run` ever calls `AssertSupabaseDbIsRunning`
+      // (`internal/db/reset/reset.go:57`). So a broken config must surface as a config
+      // error even when the local database is ALSO not running — the config check must
+      // win the race, not the "is not running" check.
+      const { layer, seam } = setup(tmp.current, {
+        toml: 'project_id = "unterminated\n',
+        args: ["db", "reset"],
+        isLocal: true,
+        running: false,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const cause = JSON.stringify(exit.cause);
+          expect(cause).toContain("failed to load config");
+          expect(cause).not.toContain("is not running.");
+        }
+        expect(seam.recreateCalls).toHaveLength(0);
+      });
+    },
+  );
+
+  it.live("fails a local reset before the destructive recreate on an undecryptable secret", () => {
+    // Regression: Go's `flags.LoadConfig` decrypts every `encrypted:` secret before
+    // `reset.Run` recreates the local database, so an undecryptable secret must abort
+    // before the destructive recreate, not surface later (or never) during bucket
+    // seeding.
+    const { layer, seam } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:anything"\n',
+      args: ["db", "reset"],
+      isLocal: true,
+      running: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      // Assert on the stable "failed to parse config:" prefix rather than the exact
+      // decrypt-failure tail, which depends on whether an ambient `DOTENV_PRIVATE_KEY*`
+      // is set (missing key vs. a base64/decrypt failure) — either way, the config
+      // load must fail before the destructive recreate.
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("failed to parse config:");
+      }
+      expect(seam.recreateCalls).toHaveLength(0);
+    });
+  });
+
+  it.live("fails a local reset before the destructive recreate on an empty project_id", () => {
+    // Go's `config.Validate` rejects an explicit `project_id = ""` (a present override
+    // that resolved to empty, unlike an absent field) before the local recreate.
+    const { layer, seam } = setup(tmp.current, {
+      toml: 'project_id = ""\n',
+      args: ["db", "reset"],
+      isLocal: true,
+      running: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "Missing required field in config: project_id",
+        );
+      }
+      expect(seam.recreateCalls).toHaveLength(0);
+    });
+  });
+
   it.live("seeds buckets after a local reset when storage is ready", () => {
     const { layer, seam } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -346,16 +520,16 @@ describe("legacy db reset", () => {
     });
   });
 
-  it.live("finishes a local reset when bucket seeding hits a strict-loader-rejected config", () => {
-    // The bucket-seeding core re-loads config via the strict `@supabase/config` loader.
-    // `SEED_ENABLED=maybe` is invalid for both Go's `strconv.ParseBool` and the TS
-    // loader's coercion, so the reload fails during decode (unlike e.g. `1`/`true`,
-    // which both now accept). The seam's Go recreate already validated + rebuilt the
-    // DB, so aborting here would leave the reset half-done — warn and skip buckets so
-    // reset finishes like Go.
+  it.live("fails a local reset before the destructive recreate on an unparseable boolean", () => {
+    // `SEED_ENABLED=maybe` cannot be resolved by Go's `strconv.ParseBool`, so
+    // `flags.LoadConfig` aborts on this config before `reset.Run` ever reaches
+    // `AssertSupabaseDbIsRunning`/`resetDatabase`. Previously this surfaced only much
+    // later (if at all) via the bucket-seeding core's own reload, AFTER the local
+    // database had already been recreated — this must now abort up front instead,
+    // via the pre-recreate `legacyCheckDbToml` gate.
     const previous = process.env["SEED_ENABLED"];
     process.env["SEED_ENABLED"] = "maybe";
-    const { layer, out, seam } = setup(tmp.current, {
+    const { layer, seam } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.seed]\nenabled = "env(SEED_ENABLED)"\n',
       args: ["db", "reset"],
       isLocal: true,
@@ -363,10 +537,12 @@ describe("legacy db reset", () => {
       storageReady: true,
     });
     return Effect.gen(function* () {
-      yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(out.stderrText).toContain("skipped seeding storage buckets");
-      expect(out.stderrText).toContain("Finished ");
-      expect(seam.recreateCalls).toHaveLength(1);
+      const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("invalid db.seed.enabled");
+      }
+      expect(seam.recreateCalls).toHaveLength(0);
     }).pipe(
       Effect.ensuring(
         Effect.sync(() => {
@@ -376,6 +552,38 @@ describe("legacy db reset", () => {
       ),
     );
   });
+
+  it.live(
+    "finishes a local reset when bucket seeding can't see an env(VAR) value the pre-recreate gate saw",
+    () => {
+      // `legacyCheckDbToml` (the pre-recreate gate) resolves `env(VAR)` via
+      // `legacyLoadProjectEnv`, which mirrors Go's full nested-env walk and sees
+      // `supabase/.env.development` — a real, Go-valid env source
+      // (`pkg/config/config.go:1220-1257`; `godotenv.Load` calls `os.Setenv`, so this
+      // is genuinely ambient env by the time Go itself resolves `env(VAR)`,
+      // `config.go:1260-1261`). The post-recreate bucket-seed reload instead goes
+      // through `@supabase/config`'s `loadProjectEnvironment`, which only ever reads
+      // `supabase/.env`/`.env.local` + ambient env (`packages/config/src/project.ts:
+      // 209-245) — it can't see `.env.development` at all. So this Go-valid config
+      // passes the gate and the real recreate, then can't be re-resolved by the
+      // reload; the reset must still finish (warn-and-skip), not hard-fail after the
+      // local database has already been dropped and rebuilt.
+      const { layer, out, seam } = setup(tmp.current, {
+        toml: 'project_id = "test"\n\n[db.seed]\nenabled = "env(SEED_ENABLED)"\n',
+        files: { "supabase/.env.development": "SEED_ENABLED=true\n" },
+        args: ["db", "reset"],
+        isLocal: true,
+        running: true,
+        storageReady: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(seam.recreateCalls).toHaveLength(1);
+        expect(out.stderrText).toContain("skipped seeding storage buckets");
+        expect(out.stderrText).toContain("Finished ");
+      });
+    },
+  );
 
   it.live("uses the detected git branch in the Finished line", () => {
     const { layer, out } = setup(tmp.current, {
@@ -718,6 +926,94 @@ describe("legacy db reset", () => {
     });
   });
 
+  it.live("does not resolve a linked DB connection before delegating an experimental reset", () => {
+    const { layer, proxy, resolver } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      experimental: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+      expect(proxy.calls).toHaveLength(1);
+      // The delegated Go child re-runs its own connection resolution (including
+      // minting/verifying the temp login role) once it starts — the TS wrapper
+      // must not do that same Management-API work first only to discard it (CLI-1879).
+      expect(resolver.calls).toBe(0);
+    });
+  });
+
+  it.live("still caches the linked ref when delegating an experimental reset", () => {
+    // `linkedRefForCache` is pre-loaded via `LegacyProjectRefResolver.loadProjectRef`
+    // separately from `resolver.resolve()`, specifically so the post-run
+    // linked-project-cache finalizer still fires on this path even though
+    // `resolve()` itself is skipped entirely (CLI-1879).
+    const { layer, linkedCache } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      experimental: true,
+      ref: LEGACY_VALID_REF,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+      expect(linkedCache.cached).toBe(true);
+      expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+    });
+  });
+
+  it.live(
+    "surfaces a delegated experimental-reset child failure as a LegacyGoChildExitError under json output",
+    () => {
+      const { layer } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        experimental: true,
+        format: "json",
+        execCaptureExitCode: 3,
+      });
+      return Effect.gen(function* () {
+        // Under json/stream-json, the delegated path uses `execCapture` (non-text
+        // branch of `delegateExperimentalReset`) — this must flow through the normal
+        // Effect failure channel (reachable by `withJsonErrorHandling` at the
+        // command-wiring layer) instead of an immediate `ProcessControl.exit()` that a
+        // handler-level test could never observe (CLI-1879).
+        const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.squash(exit.cause);
+          expect(error).toBeInstanceOf(LegacyGoChildExitError);
+          expect((error as LegacyGoChildExitError).exitCode).toBe(3);
+        }
+      });
+    },
+  );
+
+  it.live(
+    "propagates the storage-ready check's exact exit code and still flushes telemetry on a local reset",
+    () => {
+      // The bootstrap seam's `awaitStorageReady` (the `captureStdout` bootstrap-child
+      // path) failing non-zero must reach the handler as the exact `LegacyGoChildExitError`
+      // it fails with, and the handler's own `Effect.ensuring(telemetryState.flush)`
+      // finalizer must still run despite the typed failure (CLI-1879).
+      const { layer, telemetry } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset"],
+        isLocal: true,
+        running: true,
+        awaitStorageReadyExitCode: 4,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.squash(exit.cause);
+          expect(error).toBeInstanceOf(LegacyGoChildExitError);
+          expect((error as LegacyGoChildExitError).exitCode).toBe(4);
+        }
+        expect(telemetry.flushed).toBe(true);
+      });
+    },
+  );
+
   it.live("forwards the linked selector to the delegate even for --linked=false", () => {
     // Cobra `Changed` semantics: `--linked=false` still selects the linked/remote target in
     // the parent, so the delegated argv must carry `--linked` — otherwise the Go child falls
@@ -817,7 +1113,7 @@ describe("legacy db reset", () => {
   });
 
   it.live("forwards --db-url and --no-seed on an experimental remote db-url reset", () => {
-    const { layer, proxy } = setup(tmp.current, {
+    const { layer, proxy, resolver } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       experimental: true,
       args: ["db", "reset", "--db-url", "postgresql://db.example.com:5432/postgres"],
@@ -836,6 +1132,10 @@ describe("legacy db reset", () => {
         "--no-seed",
         "--yes=false",
       ]);
+      // Unlike the `connType === "linked"` branch above, a `--db-url` target still
+      // resolves a connection before delegating — the pre-delegation skip (CLI-1879)
+      // is scoped to the linked branch only, not "never call resolve when delegating".
+      expect(resolver.calls).toBe(1);
     });
   });
 

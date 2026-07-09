@@ -279,6 +279,7 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "db.migrations.enabled",
   "db.seed.enabled",
   "db.seed.sql_paths",
+  "auth.enabled",
   "edge_runtime.deno_version",
   "experimental.pgdelta.enabled",
   "experimental.pgdelta.declarative_schema_path",
@@ -735,13 +736,20 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
  * Dotted paths of every `config.Secret`-typed field Go decrypts via its global
  * `DecryptSecretHookFunc` (`pkg/config/secret.go`, `config.go:730`) — the hook only runs
  * while decoding INTO a `config.Secret`, never over arbitrary strings. `*` matches any map
- * key (`auth.external.<provider>`, `auth.hook.<name>`). `[db.vault]` (a `map[string]Secret`)
- * is intentionally omitted — the reader decrypts it directly in the body with the same
- * fail-on-undecryptable behaviour. Derived from the Go structs (`auth.go`, `db.go`,
- * `config.go`); update alongside any new `Secret` field.
+ * key (`auth.external.<provider>`, `auth.hook.<name>`, `db.vault.<name>`). `[db.vault]`
+ * (a `map[string]Secret`, `pkg/config/db.go:96`) IS included — the db-config reader below
+ * also decrypts it directly in its own body ({@link legacyReadDbToml}'s `vault` loop) with
+ * the same fail-on-undecryptable behaviour, so for that caller this just detects the same
+ * failure a little earlier (no observable difference: same `legacyDecryptSecret` call, same
+ * `failed to parse config: <cause>` message). For `config push` — the other caller of
+ * {@link legacyAssertDecryptableSecrets}, which has no such downstream vault pass — omitting
+ * `db.vault` here would let an undecryptable vault secret through to the API calls, unlike Go.
+ * Derived from the Go structs (`auth.go`, `db.go`, `config.go`); update alongside any new
+ * `Secret` field.
  */
 const LEGACY_SECRET_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
   ["db", "root_key"],
+  ["db", "vault", "*"],
   ["auth", "publishable_key"],
   ["auth", "secret_key"],
   ["auth", "jwt_secret"],
@@ -785,19 +793,17 @@ const legacyCollectSecretStrings = (
   }
 };
 
-/** Fails when a single `encrypted:` secret value cannot be decrypted (Go's hook error). */
+/** Returns Go's hook-error message when a single `encrypted:` secret value cannot be decrypted. */
 const legacyAssertSecretValue = (
   value: string,
   lookup: EnvLookup,
   dotenvPrivateKeys: ReadonlyArray<string>,
-): LegacyDbConfigLoadError | undefined => {
+): string | undefined => {
   const expanded = legacyExpandEnv(value, lookup);
   // Unset `env(...)` and plain strings are returned verbatim by Go's hook (no error).
   if (ENV_PATTERN.test(expanded) || !legacyIsEncryptedSecret(expanded)) return undefined;
   const decrypted = legacyDecryptSecret(expanded, dotenvPrivateKeys);
-  return decrypted.ok
-    ? undefined
-    : new LegacyDbConfigLoadError({ message: `failed to parse config: ${decrypted.error}` });
+  return decrypted.ok ? undefined : `failed to parse config: ${decrypted.error}`;
 };
 
 /**
@@ -807,15 +813,27 @@ const legacyAssertSecretValue = (
  * `Secret` field paths ({@link LEGACY_SECRET_PATHS}) are scanned — a non-secret string that
  * merely starts with `encrypted:` (e.g. an auth email-template `subject`) stays plain text
  * in Go and must not block the load. Go decodes every `[remotes.<name>]` block into the same
- * struct, so the same paths are checked under each remote too. Returns the failure (or
- * `undefined`); the caller surfaces it via `Effect.fail`.
+ * struct, so the same paths are checked under each remote too. Returns Go's error message (or
+ * `undefined`); callers surface it as their own domain error (e.g. `Effect.fail`).
+ *
+ * Shared across command families: the db-config reader below uses it for `db push`/`db
+ * reset`/`migration up|down`/etc, and `config push`'s handler reuses it directly against its
+ * own (`@supabase/config`-decoded) document — both need the exact same "decrypt-or-abort before
+ * anything else runs" behaviour Go gets for free from `config.Load`.
+ *
+ * The "check every `[remotes.<name>]` block too" part of that contract only holds when `doc`
+ * still has an intact `remotes` key. The db-config reader's own remote-merge keeps it (so this
+ * function really does check every declared remote there), but `@supabase/config`'s
+ * `loadProjectConfig` strips `remotes` from the document once a block matches the target ref —
+ * so for `config push`, an undecryptable secret hiding in a *different, non-matching* remote
+ * block goes unchecked (see that command's SIDE_EFFECTS.md KNOWN GAPS).
  */
-const legacyAssertDecryptableSecrets = (
+export const legacyAssertDecryptableSecrets = (
   doc: unknown,
   lookup: EnvLookup,
   dotenvPrivateKeys: ReadonlyArray<string>,
-): LegacyDbConfigLoadError | undefined => {
-  const scan = (node: unknown): LegacyDbConfigLoadError | undefined => {
+): string | undefined => {
+  const scan = (node: unknown): string | undefined => {
     for (const segs of LEGACY_SECRET_PATHS) {
       const values: Array<string> = [];
       legacyCollectSecretStrings(node, segs, 0, values);
@@ -989,11 +1007,13 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     // EVERY `config.Secret` field during `UnmarshalExact`, so an `encrypted:` secret anywhere
     // in the merged config that cannot be decrypted (e.g. no DOTENV_PRIVATE_KEY) aborts the
     // load with `failed to parse config: <error>` (secret.go:34,103; config.go:704) — before
-    // Validate and before connecting. The reader otherwise only decrypts `[db.vault]`, so
-    // assert decryptability across the whole document to match Go (a recursive scan tracks
-    // Go's "decode the entire config" better than a hand-listed set of Secret paths).
+    // Validate and before connecting. This also covers `[db.vault]` (see
+    // `LEGACY_SECRET_PATHS`), so the vault loop below never actually reaches an
+    // undecryptable value — it just decrypts-and-populates the already-asserted-valid ones.
     const secretError = legacyAssertDecryptableSecrets(effectiveDoc, lookup, dotenvPrivateKeys);
-    if (secretError !== undefined) return yield* Effect.fail(secretError);
+    if (secretError !== undefined) {
+      return yield* Effect.fail(new LegacyDbConfigLoadError({ message: secretError }));
+    }
   }
 
   // Go: `config.go:626` — read the linked pooler URL from `.temp/pooler-url` and
@@ -1267,13 +1287,16 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // Go's config.Validate runs the full `if c.Auth.Enabled` block (`config.go:1036-1102`) after
   // the bucket/function checks. Gated on `auth.enabled` (default true); Go's viper AutomaticEnv
   // binds `auth.enabled` to `SUPABASE_AUTH_ENABLED` before Validate (`config.go:529-535`), so the
-  // env override decides whether the auth block is validated.
+  // env override decides whether the auth block is validated — UNLESS a matched `[remotes.*]`
+  // block supplies `auth.enabled` itself, in which case `mergeRemoteConfig`'s `v.Set` (override
+  // tier, above `AutomaticEnv`) wins, matching the same suppression every other
+  // `LEGACY_ENV_OVERRIDABLE_KEYS` entry gets below.
   const authEnabled = yield* resolveBoolOrFail(
     "auth.enabled",
     authRaw?.["enabled"],
     true,
     lookup,
-    envOverride("SUPABASE_AUTH_ENABLED"),
+    remoteOverrideKeys.has("auth.enabled") ? undefined : envOverride("SUPABASE_AUTH_ENABLED"),
   );
 
   // Local helpers mirroring the deleted `legacyValidateAuthConfig`'s closures — its Go-parity

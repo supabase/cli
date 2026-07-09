@@ -227,6 +227,36 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     }
 
     const connType = target.connType ?? "local";
+    // Single source of truth for "does this reset delegate to the Go child?" —
+    // checked at both delegation sites below (before `resolve()` for a linked
+    // target, after it for a `--db-url` target) so the two call sites can never
+    // drift apart.
+    const shouldDelegateExperimental = experimental && resolvedVersion === "";
+
+    // Delegates the remaining `--experimental` schema-files apply path
+    // (`apply.MigrateAndSeed`, not ported) to the Go child. In text mode inherit
+    // its stdio. Under a machine-output mode (`--output-format json|stream-json`)
+    // the Go child emits no TS envelope, so suppress its stdout (capture + discard)
+    // and emit the same structured success the native local and remote paths do,
+    // keeping the JSON contract consistent across all reset paths.
+    const delegateExperimentalReset = () =>
+      Effect.gen(function* () {
+        const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
+        if (output.format === "text") {
+          yield* proxy.exec(buildResetArgs(flags, connType, yes), { env });
+        } else {
+          // Machine-output mode is non-interactive: give the Go child a non-TTY stdin
+          // (`stdin: "ignore"`) so it can't block on (or be answered at) Go's
+          // destructive reset prompt — it takes the default `false`, matching the
+          // native reset path which suppresses prompts under json/stream-json.
+          yield* proxy.execCapture(buildResetArgs(flags, connType, yes), { env, stdin: "ignore" });
+          yield* output.success("Reset remote database.", {
+            target: "remote",
+            version: resolvedVersion,
+          });
+        }
+      });
+
     // Go's ParseDatabaseConfig runs LoadProjectRef BEFORE the fallible linked
     // resolution (db_url.go:87-95), and Execute() writes the linked-project cache
     // even when a later step errors (root.go:171-181). Pre-load the ref so the
@@ -235,7 +265,23 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     if (connType === "linked") {
       const refResolver = yield* LegacyProjectRefResolver;
       linkedRefForCache = yield* refResolver.loadProjectRef(Option.none());
+
+      // A linked target is never local (`resolver.resolve()`'s "linked" branch
+      // always returns `isLocal: false`), so the delegated-experimental check can
+      // run BEFORE calling `resolve()`. This matters: for `connType === "linked"`,
+      // `resolve()` mints/verifies a temporary Postgres login role over the
+      // Management API — and the delegated Go child re-runs that exact same
+      // `ParseDatabaseConfig` work itself once delegation happens. Calling
+      // `resolve()` here would mint the temp role twice for zero downstream use on
+      // this branch (Go's own reset flow mints it exactly once, as part of the code
+      // path being delegated to — confirmed against `apps/cli-go/internal/utils/
+      // flags/db_url.go`'s `NewDbConfigWithPassword`/`initLoginRole`). CLI-1879.
+      if (shouldDelegateExperimental) {
+        yield* delegateExperimentalReset();
+        return;
+      }
     }
+
     const cfg = yield* resolver.resolve({ dbUrl: flags.dbUrl, connType, dnsResolver });
 
     // Local target → native local reset. The container-recreate primitives live
@@ -243,6 +289,20 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     // (running check, messages, bucket seeding, git-branch line, output shaping).
     // Mirrors `internal/db/reset/reset.go:57-77`.
     if (cfg.isLocal) {
+      // Go's `flags.LoadConfig` (root `PersistentPreRunE` → the local target's
+      // per-connType `LoadConfig`, `internal/utils/flags/db_url.go:77-80`) runs full
+      // config validation before `reset.Run` ever reaches `AssertSupabaseDbIsRunning`
+      // / the destructive `resetDatabase` (`internal/db/reset/reset.go:57-61`). The
+      // resolver's own local read (above, line 239) already performs the identical
+      // validation and would already reject a broken config before this point is
+      // reached — so today this re-validates for its own sake. Repeat it here anyway,
+      // as an explicit, independent gate (the same pattern `db start` and `db push`
+      // use), so the "malformed config aborts before the local database is recreated"
+      // guarantee is enforced by this handler directly and stays covered by a
+      // handler-level test even if the resolver's own internal read is ever mocked,
+      // relaxed, or refactored to stop validating.
+      yield* legacyCheckDbToml(fs, path, workdir);
+
       // AssertSupabaseDbIsRunning — error if the local db container is down.
       const running = yield* seam.isDbRunning();
       if (!running) {
@@ -268,13 +328,22 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         // Go's `buckets.Run(ctx, "", false, fsys)` — non-interactive: overwrite/prune
         // confirmations take their defaults instead of blocking on input.
         //
-        // Bucket seeding re-loads config.toml through the strict `@supabase/config`
-        // loader, which (unlike the Go-parity reader used elsewhere in reset) rejects some
-        // Go-valid configs — e.g. `[db.seed] enabled = "env(SEED_ENABLED)"`. The seam's Go
-        // `recreate` has already run Go's full `LoadConfig`+`Validate` on this same config,
-        // so a parse failure HERE is that loader-strictness gap, not a genuinely invalid
-        // config. Recreate already dropped/rebuilt the DB, so aborting now would leave the
-        // reset half-done; warn and skip buckets so `db reset` finishes like Go instead.
+        // `legacyCheckDbToml` above resolves `env(VAR)` via `legacyLoadProjectEnv`,
+        // which mirrors Go's full nested-env walk (`.env.<SUPABASE_ENV>.local`,
+        // `.env.local`, `.env.<SUPABASE_ENV>`, `.env`, across both `supabase/` and the
+        // project root — `pkg/config/config.go:1220-1257`). This reload instead goes
+        // through `@supabase/config`'s `loadProjectConfig` → `loadProjectEnvironment`,
+        // which only ever reads `supabase/.env`/`.env.local` plus ambient env
+        // (`packages/config/src/project.ts:209-245`) — regardless of `goViperCompat`,
+        // which only widens `env(VAR)` matching, not the file set consulted. So a
+        // config whose `env(VAR)` reference is backed by e.g. `supabase/.env.development`
+        // is genuinely Go-valid (Go's `godotenv.Load` calls `os.Setenv`, so the value is
+        // real ambient env by the time Go resolves it — `config.go:1260-1261`) and
+        // already passed `legacyCheckDbToml` and the real recreate above, but this
+        // narrower reload can still reject it. A `LegacySeedConfigLoadError` here is
+        // that env-file-set gap, not a genuinely invalid config — and recreate already
+        // dropped/rebuilt the DB, so aborting now would leave the reset half-done; warn
+        // and skip buckets so `db reset` finishes like Go instead.
         yield* legacySeedBucketsRun({
           projectRef: "",
           emitSummary: false,
@@ -308,34 +377,20 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       return;
     }
 
-    // Resolve the linked ref before any return so the post-run cache (Go's
-    // `PersistentPostRun` `ensureProjectGroupsCached`) is written even on the
-    // delegated `--experimental` path below — the Go child runs with telemetry
-    // disabled and skips that cache, so the TS finalizer must own it.
+    // Re-confirm `linkedRefForCache` from the now-resolved `cfg.ref` for the native
+    // remote linked path below (a linked+experimental+versionless target already
+    // delegated and returned above, before `resolve()` was ever called — see the
+    // `connType === "linked"` block earlier in this function). A `connType ===
+    // "db-url"` target leaves `linkedRefForCache` as whatever the pre-load block
+    // set (nothing, for `db-url`), since this assignment only fires when linked.
     const linkedRef = Option.getOrUndefined(cfg.ref ?? Option.none());
     if (connType === "linked" && linkedRef !== undefined) linkedRefForCache = linkedRef;
 
-    // Remote path. The niche `--experimental` schema-files apply path
-    // (`apply.MigrateAndSeed`) is not ported; delegate it to the Go child. In text
-    // mode inherit its stdio. Under a machine-output mode (`--output-format
-    // json|stream-json`) the Go child emits no TS envelope, so suppress its stdout
-    // (capture + discard) and emit the same structured success the native local and
-    // remote paths do, keeping the JSON contract consistent across all reset paths.
-    if (experimental && resolvedVersion === "") {
-      const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
-      if (output.format === "text") {
-        yield* proxy.exec(buildResetArgs(flags, connType, yes), { env });
-      } else {
-        // Machine-output mode is non-interactive: give the Go child a non-TTY stdin
-        // (`stdin: "ignore"`) so it can't block on (or be answered at) Go's
-        // destructive reset prompt — it takes the default `false`, matching the
-        // native reset path which suppresses prompts under json/stream-json.
-        yield* proxy.execCapture(buildResetArgs(flags, connType, yes), { env, stdin: "ignore" });
-        yield* output.success("Reset remote database.", {
-          target: "remote",
-          version: resolvedVersion,
-        });
-      }
+    // Remaining remote target: a `--db-url` pointing at a non-local host (the
+    // `connType === "linked"` case already delegated above, before `resolve()`,
+    // without resolving a connection at all).
+    if (shouldDelegateExperimental) {
+      yield* delegateExperimentalReset();
       return;
     }
 
