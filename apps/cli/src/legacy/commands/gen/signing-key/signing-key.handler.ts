@@ -6,10 +6,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { findGitRootPath } from "../../../../shared/git/git-root.ts";
+import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy-prompt-yes-no.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
+import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import type { LegacyGenSigningKeyFlags } from "./signing-key.command.ts";
@@ -255,9 +256,13 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
   const telemetryState = yield* LegacyTelemetryState;
   const output = yield* Output;
   const tty = yield* Tty;
-  const yes = yield* legacyResolveYes;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // Go's `flags.LoadConfig` (`signingkeys.go:99`) loads the project `.env` files before the
+  // overwrite prompt reads `viper.GetBool("YES")` (`console.PromptYesNo`, `signingkeys.go:130`),
+  // so a `SUPABASE_YES` set only in `supabase/.env` must auto-confirm here too.
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
   const emphasize = (text: string) => styleIfTty(tty.stdoutIsTty, "bold", text);
   const warnText = (text: string) => styleIfTty(tty.stdoutIsTty, "yellow", text);
 

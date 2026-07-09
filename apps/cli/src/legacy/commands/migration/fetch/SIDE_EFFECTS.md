@@ -2,9 +2,10 @@
 
 ## Files Read
 
-| Path                       | Format     | When                                              |
-| -------------------------- | ---------- | ------------------------------------------------- |
-| `~/.supabase/access-token` | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` |
+| Path                                          | Format     | When                                                               |
+| --------------------------------------------- | ---------- | ------------------------------------------------------------------ |
+| `~/.supabase/access-token`                    | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked`                  |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878; Go's `loadNestedEnv`) |
 
 ## Files Written
 
@@ -20,9 +21,10 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                        | Required?                                               |
-| ----------------------- | ------------------------------ | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` mode | no (falls back to keyring → `~/.supabase/access-token`) |
+| Variable                | Purpose                           | Required?                                                                                                         |
+| ----------------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token for `--linked` mode    | no (falls back to keyring → `~/.supabase/access-token`)                                                           |
+| `SUPABASE_YES`          | auto-confirm the overwrite prompt | no — read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files (shell wins; CLI-1878) |
 
 ## Exit Codes
 
@@ -54,8 +56,9 @@ Same structured `files` result delivered as an NDJSON `result` event.
 
 - When the migrations directory is non-empty, prompts
   `Do you want to overwrite existing files in supabase/migrations directory?`
-  (default **YES**). Declining exits non-zero (`context canceled`). `--yes`
-  auto-confirms; a non-interactive / machine-output run takes the default (YES).
+  (default **YES**). Declining exits non-zero (`context canceled`). `--yes` or
+  `SUPABASE_YES` (shell env or project `.env`) auto-confirms; a non-interactive /
+  machine-output run takes the default (YES).
 
 ## Notes
 

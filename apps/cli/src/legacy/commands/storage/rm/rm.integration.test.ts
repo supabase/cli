@@ -100,6 +100,30 @@ describe("legacy storage rm", () => {
     });
   });
 
+  it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
+    // SUPABASE_YES lives only in supabase/.env, not the shell — both the `--local` and
+    // (default) `--linked` branches of Go's `ParseDatabaseConfig` load the project `.env`
+    // files before `rm.Run`'s confirmation prompt (root.go:118), so the deletion
+    // auto-confirms with no --yes flag and no env var set in the shell (CLI-1878).
+    const { layer, out, requests } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      files: { "supabase/.env": "SUPABASE_YES=true\n" },
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: true,
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("[y/N] y");
+      expect(requests.some((r) => r.method === "DELETE")).toBe(true);
+    });
+  });
+
   it.live("skips the bucket when the confirmation is declined", () => {
     const { layer, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',

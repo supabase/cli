@@ -618,6 +618,49 @@ describe("legacy gen signing-key integration", () => {
     );
   });
 
+  it.live(
+    "auto-confirms from SUPABASE_YES in the project .env, even with a piped 'n' (CLI-1878)",
+    () => {
+      // SUPABASE_YES lives only in supabase/.env, not the shell. Go's `flags.LoadConfig`
+      // (`signingkeys.go:99`) loads the project `.env` files before the overwrite prompt reads
+      // `viper.GetBool("YES")` (`signingkeys.go:130`), so the overwrite auto-confirms and the
+      // piped `n` is never consumed — same precedence as the shell-env case above.
+      //
+      // Defensively clear a shell SUPABASE_YES: this test must prove the project-.env source
+      // specifically, not accidentally pass because a prior test in this file left the shell
+      // env set (the sibling shell-env tests above save/restore theirs).
+      const prev = process.env["SUPABASE_YES"];
+      delete process.env["SUPABASE_YES"];
+      const { layer } = setup({ stdinIsTty: false, pipedAnswer: "n" });
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() =>
+          writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
+        );
+        yield* Effect.tryPromise(() =>
+          writeFile(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n"),
+        );
+
+        yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
+
+        const saved = yield* Effect.tryPromise(() =>
+          readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
+        );
+        const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+        expect(parsed).toHaveLength(1);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev !== undefined) process.env["SUPABASE_YES"] = prev;
+          }),
+        ),
+        Effect.provide(layer),
+      );
+    },
+  );
+
   it.live("an explicit --yes=false overrides SUPABASE_YES and honors a piped 'n'", () => {
     const prev = process.env["SUPABASE_YES"];
     process.env["SUPABASE_YES"] = "1";
