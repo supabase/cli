@@ -129,29 +129,48 @@ const mappedError = (
       // message — otherwise the user sees a useless top-line above the real
       // problem.
       const errors = error["errors"];
-      if (Array.isArray(errors) && errors.length === 1) {
+      if (!Array.isArray(errors) || errors.length === 0) return undefined;
+
+      if (errors.length === 1) {
         const inner = errors[0];
         if (isErrorRecord(inner)) {
           const innerMapped = mappedError(inner, context);
           if (innerMapped) return innerMapped;
-          // No Go-parity-specific mapping exists for this inner tag (e.g.
-          // UnrecognizedOption, DuplicateOption, MissingArgument,
-          // UnknownSubcommand, UserError — or an InvalidValue that doesn't
-          // hit CLI-1898's doubled-"Expected"-prefix bug). Surface the inner
-          // error's own message rather than falling through to ShowHelp's
-          // useless "Help requested": since CLI-1901 (`run.ts`'s
-          // `withoutParseErrorHelpDump`) stopped the vendored library from
-          // also `Console.error`-ing this same text, this is now the ONLY
-          // place it reaches the user. Reuse the same `formatCliErrorsForDisplay`
-          // the text/json formatters use (rather than the raw `.message`
-          // getter) so a subcommand-flag hint (e.g. "Hint: --foo is available
-          // on `branches create`. Pass it after the subcommand") that used to
-          // reach the user via the library's now-suppressed duplicate render
-          // still survives through this single-render path.
-          if (CliError.isCliError(inner)) {
-            const [formatted] = formatCliErrorsForDisplay([inner], context).errors;
-            if (formatted) return { code: formatted._tag, message: formatted.message };
-          }
+        }
+      }
+
+      // No Go-parity-specific single-error mapping applies (either more than
+      // one simultaneous error, e.g. a child flag placed before its
+      // subcommand — `UnrecognizedOption` plus the `UnknownSubcommand` its
+      // misplaced value gets parsed as — or a lone error with no known
+      // mapping: UnrecognizedOption, DuplicateOption, MissingArgument,
+      // UnknownSubcommand, UserError, or an InvalidValue that doesn't hit
+      // CLI-1898's doubled-"Expected"-prefix bug). Surface every inner
+      // error's own message — reusing the same `formatCliErrorsForDisplay`
+      // the text/json formatters use, so a subcommand-flag hint (e.g. "Hint:
+      // --foo is available on `branches create`. Pass it after the
+      // subcommand") survives — rather than falling through to ShowHelp's
+      // useless "Help requested" envelope message: since CLI-1901 (`run.ts`'s
+      // `withoutParseErrorHelpDump`) stopped the vendored library from also
+      // `Console.error`-ing this same text, this is now the ONLY place any
+      // of it reaches the user, for one error or many.
+      if (errors.every(CliError.isCliError)) {
+        const formatted = formatCliErrorsForDisplay(errors, context);
+        if (formatted.errors.length > 0) {
+          const [only] = formatted.errors;
+          return {
+            code: formatted.errors.length === 1 && only ? only._tag : "ShowHelp",
+            message: formatted.errors.map((formattedError) => formattedError.message).join("\n\n"),
+          };
+        }
+      }
+
+      // Defensive fallback for a single inner value that carries a usable
+      // `_tag`/`message` pair but isn't a real `CliError` instance (e.g. a
+      // hand-rolled test double) — real `ShowHelp.errors` entries always are.
+      if (errors.length === 1) {
+        const inner = errors[0];
+        if (isErrorRecord(inner)) {
           const code = readString(inner, "_tag");
           const message = readString(inner, "message");
           if (code && message) return { code, message };

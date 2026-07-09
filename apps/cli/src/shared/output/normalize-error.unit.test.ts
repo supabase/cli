@@ -2,9 +2,12 @@ import { describe, expect, test } from "vitest";
 import { Cause } from "effect";
 import { CliError, Command } from "effect/unstable/cli";
 import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
+import { legacyNetworkRestrictionsCommand } from "../../legacy/commands/network-restrictions/network-restrictions.command.ts";
 import { formatCliError, normalizeCause, normalizeCliError } from "./normalize-error.ts";
 
-const testRoot = Command.make("supabase").pipe(Command.withSubcommands([legacyBranchesCommand]));
+const testRoot = Command.make("supabase").pipe(
+  Command.withSubcommands([legacyBranchesCommand, legacyNetworkRestrictionsCommand]),
+);
 
 describe("normalizeCliError", () => {
   test("maps NoRunningStackError to a user-facing message", () => {
@@ -219,6 +222,77 @@ describe("normalizeCliError", () => {
     expect(result.message).toContain(
       "Hint: --persistent is available on `supabase branches create` and `supabase branches update`. Pass it after the subcommand",
     );
+  });
+
+  // Regression test for a second Codex review finding on CLI-1901: a child
+  // flag placed before its subcommand, WITH a value (e.g. `network-restrictions
+  // --project-ref <ref> get`), makes Effect raise TWO simultaneous errors —
+  // `UnrecognizedOption` for the flag, plus `UnknownSubcommand` for the
+  // flag's own value being misread as the subcommand name. Before this fix,
+  // `mappedError`'s ShowHelp unwrap only ever looked at `errors.length === 1`,
+  // so a real two-error ShowHelp fell straight through to the generic
+  // "Help requested" envelope message — losing the hint (and the specific
+  // error) entirely now that CLI-1901 also suppresses the vendored library's
+  // own duplicate render for this case.
+  test("ShowHelp envelope unwraps multiple simultaneous errors and preserves the subcommand-flag hint (child flag with a value, before its subcommand)", () => {
+    const error = {
+      _tag: "ShowHelp",
+      commandPath: ["network-restrictions"],
+      errors: [
+        new CliError.UnrecognizedOption({
+          option: "--project-ref",
+          command: ["supabase", "network-restrictions"],
+          suggestions: [],
+        }),
+        new CliError.UnknownSubcommand({
+          subcommand: "jacraenyzrorgjhsdvvf",
+          parent: ["supabase", "network-restrictions"],
+          suggestions: [],
+        }),
+      ],
+    };
+
+    const result = normalizeCliError(error, {
+      rootCommand: testRoot,
+      args: ["network-restrictions", "--project-ref", "jacraenyzrorgjhsdvvf", "get"],
+    });
+
+    expect(result.code).toBe("UnrecognizedOption");
+    expect(result.message).toContain(
+      "Unrecognized flag: --project-ref in command supabase network-restrictions",
+    );
+    expect(result.message).toContain(
+      "Hint: --project-ref is available on `supabase network-restrictions get` and `supabase network-restrictions update`.",
+    );
+    expect(result.message).not.toContain("Help requested");
+  });
+
+  // A genuine, unrelated multi-error case (no shared hint to collapse them
+  // into one) must still surface every error's own message, not just the
+  // first — and must not crash trying to pick a single `code`.
+  test("ShowHelp envelope unwraps multiple unrelated simultaneous errors into a joined message", () => {
+    const error = {
+      _tag: "ShowHelp",
+      commandPath: ["branches"],
+      errors: [
+        new CliError.UnrecognizedOption({
+          option: "--bogus-one",
+          command: ["supabase", "branches"],
+          suggestions: [],
+        }),
+        new CliError.UnrecognizedOption({
+          option: "--bogus-two",
+          command: ["supabase", "branches"],
+          suggestions: [],
+        }),
+      ],
+    };
+
+    const result = normalizeCliError(error, { rootCommand: testRoot, args: ["branches"] });
+
+    expect(result.code).toBe("ShowHelp");
+    expect(result.message).toContain("Unrecognized flag: --bogus-one in command supabase branches");
+    expect(result.message).toContain("Unrecognized flag: --bogus-two in command supabase branches");
   });
 
   // The same fallback also covers an InvalidValue that does NOT have the
