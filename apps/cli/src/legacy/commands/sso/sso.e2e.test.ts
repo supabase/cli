@@ -75,8 +75,17 @@ describe("supabase sso (legacy)", () => {
   // — so a missing/invalid `--type` used to dump the full help doc to
   // stdout AND print the error twice on stderr. No auth/network call ever
   // happens for either case: flag parsing fails before the handler runs.
+  //
+  // A missing required flag and an invalid choice value get different
+  // treatment, matching the real `apps/cli-go/supabase-go` binary (verified
+  // directly against it): Go's `PersistentPreRunE` sets `SilenceUsage = true`
+  // (`cmd/root.go:97`) BEFORE `ValidateRequiredFlags` runs, so a missing
+  // `--type` is a single clean stderr line with no usage block — but
+  // `Flag.choice` validation happens during `ParseFlags`, BEFORE that point,
+  // so Go still shows a usage block for an invalid `--type` value, always on
+  // stderr, never stdout.
   test(
-    "add without --type: stdout stays clean, stderr is a single Go-parity line",
+    "add without --type: stdout stays clean, stderr is a single Go-parity line (no usage block)",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(
@@ -86,12 +95,13 @@ describe("supabase sso (legacy)", () => {
       expect(exitCode).toBe(1);
       expect(stdout).toBe("");
       expect(stderr).toContain(`required flag(s) "type" not set`);
+      expect(stderr).not.toContain("USAGE");
       expect(stderr.trim().split("\n")).toHaveLength(2);
     },
   );
 
   test(
-    "add with an invalid --type value: stdout stays clean, stderr is a single Go-parity line",
+    "add with an invalid --type value: stdout stays clean, the usage content and the single error line land on stderr with no duplicate",
     { timeout: E2E_TIMEOUT_MS },
     async () => {
       const { exitCode, stdout, stderr } = await runSupabase(
@@ -100,8 +110,12 @@ describe("supabase sso (legacy)", () => {
       );
       expect(exitCode).toBe(1);
       expect(stdout).toBe("");
-      expect(stderr).toContain(`Invalid value for flag --type: "bogus"`);
-      expect(stderr.trim().split("\n")).toHaveLength(2);
+      expect(stderr).toContain("USAGE");
+      const occurrences = stderr.split(`Invalid value for flag --type: "bogus"`).length - 1;
+      expect(occurrences).toBe(1);
+      expect(
+        stderr.trim().endsWith("Try rerunning the command with --debug to troubleshoot the error."),
+      ).toBe(true);
     },
   );
 });

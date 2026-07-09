@@ -183,6 +183,46 @@ describe("normalizeCliError", () => {
     });
   });
 
+  // The same fallback also covers an InvalidValue that does NOT have the
+  // CLI-1898 doubled-"Expected"-prefix bug (e.g. a custom `Flag.mapTryCatch`
+  // validator like `sso add --domains`, whose `expected` text is already
+  // clean) — `mappedError`'s own InvalidValue case returns `undefined` for
+  // those (nothing to fix), so this generic fallback is what surfaces the
+  // message, not CLI-1898's specific rebuild.
+  test("ShowHelp envelope unwraps a single InvalidValue with an already-clean expected message (not the CLI-1898 doubled-prefix bug)", () => {
+    const error = {
+      _tag: "ShowHelp",
+      commandPath: ["sso", "add"],
+      errors: [
+        new CliError.InvalidValue({
+          option: "domains",
+          value: "unterminated-quote.com",
+          expected: "a comma-separated list (unterminated quote)",
+          kind: "flag",
+        }),
+      ],
+    };
+    expect(normalizeCliError(error)).toEqual({
+      code: "InvalidValue",
+      message:
+        'Invalid value for flag --domains: "unterminated-quote.com". Expected: a comma-separated list (unterminated quote)',
+    });
+  });
+
+  // If the single inner error has a `_tag` but no usable `message` (neither a
+  // string via its own getter nor otherwise), the fallback must not surface a
+  // blank/garbage message — it should fall through to ShowHelp's own generic
+  // handling, same as the pre-existing multiple-errors case below.
+  test("ShowHelp envelope with a single inner error carrying no message falls back to generic", () => {
+    const error = {
+      _tag: "ShowHelp",
+      commandPath: ["branches"],
+      errors: [{ _tag: "SomeUnmappedTag" }],
+    };
+    const result = normalizeCliError(error);
+    expect(result.code).toBe("ShowHelp");
+  });
+
   test("ShowHelp with multiple errors does not unwrap (falls back to generic)", () => {
     const error = {
       _tag: "ShowHelp",

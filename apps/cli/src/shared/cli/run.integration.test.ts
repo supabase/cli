@@ -120,6 +120,15 @@ describe("legacy group command exit codes (CLI-1906)", () => {
  * one — that's the exact service `withoutParseErrorHelpDump` overrides and
  * later replays through, so it's what actually matters here.
  *
+ * Go only suppresses its own usage block for a MISSING REQUIRED FLAG
+ * (`ValidateRequiredFlags`, post-`PersistentPreRunE`) — verified against the
+ * real `apps/cli-go/supabase-go` binary. Every other parse-error tag
+ * (`UnrecognizedOption`, `InvalidValue`, `MissingArgument`,
+ * `UnknownSubcommand`) is raised during `ParseFlags`/`ValidateArgs`, BEFORE
+ * `PersistentPreRunE` sets `SilenceUsage` — Go still shows a usage block for
+ * those, always on stderr, never stdout. `classifyParseErrorConsoleOutput`
+ * (see `run.ts`) mirrors that split; these tests cover both branches.
+ *
  * `legacyBranchesCommand` (no `Command.provide` of its own — see the
  * sibling CLI-1906 suite above for why that matters) covers the
  * `UnrecognizedOption` shape and proves the buffering/conditional-flush
@@ -160,13 +169,17 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
       Command.runWith(requiredFlagCommand, { version: "0.0.0-test" })(args),
     ).pipe(Effect.provide(layerFor(args, console)));
 
-  test("an unrecognized flag: suppresses the help dump and the duplicate error, but still fails with the original cause", async () => {
+  test("an unrecognized flag: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause", async () => {
     const { console, calls } = fakeConsole();
     const exit = await Effect.runPromiseExit(runBranches(["--this-flag-does-not-exist"], console));
 
-    // The vendored library's own showHelp() writes are gone entirely — no
-    // stdout help dump, no duplicate stderr error.
-    expect(calls).toEqual([]);
+    // The library's own duplicate `Console.error` write is gone. Its help
+    // doc survives, but redirected to stderr (`error:`), never stdout
+    // (`log:`) — matching Go, which still shows usage for an unrecognized
+    // flag (raised during `ParseFlags`, before `SilenceUsage` is set), just
+    // on stderr.
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.startsWith("error:"))).toBe(true);
 
     // The original ShowHelp/UnrecognizedOption failure still propagates —
     // the fix only suppresses the library's own console writes, it must not
@@ -177,7 +190,7 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
     expect(exitCodeForFailure(exit.cause)).toBe(1);
   });
 
-  test("`branches` bare (clean ShowHelp) still flushes its help dump and exits 0 (untouched)", async () => {
+  test("`branches` bare (clean ShowHelp) still flushes its help dump to stdout and exits 0 (untouched)", async () => {
     const { console, calls } = fakeConsole();
     const exit = await Effect.runPromiseExit(runBranches([], console));
 
@@ -188,31 +201,60 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
     expect(exitCodeForFailure(exit.cause)).toBe(0);
   });
 
-  test("missing a required flag: suppresses the help dump and the duplicate error, but still fails with the original cause", async () => {
+  test("missing a required flag: drops the help dump entirely and the duplicate error, but still fails with the original cause", async () => {
     const { console, calls } = fakeConsole();
     const exit = await Effect.runPromiseExit(runRequiredFlagCommand([], console));
 
+    // Go's `SilenceUsage` is already active for a missing required flag
+    // (post-`PersistentPreRunE`) — nothing survives, not even on stderr.
     expect(calls).toEqual([]);
     expect(Exit.isFailure(exit)).toBe(true);
     if (!Exit.isFailure(exit)) return;
     expect(exitCodeForFailure(exit.cause)).toBe(1);
   });
 
-  test("an invalid Flag.choice value: suppresses the help dump and the duplicate error, but still fails with the original cause", async () => {
+  test("an invalid Flag.choice value: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause", async () => {
     const { console, calls } = fakeConsole();
     const exit = await Effect.runPromiseExit(runRequiredFlagCommand(["--type", "bogus"], console));
 
-    expect(calls).toEqual([]);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.startsWith("error:"))).toBe(true);
     expect(Exit.isFailure(exit)).toBe(true);
     if (!Exit.isFailure(exit)) return;
     expect(exitCodeForFailure(exit.cause)).toBe(1);
   });
 
-  test("`--help` on a command with a required flag still prints the full help doc and exits 0 (untouched)", async () => {
+  test("`--help` on a command with a required flag still prints the full help doc to stdout and exits 0 (untouched)", async () => {
     const { console, calls } = fakeConsole();
     const exit = await Effect.runPromiseExit(runRequiredFlagCommand(["--help"], console));
 
     expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((call) => call.startsWith("log:"))).toBe(true);
     expect(Exit.isSuccess(exit)).toBe(true);
+  });
+
+  // Effect's default logger (`Effect.log*`) resolves through this same
+  // `Console.Console` reference (`Logger.withConsoleLog`/`withConsoleError`
+  // in the vendored library) — see the "buffering scope" note on
+  // `withoutParseErrorHelpDump` in `run.ts`. No command handler in this
+  // codebase uses `Effect.log*` today, but this pins the invariant the doc
+  // comment describes: on a successful run, buffered logger output still
+  // reaches the user (deferred to end-of-run, not dropped).
+  test("Effect.log* output during a successful run is still flushed, not lost", async () => {
+    const { console, calls } = fakeConsole();
+    const program = Effect.gen(function* () {
+      yield* Effect.logInfo("hello from a handler");
+      return "done" as const;
+    });
+
+    const result = await Effect.runPromise(
+      withoutParseErrorHelpDump(program).pipe(
+        Effect.provide(Layer.succeed(Console.Console, console)),
+      ),
+    );
+
+    expect(result).toBe("done");
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.some((call) => call.includes("hello from a handler"))).toBe(true);
   });
 });

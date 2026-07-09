@@ -185,53 +185,78 @@ function bufferingConsole(sink: Array<BufferedConsoleWrite>): Console.Console {
 }
 
 /**
- * Whether `withoutParseErrorHelpDump`'s buffered `Console.log`/`Console.error`
- * writes should be dropped rather than flushed, given how the wrapped effect
- * failed.
+ * How `withoutParseErrorHelpDump` should dispose of its buffered
+ * `Console.log`/`Console.error` writes, given how the wrapped effect failed:
  *
- * True only for a genuine parse/validation failure: `CliError.ShowHelp`
- * carrying a non-empty `errors` array. That is the ONLY shape whose buffered
- * writes are the CLI-1901 bug — the vendored `effect` CLI library's own
- * `showHelp()` (the single `catchFilter` in `Command.ts`'s `runWith`) always
- * `Console.log`s the full help doc and, when `errors.length > 0`, ALSO
- * `Console.error`s the same errors this repo's own `normalizeCause` already
- * renders correctly afterward (`handledProgram` below). Go cobra never shows
- * this dump for the equivalent case: `PersistentPreRunE` sets
- * `SilenceUsage = true` (`apps/cli-go/cmd/root.go:97`) before
- * `ValidateRequiredFlags` (cobra `command.go:1007`), so a missing required
- * flag is a single clean stderr line with nothing on stdout — see CLI-1901.
+ * - `"flush-unchanged"` — success, or a "clean" `ShowHelp` (`errors: []` —
+ *   an explicit `--help` or a bare group command with no subcommand, both
+ *   of which map to exit `0` per `exitCodeForFailure` above), or any other
+ *   failure. Those buffered writes (if any, there normally are none outside
+ *   the two `ShowHelp` cases) are the actual intended output.
+ * - `"drop"` — a genuine parse/validation failure Go cobra's
+ *   `PersistentPreRunE` already suppresses usage for: `ValidateRequiredFlags`
+ *   (cobra `command.go:1007`), which sets `cmd.SilenceUsage = true`
+ *   (`apps/cli-go/cmd/root.go:97`) BEFORE it runs. This library's
+ *   `MissingOption` is the one tag that maps to that stage — see CLI-1901.
+ * - `"flush-help-doc-to-stderr"` — every other genuine parse/validation
+ *   failure (`UnrecognizedOption`, `InvalidValue`, `MissingArgument`,
+ *   `UnknownSubcommand`; multiple simultaneous errors also lands here).
+ *   These map to cobra's `ParseFlags`/`ValidateArgs` (`command.go:919,968`),
+ *   which run BEFORE `PersistentPreRunE` — Go still shows a usage block for
+ *   these, just on stderr, never stdout (verified against the real
+ *   `apps/cli-go/supabase-go` binary, e.g. `branches --bogus-flag` and
+ *   `sso add --type bogus`). The help doc this library renders isn't
+ *   byte-identical to cobra's shorter usage template (that would need a
+ *   second formatter, out of scope for CLI-1901), but showing SOME usage
+ *   content on the RIGHT stream is closer to Go than showing none at all.
  *
- * False for success, for a "clean" `ShowHelp` (`errors: []` — an explicit
- * `--help` or a bare group command with no subcommand, both of which map to
- * exit `0` per `exitCodeForFailure` above), and for any other failure —
- * those buffered writes (if any, there normally are none) are the actual
- * intended output and must reach the user.
+ * In every "genuine failure" case, the buffered `Console.error` write (the
+ * library's own duplicate render of the errors) is always dropped — this
+ * repo's own `handledProgram` + `normalizeCause` already render the single
+ * Go-parity line for it (see `withoutParseErrorHelpDump` below).
  */
-export function shouldSuppressShowHelpConsoleOutput(cause: Cause.Cause<unknown>): boolean {
+export type ParseErrorConsoleDisposition = "flush-unchanged" | "drop" | "flush-help-doc-to-stderr";
+
+export function classifyParseErrorConsoleOutput(
+  cause: Cause.Cause<unknown>,
+): ParseErrorConsoleDisposition {
   const error = Cause.squash(cause);
-  return CliError.isCliError(error) && error._tag === "ShowHelp" && error.errors.length > 0;
+  if (!CliError.isCliError(error) || error._tag !== "ShowHelp" || error.errors.length === 0) {
+    return "flush-unchanged";
+  }
+  const isMissingRequiredFlag = error.errors.every((inner) => inner._tag === "MissingOption");
+  return isMissingRequiredFlag ? "drop" : "flush-help-doc-to-stderr";
 }
 
 /**
  * Wraps `Command.runWith(rootCommand, ...)(args)` so the vendored `effect`
- * CLI library's OWN `Console.log`/`Console.error` writes (see
- * `shouldSuppressShowHelpConsoleOutput`) are captured instead of reaching the
- * real console, and are dropped entirely for a genuine parse-error failure.
- * This repo's own `handledProgram` + `normalizeCause` already render the
- * single Go-parity line for that case, so dropping the library's writes
+ * CLI library's OWN `Console.log`/`Console.error` writes are captured
+ * instead of reaching the real console, then disposed of per
+ * `classifyParseErrorConsoleOutput` once the run's outcome is known:
+ * dropped entirely for a missing-required-flag failure, replayed to stderr
+ * (never stdout) for every other genuine parse/validation failure, and
+ * replayed unchanged for everything else. Either way, the library's own
+ * duplicate error render never survives — this repo's own `handledProgram`
+ * + `normalizeCause` already render the single Go-parity line for it. That
  * fixes both halves of CLI-1901 (the stdout help dump and the duplicate
  * error line) from this one call site, without patching the vendored
  * library itself.
  *
- * Every other outcome (success, or a "clean" `errors: []` `ShowHelp`) flushes
- * the buffered writes unchanged, so `--help`, `--version`, `--completions`,
- * and the bare-group-command help dump are all untouched.
+ * The "flush unchanged" outcome covers success, `--help`, `--version`,
+ * `--completions`, and the bare-group-command help dump, all of which stay
+ * untouched.
  *
  * Safe to wrap the entire `runWith` call — parsing AND the eventual command
  * handler, not just the parse phase that can actually raise `ShowHelp`: no
  * command handler in this codebase writes through `effect`'s `Console`
  * service directly (they go through the `Output` service instead), so
- * buffering here never delays or drops real command output.
+ * buffering here never delays or drops real command output. Note that
+ * Effect's OWN default logger (`Effect.log*`) DOES resolve through this same
+ * `Console` reference (`Logger.withConsoleLog`/`withConsoleError`) — this
+ * codebase has no `Effect.log*` call sites today, but if one is ever added
+ * to a handler, its output would be buffered too (deferred to end-of-run on
+ * the "flush unchanged" path, or dropped on a genuine parse failure — which
+ * never runs a handler in the first place, so that half is moot).
  */
 export function withoutParseErrorHelpDump<A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -242,13 +267,21 @@ export function withoutParseErrorHelpDump<A, E, R>(
       Effect.provideService(Console.Console, bufferingConsole(sink)),
       Effect.exit,
     );
-    if (Exit.isFailure(exit) && shouldSuppressShowHelpConsoleOutput(exit.cause)) {
+    const disposition = Exit.isFailure(exit)
+      ? classifyParseErrorConsoleOutput(exit.cause)
+      : "flush-unchanged";
+    if (disposition === "drop") {
       return yield* exit;
     }
     for (const write of sink) {
+      // The library's own duplicate error render never survives a genuine
+      // parse failure — only its help-doc `log` write gets a second look,
+      // redirected to stderr instead of its original stdout-bound method.
+      if (disposition === "flush-help-doc-to-stderr" && write.method === "error") continue;
+      const method = disposition === "flush-help-doc-to-stderr" ? "error" : write.method;
       yield* Console.consoleWith((console) =>
         Effect.sync(() => {
-          console[write.method](...write.args);
+          console[method](...write.args);
         }),
       );
     }

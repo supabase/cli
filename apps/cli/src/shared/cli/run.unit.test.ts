@@ -4,10 +4,10 @@ import { describe, expect, it } from "vitest";
 
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import {
+  classifyParseErrorConsoleOutput,
   exitCodeForFailure,
   extractCommandPath,
   shouldReportFailure,
-  shouldSuppressShowHelpConsoleOutput,
   shouldUseGlobalSignalInterrupt,
 } from "./run.ts";
 
@@ -151,22 +151,47 @@ describe("shouldReportFailure", () => {
 // doc to stdout AND print the error twice (once from the vendored `effect`
 // CLI library's own `showHelp()`, once from this repo's own Go-parity
 // renderer). `withoutParseErrorHelpDump` fixes this by buffering the
-// library's own `Console.log`/`Console.error` writes and dropping them
-// entirely for exactly this cause shape — this suite covers that predicate;
-// `run.integration.test.ts` covers the end-to-end buffering/suppression
-// behavior against a real command definition.
-describe("shouldSuppressShowHelpConsoleOutput", () => {
-  it("suppresses a ShowHelp failure carrying a genuine validation error (missing required flag)", () => {
+// library's own `Console.log`/`Console.error` writes and disposing of them
+// per this classifier's verdict — this suite covers the classifier;
+// `run.integration.test.ts` covers the end-to-end buffering/flush behavior
+// against real command definitions, and `run.e2e.test.ts` /
+// `sso.e2e.test.ts` cover the real subprocess stdout/stderr streams.
+describe("classifyParseErrorConsoleOutput", () => {
+  // Go cobra's `PersistentPreRunE` sets `SilenceUsage = true`
+  // (`apps/cli-go/cmd/root.go:97`) BEFORE `ValidateRequiredFlags`
+  // (`command.go:1007`) runs — verified against the real `supabase-go`
+  // binary (`sso add` without `--type`): a single clean stderr line, no
+  // usage block. `MissingOption` is the one tag that maps to that stage.
+  it("drops the help dump for a missing required flag", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
         commandPath: ["sso", "add"],
         errors: [new CliError.MissingOption({ option: "type" })],
       }),
     );
-    expect(shouldSuppressShowHelpConsoleOutput(cause)).toBe(true);
+    expect(classifyParseErrorConsoleOutput(cause)).toBe("drop");
   });
 
-  it("suppresses a ShowHelp failure carrying an invalid Flag.choice value", () => {
+  // Multiple simultaneously-missing required flags: still `ValidateRequiredFlags`,
+  // still post-`PersistentPreRunE` in Go — must still drop, not just for a lone error.
+  it("drops the help dump when every error is a missing required flag", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["sso", "add"],
+        errors: [
+          new CliError.MissingOption({ option: "type" }),
+          new CliError.MissingOption({ option: "project-ref" }),
+        ],
+      }),
+    );
+    expect(classifyParseErrorConsoleOutput(cause)).toBe("drop");
+  });
+
+  // Go's `ParseFlags` (`command.go:919`) validates `Flag.choice` values BEFORE
+  // `PersistentPreRunE` runs — verified against the real binary (`sso add --type
+  // bogus`): Go still shows its usage block, on stderr. Same for an unrecognized
+  // flag and a missing positional argument (both also pre-`PersistentPreRunE`).
+  it("flushes the help dump to stderr for an invalid Flag.choice value", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
         commandPath: ["sso", "add"],
@@ -180,35 +205,62 @@ describe("shouldSuppressShowHelpConsoleOutput", () => {
         ],
       }),
     );
-    expect(shouldSuppressShowHelpConsoleOutput(cause)).toBe(true);
+    expect(classifyParseErrorConsoleOutput(cause)).toBe("flush-help-doc-to-stderr");
   });
 
-  it("suppresses a ShowHelp failure carrying an unrecognized flag", () => {
+  it("flushes the help dump to stderr for an unrecognized flag", () => {
     const cause = Cause.fail(
       new CliError.ShowHelp({
         commandPath: ["branches"],
         errors: [new CliError.UnrecognizedOption({ option: "--bogus", suggestions: [] })],
       }),
     );
-    expect(shouldSuppressShowHelpConsoleOutput(cause)).toBe(true);
+    expect(classifyParseErrorConsoleOutput(cause)).toBe("flush-help-doc-to-stderr");
   });
 
-  it("does not suppress a clean ShowHelp failure (bare group command / explicit --help)", () => {
+  it("flushes the help dump to stderr for a missing positional argument", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["sso", "show"],
+        errors: [new CliError.MissingArgument({ argument: "id" })],
+      }),
+    );
+    expect(classifyParseErrorConsoleOutput(cause)).toBe("flush-help-doc-to-stderr");
+  });
+
+  // A mix (e.g. a missing required flag alongside an unrecognized flag) can't
+  // actually occur in practice — the library fails fast on the earlier
+  // `ParseFlags`-class error before `MissingOption` is ever checked — but the
+  // classifier must still not mistake a mix for the all-`MissingOption` case.
+  it("flushes the help dump to stderr for a mix of error tags", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["sso", "add"],
+        errors: [
+          new CliError.MissingOption({ option: "type" }),
+          new CliError.UnrecognizedOption({ option: "--bogus", suggestions: [] }),
+        ],
+      }),
+    );
+    expect(classifyParseErrorConsoleOutput(cause)).toBe("flush-help-doc-to-stderr");
+  });
+
+  it("flushes unchanged for a clean ShowHelp failure (bare group command / explicit --help)", () => {
     const cause = Cause.fail(new CliError.ShowHelp({ commandPath: ["branches"], errors: [] }));
-    expect(shouldSuppressShowHelpConsoleOutput(cause)).toBe(false);
+    expect(classifyParseErrorConsoleOutput(cause)).toBe("flush-unchanged");
   });
 
-  it("does not suppress a non-ShowHelp failure", () => {
-    expect(shouldSuppressShowHelpConsoleOutput(Cause.fail(new Error("boom")))).toBe(false);
+  it("flushes unchanged for a non-ShowHelp failure", () => {
+    expect(classifyParseErrorConsoleOutput(Cause.fail(new Error("boom")))).toBe("flush-unchanged");
   });
 
-  it("does not suppress an interrupt", () => {
-    expect(shouldSuppressShowHelpConsoleOutput(Cause.interrupt())).toBe(false);
+  it("flushes unchanged for an interrupt", () => {
+    expect(classifyParseErrorConsoleOutput(Cause.interrupt())).toBe("flush-unchanged");
   });
 
-  it("does not suppress a defect with no typed failure", () => {
-    expect(shouldSuppressShowHelpConsoleOutput(Cause.die(new Error("unexpected crash")))).toBe(
-      false,
+  it("flushes unchanged for a defect with no typed failure", () => {
+    expect(classifyParseErrorConsoleOutput(Cause.die(new Error("unexpected crash")))).toBe(
+      "flush-unchanged",
     );
   });
 });
