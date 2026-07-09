@@ -98,12 +98,10 @@ describe("functions new", () => {
         yield* Effect.tryPromise(() =>
           readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
         ),
-      ).toBe(`import { nanoid } from "nanoid";
-
-export default {
+      ).toBe(`export default {
   async fetch(request: Request): Promise<Response> {
-    const name = new URL(request.url).searchParams.get("name") ?? nanoid();
-    return new Response(\`Hello \${name}\`, {
+    const name = new URL(request.url).searchParams.get("name") ?? "World";
+    return new Response(\`Hello \${name}!\`, {
       headers: { "content-type": "text/plain" },
     });
   },
@@ -118,9 +116,7 @@ export default {
       ).toEqual({
         private: true,
         type: "module",
-        dependencies: {
-          nanoid: "^5.1.16",
-        },
+        dependencies: {},
       });
       expect(existsSync(join(tempDir, "supabase", "functions", "hello-world", "deno.json"))).toBe(
         false,
