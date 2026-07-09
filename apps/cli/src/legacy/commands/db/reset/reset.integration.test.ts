@@ -367,6 +367,33 @@ describe("legacy db reset", () => {
     });
   });
 
+  it.live(
+    "fails a local reset on a malformed config.toml even when the database is not running",
+    () => {
+      // Pins Go's exact ordering: `flags.LoadConfig` runs in the root `PersistentPreRunE`,
+      // strictly before `reset.Run` ever calls `AssertSupabaseDbIsRunning`
+      // (`internal/db/reset/reset.go:57`). So a broken config must surface as a config
+      // error even when the local database is ALSO not running — the config check must
+      // win the race, not the "is not running" check.
+      const { layer, seam } = setup(tmp.current, {
+        toml: 'project_id = "unterminated\n',
+        args: ["db", "reset"],
+        isLocal: true,
+        running: false,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const cause = JSON.stringify(exit.cause);
+          expect(cause).toContain("failed to load config");
+          expect(cause).not.toContain("is not running.");
+        }
+        expect(seam.recreateCalls).toHaveLength(0);
+      });
+    },
+  );
+
   it.live("fails a local reset before the destructive recreate on an undecryptable secret", () => {
     // Regression: Go's `flags.LoadConfig` decrypts every `encrypted:` secret before
     // `reset.Run` recreates the local database, so an undecryptable secret must abort
@@ -381,8 +408,12 @@ describe("legacy db reset", () => {
     return Effect.gen(function* () {
       const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
+      // Assert on the stable "failed to parse config:" prefix rather than the exact
+      // decrypt-failure tail, which depends on whether an ambient `DOTENV_PRIVATE_KEY*`
+      // is set (missing key vs. a base64/decrypt failure) — either way, the config
+      // load must fail before the destructive recreate.
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to parse config: missing private key");
+        expect(JSON.stringify(exit.cause)).toContain("failed to parse config:");
       }
       expect(seam.recreateCalls).toHaveLength(0);
     });

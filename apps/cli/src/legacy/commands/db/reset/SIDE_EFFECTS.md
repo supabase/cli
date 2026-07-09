@@ -11,15 +11,15 @@ primitives run behind the hidden Go `db __db-bootstrap` seam. Only the niche
 
 ## Files Read
 
-| Path                                                   | Format     | When                                                                      |
-| ------------------------------------------------------ | ---------- | ------------------------------------------------------------------------- |
-| `<workdir>/supabase/migrations/`                       | directory  | to validate `--version` / resolve `--last`, and to load migrations        |
+| Path                                                   | Format     | When                                                                                                                  |
+| ------------------------------------------------------ | ---------- | --------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/migrations/`                       | directory  | to validate `--version` / resolve `--last`, and to load migrations                                                    |
 | `<workdir>/supabase/config.toml`                       | TOML       | always, parsed up front before any destructive work (embedded defaults when absent); re-read for local bucket seeding |
-| `<workdir>/.git/HEAD` (walked upward)                  | plain text | local path, for the `Finished … on branch <branch>.` line                 |
-| `~/.supabase/<hash>/project-ref`                       | plain text | `--linked`, to resolve the ref                                            |
-| `~/.supabase/access-token`                             | plain text | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted  |
-| seed files from `--sql-paths` or `[db.seed].sql_paths` | SQL        | when seeding is enabled (not `--no-seed`); `--sql-paths` overrides config |
-| `<workdir>/supabase/buckets/`                          | files      | local path, when storage is up and `[storage.buckets]` configure objects  |
+| `<workdir>/.git/HEAD` (walked upward)                  | plain text | local path, for the `Finished … on branch <branch>.` line                                                             |
+| `~/.supabase/<hash>/project-ref`                       | plain text | `--linked`, to resolve the ref                                                                                        |
+| `~/.supabase/access-token`                             | plain text | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted                                              |
+| seed files from `--sql-paths` or `[db.seed].sql_paths` | SQL        | when seeding is enabled (not `--no-seed`); `--sql-paths` overrides config                                             |
+| `<workdir>/supabase/buckets/`                          | files      | local path, when storage is up and `[storage.buckets]` configure objects                                              |
 
 ## Files Written
 

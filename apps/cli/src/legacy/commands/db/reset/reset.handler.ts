@@ -247,13 +247,14 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       // per-connType `LoadConfig`, `internal/utils/flags/db_url.go:77-80`) runs full
       // config validation before `reset.Run` ever reaches `AssertSupabaseDbIsRunning`
       // / the destructive `resetDatabase` (`internal/db/reset/reset.go:57-61`). The
-      // resolver's own local read (above) already performs that same validation
-      // internally, but repeat it here as an explicit, independent gate — the same
-      // pattern `db start` and `db push` use for their own pre-destructive-work
-      // checks — so a malformed config.toml (bad bucket name, undecryptable secret,
-      // empty project_id) is guaranteed to abort before the local database is
-      // recreated, and that guarantee stays covered by a handler-level test even if
-      // the resolver's own internal read is ever mocked, relaxed, or refactored.
+      // resolver's own local read (above, line 239) already performs the identical
+      // validation and would already reject a broken config before this point is
+      // reached — so today this re-validates for its own sake. Repeat it here anyway,
+      // as an explicit, independent gate (the same pattern `db start` and `db push`
+      // use), so the "malformed config aborts before the local database is recreated"
+      // guarantee is enforced by this handler directly and stays covered by a
+      // handler-level test even if the resolver's own internal read is ever mocked,
+      // relaxed, or refactored to stop validating.
       yield* legacyCheckDbToml(fs, path, workdir);
 
       // AssertSupabaseDbIsRunning — error if the local db container is down.
@@ -279,18 +280,15 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       const storageReady = yield* seam.awaitStorageReady();
       if (storageReady) {
         // Go's `buckets.Run(ctx, "", false, fsys)` — non-interactive: overwrite/prune
-        // confirmations take their defaults instead of blocking on input.
-        //
-        // Bucket seeding re-loads config.toml through the strict `@supabase/config` loader
-        // (in `goViperCompat` mode), which is usually in lockstep with the Go-parity
-        // reader used earlier in reset (both now resolve `env(VAR)` booleans via Go's
-        // `strconv.ParseBool` acceptance set) — but a genuinely invalid config would
-        // already have failed the earlier `legacyCheckDbToml` gate before the destructive
-        // recreate. A parse failure reaching HERE means the two loaders have drifted out
-        // of lockstep for some config shape, not that the config is invalid: the seam's Go
-        // `recreate` has already run Go's full `LoadConfig`+`Validate` on this same config.
-        // Recreate already dropped/rebuilt the DB, so aborting now would leave the reset
-        // half-done; warn and skip buckets so `db reset` finishes like Go instead.
+        // confirmations take their defaults instead of blocking on input. Go's own
+        // `resetDatabase` (`internal/db/reset/reset.go:66-68`) propagates ANY
+        // `buckets.Run` error as a full command failure (no "Finished ..." line,
+        // non-zero exit) — Go loads `config.toml` exactly once into memory, so it can
+        // never reach "recreate succeeded, then a later reload of the same file fails."
+        // Match that contract here: a `LegacySeedConfigLoadError` from this reload is
+        // not swallowed. `config push` hard-fails on the identical `@supabase/config`
+        // strictness gap (CLI-1489) rather than warning-and-continuing; do the same here
+        // for consistency, instead of carving out a reset-only exception.
         yield* legacySeedBucketsRun({
           projectRef: "",
           emitSummary: false,
@@ -299,14 +297,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
           // auto-confirms bucket/vector/analytics prune prompts. Pass the project-env-resolved
           // `yes` (the shared runner's own `legacyResolveYes` only sees the shell env).
           yes,
-        }).pipe(
-          Effect.catchTag("LegacySeedConfigLoadError", (error) =>
-            output.raw(
-              `${legacyYellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,
-              "stderr",
-            ),
-          ),
-        );
+        });
       }
 
       // "Finished supabase db reset on branch <branch>." (both Aqua).
