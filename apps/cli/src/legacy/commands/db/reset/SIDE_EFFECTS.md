@@ -14,7 +14,7 @@ primitives run behind the hidden Go `db __db-bootstrap` seam. Only the niche
 | Path                                                   | Format     | When                                                                      |
 | ------------------------------------------------------ | ---------- | ------------------------------------------------------------------------- |
 | `<workdir>/supabase/migrations/`                       | directory  | to validate `--version` / resolve `--last`, and to load migrations        |
-| `<workdir>/supabase/config.toml`                       | TOML       | remote path + local bucket seeding (embedded defaults when absent)        |
+| `<workdir>/supabase/config.toml`                       | TOML       | always, parsed up front before any destructive work (embedded defaults when absent); re-read for local bucket seeding |
 | `<workdir>/.git/HEAD` (walked upward)                  | plain text | local path, for the `Finished … on branch <branch>.` line                 |
 | `~/.supabase/<hash>/project-ref`                       | plain text | `--linked`, to resolve the ref                                            |
 | `~/.supabase/access-token`                             | plain text | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted  |
