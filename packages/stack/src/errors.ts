@@ -42,7 +42,11 @@ export const isDockerDaemonDownMessage = (message: string): boolean => {
     normalized.includes("cannot connect to the docker daemon") ||
     normalized.includes("docker daemon is not running") ||
     normalized.includes("docker desktop is not running") ||
-    normalized.includes("is the docker daemon running")
+    normalized.includes("is the docker daemon running") ||
+    // Spawn succeeds but the socket is not accessible (e.g. a Linux user
+    // missing docker group membership) — a local setup problem, not a
+    // registry failure.
+    normalized.includes("permission denied while trying to connect to the docker daemon")
   );
 };
 

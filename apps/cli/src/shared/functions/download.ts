@@ -23,6 +23,7 @@ import {
   InvalidFunctionSlugError,
   UnsafeFunctionDownloadPathError,
 } from "./download.errors.ts";
+import { FunctionsApiStatusError } from "./functions-api.errors.ts";
 
 const legacyEntrypointPath = "file:///src/index.ts";
 
@@ -589,7 +590,10 @@ const listRemoteFunctionSlugs = Effect.fnUntraced(function* (api: ApiClient, pro
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
   if (response.status !== 200) {
     return yield* Effect.fail(
-      new Error(`unexpected list functions status ${response.status}: ${body}`),
+      new FunctionsApiStatusError({
+        status: response.status,
+        message: `unexpected list functions status ${response.status}: ${body}`,
+      }),
     );
   }
 
@@ -635,7 +639,10 @@ const getRemoteFunction = Effect.fnUntraced(function* (
       );
     default:
       return yield* Effect.fail(
-        new Error(`Failed to download Function ${slug} on the Supabase project: ${body}`),
+        new FunctionsApiStatusError({
+          status: response.status,
+          message: `Failed to download Function ${slug} on the Supabase project: ${body}`,
+        }),
       );
   }
 
@@ -675,7 +682,12 @@ const downloadBody = Effect.fnUntraced(function* (
   }
 
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-  return yield* Effect.fail(new Error(`Error status ${response.status}: ${body}`));
+  return yield* Effect.fail(
+    new FunctionsApiStatusError({
+      status: response.status,
+      message: `Error status ${response.status}: ${body}`,
+    }),
+  );
 });
 
 const downloadSingle = Effect.fnUntraced(function* (

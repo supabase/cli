@@ -3,6 +3,7 @@ import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
+  statusCodeActionability,
 } from "../../../shared/telemetry/error-actionability.ts";
 
 // ---------------------------------------------------------------------------
@@ -76,8 +77,13 @@ export class LegacyBootstrapTemplateDownloadError extends Data.TaggedError(
  */
 export class LegacyBootstrapHealthError extends Data.TaggedError("LegacyBootstrapHealthError")<{
   readonly message: string;
+  /** Set when the health poll itself failed with a non-200; absent when the
+   * service reported unhealthy. */
+  readonly status?: number;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.apiStatus;
+    return this.status !== undefined
+      ? statusCodeActionability(this.status)
+      : actionability.apiStatus;
   }
 }

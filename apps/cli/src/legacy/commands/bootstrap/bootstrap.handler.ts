@@ -326,7 +326,9 @@ const mapHealthError = (cause: unknown): Effect.Effect<never, LegacyBootstrapHea
       Effect.orElseSucceed(() => ""),
       Effect.map(sanitizeLegacyErrorBody),
       Effect.flatMap((body) =>
-        Effect.fail(new LegacyBootstrapHealthError({ message: `Error status ${status}: ${body}` })),
+        Effect.fail(
+          new LegacyBootstrapHealthError({ message: `Error status ${status}: ${body}`, status }),
+        ),
       ),
     );
   }

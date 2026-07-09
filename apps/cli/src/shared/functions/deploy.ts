@@ -31,6 +31,7 @@ import {
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "./deploy.errors.ts";
+import { FunctionsApiStatusError } from "./functions-api.errors.ts";
 
 const COMPRESSED_ESZIP_MAGIC = "EZBR";
 const DENO1_EDGE_RUNTIME_VERSION = "1.68.4";
@@ -1427,7 +1428,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
 });
 
 const listRemoteFunctions = Effect.fnUntraced(function* (api: ApiClient, projectRef: string) {
-  let lastError: Error | undefined;
+  let lastError: Error | FunctionsApiStatusError | undefined;
   for (let attempt = 0; attempt <= 3; attempt += 1) {
     const result = yield* api
       .executeRaw(operationDefinitions.v1ListAllFunctions, { ref: projectRef })
@@ -1452,7 +1453,10 @@ const listRemoteFunctions = Effect.fnUntraced(function* (api: ApiClient, project
             ),
         });
       }
-      lastError = new Error(`unexpected list functions status ${result.response.status}: ${body}`);
+      lastError = new FunctionsApiStatusError({
+        status: result.response.status,
+        message: `unexpected list functions status ${result.response.status}: ${body}`,
+      });
       if (result.response.status < 500 && result.response.status !== 429) {
         return yield* Effect.fail(lastError);
       }
@@ -1570,7 +1574,10 @@ const uploadFunctionSource = Effect.fnUntraced(function* (
   const body = yield* response.body;
   if (response.status !== 201) {
     return yield* Effect.fail(
-      new Error(`unexpected deploy status ${response.status}: ${JSON.stringify(body)}`),
+      new FunctionsApiStatusError({
+        status: response.status,
+        message: `unexpected deploy status ${response.status}: ${JSON.stringify(body)}`,
+      }),
     );
   }
   return yield* Effect.try({
@@ -1603,7 +1610,7 @@ const bulkUpdateRemoteFunctions = Effect.fnUntraced(function* (
   projectRef: string,
   functions: ReadonlyArray<BulkUpdateFunction>,
 ) {
-  let lastError: Error | undefined;
+  let lastError: Error | FunctionsApiStatusError | undefined;
   for (let attempt = 0; attempt <= 3; attempt += 1) {
     const result = yield* rateLimitedRequest("bulk updating functions", () =>
       api
@@ -1636,7 +1643,10 @@ const bulkUpdateRemoteFunctions = Effect.fnUntraced(function* (
       if (result.response.status === 200) {
         return;
       }
-      lastError = new Error(`unexpected bulk update status ${result.response.status}: ${body}`);
+      lastError = new FunctionsApiStatusError({
+        status: result.response.status,
+        message: `unexpected bulk update status ${result.response.status}: ${body}`,
+      });
       if (result.response.status < 500) {
         return yield* Effect.fail(lastError);
       }
@@ -1658,7 +1668,7 @@ const upsertBundledFunction = Effect.fnUntraced(function* (
   exists: boolean,
 ) {
   let shouldUpdate = exists;
-  let lastError: Error | undefined;
+  let lastError: Error | FunctionsApiStatusError | undefined;
 
   for (let attempt = 0; attempt <= 3; attempt += 1) {
     const action = shouldUpdate ? "update" : "create";
@@ -1708,9 +1718,10 @@ const upsertBundledFunction = Effect.fnUntraced(function* (
       if (!shouldUpdate && body.includes("Duplicated function slug")) {
         shouldUpdate = true;
       }
-      lastError = new Error(
-        `unexpected ${action} function status ${response.value.status}: ${body}`,
-      );
+      lastError = new FunctionsApiStatusError({
+        status: response.value.status,
+        message: `unexpected ${action} function status ${response.value.status}: ${body}`,
+      });
     } else {
       lastError = response.error;
     }
@@ -1740,7 +1751,10 @@ const deleteRemoteFunction = Effect.fnUntraced(function* (
   }
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
   return yield* Effect.fail(
-    new Error(`unexpected delete function status ${response.status}: ${body}`),
+    new FunctionsApiStatusError({
+      status: response.status,
+      message: `unexpected delete function status ${response.status}: ${body}`,
+    }),
   );
 });
 
