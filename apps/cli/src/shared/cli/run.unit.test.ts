@@ -231,6 +231,33 @@ describe("classifyParseErrorConsoleOutput", () => {
     ).toBe("flush-help-doc-to-stderr");
   });
 
+  // Codex review finding (CLI-1901 follow-up): `--` is the standard operand
+  // terminator — everything after it is positional, never a flag occurrence,
+  // for ANY option (mirrors the vendored `effect` lexer's own
+  // `argv.indexOf("--")` cutoff, `internal/lexer.ts`). Verified against the
+  // real `apps/cli-go/supabase-go` binary:
+  // `migration repair --local -- 20230101000000 --status` prints a bare
+  // `required flag(s) "status" not set`, no usage block — Go correctly parses
+  // the literal `--status` string as a second positional `version`, leaving
+  // the real `--status` flag genuinely unset. Without the `--` cutoff,
+  // `isMissingFlagTokenPresent` would find that trailing `--status` string
+  // anywhere in argv and wrongly conclude the flag was given but missing its
+  // value.
+  it("drops the help dump for a missing required flag whose token only appears after the -- terminator", () => {
+    const cause = Cause.fail(
+      new CliError.ShowHelp({
+        commandPath: ["supabase", "migration", "repair"],
+        errors: [new CliError.MissingOption({ option: "status" })],
+      }),
+    );
+    expect(
+      classifyParseErrorConsoleOutput(cause, {
+        rootCommand: testRoot,
+        args: ["migration", "repair", "--", "20230101000000", "--status"],
+      }),
+    ).toBe("drop");
+  });
+
   // Codex review finding (CLI-1901 follow-up): `sso add`'s `type` flag also has
   // a short alias, `-t` (`add.command.ts`). Go's pflag treats a present-but-
   // valueless SHORT flag exactly like the long form — `parseSingleShortArg`

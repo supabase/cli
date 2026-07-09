@@ -233,13 +233,25 @@ export type ParseErrorConsoleDisposition = "flush-unchanged" | "drop" | "flush-h
 /**
  * Whether `option`'s canonical long-form flag token (`--option` or
  * `--option=...`), or one of its short/long `aliases` (e.g. `-t`), appears
- * anywhere in the raw argv this run was invoked with — used to tell a
- * genuinely-absent required flag (Go: `SilenceUsage`-suppressed) apart from
- * one that's present but missing its value (Go: a `ParseFlags`-time error,
- * usage still shown). See the `"drop"` case on `ParseErrorConsoleDisposition`
- * above for the full rationale. `aliases` come from `flagAliasesFor` (see
+ * anywhere in the raw argv this run was invoked with BEFORE the `--`
+ * operand terminator (if any) — used to tell a genuinely-absent required
+ * flag (Go: `SilenceUsage`-suppressed) apart from one that's present but
+ * missing its value (Go: a `ParseFlags`-time error, usage still shown). See
+ * the `"drop"` case on `ParseErrorConsoleDisposition` above for the full
+ * rationale. `aliases` come from `flagAliasesFor` (see
  * `classifyParseErrorConsoleOutput` below), already formatted with their
  * leading dash(es).
+ *
+ * Tokens after a literal `--` are always positional operands, never a flag
+ * occurrence for ANY option — this mirrors the vendored `effect` CLI
+ * library's own lexer, which treats `--` the same way (`internal/lexer.ts`,
+ * `argv.indexOf("--")`). Without this cutoff, a command like
+ * `migration repair -- 20230101000000 --status` (a required `Flag.choice`,
+ * `legacy/commands/migration/repair/repair.command.ts`) would have its
+ * trailing `--status` positional argument misread as evidence the `--status`
+ * flag was given, flipping a genuinely-absent-flag failure (Go: no usage
+ * shown) into a "present but missing its value" one (Go: usage shown) — see
+ * CLI-1901.
  */
 function isMissingFlagTokenPresent(
   option: string,
@@ -247,7 +259,11 @@ function isMissingFlagTokenPresent(
   aliases: ReadonlyArray<string> = [],
 ): boolean {
   const tokens = [`--${option}`, ...aliases];
-  return args.some((arg) => tokens.some((token) => arg === token || arg.startsWith(`${token}=`)));
+  const terminatorIndex = args.indexOf("--");
+  const scannedArgs = terminatorIndex === -1 ? args : args.slice(0, terminatorIndex);
+  return scannedArgs.some((arg) =>
+    tokens.some((token) => arg === token || arg.startsWith(`${token}=`)),
+  );
 }
 
 export function classifyParseErrorConsoleOutput(
