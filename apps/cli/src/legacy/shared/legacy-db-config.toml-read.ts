@@ -812,6 +812,13 @@ const legacyAssertSecretValue = (
  * reset`/`migration up|down`/etc, and `config push`'s handler reuses it directly against its
  * own (`@supabase/config`-decoded) document — both need the exact same "decrypt-or-abort before
  * anything else runs" behaviour Go gets for free from `config.Load`.
+ *
+ * The "check every `[remotes.<name>]` block too" part of that contract only holds when `doc`
+ * still has an intact `remotes` key. The db-config reader's own remote-merge keeps it (so this
+ * function really does check every declared remote there), but `@supabase/config`'s
+ * `loadProjectConfig` strips `remotes` from the document once a block matches the target ref —
+ * so for `config push`, an undecryptable secret hiding in a *different, non-matching* remote
+ * block goes unchecked (see that command's SIDE_EFFECTS.md KNOWN GAPS).
  */
 export const legacyAssertDecryptableSecrets = (
   doc: unknown,

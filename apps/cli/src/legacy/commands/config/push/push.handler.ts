@@ -109,6 +109,13 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   // `DecryptSecretHookFunc`), from the shell + project env — same source/precedence
   // as `legacy-db-config.toml-read.ts` (`process.env` wins over `supabase/.env`).
   const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...process.env });
+  // Only reached by `legacyAssertDecryptableSecrets` below for an `env(VAR)` literal that
+  // survives `loaded.document`'s own (`@supabase/config`) interpolation pass unresolved — i.e.
+  // when this wider env source (matching Go's `loadNestedEnv`) resolves `VAR` but
+  // `@supabase/config`'s narrower one (`supabase/.env`/`.env.local` only) didn't. Practically
+  // unreachable in the same narrow way the CLI-1489 comment below already documents for
+  // non-secret fields; kept for parity with the shared function's other caller
+  // (`legacy-db-config.toml-read.ts`, whose pre-interpolation document relies on this).
   const secretEnvLookup = (name: string): string | undefined =>
     process.env[name] ?? projectEnv[name];
 
@@ -392,22 +399,17 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         );
         // `dotenvPrivateKeys` decrypts any `encrypted:` auth secret before it's
         // hashed/copied into the update body. The document-wide check above
-        // (step 1b) already guarantees decryptability, so this `Effect.try` is a
-        // defensive backstop, not the primary abort path.
-        let local = yield* Effect.try({
-          try: () =>
-            authSubsetFromConfig(
-              config,
-              projectId,
-              presence.auth,
-              authEmailContent,
-              dotenvPrivateKeys,
-            ),
-          catch: (cause) =>
-            new LegacyConfigPushLoadConfigError({
-              message: cause instanceof Error ? cause.message : String(cause),
-            }),
-        });
+        // (step 1b) already scanned every `config.Secret` path — including every
+        // field `authSubsetFromConfig` reads — and would have aborted by now if
+        // any were undecryptable, so the decrypt calls inside it are unreachable
+        // failure paths here, not a real branch to guard with `Effect.try`.
+        let local = authSubsetFromConfig(
+          config,
+          projectId,
+          presence.auth,
+          authEmailContent,
+          dotenvPrivateKeys,
+        );
         const projected = applyRemoteAuthConfig(local, remote);
         // MFA phone/webauthn are paid addons: confirm cost before enabling.
         if (mfaPhoneNewlyEnabled(local, projected) && !(yield* keep("auth_mfa_phone"))) {
