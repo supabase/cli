@@ -735,13 +735,20 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
  * Dotted paths of every `config.Secret`-typed field Go decrypts via its global
  * `DecryptSecretHookFunc` (`pkg/config/secret.go`, `config.go:730`) — the hook only runs
  * while decoding INTO a `config.Secret`, never over arbitrary strings. `*` matches any map
- * key (`auth.external.<provider>`, `auth.hook.<name>`). `[db.vault]` (a `map[string]Secret`)
- * is intentionally omitted — the reader decrypts it directly in the body with the same
- * fail-on-undecryptable behaviour. Derived from the Go structs (`auth.go`, `db.go`,
- * `config.go`); update alongside any new `Secret` field.
+ * key (`auth.external.<provider>`, `auth.hook.<name>`, `db.vault.<name>`). `[db.vault]`
+ * (a `map[string]Secret`, `pkg/config/db.go:96`) IS included — the db-config reader below
+ * also decrypts it directly in its own body ({@link legacyReadDbToml}'s `vault` loop) with
+ * the same fail-on-undecryptable behaviour, so for that caller this just detects the same
+ * failure a little earlier (no observable difference: same `legacyDecryptSecret` call, same
+ * `failed to parse config: <cause>` message). For `config push` — the other caller of
+ * {@link legacyAssertDecryptableSecrets}, which has no such downstream vault pass — omitting
+ * `db.vault` here would let an undecryptable vault secret through to the API calls, unlike Go.
+ * Derived from the Go structs (`auth.go`, `db.go`, `config.go`); update alongside any new
+ * `Secret` field.
  */
 const LEGACY_SECRET_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
   ["db", "root_key"],
+  ["db", "vault", "*"],
   ["auth", "publishable_key"],
   ["auth", "secret_key"],
   ["auth", "jwt_secret"],
@@ -999,9 +1006,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     // EVERY `config.Secret` field during `UnmarshalExact`, so an `encrypted:` secret anywhere
     // in the merged config that cannot be decrypted (e.g. no DOTENV_PRIVATE_KEY) aborts the
     // load with `failed to parse config: <error>` (secret.go:34,103; config.go:704) — before
-    // Validate and before connecting. The reader otherwise only decrypts `[db.vault]`, so
-    // assert decryptability across the whole document to match Go (a recursive scan tracks
-    // Go's "decode the entire config" better than a hand-listed set of Secret paths).
+    // Validate and before connecting. This also covers `[db.vault]` (see
+    // `LEGACY_SECRET_PATHS`), so the vault loop below never actually reaches an
+    // undecryptable value — it just decrypts-and-populates the already-asserted-valid ones.
     const secretError = legacyAssertDecryptableSecrets(effectiveDoc, lookup, dotenvPrivateKeys);
     if (secretError !== undefined) {
       return yield* Effect.fail(new LegacyDbConfigLoadError({ message: secretError }));

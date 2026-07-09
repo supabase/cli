@@ -852,6 +852,36 @@ openai_api_key = "${DOTENVX_ENCRYPTED_VALUE}"
     },
   );
 
+  it.live("aborts on an undecryptable [db.vault] secret (CLI-1881)", () => {
+    // `db.vault` decodes as `map[string]Secret` in Go (`pkg/config/db.go:96`), so Go's
+    // decrypt hook covers it during `config.Load` — but the shared
+    // `legacyAssertDecryptableSecrets` path list used to omit `db.vault` on the theory
+    // that only the db-config reader's own downstream vault loop needed it. `config push`
+    // never runs that downstream loop, so this proves the shared path list now covers
+    // `db.vault` for every caller.
+    const toml = `project_id = "test"
+[storage]
+enabled = false
+[auth]
+enabled = false
+[db.vault]
+my_secret = "${DOTENVX_ENCRYPTED_VALUE}"
+`;
+    const { layer, api } = setup({ toml, yes: true });
+    return withDotenvPrivateKey(
+      undefined,
+      Effect.gen(function* () {
+        const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+          Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+            Effect.succeed(error.message),
+          ),
+        );
+        expect(message).toBe("failed to parse config: missing private key");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer)),
+    );
+  });
+
   it.live("pushes storage when enabled and changed", () => {
     const toml = `project_id = "test"
 [auth]
