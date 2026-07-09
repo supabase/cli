@@ -705,4 +705,28 @@ describe("legacy gen signing-key integration", () => {
       expect(telemetry?.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
+
+  it.live("flushes telemetry state even when the project .env is malformed (Codex review)", () => {
+    // Go attaches the telemetry service in root's `PersistentPreRunE` (cmd/root.go:131-155),
+    // before this command's own `RunE` runs `flags.LoadConfig` (signingkeys.go:99), so
+    // `service.Capture` still fires even when that project-.env load fails. The project-env
+    // resolution here must live inside the `Effect.ensuring(telemetryState.flush)`-wrapped
+    // block for the same reason — locks in that fix.
+    const { layer, telemetry } = setup({ trackTelemetry: true });
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(tempRoot.current, "supabase", ".env"), "!=broken\n"),
+      );
+
+      const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+      }
+      expect(telemetry?.flushed).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
 });

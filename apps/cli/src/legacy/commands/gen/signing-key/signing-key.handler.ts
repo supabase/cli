@@ -258,15 +258,19 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
   const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // Go's `flags.LoadConfig` (`signingkeys.go:99`) loads the project `.env` files before the
-  // overwrite prompt reads `viper.GetBool("YES")` (`console.PromptYesNo`, `signingkeys.go:130`),
-  // so a `SUPABASE_YES` set only in `supabase/.env` must auto-confirm here too.
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
-  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
   const emphasize = (text: string) => styleIfTty(tty.stdoutIsTty, "bold", text);
   const warnText = (text: string) => styleIfTty(tty.stdoutIsTty, "yellow", text);
 
   return yield* Effect.gen(function* () {
+    // Go's `flags.LoadConfig` (`signingkeys.go:99`) loads the project `.env` files before the
+    // overwrite prompt reads `viper.GetBool("YES")` (`console.PromptYesNo`, `signingkeys.go:130`),
+    // so a `SUPABASE_YES` set only in `supabase/.env` must auto-confirm here too. Resolved inside
+    // this block (not above it) so a malformed/unreadable `.env` still flushes telemetry below,
+    // matching Go: telemetry attaches in root's `PersistentPreRunE` (`cmd/root.go:131-155`)
+    // before this command's own `RunE` runs `flags.LoadConfig`, so `service.Capture` still fires
+    // in Go even when that load fails.
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
     // Match Go's order: LoadConfig validates the configured signing-keys file before any key is
     // generated, so a broken config fails fast without doing throwaway crypto work.
     const signingKeysConfig = yield* loadSigningKeysConfig(cliConfig.workdir);
