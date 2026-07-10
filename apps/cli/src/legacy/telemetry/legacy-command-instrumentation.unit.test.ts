@@ -3,6 +3,7 @@ import { Effect, Layer, Option, Stdio } from "effect";
 import { Flag } from "effect/unstable/cli";
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import {
+  LegacyAgentFlag,
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyOutputFlag,
@@ -1072,7 +1073,7 @@ describe("withLegacyCommandInstrumentation", () => {
   );
 
   it.live(
-    "still redacts a changed global choice flag like --dns-resolver (global EnumFlag safety is CLI-1904's scope, not this fix's)",
+    "passes a changed global choice flag like --dns-resolver through verbatim (Go parity: isEnumFlag, CLI-1904)",
     () => {
       const analytics = mockContextualAnalytics();
 
@@ -1091,7 +1092,68 @@ describe("withLegacyCommandInstrumentation", () => {
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
-            expect(event?.properties.flags).toEqual({ "dns-resolver": "<redacted>" });
+            expect(event?.properties.flags).toEqual({ "dns-resolver": "https" });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live(
+    "passes a changed global choice flag like --agent through verbatim (Go parity: isEnumFlag, CLI-1904)",
+    () => {
+      const analytics = mockContextualAnalytics();
+
+      return Effect.void.pipe(
+        withLegacyCommandInstrumentation({ flags: {} }),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(
+          Stdio.layerTest({
+            args: Effect.succeed(["backups", "list", "--agent", "yes"]),
+          }),
+        ),
+        Effect.provide(commandRuntimeLayer(["backups", "list"])),
+        Effect.provide(Layer.succeed(LegacyAgentFlag, "yes" as const)),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const event = analytics.captured[0];
+            expect(event?.properties.flags).toEqual({ agent: "yes" });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live(
+    "still redacts a global choice flag shadowed by a command's own differently-typed local flag (db diff's local string --output, Go parity)",
+    () => {
+      // `db diff` declares its own local `output: Flag.string("output")` (a
+      // file path, `cmd/db.go:622`) rather than a `Flag.choice` — mirroring
+      // Go, where that command's own non-enum flag object governs
+      // `isEnumFlag`, not root's persistent `*utils.EnumFlag`. Simulate that
+      // shape here: `output` is declared in the handler's own `flags` record
+      // (so `isFromHandler` is true) but absent from `config`, so it must NOT
+      // inherit safety from `GLOBAL_CHOICE_FLAG_NAMES` just because the CLI
+      // name collides with the global `--output` choice flag.
+      const analytics = mockContextualAnalytics();
+
+      return Effect.void.pipe(
+        withLegacyCommandInstrumentation({ flags: { output: "diff.sql" } }),
+        Effect.provide(analytics.layer),
+        Effect.provide(mockProcessControl().layer),
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "diff", "--output", "diff.sql"]),
+          }),
+        ),
+        Effect.provide(commandRuntimeLayer(["db", "diff"])),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const event = analytics.captured[0];
+            expect(event?.properties.flags).toEqual({ output: "<redacted>" });
           }),
         ),
       );
@@ -1170,9 +1232,10 @@ describe("withLegacyCommandInstrumentation", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
-          // `output` is a global choice flag — still redacted (CLI-1904's
-          // scope), but it must be PRESENT, not silently dropped.
-          expect(event?.properties.flags).toEqual({ output: "<redacted>" });
+          // `output` is a global choice flag — passed through verbatim
+          // (Go parity: isEnumFlag, CLI-1904), and it must be PRESENT, not
+          // silently dropped.
+          expect(event?.properties.flags).toEqual({ output: "json" });
         }),
       ),
     );
