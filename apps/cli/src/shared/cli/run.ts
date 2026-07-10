@@ -359,6 +359,12 @@ export function classifyParseErrorConsoleOutput(
  * error line) from this one call site, without patching the vendored
  * library itself.
  *
+ * TODO: remove this whole buffering/classification dance once upstream
+ * Effect-TS/effect#6313 is fixed — https://github.com/Effect-TS/effect/issues/6313.
+ * `runWith` has no supported way to opt out of, or redirect, its own
+ * `showHelp` console writes; everything below exists only to work around
+ * that gap from the outside.
+ *
  * The "flush unchanged" outcome covers success, `--help`, `--version`,
  * `--completions`, and the bare-group-command help dump, all of which stay
  * untouched.
