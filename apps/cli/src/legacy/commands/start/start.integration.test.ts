@@ -1831,4 +1831,84 @@ content_path = "./templates/custom_notice.html"
       }).pipe(Effect.provide(layer));
     });
   });
+
+  describe("SUPABASE_DB_PORT override", () => {
+    it.live("publishes Postgres on the env-overridden DB port, not config.db.port", () => {
+      const previous = process.env["SUPABASE_DB_PORT"];
+      process.env["SUPABASE_DB_PORT"] = "54329";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const dbCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
+        );
+        expect(dbCreate?.args).toContain("54329:5432");
+        expect(dbCreate?.args).not.toContain("54322:5432");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_PORT"];
+            else process.env["SUPABASE_DB_PORT"] = previous;
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("storage feature env overrides", () => {
+    it.live(
+      "honors SUPABASE_STORAGE_S3_PROTOCOL_ENABLED and SUPABASE_STORAGE_VECTOR_ENABLED",
+      () => {
+        const previousS3 = process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"];
+        const previousVector = process.env["SUPABASE_STORAGE_VECTOR_ENABLED"];
+        process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"] = "false";
+        process.env["SUPABASE_STORAGE_VECTOR_ENABLED"] = "false";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const storageCreate = child.spawned.find(
+            (s) =>
+              s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
+          );
+          expect(storageCreate?.env["S3_PROTOCOL_ENABLED"]).toBe("false");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousS3 === undefined)
+                delete process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"];
+              else process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"] = previousS3;
+              if (previousVector === undefined)
+                delete process.env["SUPABASE_STORAGE_VECTOR_ENABLED"];
+              else process.env["SUPABASE_STORAGE_VECTOR_ENABLED"] = previousVector;
+            }),
+          ),
+        );
+      },
+    );
+  });
+
+  describe("auth.* env overrides reach GoTrue's container", () => {
+    it.live("honors SUPABASE_AUTH_ENABLE_SIGNUP for GOTRUE_DISABLE_SIGNUP", () => {
+      const previous = process.env["SUPABASE_AUTH_ENABLE_SIGNUP"];
+      process.env["SUPABASE_AUTH_ENABLE_SIGNUP"] = "false";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_DISABLE_SIGNUP"]).toBe("true");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_AUTH_ENABLE_SIGNUP"];
+            else process.env["SUPABASE_AUTH_ENABLE_SIGNUP"] = previous;
+          }),
+        ),
+      );
+    });
+  });
 });

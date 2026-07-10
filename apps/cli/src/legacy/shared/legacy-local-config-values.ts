@@ -92,7 +92,19 @@ export const LEGACY_POSTGRES_DEFAULT_ROOT_KEY =
 export interface LegacyLocalConfigValues {
   readonly apiUrl: string;
   readonly apiPort: number;
+  readonly dbPort: number;
   readonly rootKey: string;
+  readonly authSiteUrl: string;
+  readonly authJwtIssuer: string | undefined;
+  readonly authJwtExpiry: number;
+  readonly authAdditionalRedirectUrls: ReadonlyArray<string>;
+  readonly authEnableSignup: boolean;
+  readonly authEnableAnonymousSignIns: boolean;
+  readonly authEnableRefreshTokenRotation: boolean;
+  readonly authRefreshTokenReuseInterval: number;
+  readonly authEnableManualLinking: boolean;
+  readonly authMinimumPasswordLength: number;
+  readonly authPasswordRequirements: string;
   readonly restUrl: string;
   readonly graphqlUrl: string;
   readonly functionsUrl: string;
@@ -715,46 +727,65 @@ function readAuthEmailTemplateContent(
 }
 
 /**
- * `SUPABASE_DB_MAJOR_VERSION` sibling of {@link envOverridePort} for the one
- * numeric field Go decodes as `uint` rather than `uint16` (`pkg/config/db.go:87`)
- * — same generic Viper `AutomaticEnv` binding (`config.go:576-586`), same
- * mapstructure hard-fail-on-bad-value semantics as the port/bool overrides, but
- * with no upper-bound cap. A non-digit override folds into the same generic
- * "Invalid db.major_version" message `legacyValidateResolvedConfig` produces for
- * an out-of-set numeric value, since Go's own decode failure and `Validate`
- * failure for this field aren't independently distinguishable from the CLI's
- * output the way ports/bools are.
+ * `SUPABASE_<NAME>` sibling of {@link envOverridePort} for `uint`-typed config
+ * fields with no upper-bound cap (`db.major_version`, `edge_runtime.
+ * deno_version`, `auth.jwt_expiry`, `auth.refresh_token_reuse_interval`,
+ * `auth.minimum_password_length`, …) — same generic Viper `AutomaticEnv`
+ * binding (`config.go:576-586`), same mapstructure hard-fail-on-bad-value
+ * semantics as the capped `uint16` port fields, but without `MAX_PORT`. A
+ * non-digit override folds into the same generic "Invalid <field>" message
+ * `legacyValidateResolvedConfig` produces for an out-of-set numeric value,
+ * since Go's own decode failure and `Validate` failure for these fields
+ * aren't independently distinguishable from the CLI's output the way
+ * ports/bools are.
  */
-function envOverrideMajorVersion(
+function envOverrideUint(
+  name: string,
+  dottedFieldPath: string,
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number {
-  const value = envOverride("SUPABASE_DB_MAJOR_VERSION", undefined, projectEnvValues);
+  const value = envOverride(name, undefined, projectEnvValues);
   if (value === undefined) return configured;
   if (!/^\d+$/.test(value)) {
-    throw new Error(`Failed reading config: Invalid db.major_version: ${value}.`);
+    throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
   }
   return Number(value);
 }
 
-/**
- * `SUPABASE_EDGE_RUNTIME_DENO_VERSION` sibling of {@link envOverrideMajorVersion}
- * — same generic Viper `AutomaticEnv` binding, same mapstructure
- * hard-fail-on-bad-value semantics, no upper-bound cap. A non-digit override
- * folds into the same generic "Invalid edge_runtime.deno_version" message
- * `legacyValidateResolvedConfig` produces for an out-of-set numeric value.
- */
+/** `SUPABASE_DB_MAJOR_VERSION` — see {@link envOverrideUint}. */
+export function legacyEnvOverrideMajorVersion(
+  configured: number,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): number {
+  return envOverrideUint(
+    "SUPABASE_DB_MAJOR_VERSION",
+    "db.major_version",
+    configured,
+    projectEnvValues,
+  );
+}
+
+/** `SUPABASE_EDGE_RUNTIME_DENO_VERSION` — see {@link envOverrideUint}. */
 function envOverrideDenoVersion(
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number {
-  const value = envOverride("SUPABASE_EDGE_RUNTIME_DENO_VERSION", undefined, projectEnvValues);
-  if (value === undefined) return configured;
-  if (!/^\d+$/.test(value)) {
-    throw new Error(`Failed reading config: Invalid edge_runtime.deno_version: ${value}.`);
-  }
-  return Number(value);
+  return envOverrideUint(
+    "SUPABASE_EDGE_RUNTIME_DENO_VERSION",
+    "edge_runtime.deno_version",
+    configured,
+    projectEnvValues,
+  );
 }
+
+/** Go's `password_requirements` fixed enum (`@supabase/config`'s `packages/config/src/auth/index.ts`). */
+const LEGACY_PASSWORD_REQUIREMENTS_VALUES = new Set([
+  "",
+  "letters_digits",
+  "lower_upper_letters_digits",
+  "lower_upper_letters_digits_symbols",
+]);
 
 /** Narrows an unknown value to a plain object, mirroring `legacy-db-config.toml-read.ts`'s `asRecord`. */
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -1073,7 +1104,7 @@ export function legacyResolveLocalConfigValues(
   const dbPort = envOverridePort("SUPABASE_DB_PORT", config.db.port, "db.port", projectEnvValues);
   // Go's `Config.Validate` checks `db.major_version` right after `db.port`
   // (`pkg/config/config.go:1034-1061`), unconditionally (no `enabled` gate).
-  const majorVersion = envOverrideMajorVersion(config.db.major_version, projectEnvValues);
+  const majorVersion = legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
   // `db.root_key` isn't modeled in `@supabase/config`'s schema (every other
   // `db.*` field is), so it's read off the raw pre-schema document — same
   // presence-based pattern as `authDocument` below. Go writes the
@@ -1168,7 +1199,93 @@ export function legacyResolveLocalConfigValues(
   // `@supabase/config`'s schema only defaults `site_url` when the key is ABSENT
   // (`Schema.withDecodingDefaultKey`), so an explicit `site_url = ""` decodes as
   // `""` with no schema-level error, same gap as `db.port === 0` above.
-  const siteUrl = envOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues);
+  const siteUrl =
+    envOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues) ??
+    config.auth.site_url;
+  // Go's `start.go` builds GoTrue's env straight off `utils.Config.Auth.*`
+  // with no local override logic of its own (`start.go:1365-1405`) — the
+  // override happens earlier, generically, via Viper's `AutomaticEnv`
+  // (`config.go:585-586`), so every flat `auth.*` scalar Go feeds into
+  // GoTrue's env must go through the same override resolution `siteUrl`
+  // above already gets, not just the fields `Validate` happens to check.
+  const jwtIssuer = envOverride(
+    "SUPABASE_AUTH_JWT_ISSUER",
+    config.auth.jwt_issuer,
+    projectEnvValues,
+  );
+  const jwtExpiry = envOverrideUint(
+    "SUPABASE_AUTH_JWT_EXPIRY",
+    "auth.jwt_expiry",
+    config.auth.jwt_expiry,
+    projectEnvValues,
+  );
+  // Go decodes `additional_redirect_urls` (a `[]string`) through the same
+  // `StringToSliceHookFunc(",")` mapstructure hook as every other Go
+  // string-slice field (`config.go:775-784`) — same comma-split-override
+  // pattern as `auth.webauthn.rp_origins` below.
+  const additionalRedirectUrlsOverride = envOverride(
+    "SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS",
+    undefined,
+    projectEnvValues,
+  );
+  const additionalRedirectUrls =
+    additionalRedirectUrlsOverride !== undefined
+      ? additionalRedirectUrlsOverride.split(",")
+      : config.auth.additional_redirect_urls;
+  const enableSignup = legacyEnvOverrideBool(
+    "SUPABASE_AUTH_ENABLE_SIGNUP",
+    config.auth.enable_signup,
+    "auth.enable_signup",
+    projectEnvValues,
+  );
+  const enableAnonymousSignIns = legacyEnvOverrideBool(
+    "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS",
+    config.auth.enable_anonymous_sign_ins,
+    "auth.enable_anonymous_sign_ins",
+    projectEnvValues,
+  );
+  const enableRefreshTokenRotation = legacyEnvOverrideBool(
+    "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
+    config.auth.enable_refresh_token_rotation,
+    "auth.enable_refresh_token_rotation",
+    projectEnvValues,
+  );
+  const refreshTokenReuseInterval = envOverrideUint(
+    "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
+    "auth.refresh_token_reuse_interval",
+    config.auth.refresh_token_reuse_interval,
+    projectEnvValues,
+  );
+  const enableManualLinking = legacyEnvOverrideBool(
+    "SUPABASE_AUTH_ENABLE_MANUAL_LINKING",
+    config.auth.enable_manual_linking,
+    "auth.enable_manual_linking",
+    projectEnvValues,
+  );
+  const minimumPasswordLength = envOverrideUint(
+    "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH",
+    "auth.minimum_password_length",
+    config.auth.minimum_password_length,
+    projectEnvValues,
+  );
+  // Go's `PasswordRequirements.UnmarshalText` (`pkg/config/auth.go:26-31`)
+  // hard-fails config loading on a value outside this fixed set — same
+  // decode-time-failure semantics as the numeric overrides above, just
+  // string-typed.
+  const passwordRequirementsOverride = envOverride(
+    "SUPABASE_AUTH_PASSWORD_REQUIREMENTS",
+    undefined,
+    projectEnvValues,
+  );
+  if (
+    passwordRequirementsOverride !== undefined &&
+    !LEGACY_PASSWORD_REQUIREMENTS_VALUES.has(passwordRequirementsOverride)
+  ) {
+    throw new Error(
+      `Failed reading config: Invalid auth.password_requirements: ${passwordRequirementsOverride}.`,
+    );
+  }
+  const passwordRequirements = passwordRequirementsOverride ?? config.auth.password_requirements;
   // `LoadedProjectConfig.document` (the raw, pre-schema-default TOML `config` was decoded from) —
   // hoisted here (rather than inside the `authEnabled` block below, where it used to live) because
   // the captcha presence check right below needs it too. `undefined` for callers that haven't
@@ -1644,7 +1761,19 @@ export function legacyResolveLocalConfigValues(
   return {
     apiUrl: apiExternalUrl,
     apiPort,
+    dbPort,
     rootKey,
+    authSiteUrl: siteUrl,
+    authJwtIssuer: jwtIssuer,
+    authJwtExpiry: jwtExpiry,
+    authAdditionalRedirectUrls: additionalRedirectUrls,
+    authEnableSignup: enableSignup,
+    authEnableAnonymousSignIns: enableAnonymousSignIns,
+    authEnableRefreshTokenRotation: enableRefreshTokenRotation,
+    authRefreshTokenReuseInterval: refreshTokenReuseInterval,
+    authEnableManualLinking: enableManualLinking,
+    authMinimumPasswordLength: minimumPasswordLength,
+    authPasswordRequirements: passwordRequirements,
     restUrl: apiUrlWithPath(apiExternalUrl, "/rest/v1"),
     graphqlUrl: apiUrlWithPath(apiExternalUrl, "/graphql/v1"),
     functionsUrl: apiUrlWithPath(apiExternalUrl, "/functions/v1"),

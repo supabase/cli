@@ -33,7 +33,11 @@
  * config `Config.Load` actually produces. `@supabase/config`'s schema
  * mirrors this by decoding `storage.s3_protocol` unconditionally (never
  * `optionalKey`, unlike `image_transformation`), so the raw decoded boolean
- * is already Go-equivalent with no extra presence check needed.
+ * needs no extra PRESENCE check — but the caller is still responsible for
+ * applying `SUPABASE_STORAGE_S3_PROTOCOL_ENABLED`/`SUPABASE_STORAGE_VECTOR_
+ * ENABLED` (Go's generic Viper `AutomaticEnv` override, same mechanism
+ * `imageTransformationEnabled`'s own compound gate already accounts for)
+ * before passing `s3ProtocolEnabled`/`vectorBucketsEnabled` in.
  */
 
 import type { ProjectConfig } from "@supabase/config";

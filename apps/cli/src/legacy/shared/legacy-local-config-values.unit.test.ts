@@ -415,11 +415,12 @@ describe("legacyResolveLocalConfigValues", () => {
       for (const key of ENV_KEYS) delete process.env[key];
     });
 
-    it("overrides db.port for the derived DB URL", () => {
+    it("overrides db.port for the derived DB URL and the exposed dbPort", () => {
       process.env["SUPABASE_DB_PORT"] = "54329";
       const config = baseConfig({ db: { port: 54322 } });
       const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.dbUrl).toBe("postgresql://postgres:postgres@127.0.0.1:54329/postgres");
+      expect(values.dbPort).toBe(54329);
     });
 
     it("overrides studio.port for the derived Studio URL", () => {
@@ -994,6 +995,82 @@ describe("legacyResolveLocalConfigValues", () => {
         const config = baseConfig({ auth: { enabled: true, site_url: "" } });
         expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
       });
+
+      it("exposes the overridden site_url on the returned values, not just for validation", () => {
+        process.env["SUPABASE_AUTH_SITE_URL"] = "http://localhost:4000";
+        const config = baseConfig({ auth: { enabled: true, site_url: "http://127.0.0.1:3000" } });
+        const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+        expect(values.authSiteUrl).toBe("http://localhost:4000");
+      });
+    });
+  });
+
+  describe("auth.* flat scalar env overrides (GoTrue container env, not just validation)", () => {
+    const AUTH_SCALAR_ENV_KEYS = [
+      "SUPABASE_AUTH_JWT_ISSUER",
+      "SUPABASE_AUTH_JWT_EXPIRY",
+      "SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS",
+      "SUPABASE_AUTH_ENABLE_SIGNUP",
+      "SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS",
+      "SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION",
+      "SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL",
+      "SUPABASE_AUTH_ENABLE_MANUAL_LINKING",
+      "SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH",
+      "SUPABASE_AUTH_PASSWORD_REQUIREMENTS",
+    ];
+    afterEach(() => {
+      for (const key of AUTH_SCALAR_ENV_KEYS) delete process.env[key];
+    });
+
+    it("overrides every flat auth.* scalar GoTrue needs, not just the ones Validate checks", () => {
+      process.env["SUPABASE_AUTH_JWT_ISSUER"] = "https://issuer.example.com";
+      process.env["SUPABASE_AUTH_JWT_EXPIRY"] = "7200";
+      process.env["SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS"] =
+        "https://a.example.com,https://b.example.com";
+      process.env["SUPABASE_AUTH_ENABLE_SIGNUP"] = "false";
+      process.env["SUPABASE_AUTH_ENABLE_ANONYMOUS_SIGN_INS"] = "true";
+      process.env["SUPABASE_AUTH_ENABLE_REFRESH_TOKEN_ROTATION"] = "false";
+      process.env["SUPABASE_AUTH_REFRESH_TOKEN_REUSE_INTERVAL"] = "20";
+      process.env["SUPABASE_AUTH_ENABLE_MANUAL_LINKING"] = "true";
+      process.env["SUPABASE_AUTH_MINIMUM_PASSWORD_LENGTH"] = "12";
+      process.env["SUPABASE_AUTH_PASSWORD_REQUIREMENTS"] = "lower_upper_letters_digits";
+
+      const config = baseConfig({
+        auth: {
+          jwt_expiry: 3600,
+          additional_redirect_urls: [],
+          enable_signup: true,
+          enable_anonymous_sign_ins: false,
+          enable_refresh_token_rotation: true,
+          refresh_token_reuse_interval: 10,
+          enable_manual_linking: false,
+          minimum_password_length: 6,
+          password_requirements: "",
+        },
+      });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+
+      expect(values.authJwtIssuer).toBe("https://issuer.example.com");
+      expect(values.authJwtExpiry).toBe(7200);
+      expect(values.authAdditionalRedirectUrls).toEqual([
+        "https://a.example.com",
+        "https://b.example.com",
+      ]);
+      expect(values.authEnableSignup).toBe(false);
+      expect(values.authEnableAnonymousSignIns).toBe(true);
+      expect(values.authEnableRefreshTokenRotation).toBe(false);
+      expect(values.authRefreshTokenReuseInterval).toBe(20);
+      expect(values.authEnableManualLinking).toBe(true);
+      expect(values.authMinimumPasswordLength).toBe(12);
+      expect(values.authPasswordRequirements).toBe("lower_upper_letters_digits");
+    });
+
+    it("rejects an unrecognized SUPABASE_AUTH_PASSWORD_REQUIREMENTS override, matching Go's UnmarshalText", () => {
+      process.env["SUPABASE_AUTH_PASSWORD_REQUIREMENTS"] = "bogus";
+      const config = baseConfig();
+      expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
+        "Invalid auth.password_requirements: bogus",
+      );
     });
   });
 

@@ -180,8 +180,19 @@ export interface LegacyStartSetupLocalDatabaseInput {
   readonly jwtSecret: string;
   /** `legacyResolveLocalJwks`'s resolved JWKS JSON string (only read when `realtime.enabled`) — already built by the caller, not recomputed here. */
   readonly jwks: string;
-  /** `LegacyLocalConfigValues.apiUrl` — derives the auth job's `API_EXTERNAL_URL` the same way Go's `AuthExternalURL()` does (see this module's header on `gotrue.service.ts`'s identical, un-exported derivation). */
+  /** `LegacyLocalConfigValues.apiUrl` — the auth job's `API_EXTERNAL_URL` falls back to this, `/auth/v1`-suffixed, only when {@link authExternalUrl} is unset. */
   readonly apiUrl: string;
+  /**
+   * Raw `auth.external_url` (already `SUPABASE_AUTH_EXTERNAL_URL`-overridden
+   * by the caller) — Go's `Config.Auth.ExternalUrl`/`AuthExternalURL()`
+   * (`pkg/config/config.go:543-545`, `auth.go:401-405`): an explicit value
+   * wins over the `apiUrl`-derived fallback, same as `gotrue.service.ts`'s
+   * `LegacyBuildGotrueEnvInput.authExternalUrl` for the long-running
+   * container — this one-shot job must resolve to the SAME value so a fresh
+   * database's auth migration never disagrees with the container it's
+   * migrating for.
+   */
+  readonly authExternalUrl?: string;
   /** `LegacyLocalConfigValues.anonKey`. */
   readonly anonKey: string;
   /** `LegacyLocalConfigValues.serviceRoleKey`. */
@@ -331,16 +342,20 @@ function legacyStartStorageMigrateEnv(input: {
 /** Go's `initAuthJob` env (`start.go:319-332`) — deliberately distinct from `gotrue.service.ts`'s full container env, see this module's header. */
 function legacyStartAuthMigrateEnv(input: {
   readonly apiUrl: string;
+  readonly authExternalUrl: string | undefined;
   readonly siteUrl: ProjectConfig["auth"]["site_url"];
   readonly jwtSecret: string;
   readonly dbHost: string;
   readonly dbPassword: string;
 }): Record<string, string> {
   // Go's `AuthExternalURL()` (`pkg/config/config.go:543-545` -> `auth.GetExternalURL`):
-  // `auth.external_url` has no `@supabase/config` schema field at all (same accepted
-  // gap as `gotrue.service.ts`'s identical, un-exported derivation), so this is
-  // always derived from `apiUrl`.
-  const authExternalUrl = `${input.apiUrl.replace(/\/+$/, "")}/auth/v1`;
+  // an explicit `auth.external_url` wins outright; only derive from `apiUrl`
+  // when it's unset — matching `gotrue.service.ts`'s identical preference
+  // chain for the long-running container.
+  const authExternalUrl =
+    input.authExternalUrl !== undefined && input.authExternalUrl.length > 0
+      ? input.authExternalUrl
+      : `${input.apiUrl.replace(/\/+$/, "")}/auth/v1`;
   return {
     API_EXTERNAL_URL: authExternalUrl,
     GOTRUE_LOG_LEVEL: "error",
@@ -407,6 +422,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
       networkId: input.networkId,
       env: legacyStartAuthMigrateEnv({
         apiUrl: input.apiUrl,
+        authExternalUrl: input.authExternalUrl,
         siteUrl: input.config.auth.site_url,
         jwtSecret: input.jwtSecret,
         dbHost,

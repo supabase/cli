@@ -47,6 +47,7 @@ import {
   envOverride,
   LEGACY_DEPRECATED_EXTERNAL_PROVIDERS,
   legacyEnvOverrideBool,
+  legacyEnvOverrideMajorVersion,
   legacyResolveAuthEmailSmtp,
   legacyResolveConfiguredSigningKeys,
   legacyResolveLocalConfigValues,
@@ -325,6 +326,31 @@ function resolveGotrueExternalProviders(
  * `gotrue.service.ts`'s hardcoded `LEGACY_GOTRUE_DEFAULT_SIGNING_KEY`) only
  * when no `signing_keys_path` is configured or auth is disabled.
  */
+
+/**
+ * `auth.external_url` isn't modeled in `@supabase/config`'s schema, so it's
+ * read off the raw document — same presence-based pattern as passkey/
+ * webauthn/external. Go's `auth.GetExternalURL` (`pkg/config/auth.go:401-405`)
+ * prefers this explicit value over deriving from `apiUrl`, and feeds it into
+ * `API_EXTERNAL_URL`, the mailer verify URL, the default JWT issuer, and
+ * OAuth redirect-URI fallbacks (`start.go:1354,1357,1374,1446`) for the
+ * long-running GoTrue container — AND into the identical `API_EXTERNAL_URL`
+ * Go's one-shot fresh-DB auth migration job builds (`db/start/start.go:323`).
+ * Both callers must resolve the SAME value, hence this standalone helper
+ * instead of two independent derivations.
+ */
+function resolveAuthExternalUrl(
+  document: Readonly<Record<string, unknown>> | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): string | undefined {
+  const rawAuthExternalUrl = asRecord(document?.["auth"])?.["external_url"];
+  return envOverride(
+    "SUPABASE_AUTH_EXTERNAL_URL",
+    typeof rawAuthExternalUrl === "string" ? rawAuthExternalUrl : undefined,
+    projectEnvValues,
+  );
+}
+
 function resolveGotrueEnvInput(params: {
   readonly context: LegacyLocalProjectContext;
   readonly values: LegacyLocalConfigValues;
@@ -372,34 +398,23 @@ function resolveGotrueEnvInput(params: {
 
   const { passkeyEnabled, webauthn } = resolveGotruePasskeyWebauthn(document);
   const externalProviders = resolveGotrueExternalProviders(document, config.auth.external);
-  // `auth.external_url` isn't modeled in `@supabase/config`'s schema, so it's
-  // read off the raw document — same presence-based pattern as passkey/
-  // webauthn/external above. Go's `auth.GetExternalURL` (`pkg/config/auth.go:
-  // 401-405`) prefers this explicit value over deriving from `apiUrl`, and
-  // feeds it into `API_EXTERNAL_URL`, the mailer verify URL, the default JWT
-  // issuer, and OAuth redirect-URI fallbacks (`start.go:1354,1357,1374,1446`).
-  const rawAuthExternalUrl = asRecord(document?.["auth"])?.["external_url"];
-  const authExternalUrl = envOverride(
-    "SUPABASE_AUTH_EXTERNAL_URL",
-    typeof rawAuthExternalUrl === "string" ? rawAuthExternalUrl : undefined,
-    projectEnvValues,
-  );
+  const authExternalUrl = resolveAuthExternalUrl(document, projectEnvValues);
 
   return {
     apiUrl: values.apiUrl,
     authExternalUrl,
     jwtSecret: values.jwtSecret,
-    jwtIssuer: config.auth.jwt_issuer,
-    jwtExpiry: config.auth.jwt_expiry,
-    siteUrl: config.auth.site_url,
-    additionalRedirectUrls: config.auth.additional_redirect_urls,
-    enableSignup: config.auth.enable_signup,
-    enableAnonymousSignIns: config.auth.enable_anonymous_sign_ins,
-    enableRefreshTokenRotation: config.auth.enable_refresh_token_rotation,
-    refreshTokenReuseInterval: config.auth.refresh_token_reuse_interval,
-    enableManualLinking: config.auth.enable_manual_linking,
-    minimumPasswordLength: config.auth.minimum_password_length,
-    passwordRequirements: config.auth.password_requirements,
+    jwtIssuer: values.authJwtIssuer,
+    jwtExpiry: values.authJwtExpiry,
+    siteUrl: values.authSiteUrl,
+    additionalRedirectUrls: values.authAdditionalRedirectUrls,
+    enableSignup: values.authEnableSignup,
+    enableAnonymousSignIns: values.authEnableAnonymousSignIns,
+    enableRefreshTokenRotation: values.authEnableRefreshTokenRotation,
+    refreshTokenReuseInterval: values.authRefreshTokenReuseInterval,
+    enableManualLinking: values.authEnableManualLinking,
+    minimumPasswordLength: values.authMinimumPasswordLength,
+    passwordRequirements: values.authPasswordRequirements,
     email: config.auth.email,
     kongContainerName,
     smtp,
@@ -627,6 +642,18 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }),
     });
 
+    // Go's `Config.Load` folds `SUPABASE_DB_MAJOR_VERSION` into
+    // `c.Db.MajorVersion` before the image-selection switch runs
+    // (`pkg/config/config.go:585-586,819-827`), and every later Go read of
+    // `utils.Config.Db.MajorVersion` — image, version-pin gating, the
+    // PG14/PG15+ branch, migration-job selection — sees that SAME
+    // already-overridden value. `legacyResolveLocalConfigValues` already
+    // computed/validated this exact value above; recomputing it here (rather
+    // than threading it out of `values`) matches this file's own precedent
+    // for the realtime/storage/auth `enabled` overrides a few dozen lines
+    // below.
+    const majorVersion = legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
+
     // 7. Resolve every image that will actually be pulled (Go's
     // `ensureImagesCached`, `start.go:225-262,289`) BEFORE any container is
     // created.
@@ -634,7 +661,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       fs,
       path,
       cliConfig.workdir,
-      config.db.major_version,
+      majorVersion,
       config.experimental.orioledb_version,
     );
     // Go's `Config.Load` rewrites `c.Auth.Image`/`c.Api.Image`/etc. from
@@ -648,7 +675,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       fs,
       path,
       cliConfig.workdir,
-      config.db.major_version,
+      majorVersion,
     );
     const imagePlan = legacyResolveStartImagePlan(gates, serviceVersionOverrides);
     // Edge Runtime doesn't go through `legacyResolveStartImagePlan` (see
@@ -932,9 +959,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               s3Region: values.storageS3Region,
               s3AccessKeyId: values.storageS3AccessKeyId,
               s3SecretAccessKey: values.storageS3SecretAccessKey,
-              s3ProtocolEnabled: config.storage.s3_protocol.enabled,
+              s3ProtocolEnabled: legacyEnvOverrideBool(
+                "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
+                config.storage.s3_protocol.enabled,
+                "storage.s3_protocol.enabled",
+                projectEnvValues,
+              ),
               imageTransformationEnabled: gates.imgproxy,
-              vectorBucketsEnabled: config.storage.vector.enabled,
+              vectorBucketsEnabled: legacyEnvOverrideBool(
+                "SUPABASE_STORAGE_VECTOR_ENABLED",
+                config.storage.vector.enabled,
+                "storage.vector.enabled",
+                projectEnvValues,
+              ),
               dbUrl: values.dbUrl,
               jwtSecret: values.jwtSecret,
               jwks,
@@ -1076,7 +1113,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       }
 
       const postgresSpec = legacyBuildPostgresStartContainerSpec({
-        db: config.db,
+        // `port` overridden by SUPABASE_DB_PORT (Go's NewHostConfig binds the
+        // published port straight from the already-overridden
+        // utils.Config.Db.Port, apps/cli-go/internal/db/start/start.go:119-121).
+        db: { ...config.db, port: values.dbPort, major_version: majorVersion },
         experimental: config.experimental,
         jwtSecret: values.jwtSecret,
         jwtExpiry: config.auth.jwt_expiry,
@@ -1103,7 +1143,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             const session = yield* dbConnection.connect(
               {
                 host: context.hostname,
-                port: config.db.port,
+                port: values.dbPort,
                 user: "postgres",
                 password: dbPassword,
                 database: "postgres",
@@ -1174,13 +1214,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                   ),
                 },
               },
-              majorVersion: config.db.major_version,
+              majorVersion,
               projectId,
               networkId,
               dbUrl: values.dbUrl,
               jwtSecret: values.jwtSecret,
               jwks,
               apiUrl: values.apiUrl,
+              authExternalUrl: resolveAuthExternalUrl(context.loaded?.document, projectEnvValues),
               anonKey: values.anonKey,
               serviceRoleKey: values.serviceRoleKey,
               storageTargetMigration,
