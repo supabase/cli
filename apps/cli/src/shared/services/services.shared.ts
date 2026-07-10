@@ -115,7 +115,7 @@ export function postgresImageForDbMajorVersion(majorVersion: number): string | u
   }
 }
 
-function replaceImageTag(image: string, tag: string): string {
+export function replaceImageTag(image: string, tag: string): string {
   const index = image.lastIndexOf(":");
   if (index === -1) {
     return image;
@@ -123,7 +123,7 @@ function replaceImageTag(image: string, tag: string): string {
   return `${image.slice(0, index + 1)}${tag.trim()}`;
 }
 
-function tagForServiceVersion(service: LocalServiceVersionName, version: string): string {
+export function tagForServiceVersion(service: LocalServiceVersionName, version: string): string {
   const trimmed = version.trim();
   const prefix = SERVICE_VERSION_TAG_PREFIX[service];
   if (prefix === "v" && !trimmed.toLowerCase().startsWith("v")) {

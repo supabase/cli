@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, PlatformError, Sink, Stream } from "effect";
+import { Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -22,7 +22,11 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
-import { LegacyDebugFlag, LegacyYesFlag } from "../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDebugFlag,
+  LegacyNetworkIdFlag,
+  LegacyYesFlag,
+} from "../../../shared/legacy/global-flags.ts";
 import { LegacyPlatformApiFactory } from "../../auth/legacy-platform-api-factory.service.ts";
 import { legacyServiceContainerIds } from "../../shared/legacy-docker-ids.ts";
 import {
@@ -53,6 +57,8 @@ function writeConfig(workdir: string, contents: string) {
 interface SpawnRecord {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  /** Bare `-e KEY` (no inline value) flags deliver their value via the spawned process's own env, not argv — see `edge-runtime.service.ts`'s header. */
+  readonly env: Readonly<Record<string, string | undefined>>;
 }
 
 type RouteResult = {
@@ -84,7 +90,8 @@ function mockStartContainerCliSpawner(
       Effect.gen(function* () {
         const cmd = command._tag === "StandardCommand" ? command.command : "";
         const args = command._tag === "StandardCommand" ? command.args : [];
-        spawned.push({ command: cmd, args });
+        const env = command._tag === "StandardCommand" ? (command.options?.env ?? {}) : {};
+        spawned.push({ command: cmd, args, env });
 
         if (opts.failSpawn === true) {
           return yield* Effect.fail(
@@ -279,6 +286,8 @@ interface SetupOpts {
   readonly failSpawn?: boolean;
   /** Defaults to `tempRoot.current` — override for `--workdir`-resolution failure tests. */
   readonly workdir?: string;
+  /** `--network-id` override. Defaults to unset (the generated `supabase_network_<project>` name applies). */
+  readonly networkId?: Option.Option<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -329,6 +338,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: ["start"] }),
     Layer.succeed(LegacyDebugFlag, false),
     Layer.succeed(LegacyYesFlag, false),
+    Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
     mockTty({ stdinIsTty: false }),
     mockStdin(false),
   );
@@ -1655,6 +1665,100 @@ content_path = "./templates/custom_notice.html"
         }).pipe(Effect.provide(layer));
       },
       90_000,
+    );
+  });
+
+  describe("--network-id", () => {
+    it.live("overrides the generated network name and every container's --network flag", () => {
+      const { layer, child } = setup({ networkId: Option.some("custom-net") });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const networkCreate = child.spawned.find(
+          (s) => s.args[0] === "network" && s.args[1] === "create",
+        );
+        expect(networkCreate?.args.at(-1)).toBe("custom-net");
+        const kongCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+        );
+        const networkFlagIndex = kongCreate?.args.indexOf("--network") ?? -1;
+        expect(kongCreate?.args[networkFlagIndex + 1]).toBe("custom-net");
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  describe("SUPABASE_API_PORT override", () => {
+    it.live("publishes Kong on the env-overridden API port, not config.api.port", () => {
+      const previous = process.env["SUPABASE_API_PORT"];
+      process.env["SUPABASE_API_PORT"] = "61234";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const kongCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+        );
+        expect(kongCreate?.args).toContain("61234:8000");
+        expect(kongCreate?.args).not.toContain("54321:8000");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_API_PORT"];
+            else process.env["SUPABASE_API_PORT"] = previous;
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("storage migration pin", () => {
+    it.live(
+      "threads a linked project's supabase/.temp/storage-migration pin into DB_MIGRATIONS_FREEZE_AT",
+      () => {
+        const { layer, workdir, child } = setup();
+        mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
+        writeFileSync(join(workdir, "supabase", ".temp", "storage-migration"), "20240102030405\n");
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const storageCreate = child.spawned.find(
+            (s) =>
+              s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
+          );
+          expect(storageCreate?.env["DB_MIGRATIONS_FREEZE_AT"]).toBe("20240102030405");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live('resolves to "" when no pin file exists', () => {
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const storageCreate = child.spawned.find(
+          (s) =>
+            s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
+        );
+        expect(storageCreate?.env["DB_MIGRATIONS_FREEZE_AT"]).toBe("");
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  describe("linked service version pins", () => {
+    it.live(
+      "resolves a supabase/.temp/storage-version pin into the pulled/created storage image tag",
+      () => {
+        const { layer, workdir, child } = setup();
+        mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
+        writeFileSync(join(workdir, "supabase", ".temp", "storage-version"), "1.2.3\n");
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const storageImageInspect = child.spawned.find(
+            (s) =>
+              s.args[0] === "image" &&
+              s.args[1] === "inspect" &&
+              (s.args[2] ?? "").includes("storage"),
+          );
+          expect(storageImageInspect?.args[2]).toMatch(/:v1\.2\.3$/);
+        }).pipe(Effect.provide(layer));
+      },
     );
   });
 });

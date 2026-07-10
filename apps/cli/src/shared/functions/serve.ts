@@ -1247,6 +1247,71 @@ const resolveServeFunctionConfigs = Effect.fnUntraced(function* (
 });
 
 /**
+ * Docker bind mounts (function source, import map, static assets) for every
+ * enabled function under `supabase/functions/**` — Go's
+ * `serve.PopulatePerFunctionConfigs` (`internal/functions/serve/serve.go:
+ * 277-318`), called both from Edge Runtime bring-up below (as part of its
+ * own loop, which additionally serializes `functionsConfig` and logs skipped
+ * functions — that logging is specific to actually *serving* a function, so
+ * it stays there) and, standalone, from `start`'s Studio container spec
+ * (`internal/start/start.go:1149-1159`), which needs only the bind mounts,
+ * unconditionally of whether Edge Runtime itself is enabled or excluded.
+ */
+export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBindMounts")(
+  function* (
+    projectId: string,
+    projectRoot: string,
+    supabaseDir: string,
+    config: Pick<
+      ServeEdgeRuntimeContainerConfig,
+      "configDeclaredFunctions" | "configFunctions" | "rawConfigFunctions"
+    >,
+    importMapOverride: Option.Option<string>,
+    noVerifyJwtOverride: Option.Option<boolean>,
+    flagCwd: string,
+  ) {
+    const functionConfigs = yield* resolveServeFunctionConfigs(
+      projectRoot,
+      supabaseDir,
+      config,
+      importMapOverride,
+      noVerifyJwtOverride,
+      flagCwd,
+    );
+
+    const functionsDir = join(projectRoot, functionsDirName);
+    const binds = new Set<string>();
+
+    for (const fnConfig of functionConfigs) {
+      if (!fnConfig.enabled) continue;
+
+      const bindWarnings: string[] = [];
+      for (const bind of yield* Effect.promise(() =>
+        buildDockerBinds(projectId, functionsDir, functionsDir, fnConfig, {
+          additionalModuleRoots: [flagCwd],
+          skipMissingImportMapTargets: true,
+          onWarning: async (message) => {
+            bindWarnings.push(message);
+          },
+        }),
+      )) {
+        binds.add(bind);
+      }
+      const missingSourceWarning = bindWarnings.find((warning) =>
+        warning.includes("failed to read file:"),
+      );
+      if (missingSourceWarning !== undefined) {
+        return yield* Effect.fail(
+          new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
+        );
+      }
+    }
+
+    return binds;
+  },
+);
+
+/**
  * The reusable "bring up one Edge Runtime container" core — Go's
  * `ServeFunctions` (`internal/functions/serve/serve.go:135-252`), called both
  * by standalone `functions serve` (indirectly, via `startEdgeRuntime` below,

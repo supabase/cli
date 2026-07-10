@@ -1,19 +1,19 @@
 import { inferFunctionsManifest, type ProjectConfig } from "@supabase/config";
-import { Effect, FileSystem, Path, Result } from "effect";
+import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { CLI_VERSION } from "../../../shared/cli/version.ts";
 import { rawFunctionConfigRecord } from "../../../shared/functions/deploy.ts";
 import {
+  resolveFunctionBindMounts,
   toPlainEdgeRuntimeConfig,
   toPlainFunctionRecord,
   type StartedRuntime,
 } from "../../../shared/functions/serve.ts";
-import { LegacyDebugFlag } from "../../../shared/legacy/global-flags.ts";
+import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import { EventStackStarted } from "../../../shared/telemetry/event-catalog.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
@@ -28,6 +28,8 @@ import {
   legacyResolveStorageCredentials,
   legacyStorageGatewayFetch,
 } from "../../shared/legacy-storage-credentials.ts";
+import { readLegacyServiceVersionOverrides } from "../../shared/legacy-service-version-overrides.ts";
+import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
 import { legacyParseGoDuration } from "../../shared/legacy-go-duration.ts";
 import {
   LEGACY_CLI_PROJECT_LABEL,
@@ -84,7 +86,11 @@ import {
   LEGACY_START_STARTING_DATABASE_MESSAGE,
   LEGACY_START_WAITING_FOR_HEALTH_CHECKS_MESSAGE,
 } from "./start.format.ts";
-import { legacyResolveStartGates, legacyResolveStartImagePlan } from "./start.gates.ts";
+import {
+  legacyResolvePinnedImage,
+  legacyResolveStartGates,
+  legacyResolveStartImagePlan,
+} from "./start.gates.ts";
 import { legacyIsUnhealthyStartError, legacyRollbackStart } from "./start.rollback.ts";
 import { LEGACY_START_SERVICES } from "./start.services.ts";
 import {
@@ -579,7 +585,20 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       config.db.major_version,
       config.experimental.orioledb_version,
     );
-    const imagePlan = legacyResolveStartImagePlan(gates);
+    // Go's `Config.Load` rewrites `c.Auth.Image`/`c.Api.Image`/etc. from
+    // `supabase/.temp/{gotrue,rest,storage,realtime,studio,pgmeta,logflare,
+    // pooler}-version` (linked-project pins written by `supabase link`)
+    // BEFORE `start` ever reads them (`pkg/config/config.go:827-863`) — read
+    // once, reused by both the image plan below and the fresh-DB one-shot
+    // setup jobs' images, which Go resolves from the same already-rewritten
+    // `utils.Config.*.Image` fields regardless of `--exclude`.
+    const serviceVersionOverrides = yield* readLegacyServiceVersionOverrides(
+      fs,
+      path,
+      cliConfig.workdir,
+      config.db.major_version,
+    );
+    const imagePlan = legacyResolveStartImagePlan(gates, serviceVersionOverrides);
     // Edge Runtime doesn't go through `legacyResolveStartImagePlan` (see
     // `start.gates.ts`'s header) — its default image is resolved independently,
     // matching Go's own `pullImagesUsingCompose`/`ensureImagesCached` also
@@ -600,7 +619,39 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     ]);
     const resolveImage = (image: string) => resolvedImages.get(image) ?? image;
 
-    const networkId = localNetworkId(projectId);
+    // Hoisted out of the Edge Runtime bring-up below: Go's Studio bring-up
+    // (`start.go:1149-1159`) calls `serve.PopulatePerFunctionConfigs` for its
+    // own bind mounts UNCONDITIONALLY of `Config.EdgeRuntime.Enabled`, so
+    // these manifest values must be available to `buildSpecForService`'s
+    // "studio" case regardless of whether Edge Runtime itself is enabled.
+    const configDeclaredFunctions = toPlainFunctionRecord(config.functions);
+    const configFunctions = yield* inferFunctionsManifest({
+      cwd: cliConfig.workdir,
+      config: { ...config, functions: configDeclaredFunctions },
+    });
+    const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
+
+    // Go's `config.Load` reads `supabase/.temp/storage-migration` (written by
+    // `supabase link`) into `Config.Storage.TargetMigration` whenever present
+    // (`pkg/config/config.go:844-846`), and that value feeds
+    // `DB_MIGRATIONS_FREEZE_AT` for both the Storage container and the
+    // fresh-DB one-shot Storage migrate job. Any read error (including
+    // not-exist) or blank content resolves to "", matching Go's `err == nil
+    // && len(version) > 0` gate.
+    const storageTargetMigration = yield* fs
+      .readFileString(legacyTempPaths(path, cliConfig.workdir).storageMigration)
+      .pipe(
+        Effect.map((content) => content.trim()),
+        Effect.orElseSucceed(() => ""),
+      );
+
+    // Go's `DockerStart` forces every container's network mode (and the
+    // network it creates) to `--network-id` when set, ahead of the generated
+    // `supabase_network_<project>` fallback (`docker.go:379-383`).
+    const networkIdFlag = yield* LegacyNetworkIdFlag;
+    const networkId = Option.isSome(networkIdFlag)
+      ? networkIdFlag.value
+      : localNetworkId(projectId);
     const isBitbucketPipeline = legacyIsBitbucketPipeline();
     const startOpts: LegacyStartContainerOpts = {
       projectId,
@@ -726,7 +777,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               containerName: kongContainerName,
               networkId,
               apiHost: context.hostname,
-              apiPort: config.api.port,
+              apiPort: values.apiPort,
               apiTlsEnabled,
               tlsCertContent,
               tlsKeyContent,
@@ -815,7 +866,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               projectId,
               networkId,
               image,
-              targetMigration: "",
+              targetMigration: storageTargetMigration,
               fileSizeLimit: config.storage.file_size_limit,
               s3Region: values.storageS3Region,
               s3AccessKeyId: values.storageS3AccessKeyId,
@@ -849,14 +900,29 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             }),
           };
 
-        case "studio":
+        case "studio": {
+          // Go's `start.go:1149-1159` computes Studio's function bind mounts
+          // via `serve.PopulatePerFunctionConfigs` unconditionally whenever
+          // Studio is enabled — NOT gated on `Config.EdgeRuntime.Enabled` —
+          // so function sources/import maps/static assets stay mounted for
+          // Studio's local function management even when Edge Runtime itself
+          // is disabled or excluded.
+          const functionBinds = yield* resolveFunctionBindMounts(
+            projectId,
+            cliConfig.workdir,
+            `${cliConfig.workdir}/supabase`,
+            { configDeclaredFunctions, configFunctions, rawConfigFunctions },
+            Option.none(),
+            Option.none(),
+            cliConfig.workdir,
+          );
           return {
             spec: buildLegacyStudioContainerSpec({
               image,
               containerName: studioContainerName,
               networkId,
               port: config.studio.port,
-              functionBinds: [],
+              functionBinds: [...functionBinds],
               env: {
                 dbPassword,
                 workdir: cliConfig.workdir,
@@ -881,6 +947,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               },
             }),
           };
+        }
 
         case "supavisor":
           return {
@@ -980,10 +1047,22 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               },
               { isLocal: true, dnsResolver: "native" },
             );
+            // Go's one-shot fresh-DB setup jobs (`initSchema15`) use the SAME
+            // already-pin-rewritten `utils.Config.{Realtime,Storage,Auth}.Image`
+            // fields the long-running containers use (`internal/db/start/
+            // start.go:270,299,321`), regardless of `--exclude` — resolve
+            // through `legacyResolvePinnedImage` (not the raw Dockerfile
+            // default) so a linked project's version pins apply here too.
             const dbSetupImages: LegacyStartDbSetupImages = {
-              realtime: resolveImage(dockerfileServiceImage("realtime")),
-              storage: resolveImage(dockerfileServiceImage("storage")),
-              auth: resolveImage(dockerfileServiceImage("gotrue")),
+              realtime: resolveImage(
+                legacyResolvePinnedImage("realtime", "realtime", serviceVersionOverrides),
+              ),
+              storage: resolveImage(
+                legacyResolvePinnedImage("storage", "storage", serviceVersionOverrides),
+              ),
+              auth: resolveImage(
+                legacyResolvePinnedImage("gotrue", "auth", serviceVersionOverrides),
+              ),
             };
             yield* legacyStartSetupLocalDatabase({
               session,
@@ -1041,7 +1120,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               apiUrl: values.apiUrl,
               anonKey: values.anonKey,
               serviceRoleKey: values.serviceRoleKey,
-              storageTargetMigration: "",
+              storageTargetMigration,
               images: dbSetupImages,
             });
           }),
@@ -1072,24 +1151,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         if (entry.service === "edgeRuntime") {
           if (!gates.edgeRuntime || edgeRuntimeDefaultImage === undefined) continue;
           const debug = yield* LegacyDebugFlag;
-          const configDeclaredFunctions = toPlainFunctionRecord(config.functions);
-          const configFunctions = yield* inferFunctionsManifest({
-            cwd: cliConfig.workdir,
-            config: { ...config, functions: configDeclaredFunctions },
-          });
           const edgeRuntimeInput: LegacyEdgeRuntimeBringUpInput = {
             projectId,
             networkId,
             image: resolveImage(edgeRuntimeDefaultImage),
             workdir: cliConfig.workdir,
             dbUrl: values.dbUrl,
-            apiPort: config.api.port,
+            apiPort: values.apiPort,
             edgeRuntimePolicy: config.edge_runtime.policy,
             edgeRuntimeInspectorPort: config.edge_runtime.inspector_port,
             edgeRuntimeSecrets: toPlainEdgeRuntimeConfig(config.edge_runtime).secrets,
             configDeclaredFunctions,
             configFunctions,
-            rawConfigFunctions: rawFunctionConfigRecord(context.loaded?.document),
+            rawConfigFunctions,
             authArtifacts: {
               publishableKey: values.publishableKey,
               secretKey: values.secretKey,

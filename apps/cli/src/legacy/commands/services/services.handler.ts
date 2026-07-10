@@ -10,7 +10,7 @@ import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.ser
 import { legacyReadDbToml } from "../../shared/legacy-db-config.toml-read.ts";
 import { legacyResolveDbImage } from "../../shared/legacy-db-image.ts";
 import { legacyResolveEdgeRuntimeImage } from "../../shared/legacy-edge-runtime-image.ts";
-import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
+import { readLegacyServiceVersionOverrides } from "../../shared/legacy-service-version-overrides.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { encodeGoJson, encodeToml, encodeYaml } from "../../shared/legacy-go-output.encoders.ts";
@@ -20,8 +20,6 @@ import {
   formatServicesWarning,
   listLocalServiceVersions,
   type LocalServiceImageOverrides,
-  type LocalServiceVersionName,
-  type LocalServiceVersionOverrides,
   mergeRemoteServiceVersions,
   renderServicesTable,
   renderServicesWarning,
@@ -185,42 +183,3 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
 function formatConfigLoadError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-
-const LEGACY_VERSION_FILES = [
-  ["auth", "gotrue-version", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
-  ["postgrest", "rest-version", (majorVersion: number | undefined) => (majorVersion ?? 17) > 14],
-  ["storage", "storage-version"],
-  ["realtime", "realtime-version"],
-  ["studio", "studio-version"],
-  ["pgmeta", "pgmeta-version"],
-  ["analytics", "logflare-version"],
-  ["pooler", "pooler-version"],
-] as const satisfies ReadonlyArray<
-  readonly [LocalServiceVersionName, string, ((majorVersion: number | undefined) => boolean)?]
->;
-
-const readLegacyServiceVersionOverrides = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-  majorVersion: number | undefined,
-) {
-  const paths = legacyTempPaths(path, workdir);
-  const versions: LocalServiceVersionOverrides = {};
-
-  for (const [service, fileName, shouldRead] of LEGACY_VERSION_FILES) {
-    if (shouldRead !== undefined && !shouldRead(majorVersion)) {
-      continue;
-    }
-
-    const version = yield* fs.readFileString(path.join(paths.tempDir, fileName)).pipe(
-      Effect.map((content) => content.trim()),
-      Effect.orElseSucceed(() => ""),
-    );
-    if (version.length > 0) {
-      versions[service] = version;
-    }
-  }
-
-  return versions;
-});

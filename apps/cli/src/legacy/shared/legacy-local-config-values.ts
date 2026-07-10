@@ -81,6 +81,7 @@ const DEFAULT_S3_REGION = "local";
 
 export interface LegacyLocalConfigValues {
   readonly apiUrl: string;
+  readonly apiPort: number;
   readonly restUrl: string;
   readonly graphqlUrl: string;
   readonly functionsUrl: string;
@@ -1577,6 +1578,7 @@ export function legacyResolveLocalConfigValues(
 
   return {
     apiUrl: apiExternalUrl,
+    apiPort,
     restUrl: apiUrlWithPath(apiExternalUrl, "/rest/v1"),
     graphqlUrl: apiUrlWithPath(apiExternalUrl, "/graphql/v1"),
     functionsUrl: apiUrlWithPath(apiExternalUrl, "/functions/v1"),
