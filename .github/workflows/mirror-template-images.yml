@@ -2,22 +2,20 @@ name: Mirror template images
 
 # Keeps the ghcr.io/ECR mirror in sync with the image versions pinned in
 # apps/cli-go/pkg/config/templates/Dockerfile (the single source of truth for
-# `config.Images`). When the Dockerfile changes on develop — most often via a
-# merged dependabot `docker` bump — this workflow detects any tag that is not
-# yet mirrored and backfills it the same way `cli-go-mirror-image.yml` does.
+# `config.Images`). When the Dockerfile changes, this workflow detects any tag
+# that is not yet mirrored and backfills it the same way
+# `cli-go-mirror-image.yml` does.
 #
-# It runs on `push` to develop (not on the PR) on purpose: mirroring needs the
-# AWS role + packages:write, which a dependabot-triggered `pull_request` run
-# cannot be granted, and we deliberately avoid `pull_request_target`. The CI
-# `Start` job pins SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io, so it only goes
-# green once a bumped tag is mirrored here; this backfill runs as soon as the
-# bump lands on develop, repopulating ghcr.io/ECR so develop and any PR rebased
-# on it pass `Start` instead of inheriting a `manifest unknown` failure.
+# Dependabot branch pushes are the automatic PR path; they have the
+# permissions needed to mirror images without using `pull_request_target`.
+# `workflow_dispatch` remains available as a manual fallback, while pushes to
+# `develop` provide post-merge synchronization.
 
 on:
   push:
     branches:
       - develop
+      - dependabot/docker/**
     paths:
       - apps/cli-go/pkg/config/templates/Dockerfile
   workflow_dispatch:
@@ -32,6 +30,9 @@ concurrency:
 jobs:
   detect:
     name: Detect unmirrored images
+    # Keep develop pushes and manual dispatch available, but only trust the
+    # Dependabot actor for the automatic branch-push path.
+    if: github.event_name != 'push' || github.ref == 'refs/heads/develop' || github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
