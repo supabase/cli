@@ -13,7 +13,12 @@ import {
   LegacyInvalidBoolEnvOverrideError,
   LegacyInvalidJwtSecretError,
   LegacyInvalidPortEnvOverrideError,
+  LegacyInvalidRealtimeIpVersionEnvOverrideError,
+  LegacyInvalidSessionReplicationRoleEnvOverrideError,
+  legacyEnvOverrideRealtimeIpVersion,
+  legacyEnvOverrideRealtimeMaxHeaderLength,
   legacyResolveAuthEmailSmtp,
+  legacyResolveDbSettingsEnvOverrides,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
 } from "./legacy-local-config-values.ts";
@@ -822,6 +827,174 @@ describe("legacyResolveLocalConfigValues", () => {
       const config = baseConfig({ api: { tls: { enabled: true }, port: 54321 } });
       const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
       expect(values.apiUrl).toBe("https://127.0.0.1:54321");
+    });
+  });
+
+  describe("legacyEnvOverrideRealtimeIpVersion", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_REALTIME_IP_VERSION"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideRealtimeIpVersion("IPv4", undefined)).toBe("IPv4");
+    });
+
+    it("overrides IPv4 to IPv6 via the env var", () => {
+      process.env["SUPABASE_REALTIME_IP_VERSION"] = "IPv6";
+      expect(legacyEnvOverrideRealtimeIpVersion("IPv4", undefined)).toBe("IPv6");
+    });
+
+    // Go's `AddressFamily.UnmarshalText` (`pkg/config/config.go:74-81`) hard-rejects
+    // any value outside `{IPv4, IPv6}` during the same `UnmarshalExact` decode every
+    // `SUPABASE_*` override goes through, same mechanism as the analytics backend override.
+    it("rejects an invalid override instead of falling back to the configured value", () => {
+      process.env["SUPABASE_REALTIME_IP_VERSION"] = "IPv5";
+      expect(() => legacyEnvOverrideRealtimeIpVersion("IPv4", undefined)).toThrow(
+        LegacyInvalidRealtimeIpVersionEnvOverrideError,
+      );
+      expect(() => legacyEnvOverrideRealtimeIpVersion("IPv4", undefined)).toThrow(
+        'Invalid config for realtime.ip_version: cannot parse "IPv5" as one of "IPv4", "IPv6"',
+      );
+    });
+  });
+
+  describe("legacyEnvOverrideRealtimeMaxHeaderLength", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideRealtimeMaxHeaderLength(4096, undefined)).toBe(4096);
+    });
+
+    it("overrides the configured value via the env var", () => {
+      process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "8192";
+      expect(legacyEnvOverrideRealtimeMaxHeaderLength(4096, undefined)).toBe(8192);
+    });
+
+    it("also honors a projectEnvValues (dotenv) value", () => {
+      expect(
+        legacyEnvOverrideRealtimeMaxHeaderLength(4096, {
+          SUPABASE_REALTIME_MAX_HEADER_LENGTH: "16384",
+        }),
+      ).toBe(16384);
+    });
+  });
+
+  describe("legacyResolveDbSettingsEnvOverrides", () => {
+    const ALL_OVERRIDE_NAMES = [
+      "SUPABASE_DB_SETTINGS_EFFECTIVE_CACHE_SIZE",
+      "SUPABASE_DB_SETTINGS_LOGICAL_DECODING_WORK_MEM",
+      "SUPABASE_DB_SETTINGS_MAINTENANCE_WORK_MEM",
+      "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS",
+      "SUPABASE_DB_SETTINGS_MAX_LOCKS_PER_TRANSACTION",
+      "SUPABASE_DB_SETTINGS_MAX_PARALLEL_MAINTENANCE_WORKERS",
+      "SUPABASE_DB_SETTINGS_MAX_PARALLEL_WORKERS",
+      "SUPABASE_DB_SETTINGS_MAX_PARALLEL_WORKERS_PER_GATHER",
+      "SUPABASE_DB_SETTINGS_MAX_REPLICATION_SLOTS",
+      "SUPABASE_DB_SETTINGS_MAX_SLOT_WAL_KEEP_SIZE",
+      "SUPABASE_DB_SETTINGS_MAX_STANDBY_ARCHIVE_DELAY",
+      "SUPABASE_DB_SETTINGS_MAX_STANDBY_STREAMING_DELAY",
+      "SUPABASE_DB_SETTINGS_MAX_WAL_SIZE",
+      "SUPABASE_DB_SETTINGS_MAX_WAL_SENDERS",
+      "SUPABASE_DB_SETTINGS_MAX_WORKER_PROCESSES",
+      "SUPABASE_DB_SETTINGS_SESSION_REPLICATION_ROLE",
+      "SUPABASE_DB_SETTINGS_SHARED_BUFFERS",
+      "SUPABASE_DB_SETTINGS_STATEMENT_TIMEOUT",
+      "SUPABASE_DB_SETTINGS_TRACK_ACTIVITY_QUERY_SIZE",
+      "SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP",
+      "SUPABASE_DB_SETTINGS_WAL_KEEP_SIZE",
+      "SUPABASE_DB_SETTINGS_WAL_SENDER_TIMEOUT",
+      "SUPABASE_DB_SETTINGS_WORK_MEM",
+    ];
+
+    afterEach(() => {
+      for (const name of ALL_OVERRIDE_NAMES) delete process.env[name];
+    });
+
+    it("returns the configured settings unchanged when nothing is overridden", () => {
+      const settings = { shared_buffers: "128MB", max_connections: 100 };
+      expect(legacyResolveDbSettingsEnvOverrides(settings, undefined)).toEqual(settings);
+    });
+
+    it("leaves an unconfigured field undefined when nothing is overridden", () => {
+      expect(
+        legacyResolveDbSettingsEnvOverrides({}, undefined).effective_cache_size,
+      ).toBeUndefined();
+    });
+
+    it("overrides a string field via the env var", () => {
+      process.env["SUPABASE_DB_SETTINGS_SHARED_BUFFERS"] = "256MB";
+      expect(
+        legacyResolveDbSettingsEnvOverrides({ shared_buffers: "128MB" }, undefined).shared_buffers,
+      ).toBe("256MB");
+    });
+
+    it("sets a string field via the env var even when not configured at all", () => {
+      process.env["SUPABASE_DB_SETTINGS_WORK_MEM"] = "8MB";
+      expect(legacyResolveDbSettingsEnvOverrides({}, undefined).work_mem).toBe("8MB");
+    });
+
+    it("overrides a uint field via the env var", () => {
+      process.env["SUPABASE_DB_SETTINGS_MAX_CONNECTIONS"] = "200";
+      expect(
+        legacyResolveDbSettingsEnvOverrides({ max_connections: 100 }, undefined).max_connections,
+      ).toBe(200);
+    });
+
+    it("rejects a non-numeric uint override", () => {
+      process.env["SUPABASE_DB_SETTINGS_MAX_CONNECTIONS"] = "not-a-number";
+      expect(() => legacyResolveDbSettingsEnvOverrides({}, undefined)).toThrow(
+        "Invalid db.settings.max_connections",
+      );
+    });
+
+    it("overrides the boolean field via the env var", () => {
+      process.env["SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP"] = "true";
+      expect(
+        legacyResolveDbSettingsEnvOverrides({ track_commit_timestamp: false }, undefined)
+          .track_commit_timestamp,
+      ).toBe(true);
+    });
+
+    it("rejects a malformed boolean override", () => {
+      process.env["SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP"] = "not-a-bool";
+      expect(() => legacyResolveDbSettingsEnvOverrides({}, undefined)).toThrow(
+        LegacyInvalidBoolEnvOverrideError,
+      );
+    });
+
+    it("overrides the session_replication_role enum field via the env var", () => {
+      process.env["SUPABASE_DB_SETTINGS_SESSION_REPLICATION_ROLE"] = "replica";
+      expect(
+        legacyResolveDbSettingsEnvOverrides({ session_replication_role: "origin" }, undefined)
+          .session_replication_role,
+      ).toBe("replica");
+    });
+
+    it("leaves session_replication_role undefined when neither configured nor overridden", () => {
+      expect(
+        legacyResolveDbSettingsEnvOverrides({}, undefined).session_replication_role,
+      ).toBeUndefined();
+    });
+
+    // Go's `SessionReplicationRole.UnmarshalText` (`pkg/config/db.go:37-43`)
+    // hard-rejects anything outside `{origin, replica, local}`.
+    it("rejects an invalid session_replication_role override", () => {
+      process.env["SUPABASE_DB_SETTINGS_SESSION_REPLICATION_ROLE"] = "invalid";
+      expect(() => legacyResolveDbSettingsEnvOverrides({}, undefined)).toThrow(
+        LegacyInvalidSessionReplicationRoleEnvOverrideError,
+      );
+      expect(() => legacyResolveDbSettingsEnvOverrides({}, undefined)).toThrow(
+        'Invalid config for db.settings.session_replication_role: cannot parse "invalid" as one of "origin", "replica", "local"',
+      );
+    });
+
+    it("also honors a projectEnvValues (dotenv) value", () => {
+      expect(
+        legacyResolveDbSettingsEnvOverrides({}, { SUPABASE_DB_SETTINGS_SHARED_BUFFERS: "512MB" })
+          .shared_buffers,
+      ).toBe("512MB");
     });
   });
 

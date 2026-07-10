@@ -49,8 +49,11 @@ import {
   legacyEnvOverrideBool,
   legacyEnvOverrideDenoVersion,
   legacyEnvOverrideMajorVersion,
+  legacyEnvOverrideRealtimeIpVersion,
+  legacyEnvOverrideRealtimeMaxHeaderLength,
   legacyResolveAuthEmailSmtp,
   legacyResolveConfiguredSigningKeys,
+  legacyResolveDbSettingsEnvOverrides,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
   type LegacyLocalConfigValues,
@@ -174,19 +177,7 @@ function isContainerNotFoundMessage(message: string): boolean {
   return /no such container/iu.test(message) || /no container with name or id/iu.test(message);
 }
 
-/**
- * `@supabase/config`'s `stringEnum` decodes `config.analytics.backend` through
- * `Schema.Literals(["postgres", "bigquery"])`, but the field's own
- * `withDecodingDefaultKey` default (a plain, non-`const` string literal) widens
- * the resulting `ProjectConfig` field type back to `string` — this narrows it
- * back for the service builders' own `"postgres" | "bigquery"` union types,
- * matching the schema's actual (enum-validated) runtime guarantee.
- */
-function toAnalyticsBackend(value: string): "postgres" | "bigquery" {
-  return value === "bigquery" ? "bigquery" : "postgres";
-}
-
-/** Same widening as {@link toAnalyticsBackend}, for `config.db.pooler.pool_mode`. */
+/** Same widening `values.analyticsBackend` already applies for analytics, but for `config.db.pooler.pool_mode`. */
 function toPoolMode(value: string): "transaction" | "session" {
   return value === "session" ? "session" : "transaction";
 }
@@ -782,6 +773,22 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       projectEnvValues,
     );
 
+    // Same generic-Viper-override gap as `apiTlsEnabled` above, for Realtime's
+    // two `SUPABASE_REALTIME_*` fields — both the Realtime container spec
+    // below AND the PG15+ Realtime setup job (`legacyStartSetupLocalDatabase`,
+    // via the `realtime` splice further down) must see the SAME
+    // already-overridden values, matching Go's single `utils.Config.Realtime`
+    // source of truth (`internal/start/start.go:922,928`,
+    // `internal/db/start/start.go:283,290`).
+    const realtimeIpVersion = legacyEnvOverrideRealtimeIpVersion(
+      config.realtime.ip_version,
+      projectEnvValues,
+    );
+    const realtimeMaxHeaderLength = legacyEnvOverrideRealtimeMaxHeaderLength(
+      config.realtime.max_header_length,
+      projectEnvValues,
+    );
+
     /**
      * Every case returns `{ spec, excludeFromHealthWatch? }`: `spec` is the
      * {@link LegacyStartContainerSpec} to bring up; `excludeFromHealthWatch`
@@ -798,10 +805,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               projectId,
               networkId,
               port: config.analytics.port,
-              backend: toAnalyticsBackend(config.analytics.backend),
-              gcpProjectId: config.analytics.gcp_project_id ?? "",
-              gcpProjectNumber: config.analytics.gcp_project_number ?? "",
-              gcpJwtPath: config.analytics.gcp_jwt_path ?? "",
+              backend: values.analyticsBackend,
+              gcpProjectId: values.gcpProjectId,
+              gcpProjectNumber: values.gcpProjectNumber,
+              gcpJwtPath: values.gcpJwtPath,
               workdir: cliConfig.workdir,
               dbHost,
               dbPort: LEGACY_START_INTERNAL_DB_PORT,
@@ -898,7 +905,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               edgeRuntimeId: edgeRuntimeContainerName,
               logflareId: logflareContainerName,
               poolerId: poolerContainerName,
-              nginxWorkerProcesses: legacyResolveKongNginxWorkerProcesses(),
+              nginxWorkerProcesses: legacyResolveKongNginxWorkerProcesses(projectEnvValues),
               workdir: cliConfig.workdir,
               emailTemplateMounts: buildKongEmailTemplateMounts(config.auth.email),
             }),
@@ -940,8 +947,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               projectId,
               networkId,
               image,
-              ipVersion: config.realtime.ip_version,
-              maxHeaderLength: config.realtime.max_header_length,
+              ipVersion: realtimeIpVersion,
+              maxHeaderLength: realtimeMaxHeaderLength,
               dbUrl: values.dbUrl,
               jwtSecret: values.jwtSecret,
               jwks,
@@ -1054,8 +1061,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                 apiSchemas: config.api.schemas,
                 apiExtraSearchPath: config.api.extra_search_path,
                 apiMaxRows: config.api.max_rows,
-                analyticsEnabled: config.analytics.enabled,
-                analyticsBackend: toAnalyticsBackend(config.analytics.backend),
+                analyticsEnabled: values.analyticsEnabled,
+                analyticsBackend: values.analyticsBackend,
               },
             }),
           };
@@ -1130,7 +1137,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // `port` overridden by SUPABASE_DB_PORT (Go's NewHostConfig binds the
         // published port straight from the already-overridden
         // utils.Config.Db.Port, apps/cli-go/internal/db/start/start.go:119-121).
-        db: { ...config.db, port: values.dbPort, major_version: majorVersion },
+        // `settings` overridden by any `SUPABASE_DB_SETTINGS_*` field (Go's
+        // `(a *settings) ToPostgresConfig()` serializes the same
+        // already-overridden global `Config.Db.Settings`, `pkg/config/db.go:181-190`).
+        db: {
+          ...config.db,
+          port: values.dbPort,
+          major_version: majorVersion,
+          settings: legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
+        },
         experimental: config.experimental,
         jwtSecret: values.jwtSecret,
         jwtExpiry: config.auth.jwt_expiry,
@@ -1208,6 +1223,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                     "realtime.enabled",
                     projectEnvValues,
                   ),
+                  ip_version: realtimeIpVersion,
+                  max_header_length: realtimeMaxHeaderLength,
                 },
                 storage: {
                   ...config.storage,
@@ -1294,11 +1311,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             platform: runtimeInfo.platform,
           };
           const runtime: StartedRuntime = yield* legacyStartEdgeRuntimeContainer(edgeRuntimeInput);
-          // Best-effort: the temp env-file/script/serve-main-template files this
-          // call staged on the host are safe to remove immediately once `docker
-          // run` has returned (see `edge-runtime.service.ts`'s header) — never
-          // fail the whole bring-up over a cleanup error.
-          yield* runtime.cleanup.pipe(Effect.catchCause(() => Effect.void));
+          // Deliberately NOT calling `runtime.cleanup` here — see
+          // `edge-runtime.service.ts`'s header for why. `start`'s container is
+          // `restartPolicy: "unless-stopped"` (mirroring every other service
+          // built here, see `legacyStartContainer`), so its bind-mounted host
+          // temp files must still exist whenever Docker re-attaches them on a
+          // later restart; `legacyStartEdgeRuntimeContainer` already runs
+          // `cleanup` on a failed or interrupted bring-up internally, so only
+          // the success path must leave it alone.
           started.push(runtime.containerId);
           edgeRuntimeGateway = {
             containerId: runtime.containerId,

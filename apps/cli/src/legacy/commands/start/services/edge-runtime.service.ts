@@ -148,16 +148,16 @@ export interface LegacyEdgeRuntimeBringUpInput {
  *
  * `cleanup` (removing the temp env-file/multiline-env-script/serve-main-
  * template files this call writes to the host) is intentionally left to the
- * caller rather than run automatically: unlike `functions serve`'s
- * interactive loop (which defers it until the container is later torn down
- * for a restart), `start` is a one-shot command with no later "this
- * container is being replaced" event of its own to hang it on. Running it
- * immediately after a successful bring-up here is expected to be safe — once
- * `docker run` returns, the container already holds its own reference to
- * each bind-mounted path, so deleting the host-side temp files afterwards
- * does not affect the running container on a native Docker Engine — but this
- * module does not decide that policy; confirm it (or thread `cleanup` through
- * to `stop`/rollback instead) as part of wiring this in.
+ * caller, and the caller must NOT invoke it on a successful bring-up.
+ * `start`'s Edge Runtime container is `restartPolicy: "unless-stopped"`
+ * (like every other `start` service, see `legacyStartContainer`), so its
+ * bind-mounted host paths must still exist whenever Docker re-attaches them
+ * on a later restart — the same reasoning `legacyStageStartSecretFiles`
+ * (`../lib/container-lifecycle.ts`) already applies to every other service's
+ * staged secret files. `startEdgeRuntimeContainer` (`shared/functions/
+ * serve.ts`) already runs `cleanup` internally on a failed or interrupted
+ * bring-up (`Effect.onInterrupt`, and the non-zero-exit branch), so the
+ * caller only needs to leave the returned `cleanup` unused on success.
  */
 export const legacyStartEdgeRuntimeContainer = Effect.fn("legacy.start.edgeRuntime")(function* (
   input: LegacyEdgeRuntimeBringUpInput,

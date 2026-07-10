@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -916,7 +916,7 @@ describe("legacy start integration", () => {
       () => {
         // Exercises the config-document-shape branches `start.handler.ts` itself owns
         // (`resolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
-        // `buildKongEmailTemplateMounts`, `toAnalyticsBackend`, `toPoolMode`,
+        // `buildKongEmailTemplateMounts`, `values.analyticsBackend`, `toPoolMode`,
         // `resolveDbHealthTimeoutSeconds`'s parse-failure fallback) in one pass, none of which
         // interact with each other. `db.health_timeout` being unparseable only matters if
         // Postgres's own health wait actually needs to retry — it doesn't here (default route
@@ -1241,6 +1241,28 @@ content_path = "./templates/custom_notice.html"
         expect(edgeRuntimeRunCalls(child.spawned)).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     });
+
+    it.live(
+      "keeps the host-side bind-mount temp files after a successful bring-up (no eager cleanup)",
+      () => {
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const runArgs = edgeRuntimeRunCalls(child.spawned)[0]?.args ?? [];
+          const bindValues = runArgs.flatMap((arg, i) => (runArgs[i - 1] === "-v" ? [arg] : []));
+          const mainTemplateBind = bindValues.find((bind) =>
+            bind.includes("supabase-functions-serve-main-"),
+          );
+          expect(mainTemplateBind).toBeDefined();
+          const hostPath = mainTemplateBind?.split(":")[0] ?? "";
+          try {
+            expect(existsSync(hostPath)).toBe(true);
+          } finally {
+            rmSync(hostPath, { force: true });
+          }
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("image pull", () => {
@@ -1862,6 +1884,29 @@ content_path = "./templates/custom_notice.html"
     });
   });
 
+  describe("SUPABASE_DB_SETTINGS_* env overrides", () => {
+    it.live("honors SUPABASE_DB_SETTINGS_SHARED_BUFFERS in the rendered postgresql.conf", () => {
+      const previous = process.env["SUPABASE_DB_SETTINGS_SHARED_BUFFERS"];
+      process.env["SUPABASE_DB_SETTINGS_SHARED_BUFFERS"] = "256MB";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const dbCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
+        );
+        expect(dbCreate?.args.some((arg) => arg.includes("shared_buffers = '256MB'"))).toBe(true);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_SETTINGS_SHARED_BUFFERS"];
+            else process.env["SUPABASE_DB_SETTINGS_SHARED_BUFFERS"] = previous;
+          }),
+        ),
+      );
+    });
+  });
+
   describe("storage feature env overrides", () => {
     it.live(
       "honors SUPABASE_STORAGE_S3_PROTOCOL_ENABLED and SUPABASE_STORAGE_VECTOR_ENABLED",
@@ -1893,6 +1938,50 @@ content_path = "./templates/custom_notice.html"
         );
       },
     );
+  });
+
+  describe("SUPABASE_ANALYTICS_* env overrides", () => {
+    it.live("honors SUPABASE_ANALYTICS_BACKEND/_GCP_* for both Logflare and Studio", () => {
+      const previousBackend = process.env["SUPABASE_ANALYTICS_BACKEND"];
+      const previousProjectId = process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"];
+      const previousProjectNumber = process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"];
+      const previousJwtPath = process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"];
+      process.env["SUPABASE_ANALYTICS_BACKEND"] = "bigquery";
+      process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"] = "env-gcp-project";
+      process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"] = "987654321";
+      process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"] = "gcp-key.json";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const logflareCreate = child.spawned.find(
+          (s) =>
+            s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_analytics_"),
+        );
+        expect(logflareCreate?.env["GOOGLE_PROJECT_ID"]).toBe("env-gcp-project");
+        expect(logflareCreate?.env["GOOGLE_PROJECT_NUMBER"]).toBe("987654321");
+        const studioCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_studio_"),
+        );
+        expect(studioCreate?.env["NEXT_ANALYTICS_BACKEND_PROVIDER"]).toBe("bigquery");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousBackend === undefined) delete process.env["SUPABASE_ANALYTICS_BACKEND"];
+            else process.env["SUPABASE_ANALYTICS_BACKEND"] = previousBackend;
+            if (previousProjectId === undefined)
+              delete process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"];
+            else process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"] = previousProjectId;
+            if (previousProjectNumber === undefined)
+              delete process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"];
+            else process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"] = previousProjectNumber;
+            if (previousJwtPath === undefined)
+              delete process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"];
+            else process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"] = previousJwtPath;
+          }),
+        ),
+      );
+    });
   });
 
   describe("auth.* env overrides reach GoTrue's container", () => {
@@ -1944,5 +2033,48 @@ content_path = "./templates/custom_notice.html"
         ),
       );
     });
+  });
+
+  describe("SUPABASE_REALTIME_* env overrides", () => {
+    it.live(
+      "honors SUPABASE_REALTIME_IP_VERSION/_MAX_HEADER_LENGTH for both the long-running container and the PG15+ setup job",
+      () => {
+        const previousIpVersion = process.env["SUPABASE_REALTIME_IP_VERSION"];
+        const previousMaxHeaderLength = process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"];
+        process.env["SUPABASE_REALTIME_IP_VERSION"] = "IPv6";
+        process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "8192";
+        const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          const realtimeCreate = child.spawned.find(
+            (s) =>
+              s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_realtime_"),
+          );
+          expect(realtimeCreate?.env["ERL_AFLAGS"]).toBe("-proto_dist inet6_tcp");
+          expect(realtimeCreate?.env["MAX_HEADER_LENGTH"]).toBe("8192");
+
+          // The first of the three PG15+ one-shot migrate jobs (realtime, storage, auth
+          // order) — see the "fresh volume: DB setup" describe block's own
+          // `dbSetupJobCalls` helper for the same `run --rm` shape.
+          const realtimeSetupJob = child.spawned.find(
+            (s) => s.args[0] === "run" && s.args[1] === "--rm",
+          );
+          expect(realtimeSetupJob?.env["ERL_AFLAGS"]).toBe("-proto_dist inet6_tcp");
+          expect(realtimeSetupJob?.env["MAX_HEADER_LENGTH"]).toBe("8192");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousIpVersion === undefined)
+                delete process.env["SUPABASE_REALTIME_IP_VERSION"];
+              else process.env["SUPABASE_REALTIME_IP_VERSION"] = previousIpVersion;
+              if (previousMaxHeaderLength === undefined)
+                delete process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"];
+              else process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = previousMaxHeaderLength;
+            }),
+          ),
+        );
+      },
+    );
   });
 });

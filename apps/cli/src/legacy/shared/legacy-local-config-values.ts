@@ -131,6 +131,16 @@ export interface LegacyLocalConfigValues {
   readonly storageS3AccessKeyId: string;
   readonly storageS3SecretAccessKey: string;
   readonly storageS3Region: string;
+  /** Already env-overridden `analytics.enabled` (`SUPABASE_ANALYTICS_ENABLED`). */
+  readonly analyticsEnabled: boolean;
+  /** Already env-overridden `analytics.backend` (`SUPABASE_ANALYTICS_BACKEND`), hard-validated like Go's `LogflareBackend`. */
+  readonly analyticsBackend: "postgres" | "bigquery";
+  /** Already env-overridden `analytics.gcp_project_id` (`SUPABASE_ANALYTICS_GCP_PROJECT_ID`). */
+  readonly gcpProjectId: string;
+  /** Already env-overridden `analytics.gcp_project_number` (`SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER`). */
+  readonly gcpProjectNumber: string;
+  /** Already env-overridden `analytics.gcp_jwt_path` (`SUPABASE_ANALYTICS_GCP_JWT_PATH`). */
+  readonly gcpJwtPath: string;
 }
 
 /**
@@ -357,6 +367,53 @@ function envOverrideAnalyticsBackend(
     throw new LegacyInvalidAnalyticsBackendEnvOverrideError("analytics.backend", value);
   }
   return value;
+}
+
+/**
+ * Thrown by {@link legacyEnvOverrideRealtimeIpVersion} when
+ * `SUPABASE_REALTIME_IP_VERSION` doesn't match Go's `AddressFamily`
+ * (`pkg/config/config.go:67-81`) — `UnmarshalText` hard-rejects anything
+ * outside `{IPv4, IPv6}`, same mechanism as
+ * {@link LegacyInvalidAnalyticsBackendEnvOverrideError}.
+ */
+export class LegacyInvalidRealtimeIpVersionEnvOverrideError extends Error {
+  constructor(dottedFieldPath: string, value: string) {
+    super(
+      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "IPv4", "IPv6"`,
+    );
+    this.name = "LegacyInvalidRealtimeIpVersionEnvOverrideError";
+  }
+}
+
+/**
+ * `realtime.ip_version`-flavored sibling of {@link envOverrideAnalyticsBackend}
+ * — Go's `Realtime.IpVersion` is `AddressFamily`, text-unmarshalled the same
+ * way `Analytics.Backend` is, so the override-or-configured value is
+ * validated with a single check to match Go's one-shot `UnmarshalText` call.
+ */
+export function legacyEnvOverrideRealtimeIpVersion(
+  configured: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): "IPv4" | "IPv6" {
+  const value =
+    envOverride("SUPABASE_REALTIME_IP_VERSION", undefined, projectEnvValues) ?? configured;
+  if (value !== "IPv4" && value !== "IPv6") {
+    throw new LegacyInvalidRealtimeIpVersionEnvOverrideError("realtime.ip_version", value);
+  }
+  return value;
+}
+
+/** `SUPABASE_REALTIME_MAX_HEADER_LENGTH` — see {@link envOverrideUint}. */
+export function legacyEnvOverrideRealtimeMaxHeaderLength(
+  configured: number,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): number {
+  return envOverrideUint(
+    "SUPABASE_REALTIME_MAX_HEADER_LENGTH",
+    "realtime.max_header_length",
+    configured,
+    projectEnvValues,
+  );
 }
 
 /**
@@ -794,6 +851,234 @@ export function legacyEnvOverrideDenoVersion(
     configured,
     projectEnvValues,
   );
+}
+
+/**
+ * Optional-uint sibling of {@link envOverrideUint} for `db.settings.*` number
+ * fields (`max_connections`, `max_wal_senders`, …) — each one is a genuine Go
+ * nil pointer (`*uint`) when unset in `config.toml`, unlike `db.major_version`/
+ * `edge_runtime.deno_version`, which always have a real default. `configured`
+ * (and the return value) stay `number | undefined` to preserve that
+ * "not configured" state through an override miss, matching Go's nil pointer
+ * staying nil when no `SUPABASE_DB_SETTINGS_*` override is set either.
+ */
+function envOverrideOptionalUint(
+  name: string,
+  dottedFieldPath: string,
+  configured: number | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): number | undefined {
+  const value = envOverride(name, undefined, projectEnvValues);
+  if (value === undefined) return configured;
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`Failed reading config: Invalid ${dottedFieldPath}: ${value}.`);
+  }
+  return Number(value);
+}
+
+/**
+ * Optional-bool sibling of {@link legacyEnvOverrideBool} for
+ * `db.settings.track_commit_timestamp` — a genuine Go nil pointer (`*bool`)
+ * when unset, unlike every other bool this file overrides (all of which have
+ * a real default and can never be "not configured").
+ */
+function legacyEnvOverrideOptionalBool(
+  name: string,
+  configured: boolean | undefined,
+  dottedFieldPath: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): boolean | undefined {
+  const value = envOverride(name, undefined, projectEnvValues);
+  if (value === undefined) return configured;
+  const parsed = legacyParseGoBool(value);
+  if (parsed === undefined) {
+    throw new LegacyInvalidBoolEnvOverrideError(dottedFieldPath, value);
+  }
+  return parsed;
+}
+
+/**
+ * Thrown by {@link legacyResolveDbSettingsEnvOverrides} when
+ * `SUPABASE_DB_SETTINGS_SESSION_REPLICATION_ROLE` doesn't match Go's
+ * `SessionReplicationRole` (`pkg/config/db.go:29-43`) — `UnmarshalText`
+ * hard-rejects anything outside `{origin, replica, local}`, same mechanism as
+ * {@link LegacyInvalidAnalyticsBackendEnvOverrideError}/
+ * {@link LegacyInvalidRealtimeIpVersionEnvOverrideError}.
+ */
+export class LegacyInvalidSessionReplicationRoleEnvOverrideError extends Error {
+  constructor(dottedFieldPath: string, value: string) {
+    super(
+      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "origin", "replica", "local"`,
+    );
+    this.name = "LegacyInvalidSessionReplicationRoleEnvOverrideError";
+  }
+}
+
+/**
+ * `db.settings.session_replication_role`-flavored sibling of
+ * {@link envOverrideAnalyticsBackend}/{@link legacyEnvOverrideRealtimeIpVersion}
+ * — the one `db.settings.*` field Go decodes as a text-unmarshalled enum
+ * rather than a string/number/bool. Unlike those two siblings, `configured`
+ * (and the return value) may genuinely be `undefined` (Go's nil pointer, "not
+ * configured" — never written to `postgresql.conf`), so validation only runs
+ * once the merged override-or-configured value is actually present.
+ */
+function legacyEnvOverrideSessionReplicationRole(
+  configured: string | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): "origin" | "replica" | "local" | undefined {
+  const value = envOverride(
+    "SUPABASE_DB_SETTINGS_SESSION_REPLICATION_ROLE",
+    configured,
+    projectEnvValues,
+  );
+  if (value === undefined) return undefined;
+  if (value !== "origin" && value !== "replica" && value !== "local") {
+    throw new LegacyInvalidSessionReplicationRoleEnvOverrideError(
+      "db.settings.session_replication_role",
+      value,
+    );
+  }
+  return value;
+}
+
+/**
+ * Go's `Config.Load` applies every `SUPABASE_DB_SETTINGS_*` override
+ * generically (Viper's `AutomaticEnv`, `pkg/config/config.go:576-586`) before
+ * `(a *settings) ToPostgresConfig()` (`pkg/config/db.go:181-190`) ever
+ * serializes `db.settings` into `postgresql.conf` — so an override for, say,
+ * `shared_buffers` changes what Go actually configures Postgres with. This
+ * resolves all 23 `db.settings.*` sub-fields (`packages/config/src/db.ts`) to
+ * their env-overridden value, for `legacyPostgresSettingsToPostgresConfig` to
+ * serialize — mirroring the `db.port`/`db.major_version`-style fix already
+ * applied at this same `start` call site, just fanned out across every
+ * `[db.settings]` field instead of one.
+ */
+export function legacyResolveDbSettingsEnvOverrides(
+  settings: ProjectConfig["db"]["settings"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): NonNullable<ProjectConfig["db"]["settings"]> {
+  return {
+    effective_cache_size: envOverride(
+      "SUPABASE_DB_SETTINGS_EFFECTIVE_CACHE_SIZE",
+      settings?.effective_cache_size,
+      projectEnvValues,
+    ),
+    logical_decoding_work_mem: envOverride(
+      "SUPABASE_DB_SETTINGS_LOGICAL_DECODING_WORK_MEM",
+      settings?.logical_decoding_work_mem,
+      projectEnvValues,
+    ),
+    maintenance_work_mem: envOverride(
+      "SUPABASE_DB_SETTINGS_MAINTENANCE_WORK_MEM",
+      settings?.maintenance_work_mem,
+      projectEnvValues,
+    ),
+    max_connections: envOverrideOptionalUint(
+      "SUPABASE_DB_SETTINGS_MAX_CONNECTIONS",
+      "db.settings.max_connections",
+      settings?.max_connections,
+      projectEnvValues,
+    ),
+    max_locks_per_transaction: envOverrideOptionalUint(
+      "SUPABASE_DB_SETTINGS_MAX_LOCKS_PER_TRANSACTION",
+      "db.settings.max_locks_per_transaction",
+      settings?.max_locks_per_transaction,
+      projectEnvValues,
+    ),
+    max_parallel_maintenance_workers: envOverrideOptionalUint(
+      "SUPABASE_DB_SETTINGS_MAX_PARALLEL_MAINTENANCE_WORKERS",
+      "db.settings.max_parallel_maintenance_workers",
+      settings?.max_parallel_maintenance_workers,
+      projectEnvValues,
+    ),
+    max_parallel_workers: envOverrideOptionalUint(
+      "SUPABASE_DB_SETTINGS_MAX_PARALLEL_WORKERS",
+      "db.settings.max_parallel_workers",
+      settings?.max_parallel_workers,
+      projectEnvValues,
+    ),
+    max_parallel_workers_per_gather: envOverrideOptionalUint(
+      "SUPABASE_DB_SETTINGS_MAX_PARALLEL_WORKERS_PER_GATHER",
+      "db.settings.max_parallel_workers_per_gather",
+      settings?.max_parallel_workers_per_gather,
+      projectEnvValues,
+    ),
+    max_replication_slots: envOverrideOptionalUint(
+      "SUPABASE_DB_SETTINGS_MAX_REPLICATION_SLOTS",
+      "db.settings.max_replication_slots",
+      settings?.max_replication_slots,
+      projectEnvValues,
+    ),
+    max_slot_wal_keep_size: envOverride(
+      "SUPABASE_DB_SETTINGS_MAX_SLOT_WAL_KEEP_SIZE",
+      settings?.max_slot_wal_keep_size,
+      projectEnvValues,
+    ),
+    max_standby_archive_delay: envOverride(
+      "SUPABASE_DB_SETTINGS_MAX_STANDBY_ARCHIVE_DELAY",
+      settings?.max_standby_archive_delay,
+      projectEnvValues,
+    ),
+    max_standby_streaming_delay: envOverride(
+      "SUPABASE_DB_SETTINGS_MAX_STANDBY_STREAMING_DELAY",
+      settings?.max_standby_streaming_delay,
+      projectEnvValues,
+    ),
+    max_wal_size: envOverride(
+      "SUPABASE_DB_SETTINGS_MAX_WAL_SIZE",
+      settings?.max_wal_size,
+      projectEnvValues,
+    ),
+    max_wal_senders: envOverrideOptionalUint(
+      "SUPABASE_DB_SETTINGS_MAX_WAL_SENDERS",
+      "db.settings.max_wal_senders",
+      settings?.max_wal_senders,
+      projectEnvValues,
+    ),
+    max_worker_processes: envOverrideOptionalUint(
+      "SUPABASE_DB_SETTINGS_MAX_WORKER_PROCESSES",
+      "db.settings.max_worker_processes",
+      settings?.max_worker_processes,
+      projectEnvValues,
+    ),
+    session_replication_role: legacyEnvOverrideSessionReplicationRole(
+      settings?.session_replication_role,
+      projectEnvValues,
+    ),
+    shared_buffers: envOverride(
+      "SUPABASE_DB_SETTINGS_SHARED_BUFFERS",
+      settings?.shared_buffers,
+      projectEnvValues,
+    ),
+    statement_timeout: envOverride(
+      "SUPABASE_DB_SETTINGS_STATEMENT_TIMEOUT",
+      settings?.statement_timeout,
+      projectEnvValues,
+    ),
+    track_activity_query_size: envOverride(
+      "SUPABASE_DB_SETTINGS_TRACK_ACTIVITY_QUERY_SIZE",
+      settings?.track_activity_query_size,
+      projectEnvValues,
+    ),
+    track_commit_timestamp: legacyEnvOverrideOptionalBool(
+      "SUPABASE_DB_SETTINGS_TRACK_COMMIT_TIMESTAMP",
+      settings?.track_commit_timestamp,
+      "db.settings.track_commit_timestamp",
+      projectEnvValues,
+    ),
+    wal_keep_size: envOverride(
+      "SUPABASE_DB_SETTINGS_WAL_KEEP_SIZE",
+      settings?.wal_keep_size,
+      projectEnvValues,
+    ),
+    wal_sender_timeout: envOverride(
+      "SUPABASE_DB_SETTINGS_WAL_SENDER_TIMEOUT",
+      settings?.wal_sender_timeout,
+      projectEnvValues,
+    ),
+    work_mem: envOverride("SUPABASE_DB_SETTINGS_WORK_MEM", settings?.work_mem, projectEnvValues),
+  };
 }
 
 /** Go's `password_requirements` fixed enum (`@supabase/config`'s `packages/config/src/auth/index.ts`). */
@@ -1848,6 +2133,11 @@ export function legacyResolveLocalConfigValues(
     storageS3AccessKeyId: DEFAULT_S3_ACCESS_KEY_ID,
     storageS3SecretAccessKey: DEFAULT_S3_SECRET_ACCESS_KEY,
     storageS3Region: DEFAULT_S3_REGION,
+    analyticsEnabled,
+    analyticsBackend,
+    gcpProjectId: gcpProjectId ?? "",
+    gcpProjectNumber: gcpProjectNumber ?? "",
+    gcpJwtPath: gcpJwtPath ?? "",
   };
 }
 

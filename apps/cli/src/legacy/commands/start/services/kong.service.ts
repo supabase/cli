@@ -49,6 +49,7 @@
 import * as nodePath from "node:path";
 
 import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
+import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
 import { legacyRenderStartKongYml } from "../lib/template-render.ts";
 import { LEGACY_START_CUSTOM_NGINX_TEMPLATE } from "../templates/custom_nginx.template.ts";
 
@@ -108,16 +109,22 @@ export function legacyBuildKongQueryToken(apiKeys: LegacyKongApiKeys): string {
  * helper at `start.go:1464-1471`): the operator's own shell value wins when
  * set (e.g. `KONG_NGINX_WORKER_PROCESSES=auto` for one worker per CPU core),
  * otherwise Go's default of a single worker to minimize local-stack memory
- * usage (Ref: supabase/cli#1271). Kept separate from
+ * usage (Ref: supabase/cli#1271). By the time Go's `os.LookupEnv` runs here,
+ * `Config.Load` has already merged any project dotenv file into the real
+ * process env (`loadEnvIfExists`/`godotenv.Load`) — `projectEnvValues` is
+ * this port's equivalent merged (dotenv + ambient shell, ambient-wins) view,
+ * so a `KONG_NGINX_WORKER_PROCESSES` set only in a project dotenv file (not
+ * the ambient shell) is honored too, matching Storage's identical
+ * `VECTOR_*`-env handling (`storage.service.ts`). Kept separate from
  * {@link legacyBuildKongContainerSpec} (which stays a pure function of
  * already-resolved values, matching every other `start`-service builder) so
  * this one ambient-env read is independently testable and the builder itself
  * never touches `process.env`.
  */
 export function legacyResolveKongNginxWorkerProcesses(
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
 ): string {
-  return env.KONG_NGINX_WORKER_PROCESSES ?? "1";
+  return legacyEnvOrDefault("KONG_NGINX_WORKER_PROCESSES", "1", projectEnvValues);
 }
 
 export interface LegacyKongEmailTemplateMount {

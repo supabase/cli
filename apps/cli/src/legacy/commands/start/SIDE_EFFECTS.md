@@ -147,7 +147,7 @@ not implemented.
 | `SUPABASE_WORKDIR`                     | Resolves `LegacyCliConfig.workdir`                                                                                                                              | no        |
 | `BITBUCKET_CLONE_DIR`                  | When non-empty, drops named volumes and `--security-opt` from every container create                                                                            | no        |
 | `DOCKER_HOST`                          | Read to discover the Docker daemon's own address, then re-derived and set on Vector's container env so it can reach the host's Docker socket for log collection | no        |
-| `KONG_NGINX_WORKER_PROCESSES`          | Read into Kong's own container env (defaults to `"1"` when unset)                                                                                               | no        |
+| `KONG_NGINX_WORKER_PROCESSES`          | Read (ambient shell or project dotenv) into Kong's own container env (defaults to `"1"` when unset)                                                             | no        |
 
 `docker`/`podman` must be resolvable on `PATH` — same fallback behavior as `stop`/`status`.
 

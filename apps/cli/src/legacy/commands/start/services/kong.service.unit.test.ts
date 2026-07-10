@@ -41,10 +41,10 @@ describe("legacyBuildKongQueryToken", () => {
 
 describe("legacyResolveKongNginxWorkerProcesses", () => {
   test('defaults to "1" when unset (start.go:1466-1471)', () => {
-    expect(legacyResolveKongNginxWorkerProcesses({})).toBe("1");
+    expect(legacyResolveKongNginxWorkerProcesses(undefined)).toBe("1");
   });
 
-  test("uses the operator's shell value when set", () => {
+  test("uses a project dotenv-only value, matching Go's post-Load os.LookupEnv", () => {
     expect(legacyResolveKongNginxWorkerProcesses({ KONG_NGINX_WORKER_PROCESSES: "auto" })).toBe(
       "auto",
     );

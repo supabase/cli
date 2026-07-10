@@ -45,6 +45,7 @@ import type { ProjectConfig } from "@supabase/config";
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import { ramInBytes } from "../../../shared/legacy-size-units.ts";
 import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
+import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
 import {
   legacyStartInternalDbUrl,
   legacyStartInternalDbPassword,
@@ -52,26 +53,6 @@ import {
 
 /** Go's `dockerStoragePath` local (`start.go:996`) — both the container's `FILE_STORAGE_BACKEND_PATH` and its named-volume mount target. */
 const LEGACY_STORAGE_DOCKER_PATH = "/mnt";
-
-/**
- * Go's `envOrDefault(key, def string) string` (`start.go:1466-1471`):
- * `os.LookupEnv`-if-set-else-default — an env var that is SET but empty is
- * used verbatim (unlike `legacy-local-config-values.ts`'s `envOverride`,
- * which treats an empty resolved value as unset). `projectEnvValues` mirrors
- * that module's own merged (dotenv + ambient shell, ambient-wins) map;
- * `??` only skips a `null`/`undefined` operand, never an empty string, so
- * this naturally reproduces `LookupEnv`'s "ok if set, even if empty"
- * semantics without a separate presence check. No `SUPABASE_` prefix and no
- * `env(VAR)` indirection — Go's raw `os.LookupEnv` here bypasses the
- * mapstructure decode-hook chain those only apply to.
- */
-function legacyEnvOrDefault(
-  key: string,
-  def: string,
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): string {
-  return projectEnvValues?.[key] ?? process.env[key] ?? def;
-}
 
 export interface LegacyStorageVectorEnvInput {
   /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`). */
