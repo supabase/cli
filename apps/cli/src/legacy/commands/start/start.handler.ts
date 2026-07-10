@@ -1,4 +1,8 @@
-import { inferFunctionsManifest, type ProjectConfig } from "@supabase/config";
+import {
+  inferFunctionsManifest,
+  resolveProjectSubtree,
+  type ProjectConfig,
+} from "@supabase/config";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -47,6 +51,7 @@ import {
 import {
   envOverride,
   LEGACY_DEPRECATED_EXTERNAL_PROVIDERS,
+  legacyDecryptAuthSecret,
   legacyEnvOverrideBool,
   legacyEnvOverrideDenoVersion,
   legacyEnvOverrideMajorVersion,
@@ -254,6 +259,7 @@ function resolveGotruePasskeyWebauthn(document: Readonly<Record<string, unknown>
 function resolveGotrueExternalProviders(
   document: Readonly<Record<string, unknown>> | undefined,
   external: ProjectConfig["auth"]["external"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): Record<string, LegacyGotrueExternalProviderInput> {
   const authDoc = asRecord(document?.["auth"]);
   const externalDoc = asRecord(authDoc?.["external"]);
@@ -278,7 +284,7 @@ function resolveGotrueExternalProviders(
       result[name] = {
         enabled: provider.enabled,
         clientId: provider.client_id,
-        secret: provider.secret,
+        secret: legacyDecryptAuthSecret(provider.secret, projectEnvValues),
         url: provider.url,
         redirectUri: provider.redirect_uri,
         skipNonceCheck: provider.skip_nonce_check,
@@ -293,7 +299,10 @@ function resolveGotrueExternalProviders(
     result[name] = {
       enabled: rawProvider["enabled"] === true,
       clientId: typeof rawProvider["client_id"] === "string" ? rawProvider["client_id"] : "",
-      secret: typeof rawProvider["secret"] === "string" ? rawProvider["secret"] : undefined,
+      secret: legacyDecryptAuthSecret(
+        typeof rawProvider["secret"] === "string" ? rawProvider["secret"] : undefined,
+        projectEnvValues,
+      ),
       url: typeof rawProvider["url"] === "string" ? rawProvider["url"] : "",
       redirectUri:
         typeof rawProvider["redirect_uri"] === "string" ? rawProvider["redirect_uri"] : undefined,
@@ -302,6 +311,44 @@ function resolveGotrueExternalProviders(
     };
   }
   return result;
+}
+
+/**
+ * Decrypts every SMS provider credential Go types as `config.Secret`
+ * (`twilio.auth_token`, `twilio_verify.auth_token`, `messagebird.access_key`,
+ * `textlocal.api_key`, `vonage.api_secret` — `pkg/config/auth.go:339,345,351,358`,
+ * `TwilioVerify` reuses `twilioConfig` so it shares `Twilio`'s `auth_token`
+ * field). `gotrue.service.ts` only ever reads whichever provider is enabled,
+ * so decrypting all 5 up front (rather than only the enabled one) is
+ * harmless and keeps this resolution independent of that enabled-branch logic.
+ */
+function resolveGotrueSms(
+  sms: ProjectConfig["auth"]["sms"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["sms"] {
+  return {
+    ...sms,
+    twilio: {
+      ...sms.twilio,
+      auth_token: legacyDecryptAuthSecret(sms.twilio.auth_token, projectEnvValues),
+    },
+    twilio_verify: {
+      ...sms.twilio_verify,
+      auth_token: legacyDecryptAuthSecret(sms.twilio_verify.auth_token, projectEnvValues),
+    },
+    messagebird: {
+      ...sms.messagebird,
+      access_key: legacyDecryptAuthSecret(sms.messagebird.access_key, projectEnvValues),
+    },
+    textlocal: {
+      ...sms.textlocal,
+      api_key: legacyDecryptAuthSecret(sms.textlocal.api_key, projectEnvValues),
+    },
+    vonage: {
+      ...sms.vonage,
+      api_secret: legacyDecryptAuthSecret(sms.vonage.api_secret, projectEnvValues),
+    },
+  };
 }
 
 /**
@@ -394,7 +441,11 @@ function resolveGotrueEnvInput(params: {
       : undefined;
 
   const { passkeyEnabled, webauthn } = resolveGotruePasskeyWebauthn(document);
-  const externalProviders = resolveGotrueExternalProviders(document, config.auth.external);
+  const externalProviders = resolveGotrueExternalProviders(
+    document,
+    config.auth.external,
+    projectEnvValues,
+  );
   const authExternalUrl = resolveAuthExternalUrl(document, projectEnvValues);
 
   return {
@@ -416,7 +467,7 @@ function resolveGotrueEnvInput(params: {
     kongContainerName,
     smtp,
     mailpit,
-    sms: config.auth.sms,
+    sms: resolveGotrueSms(config.auth.sms, projectEnvValues),
     sessions: config.auth.sessions,
     mfa: config.auth.mfa,
     rateLimit: config.auth.rate_limit,
@@ -793,6 +844,22 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       "api.tls.enabled",
       projectEnvValues,
     );
+    // Same generic-Viper-override gap as `apiTlsEnabled` above, for the two
+    // custom cert/key path fields — Go's `Config.Load` applies
+    // `SUPABASE_API_TLS_CERT_PATH`/`SUPABASE_API_TLS_KEY_PATH` before
+    // `Validate` reads `CertPath`/`KeyPath` from disk into `CertContent`/
+    // `KeyContent` (`pkg/config/config.go:1012-1024`). Mirrors the identical
+    // resolution `legacy-local-config-values.ts` already does for `status`/`stop`.
+    const apiTlsCertPath = envOverride(
+      "SUPABASE_API_TLS_CERT_PATH",
+      config.api.tls.cert_path,
+      projectEnvValues,
+    );
+    const apiTlsKeyPath = envOverride(
+      "SUPABASE_API_TLS_KEY_PATH",
+      config.api.tls.key_path,
+      projectEnvValues,
+    );
 
     // Same generic-Viper-override gap as `apiTlsEnabled` above, for Realtime's
     // two `SUPABASE_REALTIME_*` fields — both the Realtime container spec
@@ -896,13 +963,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // these fields to `/home/kong/localhost.{crt,key}` (`start.go:585-601`).
           let tlsCertContent: string = LEGACY_KONG_LOCAL_TLS_CERT;
           let tlsKeyContent: string = LEGACY_KONG_LOCAL_TLS_KEY;
-          if (
-            apiTlsEnabled &&
-            config.api.tls.cert_path !== undefined &&
-            config.api.tls.key_path !== undefined
-          ) {
+          if (apiTlsEnabled && apiTlsCertPath !== undefined && apiTlsKeyPath !== undefined) {
             tlsCertContent = yield* fs
-              .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, config.api.tls.cert_path))
+              .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsCertPath))
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -912,7 +975,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                 ),
               );
             tlsKeyContent = yield* fs
-              .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, config.api.tls.key_path))
+              .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsKeyPath))
               .pipe(
                 Effect.mapError(
                   (cause) =>
@@ -1199,7 +1262,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // `POSTGRES_INITDB_ARGS` branch.
         experimental: { ...config.experimental, orioledb_version: orioledbVersion },
         jwtSecret: values.jwtSecret,
-        jwtExpiry: config.auth.jwt_expiry,
+        // Overridden by SUPABASE_AUTH_JWT_EXPIRY — Postgres's JWT_EXP (seeding
+        // app.settings.jwt_exp) and GoTrue's GOTRUE_JWT_EXP both read the same
+        // already-overridden utils.Config.Auth.JwtExpiry in Go
+        // (internal/db/start/start.go:68, internal/start/start.go:1372); using
+        // the raw config value here would let Postgres and GoTrue disagree.
+        jwtExpiry: values.authJwtExpiry,
         projectId,
         networkId,
         image: resolveImage(postgresImage),
@@ -1338,6 +1406,21 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         if (entry.service === "edgeRuntime") {
           if (!gates.edgeRuntime || edgeRuntimeDefaultImage === undefined) continue;
           const debug = yield* LegacyDebugFlag;
+          // `config.edge_runtime.secrets` is still schema-decoded plain
+          // strings here — `toPlainEdgeRuntimeConfig` only emits entries
+          // whose values are `Redacted` (`shared/functions/serve.ts`), and a
+          // value only becomes `Redacted` after `resolveProjectSubtree`'s
+          // env-interpolation + secret-path-redaction pass. Without this step
+          // every configured `[edge_runtime.secrets]` entry is silently
+          // dropped — `functions serve`'s own call site already resolves the
+          // subtree first (`shared/functions/serve.ts:603-610`) before
+          // calling the same helper.
+          const resolvedEdgeRuntime = yield* resolveProjectSubtree(
+            config.edge_runtime,
+            { values: projectEnvValues ?? {} },
+            "edge_runtime",
+            { goViperCompat: true },
+          );
           const edgeRuntimeInput: LegacyEdgeRuntimeBringUpInput = {
             projectId,
             networkId,
@@ -1347,7 +1430,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             apiPort: values.apiPort,
             edgeRuntimePolicy: config.edge_runtime.policy,
             edgeRuntimeInspectorPort: config.edge_runtime.inspector_port,
-            edgeRuntimeSecrets: toPlainEdgeRuntimeConfig(config.edge_runtime).secrets,
+            edgeRuntimeSecrets: toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets,
             configDeclaredFunctions,
             configFunctions,
             rawConfigFunctions,

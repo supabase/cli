@@ -101,7 +101,7 @@ export interface LegacyLocalConfigValues {
    * (`secret.go:30-46,77-108`) for both the TOML value and any
    * `SUPABASE_STUDIO_OPENAI_API_KEY` override (Go's generic Viper
    * `AutomaticEnv` binding, `config.go:582-586`) — same treatment as
-   * `jwtSecret`/the API keys below, via the same `decryptAuthSecret` helper.
+   * `jwtSecret`/the API keys below, via the same `legacyDecryptAuthSecret` helper.
    */
   readonly openaiApiKey: string | undefined;
   readonly authSiteUrl: string;
@@ -435,7 +435,7 @@ export function legacyEnvOverrideRealtimeMaxHeaderLength(
  * TOML-sourced value, so `SUPABASE_AUTH_JWT_SECRET=encrypted:...` is decrypted
  * too, not just the config.toml value.
  */
-function decryptAuthSecret(
+export function legacyDecryptAuthSecret(
   value: string | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): string | undefined {
@@ -506,9 +506,9 @@ export function legacyResolveAuthEmailSmtp(
     // Go's `Auth.Email.Smtp.Pass` is a `config.Secret` (`pkg/config/auth.go:260`),
     // decrypted by `DecryptSecretHookFunc` at decode time for both the TOML
     // value and any env override — same treatment as `jwt_secret`/the API
-    // keys below, via the same `decryptAuthSecret` helper.
+    // keys below, via the same `legacyDecryptAuthSecret` helper.
     pass:
-      decryptAuthSecret(
+      legacyDecryptAuthSecret(
         envOverride(
           "SUPABASE_AUTH_EMAIL_SMTP_PASS",
           typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
@@ -1423,7 +1423,7 @@ export function legacyResolveLocalConfigValues(
   const rootKey =
     rawRootKey === undefined || rawRootKey.length === 0
       ? LEGACY_POSTGRES_DEFAULT_ROOT_KEY
-      : (decryptAuthSecret(rawRootKey, projectEnvValues) ?? LEGACY_POSTGRES_DEFAULT_ROOT_KEY);
+      : (legacyDecryptAuthSecret(rawRootKey, projectEnvValues) ?? LEGACY_POSTGRES_DEFAULT_ROOT_KEY);
   // Go's `Config.Validate` runs `ValidateBucketName` over every `[storage.buckets.*]`
   // key right after `db.major_version`, unconditionally.
   const storageBucketNames =
@@ -1471,7 +1471,7 @@ export function legacyResolveLocalConfigValues(
     projectEnvValues,
   );
   const jwtSecret = resolveJwtSecret(
-    decryptAuthSecret(
+    legacyDecryptAuthSecret(
       envOverride("SUPABASE_AUTH_JWT_SECRET", config.auth.jwt_secret, projectEnvValues),
       projectEnvValues,
     ),
@@ -2063,7 +2063,7 @@ export function legacyResolveLocalConfigValues(
     validateAuthExternalProviders(authDocument, projectEnvValues);
   }
 
-  const openaiApiKey = decryptAuthSecret(
+  const openaiApiKey = legacyDecryptAuthSecret(
     envOverride("SUPABASE_STUDIO_OPENAI_API_KEY", config.studio.openai_api_key, projectEnvValues),
     projectEnvValues,
   );
@@ -2093,14 +2093,14 @@ export function legacyResolveLocalConfigValues(
     mailpitUrl: `http://${hostname}:${mailpitPort}`,
     dbUrl: `postgresql://postgres:${DEFAULT_DB_PASSWORD}@${hostname}:${dbPort}/postgres`,
     publishableKey: resolveOpaqueKey(
-      decryptAuthSecret(
+      legacyDecryptAuthSecret(
         envOverride("SUPABASE_AUTH_PUBLISHABLE_KEY", config.auth.publishable_key, projectEnvValues),
         projectEnvValues,
       ),
       defaultPublishableKey,
     ),
     secretKey: resolveOpaqueKey(
-      decryptAuthSecret(
+      legacyDecryptAuthSecret(
         envOverride("SUPABASE_AUTH_SECRET_KEY", config.auth.secret_key, projectEnvValues),
         projectEnvValues,
       ),
@@ -2108,7 +2108,7 @@ export function legacyResolveLocalConfigValues(
     ),
     jwtSecret,
     anonKey: resolveSignedKey(
-      decryptAuthSecret(
+      legacyDecryptAuthSecret(
         envOverride("SUPABASE_AUTH_ANON_KEY", config.auth.anon_key, projectEnvValues),
         projectEnvValues,
       ),
@@ -2117,7 +2117,7 @@ export function legacyResolveLocalConfigValues(
       "anon",
     ),
     serviceRoleKey: resolveSignedKey(
-      decryptAuthSecret(
+      legacyDecryptAuthSecret(
         envOverride(
           "SUPABASE_AUTH_SERVICE_ROLE_KEY",
           config.auth.service_role_key,

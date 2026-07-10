@@ -2189,4 +2189,182 @@ content_path = "./templates/custom_notice.html"
       },
     );
   });
+
+  describe("SUPABASE_API_TLS_CERT_PATH/_KEY_PATH overrides", () => {
+    it.live(
+      "reads the env-overridden cert/key paths for Kong, not the (absent) TOML fields",
+      () => {
+        const previousCert = process.env["SUPABASE_API_TLS_CERT_PATH"];
+        const previousKey = process.env["SUPABASE_API_TLS_KEY_PATH"];
+        const { layer, workdir, child } = setup({
+          configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
+        });
+        mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
+        writeFileSync(
+          join(workdir, "supabase", "certs", "env-server.crt"),
+          "-----BEGIN CERTIFICATE-----env-cert",
+        );
+        writeFileSync(
+          join(workdir, "supabase", "certs", "env-server.key"),
+          "-----BEGIN PRIVATE KEY-----env-key",
+        );
+        process.env["SUPABASE_API_TLS_CERT_PATH"] = "certs/env-server.crt";
+        process.env["SUPABASE_API_TLS_KEY_PATH"] = "certs/env-server.key";
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const kongCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+          );
+          const kongContainerName = containerNameFromCreateArgs(kongCreate?.args ?? []);
+          const secretsDir = join(workdir, "supabase", ".temp", "start-secrets", kongContainerName);
+          const crtContent = readFileSync(join(secretsDir, "secret-1"), "utf-8");
+          const keyContent = readFileSync(join(secretsDir, "secret-2"), "utf-8");
+          expect(crtContent).toBe("-----BEGIN CERTIFICATE-----env-cert");
+          expect(keyContent).toBe("-----BEGIN PRIVATE KEY-----env-key");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousCert === undefined) delete process.env["SUPABASE_API_TLS_CERT_PATH"];
+              else process.env["SUPABASE_API_TLS_CERT_PATH"] = previousCert;
+              if (previousKey === undefined) delete process.env["SUPABASE_API_TLS_KEY_PATH"];
+              else process.env["SUPABASE_API_TLS_KEY_PATH"] = previousKey;
+            }),
+          ),
+        );
+      },
+    );
+  });
+
+  describe("SUPABASE_AUTH_JWT_EXPIRY reaches Postgres init", () => {
+    it.live("honors the override for Postgres's JWT_EXP, not just GoTrue's GOTRUE_JWT_EXP", () => {
+      const previous = process.env["SUPABASE_AUTH_JWT_EXPIRY"];
+      process.env["SUPABASE_AUTH_JWT_EXPIRY"] = "7200";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const dbCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
+        );
+        expect(dbCreate?.env["JWT_EXP"]).toBe("7200");
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_JWT_EXP"]).toBe("7200");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_AUTH_JWT_EXPIRY"];
+            else process.env["SUPABASE_AUTH_JWT_EXPIRY"] = previous;
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("encrypted secrets reach GoTrue's container", () => {
+    // Go's test vector (`apps/cli-go/pkg/config/secret_test.go`): this ciphertext
+    // decrypts to "value" under the keypair below — same fixture already used in
+    // `legacy-local-config-values.unit.test.ts`'s "encrypted auth secrets" suite.
+    const VAULT_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+    const VAULT_ENCRYPTED =
+      "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
+
+    it.live("decrypts an encrypted external OAuth provider secret (known provider)", () => {
+      const previous = process.env["DOTENV_PRIVATE_KEY"];
+      process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+      const { layer, child } = setup({
+        configContents: `project_id = "demo"\n[auth.external.github]\nenabled = true\nclient_id = "gh-client-id"\nsecret = "${VAULT_ENCRYPTED}"\n`,
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_EXTERNAL_GITHUB_SECRET"]).toBe("value");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
+            else process.env["DOTENV_PRIVATE_KEY"] = previous;
+          }),
+        ),
+      );
+    });
+
+    it.live(
+      "decrypts an encrypted external OAuth provider secret (custom/unmodeled provider)",
+      () => {
+        const previous = process.env["DOTENV_PRIVATE_KEY"];
+        process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+        const { layer, child } = setup({
+          configContents: `project_id = "demo"\n[auth.external.my_oidc]\nenabled = true\nclient_id = "custom-client-id"\nsecret = "${VAULT_ENCRYPTED}"\n`,
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_EXTERNAL_MY_OIDC_SECRET"]).toBe("value");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
+              else process.env["DOTENV_PRIVATE_KEY"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live("decrypts an encrypted Twilio SMS auth_token", () => {
+      const previous = process.env["DOTENV_PRIVATE_KEY"];
+      process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+      const { layer, child } = setup({
+        configContents: `project_id = "demo"\n[auth.sms.twilio]\nenabled = true\naccount_sid = "AC123"\nauth_token = "${VAULT_ENCRYPTED}"\nmessage_service_sid = "MG123"\n`,
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_AUTH_TOKEN"]).toBe("value");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
+            else process.env["DOTENV_PRIVATE_KEY"] = previous;
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("Edge Runtime secrets", () => {
+    it.live(
+      "resolves configured [edge_runtime.secrets] into the runtime's env, not dropped",
+      () => {
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "shh-do-not-tell"\n',
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const edgeRuntimeRunCall = child.spawned.find(
+            (s) => s.args[0] === "run" && s.args[1] === "-d",
+          );
+          const args = edgeRuntimeRunCall?.args ?? [];
+          const envFileIndex = args.indexOf("--env-file");
+          const envFilePath = envFileIndex !== -1 ? args[envFileIndex + 1] : undefined;
+          expect(envFilePath).toBeDefined();
+          const envFileContent = readFileSync(envFilePath ?? "", "utf-8");
+          expect(envFileContent).toContain("MY_SECRET=shh-do-not-tell");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+  });
 });

@@ -394,7 +394,7 @@ function redactValue(value: unknown, path: ReadonlyArray<string>, goViperCompat:
 
 function resolveProjectValueAtPath(
   value: unknown,
-  projectEnv: ProjectEnvironment,
+  projectEnv: Pick<ProjectEnvironment, "values">,
   path: ReadonlyArray<string>,
   goViperCompat: boolean,
 ): unknown {
@@ -402,9 +402,15 @@ function resolveProjectValueAtPath(
   return redactValue(interpolated, path, goViperCompat);
 }
 
+/**
+ * `projectEnv` only needs `.values` (`Pick<ProjectEnvironment, "values">`) —
+ * a caller that already has a project's env values but not the full
+ * `ProjectEnvironment` shape (e.g. `paths`/`loadedPaths`/`sources`) can pass
+ * `{ values }` directly instead of threading through the whole loaded object.
+ */
 export function resolveProjectValue<T>(
   value: T,
-  projectEnv: ProjectEnvironment,
+  projectEnv: Pick<ProjectEnvironment, "values">,
   configPath: string,
   options?: ResolveProjectOptions,
 ): Effect.Effect<ResolvedProjectValue<T>> {
@@ -419,9 +425,10 @@ export function resolveProjectValue<T>(
   );
 }
 
+/** See {@link resolveProjectValue}'s doc comment for why `projectEnv` only needs `.values`. */
 export function resolveProjectSubtree<T>(
   value: T,
-  projectEnv: ProjectEnvironment,
+  projectEnv: Pick<ProjectEnvironment, "values">,
   pathPrefix: string,
   options?: ResolveProjectOptions,
 ): Effect.Effect<ResolvedProjectValue<T>> {
