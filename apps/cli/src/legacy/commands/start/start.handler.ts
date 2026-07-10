@@ -62,6 +62,7 @@ import {
   legacyEnvOverridePoolMode,
   legacyEnvOverrideRealtimeIpVersion,
   legacyEnvOverrideRealtimeMaxHeaderLength,
+  legacyRawUnmodeledBool,
   legacyResolveAuthCaptcha,
   legacyResolveAuthEmail,
   legacyResolveAuthEmailSmtp,
@@ -73,6 +74,7 @@ import {
   legacyResolveDbSettingsEnvOverrides,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
+  legacyStrToArr,
   type LegacyLocalConfigValues,
 } from "../../shared/legacy-local-config-values.ts";
 import {
@@ -260,7 +262,7 @@ function resolveGotruePasskeyWebauthn(
     passkeyDoc !== undefined
       ? legacyEnvOverrideBool(
           "SUPABASE_AUTH_PASSKEY_ENABLED",
-          passkeyDoc["enabled"] === true,
+          legacyRawUnmodeledBool(passkeyDoc["enabled"]),
           "auth.passkey.enabled",
           projectEnvValues,
         )
@@ -286,14 +288,18 @@ function resolveGotruePasskeyWebauthn(
                 : "",
               projectEnvValues,
             ) ?? "",
-          rpOrigins:
-            rpOriginsOverride !== undefined
-              ? rpOriginsOverride.split(",")
-              : Array.isArray(webauthnDoc["rp_origins"])
-                ? webauthnDoc["rp_origins"].filter(
-                    (item): item is string => typeof item === "string",
-                  )
-                : [],
+          // Go's mapstructure decode chain applies `StringToSliceHookFunc(",")`
+          // unconditionally to every `[]string`-typed field (`config.go:775-784`) — a raw or
+          // `env(...)`-resolved `rp_origins` string (this section has no `@supabase/config`
+          // schema at all) is comma-split, not silently dropped to `[]`.
+          rpOrigins: (() => {
+            if (rpOriginsOverride !== undefined) return legacyStrToArr(rpOriginsOverride);
+            const raw = webauthnDoc["rp_origins"];
+            if (Array.isArray(raw)) {
+              return raw.filter((item): item is string => typeof item === "string");
+            }
+            return typeof raw === "string" ? legacyStrToArr(raw) : [];
+          })(),
         }
       : undefined;
   return { passkeyEnabled, webauthn };

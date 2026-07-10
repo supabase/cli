@@ -28,6 +28,7 @@ import {
   legacyResolveAuthEmailSmtp,
   legacyResolveAuthExternalProviders,
   legacyResolveAuthHooks,
+  legacyResolveAuthSms,
   legacyResolveDbSettingsEnvOverrides,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
@@ -2102,6 +2103,34 @@ describe("legacyResolveLocalConfigValues", () => {
       process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"] = "true";
       const config = baseConfig();
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+  });
+
+  describe("legacyResolveAuthSms (top-level scalars)", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
+      delete process.env["SUPABASE_AUTH_SMS_ENABLE_CONFIRMATIONS"];
+      delete process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"];
+      delete process.env["SUPABASE_AUTH_SMS_TEMPLATE"];
+    });
+
+    it("overrides enable_signup/enable_confirmations/max_frequency/template with no presence gate", () => {
+      process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "true";
+      process.env["SUPABASE_AUTH_SMS_ENABLE_CONFIRMATIONS"] = "true";
+      process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"] = "10s";
+      process.env["SUPABASE_AUTH_SMS_TEMPLATE"] = "Your OTP is {{ .Code }}";
+      const resolved = legacyResolveAuthSms(undefined, baseConfig().auth.sms, undefined);
+      expect(resolved.enable_signup).toBe(true);
+      expect(resolved.enable_confirmations).toBe(true);
+      expect(resolved.max_frequency).toBe("10s");
+      expect(resolved.template).toBe("Your OTP is {{ .Code }}");
+    });
+
+    it("leaves the scalars at their configured values when nothing is overridden", () => {
+      const configured = { ...baseConfig().auth.sms, enable_signup: true, max_frequency: "5s" };
+      const resolved = legacyResolveAuthSms(undefined, configured, undefined);
+      expect(resolved.enable_signup).toBe(true);
+      expect(resolved.max_frequency).toBe("5s");
     });
   });
 

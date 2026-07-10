@@ -2072,6 +2072,41 @@ content_path = "./templates/custom_notice.html"
         );
       },
     );
+
+    it.live(
+      "honors SUPABASE_AUTH_SMS_ENABLE_SIGNUP and SUPABASE_AUTH_SMS_MAX_FREQUENCY in GoTrue's env",
+      () => {
+        const previousEnableSignup = process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
+        const previousMaxFrequency = process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"];
+        process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "true";
+        process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"] = "10s";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_EXTERNAL_PHONE_ENABLED"]).toBe("true");
+          expect(gotrueCreate?.env["GOTRUE_SMS_MAX_FREQUENCY"]).toBe("10s");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousEnableSignup === undefined) {
+                delete process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
+              } else {
+                process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = previousEnableSignup;
+              }
+              if (previousMaxFrequency === undefined) {
+                delete process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"];
+              } else {
+                process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"] = previousMaxFrequency;
+              }
+            }),
+          ),
+        );
+      },
+    );
   });
 
   describe("SUPABASE_AUTH_EMAIL_* overrides", () => {
@@ -3098,6 +3133,66 @@ content_path = "./templates/custom_notice.html"
         ),
       );
     });
+
+    it.live(
+      "coerces an env(...)-resolved passkey enabled string instead of reading it as disabled",
+      () => {
+        // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema, so the pre-decode
+        // `env(...)` walker substitutes the real value but leaves it a raw string (no type
+        // coercion for schema-unmodeled paths) — a strict `=== true` check would silently read
+        // this valid Go config as disabled.
+        const previous = process.env["PASSKEY_ENABLED"];
+        process.env["PASSKEY_ENABLED"] = "true";
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[auth.passkey]\nenabled = "env(PASSKEY_ENABLED)"\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = ["http://localhost:3000"]\n',
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_PASSKEY_ENABLED"]).toBe("true");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["PASSKEY_ENABLED"];
+              else process.env["PASSKEY_ENABLED"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "splits an env(...)-resolved comma-separated rp_origins string instead of dropping it to []",
+      () => {
+        const previous = process.env["RP_ORIGINS"];
+        process.env["RP_ORIGINS"] = "http://a.example,http://b.example";
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[auth.passkey]\nenabled = true\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = "env(RP_ORIGINS)"\n',
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_ORIGINS"]).toBe(
+            "http://a.example,http://b.example",
+          );
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["RP_ORIGINS"];
+              else process.env["RP_ORIGINS"] = previous;
+            }),
+          ),
+        );
+      },
+    );
   });
 
   describe("SUPABASE_EDGE_RUNTIME_POLICY override", () => {

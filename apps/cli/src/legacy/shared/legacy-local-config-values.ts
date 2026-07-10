@@ -1527,6 +1527,16 @@ const LEGACY_SMS_PROVIDER_ORDER = [
  * the one `config.Secret`-typed field per provider (`pkg/config/auth.go:339,345,351,358`) for
  * parity with this function's (now-superseded) `resolveGotrueSms` precursor, which decrypted all
  * 5 providers unconditionally.
+ *
+ * The 4 top-level scalars (`enable_signup`/`enable_confirmations`/`template`/`max_frequency`,
+ * `pkg/config/auth.go:277-288`) get NO presence gate, unlike the providers above — they're
+ * unconditionally emitted (uncommented) in Go's ejected default config.toml
+ * (`pkg/config/templates/config.toml:257-265`), so `mergeDefaultValues` always registers them
+ * with Viper regardless of whether the user's own config.toml even has an `[auth.sms]` section,
+ * same reasoning already applied to `legacyResolveAuthEmail`'s scalars. `test_otp` (a
+ * `map[string]string`) is deliberately left unresolved: it's commented out of Go's default
+ * template, so Viper never knows the key by default, and Go has no `SUPABASE_AUTH_SMS_TEST_OTP*`
+ * env var at all — `ExperimentalBindStruct` binds static struct fields, not arbitrary map keys.
  */
 export function legacyResolveAuthSms(
   authDocument: Readonly<Record<string, unknown>> | undefined,
@@ -1567,6 +1577,23 @@ export function legacyResolveAuthSms(
 
   return {
     ...sms,
+    enable_signup: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_SMS_ENABLE_SIGNUP",
+      sms.enable_signup,
+      "auth.sms.enable_signup",
+      projectEnvValues,
+    ),
+    enable_confirmations: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_SMS_ENABLE_CONFIRMATIONS",
+      sms.enable_confirmations,
+      "auth.sms.enable_confirmations",
+      projectEnvValues,
+    ),
+    template:
+      envOverride("SUPABASE_AUTH_SMS_TEMPLATE", sms.template, projectEnvValues) ?? sms.template,
+    max_frequency:
+      envOverride("SUPABASE_AUTH_SMS_MAX_FREQUENCY", sms.max_frequency, projectEnvValues) ??
+      sms.max_frequency,
     twilio: {
       enabled: resolveEnabled("twilio", sms.twilio.enabled),
       account_sid: resolveField("twilio", "account_sid", sms.twilio.account_sid) ?? "",
@@ -1714,22 +1741,40 @@ export interface LegacyResolvedAuthExternalProvider {
  * the SAME effective values.
  */
 /**
- * Go's `map[string]provider` decodes an unmodeled/custom provider name through the SAME typed
- * `provider` struct (`Enabled bool`, `pkg/config/auth.go:361-369`) as every known provider — its
- * `env(VAR)`-substituted string is weakly-coerced to `bool` by mapstructure's
- * `WeaklyTypedInput`/`strconv.ParseBool` (`config.go:749-756`) before `Config` ever sees it, so Go
- * never has an untyped raw string here. `@supabase/config`'s `external` schema only recognizes
- * the ~19 known provider ids as typed struct fields (`packages/config/src/auth/providers.ts`), so
- * for an unmodeled name the pre-decode `env(...)` walker substitutes the env value but skips type
- * coercion (no schema AST at that path — `packages/config/src/lib/env.ts:308-314`), leaving e.g.
- * `enabled = "env(CUSTOM_OAUTH_ENABLED)"` as the literal string `"true"`/`"false"` instead of a
- * real boolean. A native TOML `true`/`false` literal still decodes to an actual `boolean` even for
- * an unmodeled key (only `env(...)` substitution is schema-blind), so this must accept both.
+ * Go decodes ANY unmodeled/raw-document boolean field — a custom `map[string]provider` entry
+ * (`Enabled bool`, `pkg/config/auth.go:361-369`), `auth.passkey.enabled` (`auth.go:384-386`), etc.
+ * — through its own typed struct field regardless of TOML-vs-env origin: an `env(VAR)`-substituted
+ * string is weakly-coerced to `bool` by mapstructure's `WeaklyTypedInput`/`strconv.ParseBool`
+ * (`config.go:749-756`) before `Config` ever sees it, so Go never has an untyped raw string for
+ * these fields. `@supabase/config` has no schema at all for `auth.passkey`/`auth.webauthn`, and only
+ * recognizes the ~19 known provider ids for `auth.external` (`packages/config/src/auth/
+ * providers.ts`) — so for any of these unmodeled paths, the pre-decode `env(...)` walker
+ * substitutes the env value but skips type coercion (no schema AST at that path —
+ * `packages/config/src/lib/env.ts:308-314`), leaving e.g. `enabled = "env(CUSTOM_OAUTH_ENABLED)"`
+ * as the literal string `"true"`/`"false"` instead of a real boolean. A native TOML `true`/`false`
+ * literal still decodes to an actual `boolean` even for an unmodeled key (only `env(...)`
+ * substitution is schema-blind), so this must accept both. Used by
+ * {@link legacyResolveAuthExternalProviders} below AND by `start.handler.ts`'s
+ * `resolveGotruePasskeyWebauthn`/this file's own passkey-validation read, since both are
+ * unmodeled-document reads of the identical shape.
  */
-function rawExternalProviderBool(value: unknown): boolean {
+export function legacyRawUnmodeledBool(value: unknown): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") return legacyParseGoBool(value) ?? false;
   return false;
+}
+
+/**
+ * Go's `strToArr` (`pkg/config/utils.go:86-92`): empty string → `[]`, else a plain comma-split, no
+ * trimming — the same semantic `mapstructure.StringToSliceHookFunc(",")` applies unconditionally to
+ * every `[]string`-typed config field during decode (`config.go:775-784`), so a raw or
+ * `env(VAR)`-resolved string destined for a slice field (e.g. `auth.webauthn.rp_origins`, which
+ * `@supabase/config` has no schema for at all) must be split the same way, not just accepted when
+ * it's already a JS array. Hoisted here (was duplicated in `config/push/config-sync/{api,auth}.
+ * sync.ts`) since it's now needed by a third, unrelated call site.
+ */
+export function legacyStrToArr(value: string): Array<string> {
+  return value.length === 0 ? [] : value.split(",");
 }
 
 export function legacyResolveAuthExternalProviders(
@@ -1750,8 +1795,7 @@ export function legacyResolveAuthExternalProviders(
     const provider = decodedProviders.get(name);
     const rawProvider = provider === undefined ? asRecord(externalDoc[name]) : undefined;
     if (provider === undefined && rawProvider === undefined) continue;
-    const configuredEnabled =
-      provider?.enabled ?? rawExternalProviderBool(rawProvider?.["enabled"]);
+    const configuredEnabled = provider?.enabled ?? legacyRawUnmodeledBool(rawProvider?.["enabled"]);
     const configuredClientId =
       provider?.client_id ??
       (typeof rawProvider?.["client_id"] === "string" ? rawProvider["client_id"] : undefined);
@@ -1764,9 +1808,9 @@ export function legacyResolveAuthExternalProviders(
       provider?.redirect_uri ??
       (typeof rawProvider?.["redirect_uri"] === "string" ? rawProvider["redirect_uri"] : undefined);
     const configuredSkipNonceCheck =
-      provider?.skip_nonce_check ?? rawExternalProviderBool(rawProvider?.["skip_nonce_check"]);
+      provider?.skip_nonce_check ?? legacyRawUnmodeledBool(rawProvider?.["skip_nonce_check"]);
     const configuredEmailOptional =
-      provider?.email_optional ?? rawExternalProviderBool(rawProvider?.["email_optional"]);
+      provider?.email_optional ?? legacyRawUnmodeledBool(rawProvider?.["email_optional"]);
 
     result[name] = {
       enabled: legacyEnvOverrideBool(
@@ -2240,7 +2284,7 @@ export function legacyResolveLocalConfigValues(
       passkeyDoc !== undefined
         ? legacyEnvOverrideBool(
             "SUPABASE_AUTH_PASSKEY_ENABLED",
-            passkeyDoc["enabled"] === true,
+            legacyRawUnmodeledBool(passkeyDoc["enabled"]),
             "auth.passkey.enabled",
             projectEnvValues,
           )
@@ -2260,12 +2304,19 @@ export function legacyResolveLocalConfigValues(
       webauthnDoc !== undefined
         ? envOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
         : undefined;
+    // Go's mapstructure decode chain applies `StringToSliceHookFunc(",")` unconditionally to
+    // every `[]string`-typed field (`config.go:775-784`) — a raw or `env(...)`-resolved
+    // `rp_origins` string (this section has no `@supabase/config` schema at all) must be
+    // comma-split, not silently dropped when it isn't already a JS array.
+    const rawRpOrigins = webauthnDoc?.["rp_origins"];
     const rpOrigins =
       rpOriginsOverride !== undefined
-        ? rpOriginsOverride.split(",")
-        : Array.isArray(webauthnDoc?.["rp_origins"])
-          ? webauthnDoc["rp_origins"]
-          : undefined;
+        ? legacyStrToArr(rpOriginsOverride)
+        : Array.isArray(rawRpOrigins)
+          ? rawRpOrigins
+          : typeof rawRpOrigins === "string"
+            ? legacyStrToArr(rawRpOrigins)
+            : undefined;
     const passkey: LegacyPasskeyInput | undefined = passkeyEnabled
       ? { webauthnPresent: webauthnDoc !== undefined, rpId, rpOrigins }
       : undefined;
