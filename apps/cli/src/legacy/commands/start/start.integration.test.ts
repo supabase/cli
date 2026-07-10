@@ -1239,6 +1239,37 @@ content_path = "./templates/custom_notice.html"
         }).pipe(Effect.provide(layer));
       },
     );
+
+    it.live(
+      "seeds against the env-overridden SUPABASE_API_PORT, not config.toml's raw port",
+      () => {
+        // legacySeedBucketsRun previously reloaded config.toml independently instead of
+        // reusing start's own already env-overridden config, so a SUPABASE_API_PORT
+        // override that actually brought Kong up on a different port never reached
+        // the bucket-seeding gateway's base URL.
+        const previous = process.env["SUPABASE_API_PORT"];
+        process.env["SUPABASE_API_PORT"] = "65432";
+        const http = mockStorageBucketHttpClient();
+        const { layer } = setup({
+          configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
+          route: freshVolumeRoute(defaultRoute()),
+          httpClientLayer: http.layer,
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          expect(http.createdBucketRequests).toHaveLength(1);
+          expect(http.createdBucketRequests[0]).toContain(":65432/");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_API_PORT"];
+              else process.env["SUPABASE_API_PORT"] = previous;
+            }),
+          ),
+        );
+      },
+    );
   });
 
   describe("edge runtime", () => {
@@ -2457,6 +2488,32 @@ content_path = "./templates/custom_notice.html"
         ),
       );
     });
+
+    it.live("SUPABASE_DB_POOLER_PORT overrides the published host port", () => {
+      const previous = process.env["SUPABASE_DB_POOLER_PORT"];
+      process.env["SUPABASE_DB_POOLER_PORT"] = "60001";
+      const { layer, child } = setup({
+        configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const poolerCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_pooler_"),
+        );
+        // Default pool_mode ("transaction") publishes the pooler port against
+        // container port 6543 — see the SUPABASE_DB_POOLER_POOL_MODE test above.
+        expect(poolerCreate?.args).toContain("60001:6543");
+        expect(poolerCreate?.args).not.toContain("54329:6543");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_POOLER_PORT"];
+            else process.env["SUPABASE_DB_POOLER_PORT"] = previous;
+          }),
+        ),
+      );
+    });
   });
 
   describe("SUPABASE_DB_HEALTH_TIMEOUT override", () => {
@@ -2562,6 +2619,122 @@ content_path = "./templates/custom_notice.html"
             if (previousProvider === undefined)
               delete process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"];
             else process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"] = previousProvider;
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("nested auth security env overrides reach GoTrue's container", () => {
+    it.live("honors SUPABASE_AUTH_SESSIONS_TIMEBOX", () => {
+      const previous = process.env["SUPABASE_AUTH_SESSIONS_TIMEBOX"];
+      process.env["SUPABASE_AUTH_SESSIONS_TIMEBOX"] = "24h";
+      const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_SESSIONS_TIMEBOX"]).toBe("24h0m0s");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_AUTH_SESSIONS_TIMEBOX"];
+            else process.env["SUPABASE_AUTH_SESSIONS_TIMEBOX"] = previous;
+          }),
+        ),
+      );
+    });
+
+    it.live("honors SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED/_VERIFY_ENABLED", () => {
+      const previousEnroll = process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"];
+      const previousVerify = process.env["SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED"];
+      process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"] = "true";
+      process.env["SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED"] = "true";
+      const { layer, child } = setup({
+        configContents: 'project_id = "demo"\n[auth.mfa.totp]\nenroll_enabled = false\n',
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_MFA_TOTP_ENROLL_ENABLED"]).toBe("true");
+        expect(gotrueCreate?.env["GOTRUE_MFA_TOTP_VERIFY_ENABLED"]).toBe("true");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousEnroll === undefined)
+              delete process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"];
+            else process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"] = previousEnroll;
+            if (previousVerify === undefined)
+              delete process.env["SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED"];
+            else process.env["SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED"] = previousVerify;
+          }),
+        ),
+      );
+    });
+
+    it.live("honors SUPABASE_AUTH_RATE_LIMIT_SMS_SENT", () => {
+      const previous = process.env["SUPABASE_AUTH_RATE_LIMIT_SMS_SENT"];
+      process.env["SUPABASE_AUTH_RATE_LIMIT_SMS_SENT"] = "99";
+      const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_RATE_LIMIT_SMS_SENT"]).toBe("99");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_AUTH_RATE_LIMIT_SMS_SENT"];
+            else process.env["SUPABASE_AUTH_RATE_LIMIT_SMS_SENT"] = previous;
+          }),
+        ),
+      );
+    });
+
+    it.live("honors SUPABASE_AUTH_WEB3_SOLANA_ENABLED", () => {
+      const previous = process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"];
+      process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"] = "true";
+      const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"]).toBe("true");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"];
+            else process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"] = previous;
+          }),
+        ),
+      );
+    });
+
+    it.live("honors SUPABASE_AUTH_OAUTH_SERVER_ENABLED", () => {
+      const previous = process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"];
+      process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"] = "true";
+      const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_OAUTH_SERVER_ENABLED"]).toBe("true");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"];
+            else process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"] = previous;
           }),
         ),
       );

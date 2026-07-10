@@ -936,7 +936,7 @@ function readAuthEmailTemplateContent(
  * aren't independently distinguishable from the CLI's output the way
  * ports/bools are.
  */
-function envOverrideUint(
+export function envOverrideUint(
   name: string,
   dottedFieldPath: string,
   configured: number,
@@ -1303,6 +1303,92 @@ export function legacyResolveAuthHooks(
   return result as LegacyResolvedAuthHooks;
 }
 
+/**
+ * Go's `Auth.MFA` factor fields (`TOTP`/`Phone`/`WebAuthn`) are value-typed
+ * structs (`pkg/config/auth.go:317-321`), never `nil` — unlike `Auth.Hook`'s
+ * pointer-typed fields above, Viper's `AutomaticEnv` always binds to them
+ * regardless of whether `[auth.mfa.<factor>]` is present in config.toml, so
+ * `SUPABASE_AUTH_MFA_*` overrides always apply before `Auth.MFA.validate()`
+ * runs (`config.go:1523-1534`) — no raw-document presence gate needed, unlike
+ * hooks/smtp above.
+ *
+ * Hoisted (like {@link legacyResolveAuthHooks}/{@link legacyResolveAuthCaptcha})
+ * so both `legacyResolveLocalConfigValues` (which derives its `enrollEnabled`/
+ * `verifyEnabled` pairs for `Config.Validate` parity from this same unfiltered
+ * result) and `start.handler.ts`'s `resolveGotrueEnvInput` (the actual GoTrue
+ * env) resolve the SAME effective values.
+ */
+export function legacyResolveAuthMfa(
+  mfa: ProjectConfig["auth"]["mfa"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["mfa"] {
+  return {
+    totp: {
+      enroll_enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED",
+        mfa.totp.enroll_enabled,
+        "auth.mfa.totp.enroll_enabled",
+        projectEnvValues,
+      ),
+      verify_enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED",
+        mfa.totp.verify_enabled,
+        "auth.mfa.totp.verify_enabled",
+        projectEnvValues,
+      ),
+    },
+    phone: {
+      enroll_enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_MFA_PHONE_ENROLL_ENABLED",
+        mfa.phone.enroll_enabled,
+        "auth.mfa.phone.enroll_enabled",
+        projectEnvValues,
+      ),
+      verify_enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_MFA_PHONE_VERIFY_ENABLED",
+        mfa.phone.verify_enabled,
+        "auth.mfa.phone.verify_enabled",
+        projectEnvValues,
+      ),
+      otp_length: envOverrideUint(
+        "SUPABASE_AUTH_MFA_PHONE_OTP_LENGTH",
+        "auth.mfa.phone.otp_length",
+        mfa.phone.otp_length,
+        projectEnvValues,
+      ),
+      template:
+        envOverride("SUPABASE_AUTH_MFA_PHONE_TEMPLATE", mfa.phone.template, projectEnvValues) ??
+        mfa.phone.template,
+      max_frequency:
+        envOverride(
+          "SUPABASE_AUTH_MFA_PHONE_MAX_FREQUENCY",
+          mfa.phone.max_frequency,
+          projectEnvValues,
+        ) ?? mfa.phone.max_frequency,
+    },
+    web_authn: {
+      enroll_enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_MFA_WEB_AUTHN_ENROLL_ENABLED",
+        mfa.web_authn.enroll_enabled,
+        "auth.mfa.web_authn.enroll_enabled",
+        projectEnvValues,
+      ),
+      verify_enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_MFA_WEB_AUTHN_VERIFY_ENABLED",
+        mfa.web_authn.verify_enabled,
+        "auth.mfa.web_authn.verify_enabled",
+        projectEnvValues,
+      ),
+    },
+    max_enrolled_factors: envOverrideUint(
+      "SUPABASE_AUTH_MFA_MAX_ENROLLED_FACTORS",
+      "auth.mfa.max_enrolled_factors",
+      mfa.max_enrolled_factors,
+      projectEnvValues,
+    ),
+  };
+}
+
 /** Go's `(s *sms) validate()` fixed provider priority (`pkg/config/config.go:1348-1410`) — a
  * `switch` that validates ONLY the first enabled provider in this order. */
 const LEGACY_SMS_PROVIDER_ORDER = [
@@ -1383,7 +1469,110 @@ function validateAuthSmsProviders(
  * `slack` are deleted (and warned on, if enabled) before the required-field loop runs, so they
  * are never validated here. Mirrors `legacy-db-config.toml-read.ts`'s identical "B5: external
  * providers" skip list. */
-export const LEGACY_DEPRECATED_EXTERNAL_PROVIDERS = new Set(["linkedin", "slack"]);
+const LEGACY_DEPRECATED_EXTERNAL_PROVIDERS = new Set(["linkedin", "slack"]);
+
+/** Matches `LegacyGotrueExternalProviderInput` (`start/services/gotrue.service.ts`) field-for-field — kept as its own type here rather than importing that command-specific one, same precedent as {@link LegacyResolvedAuthHooks}. */
+export interface LegacyResolvedAuthExternalProvider {
+  readonly enabled: boolean;
+  readonly clientId: string;
+  readonly secret?: string;
+  readonly url: string;
+  readonly redirectUri?: string;
+  readonly skipNonceCheck: boolean;
+  readonly emailOptional: boolean;
+}
+
+/**
+ * Go's `appendGotrueExternalProviderEnv` presence-filtering (`start.go:1442-
+ * 1462`): Go's `Auth.External` is a genuine `map[string]provider{}` containing
+ * only the providers a user's `config.toml` actually mentions, but
+ * `@supabase/config`'s schema always decodes a fixed set of ~19 known
+ * providers, each defaulting `enabled: false` regardless of TOML presence — so
+ * presence must be read from the raw document, same approach
+ * {@link validateAuthExternalProviders} below uses.
+ *
+ * `auth.external.<name>.*` is Viper-bound like every other nested field once
+ * `[auth.external.<name>]` is present in config.toml (`ExperimentalBindStruct`/
+ * `AutomaticEnv`, `config.go:581-586`), so `SUPABASE_AUTH_EXTERNAL_<NAME>_*`
+ * overrides apply before Go's `appendGotrueExternalProviderEnv` runs — Go has
+ * no separate "raw" vs. "effective" provider value, so this must be reflected
+ * in GoTrue's actual container env, not just validation.
+ *
+ * Hoisted (like {@link legacyResolveAuthHooks}/{@link legacyResolveAuthCaptcha})
+ * so both {@link validateAuthExternalProviders} (which derives its
+ * enabled/client_id/secret checks from this same unfiltered result) and
+ * `start.handler.ts`'s `resolveGotrueEnvInput` (the actual GoTrue env) resolve
+ * the SAME effective values.
+ */
+export function legacyResolveAuthExternalProviders(
+  authDocument: Readonly<Record<string, unknown>> | undefined,
+  external: ProjectConfig["auth"]["external"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): Record<string, LegacyResolvedAuthExternalProvider> {
+  const externalDoc = asRecord(authDocument?.["external"]);
+  if (externalDoc === undefined) return {};
+
+  const result: Record<string, LegacyResolvedAuthExternalProvider> = {};
+  const decodedProviders = new Map(Object.entries(external));
+  // Iterate the RAW document's keys, not `Object.entries(external)` — see this
+  // function's doc comment above for why (unmodeled/custom provider names).
+  for (const name of Object.keys(externalDoc)) {
+    if (LEGACY_DEPRECATED_EXTERNAL_PROVIDERS.has(name)) continue;
+    const envPrefix = `SUPABASE_AUTH_EXTERNAL_${name.toUpperCase()}`;
+    const provider = decodedProviders.get(name);
+    const rawProvider = provider === undefined ? asRecord(externalDoc[name]) : undefined;
+    if (provider === undefined && rawProvider === undefined) continue;
+    const configuredEnabled = provider?.enabled ?? rawProvider?.["enabled"] === true;
+    const configuredClientId =
+      provider?.client_id ??
+      (typeof rawProvider?.["client_id"] === "string" ? rawProvider["client_id"] : undefined);
+    const configuredSecret =
+      provider?.secret ??
+      (typeof rawProvider?.["secret"] === "string" ? rawProvider["secret"] : undefined);
+    const configuredUrl =
+      provider?.url ?? (typeof rawProvider?.["url"] === "string" ? rawProvider["url"] : undefined);
+    const configuredRedirectUri =
+      provider?.redirect_uri ??
+      (typeof rawProvider?.["redirect_uri"] === "string" ? rawProvider["redirect_uri"] : undefined);
+    const configuredSkipNonceCheck =
+      provider?.skip_nonce_check ?? rawProvider?.["skip_nonce_check"] === true;
+    const configuredEmailOptional =
+      provider?.email_optional ?? rawProvider?.["email_optional"] === true;
+
+    result[name] = {
+      enabled: legacyEnvOverrideBool(
+        `${envPrefix}_ENABLED`,
+        configuredEnabled,
+        `auth.external.${name}.enabled`,
+        projectEnvValues,
+      ),
+      clientId: envOverride(`${envPrefix}_CLIENT_ID`, configuredClientId, projectEnvValues) ?? "",
+      secret: legacyDecryptAuthSecret(
+        envOverride(`${envPrefix}_SECRET`, configuredSecret, projectEnvValues),
+        projectEnvValues,
+      ),
+      url: envOverride(`${envPrefix}_URL`, configuredUrl, projectEnvValues) ?? "",
+      redirectUri: envOverride(
+        `${envPrefix}_REDIRECT_URI`,
+        configuredRedirectUri,
+        projectEnvValues,
+      ),
+      skipNonceCheck: legacyEnvOverrideBool(
+        `${envPrefix}_SKIP_NONCE_CHECK`,
+        configuredSkipNonceCheck,
+        `auth.external.${name}.skip_nonce_check`,
+        projectEnvValues,
+      ),
+      emailOptional: legacyEnvOverrideBool(
+        `${envPrefix}_EMAIL_OPTIONAL`,
+        configuredEmailOptional,
+        `auth.external.${name}.email_optional`,
+        projectEnvValues,
+      ),
+    };
+  }
+  return result;
+}
 
 /**
  * Go's `(e external) validate()` (`pkg/config/config.go:1419-1451`) — D-only per
@@ -1414,38 +1603,25 @@ export const LEGACY_DEPRECATED_EXTERNAL_PROVIDERS = new Set(["linkedin", "slack"
  */
 function validateAuthExternalProviders(
   authDocument: Record<string, unknown> | undefined,
+  external: ProjectConfig["auth"]["external"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): void {
-  const external = asRecord(authDocument?.["external"]);
-  if (external === undefined) return;
-  for (const name of Object.keys(external)) {
-    if (LEGACY_DEPRECATED_EXTERNAL_PROVIDERS.has(name)) continue;
-    const provider = asRecord(external[name]);
-    if (provider === undefined) continue;
-    const envPrefix = `SUPABASE_AUTH_EXTERNAL_${name.toUpperCase()}`;
-    const enabled = legacyEnvOverrideBool(
-      `${envPrefix}_ENABLED`,
-      provider["enabled"] === true,
-      `auth.external.${name}.enabled`,
-      projectEnvValues,
-    );
-    if (!enabled) continue;
-    const clientId = envOverride(
-      `${envPrefix}_CLIENT_ID`,
-      typeof provider["client_id"] === "string" ? provider["client_id"] : undefined,
-      projectEnvValues,
-    );
-    if (clientId === undefined || clientId.length === 0) {
+  // Derived from `legacyResolveAuthExternalProviders`'s unfiltered result so this validation
+  // path and `start.handler.ts`'s GoTrue env builder can't drift — same precedent as
+  // `legacyResolveAuthHooks`'s validation caller above.
+  const resolved = legacyResolveAuthExternalProviders(authDocument, external, projectEnvValues);
+  for (const [name, provider] of Object.entries(resolved)) {
+    if (!provider.enabled) continue;
+    if (provider.clientId.length === 0) {
       throw new LegacyConfigValidateError(
         `Missing required field in config: auth.external.${name}.client_id`,
       );
     }
-    const secret = envOverride(
-      `${envPrefix}_SECRET`,
-      typeof provider["secret"] === "string" ? provider["secret"] : undefined,
-      projectEnvValues,
-    );
-    if (name !== "apple" && name !== "google" && (secret === undefined || secret.length === 0)) {
+    if (
+      name !== "apple" &&
+      name !== "google" &&
+      (provider.secret === undefined || provider.secret.length === 0)
+    ) {
       throw new LegacyConfigValidateError(
         `Missing required field in config: auth.external.${name}.secret`,
       );
@@ -1878,59 +2054,25 @@ export function legacyResolveLocalConfigValues(
       return { type: hookType, uri: resolved.uri, secrets: resolved.secrets };
     });
 
-    // Go's `Auth.MFA` factor fields (`TOTP`/`Phone`/`WebAuthn`) are value-typed structs
-    // (`pkg/config/auth.go:317-320`), never `nil` — unlike `Auth.Hook`'s pointer-typed fields
-    // above, `ExperimentalBindStruct` always recurses into them (vendored Viper's
-    // `decodeStructKeys`/`flattenAndMergeMap`) regardless of whether `[auth.mfa.<factor>]` is
-    // present in config.toml (the default template even leaves `[auth.mfa.web_authn]` commented
-    // out and it's still overridable), so `SUPABASE_AUTH_MFA_<FACTOR>_{ENROLL,VERIFY}_ENABLED`
-    // overrides always apply before `Auth.MFA.validate()` runs (`config.go:1523-1534`) — no
-    // raw-document presence gate needed here, unlike hooks/smtp above.
+    // Derived from `legacyResolveAuthMfa`'s unfiltered result so this validation path and
+    // `resolveGotrueEnvInput`'s actual GoTrue env resolve the exact same per-factor override
+    // values (see that function's doc comment) — same precedent as `hooks` above.
+    const resolvedMfa = legacyResolveAuthMfa(config.auth.mfa, projectEnvValues);
     const mfa: ReadonlyArray<LegacyMfaFactorInput> = [
       {
         label: "totp",
-        enrollEnabled: legacyEnvOverrideBool(
-          "SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED",
-          config.auth.mfa.totp.enroll_enabled,
-          "auth.mfa.totp.enroll_enabled",
-          projectEnvValues,
-        ),
-        verifyEnabled: legacyEnvOverrideBool(
-          "SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED",
-          config.auth.mfa.totp.verify_enabled,
-          "auth.mfa.totp.verify_enabled",
-          projectEnvValues,
-        ),
+        enrollEnabled: resolvedMfa.totp.enroll_enabled,
+        verifyEnabled: resolvedMfa.totp.verify_enabled,
       },
       {
         label: "phone",
-        enrollEnabled: legacyEnvOverrideBool(
-          "SUPABASE_AUTH_MFA_PHONE_ENROLL_ENABLED",
-          config.auth.mfa.phone.enroll_enabled,
-          "auth.mfa.phone.enroll_enabled",
-          projectEnvValues,
-        ),
-        verifyEnabled: legacyEnvOverrideBool(
-          "SUPABASE_AUTH_MFA_PHONE_VERIFY_ENABLED",
-          config.auth.mfa.phone.verify_enabled,
-          "auth.mfa.phone.verify_enabled",
-          projectEnvValues,
-        ),
+        enrollEnabled: resolvedMfa.phone.enroll_enabled,
+        verifyEnabled: resolvedMfa.phone.verify_enabled,
       },
       {
         label: "web_authn",
-        enrollEnabled: legacyEnvOverrideBool(
-          "SUPABASE_AUTH_MFA_WEB_AUTHN_ENROLL_ENABLED",
-          config.auth.mfa.web_authn.enroll_enabled,
-          "auth.mfa.web_authn.enroll_enabled",
-          projectEnvValues,
-        ),
-        verifyEnabled: legacyEnvOverrideBool(
-          "SUPABASE_AUTH_MFA_WEB_AUTHN_VERIFY_ENABLED",
-          config.auth.mfa.web_authn.verify_enabled,
-          "auth.mfa.web_authn.verify_enabled",
-          projectEnvValues,
-        ),
+        enrollEnabled: resolvedMfa.web_authn.enroll_enabled,
+        verifyEnabled: resolvedMfa.web_authn.verify_enabled,
       },
     ];
 
@@ -2189,7 +2331,7 @@ export function legacyResolveLocalConfigValues(
   // in D") — this is L's port of D's identical inline block.
   if (authEnabled) {
     validateAuthSmsProviders(authDocument, projectEnvValues);
-    validateAuthExternalProviders(authDocument, projectEnvValues);
+    validateAuthExternalProviders(authDocument, config.auth.external, projectEnvValues);
   }
 
   const openaiApiKey = legacyDecryptAuthSecret(

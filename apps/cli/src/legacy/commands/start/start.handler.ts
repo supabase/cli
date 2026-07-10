@@ -51,7 +51,7 @@ import {
 import {
   envOverride,
   envOverridePort,
-  LEGACY_DEPRECATED_EXTERNAL_PROVIDERS,
+  envOverrideUint,
   legacyDecryptAuthSecret,
   legacyEnvOverrideApiMaxRows,
   legacyEnvOverrideBool,
@@ -64,7 +64,9 @@ import {
   legacyEnvOverrideRealtimeMaxHeaderLength,
   legacyResolveAuthCaptcha,
   legacyResolveAuthEmailSmtp,
+  legacyResolveAuthExternalProviders,
   legacyResolveAuthHooks,
+  legacyResolveAuthMfa,
   legacyResolveConfiguredSigningKeys,
   legacyResolveDbSettingsEnvOverrides,
   legacyResolveLocalConfigValues,
@@ -157,7 +159,6 @@ import {
 import {
   buildLegacyGotrueContainerSpec,
   type LegacyBuildGotrueEnvInput,
-  type LegacyGotrueExternalProviderInput,
 } from "./services/gotrue.service.ts";
 import { legacyBuildMailpitContainerSpec } from "./services/mailpit.service.ts";
 import {
@@ -254,72 +255,6 @@ function resolveGotruePasskeyWebauthn(document: Readonly<Record<string, unknown>
 }
 
 /**
- * Go's `appendGotrueExternalProviderEnv` presence-filtering (`start.go:1442-
- * 1462`): Go's `Auth.External` is a genuine `map[string]provider{}` containing
- * only the providers a user's `config.toml` actually mentions, but
- * `@supabase/config`'s schema always decodes a fixed set of ~19 known
- * providers, each defaulting `enabled: false` regardless of TOML presence — so
- * presence must be read from the raw document, same approach already used by
- * `legacy-local-config-values.ts`'s `validateAuthExternalProviders`.
- */
-function resolveGotrueExternalProviders(
-  document: Readonly<Record<string, unknown>> | undefined,
-  external: ProjectConfig["auth"]["external"],
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): Record<string, LegacyGotrueExternalProviderInput> {
-  const authDoc = asRecord(document?.["auth"]);
-  const externalDoc = asRecord(authDoc?.["external"]);
-  if (externalDoc === undefined) return {};
-
-  const result: Record<string, LegacyGotrueExternalProviderInput> = {};
-  const decodedProviders = new Map(Object.entries(external));
-  // Iterate the RAW document's keys, not `Object.entries(external)` — Go's
-  // `Auth.External` is a genuine `map[string]provider{}` iterated
-  // unconditionally by `appendGotrueExternalProviderEnv`
-  // (`apps/cli-go/internal/start/start.go:1442-1462`), but `@supabase/
-  // config`'s `external` schema only decodes the ~19 known provider ids,
-  // silently dropping any other name at decode time — so a custom
-  // `[auth.external.my_oidc]` block would never reach GoTrue's env if this
-  // only walked the decoded object. Same raw-document approach
-  // `validateAuthExternalProviders` (`legacy-local-config-values.ts`) already
-  // uses for the identical reason.
-  for (const name of Object.keys(externalDoc)) {
-    if (LEGACY_DEPRECATED_EXTERNAL_PROVIDERS.has(name)) continue;
-    const provider = decodedProviders.get(name);
-    if (provider !== undefined) {
-      result[name] = {
-        enabled: provider.enabled,
-        clientId: provider.client_id,
-        secret: legacyDecryptAuthSecret(provider.secret, projectEnvValues),
-        url: provider.url,
-        redirectUri: provider.redirect_uri,
-        skipNonceCheck: provider.skip_nonce_check,
-        emailOptional: provider.email_optional,
-      };
-      continue;
-    }
-    // Unmodeled/custom provider name — read the raw fields directly, same
-    // defensive coercions `validateAuthExternalProviders` already uses.
-    const rawProvider = asRecord(externalDoc[name]);
-    if (rawProvider === undefined) continue;
-    result[name] = {
-      enabled: rawProvider["enabled"] === true,
-      clientId: typeof rawProvider["client_id"] === "string" ? rawProvider["client_id"] : "",
-      secret: legacyDecryptAuthSecret(
-        typeof rawProvider["secret"] === "string" ? rawProvider["secret"] : undefined,
-        projectEnvValues,
-      ),
-      url: typeof rawProvider["url"] === "string" ? rawProvider["url"] : "",
-      redirectUri:
-        typeof rawProvider["redirect_uri"] === "string" ? rawProvider["redirect_uri"] : undefined,
-      skipNonceCheck: rawProvider["skip_nonce_check"] === true,
-      emailOptional: rawProvider["email_optional"] === true,
-    };
-  }
-  return result;
-}
-
-/**
  * Decrypts every SMS provider credential Go types as `config.Secret`
  * (`twilio.auth_token`, `twilio_verify.auth_token`, `messagebird.access_key`,
  * `textlocal.api_key`, `vonage.api_secret` — `pkg/config/auth.go:339,345,351,358`,
@@ -354,6 +289,152 @@ function resolveGotrueSms(
       ...sms.vonage,
       api_secret: legacyDecryptAuthSecret(sms.vonage.api_secret, projectEnvValues),
     },
+  };
+}
+
+/**
+ * Go's `Auth.Sessions` (`pkg/config/auth.go:330-333`) is a value-typed struct,
+ * always merged with a Viper default (empty durations) regardless of
+ * `[auth.sessions]` presence in config.toml — so
+ * `SUPABASE_AUTH_SESSIONS_{TIMEBOX,INACTIVITY_TIMEOUT}` overrides always apply
+ * before `start.go` builds `GOTRUE_SESSIONS_*`, no raw-document presence gate
+ * needed (same reasoning as {@link resolveGotrueRateLimit}/mfa below).
+ * `@supabase/config`'s `sessions` schema is `Schema.optionalKey` at the
+ * `auth` level though (`config.auth.sessions` can be `undefined`), unlike
+ * Go's always-present struct — an env override must still be able to
+ * introduce a value even when the section was never in config.toml at all,
+ * matching Go's real behavior.
+ */
+function resolveGotrueSessions(
+  sessions: ProjectConfig["auth"]["sessions"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["sessions"] {
+  const timebox = envOverride(
+    "SUPABASE_AUTH_SESSIONS_TIMEBOX",
+    sessions?.timebox,
+    projectEnvValues,
+  );
+  const inactivityTimeout = envOverride(
+    "SUPABASE_AUTH_SESSIONS_INACTIVITY_TIMEOUT",
+    sessions?.inactivity_timeout,
+    projectEnvValues,
+  );
+  if (timebox === undefined && inactivityTimeout === undefined) return sessions;
+  return { timebox, inactivity_timeout: inactivityTimeout };
+}
+
+/**
+ * Go's `Auth.RateLimit` (`pkg/config/auth.go:200-208`) is a value-typed
+ * struct of plain `uint`s, always Viper-bound regardless of `[auth.rate_
+ * limit]` presence, so every `SUPABASE_AUTH_RATE_LIMIT_*` override applies
+ * before `start.go` builds `GOTRUE_RATE_LIMIT_*` — no raw-document presence
+ * gate needed, matching the existing `db.pooler`/SMS numeric-field precedent.
+ */
+function resolveGotrueRateLimit(
+  rateLimit: ProjectConfig["auth"]["rate_limit"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["rate_limit"] {
+  return {
+    anonymous_users: envOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS",
+      "auth.rate_limit.anonymous_users",
+      rateLimit.anonymous_users,
+      projectEnvValues,
+    ),
+    token_refresh: envOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_TOKEN_REFRESH",
+      "auth.rate_limit.token_refresh",
+      rateLimit.token_refresh,
+      projectEnvValues,
+    ),
+    sign_in_sign_ups: envOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_SIGN_IN_SIGN_UPS",
+      "auth.rate_limit.sign_in_sign_ups",
+      rateLimit.sign_in_sign_ups,
+      projectEnvValues,
+    ),
+    token_verifications: envOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_TOKEN_VERIFICATIONS",
+      "auth.rate_limit.token_verifications",
+      rateLimit.token_verifications,
+      projectEnvValues,
+    ),
+    email_sent: envOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT",
+      "auth.rate_limit.email_sent",
+      rateLimit.email_sent,
+      projectEnvValues,
+    ),
+    sms_sent: envOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_SMS_SENT",
+      "auth.rate_limit.sms_sent",
+      rateLimit.sms_sent,
+      projectEnvValues,
+    ),
+    web3: envOverrideUint(
+      "SUPABASE_AUTH_RATE_LIMIT_WEB3",
+      "auth.rate_limit.web3",
+      rateLimit.web3,
+      projectEnvValues,
+    ),
+  };
+}
+
+/**
+ * Go's `Auth.Web3` (`pkg/config/auth.go:379-382`) is a value-typed struct —
+ * same no-presence-gate reasoning as {@link resolveGotrueRateLimit}.
+ */
+function resolveGotrueWeb3(
+  web3: ProjectConfig["auth"]["web3"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["web3"] {
+  return {
+    solana: {
+      enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_WEB3_SOLANA_ENABLED",
+        web3.solana.enabled,
+        "auth.web3.solana.enabled",
+        projectEnvValues,
+      ),
+    },
+    ethereum: {
+      enabled: legacyEnvOverrideBool(
+        "SUPABASE_AUTH_WEB3_ETHEREUM_ENABLED",
+        web3.ethereum.enabled,
+        "auth.web3.ethereum.enabled",
+        projectEnvValues,
+      ),
+    },
+  };
+}
+
+/**
+ * Go's `Auth.OAuthServer` (`pkg/config/auth.go:394-398`) is a value-typed
+ * struct — same no-presence-gate reasoning as {@link resolveGotrueRateLimit}.
+ */
+function resolveGotrueOAuthServer(
+  oauthServer: ProjectConfig["auth"]["oauth_server"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["oauth_server"] {
+  return {
+    enabled: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_OAUTH_SERVER_ENABLED",
+      oauthServer.enabled,
+      "auth.oauth_server.enabled",
+      projectEnvValues,
+    ),
+    authorization_url_path:
+      envOverride(
+        "SUPABASE_AUTH_OAUTH_SERVER_AUTHORIZATION_URL_PATH",
+        oauthServer.authorization_url_path,
+        projectEnvValues,
+      ) ?? oauthServer.authorization_url_path,
+    allow_dynamic_registration: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION",
+      oauthServer.allow_dynamic_registration,
+      "auth.oauth_server.allow_dynamic_registration",
+      projectEnvValues,
+    ),
   };
 }
 
@@ -447,8 +528,8 @@ function resolveGotrueEnvInput(params: {
       : undefined;
 
   const { passkeyEnabled, webauthn } = resolveGotruePasskeyWebauthn(document);
-  const externalProviders = resolveGotrueExternalProviders(
-    document,
+  const externalProviders = legacyResolveAuthExternalProviders(
+    asRecord(document?.["auth"]),
     config.auth.external,
     projectEnvValues,
   );
@@ -474,11 +555,11 @@ function resolveGotrueEnvInput(params: {
     smtp,
     mailpit,
     sms: resolveGotrueSms(config.auth.sms, projectEnvValues),
-    sessions: config.auth.sessions,
-    mfa: config.auth.mfa,
-    rateLimit: config.auth.rate_limit,
-    web3: config.auth.web3,
-    oauthServer: config.auth.oauth_server,
+    sessions: resolveGotrueSessions(config.auth.sessions, projectEnvValues),
+    mfa: legacyResolveAuthMfa(config.auth.mfa, projectEnvValues),
+    rateLimit: resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
+    web3: resolveGotrueWeb3(config.auth.web3, projectEnvValues),
+    oauthServer: resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
     hooks: legacyResolveAuthHooks(asRecord(document?.["auth"]), config.auth.hook, projectEnvValues),
     captcha: legacyResolveAuthCaptcha(
       asRecord(document?.["auth"]),
@@ -942,9 +1023,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
 
     // Same gap for Supavisor's pooler fields — Go's Config.Load applies
     // SUPABASE_DB_POOLER_* generically (pkg/config/config.go:580-586) before
-    // start.go:1194-1211 reads utils.Config.Db.Pooler.{PoolMode,
+    // start.go:1194-1211 reads utils.Config.Db.Pooler.{Port,PoolMode,
     // DefaultPoolSize,MaxClientConn}; PoolMode specifically decides the
     // published host port (5432 session vs 6543 transaction).
+    const poolerPort = envOverridePort(
+      "SUPABASE_DB_POOLER_PORT",
+      config.db.pooler.port,
+      "db.pooler.port",
+      projectEnvValues,
+    );
     const poolMode = legacyEnvOverridePoolMode(config.db.pooler.pool_mode, projectEnvValues);
     const poolerDefaultPoolSize = legacyEnvOverrideDefaultPoolSize(
       config.db.pooler.default_pool_size,
@@ -1249,7 +1336,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               image,
               projectId,
               networkId,
-              port: config.db.pooler.port,
+              port: poolerPort,
               poolMode,
               defaultPoolSize: poolerDefaultPoolSize,
               maxClientConn: poolerMaxClientConn,
@@ -1618,18 +1705,28 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // hand-rolled `HttpClient.make(...)` mock (this file's own integration
     // tests), which never reads `FetchHttpClient.Fetch` at all.
     //
-    // Passes the hoisted, env-overridden `apiTlsEnabled` (not the raw
-    // `config`) so a `SUPABASE_API_TLS_ENABLED=true` override that brought
-    // Kong up on TLS also gets its CA trusted here — otherwise this lookup's
-    // `resolveLocalBaseUrl` derives `http://` from the un-overridden
-    // `config.api.tls.enabled`, `localKongCa` stays `undefined`, and the
-    // probe above fails TLS verification against Kong's self-signed cert.
+    // Folds the hoisted, env-overridden `apiPort`/`apiTlsEnabled` into `config`
+    // (not the raw values) so a `SUPABASE_API_PORT`/`SUPABASE_API_TLS_ENABLED`
+    // override that actually brought Kong up on a different port/TLS also
+    // reaches every local Storage-gateway caller below — otherwise
+    // `resolveLocalBaseUrl` derives its URL from the un-overridden
+    // `config.api.{port,tls.enabled}` and points at a port/scheme nothing is
+    // actually listening on. Reused for both this health-check CA lookup and
+    // the two `legacySeedBucketsRun` calls below (`resolvedConfig`), so bucket
+    // seeding never independently reloads config.toml and silently drops
+    // these same overrides — mirroring Go's `buckets.Run` reading the single
+    // process-wide `utils.Config` instead of reloading.
+    const effectiveLocalStorageConfig = {
+      ...config,
+      api: {
+        ...config.api,
+        port: values.apiPort,
+        tls: { ...config.api.tls, enabled: apiTlsEnabled },
+      },
+    };
     const { localKongCa } = yield* legacyResolveStorageCredentials({
       projectRef: "",
-      config: {
-        ...config,
-        api: { ...config.api, tls: { ...config.api.tls, enabled: apiTlsEnabled } },
-      },
+      config: effectiveLocalStorageConfig,
     });
     const healthResult = yield* legacyWaitForHealthyServices(spawner, started, {
       postgrest: postgrestGateway,
@@ -1666,6 +1763,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               emitSummary: false,
               interactive: false,
               yes: true,
+              resolvedConfig: {
+                config: effectiveLocalStorageConfig,
+                document: context.loaded?.document,
+              },
             }).pipe(Effect.result);
             if (Result.isFailure(seedResult)) {
               yield* legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir);
@@ -1707,6 +1808,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         emitSummary: false,
         interactive: false,
         yes: true,
+        resolvedConfig: { config: effectiveLocalStorageConfig, document: context.loaded?.document },
       }).pipe(
         Effect.tapError(() =>
           legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
