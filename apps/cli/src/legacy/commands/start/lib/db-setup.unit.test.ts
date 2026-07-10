@@ -117,6 +117,7 @@ function baseInput(
     jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
     jwks: '{"keys":[]}',
     apiUrl: "http://127.0.0.1:54321",
+    siteUrl: defaultConfig.auth.site_url,
     anonKey: "anon-key",
     serviceRoleKey: "service-role-key",
     storageTargetMigration: "",
@@ -319,6 +320,41 @@ describe("legacyStartSetupLocalDatabase", () => {
             expect(job.env["GOTRUE_JWT_SECRET"]).toBe(
               "super-secret-jwt-token-with-at-least-32-characters-long",
             );
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect(
+      "the auth job's GOTRUE_SITE_URL reflects the caller's resolved siteUrl, not the raw config value",
+      () => {
+        // `siteUrl` is already SUPABASE_AUTH_SITE_URL-overridden by the caller
+        // (`start.handler.ts`'s `values.authSiteUrl`) — the one-shot auth
+        // migration job must agree with the long-running GoTrue container,
+        // not fall back to reading the un-overridden `config.auth.site_url`.
+        const workdir = makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        const config = decodeConfig({
+          realtime: { enabled: false },
+          storage: { enabled: false },
+          auth: { site_url: "http://raw-config-value.example" },
+        });
+        return run(
+          baseInput(workdir, session, {
+            majorVersion: 15,
+            config,
+            apiUrl: "http://127.0.0.1:54321/",
+            siteUrl: "http://env-overridden-value.example",
+          }),
+          out,
+          docker,
+        ).pipe(
+          Effect.map(() => {
+            const job = docker.runs[0]!;
+            expect(job.env["GOTRUE_SITE_URL"]).toBe("http://env-overridden-value.example");
             rmSync(workdir, { recursive: true, force: true });
           }),
         );

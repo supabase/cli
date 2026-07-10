@@ -96,11 +96,11 @@ command (Go's `return seedErr` instead of the downgraded `return err`).
 
 ## Files Written
 
-| Path                                                                  | Format | When                                                                                                                      |
-| --------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.branches/_current_branch`                        | text   | on every start, only if absent — writes `"main"`                                                                          |
-| host temp files (env-file, multiline-env script, serve-main template) | —      | while Edge Runtime is starting — removed immediately after `docker run` returns (best-effort)                             |
-| `<workdir>/supabase/.temp/start-secrets/<containerName>/secret-<n>`   | varies | for Kong (`kong.yml`, TLS cert, TLS key), Postgres (`pgsodium_root.key`), and Supavisor (`pooler_tenant.exs`) — see below |
+| Path                                                                                          | Format | When                                                                                                                      |
+| --------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.branches/_current_branch`                                                | text   | on every start, only if absent — writes `"main"`                                                                          |
+| `<workdir>/supabase/.temp/start-secrets/<containerName>/secret-<n>`                           | varies | for Kong (`kong.yml`, TLS cert, TLS key), Postgres (`pgsodium_root.key`), and Supavisor (`pooler_tenant.exs`) — see below |
+| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env,main}/` | varies | Edge Runtime's own JWT/service-role-key/secret env artifacts and bootstrap template — see below                           |
 
 Kong's `custom_nginx.template`, Vector's `vector.yaml`, and Postgres's own bootstrap
 script (`postgresql.conf`-equivalent setup) are all rendered in memory and injected
@@ -124,6 +124,19 @@ reaches container creation, and is cleaned up immediately if `docker create`/`do
 start` itself fails — otherwise it is left in place for the life of the container.
 Studio reads/writes SQL snippets under `<workdir>/supabase/snippets/` at its own
 runtime — that's Studio's behavior, not something `start` itself writes.
+
+Edge Runtime's own JWT/service-role-key/configured-secret env file, multiline-env
+script + value files, and bootstrap `index.ts` template (`shared/functions/serve.ts`'s
+`writeDockerEnvFile`/`writeDockerMultilineEnvScript`/`writeServeMainTemplateFile`) are
+staged the same way, under `<workdir>/supabase/.temp/start-secrets/<edgeRuntime
+containerName>/{env,multiline-env,main}/` (directory mode `0700`, files mode `0600`),
+bind-mounted `:ro` into the container — a deterministic, persistent path rather than
+`os.tmpdir()` (which is frequently tmpfs and gets wiped on reboot) so
+`legacyCleanupStartSecrets` (see the Exit Codes/rollback section below) can reclaim
+them on `stop` or a failed-start rollback, exactly like the Kong/Postgres/Supavisor
+directories above. Each of the three writers removes and recreates its own
+subdirectory fresh on every call (self-healing, same as the directory above), so a
+shrinking env set never leaves stale files behind.
 
 ## API Routes
 

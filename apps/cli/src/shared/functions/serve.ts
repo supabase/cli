@@ -18,8 +18,7 @@ import {
   type JsonWebKeyInput,
 } from "node:crypto";
 import { watch } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { styleText } from "node:util";
 import { Cause, Duration, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from "effect";
@@ -774,13 +773,19 @@ function splitEnvEntry(entry: string) {
     : ([entry.slice(0, separatorIndex), entry.slice(separatorIndex + 1)] as const);
 }
 
-async function writeDockerEnvFile(env: Readonly<Record<string, string>>) {
+async function writeDockerEnvFile(env: Readonly<Record<string, string>>, dir: string) {
   const entries = Object.entries(env);
   if (entries.length === 0) {
     return undefined;
   }
 
-  const dir = await mkdtemp(join(tmpdir(), "supabase-functions-serve-env-"));
+  // Self-healing: `dir` is a deterministic, reused path (not a fresh mkdtemp
+  // each call), so a stale directory from an earlier invocation in the same
+  // process (e.g. `functions serve`'s watch-mode restart loop) is removed
+  // first — otherwise leftover files from a shrinking env set would survive
+  // alongside the fresh write.
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, "docker.env");
   // The file holds the JWT secret, anon/service-role keys, and JWKS, so keep it
   // owner-only rather than relying on the process umask.
@@ -801,12 +806,15 @@ async function writeDockerEnvFile(env: Readonly<Record<string, string>>) {
 async function writeDockerMultilineEnvScript(
   env: ReadonlyArray<readonly [string, string]>,
   containerDir: string,
+  dir: string,
 ) {
   if (env.length === 0) {
     return undefined;
   }
 
-  const dir = await mkdtemp(join(tmpdir(), "supabase-functions-serve-multiline-env-"));
+  // Self-healing — see the matching comment in `writeDockerEnvFile` above.
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   const scriptName = "multiline-env.sh";
   const path = join(dir, scriptName);
   const envDir = join(containerDir, "values");
@@ -820,7 +828,7 @@ async function writeDockerMultilineEnvScript(
 export ${name}="\${${name}%x}"`;
     })
     .join("\n");
-  await mkdir(hostEnvDir, { recursive: true });
+  await mkdir(hostEnvDir, { recursive: true, mode: 0o700 });
   // The value files hold secret env values, so keep them owner-only.
   await Promise.all(
     env.map(([_, value], index) =>
@@ -1205,10 +1213,12 @@ export function buildServeEntrypointCommand(
 `;
 }
 
-async function writeServeMainTemplateFile(template: string) {
+async function writeServeMainTemplateFile(template: string, dir: string) {
   // Mount the bundled runtime template instead of embedding it in `sh -c` so
   // Windows does not hit `uv_spawn` ENAMETOOLONG on path-heavy projects.
-  const dir = await mkdtemp(join(tmpdir(), "supabase-functions-serve-main-"));
+  // Self-healing — see the matching comment in `writeDockerEnvFile` above.
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(dir, { recursive: true, mode: 0o700 });
   const pathname = join(dir, "index.ts");
   await writeFile(pathname, template);
   return {
@@ -1332,6 +1342,14 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     const projectId = input.config.projectId;
     const containerId = localDockerId("edge_runtime", projectId);
     const networkMode = input.networkId;
+    // Deterministic, persistent host path (matching `start`'s own
+    // `legacyStageStartSecretFiles` convention for Kong/Postgres/Supavisor)
+    // rather than `os.tmpdir()`: `legacyCleanupStartSecrets` (wired into both
+    // `stop` and a failed-`start` rollback) reclaims this same
+    // `<workdir>/supabase/.temp/start-secrets/<containerId>` tree keyed by
+    // container name, so these JWT/service-role-key/secret env artifacts no
+    // longer leak on host disk indefinitely after the container is torn down.
+    const stagingDir = join(input.projectRoot, "supabase", ".temp", "start-secrets", containerId);
 
     const functionConfigs = yield* resolveServeFunctionConfigs(
       input.projectRoot,
@@ -1409,10 +1427,16 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     });
-    const dockerEnvFile = yield* Effect.tryPromise(() => writeDockerEnvFile(singleLineDockerEnv));
+    const dockerEnvFile = yield* Effect.tryPromise(() =>
+      writeDockerEnvFile(singleLineDockerEnv, join(stagingDir, "env")),
+    );
     const multilineEnvDir = "/root/.supabase/multiline-env";
     const dockerMultilineEnvScript = yield* Effect.tryPromise(() =>
-      writeDockerMultilineEnvScript(multilineDockerEnv, multilineEnvDir),
+      writeDockerMultilineEnvScript(
+        multilineDockerEnv,
+        multilineEnvDir,
+        join(stagingDir, "multiline-env"),
+      ),
     ).pipe(Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))));
 
     const labels = dockerProjectLabels(projectId);
@@ -1427,7 +1451,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     ];
     const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());
     const serveMainTemplateFile = yield* Effect.tryPromise(() =>
-      writeServeMainTemplateFile(serveMainTemplate),
+      writeServeMainTemplateFile(serveMainTemplate, join(stagingDir, "main")),
     ).pipe(Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))));
     const command = [
       "run",

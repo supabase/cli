@@ -805,6 +805,31 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       config.experimental.orioledb_version,
       projectEnvValues,
     );
+    // Same generic-Viper-override gap as `orioledbVersion` above, for its four
+    // sibling S3 fields Go reads into the Postgres container's `S3_*` env
+    // alongside `orioledb_version` (`apps/cli-go/internal/db/start/
+    // start.go:70-77`) — also threaded into the Postgres container spec
+    // below, since `legacyPostgresExtraEnv` reads these same fields raw.
+    const s3Host = envOverride(
+      "SUPABASE_EXPERIMENTAL_S3_HOST",
+      config.experimental.s3_host,
+      projectEnvValues,
+    );
+    const s3Region = envOverride(
+      "SUPABASE_EXPERIMENTAL_S3_REGION",
+      config.experimental.s3_region,
+      projectEnvValues,
+    );
+    const s3AccessKey = envOverride(
+      "SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY",
+      config.experimental.s3_access_key,
+      projectEnvValues,
+    );
+    const s3SecretKey = envOverride(
+      "SUPABASE_EXPERIMENTAL_S3_SECRET_KEY",
+      config.experimental.s3_secret_key,
+      projectEnvValues,
+    );
 
     // 7. Resolve every image that will actually be pulled (Go's
     // `ensureImagesCached`, `start.go:225-262,289`) BEFORE any container is
@@ -854,7 +879,23 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // own bind mounts UNCONDITIONALLY of `Config.EdgeRuntime.Enabled`, so
     // these manifest values must be available to `buildSpecForService`'s
     // "studio" case regardless of whether Edge Runtime itself is enabled.
-    const configDeclaredFunctions = toPlainFunctionRecord(config.functions);
+    //
+    // `config.functions.<slug>.env.<VAR>` is schema-marked deferred
+    // (`env(...)`, `packages/config/src/lib/env.ts`) and only gets its
+    // literal interpolated by `resolveProjectSubtree` — without this step, a
+    // configured `[functions.<slug>.env]` entry reaches Edge Runtime as the
+    // literal string `"env(API_KEY)"` instead of the real secret.
+    // `functions serve`'s own call site already resolves this subtree first
+    // (`shared/functions/serve.ts:615-622`) before the same
+    // `toPlainFunctionRecord` call — same reasoning as `resolvedEdgeRuntime`
+    // below, just for the sibling `functions` subtree.
+    const resolvedFunctions = yield* resolveProjectSubtree(
+      config.functions,
+      { values: projectEnvValues ?? {} },
+      "functions",
+      { goViperCompat: true },
+    );
+    const configDeclaredFunctions = toPlainFunctionRecord(resolvedFunctions);
     const configFunctions = yield* inferFunctionsManifest({
       cwd: cliConfig.workdir,
       config: { ...config, functions: configDeclaredFunctions },
@@ -1410,9 +1451,16 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         },
         // `orioledb_version` overridden by SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION,
         // matching the value already used to select `postgresImage` above —
-        // `legacyPostgresExtraEnv` reads this same field for its S3/
-        // `POSTGRES_INITDB_ARGS` branch.
-        experimental: { ...config.experimental, orioledb_version: orioledbVersion },
+        // `legacyPostgresExtraEnv` reads this same field, and its four sibling
+        // S3 fields, for its S3/`POSTGRES_INITDB_ARGS` branch.
+        experimental: {
+          ...config.experimental,
+          orioledb_version: orioledbVersion,
+          s3_host: s3Host,
+          s3_region: s3Region,
+          s3_access_key: s3AccessKey,
+          s3_secret_key: s3SecretKey,
+        },
         jwtSecret: values.jwtSecret,
         // Overridden by SUPABASE_AUTH_JWT_EXPIRY — Postgres's JWT_EXP (seeding
         // app.settings.jwt_exp) and GoTrue's GOTRUE_JWT_EXP both read the same
@@ -1540,6 +1588,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               jwks,
               apiUrl: values.apiUrl,
               authExternalUrl: resolveAuthExternalUrl(context.loaded?.document, projectEnvValues),
+              siteUrl: values.authSiteUrl,
               anonKey: values.anonKey,
               serviceRoleKey: values.serviceRoleKey,
               storageTargetMigration,

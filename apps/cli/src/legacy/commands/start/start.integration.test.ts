@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -1301,22 +1301,70 @@ content_path = "./templates/custom_notice.html"
     it.live(
       "keeps the host-side bind-mount temp files after a successful bring-up (no eager cleanup)",
       () => {
-        const { layer, child } = setup();
+        // Staged under `<workdir>/supabase/.temp/start-secrets/<container>/main/`
+        // — a deterministic, persistent path (not `os.tmpdir()`), so a later
+        // `stop`/rollback can reclaim it via `legacyCleanupStartSecrets`. See
+        // the "reclaims Edge Runtime's own temp secret artifacts on stop" test
+        // below for that cleanup behavior.
+        const { layer, child, workdir } = setup();
         return Effect.gen(function* () {
           yield* legacyStart(flags());
           const runArgs = edgeRuntimeRunCalls(child.spawned)[0]?.args ?? [];
           const bindValues = runArgs.flatMap((arg, i) => (runArgs[i - 1] === "-v" ? [arg] : []));
-          const mainTemplateBind = bindValues.find((bind) =>
-            bind.includes("supabase-functions-serve-main-"),
+          const stagingRoot = join(workdir, "supabase", ".temp", "start-secrets");
+          const mainTemplateBind = bindValues.find(
+            (bind) => bind.startsWith(stagingRoot) && bind.includes(`${join("main", "index.ts")}:`),
           );
           expect(mainTemplateBind).toBeDefined();
           const hostPath = mainTemplateBind?.split(":")[0] ?? "";
           try {
             expect(existsSync(hostPath)).toBe(true);
           } finally {
-            rmSync(hostPath, { force: true });
+            rmSync(stagingRoot, { recursive: true, force: true });
           }
         }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "resolves a per-function env(...) ref against the real env var, not the literal string",
+      () => {
+        // `config.functions.<slug>.env.<VAR>` is schema-deferred (`env(...)`)
+        // until `resolveProjectSubtree` runs — without that step Edge Runtime
+        // would receive the literal string "env(FOO_SECRET)" instead of the
+        // actual secret.
+        const previous = process.env["FOO_SECRET"];
+        process.env["FOO_SECRET"] = "the-real-secret-value";
+        const workdir = tempRoot.current;
+        mkdirSync(join(workdir, "supabase", "functions", "foo"), { recursive: true });
+        writeFileSync(join(workdir, "supabase", "functions", "foo", "index.ts"), "export {};\n");
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[functions.foo]\nenabled = true\n[functions.foo.env]\nFOO_SECRET = "env(FOO_SECRET)"\n',
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const runArgs = edgeRuntimeRunCalls(child.spawned)[0]?.args ?? [];
+          const envFileIndex = runArgs.indexOf("--env-file");
+          expect(envFileIndex).toBeGreaterThanOrEqual(0);
+          const envFilePath = runArgs[envFileIndex + 1] ?? "";
+          const envFileContents = readFileSync(envFilePath, "utf8");
+          try {
+            expect(envFileContents).toContain("the-real-secret-value");
+            expect(envFileContents).not.toContain("env(FOO_SECRET)");
+          } finally {
+            rmSync(dirname(envFilePath), { recursive: true, force: true });
+          }
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["FOO_SECRET"];
+              else process.env["FOO_SECRET"] = previous;
+              rmSync(join(workdir, "supabase", "functions"), { recursive: true, force: true });
+            }),
+          ),
+        );
       },
     );
   });
@@ -2218,6 +2266,49 @@ content_path = "./templates/custom_notice.html"
         );
       },
     );
+
+    it.live("honors SUPABASE_EXPERIMENTAL_S3_HOST/_REGION/_ACCESS_KEY/_SECRET_KEY", () => {
+      const previousVersion = process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"];
+      const previousHost = process.env["SUPABASE_EXPERIMENTAL_S3_HOST"];
+      const previousRegion = process.env["SUPABASE_EXPERIMENTAL_S3_REGION"];
+      const previousAccessKey = process.env["SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY"];
+      const previousSecretKey = process.env["SUPABASE_EXPERIMENTAL_S3_SECRET_KEY"];
+      process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"] = "16.0.0.1";
+      process.env["SUPABASE_EXPERIMENTAL_S3_HOST"] = "env-s3-host";
+      process.env["SUPABASE_EXPERIMENTAL_S3_REGION"] = "env-s3-region";
+      process.env["SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY"] = "env-s3-access-key";
+      process.env["SUPABASE_EXPERIMENTAL_S3_SECRET_KEY"] = "env-s3-secret-key";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const dbCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
+        );
+        expect(dbCreate?.env["S3_HOST"]).toBe("env-s3-host");
+        expect(dbCreate?.env["S3_REGION"]).toBe("env-s3-region");
+        expect(dbCreate?.env["S3_ACCESS_KEY"]).toBe("env-s3-access-key");
+        expect(dbCreate?.env["S3_SECRET_KEY"]).toBe("env-s3-secret-key");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousVersion === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"];
+            else process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"] = previousVersion;
+            if (previousHost === undefined) delete process.env["SUPABASE_EXPERIMENTAL_S3_HOST"];
+            else process.env["SUPABASE_EXPERIMENTAL_S3_HOST"] = previousHost;
+            if (previousRegion === undefined) delete process.env["SUPABASE_EXPERIMENTAL_S3_REGION"];
+            else process.env["SUPABASE_EXPERIMENTAL_S3_REGION"] = previousRegion;
+            if (previousAccessKey === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY"];
+            else process.env["SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY"] = previousAccessKey;
+            if (previousSecretKey === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_S3_SECRET_KEY"];
+            else process.env["SUPABASE_EXPERIMENTAL_S3_SECRET_KEY"] = previousSecretKey;
+          }),
+        ),
+      );
+    });
   });
 
   describe("Kong's embedded default TLS cert/key", () => {

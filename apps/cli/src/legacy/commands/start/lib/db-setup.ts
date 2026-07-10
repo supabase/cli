@@ -193,6 +193,16 @@ export interface LegacyStartSetupLocalDatabaseInput {
    * migrating for.
    */
   readonly authExternalUrl?: string;
+  /**
+   * `LegacyLocalConfigValues.authSiteUrl` (already `SUPABASE_AUTH_SITE_URL`-
+   * overridden by the caller) — Go's `initAuthJob` reads the same overridden
+   * `utils.Config.Auth.SiteUrl` the long-running GoTrue container does
+   * (`apps/cli-go/internal/db/start/start.go:327`, `internal/start/
+   * start.go:1365`), so this one-shot job must resolve to the SAME value,
+   * not the raw `config.auth.site_url` — same rationale as
+   * {@link authExternalUrl} above.
+   */
+  readonly siteUrl: string;
   /** `LegacyLocalConfigValues.anonKey`. */
   readonly anonKey: string;
   /** `LegacyLocalConfigValues.serviceRoleKey`. */
@@ -401,18 +411,39 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
     });
   }
   if (input.config.storage.enabled) {
+    // `legacyStartStorageMigrateEnv` parses `storage.file_size_limit` via
+    // `ramInBytes`, which throws on a malformed value — a plain synchronous
+    // throw here would become an uncaught Effect defect (`Effect.tapError`'s
+    // rollback trigger below only fires on typed `Fail` causes, never `Die`
+    // ones), leaking Postgres's already-created container/network/volume.
+    // Go fails this same malformed value at TOML-decode time, before any
+    // Docker work (`sizeInBytes.UnmarshalText`, `pkg/config/config.go:41-47`)
+    // — this can't be replicated literally here since Postgres is already up
+    // by this step, but surfacing it as a typed `LegacyStartDbSetupError` so
+    // rollback actually runs is the achievable equivalent, matching the same
+    // fix already applied to `resolveDbHealthTimeoutSeconds` and the
+    // long-running Storage container's own file-size-limit parsing
+    // (`start.handler.ts`).
+    const storageEnv = yield* Effect.try({
+      try: () =>
+        legacyStartStorageMigrateEnv({
+          targetMigration: input.storageTargetMigration,
+          anonKey: input.anonKey,
+          serviceRoleKey: input.serviceRoleKey,
+          jwtSecret: input.jwtSecret,
+          dbHost,
+          dbPassword,
+          fileSizeLimit: input.config.storage.file_size_limit,
+        }),
+      catch: (cause) =>
+        new LegacyStartDbSetupError({
+          message: `invalid config for storage: ${errMessage(cause)}`,
+        }),
+    });
     yield* legacyRunStartMigrateJob({
       image: input.images.storage,
       networkId: input.networkId,
-      env: legacyStartStorageMigrateEnv({
-        targetMigration: input.storageTargetMigration,
-        anonKey: input.anonKey,
-        serviceRoleKey: input.serviceRoleKey,
-        jwtSecret: input.jwtSecret,
-        dbHost,
-        dbPassword,
-        fileSizeLimit: input.config.storage.file_size_limit,
-      }),
+      env: storageEnv,
       cmd: ["node", "dist/scripts/migrate-call.js"],
     });
   }
@@ -423,7 +454,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
       env: legacyStartAuthMigrateEnv({
         apiUrl: input.apiUrl,
         authExternalUrl: input.authExternalUrl,
-        siteUrl: input.config.auth.site_url,
+        siteUrl: input.siteUrl,
         jwtSecret: input.jwtSecret,
         dbHost,
         dbPassword,
