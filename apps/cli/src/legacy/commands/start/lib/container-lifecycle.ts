@@ -471,9 +471,11 @@ function legacyDockerStartContainer(
  * to a HOST directory scoped to this container, at the DETERMINISTIC path
  * `<workdir>/supabase/.temp/start-secrets/<containerName>/` (matching this
  * codebase's existing `<workdir>/supabase/.temp/` convention for CLI-owned
- * scratch state — see `legacy-linked-project-cache.layer.ts`), one file per
- * entry, with mode `0600` — owner-only, so no other local user on the host
- * can read it while it exists — then returns the `<hostPath>:<containerPath>:ro`
+ * scratch state — see `legacy-linked-project-cache.layer.ts`), directory mode
+ * `0700` and one file per entry at mode `0600` — both owner-only, so no other
+ * local user on the host can even list the staged file names/count (let
+ * alone read their contents) while they exist — then returns the
+ * `<hostPath>:<containerPath>:ro`
  * bind for each. Mirrors this same session's `-e KEY`-only env fix
  * (`legacyDockerCreateContainer`'s doc comment) for entrypoint/`Cmd`-bound
  * secret content instead of env values: the file's HOST path is the only
@@ -520,7 +522,7 @@ function legacyStageStartSecretFiles(
         return { binds: [], cleanup: () => Promise.resolve() };
       }
       try {
-        await mkdir(dir, { recursive: true });
+        await mkdir(dir, { recursive: true, mode: 0o700 });
         const binds = await Promise.all(
           secretFiles.map(async (secretFile, index) => {
             const hostPath = join(dir, `secret-${index}`);

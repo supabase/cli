@@ -314,16 +314,18 @@ describe("legacyStartContainer", () => {
 
 describe("legacyStartContainer secretFiles", () => {
   it.live(
-    "stages a secretFile as a mode-0600 HOST file under a deterministic, per-container path, bind-mounts it read-only at the exact containerPath, keeps the raw content out of argv, and PERSISTS the file after a successful start so a `restartPolicy: unless-stopped` container can survive a host/daemon restart (CWE-214/522)",
+    "stages a secretFile as a mode-0600 HOST file under a mode-0700 deterministic, per-container directory, bind-mounts it read-only at the exact containerPath, keeps the raw content out of argv, and PERSISTS the file after a successful start so a `restartPolicy: unless-stopped` container can survive a host/daemon restart (CWE-214/522)",
     () => {
       let hostPath: string | undefined;
       let modeAtCreateTime: number | undefined;
+      let dirModeAtCreateTime: number | undefined;
       const mock = mockSpawner((args) => {
         if (args[0] === "create") {
           const bind = args.find((a) => a.endsWith(":/etc/kong/kong.yml:ro"));
           if (bind !== undefined) {
             hostPath = bind.slice(0, bind.length - ":/etc/kong/kong.yml:ro".length);
             modeAtCreateTime = statSync(hostPath).mode & 0o777;
+            dirModeAtCreateTime = statSync(dirname(hostPath)).mode & 0o777;
           }
           return { exitCode: 0, stdout: "container-id-789\n" };
         }
@@ -349,6 +351,7 @@ describe("legacyStartContainer secretFiles", () => {
 
           expect(hostPath).toBeDefined();
           expect(modeAtCreateTime).toBe(0o600);
+          expect(dirModeAtCreateTime).toBe(0o700);
           expect(create).toContain(`${hostPath}:/etc/kong/kong.yml:ro`);
 
           // Deterministic — rooted in the project's own workdir, not an OS temp dir, and

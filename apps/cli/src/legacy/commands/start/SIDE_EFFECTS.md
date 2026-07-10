@@ -109,7 +109,8 @@ never written to the host filesystem, since none of them carries secret content.
 Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supavisor's
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
 key, TLS private key material, and the DB password respectively) and are instead
-written to `<workdir>/supabase/.temp/start-secrets/<containerName>/` (mode `0600`) and
+written to `<workdir>/supabase/.temp/start-secrets/<containerName>/` (directory mode
+`0700`, files mode `0600`) and
 bind-mounted `:ro` into the container at the exact path each container's
 entrypoint/`Cmd` expects — see `container-lifecycle.ts`'s `legacyStageStartSecretFiles`
 doc comment for the full rationale (CWE-214/522: keeping secret content out of the
