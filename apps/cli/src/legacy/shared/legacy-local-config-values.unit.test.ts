@@ -26,6 +26,7 @@ import {
   legacyEnvOverrideRealtimeMaxHeaderLength,
   legacyResolveAuthCaptcha,
   legacyResolveAuthEmailSmtp,
+  legacyResolveAuthExternalProviders,
   legacyResolveAuthHooks,
   legacyResolveDbSettingsEnvOverrides,
   legacyResolveLocalConfigValues,
@@ -1079,6 +1080,41 @@ describe("legacyResolveLocalConfigValues", () => {
       process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "true";
       const resolved = legacyResolveAuthHooks({}, allHooks, undefined);
       expect(resolved.customAccessToken.enabled).toBe(false);
+    });
+  });
+
+  describe("legacyResolveAuthExternalProviders", () => {
+    it("coerces an env(...)-resolved boolean string for an unmodeled/custom provider", () => {
+      const authDocument = {
+        external: {
+          my_custom: {
+            enabled: "true",
+            client_id: "custom-client-id",
+            skip_nonce_check: "false",
+            email_optional: "TRUE",
+          },
+        },
+      };
+      const resolved = legacyResolveAuthExternalProviders(
+        authDocument,
+        baseConfig().auth.external,
+        undefined,
+      );
+      expect(resolved["my_custom"]?.enabled).toBe(true);
+      expect(resolved["my_custom"]?.skipNonceCheck).toBe(false);
+      expect(resolved["my_custom"]?.emailOptional).toBe(true);
+    });
+
+    it("treats an unparsable custom-provider boolean string as false", () => {
+      const authDocument = {
+        external: { my_custom: { enabled: "not-a-bool", client_id: "custom-client-id" } },
+      };
+      const resolved = legacyResolveAuthExternalProviders(
+        authDocument,
+        baseConfig().auth.external,
+        undefined,
+      );
+      expect(resolved["my_custom"]?.enabled).toBe(false);
     });
   });
 

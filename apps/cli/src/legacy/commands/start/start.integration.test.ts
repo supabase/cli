@@ -1091,6 +1091,36 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
+      "ignores SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED when [storage.image_transformation] is absent from config.toml",
+      () => {
+        // Go's `Storage.ImageTransformation` is a nil-unless-declared pointer
+        // (`pkg/config/storage.go:16`) — with no `[storage.image_transformation]` table, the env
+        // var is never even looked up (`start.go:302-303`'s `!= nil && .Enabled` gate), so ImgProxy
+        // must stay off even though storage itself is enabled.
+        const previous = process.env["SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED"];
+        process.env["SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED"] = "true";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const createdNames = createdContainerNames(child.spawned);
+          expect(createdNames.some((name) => name.includes("_storage_"))).toBe(true);
+          expect(createdNames.some((name) => name.includes("_imgproxy_"))).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) {
+                delete process.env["SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED"];
+              } else {
+                process.env["SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED"] = previous;
+              }
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
       "starts Kong and Realtime even when api.enabled is false, since only Postgrest depends on it",
       () => {
         const { layer, child } = setup({

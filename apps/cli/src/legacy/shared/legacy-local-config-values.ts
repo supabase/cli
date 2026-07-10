@@ -1713,6 +1713,25 @@ export interface LegacyResolvedAuthExternalProvider {
  * `start.handler.ts`'s `resolveGotrueEnvInput` (the actual GoTrue env) resolve
  * the SAME effective values.
  */
+/**
+ * Go's `map[string]provider` decodes an unmodeled/custom provider name through the SAME typed
+ * `provider` struct (`Enabled bool`, `pkg/config/auth.go:361-369`) as every known provider — its
+ * `env(VAR)`-substituted string is weakly-coerced to `bool` by mapstructure's
+ * `WeaklyTypedInput`/`strconv.ParseBool` (`config.go:749-756`) before `Config` ever sees it, so Go
+ * never has an untyped raw string here. `@supabase/config`'s `external` schema only recognizes
+ * the ~19 known provider ids as typed struct fields (`packages/config/src/auth/providers.ts`), so
+ * for an unmodeled name the pre-decode `env(...)` walker substitutes the env value but skips type
+ * coercion (no schema AST at that path — `packages/config/src/lib/env.ts:308-314`), leaving e.g.
+ * `enabled = "env(CUSTOM_OAUTH_ENABLED)"` as the literal string `"true"`/`"false"` instead of a
+ * real boolean. A native TOML `true`/`false` literal still decodes to an actual `boolean` even for
+ * an unmodeled key (only `env(...)` substitution is schema-blind), so this must accept both.
+ */
+function rawExternalProviderBool(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return legacyParseGoBool(value) ?? false;
+  return false;
+}
+
 export function legacyResolveAuthExternalProviders(
   authDocument: Readonly<Record<string, unknown>> | undefined,
   external: ProjectConfig["auth"]["external"],
@@ -1731,7 +1750,8 @@ export function legacyResolveAuthExternalProviders(
     const provider = decodedProviders.get(name);
     const rawProvider = provider === undefined ? asRecord(externalDoc[name]) : undefined;
     if (provider === undefined && rawProvider === undefined) continue;
-    const configuredEnabled = provider?.enabled ?? rawProvider?.["enabled"] === true;
+    const configuredEnabled =
+      provider?.enabled ?? rawExternalProviderBool(rawProvider?.["enabled"]);
     const configuredClientId =
       provider?.client_id ??
       (typeof rawProvider?.["client_id"] === "string" ? rawProvider["client_id"] : undefined);
@@ -1744,9 +1764,9 @@ export function legacyResolveAuthExternalProviders(
       provider?.redirect_uri ??
       (typeof rawProvider?.["redirect_uri"] === "string" ? rawProvider["redirect_uri"] : undefined);
     const configuredSkipNonceCheck =
-      provider?.skip_nonce_check ?? rawProvider?.["skip_nonce_check"] === true;
+      provider?.skip_nonce_check ?? rawExternalProviderBool(rawProvider?.["skip_nonce_check"]);
     const configuredEmailOptional =
-      provider?.email_optional ?? rawProvider?.["email_optional"] === true;
+      provider?.email_optional ?? rawExternalProviderBool(rawProvider?.["email_optional"]);
 
     result[name] = {
       enabled: legacyEnvOverrideBool(

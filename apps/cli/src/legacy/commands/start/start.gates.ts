@@ -59,6 +59,13 @@ export interface LegacyStartGateInputs {
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
   /** `legacyPartitionStartExcludeFlags(flags.exclude).valid`, as a `Set` for O(1) lookup. */
   readonly excludedKeys: ReadonlySet<string>;
+  readonly document: Readonly<Record<string, unknown>> | undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 /**
@@ -68,7 +75,7 @@ export interface LegacyStartGateInputs {
  * combination is unit-testable without a Docker mock.
  */
 export function legacyResolveStartGates(inputs: LegacyStartGateInputs): LegacyStartGates {
-  const { config, projectEnvValues, excludedKeys } = inputs;
+  const { config, projectEnvValues, excludedKeys, document } = inputs;
   const isExcluded = (key: string) => excludedKeys.has(key);
 
   const analyticsEnabled = legacyEnvOverrideBool(
@@ -107,12 +114,30 @@ export function legacyResolveStartGates(inputs: LegacyStartGateInputs): LegacySt
     "storage.enabled",
     projectEnvValues,
   );
-  const imageTransformationEnabled = legacyEnvOverrideBool(
-    "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
-    config.storage.image_transformation?.enabled ?? false,
-    "storage.image_transformation.enabled",
-    projectEnvValues,
-  );
+  // Go's `Storage.ImageTransformation` is a nil-unless-declared pointer
+  // (`pkg/config/storage.go:16`) — with no `[storage.image_transformation]`
+  // table in config.toml, that field never becomes a resolvable Viper key at
+  // all, so `SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED` alone can never
+  // flip it on (`start.go:302-303`'s `ImageTransformation != nil && .Enabled`
+  // gate short-circuits on the nil check first). `@supabase/config`'s decoded
+  // `config.storage.image_transformation` can't be used as a presence proxy
+  // either — it always decodes to a defaulted `{enabled: false}`, never
+  // `undefined` — so presence must come from the raw document, same
+  // `asRecord(document?.[...])` gate `legacyResolveAuthEmailSmtp`/
+  // `resolveGotruePasskeyWebauthn`/`legacyResolveAuthSms` already use for the
+  // identical Go-pointer-section shape.
+  const imageTransformationSectionPresent =
+    asRecord(asRecord(document?.["storage"])?.["image_transformation"]) !== undefined;
+  const configuredImageTransformationEnabled =
+    config.storage.image_transformation?.enabled ?? false;
+  const imageTransformationEnabled = imageTransformationSectionPresent
+    ? legacyEnvOverrideBool(
+        "SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED",
+        configuredImageTransformationEnabled,
+        "storage.image_transformation.enabled",
+        projectEnvValues,
+      )
+    : configuredImageTransformationEnabled;
   const studioEnabled = legacyEnvOverrideBool(
     "SUPABASE_STUDIO_ENABLED",
     config.studio.enabled,

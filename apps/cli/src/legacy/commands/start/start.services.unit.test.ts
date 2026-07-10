@@ -177,6 +177,7 @@ describe("LEGACY_START_SERVICES enabledGate cross-check against start.gates.ts",
       config,
       projectEnvValues: undefined,
       excludedKeys: new Set(),
+      document: undefined,
     });
   }
 

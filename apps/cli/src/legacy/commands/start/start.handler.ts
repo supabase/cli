@@ -786,7 +786,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // design; omission confirmed against source, not missed.
 
     // 5. Gate evaluation — see `start.gates.ts` for the full boolean table.
-    const gates = legacyResolveStartGates({ config, projectEnvValues, excludedKeys });
+    const gates = legacyResolveStartGates({
+      config,
+      projectEnvValues,
+      excludedKeys,
+      document: context.loaded?.document,
+    });
 
     // 6. Go's `utils.Config.Auth.ResolveJWKS(ctx)` (`start.go:274-277`) — runs
     // UNCONDITIONALLY, before any image pull, regardless of whether
