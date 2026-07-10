@@ -38,19 +38,18 @@ describe("legacy CLI agent output", () => {
     });
 
     expect(exitCode).toBe(1);
+    // CLI-1901: the vendored effect CLI library's own duplicate JSON render
+    // (the old `{_tag:"Help"}` + `{_tag:"Error", error:{code:"ShowHelp"}}`
+    // pair on stdout, `{_tag:"Errors"}` on stderr) is gone. stdout carries
+    // exactly this repo's single Go-parity error line; the library's help
+    // doc is redirected to stderr instead of being dropped or duplicated.
     expect(parseJsonLines(stdout)).toEqual([
-      expect.objectContaining({ _tag: "Help" }),
       expect.objectContaining({
         _tag: "Error",
-        error: expect.objectContaining({ code: "ShowHelp" }),
+        error: expect.objectContaining({ code: "UnknownSubcommand" }),
       }),
     ]);
-    expect(parseJsonLines(stderr)).toEqual([
-      expect.objectContaining({
-        _tag: "Errors",
-        errors: [expect.objectContaining({ code: "UnknownSubcommand" })],
-      }),
-    ]);
+    expect(parseJsonLines(stderr)).toEqual([expect.objectContaining({ _tag: "Help" })]);
   });
 
   test("keeps parse errors in text mode when --output-format=text is explicit", async () => {
@@ -63,7 +62,9 @@ describe("legacy CLI agent output", () => {
     );
 
     expect(exitCode).toBe(1);
-    expect(stdout).toContain("DESCRIPTION");
+    // CLI-1901: the help doc no longer prints to stdout at all.
+    expect(stdout).toBe("");
+    expect(stderr).toContain("DESCRIPTION");
     expect(stderr).toContain('Unknown subcommand "definitely-not-a-command"');
   });
 
@@ -77,7 +78,8 @@ describe("legacy CLI agent output", () => {
     );
 
     expect(exitCode).toBe(1);
-    expect(stdout).toContain("DESCRIPTION");
+    expect(stdout).toBe("");
+    expect(stderr).toContain("DESCRIPTION");
     expect(stderr).toContain('Unknown subcommand "definitely-not-a-command"');
   });
 
@@ -92,18 +94,12 @@ describe("legacy CLI agent output", () => {
 
     expect(exitCode).toBe(1);
     expect(parseJsonLines(stdout)).toEqual([
-      expect.objectContaining({ _tag: "Help" }),
       expect.objectContaining({
         _tag: "Error",
-        error: expect.objectContaining({ code: "ShowHelp" }),
+        error: expect.objectContaining({ code: "UnknownSubcommand" }),
       }),
     ]);
-    expect(parseJsonLines(stderr)).toEqual([
-      expect.objectContaining({
-        _tag: "Errors",
-        errors: [expect.objectContaining({ code: "UnknownSubcommand" })],
-      }),
-    ]);
+    expect(parseJsonLines(stderr)).toEqual([expect.objectContaining({ _tag: "Help" })]);
   });
 
   test("keeps built-in version and help in text mode for detected coding agents", async () => {
