@@ -44,6 +44,7 @@ import {
   legacyListContainersByLabel,
 } from "../../shared/legacy-docker-lifecycle.ts";
 import {
+  envOverride,
   legacyEnvOverrideBool,
   legacyResolveConfiguredSigningKeys,
   legacyResolveLocalConfigValues,
@@ -333,9 +334,22 @@ function resolveGotrueEnvInput(params: {
 
   const { passkeyEnabled, webauthn } = resolveGotruePasskeyWebauthn(document);
   const externalProviders = resolveGotrueExternalProviders(document, config.auth.external);
+  // `auth.external_url` isn't modeled in `@supabase/config`'s schema, so it's
+  // read off the raw document — same presence-based pattern as passkey/
+  // webauthn/external above. Go's `auth.GetExternalURL` (`pkg/config/auth.go:
+  // 401-405`) prefers this explicit value over deriving from `apiUrl`, and
+  // feeds it into `API_EXTERNAL_URL`, the mailer verify URL, the default JWT
+  // issuer, and OAuth redirect-URI fallbacks (`start.go:1354,1357,1374,1446`).
+  const rawAuthExternalUrl = asRecord(document?.["auth"])?.["external_url"];
+  const authExternalUrl = envOverride(
+    "SUPABASE_AUTH_EXTERNAL_URL",
+    typeof rawAuthExternalUrl === "string" ? rawAuthExternalUrl : undefined,
+    projectEnvValues,
+  );
 
   return {
     apiUrl: values.apiUrl,
+    authExternalUrl,
     jwtSecret: values.jwtSecret,
     jwtIssuer: config.auth.jwt_issuer,
     jwtExpiry: config.auth.jwt_expiry,
@@ -653,10 +667,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ? networkIdFlag.value
       : localNetworkId(projectId);
     const isBitbucketPipeline = legacyIsBitbucketPipeline();
+    // Go's `DockerStart` unconditionally appends the Linux-only
+    // `host.docker.internal:host-gateway` extra host for every container it
+    // starts (`docker_linux.go`; empty on darwin/windows, where Docker
+    // Desktop already resolves that hostname) — same expression already used
+    // for the one-shot migrate jobs (`db-setup.ts`) and Edge Runtime bring-up
+    // (`legacy-edge-runtime-script.layer.ts`).
+    const extraHosts =
+      runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
     const startOpts: LegacyStartContainerOpts = {
       projectId,
       isBitbucketPipeline,
       workdir: cliConfig.workdir,
+      extraHosts,
     };
     const dbHost = dbContainerId;
     const dbPassword = legacyStartInternalDbPassword(values.dbUrl);
@@ -1022,6 +1045,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         projectId,
         networkId,
         image: resolveImage(postgresImage),
+        rootKey: values.rootKey,
       });
       const postgresContainerId = yield* legacyStartContainer(spawner, postgresSpec, startOpts);
       yield* legacyWaitForHealthyServices(spawner, [postgresContainerId], {

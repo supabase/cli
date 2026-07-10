@@ -20,6 +20,7 @@ import type { ProjectConfig } from "@supabase/config";
 
 import { localDbContainerId } from "../../../shared/legacy-docker-ids.ts";
 import { encodeToml } from "../../../shared/legacy-go-output.encoders.ts";
+import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../../../shared/legacy-local-config-values.ts";
 import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
 import { LEGACY_START_DB_SCHEMA_SQL } from "../templates/db-schema.sql.ts";
 import { LEGACY_START_DB_SUPABASE_SQL } from "../templates/db-supabase.sql.ts";
@@ -31,23 +32,6 @@ import { LEGACY_START_DB_WEBHOOK_SQL } from "../templates/db-webhook.sql.ts";
  * `legacy-local-config-values.ts`, not imported from there since that constant
  * isn't exported and status/stop's resolver is otherwise unrelated to this module. */
 const LEGACY_POSTGRES_PASSWORD = "postgres";
-
-/**
- * Go's `Db.RootKey` default (`apps/cli-go/pkg/config/config.go:460-462`).
- * `db.root_key` isn't modeled in `@supabase/config`'s schema yet (every other
- * `db.*` TOML field is) — `legacy-db-config.toml-read.ts` only validates that a
- * configured `root_key` decrypts, it doesn't expose a resolved value the way
- * `legacyResolveLocalConfigValues` does for `jwtSecret`. Until that exists,
- * there is no code path that can feed a configured override into this builder,
- * so this constant is the value every caller observes today.
- * {@link LegacyPostgresStartServiceInput.rootKey} stays an optional override
- * (rather than this module hardcoding it unconditionally) so a future caller
- * that resolves `db.root_key` (default-or-decrypted, the same shape
- * `jwtSecret` already gets) can pass the resolved value straight through
- * without this module changing.
- */
-export const LEGACY_POSTGRES_DEFAULT_ROOT_KEY =
-  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275";
 
 /**
  * The exact in-container path Go's PG >= 15 entrypoint heredocs the pgsodium

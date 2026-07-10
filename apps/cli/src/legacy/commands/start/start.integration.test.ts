@@ -28,7 +28,10 @@ import {
   LegacyYesFlag,
 } from "../../../shared/legacy/global-flags.ts";
 import { LegacyPlatformApiFactory } from "../../auth/legacy-platform-api-factory.service.ts";
-import { legacyServiceContainerIds } from "../../shared/legacy-docker-ids.ts";
+import {
+  legacyServiceContainerIds,
+  legacyServiceContainerName,
+} from "../../shared/legacy-docker-ids.ts";
 import {
   LegacyDbConnection,
   type LegacyDbSession,
@@ -1760,5 +1763,35 @@ content_path = "./templates/custom_notice.html"
         }).pipe(Effect.provide(layer));
       },
     );
+  });
+
+  describe("db.root_key", () => {
+    it.live("stages a configured db.root_key as the Postgres container's pgsodium root key", () => {
+      const { layer, workdir, child } = setup({
+        configContents: 'project_id = "demo"\n[db]\nroot_key = "custom-root-key-value"\n',
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const containerName = legacyServiceContainerName("db", "demo");
+        const secretDir = join(workdir, "supabase", ".temp", "start-secrets", containerName);
+        const staged = readFileSync(join(secretDir, "secret-0"), "utf8");
+        expect(staged).toBe("custom-root-key-value");
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
+  describe("Linux host-gateway mapping", () => {
+    it.live("adds --add-host host.docker.internal:host-gateway on Linux", () => {
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const kongCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+        );
+        const addHostIndex = kongCreate?.args.indexOf("--add-host") ?? -1;
+        expect(kongCreate?.args[addHostIndex + 1]).toBe("host.docker.internal:host-gateway");
+      }).pipe(Effect.provide(layer));
+    });
   });
 });

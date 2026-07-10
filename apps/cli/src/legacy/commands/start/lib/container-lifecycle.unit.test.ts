@@ -125,6 +125,7 @@ describe("legacyStartContainer", () => {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
+        extraHosts: [],
       }).pipe(
         Effect.map((containerId) => {
           expect(containerId).toBe("container-id-123");
@@ -178,6 +179,7 @@ describe("legacyStartContainer", () => {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
+        extraHosts: [],
       }).pipe(
         Effect.map(() => {
           const create = mock.spawnedOptions.find((entry) => entry.args[0] === "create");
@@ -199,6 +201,7 @@ describe("legacyStartContainer", () => {
         projectId: "proj",
         isBitbucketPipeline: true,
         workdir,
+        extraHosts: [],
       }).pipe(
         Effect.map(() => {
           expect(mock.spawned.some((args) => args[0] === "volume")).toBe(false);
@@ -221,6 +224,7 @@ describe("legacyStartContainer", () => {
       projectId: "proj",
       isBitbucketPipeline: false,
       workdir,
+      extraHosts: [],
     }).pipe(
       Effect.flip,
       Effect.map((error) => {
@@ -241,6 +245,7 @@ describe("legacyStartContainer", () => {
       projectId: "proj",
       isBitbucketPipeline: false,
       workdir,
+      extraHosts: [],
     }).pipe(
       Effect.flip,
       Effect.map((error) => {
@@ -262,6 +267,7 @@ describe("legacyStartContainer", () => {
       projectId: "proj",
       isBitbucketPipeline: false,
       workdir,
+      extraHosts: [],
     }).pipe(
       Effect.flip,
       Effect.map((error) => {
@@ -292,6 +298,7 @@ describe("legacyStartContainer", () => {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
+        extraHosts: [],
       }).pipe(
         Effect.flip,
         Effect.map((error) => {
@@ -332,6 +339,7 @@ describe("legacyStartContainer secretFiles", () => {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
+        extraHosts: [],
       }).pipe(
         Effect.map((containerId) => {
           expect(containerId).toBe("container-id-789");
@@ -376,6 +384,7 @@ describe("legacyStartContainer secretFiles", () => {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
+        extraHosts: [],
       }).pipe(
         Effect.map(() => {
           expect(readdirSync(dir)).toEqual(["secret-0"]);
@@ -406,6 +415,7 @@ describe("legacyStartContainer secretFiles", () => {
       projectId: "proj",
       isBitbucketPipeline: false,
       workdir,
+      extraHosts: [],
     }).pipe(
       Effect.flip,
       Effect.map((error) => {
@@ -442,6 +452,7 @@ describe("legacyStartContainer secretFiles", () => {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
+        extraHosts: [],
       }).pipe(
         Effect.flip,
         Effect.map((error) => {
@@ -477,6 +488,7 @@ describe("legacyStartContainer secretFiles", () => {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
+        extraHosts: [],
       }).pipe(
         Effect.flip,
         Effect.map((error) => {

@@ -22,10 +22,15 @@
  *
  * `@supabase/config` schema gaps this module works around (all pre-existing,
  * not introduced here — see each input field's own doc comment):
- *   - `auth.external_url` has no schema field at all, so `API_EXTERNAL_URL`/
- *     `GOTRUE_JWT_ISSUER`'s fallback is always derived from `apiUrl` (never
- *     an explicit `auth.external_url` override) — same accepted gap as
- *     `config/push/config-sync/auth.sync.ts`'s identical derivation.
+ *   - `auth.external_url` has no schema field at all, so the caller reads it
+ *     off the raw TOML document (same pattern as the gaps below) and passes
+ *     the resolved value in as {@link LegacyBuildGotrueEnvInput.authExternalUrl}
+ *     — when set, it wins over the `apiUrl`-derived fallback for
+ *     `API_EXTERNAL_URL`/`GOTRUE_JWT_ISSUER`'s default/the mailer verify URL/
+ *     OAuth redirect-URI fallbacks, matching `auth.GetExternalURL`
+ *     (`pkg/config/auth.go:401-405`). `config/push/config-sync/auth.sync.ts`
+ *     has the identical gap, unresolved — a separate command, not this PR's
+ *     scope.
  *   - `auth.captcha`/`auth.passkey`/`auth.webauthn`/`auth.email.smtp`'s
  *     presence-and-default quirks (Go's `Config.Validate`/`Config.Load`
  *     treat an explicitly-omitted `enabled` differently depending on whether
@@ -191,12 +196,18 @@ export interface LegacyBuildGotrueEnvInput {
   /**
    * `LegacyLocalConfigValues.apiUrl` (Go's resolved `Config.Api.ExternalUrl`)
    * — reused, not recomputed, so `API_EXTERNAL_URL`/`GOTRUE_JWT_ISSUER`'s
-   * derived fallback never drifts from what `status` reports. `AuthExternalURL()`
-   * itself (`pkg/config/config.go:543-545`) is always derived from this value
-   * — see this module's header for why an explicit `auth.external_url`
-   * override can't be modeled.
+   * derived fallback (used when {@link authExternalUrl} is unset) never
+   * drifts from what `status` reports.
    */
   readonly apiUrl: string;
+  /**
+   * Raw `auth.external_url` (already `SUPABASE_AUTH_EXTERNAL_URL`-overridden
+   * by the caller) — Go's `Config.Auth.ExternalUrl`/`AuthExternalURL()`
+   * (`pkg/config/config.go:543-545`, `auth.go:401-405`): an explicit value
+   * wins outright, otherwise Go derives `TrimRight(apiUrl, "/") + "/auth/v1"`.
+   * `undefined`/empty means unset — fall back to the `apiUrl` derivation.
+   */
+  readonly authExternalUrl?: string;
   /** `LegacyLocalConfigValues.jwtSecret` — reused, not recomputed. */
   readonly jwtSecret: string;
   /** `config.auth.jwt_issuer`, raw (`undefined` when unset — falls back to the derived auth-external URL, matching `Config.Load`'s `if len(c.Auth.JwtIssuer) == 0`). */
@@ -394,7 +405,10 @@ function legacyFileExt(path: string): string {
  * around. No Effect, no I/O — every field is a plain, already-resolved value.
  */
 export function buildLegacyGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<string, string> {
-  const authExternalUrl = `${legacyTrimTrailingSlashes(input.apiUrl)}/auth/v1`;
+  const authExternalUrl =
+    input.authExternalUrl !== undefined && input.authExternalUrl.length > 0
+      ? input.authExternalUrl
+      : `${legacyTrimTrailingSlashes(input.apiUrl)}/auth/v1`;
   const jwtIssuer =
     input.jwtIssuer !== undefined && input.jwtIssuer.length > 0 ? input.jwtIssuer : authExternalUrl;
   const mailerVerifyUrl = `${legacyTrimTrailingSlashes(authExternalUrl)}/verify`;

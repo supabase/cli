@@ -129,6 +129,31 @@ describe("buildLegacyGotrueEnv", () => {
       );
     });
 
+    test("honors an explicit auth.external_url override for API_EXTERNAL_URL, the JWT issuer default, the mailer verify URL, and OAuth redirects", () => {
+      const env = buildLegacyGotrueEnv({
+        ...baseEnvInput,
+        apiUrl: "http://127.0.0.1:54321",
+        authExternalUrl: "https://auth.example.com",
+        jwtIssuer: undefined,
+        siteUrl: "http://127.0.0.1:3000",
+        externalProviders: {
+          github: {
+            enabled: true,
+            clientId: "client-id",
+            secret: "secret",
+            url: "",
+            skipNonceCheck: false,
+            emailOptional: false,
+          },
+        },
+      });
+
+      expect(env["API_EXTERNAL_URL"]).toBe("https://auth.example.com");
+      expect(env["GOTRUE_JWT_ISSUER"]).toBe("https://auth.example.com");
+      expect(env["GOTRUE_MAILER_URLPATHS_INVITE"]).toBe("https://auth.example.com/verify");
+      expect(env["GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI"]).toBe("https://auth.example.com/callback");
+    });
+
     test("preserves explicit provider redirect override", () => {
       const env = buildLegacyGotrueEnv({
         ...baseEnvInput,

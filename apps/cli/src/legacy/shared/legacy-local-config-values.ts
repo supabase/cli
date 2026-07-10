@@ -79,9 +79,20 @@ const DEFAULT_S3_SECRET_ACCESS_KEY =
   "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907";
 const DEFAULT_S3_REGION = "local";
 
+/**
+ * Go's `Db.RootKey` default (`apps/cli-go/pkg/config/config.go:460-462`).
+ * Exported (not just a local default) so `start`'s Postgres container-spec
+ * builder (`postgres.service.ts`) shares this one literal instead of a second
+ * copy — `db.root_key` isn't modeled in `@supabase/config`'s schema, so it's
+ * resolved below off the raw document the same way `jwtSecret` is resolved.
+ */
+export const LEGACY_POSTGRES_DEFAULT_ROOT_KEY =
+  "d4dc5b6d4a1d6a10b2c1e76112c994d65db7cec380572cc1839624d4be3fa275";
+
 export interface LegacyLocalConfigValues {
   readonly apiUrl: string;
   readonly apiPort: number;
+  readonly rootKey: string;
   readonly restUrl: string;
   readonly graphqlUrl: string;
   readonly functionsUrl: string;
@@ -213,7 +224,7 @@ function envOverridePort(
  * check); an unresolved/empty indirection leaves the `env(VAR)` literal
  * untouched, same as Go.
  */
-function envOverride(
+export function envOverride(
   name: string,
   configured: string | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
@@ -988,6 +999,23 @@ export function legacyResolveLocalConfigValues(
   // Go's `Config.Validate` checks `db.major_version` right after `db.port`
   // (`pkg/config/config.go:1034-1061`), unconditionally (no `enabled` gate).
   const majorVersion = envOverrideMajorVersion(config.db.major_version, projectEnvValues);
+  // `db.root_key` isn't modeled in `@supabase/config`'s schema (every other
+  // `db.*` field is), so it's read off the raw pre-schema document — same
+  // presence-based pattern as `authDocument` below. Go writes the
+  // default-or-configured, decrypted-if-`encrypted:` value verbatim into
+  // `/etc/postgresql-custom/pgsodium_root.key` on every start
+  // (`apps/cli-go/internal/db/start/start.go:100`), going through the same
+  // `Secret`/`DecryptSecretHookFunc` decode every other secret field gets
+  // (`pkg/config/secret.go:30-109`, wired at `pkg/config/config.go:781`).
+  const rawRootKey = envOverride(
+    "SUPABASE_DB_ROOT_KEY",
+    asRecord(document?.["db"])?.["root_key"] as string | undefined,
+    projectEnvValues,
+  );
+  const rootKey =
+    rawRootKey === undefined || rawRootKey.length === 0
+      ? LEGACY_POSTGRES_DEFAULT_ROOT_KEY
+      : (decryptAuthSecret(rawRootKey, projectEnvValues) ?? LEGACY_POSTGRES_DEFAULT_ROOT_KEY);
   // Go's `Config.Validate` runs `ValidateBucketName` over every `[storage.buckets.*]`
   // key right after `db.major_version`, unconditionally.
   const storageBucketNames =
@@ -1579,6 +1607,7 @@ export function legacyResolveLocalConfigValues(
   return {
     apiUrl: apiExternalUrl,
     apiPort,
+    rootKey,
     restUrl: apiUrlWithPath(apiExternalUrl, "/rest/v1"),
     graphqlUrl: apiUrlWithPath(apiExternalUrl, "/graphql/v1"),
     functionsUrl: apiUrlWithPath(apiExternalUrl, "/functions/v1"),

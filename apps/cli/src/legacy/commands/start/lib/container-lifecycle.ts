@@ -111,6 +111,16 @@ export interface LegacyStartContainerOpts {
    * function's doc comment for why.
    */
   readonly workdir: string;
+  /**
+   * `DockerStart`'s platform-specific `extraHosts` package var
+   * (`docker_linux.go`/`docker_darwin.go`/`docker_windows.go`), merged onto
+   * EVERY container's `HostConfig.ExtraHosts` (`docker.go:378`) — Linux-only
+   * (`["host.docker.internal:host-gateway"]`); empty on Docker Desktop
+   * platforms, which already resolve that hostname natively. Merged here
+   * (not per-spec) for the same reason the two project-identity labels are:
+   * Go applies it identically to every container this orchestrator creates.
+   */
+  readonly extraHosts: ReadonlyArray<string>;
 }
 
 function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
@@ -568,7 +578,11 @@ export function legacyStartContainer(
       [LEGACY_CLI_PROJECT_LABEL]: opts.projectId,
       [LEGACY_COMPOSE_PROJECT_LABEL]: opts.projectId,
     };
-    const labeledSpec: LegacyStartContainerSpec = { ...spec, labels };
+    const labeledSpec: LegacyStartContainerSpec = {
+      ...spec,
+      labels,
+      extraHosts: [...(spec.extraHosts ?? []), ...opts.extraHosts],
+    };
 
     if (!opts.isBitbucketPipeline) {
       for (const name of legacyNamedVolumeSources(labeledSpec.binds)) {

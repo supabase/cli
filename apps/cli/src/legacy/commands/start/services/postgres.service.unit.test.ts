@@ -4,8 +4,8 @@ import { describe, expect, test } from "vitest";
 import { LEGACY_START_DB_SCHEMA_SQL } from "../templates/db-schema.sql.ts";
 import { LEGACY_START_DB_SUPABASE_SQL } from "../templates/db-supabase.sql.ts";
 import { LEGACY_START_DB_WEBHOOK_SQL } from "../templates/db-webhook.sql.ts";
+import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../../../shared/legacy-local-config-values.ts";
 import {
-  LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
   legacyBuildPostgresStartContainerSpec,
   legacyPostgresImageVersionTag,
   legacyPostgresSettingsToPostgresConfig,
