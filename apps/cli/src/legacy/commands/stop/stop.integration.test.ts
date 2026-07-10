@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -58,6 +58,12 @@ type RouteResult = {
  * `volume ls`) whose relative order/count varies per scenario (N `stop` calls for
  * N listed containers), so a routing table is a better fit than the sequential
  * step-array mock `gen types` uses for its single linear pipeline.
+ *
+ * `stop` now issues two distinct `ps` listings: a pre-teardown `{{.Names}}`
+ * snapshot for `legacyCleanupStartSecrets`, then `legacyDockerRemoveAll`'s own
+ * `{{.ID}}` listing. Assertions that inspect a specific `ps` call's argv match
+ * on `s.args.includes("{{.ID}}")` to grab the latter, since a bare
+ * `s.args[0] === "ps"` `find()` would now return the former instead.
  */
 function mockRoutedContainerCliSpawner(
   route: (args: ReadonlyArray<string>) => RouteResult,
@@ -213,7 +219,7 @@ describe("legacy stop integration", () => {
       });
       return Effect.gen(function* () {
         yield* legacyStop(flags());
-        const psCall = child.spawned.find((s) => s.args[0] === "ps");
+        const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
         expect(psCall?.args).toEqual([
           "ps",
           "--filter",
@@ -241,6 +247,34 @@ describe("legacy stop integration", () => {
   );
 
   it.live(
+    "reclaims staged-secret directories for containers it tears down, leaving unrelated ones alone",
+    () => {
+      // legacyCleanupStartSecrets (legacy/shared/legacy-start-secrets-cleanup.ts)
+      // reclaims start's staged plaintext-secret directories
+      // (<workdir>/supabase/.temp/start-secrets/<container-name>) for exactly
+      // the containers this stop run tore down — captured via the pre-teardown
+      // `docker ps --format {{.Names}}` snapshot, never a blanket delete of the
+      // whole start-secrets/ parent (see that function's doc comment for why).
+      const { layer, workdir } = setup({
+        configuredProjectId: "demo",
+        route: defaultRoute({ containerIds: ["supabase_kong_demo"] }),
+      });
+      const startSecretsDir = join(workdir, "supabase", ".temp", "start-secrets");
+      const matchedDir = join(startSecretsDir, "supabase_kong_demo");
+      const unmatchedDir = join(startSecretsDir, "supabase_kong_other-project");
+      mkdirSync(matchedDir, { recursive: true });
+      writeFileSync(join(matchedDir, "secret-0"), "kong.yml contents");
+      mkdirSync(unmatchedDir, { recursive: true });
+      writeFileSync(join(unmatchedDir, "secret-0"), "unrelated project's secret");
+      return Effect.gen(function* () {
+        yield* legacyStop(flags());
+        expect(existsSync(matchedDir)).toBe(false);
+        expect(existsSync(unmatchedDir)).toBe(true);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live(
     "sanitizes a dirty config.toml project_id before filtering, matching start's label",
     () => {
       // Go's Config.Validate rewrites Config.ProjectId to its sanitized form once
@@ -254,7 +288,7 @@ describe("legacy stop integration", () => {
       });
       return Effect.gen(function* () {
         yield* legacyStop(flags());
-        const psCall = child.spawned.find((s) => s.args[0] === "ps");
+        const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
         expect(psCall?.args).toEqual([
           "ps",
           "--filter",
@@ -274,7 +308,7 @@ describe("legacy stop integration", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
       yield* legacyStop(flags({ projectId: Option.some("Raw Value!!") }));
-      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
       expect(psCall?.args).toEqual([
         "ps",
         "--filter",
@@ -290,7 +324,7 @@ describe("legacy stop integration", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
       yield* legacyStop(flags({ all: Option.some(true) }));
-      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
       expect(psCall?.args).toEqual([
         "ps",
         "--filter",
@@ -331,7 +365,7 @@ describe("legacy stop integration", () => {
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
       yield* legacyStop(flags({ projectId: Option.some("other-project") }));
-      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
       expect(psCall?.args).toEqual([
         "ps",
         "--filter",
@@ -350,7 +384,7 @@ describe("legacy stop integration", () => {
     const { layer, child } = setup({ configuredProjectId: "demo", route: defaultRoute() });
     return Effect.gen(function* () {
       yield* legacyStop(flags({ projectId: Option.some("") }));
-      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
       expect(psCall?.args).toEqual([
         "ps",
         "--filter",
@@ -371,7 +405,7 @@ describe("legacy stop integration", () => {
     writeEnvFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=env-file-project\n");
     return Effect.gen(function* () {
       yield* legacyStop(flags());
-      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
       expect(psCall?.args).toEqual([
         "ps",
         "--filter",
@@ -389,7 +423,7 @@ describe("legacy stop integration", () => {
     process.env["SUPABASE_PROJECT_ID"] = "ambient-project";
     return Effect.gen(function* () {
       yield* legacyStop(flags());
-      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
       expect(psCall?.args).toEqual([
         "ps",
         "--filter",
@@ -424,7 +458,7 @@ describe("legacy stop integration", () => {
       });
       return Effect.gen(function* () {
         yield* legacyStop(flags());
-        const psCall = child.spawned.find((s) => s.args[0] === "ps");
+        const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
         expect(psCall?.args).toEqual([
           "ps",
           "--filter",
@@ -446,7 +480,7 @@ describe("legacy stop integration", () => {
     writeEnvFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=no-config-project\n");
     return Effect.gen(function* () {
       yield* legacyStop(flags());
-      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
       expect(psCall?.args).toEqual([
         "ps",
         "--filter",
@@ -466,7 +500,7 @@ describe("legacy stop integration", () => {
     writeFileSync(join(tempRoot.current, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");
     return Effect.gen(function* () {
       yield* legacyStop(flags());
-      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
       expect(psCall?.args).toEqual([
         "ps",
         "--filter",
@@ -745,7 +779,7 @@ additional_redirect_urls = "http://a,http://b"
       const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
       return Effect.gen(function* () {
         yield* legacyStop(flags());
-        const psCall = child.spawned.find((s) => s.args[0] === "ps");
+        const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
         expect(psCall?.args).toEqual([
           "ps",
           "--filter",
@@ -825,7 +859,7 @@ enabled = true
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyStop(flags({ all: Option.some(true) })));
       expect(Exit.isSuccess(exit)).toBe(true);
-      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
       expect(psCall?.args).toContain("label=com.supabase.cli.project");
     }).pipe(Effect.provide(layer));
   });
@@ -843,7 +877,7 @@ enabled = true
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyStop(flags({ projectId: Option.some("explicit") })));
       expect(Exit.isSuccess(exit)).toBe(true);
-      const psCall = child.spawned.find((s) => s.args[0] === "ps");
+      const psCall = child.spawned.find((s) => s.args[0] === "ps" && s.args.includes("{{.ID}}"));
       expect(psCall?.args).toContain("label=com.supabase.cli.project=explicit");
     }).pipe(Effect.provide(layer));
   });

@@ -2,6 +2,8 @@ import { Effect } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { legacyDockerRemoveAll } from "../../shared/legacy-docker-remove-all.ts";
+import { legacyListContainersByLabel } from "../../shared/legacy-docker-lifecycle.ts";
+import { legacyCleanupStartSecrets } from "../../shared/legacy-start-secrets-cleanup.ts";
 import { LegacyHealthCheckTimeoutError } from "./lib/health-check.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -42,16 +44,32 @@ export function legacyIsUnhealthyStartError(
  * Go's `utils.NoBackupVolume` global (set elsewhere, based on whether the
  * Postgres volume already existed before this run) — the caller decides its
  * value, this wrapper only forwards it to {@link legacyDockerRemoveAll}.
+ *
+ * Also reclaims any {@link legacyCleanupStartSecrets} staged-secret
+ * directories for the containers this run created — a TS-port-only hygiene
+ * step with no Go equivalent (see that function's doc comment). The matching
+ * container names are captured BEFORE teardown (`docker ps --all` still
+ * reflects them at that point), so cleanup targets exactly what this run's
+ * own containers used, never a guess.
  */
 export const legacyRollbackStart = (
   spawner: Spawner,
   filterValue: string,
   deleteVolumes: boolean,
+  workdir: string,
 ): Effect.Effect<void, never> =>
-  legacyDockerRemoveAll(spawner, filterValue, deleteVolumes).pipe(
-    Effect.catch((error) =>
-      Effect.sync(() => {
-        globalThis.process.stderr.write(`${error.message}\n`);
-      }),
-    ),
-  );
+  Effect.gen(function* () {
+    const containerNames = yield* legacyListContainersByLabel(spawner, {
+      projectIdFilter: filterValue,
+      all: true,
+      format: "names",
+    }).pipe(Effect.orElseSucceed(() => []));
+    yield* legacyDockerRemoveAll(spawner, filterValue, deleteVolumes).pipe(
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          globalThis.process.stderr.write(`${error.message}\n`);
+        }),
+      ),
+    );
+    yield* legacyCleanupStartSecrets(workdir, containerNames);
+  });

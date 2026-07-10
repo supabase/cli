@@ -916,15 +916,14 @@ describe("legacy start integration", () => {
     });
 
     it.live(
-      "brings up the stack with every optional config.toml section populated (bigquery analytics, session pool mode, passkey/webauthn, external provider, SMTP, email templates, an unparseable db.health_timeout)",
+      "brings up the stack with every optional config.toml section populated (bigquery analytics, session pool mode, passkey/webauthn, external provider, SMTP, email templates)",
       () => {
         // Exercises the config-document-shape branches `start.handler.ts` itself owns
         // (`resolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
-        // `buildKongEmailTemplateMounts`, `values.analyticsBackend`, `toPoolMode`,
-        // `resolveDbHealthTimeoutSeconds`'s parse-failure fallback) in one pass, none of which
-        // interact with each other. `db.health_timeout` being unparseable only matters if
-        // Postgres's own health wait actually needs to retry — it doesn't here (default route
-        // heals immediately), so this stays fast despite falling back to the 30s default.
+        // `buildKongEmailTemplateMounts`, `values.analyticsBackend`) in one pass, none of
+        // which interact with each other. A malformed `db.health_timeout` is exercised
+        // separately below (it now hard-fails the whole command, matching Go, so it can't
+        // be bundled into this "successful bring-up" scenario anymore).
         const { layer, workdir, child } = setup({
           configContents: `project_id = "demo"
 
@@ -933,9 +932,6 @@ backend = "bigquery"
 gcp_project_id = "gcp-project"
 gcp_project_number = "123456789"
 gcp_jwt_path = "gcp-key.json"
-
-[db]
-health_timeout = "not-a-duration"
 
 [db.pooler]
 enabled = true
@@ -990,13 +986,38 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
-      "falls back to the default health-check timeout on a zero db.health_timeout, and to blank webauthn fields on an empty [auth.webauthn] section",
+      // Go's own backoff policy for "0s" performs exactly one immediate health
+      // probe with no retries (`internal/db/start/start.go:192-198` — the retry
+      // count is `uint64(timeout.Seconds())`, and the backoff library stops
+      // immediately at 0) — this is NOT a 30s fallback. The mock's default route
+      // heals on the very first check either way, so this only proves "0s" is
+      // accepted and doesn't hang/fail, not the exact retry count.
+      "accepts a zero db.health_timeout without hanging, and blanks webauthn fields on an empty [auth.webauthn] section",
       () => {
         const { layer } = setup({
           configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "0s"\n[auth.webauthn]\n',
         });
         return Effect.gen(function* () {
           yield* legacyStart(flags());
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "fails config loading on an unparseable db.health_timeout, matching Go's Config.Load",
+      () => {
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "not-a-duration"\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("failed to parse config");
+          }
+          expect(rollbackWasAttempted(child.spawned)).toBe(true);
         }).pipe(Effect.provide(layer));
       },
     );

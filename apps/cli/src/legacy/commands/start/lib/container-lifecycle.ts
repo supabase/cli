@@ -587,7 +587,10 @@ function legacyStageStartSecretFiles(
  *    has exited) can still read them; see `legacyStageStartSecretFiles`'s doc
  *    comment. Only cleaned up (best-effort, `Effect.tapError`) when `docker
  *    create`/`docker start` itself FAILS and the container never successfully
- *    starts — nothing is depending on the files at that point.
+ *    starts — nothing is depending on the files at that point. Once the
+ *    container is actually torn down (a failed-start rollback, or a later
+ *    `stop`), `legacyCleanupStartSecrets` (`legacy-start-secrets-cleanup.ts`)
+ *    reclaims the staged directory then instead.
  *
  * Resolves to the created container's id/name on success.
  */

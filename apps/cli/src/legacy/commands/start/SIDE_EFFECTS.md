@@ -173,7 +173,13 @@ matching Go's `DockerRemoveAll`, and never masks the original failure — a roll
 is logged to stderr and swallowed. `deleteVolumes` mirrors Go's `utils.NoBackupVolume`
 exactly: `true` only when this run's Postgres volume was freshly created (so a failed
 first-ever `start` prunes its own empty volume too), `false` otherwise (never touches a
-pre-existing user's data on a failed restart).
+pre-existing user's data on a failed restart). Rollback also reclaims this run's own
+`<workdir>/supabase/.temp/start-secrets/<containerName>` directories (via
+`legacyCleanupStartSecrets`, `legacy/shared/legacy-start-secrets-cleanup.ts`) once
+teardown completes — the matching container names are snapshotted immediately before
+teardown runs, so cleanup only ever targets containers this failed run itself created.
+A later successful `stop` reclaims the same directories for a normal (non-rollback)
+teardown — see `stop`'s own `SIDE_EFFECTS.md`.
 
 ## Telemetry Events Fired
 

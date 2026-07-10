@@ -13,9 +13,24 @@ byte-for-byte — it does not go through `@supabase/stack/effect`'s orchestratio
 
 ## Files Written
 
-| Path                         | Format | When                                                        |
-| ---------------------------- | ------ | ----------------------------------------------------------- |
-| `~/.supabase/telemetry.json` | JSON   | always (in `Effect.ensuring`) at end of command — Go parity |
+| Path                                                            | Format             | When                                                                              |
+| ---------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------ |
+| `~/.supabase/telemetry.json`                                      | JSON                | always (in `Effect.ensuring`) at end of command — Go parity                    |
+| `<workdir>/supabase/.temp/start-secrets/<container-name>` (removed) | plaintext, per-file | after teardown succeeds, for every container name torn down that had a staged directory |
+
+The `start-secrets` removal is a TS-port-only hygiene step (`legacyCleanupStartSecrets`,
+`legacy/shared/legacy-start-secrets-cleanup.ts`) — Go never stages secrets on host disk in
+the first place, so it has nothing to clean up here. `start` stages plaintext Kong TLS/
+`kong.yml`, Postgres pgsodium root key, and Supavisor pooler tenant-script content on host
+disk (`legacyStageStartSecretFiles`, `start/lib/container-lifecycle.ts`) because this port
+shells out to `docker create` instead of using the Docker Engine API directly; without this
+cleanup those directories would survive `stop` indefinitely. The container names to clean
+are captured via a `docker ps --filter label=... --all --format {{.Names}}` snapshot taken
+immediately before teardown, so cleanup targets exactly the containers this run tore down —
+never a blanket delete of the whole `start-secrets/` parent (unsafe if a workdir's project id
+ever changes across `start` runs without an intervening `stop`). Best-effort: a missing
+directory (every service besides Kong/Postgres/Supavisor) is a no-op, and a real deletion
+error does not fail the command.
 
 ## API Routes
 

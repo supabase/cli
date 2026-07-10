@@ -6,8 +6,12 @@ import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyAqua } from "../../shared/legacy-colors.ts";
 import { legacyCliProjectFilterValue } from "../../shared/legacy-docker-ids.ts";
-import { legacyListVolumesByLabel } from "../../shared/legacy-docker-lifecycle.ts";
+import {
+  legacyListContainersByLabel,
+  legacyListVolumesByLabel,
+} from "../../shared/legacy-docker-lifecycle.ts";
 import { legacyDockerRemoveAll } from "../../shared/legacy-docker-remove-all.ts";
+import { legacyCleanupStartSecrets } from "../../shared/legacy-start-secrets-cleanup.ts";
 import { legacyResolveLocalConfigValues } from "../../shared/legacy-local-config-values.ts";
 import { legacyLoadLocalProjectContext } from "../../shared/legacy-local-project-context.ts";
 import { legacyValidateWorkdirIsDirectory } from "../../shared/legacy-workdir-validation.ts";
@@ -168,6 +172,17 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
       yield* output.raw("Stopping containers...\n");
     }
 
+    // Captured BEFORE teardown, so `legacyCleanupStartSecrets` below reclaims
+    // exactly the staged-secret directories (`<workdir>/supabase/.temp/
+    // start-secrets/<name>`) belonging to containers this run actually tore
+    // down — never a guess, and never a blanket delete of the whole parent
+    // directory (see that function's doc comment for why that'd be unsafe).
+    const containerNamesBeforeTeardown = yield* legacyListContainersByLabel(spawner, {
+      projectIdFilter: filterValue,
+      all: true,
+      format: "names",
+    }).pipe(Effect.orElseSucceed(() => []));
+
     // Go's `DockerRemoveAll` (`apps/cli-go/internal/utils/docker.go:96-146`): list -> stop
     // concurrently -> container prune -> conditional volume prune -> network prune. See
     // `legacy-docker-remove-all.ts` for the full Go-parity rationale. Its 5 neutral, stage-tagged
@@ -186,6 +201,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
           Effect.fail(new LegacyStopNetworkPruneError({ message: error.message })),
       }),
     );
+    yield* legacyCleanupStartSecrets(cliConfig.workdir, containerNamesBeforeTeardown);
 
     if (output.format === "text") {
       // Written to stdout (no stream arg): `legacyAqua` must target stdout's own

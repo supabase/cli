@@ -50,6 +50,7 @@ import {
 } from "../../shared/legacy-docker-lifecycle.ts";
 import {
   envOverride,
+  envOverridePort,
   LEGACY_DEPRECATED_EXTERNAL_PROVIDERS,
   legacyDecryptAuthSecret,
   legacyEnvOverrideApiMaxRows,
@@ -180,8 +181,6 @@ import { legacyBuildSupavisorContainerSpec } from "./services/supavisor.service.
  */
 const LEGACY_ANALYTICS_API_KEY = "api-key";
 
-const DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS = 30;
-
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -197,17 +196,23 @@ function isContainerNotFoundMessage(message: string): boolean {
  * Go's `Db.HealthTimeout` (`internal/db/start/start.go:180`) — a duration
  * STRING (`"2m"` default, `packages/config/src/db.ts`), unlike every other
  * `start` health wait, which uses the fixed 30s `serviceTimeout` global
- * (`apps/cli-go/internal/start/start.go:161,1271`). Falls back to that same
- * 30s default on a malformed value rather than propagating a parse error —
- * this field has no `Config.Validate` format check on the Go side either.
+ * (`apps/cli-go/internal/start/start.go:161,1271`). Go decodes this field via
+ * `mapstructure.StringToTimeDurationHookFunc()` inside the same
+ * `v.UnmarshalExact` call every `SUPABASE_*` override goes through
+ * (`pkg/config/config.go:749-756,775-784`) — a malformed value hard-fails
+ * `Config.Load` (`"failed to parse config: %w"`) before `start` ever runs; it
+ * is never silently replaced with a default. A valid-but-degenerate value
+ * (e.g. `"0s"`) isn't special-cased either: Go's backoff policy computes
+ * `uint64(timeout.Seconds())` as the retry count
+ * (`internal/db/start/start.go:192-198`), and the backoff library returns
+ * `Stop` immediately when that count is `0` — i.e. exactly one immediate
+ * health probe with no wait, not a 30s fallback. Throws on a malformed
+ * value; the caller wraps that into `LegacyStartInvalidConfigError` so
+ * rollback still fires (a plain throw here would surface as an
+ * Effect defect instead of a typed failure).
  */
 function resolveDbHealthTimeoutSeconds(healthTimeout: string): number {
-  try {
-    const seconds = Math.round(legacyParseGoDuration(healthTimeout) / 1_000_000_000);
-    return seconds > 0 ? seconds : DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS;
-  } catch {
-    return DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS;
-  }
+  return Math.trunc(legacyParseGoDuration(healthTimeout) / 1_000_000_000);
 }
 
 /**
@@ -909,6 +914,32 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         : config.api.extra_search_path;
     const apiMaxRows = legacyEnvOverrideApiMaxRows(config.api.max_rows, projectEnvValues);
 
+    // Same gap for Mailpit's three ports — Go's Config.Load applies
+    // SUPABASE_LOCAL_SMTP_PORT/_SMTP_PORT/_POP3_PORT generically
+    // (pkg/config/config.go:580-586) before internal/start/start.go:853-867
+    // reads utils.Config.Inbucket.{Port,SmtpPort,Pop3Port} to build Mailpit's
+    // port bindings. `smtp_port`/`pop3_port` have no TOML default (Go's
+    // zero-value uint16), matching mailpit.service.ts's own `!== 0` publish
+    // guard, so `?? 0` here preserves that "unconfigured" signal.
+    const mailpitPort = envOverridePort(
+      "SUPABASE_LOCAL_SMTP_PORT",
+      config.local_smtp.port,
+      "local_smtp.port",
+      projectEnvValues,
+    );
+    const mailpitSmtpPort = envOverridePort(
+      "SUPABASE_LOCAL_SMTP_SMTP_PORT",
+      config.local_smtp.smtp_port ?? 0,
+      "local_smtp.smtp_port",
+      projectEnvValues,
+    );
+    const mailpitPop3Port = envOverridePort(
+      "SUPABASE_LOCAL_SMTP_POP3_PORT",
+      config.local_smtp.pop3_port ?? 0,
+      "local_smtp.pop3_port",
+      projectEnvValues,
+    );
+
     // Same gap for Supavisor's pooler fields — Go's Config.Load applies
     // SUPABASE_DB_POOLER_* generically (pkg/config/config.go:580-586) before
     // start.go:1194-1211 reads utils.Config.Db.Pooler.{PoolMode,
@@ -1074,9 +1105,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               image,
               projectId,
               networkId,
-              port: config.local_smtp.port,
-              smtpPort: config.local_smtp.smtp_port,
-              pop3Port: config.local_smtp.pop3_port,
+              port: mailpitPort,
+              smtpPort: mailpitSmtpPort,
+              pop3Port: mailpitPop3Port,
             }),
           };
 
@@ -1179,7 +1210,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               image,
               containerName: studioContainerName,
               networkId,
-              port: config.studio.port,
+              port: values.studioPort,
               functionBinds: [...functionBinds],
               env: {
                 dbPassword,
@@ -1317,8 +1348,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         config.db.health_timeout,
         projectEnvValues,
       );
+      const dbHealthTimeoutSeconds = yield* Effect.try({
+        try: () => resolveDbHealthTimeoutSeconds(dbHealthTimeout ?? config.db.health_timeout),
+        catch: (cause) =>
+          new LegacyStartInvalidConfigError({
+            message: `failed to parse config: ${cause instanceof Error ? cause.message : String(cause)}`,
+          }),
+      });
       yield* legacyWaitForHealthyServices(spawner, [postgresContainerId], {
-        timeoutSeconds: resolveDbHealthTimeoutSeconds(dbHealthTimeout ?? config.db.health_timeout),
+        timeoutSeconds: dbHealthTimeoutSeconds,
       });
 
       // Go's `if utils.NoBackupVolume { SetupLocalDatabase(...) }` (`db/start/
@@ -1554,7 +1592,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // freshly created (see `isFreshVolume` above), matching Go exactly: a
       // rollback prunes volumes on a brand-new, empty first-ever `start`, but
       // never touches a pre-existing user's data on a failed restart.
-      Effect.tapError(() => legacyRollbackStart(spawner, filterValue, isFreshVolume)),
+      Effect.tapError(() =>
+        legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
+      ),
     );
 
     const { started, postgrestGateway, edgeRuntimeGateway, storageContainerId } = yield* bringUp;
@@ -1628,7 +1668,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               yes: true,
             }).pipe(Effect.result);
             if (Result.isFailure(seedResult)) {
-              yield* legacyRollbackStart(spawner, filterValue, isFreshVolume);
+              yield* legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir);
               return yield* Effect.fail(seedResult.failure);
             }
           }
@@ -1636,7 +1676,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // Downgrade to a warning and fall through to the success path, no rollback.
         yield* output.raw(`${error.message}\n`, "stderr");
       } else {
-        yield* legacyRollbackStart(spawner, filterValue, isFreshVolume);
+        yield* legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir);
         return yield* Effect.fail(error);
       }
     }
@@ -1667,7 +1707,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         emitSummary: false,
         interactive: false,
         yes: true,
-      }).pipe(Effect.tapError(() => legacyRollbackStart(spawner, filterValue, isFreshVolume)));
+      }).pipe(
+        Effect.tapError(() =>
+          legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
+        ),
+      );
     }
 
     // 11. Success ONLY: fire `cli_stack_started` exactly once, no

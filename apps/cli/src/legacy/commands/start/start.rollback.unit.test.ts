@@ -68,19 +68,32 @@ describe("legacyRollbackStart", () => {
     const mock = mockSpawner({ exitCode: 0, stdout: "" });
     const stderr = captureStderr();
     return Effect.gen(function* () {
-      yield* legacyRollbackStart(mock.spawner, "com.supabase.cli.project=my-app", false);
+      yield* legacyRollbackStart(
+        mock.spawner,
+        "com.supabase.cli.project=my-app",
+        false,
+        "/tmp/legacy-rollback-unit-test-workdir",
+      );
       expect(stderr).not.toHaveBeenCalled();
+      // A pre-teardown `ps` snapshot (for `legacyCleanupStartSecrets`'s
+      // container-name list) runs first, then legacyDockerRemoveAll's own
       // list -> container prune -> network prune; no stop calls (empty list)
       // and no volume prune (deleteVolumes: false).
-      expect(mock.spawned.map((args) => args[0])).toEqual(["ps", "container", "network"]);
+      expect(mock.spawned.map((args) => args[0])).toEqual(["ps", "ps", "container", "network"]);
     });
   });
 
   it.live("requests a volume prune when deleteVolumes is true", () => {
     const mock = mockSpawner({ exitCode: 0, stdout: "" });
     return Effect.gen(function* () {
-      yield* legacyRollbackStart(mock.spawner, "com.supabase.cli.project=my-app", true);
+      yield* legacyRollbackStart(
+        mock.spawner,
+        "com.supabase.cli.project=my-app",
+        true,
+        "/tmp/legacy-rollback-unit-test-workdir",
+      );
       expect(mock.spawned.map((args) => args[0])).toEqual([
+        "ps",
         "ps",
         "container",
         "version",
@@ -96,7 +109,12 @@ describe("legacyRollbackStart", () => {
     return Effect.gen(function* () {
       // Never fails — Effect.Effect<void, never> — a rollback failure is
       // logged, never propagated (Go's `fmt.Fprintln(os.Stderr, err)` swallow).
-      yield* legacyRollbackStart(mock.spawner, "com.supabase.cli.project=my-app", false);
+      yield* legacyRollbackStart(
+        mock.spawner,
+        "com.supabase.cli.project=my-app",
+        false,
+        "/tmp/legacy-rollback-unit-test-workdir",
+      );
       expect(stderr).toHaveBeenCalledTimes(1);
       expect(stderr).toHaveBeenCalledWith("failed to list containers: permission denied\n");
     });
@@ -106,7 +124,12 @@ describe("legacyRollbackStart", () => {
     const mock = mockSpawner({ exitCode: 1, stderr: "" });
     const stderr = captureStderr();
     return Effect.gen(function* () {
-      yield* legacyRollbackStart(mock.spawner, "com.supabase.cli.project=my-app", false);
+      yield* legacyRollbackStart(
+        mock.spawner,
+        "com.supabase.cli.project=my-app",
+        false,
+        "/tmp/legacy-rollback-unit-test-workdir",
+      );
       expect(stderr).toHaveBeenCalledTimes(1);
       expect(stderr).toHaveBeenCalledWith("failed to list containers\n");
     });

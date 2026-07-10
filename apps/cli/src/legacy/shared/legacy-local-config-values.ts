@@ -93,6 +93,8 @@ export interface LegacyLocalConfigValues {
   readonly apiUrl: string;
   readonly apiPort: number;
   readonly dbPort: number;
+  /** Already env-overridden `studio.port` (`SUPABASE_STUDIO_PORT`) — see `apiPort`/`dbPort` for the same pattern. */
+  readonly studioPort: number;
   readonly rootKey: string;
   /**
    * Already-resolved (env-overridden, decrypted-if-`encrypted:`) `studio.
@@ -203,7 +205,7 @@ const MAX_PORT = 65535;
  * a leniency case: Go never proceeds with the pre-override value on a decode
  * error, it fails config loading outright.
  */
-function envOverridePort(
+export function envOverridePort(
   name: string,
   configuredPort: number,
   dottedFieldPath: string,
@@ -2199,6 +2201,7 @@ export function legacyResolveLocalConfigValues(
     apiUrl: apiExternalUrl,
     apiPort,
     dbPort,
+    studioPort,
     rootKey,
     openaiApiKey,
     authSiteUrl: siteUrl,
