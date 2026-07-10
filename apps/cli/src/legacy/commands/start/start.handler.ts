@@ -18,6 +18,7 @@ import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import { EventStackStarted } from "../../../shared/telemetry/event-catalog.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
+import { legacyResolveStudioApiUrl } from "../../shared/legacy-api-url.ts";
 import { legacyIsBitbucketPipeline } from "../../shared/legacy-bitbucket-pipeline.ts";
 import { legacyAqua, legacyYellow } from "../../shared/legacy-colors.ts";
 import { legacyResolveApiTlsPath } from "../../shared/legacy-config-validate.ts";
@@ -122,6 +123,10 @@ import {
   LEGACY_START_INTERNAL_DB_NAME,
   LEGACY_START_INTERNAL_DB_PORT,
 } from "./lib/internal-db-connection.ts";
+import {
+  LEGACY_KONG_LOCAL_TLS_CERT,
+  LEGACY_KONG_LOCAL_TLS_KEY,
+} from "./templates/kong-local-tls.ts";
 import { legacyBuildLogflareContainerSpec } from "./services/logflare.service.ts";
 import {
   legacyBuildVectorContainerSpec,
@@ -653,6 +658,18 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       config.edge_runtime.deno_version,
       projectEnvValues,
     );
+    // Same generic-Viper-override gap as `majorVersion`/`denoVersion` above,
+    // for `experimental.orioledb_version` -> `Config.Db.Image` rewrite
+    // (`pkg/config/config.go:1041-1046`), applied at the end of `Config.Load`
+    // (`config.go:882`) before `start` reads it. Also threaded into the
+    // Postgres container spec below, since `postgres.service.ts`'s
+    // `legacyPostgresExtraEnv` reads this same field to decide whether to add
+    // the S3/`POSTGRES_INITDB_ARGS` env vars — both consumers must agree.
+    const orioledbVersion = envOverride(
+      "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
+      config.experimental.orioledb_version,
+      projectEnvValues,
+    );
 
     // 7. Resolve every image that will actually be pulled (Go's
     // `ensureImagesCached`, `start.go:225-262,289`) BEFORE any container is
@@ -662,7 +679,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       path,
       cliConfig.workdir,
       majorVersion,
-      config.experimental.orioledb_version,
+      orioledbVersion,
     );
     // Go's `Config.Load` rewrites `c.Auth.Image`/`c.Api.Image`/etc. from
     // `supabase/.temp/{gotrue,rest,storage,realtime,studio,pgmeta,logflare,
@@ -686,11 +703,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const edgeRuntimeDefaultImage = gates.edgeRuntime
       ? yield* legacyResolveEdgeRuntimeImage(fs, path, cliConfig.workdir, denoVersion)
       : undefined;
-    const resolvedImages = yield* legacyEnsureImagesCached(spawner, [
-      postgresImage,
-      ...imagePlan.map((entry) => entry.image),
-      ...(edgeRuntimeDefaultImage !== undefined ? [edgeRuntimeDefaultImage] : []),
-    ]);
+    const resolvedImages = yield* legacyEnsureImagesCached(
+      spawner,
+      [
+        postgresImage,
+        ...imagePlan.map((entry) => entry.image),
+        ...(edgeRuntimeDefaultImage !== undefined ? [edgeRuntimeDefaultImage] : []),
+      ],
+      projectEnvValues,
+    );
     const resolveImage = (image: string) => resolvedImages.get(image) ?? image;
 
     // Hoisted out of the Edge Runtime bring-up below: Go's Studio bring-up
@@ -789,6 +810,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       projectEnvValues,
     );
 
+    // Same gap for Storage's file-size limit — both the long-running
+    // container below AND the one-shot storage migrate job
+    // (`legacyStartSetupLocalDatabase`, via the `storage` splice further
+    // down) must see the same already-overridden value (Go's
+    // `internal/start/start.go:1004`, `internal/db/start/start.go:307`, both
+    // reading the single `utils.Config.Storage.FileSizeLimit`).
+    const storageFileSizeLimit =
+      envOverride(
+        "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
+        config.storage.file_size_limit,
+        projectEnvValues,
+      ) ?? config.storage.file_size_limit;
+
     /**
      * Every case returns `{ spec, excludeFromHealthWatch? }`: `spec` is the
      * {@link LegacyStartContainerSpec} to bring up; `excludeFromHealthWatch`
@@ -852,8 +886,16 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }
 
         case "kong": {
-          let tlsCertContent = "";
-          let tlsKeyContent = "";
+          // Go's `NewConfig` seeds `Api.Tls.{CertContent,KeyContent}`
+          // unconditionally from the embedded default cert/key
+          // (`pkg/config/config.go:452-455`); `Validate` only overwrites them
+          // from disk when TLS is enabled AND both `cert_path`/`key_path` are
+          // set (`config.go:1010-1027`). So a `[api.tls] enabled = true`
+          // project with no custom paths still gets a real cert/key here —
+          // never empty strings — matching Kong's own unconditional write of
+          // these fields to `/home/kong/localhost.{crt,key}` (`start.go:585-601`).
+          let tlsCertContent: string = LEGACY_KONG_LOCAL_TLS_CERT;
+          let tlsKeyContent: string = LEGACY_KONG_LOCAL_TLS_KEY;
           if (
             apiTlsEnabled &&
             config.api.tls.cert_path !== undefined &&
@@ -976,7 +1018,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               networkId,
               image,
               targetMigration: storageTargetMigration,
-              fileSizeLimit: config.storage.file_size_limit,
+              fileSizeLimit: storageFileSizeLimit,
               s3Region: values.storageS3Region,
               s3AccessKeyId: values.storageS3AccessKeyId,
               s3SecretAccessKey: values.storageS3SecretAccessKey,
@@ -1049,7 +1091,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                 pgMetaContainerName,
                 kongContainerName,
                 logflareContainerName,
-                studioApiUrl: config.studio.api_url,
+                studioApiUrl: legacyResolveStudioApiUrl(
+                  envOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
+                    config.studio.api_url,
+                  context.hostname,
+                  values.apiUrl,
+                ),
                 jwtSecret: values.jwtSecret,
                 anonKey: values.anonKey,
                 serviceRoleKey: values.serviceRoleKey,
@@ -1146,7 +1193,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           major_version: majorVersion,
           settings: legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
         },
-        experimental: config.experimental,
+        // `orioledb_version` overridden by SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION,
+        // matching the value already used to select `postgresImage` above —
+        // `legacyPostgresExtraEnv` reads this same field for its S3/
+        // `POSTGRES_INITDB_ARGS` branch.
+        experimental: { ...config.experimental, orioledb_version: orioledbVersion },
         jwtSecret: values.jwtSecret,
         jwtExpiry: config.auth.jwt_expiry,
         projectId,
@@ -1234,6 +1285,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                     "storage.enabled",
                     projectEnvValues,
                   ),
+                  file_size_limit: storageFileSizeLimit,
                 },
                 auth: {
                   ...config.auth,

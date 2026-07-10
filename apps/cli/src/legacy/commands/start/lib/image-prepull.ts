@@ -53,9 +53,10 @@ export class LegacyImagePrepullError extends Data.TaggedError("LegacyImagePrepul
 export function legacyEnsureImagesCached(
   spawner: Spawner,
   images: ReadonlyArray<string>,
+  projectEnvValues?: Readonly<Record<string, string>>,
 ): Effect.Effect<ReadonlyMap<string, string>, LegacyImagePrepullError> {
   const uniqueImages = [...new Set(images)];
-  const resolveImage = legacyMakeDockerImageResolver(spawner);
+  const resolveImage = legacyMakeDockerImageResolver(spawner, projectEnvValues);
 
   return Effect.gen(function* () {
     const results = yield* Effect.all(

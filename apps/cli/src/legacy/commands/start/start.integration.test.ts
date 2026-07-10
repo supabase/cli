@@ -40,6 +40,10 @@ import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
 import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import type { LegacyStartFlags } from "./start.command.ts";
 import { legacyStart } from "./start.handler.ts";
+import {
+  LEGACY_KONG_LOCAL_TLS_CERT,
+  LEGACY_KONG_LOCAL_TLS_KEY,
+} from "./templates/kong-local-tls.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-start-int-");
 
@@ -2074,6 +2078,114 @@ content_path = "./templates/custom_notice.html"
             }),
           ),
         );
+      },
+    );
+  });
+
+  describe("Studio API URL normalization", () => {
+    it.live(
+      "rewrites the default studio.api_url to the Kong URL rather than passing it through raw",
+      () => {
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const studioCreate = child.spawned.find(
+            (s) =>
+              s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_studio_"),
+          );
+          expect(studioCreate?.env["SUPABASE_PUBLIC_URL"]).toBe("http://127.0.0.1:54321");
+          expect(studioCreate?.env["SUPABASE_PUBLIC_URL"]).not.toBe("http://127.0.0.1");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+  });
+
+  describe("SUPABASE_STORAGE_FILE_SIZE_LIMIT override", () => {
+    it.live(
+      "honors the override for both Storage's container and the fresh-volume migrate job",
+      () => {
+        const previous = process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"];
+        process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"] = "5MiB";
+        const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          const storageCreate = child.spawned.find(
+            (s) =>
+              s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_storage_"),
+          );
+          expect(storageCreate?.env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
+
+          // Second of the three PG15+ one-shot migrate jobs (realtime, storage, auth order).
+          const migrateJobs = child.spawned.filter(
+            (s) => s.args[0] === "run" && s.args[1] === "--rm",
+          );
+          expect(migrateJobs[1]?.env["FILE_SIZE_LIMIT"]).toBe(String(5 * 1024 * 1024));
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"];
+              else process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+  });
+
+  describe("SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION override", () => {
+    it.live(
+      "selects the OrioleDB Postgres image and enables the container's S3 env when set only via env",
+      () => {
+        const previous = process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"];
+        process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"] = "16.0.0.1";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const dbImageInspect = child.spawned.find(
+            (s) =>
+              s.args[0] === "image" &&
+              s.args[1] === "inspect" &&
+              (s.args[2] ?? "").includes("postgres"),
+          );
+          expect(dbImageInspect?.args[2]).toContain("16.0.0.1-orioledb");
+
+          const dbCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_db_"),
+          );
+          expect(dbCreate?.env["S3_ENABLED"]).toBe("true");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined)
+                delete process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"];
+              else process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+  });
+
+  describe("Kong's embedded default TLS cert/key", () => {
+    it.live(
+      "writes the embedded default cert/key when TLS is unconfigured, never empty files",
+      () => {
+        const { layer, child, workdir } = setup();
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const kongCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+          );
+          const kongContainerName = containerNameFromCreateArgs(kongCreate?.args ?? []);
+          const secretsDir = join(workdir, "supabase", ".temp", "start-secrets", kongContainerName);
+          // secretFiles order in kong.service.ts: [kong.yml, localhost.crt, localhost.key].
+          const crtContent = readFileSync(join(secretsDir, "secret-1"), "utf-8");
+          const keyContent = readFileSync(join(secretsDir, "secret-2"), "utf-8");
+          expect(crtContent).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
+          expect(keyContent).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
+        }).pipe(Effect.provide(layer));
       },
     );
   });

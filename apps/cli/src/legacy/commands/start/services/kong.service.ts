@@ -28,11 +28,15 @@
  * `custom_nginx.template`, which carries no secret content, still travels via
  * the heredoc entrypoint script, matching Go exactly.
  *
- * The TLS cert/key `secretFiles` entries are still ALWAYS present (as
- * empty-content files when TLS is unconfigured, since Go's
- * `string(nil) == ""`) — never a conditional bind — for the same reason Go
- * always wrote them: `KONG_SSL_CERT`/`KONG_SSL_CERT_KEY` reference fixed
- * in-container paths unconditionally. {@link legacyBuildKongEntrypointScript}
+ * The TLS cert/key `secretFiles` entries are still ALWAYS present — never a
+ * conditional bind — for the same reason Go always wrote them:
+ * `KONG_SSL_CERT`/`KONG_SSL_CERT_KEY` reference fixed in-container paths
+ * unconditionally. Their content is never empty either: Go's `NewConfig`
+ * seeds `Api.Tls.{CertContent,KeyContent}` with the embedded default
+ * localhost cert/key (`pkg/config/config.go:452-455`), and only overwrites
+ * them from disk when TLS is enabled AND both `cert_path`/`key_path` are
+ * configured — see {@link LegacyKongContainerSpecInput.tlsCertContent}'s doc
+ * comment. {@link legacyBuildKongEntrypointScript}
  * reproduces the remaining `custom_nginx.template` heredoc + exec line
  * byte-for-byte; see its doc comment for the exact shell mechanics.
  *
@@ -203,9 +207,17 @@ export interface LegacyKongContainerSpecInput {
   readonly apiPort: number;
   /** `config.api.tls.enabled`, post-override — selects the published container port (`8443` vs `8000`, `start.go:560-563`). */
   readonly apiTlsEnabled: boolean;
-  /** `config.api.tls.cert_content`/`Config.Api.Tls.CertContent` as a string — pass `""` when TLS is unconfigured (matches Go's `string(nil)`). */
+  /**
+   * `Config.Api.Tls.CertContent` as a string. NOT empty-by-default: Go's
+   * `NewConfig` seeds this with the embedded default cert
+   * (`pkg/config/config.go:452-455`, `LEGACY_KONG_LOCAL_TLS_CERT`) and only
+   * `Validate` overwrites it from `api.tls.cert_path` when TLS is enabled AND
+   * both `cert_path`/`key_path` are configured — the caller must pass the
+   * embedded default here otherwise, matching Kong's own unconditional write
+   * of this field to `/home/kong/localhost.crt` (`start.go:585-601`).
+   */
   readonly tlsCertContent: string;
-  /** `config.api.tls.key_content`/`Config.Api.Tls.KeyContent` as a string — pass `""` when TLS is unconfigured. */
+  /** `Config.Api.Tls.KeyContent` as a string — see {@link tlsCertContent} for the same embedded-default requirement. */
   readonly tlsKeyContent: string;
   /** The four already-generated API keys `BearerToken`/`QueryToken` are built from — see {@link legacyBuildKongBearerToken}/{@link legacyBuildKongQueryToken}. */
   readonly apiKeys: LegacyKongApiKeys;

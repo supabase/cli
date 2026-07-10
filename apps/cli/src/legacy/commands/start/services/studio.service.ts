@@ -73,12 +73,15 @@ export interface LegacyBuildStudioEnvInput {
   /** Logflare's own container name (Go's `utils.LogflareId`) — `LOGFLARE_URL=http://<name>:4000`. */
   readonly logflareContainerName: string;
   /**
-   * `config.studio.api_url`, post-`SUPABASE_STUDIO_API_URL`-override (Go's
-   * `utils.Config.Studio.ApiUrl`) — `SUPABASE_PUBLIC_URL`. Distinct from
+   * `config.studio.api_url`, post-`SUPABASE_STUDIO_API_URL`-override AND
+   * post-`Config.Validate`'s host-rewrite (`legacyResolveStudioApiUrl`,
+   * `pkg/config/config.go:1074-1078`) — `SUPABASE_PUBLIC_URL`. Distinct from
    * `LegacyLocalConfigValues.studioUrl` (the `http://<hostname>:<port>` value
-   * `status` reports) — this is the raw, user-configurable `studio.api_url`
-   * field itself, matching Go reading `utils.Config.Studio.ApiUrl` directly
-   * rather than a derived host/port URL.
+   * `status` reports). This is NOT simply the raw `studio.api_url` field:
+   * under a default config its host (`127.0.0.1`) matches the local hostname,
+   * so Go rewrites it to `Config.Api.ExternalUrl` (the Kong URL) before
+   * `start` ever reads it — the caller must apply that same rewrite before
+   * passing this field in.
    */
   readonly studioApiUrl: string;
   /** `legacyResolveLocalConfigValues(...).jwtSecret` — `AUTH_JWT_SECRET`. */

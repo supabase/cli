@@ -51,9 +51,16 @@ const shouldRetryPull = (message: string): boolean =>
  * (`legacy-docker-run.layer.ts`) and `start`'s detached, long-running service
  * containers — the resolve/pull/retry algorithm is identical for both, only
  * the caller's process lifecycle differs.
+ *
+ * `projectEnvValues` is optional (see `legacy-docker-registry.ts`'s doc
+ * comment) — only `start` currently threads it through, since its caller
+ * already has the project's dotenv-merged values in scope; `legacy-docker-run.layer.ts`
+ * is a statically-composed `Layer` built before any `projectEnvValues` is
+ * known, so its own callers stay ambient-only for now.
  */
 export function legacyMakeDockerImageResolver(
   spawner: Spawner,
+  projectEnvValues?: Readonly<Record<string, string>>,
 ): (image: string) => Effect.Effect<string, LegacyDockerRunError> {
   const hasLocalImage = (image: string): Effect.Effect<boolean> =>
     containerCliExitCode(spawner, ["image", "inspect", image]).pipe(
@@ -109,7 +116,7 @@ export function legacyMakeDockerImageResolver(
 
   return (image: string): Effect.Effect<string, LegacyDockerRunError> =>
     Effect.gen(function* () {
-      const candidates = legacyGetRegistryImageUrlCandidates(image);
+      const candidates = legacyGetRegistryImageUrlCandidates(image, projectEnvValues);
       for (const candidate of candidates) {
         if (yield* hasLocalImage(candidate)) {
           return candidate;
