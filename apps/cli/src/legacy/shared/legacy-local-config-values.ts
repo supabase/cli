@@ -94,6 +94,16 @@ export interface LegacyLocalConfigValues {
   readonly apiPort: number;
   readonly dbPort: number;
   readonly rootKey: string;
+  /**
+   * Already-resolved (env-overridden, decrypted-if-`encrypted:`) `studio.
+   * openai_api_key`. Go types this as a `config.Secret` (`pkg/config/
+   * config.go:264`), decrypted by `DecryptSecretHookFunc` at decode time
+   * (`secret.go:30-46,77-108`) for both the TOML value and any
+   * `SUPABASE_STUDIO_OPENAI_API_KEY` override (Go's generic Viper
+   * `AutomaticEnv` binding, `config.go:582-586`) — same treatment as
+   * `jwtSecret`/the API keys below, via the same `decryptAuthSecret` helper.
+   */
+  readonly openaiApiKey: string | undefined;
   readonly authSiteUrl: string;
   readonly authJwtIssuer: string | undefined;
   readonly authJwtExpiry: number;
@@ -436,10 +446,17 @@ export function legacyResolveAuthEmailSmtp(
         typeof smtpDoc["user"] === "string" ? smtpDoc["user"] : "",
         projectEnvValues,
       ) ?? "",
+    // Go's `Auth.Email.Smtp.Pass` is a `config.Secret` (`pkg/config/auth.go:260`),
+    // decrypted by `DecryptSecretHookFunc` at decode time for both the TOML
+    // value and any env override — same treatment as `jwt_secret`/the API
+    // keys below, via the same `decryptAuthSecret` helper.
     pass:
-      envOverride(
-        "SUPABASE_AUTH_EMAIL_SMTP_PASS",
-        typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
+      decryptAuthSecret(
+        envOverride(
+          "SUPABASE_AUTH_EMAIL_SMTP_PASS",
+          typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
+          projectEnvValues,
+        ) ?? "",
         projectEnvValues,
       ) ?? "",
     adminEmail:
@@ -767,7 +784,7 @@ export function legacyEnvOverrideMajorVersion(
 }
 
 /** `SUPABASE_EDGE_RUNTIME_DENO_VERSION` — see {@link envOverrideUint}. */
-function envOverrideDenoVersion(
+export function legacyEnvOverrideDenoVersion(
   configured: number,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): number {
@@ -1643,7 +1660,10 @@ export function legacyResolveLocalConfigValues(
   // block and the functions loop (`pkg/config/config.go:1158-1173`), and —
   // unlike `studio.port`/`local_smtp.port` above — unconditionally, with no
   // `edge_runtime.enabled` gate.
-  const denoVersion = envOverrideDenoVersion(config.edge_runtime.deno_version, projectEnvValues);
+  const denoVersion = legacyEnvOverrideDenoVersion(
+    config.edge_runtime.deno_version,
+    projectEnvValues,
+  );
 
   // Go's `Config.Validate` validates `[analytics]` right after
   // `edge_runtime.deno_version` (`pkg/config/config.go:1174-1187`): when
@@ -1758,11 +1778,17 @@ export function legacyResolveLocalConfigValues(
     validateAuthExternalProviders(authDocument, projectEnvValues);
   }
 
+  const openaiApiKey = decryptAuthSecret(
+    envOverride("SUPABASE_STUDIO_OPENAI_API_KEY", config.studio.openai_api_key, projectEnvValues),
+    projectEnvValues,
+  );
+
   return {
     apiUrl: apiExternalUrl,
     apiPort,
     dbPort,
     rootKey,
+    openaiApiKey,
     authSiteUrl: siteUrl,
     authJwtIssuer: jwtIssuer,
     authJwtExpiry: jwtExpiry,

@@ -19,7 +19,6 @@ import { Data, Effect, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
-  containerCliExitCode,
   legacyDescribeContainerCliFailure,
   spawnContainerCli,
 } from "../../../shared/legacy-container-cli.ts";
@@ -320,18 +319,28 @@ export class LegacyStartVolumeInspectError extends Data.TaggedError(
   readonly message: string;
 }> {}
 
+/** Docker's/Podman's "no such volume" stderr shape for `volume inspect`. */
+function isVolumeNotFoundMessage(message: string): boolean {
+  return /no such volume/iu.test(message);
+}
+
 /**
  * Go's pre-create existence check (`_, err := utils.Docker.VolumeInspect(ctx,
  * utils.DbId); utils.NoBackupVolume = errdefs.IsNotFound(err)`,
  * `apps/cli-go/internal/db/start/start.go:165-167`), run BEFORE the volume is
  * created — `docker volume create` is idempotent, so creating first would lose
  * whether the volume already existed. `docker volume inspect <name>` exits 0
- * when the volume exists; any other exit (including "no such volume") resolves
- * to `false`, mirroring Go's `errdefs.IsNotFound` gate — an inspect failure
- * that ISN'T "not found" still yields the same `false` "no backup volume" a
- * real not-found would, since Go's own `NoBackupVolume` makes no further
- * distinction either. Only a spawn failure (neither `docker` nor `podman` on
- * `PATH`) is a real error.
+ * when the volume exists; a confirmed "no such volume" resolves to `false`,
+ * matching Go's `errdefs.IsNotFound`. Any OTHER inspect failure (permission
+ * denied, daemon unreachable, …) resolves to `true` instead — Go's
+ * `errdefs.IsNotFound(err)` is `false` for any error that isn't specifically a
+ * not-found, so Go always defaults to treating the volume as pre-existing
+ * (protected from rollback's `volume prune`) unless it can positively confirm
+ * otherwise; collapsing every non-zero exit into "doesn't exist" would let an
+ * ambiguous inspect failure on a stack with real prior data get pruned by
+ * {@link legacyRollbackStart} after any later failure — a data-loss
+ * regression Go's own gate doesn't have. Only a spawn failure (neither
+ * `docker` nor `podman` on `PATH`) is a real error here.
  *
  * A separate, additional export — NOT called from {@link legacyEnsureStartVolume}
  * itself, whose existing idempotent-create behavior must not change. The caller
@@ -344,18 +353,31 @@ export function legacyStartVolumeExists(
   spawner: Spawner,
   name: string,
 ): Effect.Effect<boolean, LegacyStartVolumeInspectError> {
-  return containerCliExitCode(spawner, ["volume", "inspect", name], {
-    stdin: "ignore",
-    stdout: "ignore",
-    stderr: "ignore",
-  }).pipe(
-    Effect.map((exitCode) => exitCode === 0),
-    Effect.mapError(
-      (cause) =>
-        new LegacyStartVolumeInspectError({
-          message: `failed to inspect volume: ${legacyDescribeContainerCliFailure(cause)}`,
-        }),
-    ),
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawnContainerCli(spawner, ["volume", "inspect", name], {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new LegacyStartVolumeInspectError({
+              message: `failed to inspect volume: ${legacyDescribeContainerCliFailure(cause)}`,
+            }),
+        ),
+      );
+      const [exitCode, stderr] = yield* Effect.all(
+        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        { concurrency: "unbounded" },
+      ).pipe(
+        Effect.mapError(
+          () => new LegacyStartVolumeInspectError({ message: "failed to inspect volume" }),
+        ),
+      );
+      if (exitCode === 0) return true;
+      return !isVolumeNotFoundMessage(stderr);
+    }),
   );
 }
 

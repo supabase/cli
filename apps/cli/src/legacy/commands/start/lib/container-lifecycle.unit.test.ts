@@ -612,14 +612,17 @@ describe("legacyStartVolumeExists", () => {
     );
   });
 
-  it.live("resolves false on any other inspect failure too, matching Go's IsNotFound gate", () => {
-    const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
-    return legacyStartVolumeExists(mock.spawner, "supabase_db_proj").pipe(
-      Effect.map((exists) => {
-        expect(exists).toBe(false);
-      }),
-    );
-  });
+  it.live(
+    "resolves true (protected, not fresh) on an ambiguous inspect failure, matching Go's IsNotFound gate",
+    () => {
+      const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
+      return legacyStartVolumeExists(mock.spawner, "supabase_db_proj").pipe(
+        Effect.map((exists) => {
+          expect(exists).toBe(true);
+        }),
+      );
+    },
+  );
 
   it.live("fails with LegacyStartVolumeInspectError when no runtime can be spawned", () => {
     const spawner = ChildProcessSpawner.make(() =>

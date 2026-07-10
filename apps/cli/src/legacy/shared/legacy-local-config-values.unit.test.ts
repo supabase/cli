@@ -13,6 +13,7 @@ import {
   LegacyInvalidBoolEnvOverrideError,
   LegacyInvalidJwtSecretError,
   LegacyInvalidPortEnvOverrideError,
+  legacyResolveAuthEmailSmtp,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
 } from "./legacy-local-config-values.ts";
@@ -171,6 +172,20 @@ describe("legacyResolveLocalConfigValues", () => {
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
         "failed to parse config: missing private key",
       );
+    });
+
+    it("decrypts an encrypted: auth.email.smtp.pass, matching Go's Secret-typed Smtp.Pass field", () => {
+      process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+      const document = { auth: { email: { smtp: { enabled: true, pass: VAULT_ENCRYPTED } } } };
+      const resolved = legacyResolveAuthEmailSmtp(document.auth, undefined);
+      expect(resolved?.pass).toBe("value");
+    });
+
+    it("decrypts an encrypted: studio.openai_api_key, matching Go's Secret-typed OpenaiApiKey field", () => {
+      process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+      const config = baseConfig({ studio: { openai_api_key: VAULT_ENCRYPTED } });
+      const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+      expect(values.openaiApiKey).toBe("value");
     });
 
     it("decrypts an encrypted: SUPABASE_AUTH_* env override, not just the config.toml value", () => {

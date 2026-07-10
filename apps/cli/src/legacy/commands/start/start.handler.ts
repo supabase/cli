@@ -47,6 +47,7 @@ import {
   envOverride,
   LEGACY_DEPRECATED_EXTERNAL_PROVIDERS,
   legacyEnvOverrideBool,
+  legacyEnvOverrideDenoVersion,
   legacyEnvOverrideMajorVersion,
   legacyResolveAuthEmailSmtp,
   legacyResolveConfiguredSigningKeys,
@@ -653,6 +654,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // for the realtime/storage/auth `enabled` overrides a few dozen lines
     // below.
     const majorVersion = legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
+    // Same treatment as `majorVersion` above, for the sibling
+    // `edge_runtime.deno_version` -> `Config.EdgeRuntime.Image` switch
+    // (`pkg/config/config.go:1164-1173`), applied before `Validate` at the
+    // end of `Config.Load` (`config.go:882`).
+    const denoVersion = legacyEnvOverrideDenoVersion(
+      config.edge_runtime.deno_version,
+      projectEnvValues,
+    );
 
     // 7. Resolve every image that will actually be pulled (Go's
     // `ensureImagesCached`, `start.go:225-262,289`) BEFORE any container is
@@ -684,12 +693,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // pre-pulling `utils.Config.EdgeRuntime.Image` whenever it's enabled and not
     // excluded.
     const edgeRuntimeDefaultImage = gates.edgeRuntime
-      ? yield* legacyResolveEdgeRuntimeImage(
-          fs,
-          path,
-          cliConfig.workdir,
-          config.edge_runtime.deno_version,
-        )
+      ? yield* legacyResolveEdgeRuntimeImage(fs, path, cliConfig.workdir, denoVersion)
       : undefined;
     const resolvedImages = yield* legacyEnsureImagesCached(spawner, [
       postgresImage,
@@ -762,6 +766,22 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const vectorContainerName = legacyServiceContainerName("vector", projectId);
     const mailpitContainerName = legacyServiceContainerName("inbucket", projectId);
 
+    // Hoisted out of the "kong" case below (it used to be computed only
+    // there): the post-bring-up health-probe CA-trust lookup near the end of
+    // this function needs the SAME env-overridden value, not the raw
+    // `config.api.tls.enabled` — Go has one source of truth here (`Config.
+    // Load` applies `SUPABASE_API_TLS_ENABLED` before `Validate` populates
+    // `Api.Tls.CertContent`, `pkg/config/config.go:586,749,882,1006-1019`),
+    // and `status.NewKongClient`'s trust pool + its health probe's target URL
+    // both read that same already-overridden global (`internal/status/
+    // status.go:181-229`).
+    const apiTlsEnabled = legacyEnvOverrideBool(
+      "SUPABASE_API_TLS_ENABLED",
+      config.api.tls.enabled,
+      "api.tls.enabled",
+      projectEnvValues,
+    );
+
     /**
      * Every case returns `{ spec, excludeFromHealthWatch? }`: `spec` is the
      * {@link LegacyStartContainerSpec} to bring up; `excludeFromHealthWatch`
@@ -825,12 +845,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }
 
         case "kong": {
-          const apiTlsEnabled = legacyEnvOverrideBool(
-            "SUPABASE_API_TLS_ENABLED",
-            config.api.tls.enabled,
-            "api.tls.enabled",
-            projectEnvValues,
-          );
           let tlsCertContent = "";
           let tlsKeyContent = "";
           if (
@@ -1036,7 +1050,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                 secretKey: values.secretKey,
                 s3AccessKeyId: values.storageS3AccessKeyId,
                 s3SecretAccessKey: values.storageS3SecretAccessKey,
-                openaiApiKey: config.studio.openai_api_key,
+                openaiApiKey: values.openaiApiKey,
                 apiSchemas: config.api.schemas,
                 apiExtraSearchPath: config.api.extra_search_path,
                 apiMaxRows: config.api.max_rows,
@@ -1366,7 +1380,20 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // `FetchHttpClient`-backed client (production) and is a no-op against a
     // hand-rolled `HttpClient.make(...)` mock (this file's own integration
     // tests), which never reads `FetchHttpClient.Fetch` at all.
-    const { localKongCa } = yield* legacyResolveStorageCredentials({ projectRef: "", config });
+    //
+    // Passes the hoisted, env-overridden `apiTlsEnabled` (not the raw
+    // `config`) so a `SUPABASE_API_TLS_ENABLED=true` override that brought
+    // Kong up on TLS also gets its CA trusted here — otherwise this lookup's
+    // `resolveLocalBaseUrl` derives `http://` from the un-overridden
+    // `config.api.tls.enabled`, `localKongCa` stays `undefined`, and the
+    // probe above fails TLS verification against Kong's self-signed cert.
+    const { localKongCa } = yield* legacyResolveStorageCredentials({
+      projectRef: "",
+      config: {
+        ...config,
+        api: { ...config.api, tls: { ...config.api.tls, enabled: apiTlsEnabled } },
+      },
+    });
     const healthResult = yield* legacyWaitForHealthyServices(spawner, started, {
       postgrest: postgrestGateway,
       edgeRuntime: edgeRuntimeGateway,

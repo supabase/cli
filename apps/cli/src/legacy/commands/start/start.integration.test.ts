@@ -206,7 +206,13 @@ function freshVolumeRoute(
   base: (args: ReadonlyArray<string>) => RouteResult,
 ): (args: ReadonlyArray<string>) => RouteResult {
   return (args) => {
-    if (args[0] === "volume" && args[1] === "inspect") return { exitCode: 1 };
+    // `legacyStartVolumeExists` now distinguishes a confirmed "not found" from
+    // any other inspect error (matching Go's `errdefs.IsNotFound` gate) — the
+    // stderr text is what makes this simulate a genuinely fresh/non-existent
+    // volume rather than an ambiguous inspect failure.
+    if (args[0] === "volume" && args[1] === "inspect") {
+      return { exitCode: 1, stderr: [`Error: No such volume: ${args[2] ?? ""}`] };
+    }
     return base(args);
   };
 }
@@ -1906,6 +1912,34 @@ content_path = "./templates/custom_notice.html"
           Effect.sync(() => {
             if (previous === undefined) delete process.env["SUPABASE_AUTH_ENABLE_SIGNUP"];
             else process.env["SUPABASE_AUTH_ENABLE_SIGNUP"] = previous;
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("SUPABASE_EDGE_RUNTIME_DENO_VERSION override", () => {
+    it.live("resolves the Deno 1 edge-runtime image tag, not the Deno 2 default", () => {
+      const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+      process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const edgeRuntimeImageInspect = child.spawned.find(
+          (s) =>
+            s.args[0] === "image" &&
+            s.args[1] === "inspect" &&
+            (s.args[2] ?? "").includes("edge-runtime"),
+        );
+        expect(edgeRuntimeImageInspect?.args[2]).toBe(
+          "public.ecr.aws/supabase/edge-runtime:v1.68.4",
+        );
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+            else process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
           }),
         ),
       );
