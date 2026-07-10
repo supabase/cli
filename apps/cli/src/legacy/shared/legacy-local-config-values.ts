@@ -416,6 +416,73 @@ export function legacyEnvOverrideRealtimeMaxHeaderLength(
   );
 }
 
+/** `SUPABASE_API_MAX_ROWS` — see {@link envOverrideUint}. */
+export function legacyEnvOverrideApiMaxRows(
+  configured: number,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): number {
+  return envOverrideUint("SUPABASE_API_MAX_ROWS", "api.max_rows", configured, projectEnvValues);
+}
+
+/**
+ * Thrown by {@link legacyEnvOverridePoolMode} when `SUPABASE_DB_POOLER_POOL_MODE`
+ * doesn't match Go's `PoolMode` (`pkg/config/db.go:14-26`) — `UnmarshalText`
+ * hard-rejects anything outside `{transaction, session}`, same mechanism as
+ * {@link LegacyInvalidRealtimeIpVersionEnvOverrideError}.
+ */
+export class LegacyInvalidPoolModeEnvOverrideError extends Error {
+  constructor(dottedFieldPath: string, value: string) {
+    super(
+      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "transaction", "session"`,
+    );
+    this.name = "LegacyInvalidPoolModeEnvOverrideError";
+  }
+}
+
+/**
+ * `db.pooler.pool_mode`-flavored sibling of {@link legacyEnvOverrideRealtimeIpVersion}
+ * — Go's `Pooler.PoolMode` is `PoolMode`, text-unmarshalled the same way
+ * `Realtime.IpVersion` is, so the override-or-configured value is validated
+ * with a single check to match Go's one-shot `UnmarshalText` call.
+ */
+export function legacyEnvOverridePoolMode(
+  configured: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): "transaction" | "session" {
+  const value =
+    envOverride("SUPABASE_DB_POOLER_POOL_MODE", undefined, projectEnvValues) ?? configured;
+  if (value !== "transaction" && value !== "session") {
+    throw new LegacyInvalidPoolModeEnvOverrideError("db.pooler.pool_mode", value);
+  }
+  return value;
+}
+
+/** `SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE` — see {@link envOverrideUint}. */
+export function legacyEnvOverrideDefaultPoolSize(
+  configured: number,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): number {
+  return envOverrideUint(
+    "SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE",
+    "db.pooler.default_pool_size",
+    configured,
+    projectEnvValues,
+  );
+}
+
+/** `SUPABASE_DB_POOLER_MAX_CLIENT_CONN` — see {@link envOverrideUint}. */
+export function legacyEnvOverrideMaxClientConn(
+  configured: number,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): number {
+  return envOverrideUint(
+    "SUPABASE_DB_POOLER_MAX_CLIENT_CONN",
+    "db.pooler.max_client_conn",
+    configured,
+    projectEnvValues,
+  );
+}
+
 /**
  * Decrypts a resolved auth identity-key field (`jwt_secret`, `publishable_key`,
  * `secret_key`, `anon_key`, `service_role_key`) when it's a dotenvx `encrypted:`
@@ -528,6 +595,60 @@ export function legacyResolveAuthEmailSmtp(
       projectEnvValues,
     ),
   };
+}
+
+/**
+ * Go's `Config.Validate` checks `auth.captcha` right after `auth.site_url`,
+ * still inside `if c.Auth.Enabled` (`pkg/config/config.go:1099-1109`): an
+ * enabled CAPTCHA section requires both `provider` and `secret`. `auth.captcha.*`
+ * is Viper-bound like every other nested field once `[auth.captcha]` is present
+ * in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`),
+ * so `SUPABASE_AUTH_CAPTCHA_ENABLED`/`_PROVIDER`/`_SECRET` overrides apply before
+ * this validation runs. Unlike the flat `auth.site_url` field, `config.auth.captcha`
+ * does NOT decode to `undefined` when `[auth.captcha]` is absent from config.toml —
+ * `captcha.ts`'s own `withDecodingDefaultKey` fills in `{ enabled: false }` even
+ * through the outer `Schema.optionalKey` wrapper (`packages/config/src/auth/index.ts`),
+ * confirmed empirically; there is no schema-level presence signal here, unlike
+ * `auth.passkey`/`auth.webauthn`. So presence is read from the raw `authDocument`
+ * instead — matching Go's `AutomaticEnv` (which only intercepts keys already
+ * present in the merged config), an absent `[auth.captcha]` section never picks
+ * up an env override alone.
+ *
+ * Hoisted (like {@link legacyResolveAuthEmailSmtp}) so both
+ * `legacyResolveLocalConfigValues` (`Config.Validate` parity) and
+ * `start.handler.ts`'s `resolveGotrueEnvInput` (the actual GoTrue env) resolve
+ * the SAME effective value — `secret` is `Secret`-typed in Go
+ * (`pkg/config/auth.go`), decrypted the same way `jwt_secret`/API keys/`smtp.pass` are.
+ */
+export function legacyResolveAuthCaptcha(
+  authDocument: Readonly<Record<string, unknown>> | undefined,
+  captcha: ProjectConfig["auth"]["captcha"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): LegacyCaptchaInput | undefined {
+  const captchaDoc = asRecord(authDocument?.["captcha"]);
+  return captcha
+    ? {
+        enabled:
+          captchaDoc !== undefined
+            ? legacyEnvOverrideBool(
+                "SUPABASE_AUTH_CAPTCHA_ENABLED",
+                captcha.enabled ?? false,
+                "auth.captcha.enabled",
+                projectEnvValues,
+              )
+            : (captcha.enabled ?? false),
+        provider:
+          captchaDoc !== undefined
+            ? envOverride("SUPABASE_AUTH_CAPTCHA_PROVIDER", captcha.provider, projectEnvValues)
+            : captcha.provider,
+        secret: legacyDecryptAuthSecret(
+          captchaDoc !== undefined
+            ? envOverride("SUPABASE_AUTH_CAPTCHA_SECRET", captcha.secret, projectEnvValues)
+            : captcha.secret,
+          projectEnvValues,
+        ),
+      }
+    : undefined;
 }
 
 /** Go's `(a *auth) generateAPIKeys` (`pkg/config/apikeys.go:43-73`). */
@@ -1108,6 +1229,78 @@ const LEGACY_HOOK_TYPE_ORDER = [
   "before_user_created",
 ] as const;
 
+/** camelCase key {@link legacyResolveAuthHooks} exposes per {@link LEGACY_HOOK_TYPE_ORDER} entry — matches `LegacyBuildGotrueEnvInput.hooks`'s field names (`gotrue.service.ts`). */
+const LEGACY_HOOK_TYPE_TO_CAMEL = {
+  mfa_verification_attempt: "mfaVerificationAttempt",
+  password_verification_attempt: "passwordVerificationAttempt",
+  custom_access_token: "customAccessToken",
+  send_sms: "sendSms",
+  send_email: "sendEmail",
+  before_user_created: "beforeUserCreated",
+} as const satisfies Record<(typeof LEGACY_HOOK_TYPE_ORDER)[number], string>;
+
+interface LegacyResolvedAuthHook {
+  readonly enabled: boolean;
+  readonly uri: string;
+  readonly secrets: string;
+}
+
+export type LegacyResolvedAuthHooks = {
+  readonly [K in (typeof LEGACY_HOOK_TYPE_TO_CAMEL)[keyof typeof LEGACY_HOOK_TYPE_TO_CAMEL]]: LegacyResolvedAuthHook;
+};
+
+/**
+ * Go's `hook.validate()` fixed iteration order (`pkg/config/config.go:1453-1485`).
+ * `auth.hook.<type>.*` is Viper-bound like every other nested field
+ * (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`), so
+ * `SUPABASE_AUTH_HOOK_<TYPE>_ENABLED`/`_URI`/`_SECRETS` overrides apply before
+ * Go builds `GOTRUE_HOOK_*` (`internal/start/start.go:746-792`) — Go has no
+ * separate "raw" vs. "effective" hook value, so a hook enabled/retargeted
+ * purely through env vars must reach GoTrue too, not just validation.
+ * `@supabase/config`'s hook schema always decodes a `{ enabled: false }`
+ * default per type regardless of file presence (`packages/config/src/auth/
+ * hooks.ts`'s `withDecodingDefaultKey`), which erases the presence signal
+ * Go's `AutomaticEnv` needs (it only intercepts keys already present in the
+ * merged config) — so, like the passkey/webauthn/captcha overrides, this
+ * reads the raw `[auth.hook.<type>]` document to gate the override on the
+ * section actually being present.
+ *
+ * Hoisted (like {@link legacyResolveAuthEmailSmtp}/{@link legacyResolveAuthCaptcha})
+ * so both `legacyResolveLocalConfigValues` (which derives its filtered,
+ * enabled-only `LegacyHookInput[]` for `Config.Validate` parity from this same
+ * unfiltered result) and `start.handler.ts`'s `resolveGotrueEnvInput` (the
+ * actual GoTrue env) resolve the SAME effective values.
+ */
+export function legacyResolveAuthHooks(
+  authDocument: Readonly<Record<string, unknown>> | undefined,
+  hook: ProjectConfig["auth"]["hook"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): LegacyResolvedAuthHooks {
+  const hookDocument = asRecord(authDocument?.["hook"]);
+  const result = {} as Record<string, LegacyResolvedAuthHook>;
+  for (const hookType of LEGACY_HOOK_TYPE_ORDER) {
+    const h = hook[hookType];
+    const hookSectionPresent = asRecord(hookDocument?.[hookType]) !== undefined;
+    const envPrefix = `SUPABASE_AUTH_HOOK_${hookType.toUpperCase()}`;
+    const enabled = hookSectionPresent
+      ? legacyEnvOverrideBool(
+          `${envPrefix}_ENABLED`,
+          h.enabled,
+          `auth.hook.${hookType}.enabled`,
+          projectEnvValues,
+        )
+      : h.enabled;
+    const uri =
+      (hookSectionPresent ? envOverride(`${envPrefix}_URI`, h.uri, projectEnvValues) : h.uri) ?? "";
+    const secrets =
+      (hookSectionPresent
+        ? envOverride(`${envPrefix}_SECRETS`, h.secrets, projectEnvValues)
+        : h.secrets) ?? "";
+    result[LEGACY_HOOK_TYPE_TO_CAMEL[hookType]] = { enabled, uri, secrets };
+  }
+  return result as LegacyResolvedAuthHooks;
+}
+
 /** Go's `(s *sms) validate()` fixed provider priority (`pkg/config/config.go:1348-1410`) — a
  * `switch` that validates ONLY the first enabled provider in this order. */
 const LEGACY_SMS_PROVIDER_ORDER = [
@@ -1593,51 +1786,11 @@ export function legacyResolveLocalConfigValues(
   // the captcha presence check right below needs it too. `undefined` for callers that haven't
   // threaded `document` through yet, in which case presence-based checks are simply skipped.
   const authDocument = asRecord(document?.["auth"]);
-  // Go's `Config.Validate` checks `auth.captcha` right after `auth.site_url`,
-  // still inside `if c.Auth.Enabled` (`pkg/config/config.go:1099-1109`): an
-  // enabled CAPTCHA section requires both `provider` and `secret`. `auth.captcha.*`
-  // is Viper-bound like every other nested field once `[auth.captcha]` is present
-  // in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`),
-  // so `SUPABASE_AUTH_CAPTCHA_ENABLED`/`_PROVIDER`/`_SECRET` overrides apply before
-  // this validation runs. Unlike the flat `auth.site_url` field, `config.auth.captcha`
-  // does NOT decode to `undefined` when `[auth.captcha]` is absent from config.toml —
-  // `captcha.ts`'s own `withDecodingDefaultKey` fills in `{ enabled: false }` even
-  // through the outer `Schema.optionalKey` wrapper (`packages/config/src/auth/index.ts`),
-  // confirmed empirically; there is no schema-level presence signal here, unlike
-  // `auth.passkey`/`auth.webauthn` below. So, like those, presence is read from the raw
-  // `authDocument` instead — matching Go's `AutomaticEnv` (which only intercepts keys
-  // already present in the merged config), an absent `[auth.captcha]` section never
-  // picks up an env override alone.
-  const captchaDoc = asRecord(authDocument?.["captcha"]);
-  const captchaInput: LegacyCaptchaInput | undefined = config.auth.captcha
-    ? {
-        enabled:
-          captchaDoc !== undefined
-            ? legacyEnvOverrideBool(
-                "SUPABASE_AUTH_CAPTCHA_ENABLED",
-                config.auth.captcha.enabled ?? false,
-                "auth.captcha.enabled",
-                projectEnvValues,
-              )
-            : (config.auth.captcha.enabled ?? false),
-        provider:
-          captchaDoc !== undefined
-            ? envOverride(
-                "SUPABASE_AUTH_CAPTCHA_PROVIDER",
-                config.auth.captcha.provider,
-                projectEnvValues,
-              )
-            : config.auth.captcha.provider,
-        secret:
-          captchaDoc !== undefined
-            ? envOverride(
-                "SUPABASE_AUTH_CAPTCHA_SECRET",
-                config.auth.captcha.secret,
-                projectEnvValues,
-              )
-            : config.auth.captcha.secret,
-      }
-    : undefined;
+  const captchaInput = legacyResolveAuthCaptcha(
+    authDocument,
+    config.auth.captcha,
+    projectEnvValues,
+  );
   const signingKey =
     authEnabled && signingKeysPath !== undefined && signingKeysPath.length > 0
       ? loadFirstSigningKey(workdir, signingKeysPath)
@@ -1710,44 +1863,18 @@ export function legacyResolveLocalConfigValues(
       ? { webauthnPresent: webauthnDoc !== undefined, rpId, rpOrigins }
       : undefined;
 
-    // Go's `hook.validate()` fixed iteration order (`pkg/config/config.go:1453-1485`) — only
-    // enabled hooks are forwarded, in that order. `auth.hook.<type>.*` is Viper-bound like every
-    // other nested field (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`), so
-    // `SUPABASE_AUTH_HOOK_<TYPE>_ENABLED`/`_URI`/`_SECRETS` overrides apply before this
-    // validation runs. `@supabase/config`'s hook schema always decodes a `{ enabled: false }`
-    // default per type regardless of file presence (`packages/config/src/auth/hooks.ts`'s
-    // `withDecodingDefaultKey`), which erases the presence signal Go's `AutomaticEnv` needs (it
-    // only intercepts keys already present in the merged config) — so, like the passkey/webauthn
-    // overrides above, this reads the raw `[auth.hook.<type>]` document instead to gate the
-    // override on the section actually being present.
-    const hookDocument = asRecord(authDocument?.["hook"]);
-    const hooks: Array<LegacyHookInput> = [];
-    for (const hookType of LEGACY_HOOK_TYPE_ORDER) {
-      const hook = config.auth.hook[hookType];
-      const hookSectionPresent = asRecord(hookDocument?.[hookType]) !== undefined;
-      const envPrefix = `SUPABASE_AUTH_HOOK_${hookType.toUpperCase()}`;
-      const hookEnabled = hookSectionPresent
-        ? legacyEnvOverrideBool(
-            `${envPrefix}_ENABLED`,
-            hook.enabled,
-            `auth.hook.${hookType}.enabled`,
-            projectEnvValues,
-          )
-        : hook.enabled;
-      if (hookEnabled) {
-        hooks.push({
-          type: hookType,
-          uri:
-            (hookSectionPresent
-              ? envOverride(`${envPrefix}_URI`, hook.uri, projectEnvValues)
-              : hook.uri) ?? "",
-          secrets:
-            (hookSectionPresent
-              ? envOverride(`${envPrefix}_SECRETS`, hook.secrets, projectEnvValues)
-              : hook.secrets) ?? "",
-        });
-      }
-    }
+    // Only enabled hooks are forwarded to `Config.Validate` parity, in Go's
+    // fixed iteration order (`pkg/config/config.go:1453-1485`) — derived from
+    // `legacyResolveAuthHooks`'s unfiltered result so this validation path and
+    // `resolveGotrueEnvInput`'s actual GoTrue env resolve the exact same
+    // per-hook override values (see that function's doc comment).
+    const resolvedHooks = legacyResolveAuthHooks(authDocument, config.auth.hook, projectEnvValues);
+    const hooks: Array<LegacyHookInput> = LEGACY_HOOK_TYPE_ORDER.filter(
+      (hookType) => resolvedHooks[LEGACY_HOOK_TYPE_TO_CAMEL[hookType]].enabled,
+    ).map((hookType) => {
+      const resolved = resolvedHooks[LEGACY_HOOK_TYPE_TO_CAMEL[hookType]];
+      return { type: hookType, uri: resolved.uri, secrets: resolved.secrets };
+    });
 
     // Go's `Auth.MFA` factor fields (`TOTP`/`Phone`/`WebAuthn`) are value-typed structs
     // (`pkg/config/auth.go:317-320`), never `nil` — unlike `Auth.Hook`'s pointer-typed fields

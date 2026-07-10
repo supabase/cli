@@ -12,12 +12,19 @@ import {
   LegacyInvalidAnalyticsBackendEnvOverrideError,
   LegacyInvalidBoolEnvOverrideError,
   LegacyInvalidJwtSecretError,
+  LegacyInvalidPoolModeEnvOverrideError,
   LegacyInvalidPortEnvOverrideError,
   LegacyInvalidRealtimeIpVersionEnvOverrideError,
   LegacyInvalidSessionReplicationRoleEnvOverrideError,
+  legacyEnvOverrideApiMaxRows,
+  legacyEnvOverrideDefaultPoolSize,
+  legacyEnvOverrideMaxClientConn,
+  legacyEnvOverridePoolMode,
   legacyEnvOverrideRealtimeIpVersion,
   legacyEnvOverrideRealtimeMaxHeaderLength,
+  legacyResolveAuthCaptcha,
   legacyResolveAuthEmailSmtp,
+  legacyResolveAuthHooks,
   legacyResolveDbSettingsEnvOverrides,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
@@ -878,6 +885,171 @@ describe("legacyResolveLocalConfigValues", () => {
           SUPABASE_REALTIME_MAX_HEADER_LENGTH: "16384",
         }),
       ).toBe(16384);
+    });
+  });
+
+  describe("legacyEnvOverrideApiMaxRows", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_API_MAX_ROWS"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideApiMaxRows(1000, undefined)).toBe(1000);
+    });
+
+    it("overrides the configured value via the env var", () => {
+      process.env["SUPABASE_API_MAX_ROWS"] = "500";
+      expect(legacyEnvOverrideApiMaxRows(1000, undefined)).toBe(500);
+    });
+  });
+
+  describe("legacyEnvOverridePoolMode", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_DB_POOLER_POOL_MODE"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverridePoolMode("transaction", undefined)).toBe("transaction");
+    });
+
+    it("overrides the configured value via the env var", () => {
+      process.env["SUPABASE_DB_POOLER_POOL_MODE"] = "session";
+      expect(legacyEnvOverridePoolMode("transaction", undefined)).toBe("session");
+    });
+
+    // Go's `PoolMode.UnmarshalText` (`pkg/config/db.go:14-26`) hard-rejects any
+    // value outside `{transaction, session}`.
+    it("rejects an invalid override instead of falling back to the configured value", () => {
+      process.env["SUPABASE_DB_POOLER_POOL_MODE"] = "invalid";
+      expect(() => legacyEnvOverridePoolMode("transaction", undefined)).toThrow(
+        LegacyInvalidPoolModeEnvOverrideError,
+      );
+      expect(() => legacyEnvOverridePoolMode("transaction", undefined)).toThrow(
+        'Invalid config for db.pooler.pool_mode: cannot parse "invalid" as one of "transaction", "session"',
+      );
+    });
+  });
+
+  describe("legacyEnvOverrideDefaultPoolSize", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideDefaultPoolSize(20, undefined)).toBe(20);
+    });
+
+    it("overrides the configured value via the env var", () => {
+      process.env["SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE"] = "40";
+      expect(legacyEnvOverrideDefaultPoolSize(20, undefined)).toBe(40);
+    });
+  });
+
+  describe("legacyEnvOverrideMaxClientConn", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_DB_POOLER_MAX_CLIENT_CONN"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideMaxClientConn(100, undefined)).toBe(100);
+    });
+
+    it("overrides the configured value via the env var", () => {
+      process.env["SUPABASE_DB_POOLER_MAX_CLIENT_CONN"] = "200";
+      expect(legacyEnvOverrideMaxClientConn(100, undefined)).toBe(200);
+    });
+  });
+
+  describe("legacyResolveAuthCaptcha", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"];
+      delete process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"];
+      delete process.env["SUPABASE_AUTH_CAPTCHA_SECRET"];
+    });
+
+    it("returns undefined when captcha is not configured", () => {
+      expect(legacyResolveAuthCaptcha(undefined, undefined, undefined)).toBeUndefined();
+    });
+
+    it("overrides enabled/provider when the section is present in the document", () => {
+      process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = "true";
+      process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"] = "turnstile";
+      const authDocument = { captcha: { enabled: false, provider: "hcaptcha" } };
+      const resolved = legacyResolveAuthCaptcha(
+        authDocument,
+        { enabled: false, provider: "hcaptcha", secret: "shh" },
+        undefined,
+      );
+      expect(resolved?.enabled).toBe(true);
+      expect(resolved?.provider).toBe("turnstile");
+    });
+
+    it("does not apply an env override when [auth.captcha] is absent from the document", () => {
+      process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = "true";
+      const resolved = legacyResolveAuthCaptcha(
+        {},
+        { enabled: false, provider: "hcaptcha", secret: "shh" },
+        undefined,
+      );
+      expect(resolved?.enabled).toBe(false);
+    });
+
+    it("decrypts an encrypted: captcha secret", () => {
+      process.env["DOTENV_PRIVATE_KEY"] =
+        "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
+      const authDocument = { captcha: { enabled: true } };
+      const resolved = legacyResolveAuthCaptcha(
+        authDocument,
+        {
+          enabled: true,
+          provider: "hcaptcha",
+          secret:
+            "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/",
+        },
+        undefined,
+      );
+      expect(resolved?.secret).toBe("value");
+      delete process.env["DOTENV_PRIVATE_KEY"];
+    });
+  });
+
+  describe("legacyResolveAuthHooks", () => {
+    const baseHook = { enabled: false, uri: "", secrets: "" };
+    const allHooks = {
+      mfa_verification_attempt: baseHook,
+      password_verification_attempt: baseHook,
+      custom_access_token: baseHook,
+      send_sms: baseHook,
+      send_email: baseHook,
+      before_user_created: baseHook,
+    };
+
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"];
+      delete process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"];
+    });
+
+    it("leaves every hook disabled when nothing is configured or overridden", () => {
+      const resolved = legacyResolveAuthHooks(undefined, allHooks, undefined);
+      expect(resolved.customAccessToken.enabled).toBe(false);
+      expect(resolved.mfaVerificationAttempt.enabled).toBe(false);
+    });
+
+    it("overrides enabled/uri when the hook's section is present in the document", () => {
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "true";
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"] = "https://example.com/hook";
+      const authDocument = { hook: { custom_access_token: { enabled: false } } };
+      const resolved = legacyResolveAuthHooks(authDocument, allHooks, undefined);
+      expect(resolved.customAccessToken.enabled).toBe(true);
+      expect(resolved.customAccessToken.uri).toBe("https://example.com/hook");
+      // Unrelated hooks stay untouched.
+      expect(resolved.mfaVerificationAttempt.enabled).toBe(false);
+    });
+
+    it("does not apply an env override when the hook's section is absent from the document", () => {
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "true";
+      const resolved = legacyResolveAuthHooks({}, allHooks, undefined);
+      expect(resolved.customAccessToken.enabled).toBe(false);
     });
   });
 

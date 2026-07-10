@@ -273,7 +273,11 @@ export interface LegacyBuildGotrueEnvInput {
   readonly rateLimit: ProjectConfig["auth"]["rate_limit"];
   readonly web3: ProjectConfig["auth"]["web3"];
   readonly oauthServer: ProjectConfig["auth"]["oauth_server"];
-  /** `config.auth.hook.<type>`, each already presence-resolved (no `@supabase/config` presence quirk applies here — see this module's header). */
+  /**
+   * `config.auth.hook.<type>`, each already presence-resolved AND
+   * env-override-resolved by the caller (`legacyResolveAuthHooks` —
+   * `SUPABASE_AUTH_HOOK_<TYPE>_ENABLED`/`_URI`/`_SECRETS`).
+   */
   readonly hooks: {
     readonly mfaVerificationAttempt: LegacyGotrueHookInput;
     readonly passwordVerificationAttempt: LegacyGotrueHookInput;
@@ -284,10 +288,12 @@ export interface LegacyBuildGotrueEnvInput {
   };
 
   /**
-   * `config.auth.captcha`, already presence-resolved by the caller
-   * (`@supabase/config`'s `withDecodingDefaultKey` fills in `{enabled:
-   * false}` even when `[auth.captcha]` is absent — see this module's
-   * header). `undefined` means `Auth.Captcha == nil` in Go.
+   * `config.auth.captcha`, already presence-resolved AND env-override-resolved
+   * by the caller (`legacyResolveAuthCaptcha` — `SUPABASE_AUTH_CAPTCHA_ENABLED`/
+   * `_PROVIDER`/`_SECRET`, `secret` decrypted like every other `Secret`-typed
+   * field). `@supabase/config`'s `withDecodingDefaultKey` fills in `{enabled:
+   * false}` even when `[auth.captcha]` is absent — see this module's header.
+   * `undefined` means `Auth.Captcha == nil` in Go.
    */
   readonly captcha?: {
     readonly enabled: boolean;

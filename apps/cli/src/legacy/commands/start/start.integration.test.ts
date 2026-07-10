@@ -2367,4 +2367,183 @@ content_path = "./templates/custom_notice.html"
       },
     );
   });
+
+  describe("SUPABASE_API_* env overrides reach PostgREST and Studio", () => {
+    it.live("honors SUPABASE_API_SCHEMAS/_EXTRA_SEARCH_PATH/_MAX_ROWS in both containers", () => {
+      const previousSchemas = process.env["SUPABASE_API_SCHEMAS"];
+      const previousSearchPath = process.env["SUPABASE_API_EXTRA_SEARCH_PATH"];
+      const previousMaxRows = process.env["SUPABASE_API_MAX_ROWS"];
+      process.env["SUPABASE_API_SCHEMAS"] = "public,custom";
+      process.env["SUPABASE_API_EXTRA_SEARCH_PATH"] = "extensions,other";
+      process.env["SUPABASE_API_MAX_ROWS"] = "500";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const restCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_rest_"),
+        );
+        expect(restCreate?.env["PGRST_DB_SCHEMAS"]).toBe("public,custom");
+        expect(restCreate?.env["PGRST_DB_EXTRA_SEARCH_PATH"]).toBe("extensions,other");
+        expect(restCreate?.env["PGRST_DB_MAX_ROWS"]).toBe("500");
+        const studioCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_studio_"),
+        );
+        expect(studioCreate?.env["PGRST_DB_SCHEMAS"]).toBe("public,custom");
+        expect(studioCreate?.env["PGRST_DB_EXTRA_SEARCH_PATH"]).toBe("extensions,other");
+        expect(studioCreate?.env["PGRST_DB_MAX_ROWS"]).toBe("500");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousSchemas === undefined) delete process.env["SUPABASE_API_SCHEMAS"];
+            else process.env["SUPABASE_API_SCHEMAS"] = previousSchemas;
+            if (previousSearchPath === undefined)
+              delete process.env["SUPABASE_API_EXTRA_SEARCH_PATH"];
+            else process.env["SUPABASE_API_EXTRA_SEARCH_PATH"] = previousSearchPath;
+            if (previousMaxRows === undefined) delete process.env["SUPABASE_API_MAX_ROWS"];
+            else process.env["SUPABASE_API_MAX_ROWS"] = previousMaxRows;
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("SUPABASE_DB_POOLER_* env overrides reach Supavisor", () => {
+    it.live("SUPABASE_DB_POOLER_POOL_MODE=session flips the published host port to 5432", () => {
+      const previous = process.env["SUPABASE_DB_POOLER_POOL_MODE"];
+      process.env["SUPABASE_DB_POOLER_POOL_MODE"] = "session";
+      const { layer, child } = setup({
+        configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const poolerCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_pooler_"),
+        );
+        // `db.pooler.port` defaults to 54329 (`packages/config/src/db.ts`) —
+        // the published `-p <hostPort>:<containerPort>` mapping is what
+        // changes with pool mode; the exposed-ports list always lists both
+        // 5432 and 6543 regardless, so assert on the specific mapping string.
+        expect(poolerCreate?.args).toContain("54329:5432");
+        expect(poolerCreate?.args).not.toContain("54329:6543");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_POOLER_POOL_MODE"];
+            else process.env["SUPABASE_DB_POOLER_POOL_MODE"] = previous;
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("SUPABASE_DB_HEALTH_TIMEOUT override", () => {
+    it.live(
+      "honors an env-overridden health_timeout, not just the config.toml/default value",
+      () => {
+        const previous = process.env["SUPABASE_DB_HEALTH_TIMEOUT"];
+        process.env["SUPABASE_DB_HEALTH_TIMEOUT"] = "2s";
+        const neverHealthy = new Set<string>();
+        const base = defaultRoute({ neverHealthy });
+        const route = (args: ReadonlyArray<string>): RouteResult => {
+          if (args[0] === "create") {
+            const name = containerNameFromCreateArgs(args);
+            if (name.includes("_db_")) neverHealthy.add(name);
+          }
+          return base(args);
+        };
+        const { layer, child } = setup({ route });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyHealthCheckTimeoutError");
+          }
+          // Postgres's own health wait fails before any other service is ever created —
+          // proving the short env-overridden timeout took effect (the default is much longer).
+          expect(createdContainerNames(child.spawned)).toEqual([expect.stringContaining("_db_")]);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_DB_HEALTH_TIMEOUT"];
+              else process.env["SUPABASE_DB_HEALTH_TIMEOUT"] = previous;
+            }),
+          ),
+        );
+      },
+      10_000,
+    );
+  });
+
+  describe("auth.hook.* env overrides reach GoTrue's container", () => {
+    it.live("honors SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED/_URI", () => {
+      const previousEnabled = process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"];
+      const previousUri = process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"];
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "true";
+      // A pg-functions URI needs no `secrets` (unlike http/https, validated by
+      // `legacyValidateResolvedConfig`), keeping this scenario focused on the
+      // enabled/uri override reaching GoTrue.
+      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"] =
+        "pg-functions://postgres/auth/custom-access-token-hook";
+      const { layer, child } = setup({
+        configContents: 'project_id = "demo"\n[auth.hook.custom_access_token]\nenabled = false\n',
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"]).toBe("true");
+        expect(gotrueCreate?.env["GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI"]).toBe(
+          "pg-functions://postgres/auth/custom-access-token-hook",
+        );
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousEnabled === undefined)
+              delete process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"];
+            else process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = previousEnabled;
+            if (previousUri === undefined)
+              delete process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"];
+            else process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"] = previousUri;
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("auth.captcha.* env overrides reach GoTrue's container", () => {
+    it.live("honors SUPABASE_AUTH_CAPTCHA_ENABLED/_PROVIDER", () => {
+      const previousEnabled = process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"];
+      const previousProvider = process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"];
+      process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = "true";
+      process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"] = "turnstile";
+      const { layer, child } = setup({
+        configContents:
+          'project_id = "demo"\n[auth.captcha]\nenabled = false\nprovider = "hcaptcha"\nsecret = "test-secret"\n',
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_SECURITY_CAPTCHA_ENABLED"]).toBe("true");
+        expect(gotrueCreate?.env["GOTRUE_SECURITY_CAPTCHA_PROVIDER"]).toBe("turnstile");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousEnabled === undefined) delete process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"];
+            else process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = previousEnabled;
+            if (previousProvider === undefined)
+              delete process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"];
+            else process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"] = previousProvider;
+          }),
+        ),
+      );
+    });
+  });
 });

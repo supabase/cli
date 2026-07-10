@@ -52,12 +52,18 @@ import {
   envOverride,
   LEGACY_DEPRECATED_EXTERNAL_PROVIDERS,
   legacyDecryptAuthSecret,
+  legacyEnvOverrideApiMaxRows,
   legacyEnvOverrideBool,
+  legacyEnvOverrideDefaultPoolSize,
   legacyEnvOverrideDenoVersion,
   legacyEnvOverrideMajorVersion,
+  legacyEnvOverrideMaxClientConn,
+  legacyEnvOverridePoolMode,
   legacyEnvOverrideRealtimeIpVersion,
   legacyEnvOverrideRealtimeMaxHeaderLength,
+  legacyResolveAuthCaptcha,
   legacyResolveAuthEmailSmtp,
+  legacyResolveAuthHooks,
   legacyResolveConfiguredSigningKeys,
   legacyResolveDbSettingsEnvOverrides,
   legacyResolveLocalConfigValues,
@@ -185,11 +191,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 /** Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect`. */
 function isContainerNotFoundMessage(message: string): boolean {
   return /no such container/iu.test(message) || /no container with name or id/iu.test(message);
-}
-
-/** Same widening `values.analyticsBackend` already applies for analytics, but for `config.db.pooler.pool_mode`. */
-function toPoolMode(value: string): "transaction" | "session" {
-  return value === "session" ? "session" : "transaction";
 }
 
 /**
@@ -473,15 +474,12 @@ function resolveGotrueEnvInput(params: {
     rateLimit: config.auth.rate_limit,
     web3: config.auth.web3,
     oauthServer: config.auth.oauth_server,
-    hooks: {
-      mfaVerificationAttempt: config.auth.hook.mfa_verification_attempt,
-      passwordVerificationAttempt: config.auth.hook.password_verification_attempt,
-      customAccessToken: config.auth.hook.custom_access_token,
-      sendSms: config.auth.hook.send_sms,
-      sendEmail: config.auth.hook.send_email,
-      beforeUserCreated: config.auth.hook.before_user_created,
-    },
-    captcha: config.auth.captcha,
+    hooks: legacyResolveAuthHooks(asRecord(document?.["auth"]), config.auth.hook, projectEnvValues),
+    captcha: legacyResolveAuthCaptcha(
+      asRecord(document?.["auth"]),
+      config.auth.captcha,
+      projectEnvValues,
+    ),
     passkeyEnabled,
     webauthn,
     externalProviders,
@@ -890,6 +888,42 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         projectEnvValues,
       ) ?? config.storage.file_size_limit;
 
+    // Same gap for `api.schemas`/`api.extra_search_path`/`api.max_rows` — both
+    // PostgREST's own container AND Studio's copy of the same PGRST_DB_* env
+    // must see the same already-overridden values (Go's
+    // `internal/start/start.go:968-970,1335-1337`, both reading the single
+    // `utils.Config.Api.{Schemas,ExtraSearchPath,MaxRows}`). The two array
+    // fields use the same comma-split-override pattern as
+    // `auth.additional_redirect_urls`/`auth.webauthn.rp_origins` above.
+    const apiSchemasOverride = envOverride("SUPABASE_API_SCHEMAS", undefined, projectEnvValues);
+    const apiSchemas =
+      apiSchemasOverride !== undefined ? apiSchemasOverride.split(",") : config.api.schemas;
+    const apiExtraSearchPathOverride = envOverride(
+      "SUPABASE_API_EXTRA_SEARCH_PATH",
+      undefined,
+      projectEnvValues,
+    );
+    const apiExtraSearchPath =
+      apiExtraSearchPathOverride !== undefined
+        ? apiExtraSearchPathOverride.split(",")
+        : config.api.extra_search_path;
+    const apiMaxRows = legacyEnvOverrideApiMaxRows(config.api.max_rows, projectEnvValues);
+
+    // Same gap for Supavisor's pooler fields — Go's Config.Load applies
+    // SUPABASE_DB_POOLER_* generically (pkg/config/config.go:580-586) before
+    // start.go:1194-1211 reads utils.Config.Db.Pooler.{PoolMode,
+    // DefaultPoolSize,MaxClientConn}; PoolMode specifically decides the
+    // published host port (5432 session vs 6543 transaction).
+    const poolMode = legacyEnvOverridePoolMode(config.db.pooler.pool_mode, projectEnvValues);
+    const poolerDefaultPoolSize = legacyEnvOverrideDefaultPoolSize(
+      config.db.pooler.default_pool_size,
+      projectEnvValues,
+    );
+    const poolerMaxClientConn = legacyEnvOverrideMaxClientConn(
+      config.db.pooler.max_client_conn,
+      projectEnvValues,
+    );
+
     /**
      * Every case returns `{ spec, excludeFromHealthWatch? }`: `spec` is the
      * {@link LegacyStartContainerSpec} to bring up; `excludeFromHealthWatch`
@@ -1066,9 +1100,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               projectId,
               networkId,
               image,
-              schemas: config.api.schemas,
-              extraSearchPath: config.api.extra_search_path,
-              maxRows: config.api.max_rows,
+              schemas: apiSchemas,
+              extraSearchPath: apiExtraSearchPath,
+              maxRows: apiMaxRows,
               dbUrl: values.dbUrl,
               jwks,
             }),
@@ -1168,9 +1202,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                 s3AccessKeyId: values.storageS3AccessKeyId,
                 s3SecretAccessKey: values.storageS3SecretAccessKey,
                 openaiApiKey: values.openaiApiKey,
-                apiSchemas: config.api.schemas,
-                apiExtraSearchPath: config.api.extra_search_path,
-                apiMaxRows: config.api.max_rows,
+                apiSchemas: apiSchemas,
+                apiExtraSearchPath: apiExtraSearchPath,
+                apiMaxRows: apiMaxRows,
                 analyticsEnabled: values.analyticsEnabled,
                 analyticsBackend: values.analyticsBackend,
               },
@@ -1185,9 +1219,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               projectId,
               networkId,
               port: config.db.pooler.port,
-              poolMode: toPoolMode(config.db.pooler.pool_mode),
-              defaultPoolSize: config.db.pooler.default_pool_size,
-              maxClientConn: config.db.pooler.max_client_conn,
+              poolMode,
+              defaultPoolSize: poolerDefaultPoolSize,
+              maxClientConn: poolerMaxClientConn,
               jwtSecret: values.jwtSecret,
               dbHost,
               dbPort: LEGACY_START_INTERNAL_DB_PORT,
@@ -1275,8 +1309,16 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         rootKey: values.rootKey,
       });
       const postgresContainerId = yield* legacyStartContainer(spawner, postgresSpec, startOpts);
+      // Overridden by SUPABASE_DB_HEALTH_TIMEOUT — Go's Config.Load binds this
+      // generically before StartDatabase's health wait reads it
+      // (pkg/config/config.go:580-586, internal/db/start/start.go:180).
+      const dbHealthTimeout = envOverride(
+        "SUPABASE_DB_HEALTH_TIMEOUT",
+        config.db.health_timeout,
+        projectEnvValues,
+      );
       yield* legacyWaitForHealthyServices(spawner, [postgresContainerId], {
-        timeoutSeconds: resolveDbHealthTimeoutSeconds(config.db.health_timeout),
+        timeoutSeconds: resolveDbHealthTimeoutSeconds(dbHealthTimeout ?? config.db.health_timeout),
       });
 
       // Go's `if utils.NoBackupVolume { SetupLocalDatabase(...) }` (`db/start/
