@@ -5,7 +5,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import type { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyCreateSeedTable } from "../../../shared/legacy-migration-history.ts";
-import { legacyPathMatch } from "../../../shared/legacy-path-match.ts";
+import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "../../../shared/legacy-path-match.ts";
 import { legacySplitAndTrim } from "../../../shared/legacy-sql-split.ts";
 
 /**
@@ -41,8 +41,10 @@ interface LegacyGlobResult {
  * over `fs.Glob` (`pkg/config/config.go:102-124`). Each pattern is first joined
  * under the `supabase/` directory (Go resolves `sql_paths` at config load,
  * `config.go:884`). Matches per pattern are sorted; the overall result preserves
- * first-seen order across patterns. A pattern that matches nothing contributes a
- * `no files matched pattern: <pattern>` warning but is not fatal.
+ * first-seen order across patterns. A pattern that matches nothing, or is malformed
+ * (Go's `path.ErrBadPattern`, e.g. an unterminated `[` class), contributes a warning
+ * but is not fatal — mirroring `fs.Glob`'s up-front `Match(pattern, "")` validation
+ * (`io/fs/glob.go`) and the sibling seed pipeline's `legacy-seed.ts:resolveSeedFiles`.
  */
 const legacyGlobSeedFiles = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -61,6 +63,13 @@ const legacyGlobSeedFiles = Effect.fnUntraced(function* (
     // globs those resolved paths without re-prefixing (`config.go:102-124`), so only
     // normalize separators here; re-joining `supabase/` would double-prefix.
     const pattern = toSlash(rawPattern);
+    // Go's `fs.Glob` validates the whole pattern up front (`Match(pattern, "")`); a
+    // malformed glob is reported as `failed to glob files: <ErrBadPattern>` and
+    // contributes no matches, rather than the misleading "no files matched" below.
+    if (legacyPathMatch(pattern, "").badPattern) {
+      errors.push(`failed to glob files: ${LEGACY_BAD_PATTERN_MESSAGE}`);
+      continue;
+    }
     const matches = yield* globOne(fs, path, workdir, pattern);
     if (matches.length === 0) {
       errors.push(`no files matched pattern: ${pattern}`);

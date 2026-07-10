@@ -58,6 +58,28 @@ describe("legacyGetPendingSeeds (glob character classes)", () => {
       );
     },
   );
+
+  it.effect(
+    "warns Go's bad-pattern message for an unterminated bracket class, not a bogus no-match",
+    () => {
+      // An unclosed `[` is malformed per Go's `path.Match` grammar (`ErrBadPattern`), which
+      // `fs.Glob` reports as `failed to glob files: syntax error in pattern` — not the
+      // generic `no files matched pattern` a same-shaped but well-formed glob would get.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-seed-glob-"));
+      const { session } = fakeSeedSession();
+      const out = mockOutput({ format: "text" });
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const pending = yield* legacyGetPendingSeeds(session, fs, path, ["seed[.sql"], dir);
+        expect(pending).toEqual([]);
+        expect(out.rawChunks.map((c) => c.text).join("")).toContain(
+          "failed to glob files: syntax error in pattern",
+        );
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(Effect.provide(out.layer), Effect.provide(BunServices.layer));
+    },
+  );
 });
 
 const runSeed = (
