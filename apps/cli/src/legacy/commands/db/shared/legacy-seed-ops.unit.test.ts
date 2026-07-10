@@ -7,7 +7,7 @@ import { Data, Effect, Exit, FileSystem, Path } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
-import { legacyMatchPattern, legacySeedData } from "./legacy-seed-ops.ts";
+import { legacyGetPendingSeeds, legacySeedData } from "./legacy-seed-ops.ts";
 
 class TestError extends Data.TaggedError("TestError")<{ readonly message: string }> {}
 
@@ -29,40 +29,35 @@ function fakeSeedSession() {
   return { session, calls };
 }
 
-describe("legacyMatchPattern", () => {
-  it("matches a literal filename", () => {
-    expect(legacyMatchPattern("seed.sql", "seed.sql")).toBe(true);
-    expect(legacyMatchPattern("seed.sql", "other.sql")).toBe(false);
-  });
-
-  it("matches `*` against any run of characters", () => {
-    expect(legacyMatchPattern("*.sql", "seed.sql")).toBe(true);
-    expect(legacyMatchPattern("*.sql", "0001_init.sql")).toBe(true);
-    expect(legacyMatchPattern("*.sql", "seed.txt")).toBe(false);
-    expect(legacyMatchPattern("seed.*", "seed.sql")).toBe(true);
-  });
-
-  it("matches `?` against exactly one character", () => {
-    expect(legacyMatchPattern("seed?.sql", "seed1.sql")).toBe(true);
-    expect(legacyMatchPattern("seed?.sql", "seed12.sql")).toBe(false);
-    expect(legacyMatchPattern("seed?.sql", "seed.sql")).toBe(false);
-  });
-
-  it("matches character classes with ranges and negation", () => {
-    expect(legacyMatchPattern("seed[0-9].sql", "seed5.sql")).toBe(true);
-    expect(legacyMatchPattern("seed[0-9].sql", "seedx.sql")).toBe(false);
-    expect(legacyMatchPattern("seed[!0-9].sql", "seedx.sql")).toBe(true);
-    expect(legacyMatchPattern("seed[!0-9].sql", "seed5.sql")).toBe(false);
-  });
-
-  it("honors backslash escapes", () => {
-    expect(legacyMatchPattern("seed\\*.sql", "seed*.sql")).toBe(true);
-    expect(legacyMatchPattern("seed\\*.sql", "seedx.sql")).toBe(false);
-  });
-
-  it("collapses consecutive stars", () => {
-    expect(legacyMatchPattern("**.sql", "seed.sql")).toBe(true);
-  });
+// Glob matching itself is `legacyPathMatch` (`../../../shared/legacy-path-match.ts`),
+// a faithful port of Go's `path.Match` already covered by
+// `legacy-path-match.unit.test.ts` (including the `^`-only negation / `!`-is-literal
+// rule this file used to duplicate — and get wrong — in a local `legacyMatchPattern`).
+// This exercises that the seed pipeline's own glob resolution (`legacyGetPendingSeeds`)
+// actually uses it end to end, per Go's `config.Glob.Files` → `fs.Glob` → `path.Match`.
+describe("legacyGetPendingSeeds (glob character classes)", () => {
+  it.effect(
+    "treats a leading `!` in a bracket class as literal, not negation (Go path.Match parity)",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "legacy-seed-glob-"));
+      writeFileSync(join(dir, "a.sql"), "select 1;");
+      writeFileSync(join(dir, "b.sql"), "select 2;");
+      const { session } = fakeSeedSession();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // Go's `[!a]` is a positive class of the literal members `!` and `a` — only a
+        // leading `^` negates. So this pattern matches `a.sql`, not `b.sql` (the old
+        // shell-style bug negated on `!` too, and would have matched `b.sql` instead).
+        const pending = yield* legacyGetPendingSeeds(session, fs, path, ["[!a].sql"], dir);
+        expect(pending.map((seed) => seed.path)).toEqual(["a.sql"]);
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(mockOutput({ format: "text" }).layer),
+        Effect.provide(BunServices.layer),
+      );
+    },
+  );
 });
 
 const runSeed = (

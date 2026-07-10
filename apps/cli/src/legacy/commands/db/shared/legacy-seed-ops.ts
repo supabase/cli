@@ -5,6 +5,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import type { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyCreateSeedTable } from "../../../shared/legacy-migration-history.ts";
+import { legacyPathMatch } from "../../../shared/legacy-path-match.ts";
 import { legacySplitAndTrim } from "../../../shared/legacy-sql-split.ts";
 
 /**
@@ -26,74 +27,6 @@ export interface LegacySeedFile {
 }
 
 const META_CHARS = /[*?[\\]/u;
-
-/**
- * Go's `path.Match` for a single filename (no `/`). Supports `*` (any run of
- * non-separator chars), `?` (one char), `[...]` classes with ranges and a
- * leading `^`/`!` negation, and `\` escapes. Filenames never contain `/`, so the
- * separator subtlety in Go's matcher does not apply here.
- */
-export function legacyMatchPattern(pattern: string, name: string): boolean {
-  const matchClass = (cls: string, ch: string): boolean => {
-    let negated = false;
-    let body = cls;
-    if (body.startsWith("^") || body.startsWith("!")) {
-      negated = true;
-      body = body.slice(1);
-    }
-    let matched = false;
-    for (let k = 0; k < body.length; k++) {
-      if (body[k + 1] === "-" && k + 2 < body.length) {
-        if (ch >= body[k]! && ch <= body[k + 2]!) matched = true;
-        k += 2;
-      } else if (body[k] === ch) {
-        matched = true;
-      }
-    }
-    return matched !== negated;
-  };
-
-  const match = (p: number, n: number): boolean => {
-    while (p < pattern.length) {
-      const pc = pattern[p]!;
-      if (pc === "*") {
-        // Collapse consecutive stars, then try to match the rest at every offset.
-        while (pattern[p] === "*") p++;
-        if (p === pattern.length) return true;
-        for (let k = n; k <= name.length; k++) {
-          if (match(p, k)) return true;
-        }
-        return false;
-      }
-      if (n >= name.length) return false;
-      if (pc === "?") {
-        p++;
-        n++;
-        continue;
-      }
-      if (pc === "[") {
-        const end = pattern.indexOf("]", p + 1);
-        if (end === -1) return false;
-        if (!matchClass(pattern.slice(p + 1, end), name[n]!)) return false;
-        p = end + 1;
-        n++;
-        continue;
-      }
-      if (pc === "\\" && p + 1 < pattern.length) {
-        if (pattern[p + 1] !== name[n]) return false;
-        p += 2;
-        n++;
-        continue;
-      }
-      if (pc !== name[n]) return false;
-      p++;
-      n++;
-    }
-    return n === name.length;
-  };
-
-  return match(0, 0);
-}
 
 /** Result of resolving `[db.seed].sql_paths` against the workspace. */
 interface LegacyGlobResult {
@@ -202,7 +135,7 @@ const globOne = (
         .readDirectory(absDir)
         .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
       for (const name of names) {
-        if (legacyMatchPattern(file, name)) {
+        if (legacyPathMatch(file, name).matched) {
           result.push(d === "" ? name : `${d}/${name}`);
         }
       }
