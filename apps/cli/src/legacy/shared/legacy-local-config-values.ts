@@ -369,6 +369,81 @@ function decryptAuthSecret(
   return decrypted.value;
 }
 
+/**
+ * `[auth.email.smtp]`'s full resolved field set, including Go's
+ * presence-based `enabled` default. Exported so any caller that needs GoTrue's
+ * actual SMTP-vs-Mailpit decision (not just validation) can reuse this instead
+ * of re-deriving it from the schema-decoded, always-`enabled: false`-when-
+ * absent `config.auth.email.smtp` — see `start.handler.ts`'s
+ * `resolveGotrueEnvInput`, which used to do exactly that.
+ *
+ * Go's `[auth.email.smtp]` presence-based `enabled` default
+ * (`pkg/config/config.go:743-748`): when the TOML table is present but omits
+ * `enabled`, Go treats it as `true` — a genuinely presence-based default
+ * `@supabase/config`'s schema can't see (it always decodes `smtp.enabled` to
+ * `false` when the key is absent), so this reads the raw `authDocument` too.
+ * `auth.email.smtp.*` is Viper-bound like every other nested field once
+ * `[auth.email.smtp]` is present in config.toml (`ExperimentalBindStruct`/
+ * `AutomaticEnv`, `config.go:581-586`), so `SUPABASE_AUTH_EMAIL_SMTP_ENABLED`/
+ * `_HOST`/`_PORT`/`_USER`/`_PASS`/`_ADMIN_EMAIL`/`_SENDER_NAME` overrides
+ * apply before `Auth.Email.validate` runs (`config.go:1325-1344`) — layered on
+ * top of the presence-aware raw-document read above, same
+ * `envOverride`/`envOverridePort` precedent as every other field in this file.
+ * `sender_name` (`pkg/config/auth.go:254-262`) is an equally Viper-bound
+ * regular field, just not needed by validation (hence absent from
+ * {@link LegacySmtpInput}).
+ */
+export function legacyResolveAuthEmailSmtp(
+  authDocument: Readonly<Record<string, unknown>> | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): (LegacySmtpInput & { readonly senderName: string | undefined }) | undefined {
+  const smtpDoc = asRecord(asRecord(authDocument?.["email"])?.["smtp"]);
+  if (smtpDoc === undefined) return undefined;
+  return {
+    enabled: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_EMAIL_SMTP_ENABLED",
+      smtpDoc["enabled"] === undefined ? true : smtpDoc["enabled"] === true,
+      "auth.email.smtp.enabled",
+      projectEnvValues,
+    ),
+    host:
+      envOverride(
+        "SUPABASE_AUTH_EMAIL_SMTP_HOST",
+        typeof smtpDoc["host"] === "string" ? smtpDoc["host"] : "",
+        projectEnvValues,
+      ) ?? "",
+    port: envOverridePort(
+      "SUPABASE_AUTH_EMAIL_SMTP_PORT",
+      typeof smtpDoc["port"] === "number" ? smtpDoc["port"] : 0,
+      "auth.email.smtp.port",
+      projectEnvValues,
+    ),
+    user:
+      envOverride(
+        "SUPABASE_AUTH_EMAIL_SMTP_USER",
+        typeof smtpDoc["user"] === "string" ? smtpDoc["user"] : "",
+        projectEnvValues,
+      ) ?? "",
+    pass:
+      envOverride(
+        "SUPABASE_AUTH_EMAIL_SMTP_PASS",
+        typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
+        projectEnvValues,
+      ) ?? "",
+    adminEmail:
+      envOverride(
+        "SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL",
+        typeof smtpDoc["admin_email"] === "string" ? smtpDoc["admin_email"] : "",
+        projectEnvValues,
+      ) ?? "",
+    senderName: envOverride(
+      "SUPABASE_AUTH_EMAIL_SMTP_SENDER_NAME",
+      typeof smtpDoc["sender_name"] === "string" ? smtpDoc["sender_name"] : undefined,
+      projectEnvValues,
+    ),
+  };
+}
+
 /** Go's `(a *auth) generateAPIKeys` (`pkg/config/apikeys.go:43-73`). */
 function resolveJwtSecret(configured: string | undefined): string {
   if (configured === undefined || configured.length === 0) return defaultJwtSecret;
@@ -780,7 +855,7 @@ function validateAuthSmsProviders(
  * `slack` are deleted (and warned on, if enabled) before the required-field loop runs, so they
  * are never validated here. Mirrors `legacy-db-config.toml-read.ts`'s identical "B5: external
  * providers" skip list. */
-const DEPRECATED_EXTERNAL_PROVIDERS = new Set(["linkedin", "slack"]);
+export const LEGACY_DEPRECATED_EXTERNAL_PROVIDERS = new Set(["linkedin", "slack"]);
 
 /**
  * Go's `(e external) validate()` (`pkg/config/config.go:1419-1451`) — D-only per
@@ -816,7 +891,7 @@ function validateAuthExternalProviders(
   const external = asRecord(authDocument?.["external"]);
   if (external === undefined) return;
   for (const name of Object.keys(external)) {
-    if (DEPRECATED_EXTERNAL_PROVIDERS.has(name)) continue;
+    if (LEGACY_DEPRECATED_EXTERNAL_PROVIDERS.has(name)) continue;
     const provider = asRecord(external[name]);
     if (provider === undefined) continue;
     const envPrefix = `SUPABASE_AUTH_EXTERNAL_${name.toUpperCase()}`;
@@ -1316,58 +1391,20 @@ export function legacyResolveLocalConfigValues(
     // stays at this exact textual position (see this function's `@throws` doc for why).
     readAuthEmailTemplateContent(config.auth.email, workdir, authDocument, projectEnvValues);
 
-    // Go's `[auth.email.smtp]` presence-based `enabled` default (`pkg/config/config.go:743-748`):
-    // when the TOML table is present but omits `enabled`, Go treats it as `true` — a genuinely
-    // presence-based default `@supabase/config`'s schema can't see (it always decodes
-    // `smtp.enabled` to `false` when the key is absent), so this reads the raw `document` too.
-    // `auth.email.smtp.*` is Viper-bound like every other nested field once `[auth.email.smtp]`
-    // is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`),
-    // so `SUPABASE_AUTH_EMAIL_SMTP_ENABLED`/`_HOST`/`_PORT`/`_USER`/`_PASS`/`_ADMIN_EMAIL`
-    // overrides apply before `Auth.Email.validate` runs (`config.go:1325-1344`) — layered on top
-    // of the presence-aware raw-document read above, same `envOverride`/`envOverridePort`
-    // precedent as every other field in this file.
-    const smtpDoc = asRecord(asRecord(authDocument?.["email"])?.["smtp"]);
+    // Go's `[auth.email.smtp]` presence-based `enabled` default — see
+    // {@link legacyResolveAuthEmailSmtp}'s doc comment.
+    const resolvedSmtp = legacyResolveAuthEmailSmtp(authDocument, projectEnvValues);
     const smtp: LegacySmtpInput | undefined =
-      smtpDoc !== undefined
-        ? {
-            enabled: legacyEnvOverrideBool(
-              "SUPABASE_AUTH_EMAIL_SMTP_ENABLED",
-              smtpDoc["enabled"] === undefined ? true : smtpDoc["enabled"] === true,
-              "auth.email.smtp.enabled",
-              projectEnvValues,
-            ),
-            host:
-              envOverride(
-                "SUPABASE_AUTH_EMAIL_SMTP_HOST",
-                typeof smtpDoc["host"] === "string" ? smtpDoc["host"] : "",
-                projectEnvValues,
-              ) ?? "",
-            port: envOverridePort(
-              "SUPABASE_AUTH_EMAIL_SMTP_PORT",
-              typeof smtpDoc["port"] === "number" ? smtpDoc["port"] : 0,
-              "auth.email.smtp.port",
-              projectEnvValues,
-            ),
-            user:
-              envOverride(
-                "SUPABASE_AUTH_EMAIL_SMTP_USER",
-                typeof smtpDoc["user"] === "string" ? smtpDoc["user"] : "",
-                projectEnvValues,
-              ) ?? "",
-            pass:
-              envOverride(
-                "SUPABASE_AUTH_EMAIL_SMTP_PASS",
-                typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
-                projectEnvValues,
-              ) ?? "",
-            adminEmail:
-              envOverride(
-                "SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL",
-                typeof smtpDoc["admin_email"] === "string" ? smtpDoc["admin_email"] : "",
-                projectEnvValues,
-              ) ?? "",
-          }
-        : undefined;
+      resolvedSmtp === undefined
+        ? undefined
+        : {
+            enabled: resolvedSmtp.enabled,
+            host: resolvedSmtp.host,
+            port: resolvedSmtp.port,
+            user: resolvedSmtp.user,
+            pass: resolvedSmtp.pass,
+            adminEmail: resolvedSmtp.adminEmail,
+          };
 
     // Go's `(tpa *thirdParty) validate()` fixed provider order (`pkg/config/config.go:1635-1683`)
     // — only enabled providers are forwarded, in that order. Like `Auth.MFA` above, each provider

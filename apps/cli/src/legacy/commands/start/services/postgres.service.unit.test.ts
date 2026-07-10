@@ -58,6 +58,7 @@ function baseInput(
     projectId: "myproj",
     networkId: "supabase_network_myproj",
     image: "public.ecr.aws/supabase/postgres:17.4.1.030",
+    configImage: "supabase/postgres:17.4.1.030",
     ...overrides,
   };
 }
@@ -178,21 +179,40 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
 
   test("version-compare branch: adds POSTGRES_INITDB_ARGS=--lc-collate=C.UTF-8 when the image tag is below the threshold", () => {
     const spec = legacyBuildPostgresStartContainerSpec(
-      baseInput({ image: "public.ecr.aws/supabase/postgres:15.1.0.117" }),
+      baseInput({
+        image: "public.ecr.aws/supabase/postgres:15.1.0.117",
+        configImage: "supabase/postgres:15.1.0.117",
+      }),
     );
     expect(spec.env.POSTGRES_INITDB_ARGS).toBe("--lc-collate=C.UTF-8");
   });
 
   test("version-compare branch is skipped when the image tag is at or above the threshold", () => {
     const atThreshold = legacyBuildPostgresStartContainerSpec(
-      baseInput({ image: "public.ecr.aws/supabase/postgres:15.8.1.005" }),
+      baseInput({
+        image: "public.ecr.aws/supabase/postgres:15.8.1.005",
+        configImage: "supabase/postgres:15.8.1.005",
+      }),
     );
     expect(atThreshold.env.POSTGRES_INITDB_ARGS).toBeUndefined();
 
     const aboveThreshold = legacyBuildPostgresStartContainerSpec(
-      baseInput({ image: "public.ecr.aws/supabase/postgres:17.4.1.030" }),
+      baseInput({
+        image: "public.ecr.aws/supabase/postgres:17.4.1.030",
+        configImage: "supabase/postgres:17.4.1.030",
+      }),
     );
     expect(aboveThreshold.env.POSTGRES_INITDB_ARGS).toBeUndefined();
+  });
+
+  test("version-compare branch reads the pre-registry-rewrite configImage, not the registry-resolved image (a port-bearing registry override must not break the tag parse)", () => {
+    const spec = legacyBuildPostgresStartContainerSpec(
+      baseInput({
+        image: "localhost:5000/supabase/postgres:17.4.1.030",
+        configImage: "supabase/postgres:17.4.1.030",
+      }),
+    );
+    expect(spec.env.POSTGRES_INITDB_ARGS).toBeUndefined();
   });
 
   test("healthcheck matches Go's pg_isready probe", () => {

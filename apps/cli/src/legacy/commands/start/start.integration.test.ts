@@ -1794,4 +1794,41 @@ content_path = "./templates/custom_notice.html"
       }).pipe(Effect.provide(layer));
     });
   });
+
+  describe("auth.email.smtp table-present default", () => {
+    it.live(
+      "uses the configured SMTP server (not Mailpit) when [auth.email.smtp] omits enabled",
+      () => {
+        const { layer, child } = setup({
+          configContents:
+            'project_id = "demo"\n[auth.email.smtp]\nhost = "smtp.example.com"\nport = 587\nuser = "smtp-user"\npass = "smtp-pass"\nadmin_email = "admin@example.com"\n',
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_SMTP_HOST"]).toBe("smtp.example.com");
+          expect(gotrueCreate?.env["GOTRUE_SMTP_PORT"]).toBe("587");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+  });
+
+  describe("custom auth.external providers", () => {
+    it.live("emits GOTRUE_EXTERNAL_* env vars for a provider outside the fixed schema set", () => {
+      const { layer, child } = setup({
+        configContents:
+          'project_id = "demo"\n[auth.external.my_oidc]\nenabled = true\nclient_id = "custom-client-id"\nsecret = "custom-secret"\n',
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_EXTERNAL_MY_OIDC_ENABLED"]).toBe("true");
+        expect(gotrueCreate?.env["GOTRUE_EXTERNAL_MY_OIDC_CLIENT_ID"]).toBe("custom-client-id");
+      }).pipe(Effect.provide(layer));
+    });
+  });
 });

@@ -45,7 +45,9 @@ import {
 } from "../../shared/legacy-docker-lifecycle.ts";
 import {
   envOverride,
+  LEGACY_DEPRECATED_EXTERNAL_PROVIDERS,
   legacyEnvOverrideBool,
+  legacyResolveAuthEmailSmtp,
   legacyResolveConfiguredSigningKeys,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
@@ -260,16 +262,45 @@ function resolveGotrueExternalProviders(
   if (externalDoc === undefined) return {};
 
   const result: Record<string, LegacyGotrueExternalProviderInput> = {};
-  for (const [name, provider] of Object.entries(external)) {
-    if (externalDoc[name] === undefined) continue;
+  const decodedProviders = new Map(Object.entries(external));
+  // Iterate the RAW document's keys, not `Object.entries(external)` — Go's
+  // `Auth.External` is a genuine `map[string]provider{}` iterated
+  // unconditionally by `appendGotrueExternalProviderEnv`
+  // (`apps/cli-go/internal/start/start.go:1442-1462`), but `@supabase/
+  // config`'s `external` schema only decodes the ~19 known provider ids,
+  // silently dropping any other name at decode time — so a custom
+  // `[auth.external.my_oidc]` block would never reach GoTrue's env if this
+  // only walked the decoded object. Same raw-document approach
+  // `validateAuthExternalProviders` (`legacy-local-config-values.ts`) already
+  // uses for the identical reason.
+  for (const name of Object.keys(externalDoc)) {
+    if (LEGACY_DEPRECATED_EXTERNAL_PROVIDERS.has(name)) continue;
+    const provider = decodedProviders.get(name);
+    if (provider !== undefined) {
+      result[name] = {
+        enabled: provider.enabled,
+        clientId: provider.client_id,
+        secret: provider.secret,
+        url: provider.url,
+        redirectUri: provider.redirect_uri,
+        skipNonceCheck: provider.skip_nonce_check,
+        emailOptional: provider.email_optional,
+      };
+      continue;
+    }
+    // Unmodeled/custom provider name — read the raw fields directly, same
+    // defensive coercions `validateAuthExternalProviders` already uses.
+    const rawProvider = asRecord(externalDoc[name]);
+    if (rawProvider === undefined) continue;
     result[name] = {
-      enabled: provider.enabled,
-      clientId: provider.client_id,
-      secret: provider.secret,
-      url: provider.url,
-      redirectUri: provider.redirect_uri,
-      skipNonceCheck: provider.skip_nonce_check,
-      emailOptional: provider.email_optional,
+      enabled: rawProvider["enabled"] === true,
+      clientId: typeof rawProvider["client_id"] === "string" ? rawProvider["client_id"] : "",
+      secret: typeof rawProvider["secret"] === "string" ? rawProvider["secret"] : undefined,
+      url: typeof rawProvider["url"] === "string" ? rawProvider["url"] : "",
+      redirectUri:
+        typeof rawProvider["redirect_uri"] === "string" ? rawProvider["redirect_uri"] : undefined,
+      skipNonceCheck: rawProvider["skip_nonce_check"] === true,
+      emailOptional: rawProvider["email_optional"] === true,
     };
   }
   return result;
@@ -311,16 +342,23 @@ function resolveGotrueEnvInput(params: {
     "local_smtp.enabled",
     projectEnvValues,
   );
-  const smtpConfig = config.auth.email.smtp;
+  // Go's `[auth.email.smtp]` presence-based `enabled` default — reading the
+  // schema-decoded `config.auth.email.smtp` here would always see `enabled:
+  // false` when the key is merely absent from the TOML table (`@supabase/
+  // config`'s decode-time default), silently falling back to Mailpit even
+  // when a real SMTP server is configured. `legacyResolveAuthEmailSmtp`
+  // resolves this correctly off the raw document, same as the passkey/
+  // webauthn/external-provider reads below.
+  const resolvedSmtp = legacyResolveAuthEmailSmtp(asRecord(document?.["auth"]), projectEnvValues);
   const smtp =
-    smtpConfig?.enabled === true
+    resolvedSmtp?.enabled === true
       ? {
-          host: smtpConfig.host ?? "",
-          port: smtpConfig.port ?? 0,
-          user: smtpConfig.user ?? "",
-          pass: smtpConfig.pass ?? "",
-          adminEmail: smtpConfig.admin_email ?? "",
-          senderName: smtpConfig.sender_name,
+          host: resolvedSmtp.host,
+          port: resolvedSmtp.port,
+          user: resolvedSmtp.user,
+          pass: resolvedSmtp.pass,
+          adminEmail: resolvedSmtp.adminEmail,
+          senderName: resolvedSmtp.senderName,
         }
       : undefined;
   const mailpit =
@@ -1045,6 +1083,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         projectId,
         networkId,
         image: resolveImage(postgresImage),
+        configImage: postgresImage,
         rootKey: values.rootKey,
       });
       const postgresContainerId = yield* legacyStartContainer(spawner, postgresSpec, startOpts);

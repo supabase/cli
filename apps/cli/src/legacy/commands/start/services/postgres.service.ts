@@ -66,8 +66,19 @@ export interface LegacyPostgresStartServiceInput {
   readonly projectId: string;
   /** `utils.NetId` — the local stack's docker network id. */
   readonly networkId: string;
-  /** `utils.Config.Db.Image`, already resolved/pulled (see `../lib/image-prepull.ts`). */
+  /** `utils.Config.Db.Image`, already resolved/pulled (see `../lib/image-prepull.ts`) — the container's own image. */
   readonly image: string;
+  /**
+   * `utils.Config.Db.Image` BEFORE registry resolution — Go's
+   * `POSTGRES_INITDB_ARGS` version-tag comparison (`start.go:79`) always runs
+   * against this un-rewritten value; the registry candidate only ever
+   * overwrites the container's `Image` field, afterward, inside `DockerStart`
+   * (`docker.go:365,371`). Passed separately from {@link image} because a
+   * `SUPABASE_INTERNAL_IMAGE_REGISTRY` override containing a port (e.g.
+   * `localhost:5000`) would otherwise inject an extra colon that breaks
+   * {@link legacyPostgresImageVersionTag}'s first-colon tag split.
+   */
+  readonly configImage: string;
   /** Already-resolved `db.root_key` value. Defaults to {@link LEGACY_POSTGRES_DEFAULT_ROOT_KEY} when omitted — see that constant's doc comment for why. */
   readonly rootKey?: string;
 }
@@ -165,15 +176,16 @@ function legacyCompareVersionStrings(a: string, b: string): number {
  * Go's `i := strings.IndexByte(utils.Config.Db.Image, ':'); ...Image[i+1:]`
  * (`apps/cli-go/internal/db/start/start.go:79`) — the FIRST colon splits the
  * image name from its tag. Go's own `Db.Image` is never registry-prefixed at
- * this point in Go's pipeline, so the first colon is always the name/tag
- * separator; this port's `image` argument may already carry a registry host
- * prefix from multi-registry resolution (`legacyGetRegistryImageUrlCandidates`,
- * `../../../shared/legacy-docker-registry.ts`), but none of those candidate
- * hosts (`public.ecr.aws`, `ghcr.io`, `docker.io`) contain a colon themselves,
- * so the first colon in the resolved string is still the same name/tag
- * separator Go's unprefixed string would have had. When no colon is present at
- * all, Go's slice expression degrades to the whole string (`Image[0:]`) —
- * reproduced here the same way.
+ * this point in Go's pipeline (registry resolution only overwrites the
+ * container's `Image` field afterward, inside `DockerStart` —
+ * `docker.go:365,371`), so the first colon is always the name/tag separator.
+ * The caller MUST pass the pre-registry-rewrite image (see
+ * {@link LegacyPostgresStartServiceInput.configImage}) — a resolved image can
+ * carry a registry host prefix with its own colon (e.g. a
+ * `SUPABASE_INTERNAL_IMAGE_REGISTRY=localhost:5000` override), which would
+ * otherwise be misparsed as the tag. When no colon is present at all, Go's
+ * slice expression degrades to the whole string (`Image[0:]`) — reproduced
+ * here the same way.
  */
 export function legacyPostgresImageVersionTag(image: string): string {
   const colonIndex = image.indexOf(":");
@@ -282,7 +294,7 @@ export function legacyBuildPostgresStartContainerSpec(
     POSTGRES_HOST: "/var/run/postgresql",
     JWT_SECRET: input.jwtSecret,
     JWT_EXP: String(input.jwtExpiry),
-    ...legacyPostgresExtraEnv(input.experimental, input.image),
+    ...legacyPostgresExtraEnv(input.experimental, input.configImage),
   };
 
   const script = isPg14OrEarlier
