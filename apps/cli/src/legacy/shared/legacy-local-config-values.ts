@@ -538,7 +538,7 @@ export function legacyEnvOverrideMaxClientConn(
  * TOML-sourced value, so `SUPABASE_AUTH_JWT_SECRET=encrypted:...` is decrypted
  * too, not just the config.toml value.
  */
-export function legacyDecryptAuthSecret(
+function legacyDecryptAuthSecret(
   value: string | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): string | undefined {
@@ -867,6 +867,107 @@ function readApiTlsFiles(
 }
 
 /**
+ * Go's `Auth.Email` is a value-typed (non-pointer) struct (`pkg/config/auth.go:174,242-253`),
+ * always Viper/`AutomaticEnv`-bound regardless of `[auth.email]` presence in config.toml
+ * (`config.go:580-586`) — same reasoning as {@link resolveGotrueRateLimit}/`resolveGotrueSessions`
+ * in `start.handler.ts`, just hoisted here since `readAuthEmailTemplateContent`'s validation-only
+ * file-read ALSO needs the override-aware `template`/`notification` maps, not just
+ * `start.handler.ts`'s GoTrue env builder — same single-source/two-consumer shape as
+ * {@link legacyResolveAuthExternalProviders}.
+ *
+ * `template`/`notification` need no raw-document presence gate either: they're
+ * `Schema.Record`s (`packages/config/src/auth/email.ts`), which — unlike a fixed-shape struct
+ * with `withDecodingDefaultKey` — only ever contain a key when the TOML section was actually
+ * present, so `Object.entries(email.template)` already reflects presence, matching Go's own
+ * `map[string]emailTemplate`.
+ *
+ * `start.go:544-558` (Kong `mountEmailTemplates`) and `start.go:668-694,1376-1406` (GoTrue's
+ * mailer/OTP/signup env) both read `utils.Config.Auth.Email.*` post-override — this resolves the
+ * SAME effective value for both `buildKongEmailTemplateMounts` and `resolveGotrueEnvInput` in
+ * `start.handler.ts`.
+ */
+export function legacyResolveAuthEmail(
+  email: ProjectConfig["auth"]["email"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["email"] {
+  const template: Record<string, { readonly subject: string; readonly content_path: string }> = {};
+  for (const [name, tmpl] of Object.entries(email.template)) {
+    const envPrefix = `SUPABASE_AUTH_EMAIL_TEMPLATE_${name.toUpperCase()}`;
+    template[name] = {
+      subject: envOverride(`${envPrefix}_SUBJECT`, tmpl.subject, projectEnvValues) ?? tmpl.subject,
+      content_path:
+        envOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
+        tmpl.content_path,
+    };
+  }
+
+  const notification: Record<
+    string,
+    { readonly enabled: boolean; readonly subject: string; readonly content_path: string }
+  > = {};
+  for (const [name, tmpl] of Object.entries(email.notification)) {
+    const envPrefix = `SUPABASE_AUTH_EMAIL_NOTIFICATION_${name.toUpperCase()}`;
+    notification[name] = {
+      enabled: legacyEnvOverrideBool(
+        `${envPrefix}_ENABLED`,
+        tmpl.enabled,
+        `auth.email.notification.${name}.enabled`,
+        projectEnvValues,
+      ),
+      subject: envOverride(`${envPrefix}_SUBJECT`, tmpl.subject, projectEnvValues) ?? tmpl.subject,
+      content_path:
+        envOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
+        tmpl.content_path,
+    };
+  }
+
+  return {
+    ...email,
+    enable_signup: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP",
+      email.enable_signup,
+      "auth.email.enable_signup",
+      projectEnvValues,
+    ),
+    double_confirm_changes: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_EMAIL_DOUBLE_CONFIRM_CHANGES",
+      email.double_confirm_changes,
+      "auth.email.double_confirm_changes",
+      projectEnvValues,
+    ),
+    enable_confirmations: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_EMAIL_ENABLE_CONFIRMATIONS",
+      email.enable_confirmations,
+      "auth.email.enable_confirmations",
+      projectEnvValues,
+    ),
+    secure_password_change: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_EMAIL_SECURE_PASSWORD_CHANGE",
+      email.secure_password_change,
+      "auth.email.secure_password_change",
+      projectEnvValues,
+    ),
+    max_frequency:
+      envOverride("SUPABASE_AUTH_EMAIL_MAX_FREQUENCY", email.max_frequency, projectEnvValues) ??
+      email.max_frequency,
+    otp_length: envOverrideUint(
+      "SUPABASE_AUTH_EMAIL_OTP_LENGTH",
+      "auth.email.otp_length",
+      email.otp_length,
+      projectEnvValues,
+    ),
+    otp_expiry: envOverrideUint(
+      "SUPABASE_AUTH_EMAIL_OTP_EXPIRY",
+      "auth.email.otp_expiry",
+      email.otp_expiry,
+      projectEnvValues,
+    ),
+    template,
+    notification,
+  };
+}
+
+/**
  * Go's `(e *email) validate(fsys)` template/notification content read (`pkg/config/
  * config.go:1293-1313`), called from `Config.Validate` right after `Auth.MFA.validate()`, still
  * inside `if c.Auth.Enabled` (`config.go:1142`). Every template is checked unconditionally; a
@@ -883,38 +984,24 @@ function readApiTlsFiles(
  * (`packages/config/src/auth/email.ts`) has no `content` field to see) and performs the read
  * when a path comes back.
  *
- * `auth.email.template.<name>.*`/`auth.email.notification.<name>.*` are Viper-bound like every
- * other nested field once `[auth.email.template.<name>]`/`[auth.email.notification.<name>]` are
- * present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`), so
- * `SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_CONTENT_PATH`/`SUPABASE_AUTH_EMAIL_NOTIFICATION_<NAME>_
- * ENABLED`/`_CONTENT_PATH` overrides apply before this read runs. Unlike the hook/passkey/smtp
- * presence gates elsewhere in this file, no extra raw-document presence check is needed here to
- * decide WHETHER to apply an override: `email.template`/`email.notification` are `Schema.Record`s
- * (`packages/config/src/auth/email.ts`), which — unlike a fixed-shape struct with
- * `withDecodingDefaultKey` — only ever contain a key when the TOML section was actually present,
- * so `Object.entries` already reflects presence.
+ * Takes the ALREADY env-override-resolved `email` (from {@link legacyResolveAuthEmail}) so this
+ * only performs the file-existence read, matching the other validators' "resolve once, validate
+ * the resolved value" shape.
  */
 function readAuthEmailTemplateContent(
   email: ProjectConfig["auth"]["email"],
   workdir: string,
   authDocument: Record<string, unknown> | undefined,
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): void {
   const emailDoc = asRecord(authDocument?.["email"]);
   const templatesDoc = asRecord(emailDoc?.["template"]);
   const notificationsDoc = asRecord(emailDoc?.["notification"]);
 
   for (const [name, tmpl] of Object.entries(email.template)) {
-    const contentPath =
-      envOverride(
-        `SUPABASE_AUTH_EMAIL_TEMPLATE_${name.toUpperCase()}_CONTENT_PATH`,
-        tmpl.content_path,
-        projectEnvValues,
-      ) ?? tmpl.content_path;
     const path = legacyResolveEmailTemplateContentPath({
       section: "template",
       name,
-      contentPath,
+      contentPath: tmpl.content_path,
       contentPresent: asRecord(templatesDoc?.[name])?.["content"] !== undefined,
       base: workdir,
     });
@@ -928,21 +1015,11 @@ function readAuthEmailTemplateContent(
     }
   }
   for (const [name, tmpl] of Object.entries(email.notification)) {
-    const envPrefix = `SUPABASE_AUTH_EMAIL_NOTIFICATION_${name.toUpperCase()}`;
-    const enabled = legacyEnvOverrideBool(
-      `${envPrefix}_ENABLED`,
-      tmpl.enabled,
-      `auth.email.notification.${name}.enabled`,
-      projectEnvValues,
-    );
-    if (!enabled) continue;
-    const contentPath =
-      envOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
-      tmpl.content_path;
+    if (!tmpl.enabled) continue;
     const path = legacyResolveEmailTemplateContentPath({
       section: "notification",
       name,
-      contentPath,
+      contentPath: tmpl.content_path,
       contentPresent: asRecord(notificationsDoc?.[name])?.["content"] !== undefined,
       base: join(workdir, "supabase"),
     });
@@ -1433,68 +1510,166 @@ const LEGACY_SMS_PROVIDER_ORDER = [
   "vonage",
 ] as const;
 
-/** Required fields per SMS provider, in the order Go checks them (`config.go:1349-1403`). */
-const LEGACY_SMS_REQUIRED_FIELDS: Record<
-  (typeof LEGACY_SMS_PROVIDER_ORDER)[number],
-  ReadonlyArray<string>
-> = {
-  twilio: ["account_sid", "message_service_sid", "auth_token"],
-  twilio_verify: ["account_sid", "message_service_sid", "auth_token"],
-  messagebird: ["originator", "access_key"],
-  textlocal: ["sender", "api_key"],
-  vonage: ["from", "api_key", "api_secret"],
-};
+/**
+ * Go's `Auth.Sms.<provider>.*` is Viper-bound like every other nested field once
+ * `[auth.sms.<provider>]` is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`,
+ * `config.go:581-586`), so `SUPABASE_AUTH_SMS_<PROVIDER>_ENABLED`/`_<FIELD>` overrides must reach
+ * GoTrue's actual container env (`start.go:696-733`), not just `Config.Validate` — same
+ * "validates but doesn't use" gap already fixed for `auth.hook`/`auth.captcha`/`auth.external`/
+ * `auth.mfa`. Hoisted so both {@link validateAuthSmsProviders} and `start.handler.ts`'s
+ * `resolveGotrueEnvInput` resolve the SAME effective per-provider values — same precedent as
+ * {@link legacyResolveAuthExternalProviders}.
+ *
+ * Presence-gated per provider (the raw `[auth.sms.<provider>]` table must exist), matching
+ * `AutomaticEnv`'s "only intercepts keys already present in the merged config" behavior — same
+ * gate {@link validateAuthSmsProviders} used before this was hoisted out of it. When a provider's
+ * table is absent, its decoded (schema-default) values pass through unchanged, still decrypting
+ * the one `config.Secret`-typed field per provider (`pkg/config/auth.go:339,345,351,358`) for
+ * parity with this function's (now-superseded) `resolveGotrueSms` precursor, which decrypted all
+ * 5 providers unconditionally.
+ */
+export function legacyResolveAuthSms(
+  authDocument: Readonly<Record<string, unknown>> | undefined,
+  sms: ProjectConfig["auth"]["sms"],
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): ProjectConfig["auth"]["sms"] {
+  const smsDoc = asRecord(authDocument?.["sms"]);
+
+  function providerPresent(providerName: (typeof LEGACY_SMS_PROVIDER_ORDER)[number]): boolean {
+    return smsDoc !== undefined && asRecord(smsDoc[providerName]) !== undefined;
+  }
+
+  function resolveEnabled(
+    providerName: (typeof LEGACY_SMS_PROVIDER_ORDER)[number],
+    configured: boolean,
+  ): boolean {
+    if (!providerPresent(providerName)) return configured;
+    return legacyEnvOverrideBool(
+      `SUPABASE_AUTH_SMS_${providerName.toUpperCase()}_ENABLED`,
+      configured,
+      `auth.sms.${providerName}.enabled`,
+      projectEnvValues,
+    );
+  }
+
+  function resolveField(
+    providerName: (typeof LEGACY_SMS_PROVIDER_ORDER)[number],
+    field: string,
+    configured: string | undefined,
+  ): string | undefined {
+    if (!providerPresent(providerName)) return configured;
+    return envOverride(
+      `SUPABASE_AUTH_SMS_${providerName.toUpperCase()}_${field.toUpperCase()}`,
+      configured,
+      projectEnvValues,
+    );
+  }
+
+  return {
+    ...sms,
+    twilio: {
+      enabled: resolveEnabled("twilio", sms.twilio.enabled),
+      account_sid: resolveField("twilio", "account_sid", sms.twilio.account_sid) ?? "",
+      message_service_sid:
+        resolveField("twilio", "message_service_sid", sms.twilio.message_service_sid) ?? "",
+      auth_token: legacyDecryptAuthSecret(
+        resolveField("twilio", "auth_token", sms.twilio.auth_token),
+        projectEnvValues,
+      ),
+    },
+    twilio_verify: {
+      enabled: resolveEnabled("twilio_verify", sms.twilio_verify.enabled),
+      account_sid: resolveField("twilio_verify", "account_sid", sms.twilio_verify.account_sid),
+      message_service_sid: resolveField(
+        "twilio_verify",
+        "message_service_sid",
+        sms.twilio_verify.message_service_sid,
+      ),
+      auth_token: legacyDecryptAuthSecret(
+        resolveField("twilio_verify", "auth_token", sms.twilio_verify.auth_token),
+        projectEnvValues,
+      ),
+    },
+    messagebird: {
+      enabled: resolveEnabled("messagebird", sms.messagebird.enabled),
+      originator: resolveField("messagebird", "originator", sms.messagebird.originator),
+      access_key: legacyDecryptAuthSecret(
+        resolveField("messagebird", "access_key", sms.messagebird.access_key),
+        projectEnvValues,
+      ),
+    },
+    textlocal: {
+      enabled: resolveEnabled("textlocal", sms.textlocal.enabled),
+      sender: resolveField("textlocal", "sender", sms.textlocal.sender),
+      api_key: legacyDecryptAuthSecret(
+        resolveField("textlocal", "api_key", sms.textlocal.api_key),
+        projectEnvValues,
+      ),
+    },
+    vonage: {
+      enabled: resolveEnabled("vonage", sms.vonage.enabled),
+      from: resolveField("vonage", "from", sms.vonage.from),
+      api_key: resolveField("vonage", "api_key", sms.vonage.api_key),
+      api_secret: legacyDecryptAuthSecret(
+        resolveField("vonage", "api_secret", sms.vonage.api_secret),
+        projectEnvValues,
+      ),
+    },
+  };
+}
 
 /**
  * Go's `(s *sms) validate()` (`pkg/config/config.go:1348-1410`): a boolean `switch` that inspects
  * providers in the FIXED priority order above and validates ONLY the first one whose `enabled` is
- * true — a later enabled-but-incomplete provider is never even looked at. `@supabase/config`'s
- * `sms` schema (`packages/config/src/auth/sms.ts`) already implements this exact switch for the
- * schema-decoded (pre-env-override) TOML value, which is Go-parity-correct for a config with no
- * relevant `SUPABASE_AUTH_SMS_*` env override — but `@supabase/config`'s decode pipeline never
- * resolves `SUPABASE_*` overrides at all (only this legacy-shell layer does, post-decode), so a
- * `SUPABASE_AUTH_SMS_<PROVIDER>_ENABLED` override that flips a section's enabled state after
- * decode is invisible to it. This re-runs the same switch against the RAW `authDocument` with
- * env overrides applied first — same document-based, post-override pattern as
- * {@link validateAuthExternalProviders} below, and the same "duplicate D's/the schema's check for
- * the env-override-aware L path" tradeoff already accepted for that function.
- *
- * `auth.sms.<provider>.*` is Viper-bound like every other nested field once
- * `[auth.sms.<provider>]` is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`,
- * `config.go:581-586`), so `SUPABASE_AUTH_SMS_<PROVIDER>_ENABLED`/`_<FIELD>` overrides apply
- * before this validation runs, gated on the raw provider section already being present, matching
- * `AutomaticEnv` (which only intercepts keys already present in the merged config).
+ * true — a later enabled-but-incomplete provider is never even looked at. Runs against
+ * {@link legacyResolveAuthSms}'s env-override-aware result, same document-based, post-override
+ * pattern as {@link validateAuthExternalProviders} below.
  */
 function validateAuthSmsProviders(
   authDocument: Record<string, unknown> | undefined,
+  sms: ProjectConfig["auth"]["sms"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
 ): void {
-  const smsDoc = asRecord(authDocument?.["sms"]);
-  if (smsDoc === undefined) return;
-  for (const providerName of LEGACY_SMS_PROVIDER_ORDER) {
-    const providerDoc = asRecord(smsDoc[providerName]);
-    if (providerDoc === undefined) continue;
-    const envPrefix = `SUPABASE_AUTH_SMS_${providerName.toUpperCase()}`;
-    const enabled = legacyEnvOverrideBool(
-      `${envPrefix}_ENABLED`,
-      providerDoc["enabled"] === true,
-      `auth.sms.${providerName}.enabled`,
-      projectEnvValues,
-    );
-    if (!enabled) continue;
-    for (const field of LEGACY_SMS_REQUIRED_FIELDS[providerName]) {
-      const value = envOverride(
-        `${envPrefix}_${field.toUpperCase()}`,
-        typeof providerDoc[field] === "string" ? providerDoc[field] : undefined,
-        projectEnvValues,
+  const resolved = legacyResolveAuthSms(authDocument, sms, projectEnvValues);
+
+  function requireField(provider: string, field: string, value: string | undefined): void {
+    if (value === undefined || value.length === 0) {
+      throw new LegacyConfigValidateError(
+        `Missing required field in config: auth.sms.${provider}.${field}`,
       );
-      if (value === undefined || value.length === 0) {
-        throw new LegacyConfigValidateError(
-          `Missing required field in config: auth.sms.${providerName}.${field}`,
-        );
-      }
     }
-    // Go's switch stops at the first enabled provider — later providers are never inspected.
+  }
+
+  if (resolved.twilio.enabled) {
+    requireField("twilio", "account_sid", resolved.twilio.account_sid);
+    requireField("twilio", "message_service_sid", resolved.twilio.message_service_sid);
+    requireField("twilio", "auth_token", resolved.twilio.auth_token);
+    return;
+  }
+  if (resolved.twilio_verify.enabled) {
+    requireField("twilio_verify", "account_sid", resolved.twilio_verify.account_sid);
+    requireField(
+      "twilio_verify",
+      "message_service_sid",
+      resolved.twilio_verify.message_service_sid,
+    );
+    requireField("twilio_verify", "auth_token", resolved.twilio_verify.auth_token);
+    return;
+  }
+  if (resolved.messagebird.enabled) {
+    requireField("messagebird", "originator", resolved.messagebird.originator);
+    requireField("messagebird", "access_key", resolved.messagebird.access_key);
+    return;
+  }
+  if (resolved.textlocal.enabled) {
+    requireField("textlocal", "sender", resolved.textlocal.sender);
+    requireField("textlocal", "api_key", resolved.textlocal.api_key);
+    return;
+  }
+  if (resolved.vonage.enabled) {
+    requireField("vonage", "from", resolved.vonage.from);
+    requireField("vonage", "api_key", resolved.vonage.api_key);
+    requireField("vonage", "api_secret", resolved.vonage.api_secret);
     return;
   }
 }
@@ -2113,7 +2288,11 @@ export function legacyResolveLocalConfigValues(
     // Go's `Config.Validate` runs the email template/notification content read right after
     // `Auth.MFA.validate()`, still inside `if c.Auth.Enabled` (`config.go:1142`) — this I/O read
     // stays at this exact textual position (see this function's `@throws` doc for why).
-    readAuthEmailTemplateContent(config.auth.email, workdir, authDocument, projectEnvValues);
+    readAuthEmailTemplateContent(
+      legacyResolveAuthEmail(config.auth.email, projectEnvValues),
+      workdir,
+      authDocument,
+    );
 
     // Go's `[auth.email.smtp]` presence-based `enabled` default — see
     // {@link legacyResolveAuthEmailSmtp}'s doc comment.
@@ -2364,7 +2543,7 @@ export function legacyResolveLocalConfigValues(
   // D-only per `legacy-config-validate.ts`'s module header ("auth.external ... stays 100% inline
   // in D") — this is L's port of D's identical inline block.
   if (authEnabled) {
-    validateAuthSmsProviders(authDocument, projectEnvValues);
+    validateAuthSmsProviders(authDocument, config.auth.sms, projectEnvValues);
     validateAuthExternalProviders(authDocument, config.auth.external, projectEnvValues);
   }
 

@@ -52,7 +52,6 @@ import {
   envOverride,
   envOverridePort,
   envOverrideUint,
-  legacyDecryptAuthSecret,
   legacyEnvOverrideApiMaxRows,
   legacyEnvOverrideBool,
   legacyEnvOverrideDefaultPoolSize,
@@ -64,10 +63,12 @@ import {
   legacyEnvOverrideRealtimeIpVersion,
   legacyEnvOverrideRealtimeMaxHeaderLength,
   legacyResolveAuthCaptcha,
+  legacyResolveAuthEmail,
   legacyResolveAuthEmailSmtp,
   legacyResolveAuthExternalProviders,
   legacyResolveAuthHooks,
   legacyResolveAuthMfa,
+  legacyResolveAuthSms,
   legacyResolveConfiguredSigningKeys,
   legacyResolveDbSettingsEnvOverrides,
   legacyResolveLocalConfigValues,
@@ -299,44 +300,6 @@ function resolveGotruePasskeyWebauthn(
 }
 
 /**
- * Decrypts every SMS provider credential Go types as `config.Secret`
- * (`twilio.auth_token`, `twilio_verify.auth_token`, `messagebird.access_key`,
- * `textlocal.api_key`, `vonage.api_secret` — `pkg/config/auth.go:339,345,351,358`,
- * `TwilioVerify` reuses `twilioConfig` so it shares `Twilio`'s `auth_token`
- * field). `gotrue.service.ts` only ever reads whichever provider is enabled,
- * so decrypting all 5 up front (rather than only the enabled one) is
- * harmless and keeps this resolution independent of that enabled-branch logic.
- */
-function resolveGotrueSms(
-  sms: ProjectConfig["auth"]["sms"],
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["sms"] {
-  return {
-    ...sms,
-    twilio: {
-      ...sms.twilio,
-      auth_token: legacyDecryptAuthSecret(sms.twilio.auth_token, projectEnvValues),
-    },
-    twilio_verify: {
-      ...sms.twilio_verify,
-      auth_token: legacyDecryptAuthSecret(sms.twilio_verify.auth_token, projectEnvValues),
-    },
-    messagebird: {
-      ...sms.messagebird,
-      access_key: legacyDecryptAuthSecret(sms.messagebird.access_key, projectEnvValues),
-    },
-    textlocal: {
-      ...sms.textlocal,
-      api_key: legacyDecryptAuthSecret(sms.textlocal.api_key, projectEnvValues),
-    },
-    vonage: {
-      ...sms.vonage,
-      api_secret: legacyDecryptAuthSecret(sms.vonage.api_secret, projectEnvValues),
-    },
-  };
-}
-
-/**
  * Go's `Auth.Sessions` (`pkg/config/auth.go:330-333`) is a value-typed struct,
  * always merged with a Viper default (empty durations) regardless of
  * `[auth.sessions]` presence in config.toml — so
@@ -532,8 +495,10 @@ function resolveGotrueEnvInput(params: {
   readonly workdir: string;
   readonly kongContainerName: string;
   readonly mailpitContainerName: string;
+  readonly resolvedEmail: ProjectConfig["auth"]["email"];
 }): Omit<LegacyBuildGotrueEnvInput, "dbHost" | "dbPassword"> {
-  const { context, values, workdir, kongContainerName, mailpitContainerName } = params;
+  const { context, values, workdir, kongContainerName, mailpitContainerName, resolvedEmail } =
+    params;
   const { config, projectEnvValues, loaded } = context;
   const document = loaded?.document;
 
@@ -562,12 +527,26 @@ function resolveGotrueEnvInput(params: {
           senderName: resolvedSmtp.senderName,
         }
       : undefined;
+  // Same generic-Viper-override gap as `inbucketEnabled` above, for
+  // `local_smtp.admin_email`/`sender_name` — value-typed fields, so no
+  // raw-document presence gate needed, matching `local_smtp.port`'s
+  // existing treatment.
+  const mailpitAdminEmail = envOverride(
+    "SUPABASE_LOCAL_SMTP_ADMIN_EMAIL",
+    config.local_smtp.admin_email,
+    projectEnvValues,
+  );
+  const mailpitSenderName = envOverride(
+    "SUPABASE_LOCAL_SMTP_SENDER_NAME",
+    config.local_smtp.sender_name,
+    projectEnvValues,
+  );
   const mailpit =
     smtp === undefined && inbucketEnabled
       ? {
           containerName: mailpitContainerName,
-          adminEmail: config.local_smtp.admin_email,
-          senderName: config.local_smtp.sender_name,
+          adminEmail: mailpitAdminEmail,
+          senderName: mailpitSenderName,
         }
       : undefined;
 
@@ -594,11 +573,11 @@ function resolveGotrueEnvInput(params: {
     enableManualLinking: values.authEnableManualLinking,
     minimumPasswordLength: values.authMinimumPasswordLength,
     passwordRequirements: values.authPasswordRequirements,
-    email: config.auth.email,
+    email: resolvedEmail,
     kongContainerName,
     smtp,
     mailpit,
-    sms: resolveGotrueSms(config.auth.sms, projectEnvValues),
+    sms: legacyResolveAuthSms(asRecord(document?.["auth"]), config.auth.sms, projectEnvValues),
     sessions: resolveGotrueSessions(config.auth.sessions, projectEnvValues),
     mfa: legacyResolveAuthMfa(config.auth.mfa, projectEnvValues),
     rateLimit: resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
@@ -687,6 +666,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }),
     });
     const { config, projectId, projectEnvValues } = context;
+    // Single source resolved once, fed to both Kong's template mounts and GoTrue's env builder —
+    // see {@link legacyResolveAuthEmail}'s doc comment.
+    const resolvedEmail = legacyResolveAuthEmail(config.auth.email, projectEnvValues);
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = legacyCliProjectFilterValue(projectId);
 
@@ -1260,7 +1242,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               poolerId: poolerContainerName,
               nginxWorkerProcesses: legacyResolveKongNginxWorkerProcesses(projectEnvValues),
               workdir: cliConfig.workdir,
-              emailTemplateMounts: buildKongEmailTemplateMounts(config.auth.email),
+              emailTemplateMounts: buildKongEmailTemplateMounts(resolvedEmail),
             }),
           };
         }
@@ -1278,6 +1260,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                 workdir: cliConfig.workdir,
                 kongContainerName,
                 mailpitContainerName,
+                resolvedEmail,
               }),
             }),
           };

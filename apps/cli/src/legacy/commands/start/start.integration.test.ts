@@ -1964,6 +1964,155 @@ content_path = "./templates/custom_notice.html"
     });
   });
 
+  describe("SUPABASE_LOCAL_SMTP_ADMIN_EMAIL / SUPABASE_LOCAL_SMTP_SENDER_NAME overrides", () => {
+    it.live("honors env overrides for the Mailpit fallback's admin email and sender name", () => {
+      const previousAdminEmail = process.env["SUPABASE_LOCAL_SMTP_ADMIN_EMAIL"];
+      const previousSenderName = process.env["SUPABASE_LOCAL_SMTP_SENDER_NAME"];
+      process.env["SUPABASE_LOCAL_SMTP_ADMIN_EMAIL"] = "override-admin@example.com";
+      process.env["SUPABASE_LOCAL_SMTP_SENDER_NAME"] = "Override Sender";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_SMTP_ADMIN_EMAIL"]).toBe("override-admin@example.com");
+        expect(gotrueCreate?.env["GOTRUE_SMTP_SENDER_NAME"]).toBe("Override Sender");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousAdminEmail === undefined) {
+              delete process.env["SUPABASE_LOCAL_SMTP_ADMIN_EMAIL"];
+            } else {
+              process.env["SUPABASE_LOCAL_SMTP_ADMIN_EMAIL"] = previousAdminEmail;
+            }
+            if (previousSenderName === undefined) {
+              delete process.env["SUPABASE_LOCAL_SMTP_SENDER_NAME"];
+            } else {
+              process.env["SUPABASE_LOCAL_SMTP_SENDER_NAME"] = previousSenderName;
+            }
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("SUPABASE_AUTH_SMS_<PROVIDER>_* overrides", () => {
+    it.live(
+      "honors env overrides enabling Twilio SMS even when config.toml has it disabled",
+      () => {
+        const envKeys = [
+          "SUPABASE_AUTH_SMS_TWILIO_ENABLED",
+          "SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID",
+          "SUPABASE_AUTH_SMS_TWILIO_MESSAGE_SERVICE_SID",
+          "SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN",
+        ] as const;
+        const previous = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+        process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"] = "true";
+        process.env["SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID"] = "override-account-sid";
+        process.env["SUPABASE_AUTH_SMS_TWILIO_MESSAGE_SERVICE_SID"] =
+          "override-message-service-sid";
+        process.env["SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN"] = "override-auth-token";
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[auth.sms.twilio]\nenabled = false\n',
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_SMS_PROVIDER"]).toBe("twilio");
+          expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_ACCOUNT_SID"]).toBe("override-account-sid");
+          expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID"]).toBe(
+            "override-message-service-sid",
+          );
+          expect(gotrueCreate?.env["GOTRUE_SMS_TWILIO_AUTH_TOKEN"]).toBe("override-auth-token");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              for (const key of envKeys) {
+                const value = previous[key];
+                if (value === undefined) delete process.env[key];
+                else process.env[key] = value;
+              }
+            }),
+          ),
+        );
+      },
+    );
+  });
+
+  describe("SUPABASE_AUTH_EMAIL_* overrides", () => {
+    it.live(
+      "honors SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP and SUPABASE_AUTH_EMAIL_OTP_LENGTH in GoTrue's env",
+      () => {
+        const previousEnableSignup = process.env["SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP"];
+        const previousOtpLength = process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"];
+        process.env["SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP"] = "false";
+        process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"] = "8";
+        const { layer, child } = setup();
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_EXTERNAL_EMAIL_ENABLED"]).toBe("false");
+          expect(gotrueCreate?.env["GOTRUE_MAILER_OTP_LENGTH"]).toBe("8");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousEnableSignup === undefined) {
+                delete process.env["SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP"];
+              } else {
+                process.env["SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP"] = previousEnableSignup;
+              }
+              if (previousOtpLength === undefined) {
+                delete process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"];
+              } else {
+                process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"] = previousOtpLength;
+              }
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "honors SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_SUBJECT in GoTrue's mailer subject env",
+      () => {
+        const previous = process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT"];
+        process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT"] = "Override subject";
+        const { layer, workdir, child } = setup({
+          configContents:
+            'project_id = "demo"\n[auth.email.template.confirmation]\ncontent_path = "./templates/confirmation.html"\n',
+        });
+        mkdirSync(join(workdir, "templates"), { recursive: true });
+        writeFileSync(join(workdir, "templates", "confirmation.html"), "<html></html>");
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const gotrueCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+          );
+          expect(gotrueCreate?.env["GOTRUE_MAILER_SUBJECTS_CONFIRMATION"]).toBe("Override subject");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) {
+                delete process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT"];
+              } else {
+                process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT"] = previous;
+              }
+            }),
+          ),
+        );
+      },
+    );
+  });
+
   describe("SUPABASE_DB_PORT override", () => {
     it.live("publishes Postgres on the env-overridden DB port, not config.db.port", () => {
       const previous = process.env["SUPABASE_DB_PORT"];
