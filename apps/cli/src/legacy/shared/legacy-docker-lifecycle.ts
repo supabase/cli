@@ -41,29 +41,28 @@ function splitNonEmptyLines(text: string): ReadonlyArray<string> {
 }
 
 /**
- * Go's `Docker.ContainerList(ctx, container.ListOptions{All, Filters})`
- * (`docker.go:99-104`, `status.go:126-131`) via `docker ps --filter
- * label=<filterValue>`. `all: false` mirrors `status`'s running-only list;
- * `all: true` mirrors `stop`'s "every container regardless of state" list.
+ * Shared `docker ps --filter label=<filterValue> [--all] --format
+ * <formatArg>` spawn: one Docker CLI invocation is one underlying `GET
+ * /containers/json` Docker Engine API request regardless of `--format`
+ * (`--format` only controls how the CLI renders the already-returned JSON
+ * response client-side) — every exported listing function below funnels
+ * through here so two differently-formatted needs never accidentally cost
+ * two real requests. See {@link legacyListContainerIdsAndNames}'s doc
+ * comment for why that distinction matters for Go-parity request-log tests.
  */
-export const legacyListContainersByLabel = (
+function spawnDockerPsLines(
   spawner: Spawner,
-  opts: {
-    readonly projectIdFilter: string;
-    readonly all: boolean;
-    readonly format: "id" | "names";
-  },
-) =>
-  Effect.scoped(
+  opts: { readonly projectIdFilter: string; readonly all: boolean; readonly formatArg: string },
+): Effect.Effect<ReadonlyArray<string>, LegacyDockerLifecycleListError> {
+  return Effect.scoped(
     Effect.gen(function* () {
-      const formatArg = opts.format === "names" ? "{{.Names}}" : "{{.ID}}";
       const args = [
         "ps",
         "--filter",
         `label=${opts.projectIdFilter}`,
         ...(opts.all ? ["--all"] : []),
         "--format",
-        formatArg,
+        opts.formatArg,
       ];
       const child = yield* spawnContainerCli(spawner, args, {
         stdin: "ignore",
@@ -107,6 +106,68 @@ export const legacyListContainersByLabel = (
       }
       return splitNonEmptyLines(stdout);
     }),
+  );
+}
+
+/**
+ * Go's `Docker.ContainerList(ctx, container.ListOptions{All, Filters})`
+ * (`docker.go:99-104`, `status.go:126-131`) via `docker ps --filter
+ * label=<filterValue>`. `all: false` mirrors `status`'s running-only list;
+ * `all: true` mirrors `stop`'s "every container regardless of state" list.
+ */
+export const legacyListContainersByLabel = (
+  spawner: Spawner,
+  opts: {
+    readonly projectIdFilter: string;
+    readonly all: boolean;
+    readonly format: "id" | "names";
+  },
+) =>
+  spawnDockerPsLines(spawner, {
+    projectIdFilter: opts.projectIdFilter,
+    all: opts.all,
+    formatArg: opts.format === "names" ? "{{.Names}}" : "{{.ID}}",
+  });
+
+/** A single `docker ps` result row's id and name together. */
+export interface LegacyContainerIdName {
+  readonly id: string;
+  readonly name: string;
+}
+
+/**
+ * Combined-format sibling of {@link legacyListContainersByLabel}: fetches a
+ * container's id AND name from a SINGLE `docker ps --format
+ * "{{.ID}}\t{{.Names}}"` invocation, rather than one call per field. Go's
+ * SDK-based `Docker.ContainerList` gets both (and every other field) from the
+ * one Engine API response it already makes; two separately-`--format`ted CLI
+ * calls here would silently double the real Docker request count relative to
+ * Go even though each call's own output is individually correct — exactly
+ * the bug the cli-e2e-ci request-log parity harness caught for `stop` (an
+ * extra `GET /containers/json` versus Go's single call). Used by
+ * {@link legacyDockerRemoveAll}, which needs ids to stop containers, for
+ * callers (`stop`, `start`'s rollback) that ALSO need names for
+ * {@link legacyCleanupStartSecrets} — see that function's `onContainersListed`
+ * parameter.
+ */
+export const legacyListContainerIdsAndNames = (
+  spawner: Spawner,
+  opts: {
+    readonly projectIdFilter: string;
+    readonly all: boolean;
+  },
+): Effect.Effect<ReadonlyArray<LegacyContainerIdName>, LegacyDockerLifecycleListError> =>
+  spawnDockerPsLines(spawner, {
+    projectIdFilter: opts.projectIdFilter,
+    all: opts.all,
+    formatArg: "{{.ID}}\t{{.Names}}",
+  }).pipe(
+    Effect.map((lines) =>
+      lines.map((line) => {
+        const [id = "", name = ""] = line.split("\t");
+        return { id, name };
+      }),
+    ),
   );
 
 /**

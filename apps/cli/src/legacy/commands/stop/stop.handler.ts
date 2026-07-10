@@ -6,10 +6,7 @@ import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyAqua } from "../../shared/legacy-colors.ts";
 import { legacyCliProjectFilterValue } from "../../shared/legacy-docker-ids.ts";
-import {
-  legacyListContainersByLabel,
-  legacyListVolumesByLabel,
-} from "../../shared/legacy-docker-lifecycle.ts";
+import { legacyListVolumesByLabel } from "../../shared/legacy-docker-lifecycle.ts";
 import { legacyDockerRemoveAll } from "../../shared/legacy-docker-remove-all.ts";
 import { legacyCleanupStartSecrets } from "../../shared/legacy-start-secrets-cleanup.ts";
 import { legacyResolveLocalConfigValues } from "../../shared/legacy-local-config-values.ts";
@@ -172,22 +169,22 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
       yield* output.raw("Stopping containers...\n");
     }
 
-    // Captured BEFORE teardown, so `legacyCleanupStartSecrets` below reclaims
-    // exactly the staged-secret directories (`<workdir>/supabase/.temp/
-    // start-secrets/<name>`) belonging to containers this run actually tore
-    // down — never a guess, and never a blanket delete of the whole parent
-    // directory (see that function's doc comment for why that'd be unsafe).
-    const containerNamesBeforeTeardown = yield* legacyListContainersByLabel(spawner, {
-      projectIdFilter: filterValue,
-      all: true,
-      format: "names",
-    }).pipe(Effect.orElseSucceed(() => []));
-
     // Go's `DockerRemoveAll` (`apps/cli-go/internal/utils/docker.go:96-146`): list -> stop
     // concurrently -> container prune -> conditional volume prune -> network prune. See
     // `legacy-docker-remove-all.ts` for the full Go-parity rationale. Its 5 neutral, stage-tagged
     // failure variants are remapped here into `stop`'s own tagged errors.
-    yield* legacyDockerRemoveAll(spawner, filterValue, deleteVolumes).pipe(
+    //
+    // The container names its listing step finds are captured via `onContainersListed` — BEFORE
+    // teardown, so `legacyCleanupStartSecrets` below reclaims exactly the staged-secret
+    // directories (`<workdir>/supabase/.temp/start-secrets/<name>`) belonging to containers this
+    // run actually tore down, never a guess or a blanket delete of the whole parent directory (see
+    // that function's doc comment for why that'd be unsafe) — and without a second, separately
+    // `docker ps`'d listing call, which would cost an extra real Docker Engine API request Go never
+    // makes (see `legacyDockerRemoveAll`'s doc comment).
+    let containerNamesBeforeTeardown: ReadonlyArray<string> = [];
+    yield* legacyDockerRemoveAll(spawner, filterValue, deleteVolumes, (containers) => {
+      containerNamesBeforeTeardown = containers.map((container) => container.name);
+    }).pipe(
       Effect.catchTags({
         LegacyDockerRemoveAllListError: (error) =>
           Effect.fail(new LegacyStopListError({ message: error.message })),

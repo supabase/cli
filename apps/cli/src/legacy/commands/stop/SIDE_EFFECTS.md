@@ -13,9 +13,9 @@ byte-for-byte — it does not go through `@supabase/stack/effect`'s orchestratio
 
 ## Files Written
 
-| Path                                                            | Format             | When                                                                              |
-| ---------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------ |
-| `~/.supabase/telemetry.json`                                      | JSON                | always (in `Effect.ensuring`) at end of command — Go parity                    |
+| Path                                                                | Format              | When                                                                                    |
+| ------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------- |
+| `~/.supabase/telemetry.json`                                        | JSON                | always (in `Effect.ensuring`) at end of command — Go parity                             |
 | `<workdir>/supabase/.temp/start-secrets/<container-name>` (removed) | plaintext, per-file | after teardown succeeds, for every container name torn down that had a staged directory |
 
 The `start-secrets` removal is a TS-port-only hygiene step (`legacyCleanupStartSecrets`,

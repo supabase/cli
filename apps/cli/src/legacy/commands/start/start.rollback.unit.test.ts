@@ -75,11 +75,11 @@ describe("legacyRollbackStart", () => {
         "/tmp/legacy-rollback-unit-test-workdir",
       );
       expect(stderr).not.toHaveBeenCalled();
-      // A pre-teardown `ps` snapshot (for `legacyCleanupStartSecrets`'s
-      // container-name list) runs first, then legacyDockerRemoveAll's own
-      // list -> container prune -> network prune; no stop calls (empty list)
+      // legacyDockerRemoveAll's own list (its `onContainersListed` hook feeds
+      // legacyCleanupStartSecrets the same container names, no second `ps`
+      // call) -> container prune -> network prune; no stop calls (empty list)
       // and no volume prune (deleteVolumes: false).
-      expect(mock.spawned.map((args) => args[0])).toEqual(["ps", "ps", "container", "network"]);
+      expect(mock.spawned.map((args) => args[0])).toEqual(["ps", "container", "network"]);
     });
   });
 
@@ -93,7 +93,6 @@ describe("legacyRollbackStart", () => {
         "/tmp/legacy-rollback-unit-test-workdir",
       );
       expect(mock.spawned.map((args) => args[0])).toEqual([
-        "ps",
         "ps",
         "container",
         "version",

@@ -6,7 +6,10 @@ import {
   legacyDescribeContainerCliFailure,
   legacyDockerSupportsVolumePruneAllFlag,
 } from "./legacy-container-cli.ts";
-import { legacyListContainersByLabel } from "./legacy-docker-lifecycle.ts";
+import {
+  legacyListContainerIdsAndNames,
+  type LegacyContainerIdName,
+} from "./legacy-docker-lifecycle.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -60,20 +63,32 @@ export type LegacyDockerRemoveAllError =
  * [--all] --filter label=<filterValue>` (the `--all` flag itself gated on
  * {@link legacyDockerSupportsVolumePruneAllFlag}, Docker API >= 1.42) -> `network prune --force
  * --filter label=<filterValue>`.
+ *
+ * `onContainersListed`, if given, fires synchronously right after the initial listing succeeds
+ * (before any container is stopped) with the exact containers found — a TS-port-only hook with no
+ * Go equivalent, for callers (`stop.handler.ts`, `start.rollback.ts`) that need those same
+ * container NAMES for {@link legacyCleanupStartSecrets} (Go itself doesn't stage host-disk
+ * secrets, so it has no reason to know them). It exists so those callers get names from THIS
+ * function's own single `docker ps` listing instead of issuing a second, separately-formatted
+ * `docker ps` call, which would double the real Docker Engine API request count relative to Go
+ * and fail the cli-e2e-ci request-log parity check. Fires even if a later stop/prune stage then
+ * fails, matching the "snapshot before touching anything" semantics those callers rely on.
  */
 export const legacyDockerRemoveAll = (
   spawner: Spawner,
   filterValue: string,
   deleteVolumes: boolean,
+  onContainersListed?: (containers: ReadonlyArray<LegacyContainerIdName>) => void,
 ): Effect.Effect<void, LegacyDockerRemoveAllError> =>
   Effect.gen(function* () {
-    const containerIds = yield* legacyListContainersByLabel(spawner, {
+    const containers = yield* legacyListContainerIdsAndNames(spawner, {
       projectIdFilter: filterValue,
       all: true,
-      format: "id",
     }).pipe(
       Effect.mapError((cause) => new LegacyDockerRemoveAllListError({ message: cause.message })),
     );
+    onContainersListed?.(containers);
+    const containerIds = containers.map((container) => container.id);
 
     // Go stops containers concurrently via `WaitAll`, joining every failure rather than
     // short-circuiting on the first one (`docker.go:96-146`).

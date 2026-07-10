@@ -2,7 +2,6 @@ import { Effect } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { legacyDockerRemoveAll } from "../../shared/legacy-docker-remove-all.ts";
-import { legacyListContainersByLabel } from "../../shared/legacy-docker-lifecycle.ts";
 import { legacyCleanupStartSecrets } from "../../shared/legacy-start-secrets-cleanup.ts";
 import { LegacyHealthCheckTimeoutError } from "./lib/health-check.ts";
 
@@ -48,9 +47,11 @@ export function legacyIsUnhealthyStartError(
  * Also reclaims any {@link legacyCleanupStartSecrets} staged-secret
  * directories for the containers this run created — a TS-port-only hygiene
  * step with no Go equivalent (see that function's doc comment). The matching
- * container names are captured BEFORE teardown (`docker ps --all` still
- * reflects them at that point), so cleanup targets exactly what this run's
- * own containers used, never a guess.
+ * container names come from {@link legacyDockerRemoveAll}'s own
+ * `onContainersListed` hook, captured BEFORE teardown from that function's
+ * single internal `docker ps` listing — never a second, separately listed
+ * call, which would cost an extra real Docker Engine API request Go never
+ * makes (see that function's doc comment for the parity rationale).
  */
 export const legacyRollbackStart = (
   spawner: Spawner,
@@ -59,12 +60,10 @@ export const legacyRollbackStart = (
   workdir: string,
 ): Effect.Effect<void, never> =>
   Effect.gen(function* () {
-    const containerNames = yield* legacyListContainersByLabel(spawner, {
-      projectIdFilter: filterValue,
-      all: true,
-      format: "names",
-    }).pipe(Effect.orElseSucceed(() => []));
-    yield* legacyDockerRemoveAll(spawner, filterValue, deleteVolumes).pipe(
+    let containerNames: ReadonlyArray<string> = [];
+    yield* legacyDockerRemoveAll(spawner, filterValue, deleteVolumes, (containers) => {
+      containerNames = containers.map((container) => container.name);
+    }).pipe(
       Effect.catch((error) =>
         Effect.sync(() => {
           globalThis.process.stderr.write(`${error.message}\n`);
