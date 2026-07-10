@@ -11,6 +11,7 @@ import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 import {
   LegacyInvalidAnalyticsBackendEnvOverrideError,
   LegacyInvalidBoolEnvOverrideError,
+  LegacyInvalidEdgeRuntimePolicyEnvOverrideError,
   LegacyInvalidJwtSecretError,
   LegacyInvalidPoolModeEnvOverrideError,
   LegacyInvalidPortEnvOverrideError,
@@ -18,6 +19,7 @@ import {
   LegacyInvalidSessionReplicationRoleEnvOverrideError,
   legacyEnvOverrideApiMaxRows,
   legacyEnvOverrideDefaultPoolSize,
+  legacyEnvOverrideEdgeRuntimePolicy,
   legacyEnvOverrideMaxClientConn,
   legacyEnvOverridePoolMode,
   legacyEnvOverrideRealtimeIpVersion,
@@ -926,6 +928,33 @@ describe("legacyResolveLocalConfigValues", () => {
       );
       expect(() => legacyEnvOverridePoolMode("transaction", undefined)).toThrow(
         'Invalid config for db.pooler.pool_mode: cannot parse "invalid" as one of "transaction", "session"',
+      );
+    });
+  });
+
+  describe("legacyEnvOverrideEdgeRuntimePolicy", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_EDGE_RUNTIME_POLICY"];
+    });
+
+    it("falls back to the configured value when unset", () => {
+      expect(legacyEnvOverrideEdgeRuntimePolicy("oneshot", undefined)).toBe("oneshot");
+    });
+
+    it("overrides the configured value via the env var", () => {
+      process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = "per_worker";
+      expect(legacyEnvOverrideEdgeRuntimePolicy("oneshot", undefined)).toBe("per_worker");
+    });
+
+    // Go's `RequestPolicy.UnmarshalText` (`pkg/config/config.go:83-96`) hard-rejects
+    // any value outside `{per_worker, oneshot}`.
+    it("rejects an invalid override instead of falling back to the configured value", () => {
+      process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = "invalid";
+      expect(() => legacyEnvOverrideEdgeRuntimePolicy("oneshot", undefined)).toThrow(
+        LegacyInvalidEdgeRuntimePolicyEnvOverrideError,
+      );
+      expect(() => legacyEnvOverrideEdgeRuntimePolicy("oneshot", undefined)).toThrow(
+        'Invalid config for edge_runtime.policy: cannot parse "invalid" as one of "per_worker", "oneshot"',
       );
     });
   });

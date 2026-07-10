@@ -459,6 +459,40 @@ export function legacyEnvOverridePoolMode(
   return value;
 }
 
+/**
+ * Thrown by {@link legacyEnvOverrideEdgeRuntimePolicy} when
+ * `SUPABASE_EDGE_RUNTIME_POLICY` doesn't match Go's `RequestPolicy`
+ * (`pkg/config/config.go:83-96`) — `UnmarshalText` hard-rejects anything
+ * outside `{per_worker, oneshot}`, same mechanism as
+ * {@link LegacyInvalidPoolModeEnvOverrideError}.
+ */
+export class LegacyInvalidEdgeRuntimePolicyEnvOverrideError extends Error {
+  constructor(dottedFieldPath: string, value: string) {
+    super(
+      `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "per_worker", "oneshot"`,
+    );
+    this.name = "LegacyInvalidEdgeRuntimePolicyEnvOverrideError";
+  }
+}
+
+/**
+ * `edge_runtime.policy`-flavored sibling of {@link legacyEnvOverridePoolMode}
+ * — Go's `EdgeRuntime.Policy` is `RequestPolicy`, text-unmarshalled the same
+ * way `Pooler.PoolMode` is, so the override-or-configured value is validated
+ * with a single check to match Go's one-shot `UnmarshalText` call.
+ */
+export function legacyEnvOverrideEdgeRuntimePolicy(
+  configured: string,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): "per_worker" | "oneshot" {
+  const value =
+    envOverride("SUPABASE_EDGE_RUNTIME_POLICY", undefined, projectEnvValues) ?? configured;
+  if (value !== "per_worker" && value !== "oneshot") {
+    throw new LegacyInvalidEdgeRuntimePolicyEnvOverrideError("edge_runtime.policy", value);
+  }
+  return value;
+}
+
 /** `SUPABASE_DB_POOLER_DEFAULT_POOL_SIZE` — see {@link envOverrideUint}. */
 export function legacyEnvOverrideDefaultPoolSize(
   configured: number,

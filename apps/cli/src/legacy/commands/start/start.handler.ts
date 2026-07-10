@@ -57,6 +57,7 @@ import {
   legacyEnvOverrideBool,
   legacyEnvOverrideDefaultPoolSize,
   legacyEnvOverrideDenoVersion,
+  legacyEnvOverrideEdgeRuntimePolicy,
   legacyEnvOverrideMajorVersion,
   legacyEnvOverrideMaxClientConn,
   legacyEnvOverridePoolMode,
@@ -224,7 +225,24 @@ function resolveDbHealthTimeoutSeconds(healthTimeout: string): number {
  * document-based approach `legacy-local-config-values.ts` already uses for
  * these two sections.
  */
-function resolveGotruePasskeyWebauthn(document: Readonly<Record<string, unknown>> | undefined): {
+/**
+ * `auth.passkey.enabled`/`auth.webauthn.*` are Viper-bound like every other
+ * nested field once `[auth.passkey]`/`[auth.webauthn]` are present in
+ * config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`),
+ * so `SUPABASE_AUTH_PASSKEY_ENABLED`/`SUPABASE_AUTH_WEBAUTHN_{RP_ID,
+ * RP_DISPLAY_NAME,RP_ORIGINS}` overrides apply before `appendGotruePasskeyEnv`
+ * (`start.go:1427-1436`) builds GoTrue's env — same reasoning, and same
+ * presence-gating (an absent section is never synthesized from an env
+ * override alone), as `legacy-local-config-values.ts`'s identical
+ * `Config.Validate`-parity resolution for this raw-document pair.
+ * `rp_display_name` has no validation-path precedent (Go's `Config.Validate`
+ * never checks it), but GoTrue's env does consume it, so it gets the same
+ * treatment here.
+ */
+function resolveGotruePasskeyWebauthn(
+  document: Readonly<Record<string, unknown>> | undefined,
+  projectEnvValues: Readonly<Record<string, string>> | undefined,
+): {
   readonly passkeyEnabled: boolean | undefined;
   readonly webauthn:
     | {
@@ -237,18 +255,44 @@ function resolveGotruePasskeyWebauthn(document: Readonly<Record<string, unknown>
   const authDoc = asRecord(document?.["auth"]);
   const passkeyDoc = asRecord(authDoc?.["passkey"]);
   const webauthnDoc = asRecord(authDoc?.["webauthn"]);
-  const passkeyEnabled = passkeyDoc !== undefined ? passkeyDoc["enabled"] === true : undefined;
+  const passkeyEnabled =
+    passkeyDoc !== undefined
+      ? legacyEnvOverrideBool(
+          "SUPABASE_AUTH_PASSKEY_ENABLED",
+          passkeyDoc["enabled"] === true,
+          "auth.passkey.enabled",
+          projectEnvValues,
+        )
+      : undefined;
+  const rpOriginsOverride =
+    webauthnDoc !== undefined
+      ? envOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
+      : undefined;
   const webauthn =
     webauthnDoc !== undefined
       ? {
-          rpId: typeof webauthnDoc["rp_id"] === "string" ? webauthnDoc["rp_id"] : "",
+          rpId:
+            envOverride(
+              "SUPABASE_AUTH_WEBAUTHN_RP_ID",
+              typeof webauthnDoc["rp_id"] === "string" ? webauthnDoc["rp_id"] : "",
+              projectEnvValues,
+            ) ?? "",
           rpDisplayName:
-            typeof webauthnDoc["rp_display_name"] === "string"
-              ? webauthnDoc["rp_display_name"]
-              : "",
-          rpOrigins: Array.isArray(webauthnDoc["rp_origins"])
-            ? webauthnDoc["rp_origins"].filter((item): item is string => typeof item === "string")
-            : [],
+            envOverride(
+              "SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME",
+              typeof webauthnDoc["rp_display_name"] === "string"
+                ? webauthnDoc["rp_display_name"]
+                : "",
+              projectEnvValues,
+            ) ?? "",
+          rpOrigins:
+            rpOriginsOverride !== undefined
+              ? rpOriginsOverride.split(",")
+              : Array.isArray(webauthnDoc["rp_origins"])
+                ? webauthnDoc["rp_origins"].filter(
+                    (item): item is string => typeof item === "string",
+                  )
+                : [],
         }
       : undefined;
   return { passkeyEnabled, webauthn };
@@ -527,7 +571,7 @@ function resolveGotrueEnvInput(params: {
         }
       : undefined;
 
-  const { passkeyEnabled, webauthn } = resolveGotruePasskeyWebauthn(document);
+  const { passkeyEnabled, webauthn } = resolveGotruePasskeyWebauthn(document, projectEnvValues);
   const externalProviders = legacyResolveAuthExternalProviders(
     asRecord(document?.["auth"]),
     config.auth.external,
@@ -1062,6 +1106,17 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       projectEnvValues,
     );
 
+    // Same gap for Logflare's port — Go's Config.Load applies
+    // SUPABASE_ANALYTICS_PORT generically (pkg/config/config.go:582-586)
+    // before start.go:378 reads utils.Config.Analytics.Port to build
+    // Logflare's HostPort.
+    const analyticsPort = envOverridePort(
+      "SUPABASE_ANALYTICS_PORT",
+      config.analytics.port,
+      "analytics.port",
+      projectEnvValues,
+    );
+
     // Same gap for Supavisor's pooler fields — Go's Config.Load applies
     // SUPABASE_DB_POOLER_* generically (pkg/config/config.go:580-586) before
     // start.go:1194-1211 reads utils.Config.Db.Pooler.{Port,PoolMode,
@@ -1098,7 +1153,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               image,
               projectId,
               networkId,
-              port: config.analytics.port,
+              port: analyticsPort,
               backend: values.analyticsBackend,
               gcpProjectId: values.gcpProjectId,
               gcpProjectNumber: values.gcpProjectNumber,
@@ -1644,8 +1699,16 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             workdir: cliConfig.workdir,
             dbUrl: values.dbUrl,
             apiPort: values.apiPort,
-            edgeRuntimePolicy: config.edge_runtime.policy,
-            edgeRuntimeInspectorPort: config.edge_runtime.inspector_port,
+            edgeRuntimePolicy: legacyEnvOverrideEdgeRuntimePolicy(
+              config.edge_runtime.policy,
+              projectEnvValues,
+            ),
+            edgeRuntimeInspectorPort: envOverridePort(
+              "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
+              config.edge_runtime.inspector_port,
+              "edge_runtime.inspector_port",
+              projectEnvValues,
+            ),
             edgeRuntimeSecrets: toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets,
             configDeclaredFunctions,
             configFunctions,
@@ -1754,14 +1817,25 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // hand-rolled `HttpClient.make(...)` mock (this file's own integration
     // tests), which never reads `FetchHttpClient.Fetch` at all.
     //
-    // Folds the hoisted, env-overridden `apiPort`/`apiTlsEnabled` into `config`
-    // (not the raw values) so a `SUPABASE_API_PORT`/`SUPABASE_API_TLS_ENABLED`
-    // override that actually brought Kong up on a different port/TLS also
-    // reaches every local Storage-gateway caller below — otherwise
+    // Folds the hoisted, env-overridden `apiPort`/`apiTlsEnabled`/
+    // `apiTlsCertPath`/`apiTlsKeyPath` into `config` (not the raw values) so a
+    // `SUPABASE_API_PORT`/`SUPABASE_API_TLS_{ENABLED,CERT_PATH,KEY_PATH}`
+    // override that actually brought Kong up on a different port/TLS/cert
+    // also reaches every local Storage-gateway caller below — otherwise
     // `resolveLocalBaseUrl` derives its URL from the un-overridden
     // `config.api.{port,tls.enabled}` and points at a port/scheme nothing is
-    // actually listening on. Reused for both this health-check CA lookup and
-    // the two `legacySeedBucketsRun` calls below (`resolvedConfig`), so bucket
+    // actually listening on, and `validateLocalKongTls` validates against a
+    // cert/key path Kong itself isn't actually serving from (Kong's own spec
+    // uses these same resolved `apiTlsCertPath`/`apiTlsKeyPath` locals). Also
+    // folds in the already-resolved `values.jwtSecret`/`values.serviceRoleKey`
+    // (decrypted, env/dotenv-overridden — the same values the real GoTrue/
+    // Storage containers were started with) instead of the raw `config.auth.*`
+    // `legacyResolveStorageCredentials`'s local branch would otherwise
+    // re-derive from a narrower, dotenv-blind `process.env`-only check —
+    // mirroring Go's single `utils.Config.Auth.*.Value` read by both the
+    // container env and `newLocalClient` (`internal/storage/client/api.go:
+    // 30-37`). Reused for both this health-check CA lookup and the two
+    // `legacySeedBucketsRun` calls below (`resolvedConfig`), so bucket
     // seeding never independently reloads config.toml and silently drops
     // these same overrides — mirroring Go's `buckets.Run` reading the single
     // process-wide `utils.Config` instead of reloading.
@@ -1770,7 +1844,17 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       api: {
         ...config.api,
         port: values.apiPort,
-        tls: { ...config.api.tls, enabled: apiTlsEnabled },
+        tls: {
+          ...config.api.tls,
+          enabled: apiTlsEnabled,
+          cert_path: apiTlsCertPath,
+          key_path: apiTlsKeyPath,
+        },
+      },
+      auth: {
+        ...config.auth,
+        jwt_secret: values.jwtSecret,
+        service_role_key: values.serviceRoleKey,
       },
     };
     const { localKongCa } = yield* legacyResolveStorageCredentials({

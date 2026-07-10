@@ -2607,6 +2607,31 @@ content_path = "./templates/custom_notice.html"
     });
   });
 
+  describe("SUPABASE_ANALYTICS_PORT override", () => {
+    it.live("overrides the published Logflare host port", () => {
+      const previous = process.env["SUPABASE_ANALYTICS_PORT"];
+      process.env["SUPABASE_ANALYTICS_PORT"] = "60002";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const logflareCreate = child.spawned.find(
+          (s) =>
+            s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_analytics_"),
+        );
+        expect(logflareCreate?.args).toContain("60002:4000");
+        expect(logflareCreate?.args).not.toContain("54327:4000");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_ANALYTICS_PORT"];
+            else process.env["SUPABASE_ANALYTICS_PORT"] = previous;
+          }),
+        ),
+      );
+    });
+  });
+
   describe("SUPABASE_DB_HEALTH_TIMEOUT override", () => {
     it.live(
       "honors an env-overridden health_timeout, not just the config.toml/default value",
@@ -2826,6 +2851,95 @@ content_path = "./templates/custom_notice.html"
           Effect.sync(() => {
             if (previous === undefined) delete process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"];
             else process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"] = previous;
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("auth.passkey/auth.webauthn env overrides reach GoTrue's container", () => {
+    it.live("honors SUPABASE_AUTH_PASSKEY_ENABLED", () => {
+      const previous = process.env["SUPABASE_AUTH_PASSKEY_ENABLED"];
+      process.env["SUPABASE_AUTH_PASSKEY_ENABLED"] = "true";
+      const { layer, child } = setup({
+        configContents:
+          'project_id = "demo"\n[auth.passkey]\nenabled = false\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = ["http://localhost:3000"]\n',
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_PASSKEY_ENABLED"]).toBe("true");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_AUTH_PASSKEY_ENABLED"];
+            else process.env["SUPABASE_AUTH_PASSKEY_ENABLED"] = previous;
+          }),
+        ),
+      );
+    });
+
+    it.live("honors SUPABASE_AUTH_WEBAUTHN_RP_ID/_RP_DISPLAY_NAME/_RP_ORIGINS", () => {
+      const previousRpId = process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"];
+      const previousDisplayName = process.env["SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME"];
+      const previousOrigins = process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"];
+      process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"] = "env-rp-id";
+      process.env["SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME"] = "Env Display Name";
+      process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"] = "http://a.example,http://b.example";
+      const { layer, child } = setup({
+        configContents:
+          'project_id = "demo"\n[auth.webauthn]\nrp_id = "toml-rp-id"\nrp_display_name = "TOML Display Name"\nrp_origins = ["http://toml.example"]\n',
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const gotrueCreate = child.spawned.find(
+          (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
+        );
+        expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_ID"]).toBe("env-rp-id");
+        expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_DISPLAY_NAME"]).toBe("Env Display Name");
+        expect(gotrueCreate?.env["GOTRUE_WEBAUTHN_RP_ORIGINS"]).toBe(
+          "http://a.example,http://b.example",
+        );
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousRpId === undefined) delete process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"];
+            else process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"] = previousRpId;
+            if (previousDisplayName === undefined)
+              delete process.env["SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME"];
+            else process.env["SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME"] = previousDisplayName;
+            if (previousOrigins === undefined)
+              delete process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"];
+            else process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"] = previousOrigins;
+          }),
+        ),
+      );
+    });
+  });
+
+  describe("SUPABASE_EDGE_RUNTIME_POLICY override", () => {
+    it.live("honors the env-overridden Edge Runtime request policy", () => {
+      const previous = process.env["SUPABASE_EDGE_RUNTIME_POLICY"];
+      process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = "per_worker";
+      const { layer, child } = setup({
+        configContents: 'project_id = "demo"\n[edge_runtime]\npolicy = "oneshot"\n',
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const runCalls = child.spawned.filter((s) => s.args[0] === "run" && s.args[1] === "-d");
+        const entrypointCommand = runCalls[0]?.args.at(-1) ?? "";
+        expect(entrypointCommand).toContain("--policy=per_worker");
+        expect(entrypointCommand).not.toContain("--policy=oneshot");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_EDGE_RUNTIME_POLICY"];
+            else process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = previous;
           }),
         ),
       );
