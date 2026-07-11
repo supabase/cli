@@ -175,12 +175,24 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     // failure variants are remapped here into `stop`'s own tagged errors.
     //
     // The container names its listing step finds are captured via `onContainersListed` — BEFORE
-    // teardown, so `legacyCleanupStartSecrets` below reclaims exactly the staged-secret
-    // directories (`<workdir>/supabase/.temp/start-secrets/<name>`) belonging to containers this
-    // run actually tore down, never a guess or a blanket delete of the whole parent directory (see
-    // that function's doc comment for why that'd be unsafe) — and without a second, separately
+    // teardown, so `legacyCleanupStartSecrets` reclaims exactly the staged-secret directories
+    // (`<workdir>/supabase/.temp/start-secrets/<name>`) belonging to containers this run actually
+    // tore down, never a guess or a blanket delete of the whole parent directory (see that
+    // function's doc comment for why that'd be unsafe) — and without a second, separately
     // `docker ps`'d listing call, which would cost an extra real Docker Engine API request Go never
     // makes (see `legacyDockerRemoveAll`'s doc comment).
+    //
+    // Run via `Effect.ensuring` rather than a plain statement after this pipe: each of
+    // `legacyDockerRemoveAll`'s stages (stop, container prune, volume prune, network prune) can
+    // independently fail AFTER earlier stages have already torn down containers, and a plain
+    // `yield*` below would never run once that failure propagates — leaking staged secret
+    // directories for containers a later `stop` can no longer rediscover (they're already gone).
+    // `legacyRollbackStart` (`start.rollback.ts`) already runs this same cleanup unconditionally
+    // after its own `legacyDockerRemoveAll` call for the identical reason; this makes `stop`
+    // consistent with that sibling caller, just without swallowing the teardown error itself.
+    // The finalizer is wrapped in `Effect.suspend` so `containerNamesBeforeTeardown` is read at
+    // FINALIZER-RUN time, not at pipe-construction time (before `onContainersListed` has fired) —
+    // same pattern as `storage/ls/ls.handler.ts`/`storage/rm/rm.handler.ts`.
     let containerNamesBeforeTeardown: ReadonlyArray<string> = [];
     yield* legacyDockerRemoveAll(spawner, filterValue, deleteVolumes, (containers) => {
       containerNamesBeforeTeardown = containers.map((container) => container.name);
@@ -197,8 +209,12 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
         LegacyDockerRemoveAllNetworkPruneError: (error) =>
           Effect.fail(new LegacyStopNetworkPruneError({ message: error.message })),
       }),
+      Effect.ensuring(
+        Effect.suspend(() =>
+          legacyCleanupStartSecrets(cliConfig.workdir, containerNamesBeforeTeardown),
+        ),
+      ),
     );
-    yield* legacyCleanupStartSecrets(cliConfig.workdir, containerNamesBeforeTeardown);
 
     if (output.format === "text") {
       // Written to stdout (no stream arg): `legacyAqua` must target stdout's own

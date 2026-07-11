@@ -996,6 +996,28 @@ enabled = true
     }).pipe(Effect.provide(layer));
   });
 
+  // By the time volume/network prune fails, the container-prune stage before it has already
+  // `docker rm`'d the matching containers — a subsequent `stop` can no longer rediscover their
+  // names via `docker ps` to reclaim their staged-secret directories, so this cleanup must run
+  // even though the command itself still fails (see the `Effect.ensuring` finalizer above).
+  it.live("still reclaims staged-secret directories when a later prune stage fails", () => {
+    const { layer, workdir } = setup({
+      configuredProjectId: "demo",
+      route: (args) => {
+        if (args[0] === "network" && args[1] === "prune") return { exitCode: 1 };
+        return defaultRoute({ containerIds: ["supabase_kong_demo"] })(args);
+      },
+    });
+    const matchedDir = join(workdir, "supabase", ".temp", "start-secrets", "supabase_kong_demo");
+    mkdirSync(matchedDir, { recursive: true });
+    writeFileSync(join(matchedDir, "secret-0"), "kong.yml contents");
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyStop(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(existsSync(matchedDir)).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails when the container list errors", () => {
     const { layer } = setup({
       configuredProjectId: "demo",
