@@ -23,6 +23,21 @@ export interface JwkLike {
 }
 
 /**
+ * Filters `key_ops` down to `"verify"` entries, returning `undefined` (never an empty array) when
+ * none remain — matches Go's `encoding/json` `omitempty` on a slice field, which drops the field
+ * entirely for a zero-length slice (`apps/cli-go/pkg/config/auth.go:92,126-130`): `ToPublicJWK`
+ * only ever appends to a nil slice, so Go can emit an absent field or a non-empty array, never
+ * `"key_ops":[]`. `key.key_ops?.filter(...)` alone doesn't reproduce this: it only returns
+ * `undefined` when `key.key_ops` itself is `undefined`, not when filtering empties it out.
+ */
+function publicKeyOps(
+  keyOps: ReadonlyArray<string> | undefined,
+): ReadonlyArray<string> | undefined {
+  const verifyOps = keyOps?.filter((operation) => operation === "verify");
+  return verifyOps !== undefined && verifyOps.length > 0 ? verifyOps : undefined;
+}
+
+/**
  * Go's `(j JWK) ToPublicJWK()` (`apps/cli-go/pkg/config/auth.go:111-145`): strips private key
  * material (`d`/`p`/`q`/`dp`/`dq`/`qi`) from a signing key before it's published in a JWKS, and
  * filters `key_ops` down to `"verify"` entries only (Go never republishes `"sign"`). Field order
@@ -36,7 +51,7 @@ export function toPublicJwk(key: JwkLike): JwkLike {
       kty: "RSA",
       kid: key.kid,
       use: key.use,
-      key_ops: key.key_ops?.filter((operation) => operation === "verify"),
+      key_ops: publicKeyOps(key.key_ops),
       alg: key.alg,
       ext: key.ext,
       n: key.n,
@@ -48,7 +63,7 @@ export function toPublicJwk(key: JwkLike): JwkLike {
     kty: "EC",
     kid: key.kid,
     use: key.use,
-    key_ops: key.key_ops?.filter((operation) => operation === "verify"),
+    key_ops: publicKeyOps(key.key_ops),
     alg: key.alg,
     ext: key.ext,
     crv: key.crv,
