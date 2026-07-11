@@ -1,5 +1,8 @@
 import { Option } from "effect";
-import { legacyIsBindMountSource } from "./legacy-docker-bind-classify.ts";
+import {
+  legacyBindMountSpecSource,
+  legacyIsBindMountSource,
+} from "./legacy-docker-bind-classify.ts";
 import type { LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
 
 /**
@@ -56,7 +59,7 @@ export function legacyApplyBitbucketDockerFilter(
   if (!isBitbucket) return opts;
   return {
     ...opts,
-    binds: opts.binds.filter((bind) => legacyIsBindMountSource(bind.split(":")[0] ?? "")),
+    binds: opts.binds.filter((bind) => legacyIsBindMountSource(legacyBindMountSpecSource(bind))),
     securityOpt: [],
   };
 }

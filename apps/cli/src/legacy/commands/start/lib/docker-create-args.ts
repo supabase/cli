@@ -51,7 +51,10 @@
  * for the mitigation.
  */
 
-import { legacyIsBindMountSource } from "../../../shared/legacy-docker-bind-classify.ts";
+import {
+  legacyBindMountSpecSource,
+  legacyIsBindMountSource,
+} from "../../../shared/legacy-docker-bind-classify.ts";
 
 /**
  * `container.HealthConfig` (`docker/docker/api/types/container`). Not
@@ -422,7 +425,7 @@ export function legacyApplyBitbucketStartContainerFilter(
   if (!isBitbucket) return spec;
   return {
     ...spec,
-    binds: spec.binds.filter((bind) => legacyIsBindMountSource(bind.split(":")[0] ?? "")),
+    binds: spec.binds.filter((bind) => legacyIsBindMountSource(legacyBindMountSpecSource(bind))),
     securityOpt: [],
   };
 }

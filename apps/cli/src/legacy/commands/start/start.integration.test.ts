@@ -1194,6 +1194,35 @@ content_path = "./templates/custom_notice.html"
       },
     );
 
+    it.live(
+      "resolves an excluded service's migrate-job image through a project-dotenv-only registry override",
+      () => {
+        // The auth/realtime/storage migrate jobs run regardless of `--exclude` (Go parity —
+        // see this describe block's own header comment), but `--exclude gotrue` removes the
+        // gotrue image from `imagePlan`, which used to make its migrate-job image fall back to
+        // `LegacyDockerRun`'s ambient-`process.env`-only registry resolver — invisible to a
+        // registry override that only exists in the project's own `.env` file.
+        const workdir = tempRoot.current;
+        const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+        // `loadProjectEnvironment`'s `envPath` is `<workdir>/supabase/.env` (`findProjectPaths`),
+        // written after `setup()` so the `supabase/` dir (created by `writeConfig`) already exists.
+        writeFileSync(
+          join(workdir, "supabase", ".env"),
+          "SUPABASE_INTERNAL_IMAGE_REGISTRY=registry.example.com\n",
+        );
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ exclude: ["gotrue"] }));
+          expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
+          const authMigrateJob = dbSetupJobCalls(child.spawned).find((s) =>
+            s.args.some((arg) => arg.includes("gotrue")),
+          );
+          expect(authMigrateJob?.args.some((arg) => arg.includes("registry.example.com"))).toBe(
+            true,
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
     it.live("skips the SetupLocalDatabase-equivalent pipeline on a non-fresh volume", () => {
       const { layer, out, child } = setup();
       return Effect.gen(function* () {
@@ -1941,6 +1970,47 @@ content_path = "./templates/custom_notice.html"
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
       }).pipe(Effect.provide(layer));
     });
+  });
+
+  describe("container-not-found stderr shapes", () => {
+    it.live(
+      "brings up the stack when the DB container's inspect reports 'No such object' instead of 'No such container'",
+      () => {
+        // Docker/Podman report a missing container as either "No such container" or "No such
+        // object" depending on daemon version/CLI path — `isContainerNotFoundMessage` must
+        // recognize both, or `legacyStart`'s "not running, bring up the stack" branch never
+        // fires and the inspect failure propagates instead.
+        const created = new Set<string>();
+        const route = (args: ReadonlyArray<string>): RouteResult => {
+          if (args[0] === "container" && args[1] === "inspect") {
+            const id = args[2] ?? "";
+            if (!created.has(id)) {
+              return { exitCode: 1, stderr: [`Error: no such object: ${id}`] };
+            }
+            return { stdout: [HEALTHY_STATE] };
+          }
+          if (args[0] === "image" && args[1] === "inspect") return { exitCode: 0 };
+          if (args[0] === "network" && args[1] === "create") return { exitCode: 0 };
+          if (args[0] === "volume" && args[1] === "create") return { exitCode: 0 };
+          if (args[0] === "context" && args[1] === "inspect") return { exitCode: 1 };
+          if (args[0] === "create") {
+            const name = containerNameFromCreateArgs(args);
+            created.add(name);
+            return { stdout: [name] };
+          }
+          if (args[0] === "start") return { exitCode: 0 };
+          if (args[0] === "logs") return { exitCode: 0 };
+          if (args[0] === "ps") return { stdout: [] };
+          return { exitCode: 0 };
+        };
+        const { layer, child } = setup({ route });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const createdNames = createdContainerNames(child.spawned);
+          expect(createdNames.some((name) => name.includes("_db_"))).toBe(true);
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("Linux host-gateway mapping", () => {

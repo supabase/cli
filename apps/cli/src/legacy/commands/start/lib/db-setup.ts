@@ -307,6 +307,11 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (opts: {
     securityOpt: [],
     extraHosts,
     network: { _tag: "named", name: opts.networkId },
+    // `opts.image` is already fully resolved (`start.handler.ts`'s `resolveImage`, which
+    // threads `projectEnvValues` through `legacyEnsureImagesCached`) — this layer's own
+    // ambient-only resolver must not re-resolve it. See `LegacyDockerRunOpts.
+    // skipImageResolve`'s doc comment.
+    skipImageResolve: true,
   };
   const result = yield* docker
     .runCapture(runOpts)

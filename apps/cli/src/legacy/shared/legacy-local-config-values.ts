@@ -2051,6 +2051,15 @@ export function legacyResolveLocalConfigValues(
   // Go's `Config.Validate` checks `db.major_version` right after `db.port`
   // (`pkg/config/config.go:1034-1061`), unconditionally (no `enabled` gate).
   const majorVersion = legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
+  // Go's `flags.LoadConfig` applies every `SUPABASE_DB_SETTINGS_*` override unconditionally
+  // during `Config.Load` (`config.go:576-586`), BEFORE `start`/`status`/`stop` do anything else
+  // (`internal/start/start.go:51` runs before `AssertSupabaseDbIsRunning` at line 54; `status.
+  // Run`/`stop.Run` load config first too) — so a malformed override must fail here, the same
+  // point `majorVersion`/`denoVersion`/`orioledbVersion` are already validated, not deep inside
+  // `start.handler.ts`'s `bringUp` after Postgres may already be created. Validate-only: the
+  // actual resolved settings `start` needs are recomputed at their own call site (same
+  // "validate early, recompute at point of use" split already used for those three fields).
+  legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues);
   // `db.root_key` isn't modeled in `@supabase/config`'s schema (every other
   // `db.*` field is), so it's read off the raw pre-schema document — same
   // presence-based pattern as `authDocument` below. Go writes the

@@ -46,7 +46,9 @@ export const legacyDockerRunLayer: Layer.Layer<
     const withResolvedImage = (
       opts: LegacyDockerRunOpts,
     ): Effect.Effect<LegacyDockerRunOpts, LegacyDockerRunError> =>
-      resolveImage(opts.image).pipe(Effect.map((image) => ({ ...opts, image })));
+      opts.skipImageResolve === true
+        ? Effect.succeed(opts)
+        : resolveImage(opts.image).pipe(Effect.map((image) => ({ ...opts, image })));
 
     return LegacyDockerRun.of({
       runCapture: (opts, captureOpts) =>

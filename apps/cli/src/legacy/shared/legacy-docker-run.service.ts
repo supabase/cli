@@ -29,6 +29,19 @@ export interface LegacyDockerRunOpts {
    */
   readonly extraHosts: ReadonlyArray<string>;
   readonly network: LegacyDockerNetwork;
+  /**
+   * Skips this layer's own image resolution (`legacyMakeDockerImageResolver`) when the
+   * caller already resolved `image` itself through a `projectEnvValues`-aware path (e.g.
+   * `start`'s one-shot fresh-DB setup jobs, resolved via `legacyEnsureImagesCached` before
+   * `legacyStartSetupLocalDatabase` ever calls this service). This layer's own resolver is
+   * built once, statically, with no `projectEnvValues` in scope (see
+   * `legacy-docker-run.layer.ts`'s header) — re-resolving an ALREADY-resolved image (e.g.
+   * `registry.example.com/supabase/gotrue:v2.192.0`) would treat it as a fresh, unresolved
+   * image reference and rebuild registry candidates from it using the DEFAULT registry,
+   * silently discarding a project-dotenv-only `SUPABASE_INTERNAL_IMAGE_REGISTRY` override.
+   * Defaults to `false` (existing ambient-only resolution) for every other caller.
+   */
+  readonly skipImageResolve?: boolean;
 }
 
 /**

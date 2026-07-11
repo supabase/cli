@@ -192,9 +192,18 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-/** Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect`. */
+/**
+ * Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect`: "No such
+ * container" or "No such object" depending on daemon version/CLI path — the same pair already
+ * handled in `shared/functions/serve.ts`/`legacy-db-bootstrap.seam.layer.ts`/`legacy-pgdelta.seam.
+ * layer.ts`.
+ */
 function isContainerNotFoundMessage(message: string): boolean {
-  return /no such container/iu.test(message) || /no container with name or id/iu.test(message);
+  return (
+    /no such container/iu.test(message) ||
+    /no such object/iu.test(message) ||
+    /no container with name or id/iu.test(message)
+  );
 }
 
 /**
@@ -852,6 +861,35 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       config.experimental.s3_host,
       projectEnvValues,
     );
+    // Go's one-shot fresh-DB setup jobs (`initSchema15`) read `utils.Config.
+    // {Realtime,Storage,Auth}.Enabled` — the EFFECTIVE, env-overridden value — and run
+    // regardless of `--exclude` (`internal/db/start/start.go:270,299,321`). Hoisted here
+    // (rather than recomputed only inside the `isFreshVolume` block below) so the SAME
+    // booleans can also gate which of these services' images get resolved through
+    // `legacyEnsureImagesCached` a few lines down — `imagePlan` omits an excluded
+    // service's image entirely, so without this, an excluded-but-still-run setup job's
+    // image falls back to `resolveImage`'s raw-image miss path, which never applies a
+    // project-dotenv-only `SUPABASE_INTERNAL_IMAGE_REGISTRY` override (`LegacyDockerRun`'s
+    // resolver is ambient-`process.env`-only, unlike the `projectEnvValues`-aware
+    // `legacyEnsureImagesCached`).
+    const realtimeEnabledForSetup = legacyEnvOverrideBool(
+      "SUPABASE_REALTIME_ENABLED",
+      config.realtime.enabled,
+      "realtime.enabled",
+      projectEnvValues,
+    );
+    const storageEnabledForSetup = legacyEnvOverrideBool(
+      "SUPABASE_STORAGE_ENABLED",
+      config.storage.enabled,
+      "storage.enabled",
+      projectEnvValues,
+    );
+    const authEnabledForSetup = legacyEnvOverrideBool(
+      "SUPABASE_AUTH_ENABLED",
+      config.auth.enabled,
+      "auth.enabled",
+      projectEnvValues,
+    );
     const s3Region = envOverride(
       "SUPABASE_EXPERIMENTAL_S3_REGION",
       config.experimental.s3_region,
@@ -900,11 +938,27 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const edgeRuntimeDefaultImage = gates.edgeRuntime
       ? yield* legacyResolveEdgeRuntimeImage(fs, path, cliConfig.workdir, denoVersion)
       : undefined;
+    // The fresh-DB one-shot setup jobs' images (below) must resolve through this SAME
+    // `projectEnvValues`-aware cache regardless of `--exclude`, matching Go's setup jobs
+    // running unconditionally — `legacyEnsureImagesCached`'s own `Set`-based dedup makes
+    // this a no-op when the service isn't excluded (its image is already in `imagePlan`).
+    const setupJobImages = [
+      ...(realtimeEnabledForSetup
+        ? [legacyResolvePinnedImage("realtime", "realtime", serviceVersionOverrides)]
+        : []),
+      ...(storageEnabledForSetup
+        ? [legacyResolvePinnedImage("storage", "storage", serviceVersionOverrides)]
+        : []),
+      ...(authEnabledForSetup
+        ? [legacyResolvePinnedImage("gotrue", "auth", serviceVersionOverrides)]
+        : []),
+    ];
     const resolvedImages = yield* legacyEnsureImagesCached(
       spawner,
       [
         postgresImage,
         ...imagePlan.map((entry) => entry.image),
+        ...setupJobImages,
         ...(edgeRuntimeDefaultImage !== undefined ? [edgeRuntimeDefaultImage] : []),
       ],
       projectEnvValues,
@@ -1568,6 +1622,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             // start.go:270,299,321`), regardless of `--exclude` — resolve
             // through `legacyResolvePinnedImage` (not the raw Dockerfile
             // default) so a linked project's version pins apply here too.
+            // `resolveImage` finds these in the cache even when excluded, since
+            // `setupJobImages` above feeds them into `legacyEnsureImagesCached`
+            // unconditionally on `--exclude`.
             const dbSetupImages: LegacyStartDbSetupImages = {
               realtime: resolveImage(
                 legacyResolvePinnedImage("realtime", "realtime", serviceVersionOverrides),
@@ -1591,42 +1648,25 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               // additionally filtered by `--exclude` the way `gates.*` is (Go's
               // one-shot migration jobs run regardless of `--exclude` — they're
               // part of `StartDatabase`, which finishes before `run()`'s own
-              // excluded-services filtering even begins). `legacyResolveStartGates`
-              // only exposes the exclude-combined booleans, so these three are
-              // recomputed here, matching `resolveGotrueEnvInput`'s own precedent
-              // of independently recomputing an env-overridden boolean rather than
-              // threading it through.
+              // excluded-services filtering even begins). Reuses
+              // `{realtime,storage,auth}EnabledForSetup`, hoisted above (also
+              // needed by `setupJobImages`) instead of recomputing them here.
               config: {
                 ...config,
                 realtime: {
                   ...config.realtime,
-                  enabled: legacyEnvOverrideBool(
-                    "SUPABASE_REALTIME_ENABLED",
-                    config.realtime.enabled,
-                    "realtime.enabled",
-                    projectEnvValues,
-                  ),
+                  enabled: realtimeEnabledForSetup,
                   ip_version: realtimeIpVersion,
                   max_header_length: realtimeMaxHeaderLength,
                 },
                 storage: {
                   ...config.storage,
-                  enabled: legacyEnvOverrideBool(
-                    "SUPABASE_STORAGE_ENABLED",
-                    config.storage.enabled,
-                    "storage.enabled",
-                    projectEnvValues,
-                  ),
+                  enabled: storageEnabledForSetup,
                   file_size_limit: storageFileSizeLimit,
                 },
                 auth: {
                   ...config.auth,
-                  enabled: legacyEnvOverrideBool(
-                    "SUPABASE_AUTH_ENABLED",
-                    config.auth.enabled,
-                    "auth.enabled",
-                    projectEnvValues,
-                  ),
+                  enabled: authEnabledForSetup,
                 },
               },
               majorVersion,
@@ -1686,6 +1726,33 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             "edge_runtime",
             { goViperCompat: true },
           );
+          // Both malformed-value throws below happen well after Postgres (and possibly other
+          // services) have already been created — synchronous throws here would become
+          // untyped Effect defects bypassing this pipeline's `tapError` rollback, same bug
+          // class already fixed for `dbHealthTimeoutSeconds` above and `buildSpecForService`'s
+          // `catchDefect` below. Go decodes both fields during `Config.Load`, well before any
+          // Docker work, so a bad value must fail the same way here.
+          const edgeRuntimePolicy = yield* Effect.try({
+            try: () =>
+              legacyEnvOverrideEdgeRuntimePolicy(config.edge_runtime.policy, projectEnvValues),
+            catch: (cause) =>
+              new LegacyStartInvalidConfigError({
+                message: `invalid config for edge_runtime.policy: ${cause instanceof Error ? cause.message : String(cause)}`,
+              }),
+          });
+          const edgeRuntimeInspectorPort = yield* Effect.try({
+            try: () =>
+              envOverridePort(
+                "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
+                config.edge_runtime.inspector_port,
+                "edge_runtime.inspector_port",
+                projectEnvValues,
+              ),
+            catch: (cause) =>
+              new LegacyStartInvalidConfigError({
+                message: `invalid config for edge_runtime.inspector_port: ${cause instanceof Error ? cause.message : String(cause)}`,
+              }),
+          });
           const edgeRuntimeInput: LegacyEdgeRuntimeBringUpInput = {
             projectId,
             networkId,
@@ -1693,16 +1760,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             workdir: cliConfig.workdir,
             dbUrl: values.dbUrl,
             apiPort: values.apiPort,
-            edgeRuntimePolicy: legacyEnvOverrideEdgeRuntimePolicy(
-              config.edge_runtime.policy,
-              projectEnvValues,
-            ),
-            edgeRuntimeInspectorPort: envOverridePort(
-              "SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT",
-              config.edge_runtime.inspector_port,
-              "edge_runtime.inspector_port",
-              projectEnvValues,
-            ),
+            edgeRuntimePolicy,
+            edgeRuntimeInspectorPort,
             edgeRuntimeSecrets: toPlainEdgeRuntimeConfig(resolvedEdgeRuntime).secrets,
             configDeclaredFunctions,
             configFunctions,

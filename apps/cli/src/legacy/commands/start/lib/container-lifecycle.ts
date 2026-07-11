@@ -22,7 +22,10 @@ import {
   legacyDescribeContainerCliFailure,
   spawnContainerCli,
 } from "../../../shared/legacy-container-cli.ts";
-import { legacyIsBindMountSource } from "../../../shared/legacy-docker-bind-classify.ts";
+import {
+  legacyBindMountSpecSource,
+  legacyIsBindMountSource,
+} from "../../../shared/legacy-docker-bind-classify.ts";
 import { LEGACY_CLI_PROJECT_LABEL } from "../../../shared/legacy-docker-ids.ts";
 import {
   buildLegacyStartContainerCreateArgs,
@@ -144,7 +147,7 @@ function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
 function legacyNamedVolumeSources(binds: ReadonlyArray<string>): ReadonlyArray<string> {
   const sources: Array<string> = [];
   for (const bind of binds) {
-    const source = bind.split(":")[0] ?? "";
+    const source = legacyBindMountSpecSource(bind);
     if (source.length > 0 && !legacyIsBindMountSource(source)) {
       sources.push(source);
     }
