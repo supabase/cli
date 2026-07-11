@@ -40,8 +40,13 @@ const EXCLUDED_SERVICE_KEYS: ReadonlySet<string> = new Set(["studio", "logflare"
  *  - `supavisor` — `db.pooler.enabled` defaults to `false` (`packages/config/src/db.ts`,
  *    `defaultPoolerEnabled`), and `runSupabaseLive(["init"], ...)` above writes a config.toml
  *    with no override, so it's genuinely disabled on this test's stack, not merely unasserted.
+ *  - `imgproxy` — gated on `storage.image_transformation.enabled` (`start.gates.ts:169`,
+ *    mirroring Go's `isImgProxyEnabled`, `apps/cli-go/internal/start/start.go:302-303`), which
+ *    defaults to `false`/absent; `runSupabaseLive(["init"], ...)` writes a config.toml with
+ *    `[storage.image_transformation]` still commented out (`project-init.templates.ts:132-133`,
+ *    byte-identical to Go's own template), so imgproxy is genuinely disabled on this test's stack.
  */
-const NEVER_RUNNING_SERVICE_KEYS: ReadonlySet<string> = new Set(["supavisor"]);
+const NEVER_RUNNING_SERVICE_KEYS: ReadonlySet<string> = new Set(["supavisor", "imgproxy"]);
 
 function splitNonEmptyLines(text: string): ReadonlyArray<string> {
   return text
