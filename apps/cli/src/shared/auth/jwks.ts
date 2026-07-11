@@ -167,6 +167,42 @@ export function resolveThirdPartyIssuerUrl(
 }
 
 /**
+ * Go's `(tpa *thirdParty) IssuerURL()` ALONE (`apps/cli-go/pkg/config/config.go:1685-1707`, each
+ * provider's own unconditional `issuerURL()` at `config.go:1556-1636`) — no validation at all. Go's
+ * `Auth.ThirdParty.validate()` (the "at most one enabled" + required-field checks
+ * {@link resolveThirdPartyIssuerUrl} above performs) only runs inside `Config.Validate`'s `if
+ * c.Auth.Enabled` block (`config.go:1087-1153`), but `ResolveJWKS`/`IssuerURL()` is called
+ * unconditionally (`internal/start/start.go:274`) regardless of `auth.enabled`. So when auth is
+ * disabled, only this unchecked, fixed-priority string builder applies: the first enabled
+ * provider (firebase, auth0, aws_cognito, clerk, workos, in that order) wins, with no "more than
+ * one enabled" rejection and no required-field check — a missing required field for the winning
+ * provider just produces a URL with an empty segment, matching Go's own unchecked string
+ * interpolation (`fmt.Sprintf` never errors on an empty string argument).
+ */
+export function thirdPartyIssuerUrlUnchecked(
+  thirdParty: ThirdPartyProvidersLike,
+): string | undefined {
+  if (thirdParty.firebase.enabled) {
+    return `https://securetoken.google.com/${thirdParty.firebase.project_id ?? ""}`;
+  }
+  if (thirdParty.auth0.enabled) {
+    return thirdParty.auth0.tenant_region
+      ? `https://${thirdParty.auth0.tenant ?? ""}.${thirdParty.auth0.tenant_region}.auth0.com`
+      : `https://${thirdParty.auth0.tenant ?? ""}.auth0.com`;
+  }
+  if (thirdParty.aws_cognito.enabled) {
+    return `https://cognito-idp.${thirdParty.aws_cognito.user_pool_region ?? ""}.amazonaws.com/${thirdParty.aws_cognito.user_pool_id ?? ""}`;
+  }
+  if (thirdParty.clerk.enabled) {
+    return `https://${thirdParty.clerk.domain ?? ""}`;
+  }
+  if (thirdParty.workos.enabled) {
+    return thirdParty.workos.issuer_url;
+  }
+  return undefined;
+}
+
+/**
  * Go's OIDC-discovery + remote-JWKS fetch inside `(a *auth) ResolveJWKS`
  * (`apps/cli-go/pkg/config/config.go:1730-1774`): resolves `<issuerUrl>/.well-known/
  * openid-configuration`'s `jwks_uri`, then fetches that URI's `keys` array. Throws/rejects on any

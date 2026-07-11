@@ -1106,9 +1106,18 @@ describe("legacyResolveLocalConfigValues", () => {
       expect(resolved["my_custom"]?.emailOptional).toBe(true);
     });
 
-    it("treats an unparsable custom-provider boolean string as false", () => {
+    it("throws on an unparsable custom-provider boolean string instead of silently disabling it", () => {
       const authDocument = {
         external: { my_custom: { enabled: "not-a-bool", client_id: "custom-client-id" } },
+      };
+      expect(() =>
+        legacyResolveAuthExternalProviders(authDocument, baseConfig().auth.external, undefined),
+      ).toThrow('cannot parse "not-a-bool" as a bool');
+    });
+
+    it("leaves an absent custom-provider boolean field at its schema default without throwing", () => {
+      const authDocument = {
+        external: { my_custom: { client_id: "custom-client-id" } },
       };
       const resolved = legacyResolveAuthExternalProviders(
         authDocument,
@@ -1590,6 +1599,17 @@ describe("legacyResolveLocalConfigValues", () => {
       process.env["SUPABASE_AUTH_PASSKEY_ENABLED"] = "true";
       const config = baseConfig();
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
+    });
+
+    it("throws on an unparsable raw auth.passkey.enabled string instead of silently disabling it", () => {
+      // e.g. a still-literal `env(VAR)` placeholder when the referenced var was never set, or a
+      // typo — Go's `strconv.ParseBool` hard-rejects this during `Config.Load`, it never silently
+      // treats it as `false`.
+      const config = baseConfig();
+      const document = { auth: { passkey: { enabled: "not-a-bool" } } };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).toThrow('cannot parse "not-a-bool" as a bool');
     });
   });
 
@@ -2365,6 +2385,45 @@ describe("legacyResolveLocalJwks", () => {
       await expect(legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32))).rejects.toThrow(
         "Invalid config: Only one third_party provider allowed to be enabled at a time.",
       );
+    });
+
+    it("does not validate third-party providers when auth is disabled, matching Go's ResolveJWKS/IssuerURL", async () => {
+      // Go's `Auth.ThirdParty.validate()` (the "at most one enabled" check above) only runs
+      // inside `Config.Validate`'s `if Auth.Enabled` block — `ResolveJWKS`/`IssuerURL()` is called
+      // unconditionally and never validates, it just picks the first enabled provider by fixed
+      // priority (firebase, auth0, aws_cognito, clerk, workos) and resolves its remote JWKS.
+      const remoteKeys = [{ kty: "RSA", kid: "firebase-key", n: "abc", e: "AQAB" }];
+      const issuerUrl = "https://securetoken.google.com/my-project";
+      const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === `${issuerUrl}/.well-known/openid-configuration`) {
+          return new Response(JSON.stringify({ jwks_uri: `${issuerUrl}/jwks.json` }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url === `${issuerUrl}/jwks.json`) {
+          return new Response(JSON.stringify({ keys: remoteKeys }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      });
+      const config = baseConfig({
+        auth: {
+          enabled: false,
+          third_party: {
+            firebase: { enabled: true, project_id: "my-project" },
+            workos: { enabled: true, issuer_url: "https://issuer.example" },
+          },
+        },
+      });
+      const jwksJson = await legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32));
+      const jwks = JSON.parse(jwksJson) as { keys: ReadonlyArray<{ kid?: string }> };
+      expect(jwks.keys.some((key) => key.kid === "firebase-key")).toBe(true);
+      fetchMock.mockRestore();
     });
 
     it("fetches and includes the remote JWKS for an enabled third-party provider", async () => {

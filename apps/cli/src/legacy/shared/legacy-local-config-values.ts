@@ -8,6 +8,7 @@ import { Schema } from "effect";
 import {
   resolveRemoteJwks,
   resolveThirdPartyIssuerUrl,
+  thirdPartyIssuerUrlUnchecked,
   toPublicJwk,
   type ThirdPartyProvidersLike,
 } from "../../shared/auth/jwks.ts";
@@ -1757,10 +1758,25 @@ export interface LegacyResolvedAuthExternalProvider {
  * {@link legacyResolveAuthExternalProviders} below AND by `start.handler.ts`'s
  * `resolveGotruePasskeyWebauthn`/this file's own passkey-validation read, since both are
  * unmodeled-document reads of the identical shape.
+ *
+ * An unparsable STRING (e.g. a typo, or a still-literal `"env(VAR)"` when the referenced var was
+ * never set) is a hard `Config.Load` failure in Go, not a silent `false` — `v.UnmarshalExact`'s
+ * `strconv.ParseBool` decode hook (`config.go:747-753`) errors on it, and that error propagates as
+ * `"failed to parse config: %w"`, same as {@link legacyEnvOverrideBool}'s identical treatment for
+ * schema-modeled bool fields. Silently defaulting to `false` here would both misreport a broken
+ * config as "section disabled" AND skip the required-field validation an enabled section should
+ * trigger. An absent value (`undefined` — key genuinely not present) is NOT an error: that's Go's
+ * own zero-value bool default, unchanged.
  */
-export function legacyRawUnmodeledBool(value: unknown): boolean {
+export function legacyRawUnmodeledBool(value: unknown, dottedFieldPath: string): boolean {
   if (typeof value === "boolean") return value;
-  if (typeof value === "string") return legacyParseGoBool(value) ?? false;
+  if (typeof value === "string") {
+    const parsed = legacyParseGoBool(value);
+    if (parsed === undefined) {
+      throw new LegacyInvalidBoolEnvOverrideError(dottedFieldPath, value);
+    }
+    return parsed;
+  }
   return false;
 }
 
@@ -1795,7 +1811,9 @@ export function legacyResolveAuthExternalProviders(
     const provider = decodedProviders.get(name);
     const rawProvider = provider === undefined ? asRecord(externalDoc[name]) : undefined;
     if (provider === undefined && rawProvider === undefined) continue;
-    const configuredEnabled = provider?.enabled ?? legacyRawUnmodeledBool(rawProvider?.["enabled"]);
+    const configuredEnabled =
+      provider?.enabled ??
+      legacyRawUnmodeledBool(rawProvider?.["enabled"], `auth.external.${name}.enabled`);
     const configuredClientId =
       provider?.client_id ??
       (typeof rawProvider?.["client_id"] === "string" ? rawProvider["client_id"] : undefined);
@@ -1808,9 +1826,17 @@ export function legacyResolveAuthExternalProviders(
       provider?.redirect_uri ??
       (typeof rawProvider?.["redirect_uri"] === "string" ? rawProvider["redirect_uri"] : undefined);
     const configuredSkipNonceCheck =
-      provider?.skip_nonce_check ?? legacyRawUnmodeledBool(rawProvider?.["skip_nonce_check"]);
+      provider?.skip_nonce_check ??
+      legacyRawUnmodeledBool(
+        rawProvider?.["skip_nonce_check"],
+        `auth.external.${name}.skip_nonce_check`,
+      );
     const configuredEmailOptional =
-      provider?.email_optional ?? legacyRawUnmodeledBool(rawProvider?.["email_optional"]);
+      provider?.email_optional ??
+      legacyRawUnmodeledBool(
+        rawProvider?.["email_optional"],
+        `auth.external.${name}.email_optional`,
+      );
 
     result[name] = {
       enabled: legacyEnvOverrideBool(
@@ -2293,7 +2319,7 @@ export function legacyResolveLocalConfigValues(
       passkeyDoc !== undefined
         ? legacyEnvOverrideBool(
             "SUPABASE_AUTH_PASSKEY_ENABLED",
-            legacyRawUnmodeledBool(passkeyDoc["enabled"]),
+            legacyRawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled"),
             "auth.passkey.enabled",
             projectEnvValues,
           )
@@ -2863,11 +2889,30 @@ export async function legacyResolveLocalJwks(
     },
   };
 
+  // Go's `Auth.ThirdParty.validate()` (the "at most one enabled" + required-field checks
+  // `resolveThirdPartyIssuerUrl` performs) only runs inside `Config.Validate`'s `if
+  // c.Auth.Enabled` block (`config.go:1087-1153`) — but `ResolveJWKS`/`IssuerURL()` (this whole
+  // function) is called UNCONDITIONALLY (`internal/start/start.go:274`), regardless of
+  // `auth.enabled`. When auth is enabled, `legacyResolveLocalConfigValues`'s own gated
+  // `validateAuthThirdPartyProviders`-equivalent check already ran first, so the validating
+  // resolver here is safe/redundant-but-harmless. When auth is disabled, that earlier validation
+  // is (correctly) skipped, so this function must NOT re-introduce it — using the unchecked,
+  // no-throw `IssuerURL()`-only builder instead, matching Go exactly.
+  const authEnabled = legacyEnvOverrideBool(
+    "SUPABASE_AUTH_ENABLED",
+    config.auth.enabled,
+    "auth.enabled",
+    projectEnvValues,
+  );
   let issuerUrl: string | undefined;
-  try {
-    issuerUrl = resolveThirdPartyIssuerUrl(thirdParty);
-  } catch (cause) {
-    throw new LegacyConfigValidateError(cause instanceof Error ? cause.message : String(cause));
+  if (authEnabled) {
+    try {
+      issuerUrl = resolveThirdPartyIssuerUrl(thirdParty);
+    } catch (cause) {
+      throw new LegacyConfigValidateError(cause instanceof Error ? cause.message : String(cause));
+    }
+  } else {
+    issuerUrl = thirdPartyIssuerUrlUnchecked(thirdParty);
   }
 
   const keys: unknown[] = [];

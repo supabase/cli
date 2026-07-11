@@ -271,7 +271,7 @@ function resolveGotruePasskeyWebauthn(
     passkeyDoc !== undefined
       ? legacyEnvOverrideBool(
           "SUPABASE_AUTH_PASSKEY_ENABLED",
-          legacyRawUnmodeledBool(passkeyDoc["enabled"]),
+          legacyRawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled"),
           "auth.passkey.enabled",
           projectEnvValues,
         )
@@ -1154,22 +1154,49 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // SUPABASE_DB_POOLER_* generically (pkg/config/config.go:580-586) before
     // start.go:1194-1211 reads utils.Config.Db.Pooler.{Port,PoolMode,
     // DefaultPoolSize,MaxClientConn}; PoolMode specifically decides the
-    // published host port (5432 session vs 6543 transaction).
-    const poolerPort = envOverridePort(
-      "SUPABASE_DB_POOLER_PORT",
-      config.db.pooler.port,
-      "db.pooler.port",
-      projectEnvValues,
-    );
-    const poolMode = legacyEnvOverridePoolMode(config.db.pooler.pool_mode, projectEnvValues);
-    const poolerDefaultPoolSize = legacyEnvOverrideDefaultPoolSize(
-      config.db.pooler.default_pool_size,
-      projectEnvValues,
-    );
-    const poolerMaxClientConn = legacyEnvOverrideMaxClientConn(
-      config.db.pooler.max_client_conn,
-      projectEnvValues,
-    );
+    // published host port (5432 session vs 6543 transaction). All four throw
+    // synchronously on a malformed override — wrapped in `Effect.try` so a bad
+    // value fails as a typed `LegacyStartInvalidConfigError` (matching Go's
+    // `Config.Load` rejecting it before any Docker work) instead of an
+    // untyped Effect defect bypassing the rollback `tapError` and
+    // `withJsonErrorHandling`'s `Effect.catch` — same bug class already fixed
+    // for `dbHealthTimeoutSeconds`/`db.settings`/the Edge Runtime
+    // `policy`/`inspector_port` overrides elsewhere in this function.
+    const poolerPort = yield* Effect.try({
+      try: () =>
+        envOverridePort(
+          "SUPABASE_DB_POOLER_PORT",
+          config.db.pooler.port,
+          "db.pooler.port",
+          projectEnvValues,
+        ),
+      catch: (cause) =>
+        new LegacyStartInvalidConfigError({
+          message: `invalid config for db.pooler.port: ${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
+    });
+    const poolMode = yield* Effect.try({
+      try: () => legacyEnvOverridePoolMode(config.db.pooler.pool_mode, projectEnvValues),
+      catch: (cause) =>
+        new LegacyStartInvalidConfigError({
+          message: `invalid config for db.pooler.pool_mode: ${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
+    });
+    const poolerDefaultPoolSize = yield* Effect.try({
+      try: () =>
+        legacyEnvOverrideDefaultPoolSize(config.db.pooler.default_pool_size, projectEnvValues),
+      catch: (cause) =>
+        new LegacyStartInvalidConfigError({
+          message: `invalid config for db.pooler.default_pool_size: ${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
+    });
+    const poolerMaxClientConn = yield* Effect.try({
+      try: () => legacyEnvOverrideMaxClientConn(config.db.pooler.max_client_conn, projectEnvValues),
+      catch: (cause) =>
+        new LegacyStartInvalidConfigError({
+          message: `invalid config for db.pooler.max_client_conn: ${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
+    });
 
     /**
      * Every case returns `{ spec, excludeFromHealthWatch? }`: `spec` is the

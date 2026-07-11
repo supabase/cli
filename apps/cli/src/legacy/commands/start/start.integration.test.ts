@@ -2895,6 +2895,33 @@ content_path = "./templates/custom_notice.html"
       );
     });
 
+    it.live(
+      "fails with a typed config error, before any container is created, on an invalid SUPABASE_DB_POOLER_POOL_MODE",
+      () => {
+        const previous = process.env["SUPABASE_DB_POOLER_POOL_MODE"];
+        process.env["SUPABASE_DB_POOLER_POOL_MODE"] = "bogus";
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_DB_POOLER_POOL_MODE"];
+              else process.env["SUPABASE_DB_POOLER_POOL_MODE"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
     it.live("SUPABASE_DB_POOLER_PORT overrides the published host port", () => {
       const previous = process.env["SUPABASE_DB_POOLER_PORT"];
       process.env["SUPABASE_DB_POOLER_PORT"] = "60001";
