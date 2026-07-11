@@ -2768,6 +2768,51 @@ content_path = "./templates/custom_notice.html"
     );
   });
 
+  describe("SUPABASE_API_ENABLED override", () => {
+    // Go nests the entire TLS cert/key disk read inside `if c.Api.Enabled`
+    // (`pkg/config/config.go:1006-1027`) — when API is disabled (however that happened), Kong
+    // keeps its embedded default cert/key regardless of `api.tls.enabled`/cert_path/key_path.
+    it.live(
+      "skips the configured cert/key read for Kong when API is disabled only via env override",
+      () => {
+        const previous = process.env["SUPABASE_API_ENABLED"];
+        process.env["SUPABASE_API_ENABLED"] = "false";
+        const { layer, workdir, child } = setup({
+          configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
+        });
+        mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
+        writeFileSync(
+          join(workdir, "supabase", "certs", "server.crt"),
+          "-----BEGIN CERTIFICATE-----custom-cert",
+        );
+        writeFileSync(
+          join(workdir, "supabase", "certs", "server.key"),
+          "-----BEGIN PRIVATE KEY-----custom-key",
+        );
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const kongCreate = child.spawned.find(
+            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+          );
+          const kongContainerName = containerNameFromCreateArgs(kongCreate?.args ?? []);
+          const secretsDir = join(workdir, "supabase", ".temp", "start-secrets", kongContainerName);
+          const crtContent = readFileSync(join(secretsDir, "secret-1"), "utf-8");
+          const keyContent = readFileSync(join(secretsDir, "secret-2"), "utf-8");
+          expect(crtContent).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
+          expect(keyContent).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_API_ENABLED"];
+              else process.env["SUPABASE_API_ENABLED"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+  });
+
   describe("SUPABASE_AUTH_JWT_EXPIRY reaches Postgres init", () => {
     it.live("honors the override for Postgres's JWT_EXP, not just GoTrue's GOTRUE_JWT_EXP", () => {
       const previous = process.env["SUPABASE_AUTH_JWT_EXPIRY"];
@@ -2990,6 +3035,31 @@ content_path = "./templates/custom_notice.html"
             Effect.sync(() => {
               if (previous === undefined) delete process.env["SUPABASE_DB_POOLER_POOL_MODE"];
               else process.env["SUPABASE_DB_POOLER_POOL_MODE"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "fails with a typed config error, before any container is created, on an invalid SUPABASE_REALTIME_ENABLED",
+      () => {
+        const previous = process.env["SUPABASE_REALTIME_ENABLED"];
+        process.env["SUPABASE_REALTIME_ENABLED"] = "maybe";
+        const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_REALTIME_ENABLED"];
+              else process.env["SUPABASE_REALTIME_ENABLED"] = previous;
             }),
           ),
         );

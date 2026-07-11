@@ -806,11 +806,22 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // design; omission confirmed against source, not missed.
 
     // 5. Gate evaluation — see `start.gates.ts` for the full boolean table.
-    const gates = legacyResolveStartGates({
-      config,
-      projectEnvValues,
-      excludedKeys,
-      document: context.loaded?.document,
+    // `legacyEnvOverrideBool` throws synchronously on an unparsable value (matching Go's
+    // `Config.Load` hard-failing on a bad Viper bool decode, `pkg/config/config.go:749-756`) —
+    // wrapped so that throw becomes the typed `LegacyStartInvalidConfigError` every other
+    // malformed-config path in this handler uses, not an untyped Effect defect.
+    const gates = yield* Effect.try({
+      try: () =>
+        legacyResolveStartGates({
+          config,
+          projectEnvValues,
+          excludedKeys,
+          document: context.loaded?.document,
+        }),
+      catch: (cause) =>
+        new LegacyStartInvalidConfigError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
     });
 
     // 6. Go's `utils.Config.Auth.ResolveJWKS(ctx)` (`start.go:274-277`) — runs
@@ -1036,6 +1047,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const vectorContainerName = legacyServiceContainerName("vector", projectId);
     const mailpitContainerName = legacyServiceContainerName("inbucket", projectId);
 
+    // Go gates the TLS cert/key disk read on the post-Viper-override `Api.Enabled` itself, not
+    // just `Api.Tls.Enabled` (`pkg/config/config.go:1006-1027`: the whole `if c.Api.Enabled`
+    // block, including the nested `if c.Api.Tls.Enabled` cert read, is skipped when API is
+    // disabled, leaving `CertContent`/`KeyContent` at their embedded defaults). Not the SAME
+    // `apiEnabled` `legacyResolveStartGates` (`start.gates.ts:87-92`) computes for its own
+    // `gates.postgrest` — that one is additionally ANDed with `--exclude postgrest`, which has no
+    // equivalent in Go's `Validate()` — so this is resolved separately here.
+    const apiEnabled = legacyEnvOverrideBool(
+      "SUPABASE_API_ENABLED",
+      config.api.enabled,
+      "api.enabled",
+      projectEnvValues,
+    );
     // Hoisted out of the "kong" case below (it used to be computed only
     // there): the post-bring-up health-probe CA-trust lookup near the end of
     // this function needs the SAME env-overridden value, not the raw
@@ -1280,14 +1304,21 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // Go's `NewConfig` seeds `Api.Tls.{CertContent,KeyContent}`
           // unconditionally from the embedded default cert/key
           // (`pkg/config/config.go:452-455`); `Validate` only overwrites them
-          // from disk when TLS is enabled AND both `cert_path`/`key_path` are
-          // set (`config.go:1010-1027`). So a `[api.tls] enabled = true`
-          // project with no custom paths still gets a real cert/key here —
-          // never empty strings — matching Kong's own unconditional write of
-          // these fields to `/home/kong/localhost.{crt,key}` (`start.go:585-601`).
+          // from disk when API itself is enabled, TLS is enabled, AND both
+          // `cert_path`/`key_path` are set (`config.go:1006-1027` — the whole
+          // disk-read branch is nested inside `if c.Api.Enabled`). So a
+          // `[api.tls] enabled = true` project with no custom paths still
+          // gets a real cert/key here — never empty strings — matching
+          // Kong's own unconditional write of these fields to
+          // `/home/kong/localhost.{crt,key}` (`start.go:585-601`).
           let tlsCertContent: string = LEGACY_KONG_LOCAL_TLS_CERT;
           let tlsKeyContent: string = LEGACY_KONG_LOCAL_TLS_KEY;
-          if (apiTlsEnabled && apiTlsCertPath !== undefined && apiTlsKeyPath !== undefined) {
+          if (
+            apiEnabled &&
+            apiTlsEnabled &&
+            apiTlsCertPath !== undefined &&
+            apiTlsKeyPath !== undefined
+          ) {
             tlsCertContent = yield* fs
               .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsCertPath))
               .pipe(
@@ -1922,17 +1953,21 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // hand-rolled `HttpClient.make(...)` mock (this file's own integration
     // tests), which never reads `FetchHttpClient.Fetch` at all.
     //
-    // Folds the hoisted, env-overridden `apiPort`/`apiTlsEnabled`/
+    // Folds the hoisted, env-overridden `apiEnabled`/`apiPort`/`apiTlsEnabled`/
     // `apiTlsCertPath`/`apiTlsKeyPath`/`values.apiUrl` into `config` (not the
-    // raw values) so a `SUPABASE_API_PORT`/`SUPABASE_API_TLS_{ENABLED,
-    // CERT_PATH,KEY_PATH}`/`SUPABASE_API_EXTERNAL_URL` override that actually
-    // brought Kong up on a different port/TLS/cert/external URL also reaches
-    // every local Storage-gateway caller below — otherwise `resolveLocalBaseUrl`
-    // derives its URL from the un-overridden `config.api.{port,tls.enabled,
-    // external_url}` and points at a port/scheme/host nothing is actually
-    // listening on, and `validateLocalKongTls` validates against a cert/key path
-    // Kong itself isn't actually serving from (Kong's own spec uses these same
-    // resolved `apiTlsCertPath`/`apiTlsKeyPath` locals). Also folds in the
+    // raw values) so a `SUPABASE_API_ENABLED`/`SUPABASE_API_PORT`/
+    // `SUPABASE_API_TLS_{ENABLED,CERT_PATH,KEY_PATH}`/`SUPABASE_API_EXTERNAL_URL`
+    // override that actually brought Kong up on a different port/TLS/cert/
+    // external URL also reaches every local Storage-gateway caller below —
+    // otherwise `resolveLocalBaseUrl` derives its URL from the un-overridden
+    // `config.api.{port,tls.enabled,external_url}` and points at a
+    // port/scheme/host nothing is actually listening on, and
+    // `validateLocalKongTls`'s own `opts.config.api.enabled &&
+    // opts.config.api.tls.enabled` gate (`legacy-storage-credentials.ts`)
+    // validates against a cert/key path Kong itself isn't actually serving
+    // from when `api.enabled` disagrees with the raw config (Kong's own spec
+    // uses these same resolved `apiEnabled`/`apiTlsCertPath`/`apiTlsKeyPath`
+    // locals). Also folds in the
     // already-resolved `values.jwtSecret`/`values.serviceRoleKey` (decrypted,
     // env/dotenv-overridden — the same values the real GoTrue/Storage containers
     // were started with) instead of the raw `config.auth.*`
@@ -1957,6 +1992,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       ...config,
       api: {
         ...config.api,
+        enabled: apiEnabled,
         port: values.apiPort,
         external_url: values.apiUrl,
         tls: {
