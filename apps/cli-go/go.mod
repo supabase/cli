@@ -48,7 +48,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 	github.com/stretchr/testify v1.11.1
-	github.com/stripe/pg-schema-diff v1.0.5
+	github.com/stripe/pg-schema-diff v1.0.7
 	github.com/supabase/cli/pkg v1.0.0
 	github.com/tidwall/jsonc v0.3.3
 	github.com/withfig/autocomplete-tools/packages/cobra v1.2.0
