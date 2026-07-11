@@ -4,6 +4,7 @@ import {
   buildLegacyStartContainerCreateArgs,
   legacyApplyBitbucketStartContainerFilter,
   legacyBuildHealthCmdArg,
+  legacyIsDockerClientEnvKey,
   type LegacyStartContainerSpec,
 } from "./docker-create-args.ts";
 
@@ -121,6 +122,34 @@ describe("buildLegacyStartContainerCreateArgs", () => {
     // Every -e argument is a bare key: no '=' anywhere in an -e value.
     const envValues = args.flatMap((a, i) => (args[i - 1] === "-e" ? [a] : []));
     expect(envValues.every((v) => !v.includes("="))).toBe(true);
+  });
+
+  test("emits DOCKER_HOST inline as -e KEY=value, not key-only, since it's not a secret (Vector's tcp/npipe daemon host)", () => {
+    const spec: LegacyStartContainerSpec = {
+      image: "timberio/vector:0.36.0-alpine",
+      containerName: "supabase_vector_proj",
+      env: { DOCKER_HOST: "http://host.docker.internal:2375", API_KEY: "super-secret" },
+      binds: [],
+      networkId: "supabase_network_proj",
+      labels: {},
+    };
+    const args = buildLegacyStartContainerCreateArgs(spec);
+    expect(args).toContain("-e");
+    const dockerHostIndex = args.indexOf("DOCKER_HOST=http://host.docker.internal:2375");
+    expect(dockerHostIndex).toBeGreaterThan(-1);
+    expect(args[dockerHostIndex - 1]).toBe("-e");
+    // The genuine secret alongside it must still stay key-only.
+    expect(args).toContain("API_KEY");
+    expect(args.some((a) => a.includes("super-secret"))).toBe(false);
+  });
+
+  test("legacyIsDockerClientEnvKey recognizes Docker/Podman client env vars and nothing else", () => {
+    expect(legacyIsDockerClientEnvKey("DOCKER_HOST")).toBe(true);
+    expect(legacyIsDockerClientEnvKey("DOCKER_TLS_VERIFY")).toBe(true);
+    expect(legacyIsDockerClientEnvKey("DOCKER_CERT_PATH")).toBe(true);
+    expect(legacyIsDockerClientEnvKey("DOCKER_CONTEXT")).toBe(true);
+    expect(legacyIsDockerClientEnvKey("DOCKER_API_VERSION")).toBe(true);
+    expect(legacyIsDockerClientEnvKey("DB_PASSWORD")).toBe(false);
   });
 
   test("omits the protocol suffix for tcp ports and adds /udp when specified", () => {

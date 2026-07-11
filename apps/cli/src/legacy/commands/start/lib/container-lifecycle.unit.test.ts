@@ -194,6 +194,35 @@ describe("legacyStartContainer", () => {
   );
 
   it.live(
+    "excludes DOCKER_HOST from the spawned docker create process's own env, even though it's in spec.env (Vector's tcp/npipe daemon host)",
+    () => {
+      // `env`/`extendEnv: true` merge `spec.env` INTO the spawned `docker create` process's own
+      // environment (see the previous test) — but `DOCKER_HOST` configures which daemon the
+      // `docker`/`podman` CLI CLIENT itself talks to, not a container env var read via `-e KEY`.
+      // Letting a container-facing `DOCKER_HOST` (e.g. Vector's `http://host.docker.internal:...`
+      // for a tcp/npipe daemon host) leak into the spawned process's own env would hijack which
+      // daemon this `docker create` call itself targets, before the container even exists.
+      const mock = alwaysSucceed();
+      const spec: LegacyStartContainerSpec = {
+        ...baseSpec,
+        env: { DOCKER_HOST: "http://host.docker.internal:2375", API_KEY: "s3cret" },
+      };
+      return legacyStartContainer(mock.spawner, spec, {
+        projectId: "proj",
+        isBitbucketPipeline: false,
+        workdir,
+        extraHosts: [],
+      }).pipe(
+        Effect.map(() => {
+          const create = mock.spawnedOptions.find((entry) => entry.args[0] === "create");
+          expect(create?.env).toEqual({ API_KEY: "s3cret" });
+          expect(create?.args).toContain("DOCKER_HOST=http://host.docker.internal:2375");
+        }),
+      );
+    },
+  );
+
+  it.live(
     "skips volume creation and drops the named-volume bind + security-opt under Bitbucket Pipelines",
     () => {
       const mock = alwaysSucceed();

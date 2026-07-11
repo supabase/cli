@@ -354,6 +354,34 @@ function buildHealthcheckArgs(healthcheck: LegacyStartHealthcheckSpec): Readonly
 }
 
 /**
+ * Docker/Podman CLI env vars that configure the CLIENT itself — which daemon
+ * it connects to — rather than a value for the container being created. A
+ * container spec's own `env` can legitimately need to set one of these (e.g.
+ * Vector's `DOCKER_HOST=http://host.docker.internal:<port>`, set by
+ * `legacyResolveVectorDockerSocketPlan` for a `tcp`/`npipe` daemon host so
+ * Vector can reach the real daemon from inside its own container), but that
+ * value must never be inherited by the spawned `docker`/`podman create`
+ * PROCESS's own environment: doing so would hijack which daemon that process
+ * itself talks to before the container even exists (see
+ * `legacyDockerCreateContainer`, `container-lifecycle.ts`, which filters these
+ * keys out of the env it hands to the spawned process for exactly this
+ * reason). These are not secrets, so unlike the rest of `spec.env` they are
+ * safe to emit inline as `-e KEY=value` instead of the key-only form.
+ */
+const DOCKER_CLIENT_ENV_KEYS: ReadonlySet<string> = new Set([
+  "DOCKER_HOST",
+  "DOCKER_TLS_VERIFY",
+  "DOCKER_CERT_PATH",
+  "DOCKER_CONTEXT",
+  "DOCKER_API_VERSION",
+]);
+
+/** Whether `key` configures the Docker/Podman CLI client itself — see {@link DOCKER_CLIENT_ENV_KEYS}. */
+export function legacyIsDockerClientEnvKey(key: string): boolean {
+  return DOCKER_CLIENT_ENV_KEYS.has(key);
+}
+
+/**
  * Assemble the `docker create` argv for one `supabase start` service
  * container. Pure (no Effect) so every flag mapping is unit-testable in
  * isolation, matching the `buildLegacyDockerArgs` (`docker run`) precedent.
@@ -369,6 +397,8 @@ function buildHealthcheckArgs(healthcheck: LegacyStartHealthcheckSpec): Readonly
  * of which may appear in this process's own argv (`ps aux` /
  * `/proc/<pid>/cmdline`). The spawned `docker create`'s own child environment
  * supplies each value — a later caller's responsibility, not this builder's.
+ * The exception is {@link legacyIsDockerClientEnvKey} keys, which are emitted
+ * inline as `-e KEY=value` instead — see that function's doc comment.
  */
 export function buildLegacyStartContainerCreateArgs(
   spec: LegacyStartContainerSpec,
@@ -378,7 +408,9 @@ export function buildLegacyStartContainerCreateArgs(
     "--name",
     spec.containerName,
     ...(spec.hostname === undefined ? [] : ["--hostname", spec.hostname]),
-    ...Object.keys(spec.env).flatMap((key) => ["-e", key]),
+    ...Object.entries(spec.env).flatMap(([key, value]) =>
+      legacyIsDockerClientEnvKey(key) ? ["-e", `${key}=${value}`] : ["-e", key],
+    ),
     ...spec.binds.flatMap((bind) => ["-v", bind]),
     ...(spec.volumesFrom ?? []).flatMap((source) => ["--volumes-from", source]),
     ...Object.entries(spec.tmpfs ?? {}).flatMap(([path, options]) => [

@@ -30,6 +30,7 @@ import { LEGACY_CLI_PROJECT_LABEL } from "../../../shared/legacy-docker-ids.ts";
 import {
   buildLegacyStartContainerCreateArgs,
   legacyApplyBitbucketStartContainerFilter,
+  legacyIsDockerClientEnvKey,
   type LegacyStartContainerSpec,
 } from "./docker-create-args.ts";
 
@@ -394,10 +395,20 @@ function legacyDockerCreateContainer(
       // `docker-create-args.ts` emits the key-only `-e KEY` form (never `-e KEY=value`) so
       // secrets never appear in argv/`ps`/`/proc/<pid>/cmdline` (CWE-214/209) — Docker then
       // resolves each key's value from THIS spawned process's own environment. `extendEnv:
-      // true` keeps the rest of the parent's env (PATH, DOCKER_HOST, …) so the docker CLI
-      // invocation itself still behaves correctly; `env` supplies the actual secret values.
+      // true` keeps the rest of the parent's env (PATH, the real DOCKER_HOST, …) so the docker
+      // CLI invocation itself still behaves correctly; `env` supplies the actual secret values.
       // Matches the same pattern already used for `docker run` (`legacy-docker-run.layer.ts`)
       // and image resolution (`legacy-docker-image-resolve.ts`).
+      //
+      // Callers must have already stripped `legacyIsDockerClientEnvKey` keys (e.g. a
+      // container-facing `DOCKER_HOST`, set by Vector's spec for a tcp/npipe daemon host) from
+      // `env` before calling this function — those are emitted inline as `-e KEY=value` by
+      // `buildLegacyStartContainerCreateArgs` instead, since `extendEnv: true` merges `env` INTO
+      // this spawned process's own environment (per Effect's `ChildProcess` semantics,
+      // prioritizing `env`'s values), and that same environment is what the `docker`/`podman`
+      // CLI client itself reads `DOCKER_HOST` from to pick which daemon to talk to. Letting a
+      // container-facing `DOCKER_HOST` leak in here would hijack this `docker create` call's own
+      // daemon target before the container even exists.
       const child = yield* spawnContainerCli(spawner, args, {
         stdin: "ignore",
         stdout: "pipe",
@@ -637,11 +648,14 @@ export function legacyStartContainer(
 
     return yield* Effect.gen(function* () {
       const createArgs = buildLegacyStartContainerCreateArgs(specWithSecretBinds);
-      const containerId = yield* legacyDockerCreateContainer(
-        spawner,
-        createArgs,
-        specWithSecretBinds.env,
+      // `legacyIsDockerClientEnvKey` keys (e.g. Vector's container-facing `DOCKER_HOST`) are
+      // already emitted inline as `-e KEY=value` by `buildLegacyStartContainerCreateArgs` above —
+      // see `legacyDockerCreateContainer`'s doc comment for why they must not also reach the
+      // spawned `docker create` process's own environment.
+      const createProcessEnv = Object.fromEntries(
+        Object.entries(specWithSecretBinds.env).filter(([key]) => !legacyIsDockerClientEnvKey(key)),
       );
+      const containerId = yield* legacyDockerCreateContainer(spawner, createArgs, createProcessEnv);
       yield* legacyDockerStartContainer(spawner, containerId, specWithSecretBinds);
       return containerId;
     }).pipe(
