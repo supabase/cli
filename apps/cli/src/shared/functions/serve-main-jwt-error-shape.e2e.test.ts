@@ -10,16 +10,13 @@ import { LEGACY_EDGE_RUNTIME_IMAGE } from "../../legacy/shared/legacy-edge-runti
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
 
 /**
- * Regression guard for supabase/supabase#47836: JWT verification failures must be
- * returned as `{ "error": "..." }`, matching the platform edge runtime's shape, not
- * the template's former `{ "msg": "..." }`. Studio (and other consumers) parse the
- * `error` key to surface the real failure reason instead of falling back to a
- * generic message.
+ * Regression guard for supabase/supabase#47836: JWT verification failures must
+ * return `{ "error": "..." }`, matching the platform edge runtime's shape, not
+ * the template's former `{ "msg": "..." }`.
  *
- * Boots the real bundled template under edge-runtime with networking enabled and
- * asserts the JSON body shape for both JWT-failure paths: a missing Authorization
- * header (caught exception path) and a syntactically valid but wrongly-signed JWT
- * (the `!isValidJWT` path).
+ * Boots the real bundled template under edge-runtime and asserts the JSON body
+ * for both JWT-failure paths: a missing Authorization header (caught-exception
+ * path) and a wrongly-signed JWT (the `!isValidJWT` path).
  */
 
 function hasDocker(): boolean {
@@ -40,18 +37,6 @@ const PORT = 8082;
 function containerLogs(container: string): string {
   const result = spawnSync("docker", ["logs", container], { encoding: "utf8" });
   return `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
-}
-
-async function waitForServer(url: string, deadline: number): Promise<void> {
-  while (Date.now() < deadline) {
-    try {
-      await fetch(url, { method: "OPTIONS" });
-      return;
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-  }
-  throw new Error(`Server at ${url} did not become reachable in time`);
 }
 
 const containers: string[] = [];
@@ -131,7 +116,6 @@ describe("functions serve runtime template (JWT error shape)", () => {
       expect(logs).toMatch(/Serving functions on/);
 
       const url = `http://127.0.0.1:${PORT.toString()}/test-func`;
-      await waitForServer(url, deadline);
 
       // Missing Authorization header: caught-exception path (previously { msg: e.toString() }).
       const missingAuthRes = await fetch(url, { method: "POST" });
