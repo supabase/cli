@@ -1091,6 +1091,17 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         config.storage.file_size_limit,
         projectEnvValues,
       ) ?? config.storage.file_size_limit;
+    // Same gap for `storage.vector.enabled` — both the long-running Storage
+    // container AND `legacySeedBucketsRun`'s `effectiveLocalStorageConfig`
+    // splice further down must see the same already-overridden value (Go's
+    // `internal/seed/buckets/buckets.go:54` reads the single
+    // `utils.Config.Storage.VectorBuckets.Enabled`).
+    const storageVectorEnabled = legacyEnvOverrideBool(
+      "SUPABASE_STORAGE_VECTOR_ENABLED",
+      config.storage.vector.enabled,
+      "storage.vector.enabled",
+      projectEnvValues,
+    );
 
     // Same gap for `api.schemas`/`api.extra_search_path`/`api.max_rows` — both
     // PostgREST's own container AND Studio's copy of the same PGRST_DB_* env
@@ -1401,12 +1412,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
                 projectEnvValues,
               ),
               imageTransformationEnabled: gates.imgproxy,
-              vectorBucketsEnabled: legacyEnvOverrideBool(
-                "SUPABASE_STORAGE_VECTOR_ENABLED",
-                config.storage.vector.enabled,
-                "storage.vector.enabled",
-                projectEnvValues,
-              ),
+              vectorBucketsEnabled: storageVectorEnabled,
               dbUrl: values.dbUrl,
               jwtSecret: values.jwtSecret,
               jwks,
@@ -1912,23 +1918,32 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // tests), which never reads `FetchHttpClient.Fetch` at all.
     //
     // Folds the hoisted, env-overridden `apiPort`/`apiTlsEnabled`/
-    // `apiTlsCertPath`/`apiTlsKeyPath` into `config` (not the raw values) so a
-    // `SUPABASE_API_PORT`/`SUPABASE_API_TLS_{ENABLED,CERT_PATH,KEY_PATH}`
-    // override that actually brought Kong up on a different port/TLS/cert
-    // also reaches every local Storage-gateway caller below — otherwise
-    // `resolveLocalBaseUrl` derives its URL from the un-overridden
-    // `config.api.{port,tls.enabled}` and points at a port/scheme nothing is
-    // actually listening on, and `validateLocalKongTls` validates against a
-    // cert/key path Kong itself isn't actually serving from (Kong's own spec
-    // uses these same resolved `apiTlsCertPath`/`apiTlsKeyPath` locals). Also
-    // folds in the already-resolved `values.jwtSecret`/`values.serviceRoleKey`
-    // (decrypted, env/dotenv-overridden — the same values the real GoTrue/
-    // Storage containers were started with) instead of the raw `config.auth.*`
+    // `apiTlsCertPath`/`apiTlsKeyPath`/`values.apiUrl` into `config` (not the
+    // raw values) so a `SUPABASE_API_PORT`/`SUPABASE_API_TLS_{ENABLED,
+    // CERT_PATH,KEY_PATH}`/`SUPABASE_API_EXTERNAL_URL` override that actually
+    // brought Kong up on a different port/TLS/cert/external URL also reaches
+    // every local Storage-gateway caller below — otherwise `resolveLocalBaseUrl`
+    // derives its URL from the un-overridden `config.api.{port,tls.enabled,
+    // external_url}` and points at a port/scheme/host nothing is actually
+    // listening on, and `validateLocalKongTls` validates against a cert/key path
+    // Kong itself isn't actually serving from (Kong's own spec uses these same
+    // resolved `apiTlsCertPath`/`apiTlsKeyPath` locals). Also folds in the
+    // already-resolved `values.jwtSecret`/`values.serviceRoleKey` (decrypted,
+    // env/dotenv-overridden — the same values the real GoTrue/Storage containers
+    // were started with) instead of the raw `config.auth.*`
     // `legacyResolveStorageCredentials`'s local branch would otherwise
     // re-derive from a narrower, dotenv-blind `process.env`-only check —
-    // mirroring Go's single `utils.Config.Auth.*.Value` read by both the
-    // container env and `newLocalClient` (`internal/storage/client/api.go:
-    // 30-37`). Reused for both this health-check CA lookup and the two
+    // mirroring Go's single `utils.Config.Auth.*.Value`/`Api.ExternalUrl` read
+    // by both the container env and `newLocalClient` (`internal/storage/
+    // client/api.go:30-37`). Also folds in `storageFileSizeLimit`/
+    // `storageVectorEnabled` so `legacySeedBucketsRun` (which reads
+    // `config.storage.file_size_limit`/`config.storage.vector.enabled` to fill
+    // bucket defaults and gate vector-upsert seeding, `legacy-seed-buckets.ts`)
+    // sees the same values the real Storage container was started with, not the
+    // raw un-overridden config — mirroring Go's `internal/seed/buckets/
+    // buckets.go:54` and `pkg/config/config.go:919-920`, both reading the
+    // single `utils.Config.Storage.{FileSizeLimit,VectorBuckets.Enabled}`.
+    // Reused for both this health-check CA lookup and the two
     // `legacySeedBucketsRun` calls below (`resolvedConfig`), so bucket
     // seeding never independently reloads config.toml and silently drops
     // these same overrides — mirroring Go's `buckets.Run` reading the single
@@ -1938,6 +1953,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       api: {
         ...config.api,
         port: values.apiPort,
+        external_url: values.apiUrl,
         tls: {
           ...config.api.tls,
           enabled: apiTlsEnabled,
@@ -1949,6 +1965,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         ...config.auth,
         jwt_secret: values.jwtSecret,
         service_role_key: values.serviceRoleKey,
+      },
+      storage: {
+        ...config.storage,
+        file_size_limit: storageFileSizeLimit,
+        vector: {
+          ...config.storage.vector,
+          enabled: storageVectorEnabled,
+        },
       },
     };
     const { localKongCa } = yield* legacyResolveStorageCredentials({

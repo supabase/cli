@@ -224,6 +224,7 @@ function freshVolumeRoute(
 /** Storage's `/storage/v1/bucket` GET (list)/POST (create) endpoints — every other request answers a bare 200, matching `alwaysReadyHttpClientLayer`'s permissiveness for the PostgREST/Edge Runtime readiness probes some scenarios also exercise. */
 function mockStorageBucketHttpClient() {
   const createdBucketRequests: Array<string> = [];
+  const createdBucketBodies: Array<unknown> = [];
   const layer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
@@ -240,6 +241,15 @@ function mockStorageBucketHttpClient() {
       }
       if (request.method === "POST" && request.url.includes("/storage/v1/bucket")) {
         createdBucketRequests.push(request.url);
+        if (request.body._tag === "Uint8Array") {
+          try {
+            createdBucketBodies.push(JSON.parse(new TextDecoder().decode(request.body.body)));
+          } catch {
+            createdBucketBodies.push(undefined);
+          }
+        } else {
+          createdBucketBodies.push(undefined);
+        }
         return Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
@@ -255,7 +265,7 @@ function mockStorageBucketHttpClient() {
       );
     }),
   );
-  return { layer, createdBucketRequests };
+  return { layer, createdBucketRequests, createdBucketBodies };
 }
 
 /**
@@ -1355,6 +1365,70 @@ content_path = "./templates/custom_notice.html"
             Effect.sync(() => {
               if (previous === undefined) delete process.env["SUPABASE_API_PORT"];
               else process.env["SUPABASE_API_PORT"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "seeds against the env-overridden SUPABASE_API_EXTERNAL_URL, not config.toml's raw value",
+      () => {
+        // `effectiveLocalStorageConfig` previously left `api.external_url` as the raw,
+        // un-overridden config value, so a `SUPABASE_API_EXTERNAL_URL` override that
+        // actually brought Kong/GoTrue up under a different external URL never reached
+        // the bucket-seeding gateway's base URL.
+        const previous = process.env["SUPABASE_API_EXTERNAL_URL"];
+        process.env["SUPABASE_API_EXTERNAL_URL"] = "http://override.example.com:9999";
+        const http = mockStorageBucketHttpClient();
+        const { layer } = setup({
+          configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
+          route: freshVolumeRoute(defaultRoute()),
+          httpClientLayer: http.layer,
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          expect(http.createdBucketRequests).toHaveLength(1);
+          expect(http.createdBucketRequests[0]).toContain("override.example.com:9999");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_API_EXTERNAL_URL"];
+              else process.env["SUPABASE_API_EXTERNAL_URL"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "seeds a bucket's default file_size_limit from the env-overridden SUPABASE_STORAGE_FILE_SIZE_LIMIT",
+      () => {
+        // `effectiveLocalStorageConfig` previously left `storage.file_size_limit` as the
+        // raw, un-overridden config value, so `legacySeedBucketsRun`'s per-bucket default
+        // (for a bucket with no explicit `file_size_limit` of its own) never reflected an
+        // env/dotenv-only `SUPABASE_STORAGE_FILE_SIZE_LIMIT` override.
+        const previous = process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"];
+        process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"] = "10MiB";
+        const http = mockStorageBucketHttpClient();
+        const { layer } = setup({
+          configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
+          route: freshVolumeRoute(defaultRoute()),
+          httpClientLayer: http.layer,
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          expect(http.createdBucketBodies).toHaveLength(1);
+          expect(
+            (http.createdBucketBodies[0] as { file_size_limit?: number })?.file_size_limit,
+          ).toBe(10 * 1024 * 1024);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) delete process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"];
+              else process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"] = previous;
             }),
           ),
         );
