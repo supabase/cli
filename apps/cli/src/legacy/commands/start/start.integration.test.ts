@@ -1223,6 +1223,37 @@ content_path = "./templates/custom_notice.html"
       },
     );
 
+    it.live(
+      "does not attempt to resolve an excluded service's migrate-job image on a non-fresh-volume restart",
+      () => {
+        // Go's own pre-pull (`ensureImagesCached`, `start.go:237-262`) only ever touches
+        // non-excluded services, and the one-shot setup-job images are resolved lazily,
+        // only from inside `initSchema15` when it actually runs — a fresh volume AND
+        // PG15+. On an ordinary restart (this test's default, non-fresh-volume setup),
+        // `--exclude storage-api` must not even attempt to resolve Storage's image, or an
+        // unavailable/rate-limited Storage image would fail `start` even though nothing
+        // in this run needs it.
+        const base = defaultRoute();
+        const route = (args: ReadonlyArray<string>): RouteResult => {
+          const targetsStorageImage =
+            (args[0] === "image" && args[1] === "inspect" && args[2]?.includes("storage-api")) ===
+              true ||
+            (args[0] === "pull" && args[1]?.includes("storage-api") === true);
+          if (targetsStorageImage) {
+            return { exitCode: 1, stderr: ["Error: toomanyrequests: rate limit exceeded"] };
+          }
+          return base(args);
+        };
+        const { layer, child } = setup({ route });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ exclude: ["storage-api"] }));
+          const createdNames = createdContainerNames(child.spawned);
+          expect(createdNames.some((name) => name.includes("_storage_"))).toBe(false);
+          expect(createdNames.some((name) => name.includes("_kong_"))).toBe(true);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
     it.live("skips the SetupLocalDatabase-equivalent pipeline on a non-fresh volume", () => {
       const { layer, out, child } = setup();
       return Effect.gen(function* () {

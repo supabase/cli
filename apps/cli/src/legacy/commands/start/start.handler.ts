@@ -863,15 +863,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     );
     // Go's one-shot fresh-DB setup jobs (`initSchema15`) read `utils.Config.
     // {Realtime,Storage,Auth}.Enabled` — the EFFECTIVE, env-overridden value — and run
-    // regardless of `--exclude` (`internal/db/start/start.go:270,299,321`). Hoisted here
-    // (rather than recomputed only inside the `isFreshVolume` block below) so the SAME
-    // booleans can also gate which of these services' images get resolved through
-    // `legacyEnsureImagesCached` a few lines down — `imagePlan` omits an excluded
-    // service's image entirely, so without this, an excluded-but-still-run setup job's
-    // image falls back to `resolveImage`'s raw-image miss path, which never applies a
-    // project-dotenv-only `SUPABASE_INTERNAL_IMAGE_REGISTRY` override (`LegacyDockerRun`'s
-    // resolver is ambient-`process.env`-only, unlike the `projectEnvValues`-aware
-    // `legacyEnsureImagesCached`).
+    // regardless of `--exclude` (`internal/db/start/start.go:270,299,321`) WHENEVER they
+    // actually execute (see the `isFreshVolume`/`majorVersion >= 15` gate further down,
+    // where these booleans also gate that conditional image resolve). Hoisted here
+    // (rather than recomputed only inside the `isFreshVolume` block below) since
+    // `legacyStartSetupLocalDatabase`'s own config object a few hundred lines down also
+    // needs them, and computing them once keeps both consumers in agreement.
     const realtimeEnabledForSetup = legacyEnvOverrideBool(
       "SUPABASE_REALTIME_ENABLED",
       config.realtime.enabled,
@@ -938,27 +935,16 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const edgeRuntimeDefaultImage = gates.edgeRuntime
       ? yield* legacyResolveEdgeRuntimeImage(fs, path, cliConfig.workdir, denoVersion)
       : undefined;
-    // The fresh-DB one-shot setup jobs' images (below) must resolve through this SAME
-    // `projectEnvValues`-aware cache regardless of `--exclude`, matching Go's setup jobs
-    // running unconditionally — `legacyEnsureImagesCached`'s own `Set`-based dedup makes
-    // this a no-op when the service isn't excluded (its image is already in `imagePlan`).
-    const setupJobImages = [
-      ...(realtimeEnabledForSetup
-        ? [legacyResolvePinnedImage("realtime", "realtime", serviceVersionOverrides)]
-        : []),
-      ...(storageEnabledForSetup
-        ? [legacyResolvePinnedImage("storage", "storage", serviceVersionOverrides)]
-        : []),
-      ...(authEnabledForSetup
-        ? [legacyResolvePinnedImage("gotrue", "auth", serviceVersionOverrides)]
-        : []),
-    ];
+    // Go's own pre-pull (`ensureImagesCached`, `start.go:237-262`) only ever touches
+    // `project.Services`, already filtered to non-excluded services (`start.go:269-282`)
+    // — the fresh-DB one-shot setup jobs' images are NOT pre-pulled here; Go resolves
+    // those lazily, later, only from inside `initSchema15` when it actually runs (see the
+    // conditional resolve further down, gated the same way that job itself is gated).
     const resolvedImages = yield* legacyEnsureImagesCached(
       spawner,
       [
         postgresImage,
         ...imagePlan.map((entry) => entry.image),
-        ...setupJobImages,
         ...(edgeRuntimeDefaultImage !== undefined ? [edgeRuntimeDefaultImage] : []),
       ],
       projectEnvValues,
@@ -1619,22 +1605,48 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             // Go's one-shot fresh-DB setup jobs (`initSchema15`) use the SAME
             // already-pin-rewritten `utils.Config.{Realtime,Storage,Auth}.Image`
             // fields the long-running containers use (`internal/db/start/
-            // start.go:270,299,321`), regardless of `--exclude` — resolve
-            // through `legacyResolvePinnedImage` (not the raw Dockerfile
-            // default) so a linked project's version pins apply here too.
-            // `resolveImage` finds these in the cache even when excluded, since
-            // `setupJobImages` above feeds them into `legacyEnsureImagesCached`
-            // unconditionally on `--exclude`.
+            // start.go:270,299,321`), regardless of `--exclude` — resolve through
+            // `legacyResolvePinnedImage` (not the raw Dockerfile default) so a
+            // linked project's version pins apply here too. Resolved HERE, inside
+            // this `isFreshVolume` block and additionally gated on `majorVersion
+            // >= 15` (this schema-init path is PG15+-only, `db-setup.ts`'s own
+            // `majorVersion <= 14` branch never reads `images`) — NOT pre-pulled
+            // unconditionally up front, matching Go's own `ensureImagesCached`
+            // (`start.go:237-262`), which only pre-pulls non-excluded services;
+            // these images are resolved lazily inside `initSchema15` itself
+            // (`DockerStart` -> `DockerResolveImageIfNotCached`,
+            // `internal/utils/docker.go:363-365`), only when the job genuinely
+            // runs. Still resolved through the SAME `projectEnvValues`-aware
+            // `legacyEnsureImagesCached` used above (not the raw image string) so
+            // a project-dotenv-only `SUPABASE_INTERNAL_IMAGE_REGISTRY` override
+            // still applies whenever the job WILL run.
+            const rawSetupJobImages = {
+              realtime: legacyResolvePinnedImage("realtime", "realtime", serviceVersionOverrides),
+              storage: legacyResolvePinnedImage("storage", "storage", serviceVersionOverrides),
+              auth: legacyResolvePinnedImage("gotrue", "auth", serviceVersionOverrides),
+            };
+            const setupJobImagesToResolve =
+              majorVersion >= 15
+                ? [
+                    ...(realtimeEnabledForSetup ? [rawSetupJobImages.realtime] : []),
+                    ...(storageEnabledForSetup ? [rawSetupJobImages.storage] : []),
+                    ...(authEnabledForSetup ? [rawSetupJobImages.auth] : []),
+                  ]
+                : [];
+            const resolvedSetupJobImages =
+              setupJobImagesToResolve.length > 0
+                ? yield* legacyEnsureImagesCached(
+                    spawner,
+                    setupJobImagesToResolve,
+                    projectEnvValues,
+                  )
+                : new Map<string, string>();
+            const resolveSetupJobImage = (image: string) =>
+              resolvedSetupJobImages.get(image) ?? image;
             const dbSetupImages: LegacyStartDbSetupImages = {
-              realtime: resolveImage(
-                legacyResolvePinnedImage("realtime", "realtime", serviceVersionOverrides),
-              ),
-              storage: resolveImage(
-                legacyResolvePinnedImage("storage", "storage", serviceVersionOverrides),
-              ),
-              auth: resolveImage(
-                legacyResolvePinnedImage("gotrue", "auth", serviceVersionOverrides),
-              ),
+              realtime: resolveSetupJobImage(rawSetupJobImages.realtime),
+              storage: resolveSetupJobImage(rawSetupJobImages.storage),
+              auth: resolveSetupJobImage(rawSetupJobImages.auth),
             };
             yield* legacyStartSetupLocalDatabase({
               session,
@@ -1779,13 +1791,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           };
           const runtime: StartedRuntime = yield* legacyStartEdgeRuntimeContainer(edgeRuntimeInput);
           // Deliberately NOT calling `runtime.cleanup` here — see
-          // `edge-runtime.service.ts`'s header for why. `start`'s container is
-          // `restartPolicy: "unless-stopped"` (mirroring every other service
-          // built here, see `legacyStartContainer`), so its bind-mounted host
-          // temp files must still exist whenever Docker re-attaches them on a
-          // later restart; `legacyStartEdgeRuntimeContainer` already runs
-          // `cleanup` on a failed or interrupted bring-up internally, so only
-          // the success path must leave it alone.
+          // `edge-runtime.service.ts`'s header for why. Unlike every other
+          // service built here (`legacyStartContainer`'s `restartPolicy:
+          // "unless-stopped"`), Go's own Edge Runtime bring-up sets no Docker
+          // restart policy at all, so this container's `docker run` matches
+          // that — but its bind-mounted host temp files must still exist for
+          // as long as the container can be reattached to; `legacyStart
+          // EdgeRuntimeContainer` already runs `cleanup` on a failed or
+          // interrupted bring-up internally, so only the success path must
+          // leave it alone.
           started.push(runtime.containerId);
           edgeRuntimeGateway = {
             containerId: runtime.containerId,

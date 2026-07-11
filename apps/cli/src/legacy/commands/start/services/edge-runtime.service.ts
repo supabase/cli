@@ -148,11 +148,17 @@ export interface LegacyEdgeRuntimeBringUpInput {
  *
  * `cleanup` (removing the temp env-file/multiline-env-script/serve-main-
  * template files this call writes to the host) is intentionally left to the
- * caller, and the caller must NOT invoke it on a successful bring-up.
- * `start`'s Edge Runtime container is `restartPolicy: "unless-stopped"`
- * (like every other `start` service, see `legacyStartContainer`), so its
- * bind-mounted host paths must still exist whenever Docker re-attaches them
- * on a later restart — the same reasoning `legacyStageStartSecretFiles`
+ * caller, and the caller must NOT invoke it on a successful bring-up. Unlike
+ * every other `start` service (`legacyStartContainer`'s `restartPolicy:
+ * "unless-stopped"`), Go's own Edge Runtime bring-up (`serve.ServeFunctions`,
+ * `internal/functions/serve/serve.go:218-241`) sets NO Docker restart policy
+ * at all — its lifecycle is deliberately reconciled at the CLI level
+ * (`restartEdgeRuntime`, `serve.go:108-133`), not the Docker daemon level —
+ * so this container's own `docker run` (`shared/functions/serve.ts`)
+ * intentionally omits `--restart` too. Its bind-mounted host paths must
+ * still exist for as long as the container itself can be reattached to
+ * (e.g. a plain `docker start` by the user, or discovery by a later CLI
+ * invocation) — the same reasoning `legacyStageStartSecretFiles`
  * (`../lib/container-lifecycle.ts`) already applies to every other service's
  * staged secret files. `startEdgeRuntimeContainer` (`shared/functions/
  * serve.ts`) already runs `cleanup` internally on a failed or interrupted
