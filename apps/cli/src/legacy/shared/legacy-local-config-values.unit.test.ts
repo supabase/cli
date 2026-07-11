@@ -2426,6 +2426,28 @@ describe("legacyResolveLocalJwks", () => {
       fetchMock.mockRestore();
     });
 
+    // Go's `ResolveJWKS` only attempts the remote fetch when `issuerURL != ""`
+    // (`apps/cli-go/pkg/config/config.go:1732`); workos's own `issuerURL()` is a raw field read
+    // with no validation (`config.go:1631-1632`), so an enabled-but-unconfigured workos provider
+    // with `auth.enabled = false` resolves an empty issuer URL that Go tolerates by skipping the
+    // fetch entirely, rather than attempting (and failing) a fetch against an empty URL.
+    it('does not attempt a remote JWKS fetch for an enabled third-party provider with an empty issuer_url, matching Go\'s issuerURL != "" check', async () => {
+      const fetchMock = vi.spyOn(globalThis, "fetch");
+      const config = baseConfig({
+        auth: {
+          enabled: false,
+          third_party: { workos: { enabled: true, issuer_url: "" } },
+        },
+      });
+
+      const jwksJson = await legacyResolveLocalJwks(config, WORKDIR, "a".repeat(32));
+      const jwks = JSON.parse(jwksJson) as { keys: ReadonlyArray<unknown> };
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(jwks.keys.length).toBeGreaterThan(0);
+      fetchMock.mockRestore();
+    });
+
     it("fetches and includes the remote JWKS for an enabled third-party provider", async () => {
       const remoteKeys = [{ kty: "RSA", kid: "remote-key", n: "abc", e: "AQAB" }];
       const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

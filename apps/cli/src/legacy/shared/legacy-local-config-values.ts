@@ -2916,7 +2916,12 @@ export async function legacyResolveLocalJwks(
   }
 
   const keys: unknown[] = [];
-  if (issuerUrl !== undefined) {
+  // Go's `ResolveJWKS` only attempts the remote fetch when `issuerURL != ""`
+  // (`apps/cli-go/pkg/config/config.go:1732`) — a provider's own `issuerURL()` can return the
+  // empty string with no validation (e.g. workos's `issuerURL()` is a raw field read,
+  // `config.go:1631-1632`), so an enabled-but-unconfigured third-party provider with
+  // `auth.enabled = false` must be tolerated, not fetched.
+  if (issuerUrl !== undefined && issuerUrl.length > 0) {
     try {
       keys.push(...(await resolveRemoteJwks(issuerUrl)));
     } catch (cause) {
