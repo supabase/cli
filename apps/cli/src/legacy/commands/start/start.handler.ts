@@ -76,6 +76,7 @@ import {
   legacyResolveLocalJwks,
   legacyStrToArr,
   type LegacyLocalConfigValues,
+  type LegacyResolvedAuthEmail,
 } from "../../shared/legacy-local-config-values.ts";
 import {
   legacyLoadLocalProjectContext,
@@ -510,7 +511,7 @@ function resolveGotrueEnvInput(params: {
   readonly workdir: string;
   readonly kongContainerName: string;
   readonly mailpitContainerName: string;
-  readonly resolvedEmail: ProjectConfig["auth"]["email"];
+  readonly resolvedEmail: LegacyResolvedAuthEmail;
 }): Omit<LegacyBuildGotrueEnvInput, "dbHost" | "dbPassword"> {
   const { context, values, workdir, kongContainerName, mailpitContainerName, resolvedEmail } =
     params;
@@ -613,7 +614,7 @@ function resolveGotrueEnvInput(params: {
 
 /** Go's `mountEmailTemplates` call sites for Kong (`start.go:544-558`): every configured template, then every ENABLED notification, suffixed `_notification`. */
 function buildKongEmailTemplateMounts(
-  email: ProjectConfig["auth"]["email"],
+  email: LegacyResolvedAuthEmail,
 ): ReadonlyArray<LegacyKongEmailTemplateMount> {
   return [
     ...Object.entries(email.template).map(([id, template]) => ({
@@ -683,7 +684,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const { config, projectId, projectEnvValues } = context;
     // Single source resolved once, fed to both Kong's template mounts and GoTrue's env builder —
     // see {@link legacyResolveAuthEmail}'s doc comment.
-    const resolvedEmail = legacyResolveAuthEmail(config.auth.email, projectEnvValues);
+    const resolvedEmail = legacyResolveAuthEmail(
+      config.auth.email,
+      asRecord(context.loaded?.document?.["auth"]),
+      projectEnvValues,
+    );
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = legacyCliProjectFilterValue(projectId);
 

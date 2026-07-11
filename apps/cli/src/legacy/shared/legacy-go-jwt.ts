@@ -2,16 +2,23 @@ import { createHmac, createPrivateKey, createSign } from "node:crypto";
 
 /**
  * RFC 7517 JWK fields Go's `JWK` struct round-trips (`pkg/config/auth.go:88-108`,
- * `toml`/`json` tags `kty`, `kid`, `alg`, `n`, `e`, `d`, `p`, `q`, `dp`, `dq`,
- * `qi`, `crv`, `x`, `y`) — field names match exactly, so a signing-keys file can
- * be parsed straight into this shape. A superset of Node's own
- * `crypto.webcrypto.JsonWebKey` (which omits `kid`), so it's still assignable
- * wherever that type is expected (e.g. `createPrivateKey`'s `format: "jwk"` input).
+ * `toml`/`json` tags `kty`, `kid`, `use`, `key_ops`, `alg`, `ext`, `n`, `e`, `d`, `p`, `q`, `dp`,
+ * `dq`, `qi`, `crv`, `x`, `y`) — field names match exactly, so a signing-keys file can be parsed
+ * straight into this shape (Go decodes `auth.signing_keys_path` directly into `[]JWK`,
+ * `pkg/config/config.go:1113`, so `use`/`key_ops`/`ext` on a user's key file must round-trip into
+ * both `GOTRUE_JWT_KEYS` and the published JWKS just like every other field here). A superset of
+ * Node's own `crypto.webcrypto.JsonWebKey` (which omits `kid`), so it's still assignable wherever
+ * that type is expected (e.g. `createPrivateKey`'s `format: "jwk"` input) — `key_ops` is typed as
+ * a mutable `string[]` rather than `ReadonlyArray<string>` for exactly this reason: Node's own
+ * `JsonWebKey.key_ops` field is a plain `string[]`, and a `ReadonlyArray` isn't assignable to it.
  */
 export interface LegacyJwk {
   readonly kty: string;
   readonly kid?: string;
+  readonly use?: string;
+  readonly key_ops?: string[];
   readonly alg?: string;
+  readonly ext?: boolean;
   readonly n?: string;
   readonly e?: string;
   readonly d?: string;
@@ -36,13 +43,11 @@ export interface LegacyJwk {
  * which signs tokens with it) and JWKS resolution (`legacyResolveLocalJwks`, which must publish
  * its public form) so the two can never disagree on the default key.
  *
- * Deliberately NOT typed as `LegacyJwk` (which omits `use`/`key_ops`/`ext` so it stays
- * assignable to Node's `createPrivateKey`/`jose`'s `JWK`, both of which want a mutable
- * `key_ops: string[]`, not `readonly string[]`) — left to infer its own wider literal type,
- * which is still structurally assignable everywhere a `LegacyJwk` or a `JwkLike`
- * (`shared/auth/jwks.ts`) is expected.
+ * Typed as `LegacyJwk` directly — see that type's own doc comment for why `key_ops` is a mutable
+ * `string[]` rather than `ReadonlyArray<string>`, which is also why this is still structurally
+ * assignable everywhere a `JwkLike` (`shared/auth/jwks.ts`) is expected.
  */
-export const LEGACY_DEFAULT_SIGNING_KEY = {
+export const LEGACY_DEFAULT_SIGNING_KEY: LegacyJwk = {
   kty: "EC",
   kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
   use: "sig",

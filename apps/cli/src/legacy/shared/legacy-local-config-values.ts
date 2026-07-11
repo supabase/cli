@@ -717,7 +717,10 @@ function resolveSignedKey(
 const LegacyJwkSchema = Schema.Struct({
   kty: Schema.String,
   kid: Schema.optionalKey(Schema.String),
+  use: Schema.optionalKey(Schema.String),
+  key_ops: Schema.optionalKey(Schema.Array(Schema.String)),
   alg: Schema.optionalKey(Schema.String),
+  ext: Schema.optionalKey(Schema.Boolean),
   n: Schema.optionalKey(Schema.String),
   e: Schema.optionalKey(Schema.String),
   d: Schema.optionalKey(Schema.String),
@@ -770,7 +773,14 @@ function readSigningKeysFile(workdir: string, signingKeysPath: string): Readonly
   }
 
   try {
-    return decodeLegacyJwks(JSON.parse(contents));
+    // `Schema.Array` decodes `key_ops` as `ReadonlyArray<string>`, but `LegacyJwk.key_ops` is a
+    // mutable `string[]` (required for assignability into Node's `createPrivateKey`/`JsonWebKey`
+    // input — see that type's own doc comment), so each key's `key_ops` is copied into a fresh
+    // mutable array here rather than widening the schema's own (correctly readonly) output type.
+    return decodeLegacyJwks(JSON.parse(contents)).map((jwk) => ({
+      ...jwk,
+      key_ops: jwk.key_ops === undefined ? undefined : [...jwk.key_ops],
+    }));
   } catch (cause) {
     throw new LegacyConfigValidateError(legacySigningKeysDecodeErrorMessage(cause));
   }
@@ -868,6 +878,36 @@ function readApiTlsFiles(
 }
 
 /**
+ * One `[auth.email.template.<name>]` entry, already env-override-resolved. `subject` is
+ * `string | undefined` rather than a plain `string` — see {@link legacyResolveAuthEmail}'s doc
+ * comment for why.
+ */
+interface LegacyResolvedAuthEmailTemplate {
+  readonly subject: string | undefined;
+  readonly content_path: string;
+}
+
+/** One `[auth.email.notification.<name>]` entry — see {@link LegacyResolvedAuthEmailTemplate}. */
+interface LegacyResolvedAuthEmailNotification {
+  readonly enabled: boolean;
+  readonly subject: string | undefined;
+  readonly content_path: string;
+}
+
+/**
+ * {@link legacyResolveAuthEmail}'s return type — identical to `ProjectConfig["auth"]["email"]`
+ * except each `template`/`notification` entry's `subject` is `string | undefined` instead of a
+ * plain `string`.
+ */
+export type LegacyResolvedAuthEmail = Omit<
+  ProjectConfig["auth"]["email"],
+  "template" | "notification"
+> & {
+  readonly template: Readonly<Record<string, LegacyResolvedAuthEmailTemplate>>;
+  readonly notification: Readonly<Record<string, LegacyResolvedAuthEmailNotification>>;
+};
+
+/**
  * Go's `Auth.Email` is a value-typed (non-pointer) struct (`pkg/config/auth.go:174,242-253`),
  * always Viper/`AutomaticEnv`-bound regardless of `[auth.email]` presence in config.toml
  * (`config.go:580-586`) — same reasoning as {@link resolveGotrueRateLimit}/`resolveGotrueSessions`
@@ -876,11 +916,18 @@ function readApiTlsFiles(
  * `start.handler.ts`'s GoTrue env builder — same single-source/two-consumer shape as
  * {@link legacyResolveAuthExternalProviders}.
  *
- * `template`/`notification` need no raw-document presence gate either: they're
+ * `template`/`notification` THEMSELVES need no raw-document presence gate: they're
  * `Schema.Record`s (`packages/config/src/auth/email.ts`), which — unlike a fixed-shape struct
  * with `withDecodingDefaultKey` — only ever contain a key when the TOML section was actually
  * present, so `Object.entries(email.template)` already reflects presence, matching Go's own
- * `map[string]emailTemplate`.
+ * `map[string]emailTemplate`. Each entry's OWN `subject` field is a narrower case, though: Go's
+ * `emailTemplate.Subject` is `*string` (`pkg/config/auth.go:266`), so an explicit `subject = ""`
+ * is a real, non-nil state distinct from an absent key — but both decode to the SAME `""` in
+ * `@supabase/config`'s plain-string schema (`packages/config/src/auth/email.ts`), so `authDocument`
+ * (the raw TOML) is read per-entry to recover which case applies, same as the
+ * `auth.captcha`/`auth.passkey`/`auth.webauthn`/`auth.email.smtp` presence gaps elsewhere in this
+ * file. An env override always wins outright when set (Go's Viper `AutomaticEnv` precedence over
+ * config.toml), regardless of the raw document.
  *
  * `start.go:544-558` (Kong `mountEmailTemplates`) and `start.go:668-694,1376-1406` (GoTrue's
  * mailer/OTP/signup env) both read `utils.Config.Auth.Email.*` post-override — this resolves the
@@ -889,25 +936,31 @@ function readApiTlsFiles(
  */
 export function legacyResolveAuthEmail(
   email: ProjectConfig["auth"]["email"],
+  authDocument: Record<string, unknown> | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["email"] {
-  const template: Record<string, { readonly subject: string; readonly content_path: string }> = {};
+): LegacyResolvedAuthEmail {
+  const emailDoc = asRecord(authDocument?.["email"]);
+  const templateDoc = asRecord(emailDoc?.["template"]);
+  const notificationDoc = asRecord(emailDoc?.["notification"]);
+
+  const template: Record<string, LegacyResolvedAuthEmailTemplate> = {};
   for (const [name, tmpl] of Object.entries(email.template)) {
     const envPrefix = `SUPABASE_AUTH_EMAIL_TEMPLATE_${name.toUpperCase()}`;
+    const envSubject = envOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
+    const rawSubjectPresent = asRecord(templateDoc?.[name])?.["subject"] !== undefined;
     template[name] = {
-      subject: envOverride(`${envPrefix}_SUBJECT`, tmpl.subject, projectEnvValues) ?? tmpl.subject,
+      subject: envSubject ?? (rawSubjectPresent ? tmpl.subject : undefined),
       content_path:
         envOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
         tmpl.content_path,
     };
   }
 
-  const notification: Record<
-    string,
-    { readonly enabled: boolean; readonly subject: string; readonly content_path: string }
-  > = {};
+  const notification: Record<string, LegacyResolvedAuthEmailNotification> = {};
   for (const [name, tmpl] of Object.entries(email.notification)) {
     const envPrefix = `SUPABASE_AUTH_EMAIL_NOTIFICATION_${name.toUpperCase()}`;
+    const envSubject = envOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
+    const rawSubjectPresent = asRecord(notificationDoc?.[name])?.["subject"] !== undefined;
     notification[name] = {
       enabled: legacyEnvOverrideBool(
         `${envPrefix}_ENABLED`,
@@ -915,7 +968,7 @@ export function legacyResolveAuthEmail(
         `auth.email.notification.${name}.enabled`,
         projectEnvValues,
       ),
-      subject: envOverride(`${envPrefix}_SUBJECT`, tmpl.subject, projectEnvValues) ?? tmpl.subject,
+      subject: envSubject ?? (rawSubjectPresent ? tmpl.subject : undefined),
       content_path:
         envOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
         tmpl.content_path,
@@ -990,7 +1043,7 @@ export function legacyResolveAuthEmail(
  * the resolved value" shape.
  */
 function readAuthEmailTemplateContent(
-  email: ProjectConfig["auth"]["email"],
+  email: LegacyResolvedAuthEmail,
   workdir: string,
   authDocument: Record<string, unknown> | undefined,
 ): void {
@@ -2395,7 +2448,7 @@ export function legacyResolveLocalConfigValues(
     // `Auth.MFA.validate()`, still inside `if c.Auth.Enabled` (`config.go:1142`) — this I/O read
     // stays at this exact textual position (see this function's `@throws` doc for why).
     readAuthEmailTemplateContent(
-      legacyResolveAuthEmail(config.auth.email, projectEnvValues),
+      legacyResolveAuthEmail(config.auth.email, authDocument, projectEnvValues),
       workdir,
       authDocument,
     );

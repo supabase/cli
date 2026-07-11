@@ -515,6 +515,35 @@ describe("buildLegacyGotrueEnv", () => {
       expect(env["GOTRUE_MAILER_SUBJECTS_CONFIRMATION"]).toBe("Confirm your signup");
     });
 
+    // Go's `emailTemplate.Subject` is `*string` (`pkg/config/auth.go:266`); `start.go:668-676`
+    // gates strictly on `subject != nil`, not on string length — an explicit blank subject is
+    // still emitted, distinct from an absent one below.
+    test("still emits an explicit empty subject, distinct from an absent one", () => {
+      const env = buildLegacyGotrueEnv({
+        ...baseEnvInput,
+        email: {
+          ...baseEnvInput.email,
+          template: {
+            confirmation: { subject: "", content_path: "supabase/templates/confirm.html" },
+          },
+        },
+      });
+      expect(env["GOTRUE_MAILER_SUBJECTS_CONFIRMATION"]).toBe("");
+    });
+
+    test("omits the subject env var entirely when subject is absent (undefined)", () => {
+      const env = buildLegacyGotrueEnv({
+        ...baseEnvInput,
+        email: {
+          ...baseEnvInput.email,
+          template: {
+            confirmation: { subject: undefined, content_path: "supabase/templates/confirm.html" },
+          },
+        },
+      });
+      expect(env).not.toHaveProperty("GOTRUE_MAILER_SUBJECTS_CONFIRMATION");
+    });
+
     test("emits a notification's ENABLED flag and template/subject with the _notification suffix", () => {
       const env = buildLegacyGotrueEnv({
         ...baseEnvInput,

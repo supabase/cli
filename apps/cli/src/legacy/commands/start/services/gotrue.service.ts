@@ -59,6 +59,7 @@ import {
   legacyParseGoDuration,
 } from "../../../shared/legacy-go-duration.ts";
 import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
+import type { LegacyResolvedAuthEmail } from "../../../shared/legacy-local-config-values.ts";
 import type { LegacyStartContainerSpec } from "../lib/docker-create-args.ts";
 import {
   legacyStartInternalDbPassword,
@@ -86,13 +87,14 @@ const LEGACY_GOTRUE_DB_ROLE = "supabase_auth_admin";
  * (`apps/cli-go/pkg/config/auth.go:88-108`), in the exact `json:"..."` field
  * declaration order — needed so {@link buildLegacyGotrueEnv}'s
  * `JSON.stringify` reproduces Go's `encoding/json.Marshal` byte-for-byte
- * (both languages serialize object/struct keys in declaration order). A
- * superset of `legacy/shared/legacy-go-jwt.ts`'s `LegacyJwk` and
- * `shared/auth/jwks.ts`'s `JwkLike` (neither models every field GoTrue's own
- * signing key needs: `LegacyJwk` omits `use`/`key_ops`/`ext`, `JwkLike` omits
- * the private-key fields `d`/`p`/`q`/`dp`/`dq`/`qi`) — kept local rather than
- * widening either shared type, since neither of their existing callers needs
- * the union of all seventeen fields.
+ * (both languages serialize object/struct keys in declaration order).
+ * Structurally near-identical to `legacy/shared/legacy-go-jwt.ts`'s `LegacyJwk`
+ * (the only difference is `key_ops`'s mutable `string[]` there, needed for
+ * assignability into Node's `createPrivateKey`/`JsonWebKey` input — see that
+ * type's own doc comment) and a superset of `shared/auth/jwks.ts`'s `JwkLike`
+ * (which omits the private-key fields `d`/`p`/`q`/`dp`/`dq`/`qi`) — kept local
+ * rather than reusing either shared type, since neither of their existing
+ * callers needs the union of all seventeen fields.
  */
 export interface LegacyGotrueSigningKey {
   readonly kty: string;
@@ -233,7 +235,7 @@ export interface LegacyBuildGotrueEnvInput {
   readonly signingKeys?: ReadonlyArray<LegacyGotrueSigningKey>;
 
   /** `config.auth.email`, everything except `smtp` (kept separate — see {@link smtp}). */
-  readonly email: Omit<ProjectConfig["auth"]["email"], "smtp">;
+  readonly email: Omit<LegacyResolvedAuthEmail, "smtp">;
   /** Kong's own container name (Go's `utils.KongId`) — mailer template/subject URLs route through it. */
   readonly kongContainerName: string;
 
@@ -543,16 +545,16 @@ export function buildLegacyGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
   }
 
   // Mailer template/notification URLs and subjects (start.go:668-694).
-  // `subject !== ""` approximates Go's `subject *string; if subject != nil`:
-  // `@supabase/config`'s `template`/`notification` schema decodes `subject`
-  // as a plain string defaulting to `""`, which cannot distinguish "key
-  // absent" from "key present but empty" the way Go's `*string` can.
-  const addMailerEnvVars = (id: string, contentPath: string, subject: string): void => {
+  // `subject !== undefined` matches Go's `subject *string; if subject != nil` exactly: the
+  // caller (`legacyResolveAuthEmail`) has already recovered the "explicit empty string" vs
+  // "absent" distinction from the raw document, so `undefined` here means Go's nil (omit the
+  // env var entirely) and `""` means an explicit blank subject (still emit it).
+  const addMailerEnvVars = (id: string, contentPath: string, subject: string | undefined): void => {
     if (contentPath.length > 0) {
       env[`GOTRUE_MAILER_TEMPLATES_${id.toUpperCase()}`] =
         `http://${input.kongContainerName}:${LEGACY_GOTRUE_NGINX_TEMPLATE_SERVER_PORT}/email/${id}${legacyFileExt(contentPath)}`;
     }
-    if (subject.length > 0) {
+    if (subject !== undefined) {
       env[`GOTRUE_MAILER_SUBJECTS_${id.toUpperCase()}`] = subject;
     }
   };

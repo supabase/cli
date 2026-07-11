@@ -25,6 +25,7 @@ import {
   legacyEnvOverrideRealtimeIpVersion,
   legacyEnvOverrideRealtimeMaxHeaderLength,
   legacyResolveAuthCaptcha,
+  legacyResolveAuthEmail,
   legacyResolveAuthEmailSmtp,
   legacyResolveAuthExternalProviders,
   legacyResolveAuthHooks,
@@ -1041,6 +1042,43 @@ describe("legacyResolveLocalConfigValues", () => {
       );
       expect(resolved?.secret).toBe("value");
       delete process.env["DOTENV_PRIVATE_KEY"];
+    });
+  });
+
+  describe("legacyResolveAuthEmail", () => {
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT"];
+    });
+
+    // Go's `emailTemplate.Subject` is `*string` (`pkg/config/auth.go:266`) — an explicit
+    // `subject = ""` in config.toml is a real, non-nil state, distinct from an absent key, that
+    // Go's mailer-env block honors by still emitting `GOTRUE_MAILER_SUBJECTS_*=` (empty).
+    it("keeps an explicit empty subject present in the raw document, not omitted", () => {
+      const config = baseConfig({
+        auth: { email: { template: { confirmation: { subject: "", content_path: "x" } } } },
+      });
+      const authDocument = { email: { template: { confirmation: { subject: "" } } } };
+      const resolved = legacyResolveAuthEmail(config.auth.email, authDocument, undefined);
+      expect(resolved.template["confirmation"]?.subject).toBe("");
+    });
+
+    it("omits the subject when the key is absent from the raw document", () => {
+      const config = baseConfig({
+        auth: { email: { template: { confirmation: { content_path: "x" } } } },
+      });
+      const authDocument = { email: { template: { confirmation: { content_path: "x" } } } };
+      const resolved = legacyResolveAuthEmail(config.auth.email, authDocument, undefined);
+      expect(resolved.template["confirmation"]?.subject).toBeUndefined();
+    });
+
+    it("prefers an env-overridden subject over the raw document's presence, even when absent", () => {
+      process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT"] = "Overridden subject";
+      const config = baseConfig({
+        auth: { email: { template: { confirmation: { content_path: "x" } } } },
+      });
+      const authDocument = { email: { template: { confirmation: { content_path: "x" } } } };
+      const resolved = legacyResolveAuthEmail(config.auth.email, authDocument, undefined);
+      expect(resolved.template["confirmation"]?.subject).toBe("Overridden subject");
     });
   });
 
@@ -2311,6 +2349,20 @@ describe("legacyResolveLocalJwks", () => {
     expect(parsed.keys[0]).not.toHaveProperty("d");
     expect(parsed.keys[0]).not.toHaveProperty("p");
     expect(parsed.keys.some((key) => key["kty"] === "oct")).toBe(false);
+  });
+
+  // Go decodes `auth.signing_keys_path` directly into `[]JWK` (`pkg/config/config.go:1113`),
+  // so a configured key's `use`/`key_ops`/`ext` metadata must round-trip into the published JWKS
+  // via `ToPublicJWK` (`pkg/config/auth.go:111-145`), which keeps `use`/`ext` verbatim and
+  // filters `key_ops` down to `"verify"` entries only (never dropping the other two fields).
+  it("preserves a configured signing key's use/ext and filters key_ops to verify-only", async () => {
+    const jwk = { ...generateRsaJwk(), use: "sig", ext: true, key_ops: ["sign", "verify"] };
+    writeSigningKeys(tempRoot.current, [jwk]);
+    const config = baseConfig({ auth: { signing_keys_path: "signing_keys.json" } });
+    const jwks = await legacyResolveLocalJwks(config, tempRoot.current, "a".repeat(32));
+    const parsed = JSON.parse(jwks) as { keys: ReadonlyArray<Record<string, unknown>> };
+
+    expect(parsed.keys[0]).toMatchObject({ use: "sig", ext: true, key_ops: ["verify"] });
   });
 
   // Go quirk this reproduces: `a.SigningKeysPath` is resolved to an absolute path
