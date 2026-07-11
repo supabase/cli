@@ -14,6 +14,7 @@ import {
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService } from "./postgrest.ts";
 import { makePoolerServiceDocker, poolerContainerPorts } from "./pooler.ts";
+import { makeRealtimeServiceDocker } from "./realtime.ts";
 import { LOCAL_S3_PROTOCOL_ACCESS_KEY_ID, LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET } from "./storage.ts";
 import { makeStudioServiceDocker } from "./studio.ts";
 import { makeVectorServiceDocker } from "./vector.ts";
@@ -315,6 +316,31 @@ describe("makeAuthServiceDocker", () => {
     expect(def.supervision).toEqual({
       orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-auth-${API_PORT}` }],
     });
+  });
+});
+
+describe("makeRealtimeServiceDocker", () => {
+  it("pins the database connection to IPv4 so realtime doesn't hang over IPv6 (#5788)", () => {
+    const def = makeRealtimeServiceDocker({
+      image: dockerImageForService("realtime", DEFAULT_VERSIONS.realtime),
+      port: 4000,
+      apiPort: API_PORT,
+      dbHost: "host.docker.internal",
+      dbPort: DB_PORT,
+      jwtSecret: JWT_SECRET,
+      jwtJwks: "{}",
+      tenantId: "realtime-dev",
+      encryptionKey: "supabaserealtime",
+      secretKeyBase: "0".repeat(64),
+      maxHeaderLength: 4096,
+      networkArgs: [...LINUX_HOST_GATEWAY_ARGS],
+      dependencies: [{ service: "postgres", condition: "healthy" }],
+    });
+
+    expect(def.name).toBe("realtime");
+    expect(def.command).toBe("docker");
+    expect(def.args).toContain("DB_IP_VERSION=ipv4");
+    expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
   });
 });
 

@@ -45,6 +45,10 @@ export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceD
     env: {
       PORT: String(opts.port),
       DB_HOST: opts.dbHost,
+      // In docker mode DB_HOST is host.docker.internal, which resolves to IPv4
+      // only on Docker Desktop; pin IPv4 so realtime doesn't hang trying to
+      // reach the database over IPv6 (#5788).
+      DB_IP_VERSION: "ipv4",
       DB_PORT: String(opts.dbPort),
       DB_USER: "postgres",
       DB_PASSWORD: "postgres",
