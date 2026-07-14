@@ -1,7 +1,6 @@
 import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
-import { chmod, mkdtemp, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { tmpdir } from "node:os";
 import { URL } from "node:url";
 import { FunctionResponse, operationDefinitions, type ApiClient } from "@supabase/api/effect";
 import {
@@ -1334,8 +1333,10 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
   const output = yield* Output;
   yield* output.raw(`Bundling Function: ${config.slug}\n`, "stderr");
 
+  const outputRoot = resolve(functionsDir, "..", ".temp");
+  yield* Effect.tryPromise(() => mkdir(outputRoot, { recursive: true }));
   const outputDir = yield* Effect.tryPromise(() =>
-    mkdtemp(join(tmpdir(), `.supabase-output-${config.slug}-`)),
+    mkdtemp(join(outputRoot, `.output_${config.slug}-`)),
   );
   try {
     yield* Effect.tryPromise(() => chmod(outputDir, 0o777));
