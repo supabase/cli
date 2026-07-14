@@ -1336,7 +1336,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
   const outputRoot = resolve(functionsDir, "..", ".temp");
   yield* Effect.tryPromise(() => mkdir(outputRoot, { recursive: true }));
   const outputDir = yield* Effect.tryPromise(() =>
-    mkdtemp(join(outputRoot, `.output_${config.slug}-`)),
+    mkdtemp(join(outputRoot, `.supabase-output-${config.slug}-`)),
   );
   try {
     yield* Effect.tryPromise(() => chmod(outputDir, 0o777));
