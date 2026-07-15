@@ -93,6 +93,10 @@ export function parseQueryTimeoutSeconds(
   });
 }
 
+export function localDbPassword() {
+  return process.env["SUPABASE_DB_PASSWORD"] ?? "postgres";
+}
+
 export function parseDatabaseUrl(
   url: string,
 ): Effect.Effect<LegacyGenTypesDbTarget, LegacyInvalidGenTypesDatabaseUrlError> {
