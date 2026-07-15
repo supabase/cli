@@ -26,6 +26,10 @@ import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConfigFlags } from "../../../shared/legacy-db-config.types.ts";
 import { legacyPoolerConfigFromConnectionString } from "../../../shared/legacy-db-config.parse.ts";
+import {
+  legacyApplyProjectEnv,
+  legacyReadDbToml,
+} from "../../../shared/legacy-db-config.toml-read.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacyTempPaths } from "../../../shared/legacy-temp-paths.ts";
@@ -527,12 +531,12 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
 
   yield* Effect.gen(function* () {
     if (flags.local) {
-      const loaded = yield* loadConfig();
-      if (loaded === null) {
-        return yield* Effect.fail(
-          new Error("failed to load config: supabase/config.toml not found"),
-        );
-      }
+      const config = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      yield* legacyApplyProjectEnv(
+        config.projectEnv,
+        Object.keys(config.projectEnv).filter((key) => key !== "SUPABASE_DB_PASSWORD"),
+      );
+      const projectId = Option.getOrElse(config.projectId, () => path.basename(cliConfig.workdir));
 
       const paths = legacyTempPaths(path, cliConfig.workdir);
       // Go resolves Config.Api.Image from the rest-version file only when
@@ -540,7 +544,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       // (pkg/config/config.go:657-666, internal/gen/types/types.go:69). Gate and trim
       // identically so we don't force v9 on older databases.
       const restVersion =
-        loaded.config.db.major_version > 14
+        config.majorVersion > 14
           ? (yield* fs
               .readFileString(paths.restVersion)
               .pipe(Effect.orElseSucceed(() => ""))).trim()
@@ -551,9 +555,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         .pipe(Effect.orElseSucceed(() => ""));
 
       const includedSchemas = (
-        schemas.length > 0 ? schemas : defaultSchemas(loaded.config.api.schemas)
+        schemas.length > 0 ? schemas : defaultSchemas(config.apiSchemas)
       ).join(",");
-      const projectId = loaded.config.project_id ?? path.basename(cliConfig.workdir);
       yield* assertLocalDbRunning(projectId);
 
       yield* runPgMeta({
@@ -567,7 +570,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         host: "db",
         port: 5432,
         probeHost: legacyGetHostname(),
-        probePort: loaded.config.db.port,
+        probePort: config.port,
         networkMode: localNetworkId(projectId),
         includedSchemas,
         postgrestV9Compat: flags.postgrestV9Compat || forcedV9,
@@ -637,5 +640,5 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
       false,
     );
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  }).pipe(Effect.scoped, Effect.ensuring(telemetryState.flush));
 });
