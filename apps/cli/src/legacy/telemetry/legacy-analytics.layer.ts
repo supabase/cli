@@ -1,5 +1,4 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
-import { PostHog } from "posthog-node";
 import { aiToolLayer } from "../../shared/telemetry/ai-tool.layer.ts";
 import { AiTool } from "../../shared/telemetry/ai-tool.service.ts";
 import {
@@ -26,6 +25,7 @@ import {
   PropSchemaVersion,
   PropSessionId,
 } from "../../shared/telemetry/event-catalog.ts";
+import { scopedPosthogClient } from "../../shared/telemetry/posthog-client.ts";
 import { resolvePosthogConfig } from "../../shared/telemetry/posthog-config.ts";
 import { telemetryRuntimeLayer } from "../../shared/telemetry/runtime.layer.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
@@ -158,14 +158,7 @@ export const legacyAnalyticsLayer = Layer.effect(
       });
     }
 
-    const client = new PostHog(posthogConfig.key.value, {
-      host: posthogConfig.host,
-      flushAt: 1,
-      flushInterval: 0,
-    });
-    yield* Effect.addFinalizer(() =>
-      Effect.promise(() => client._shutdown(5_000)).pipe(Effect.ignore),
-    );
+    const client = yield* scopedPosthogClient(posthogConfig.key.value, posthogConfig.host);
 
     const loadLinkedProject = makeLoadLinkedProject(fs, path);
 
