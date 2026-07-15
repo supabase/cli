@@ -6,6 +6,7 @@
 | ----------------------------------------- | ---------- | ---------------------------------------------------------------------------------------- |
 | `~/.supabase/access-token`                | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` or `--project-id`                      |
 | `<workdir>/supabase/config.toml`          | TOML       | when selecting schemas; `--local` uses embedded defaults when the file is missing        |
+| `<workdir>{/supabase}/.env*`              | dotenv     | `--local`; resolves the same nested environment overrides as the legacy CLI              |
 | `<workdir>/supabase/.temp/rest-version`   | plain text | `--local` only, when `db.major_version > 14` — forces v9 compat if the tag contains `v9` |
 | `<workdir>/supabase/.temp/pgmeta-version` | plain text | `--local` only — overrides the pg-meta docker image tag                                  |
 
@@ -59,6 +60,11 @@ default 10s pg-delta probe timeout.
 | Variable                           | Purpose                                                                                     | Required?                                                                                                     |
 | ---------------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN`            | auth token for linked/project-id mode                                                       | no (falls back to keyring → `~/.supabase/access-token`)                                                       |
+| `SUPABASE_PROJECT_ID`              | local Docker container and network project ID                                               | no (falls back to the workdir name)                                                                           |
+| `SUPABASE_DB_PORT`                 | local database probe port                                                                   | no (defaults to `54322`)                                                                                      |
+| `SUPABASE_DB_MAJOR_VERSION`        | local PostgreSQL major version                                                              | no (defaults to `17`)                                                                                         |
+| `SUPABASE_API_SCHEMAS`             | local schemas used when `--schema` is omitted                                               | no (defaults to `public,graphql_public`)                                                                      |
+| `SUPABASE_ENV`                     | selects nested dotenv files for local generation                                            | no (defaults to `development`)                                                                                |
 | `SUPABASE_PROFILE`                 | built-in profile name or YAML file path                                                     | no (falls back to `~/.supabase/profile` -> `supabase`)                                                        |
 | `SUPABASE_DB_PASSWORD`             | database password for `--local` and the `--linked` workdir project                          | no (defaults to `postgres`; **ignored** for ad-hoc `--project-id`, which always mints a temporary login role) |
 | `SUPABASE_SERVICES_HOSTNAME`       | host used for the local TLS probe                                                           | no (defaults to `127.0.0.1`)                                                                                  |
@@ -95,8 +101,8 @@ Not applicable.
 ## Notes
 
 - Exactly one of `--local`, `--linked`, `--project-id`, or `--db-url` must be specified.
-- With `--local`, a missing `supabase/config.toml` uses the embedded config defaults,
-  matching the Go CLI.
+- With `--local`, a missing `supabase/config.toml` uses the embedded config defaults plus
+  shell and nested dotenv overrides, matching the legacy CLI.
 - `--lang` flag accepts `typescript` (default), `go`, `swift`, or `python`. Project-ref
   paths use the Management API for TypeScript, and use a project database host +
   temporary login role + pg-meta for other languages.

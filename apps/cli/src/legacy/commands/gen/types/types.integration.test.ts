@@ -2672,6 +2672,52 @@ describe("legacy gen types", () => {
     });
   });
 
+  it.live("honors local dotenv overrides when supabase/config.toml is missing", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-no-config-env-"));
+    const supabaseDir = join(workdir, "supabase");
+    mkdirSync(supabaseDir, { recursive: true });
+    writeFileSync(
+      join(supabaseDir, ".env"),
+      [
+        "SUPABASE_PROJECT_ID=configless-env-project",
+        "SUPABASE_DB_PORT=55432",
+        "SUPABASE_API_SCHEMAS=private,graphql_public",
+        "",
+      ].join("\n"),
+    );
+    const docker = captureDockerRun();
+    const probes: Array<{ host: string; port: number }> = [];
+    const { layer, out, child } = setup({
+      workdir,
+      skipConfig: true,
+      childStdout: ["generated"],
+      onSpawn: docker.onSpawn,
+      sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
+        requireSsl: () => Effect.succeed(false),
+        requireSslForHost: (host, port) =>
+          Effect.sync(() => {
+            probes.push({ host, port });
+            return false;
+          }),
+      }),
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
+
+      expect(child.spawned[0]).toEqual({
+        command: "docker",
+        args: ["container", "inspect", localDbContainerId("configless-env-project")],
+      });
+      expect(child.spawned[1]?.args).toContain(localNetworkId("configless-env-project"));
+      expect(probes).toEqual([{ host: "127.0.0.1", port: 55432 }]);
+      expect(
+        docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,private,graphql_public"),
+      ).toBe(true);
+      expect(out.stdoutText).toContain("generated");
+    });
+  });
+
   it.live("reports a generic inspect failure when docker emits no stderr", () => {
     const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-empty-stderr-"));
     writeConfig(

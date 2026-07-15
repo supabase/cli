@@ -1,6 +1,6 @@
-import { loadProjectConfig, ProjectConfigSchema } from "@supabase/config";
+import { loadProjectConfig } from "@supabase/config";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, FileSystem, Option, Path, Schema, Stdio, Stream } from "effect";
+import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
@@ -26,6 +26,7 @@ import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConfigFlags } from "../../../shared/legacy-db-config.types.ts";
 import { legacyPoolerConfigFromConnectionString } from "../../../shared/legacy-db-config.parse.ts";
+import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacyTempPaths } from "../../../shared/legacy-temp-paths.ts";
@@ -84,7 +85,6 @@ function isProjectNotFound(cause: unknown) {
 }
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
-const defaultProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema)({});
 
 function ensureMutuallyExclusive(
   group: ReadonlyArray<string>,
@@ -528,8 +528,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
 
   yield* Effect.gen(function* () {
     if (flags.local) {
-      // Go's Config.Load merges embedded defaults when config.toml is absent.
-      const config = (yield* loadConfig())?.config ?? defaultProjectConfig;
+      const config = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      const projectId = Option.getOrElse(config.projectId, () => path.basename(cliConfig.workdir));
 
       const paths = legacyTempPaths(path, cliConfig.workdir);
       // Go resolves Config.Api.Image from the rest-version file only when
@@ -537,7 +537,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       // (pkg/config/config.go:657-666, internal/gen/types/types.go:69). Gate and trim
       // identically so we don't force v9 on older databases.
       const restVersion =
-        config.db.major_version > 14
+        config.majorVersion > 14
           ? (yield* fs
               .readFileString(paths.restVersion)
               .pipe(Effect.orElseSucceed(() => ""))).trim()
@@ -548,9 +548,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         .pipe(Effect.orElseSucceed(() => ""));
 
       const includedSchemas = (
-        schemas.length > 0 ? schemas : defaultSchemas(config.api.schemas)
+        schemas.length > 0 ? schemas : defaultSchemas(config.apiSchemas)
       ).join(",");
-      const projectId = config.project_id ?? path.basename(cliConfig.workdir);
       yield* assertLocalDbRunning(projectId);
 
       yield* runPgMeta({
@@ -564,7 +563,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         host: "db",
         port: 5432,
         probeHost: legacyGetHostname(),
-        probePort: config.db.port,
+        probePort: config.port,
         networkMode: localNetworkId(projectId),
         includedSchemas,
         postgrestV9Compat: flags.postgrestV9Compat || forcedV9,

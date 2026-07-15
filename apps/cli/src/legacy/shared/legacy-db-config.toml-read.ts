@@ -51,6 +51,7 @@ interface LegacyDbTomlValues {
    * rather than `process.env` alone (e.g. `SUPABASE_EXPERIMENTAL_PG_DELTA`).
    */
   readonly envLookup: (name: string) => string | undefined;
+  readonly apiSchemas: ReadonlyArray<string>;
   /** `[db] port`, default 54322 (`packages/config/src/db.ts`). */
   readonly port: number;
   /** `[db] shadow_port`, default 54320. */
@@ -169,6 +170,7 @@ const DEFAULT_PORT = 54322;
 const DEFAULT_SHADOW_PORT = 54320;
 const DEFAULT_MAJOR_VERSION = 17;
 const DEFAULT_PASSWORD = "postgres";
+const DEFAULT_API_SCHEMAS = ["public", "graphql_public"] as const;
 /** `[edge_runtime] deno_version` default (`config.toml` template). 2 → the current edge-runtime image. */
 const DEFAULT_DENO_VERSION = 2;
 
@@ -273,6 +275,7 @@ function legacyResolveValidatedRemoteProjectId(
  * `AutomaticEnv` — `config.go:635-637`), so the block value must beat the env override.
  */
 const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
+  "api.schemas",
   "db.port",
   "db.shadow_port",
   "db.major_version",
@@ -468,6 +471,19 @@ function resolveConfigInt(value: unknown, lookup: EnvLookup): number | "absent" 
     if (/^\d+$/.test(expanded)) return Number(expanded);
   }
   return "invalid";
+}
+
+function resolveStringSlice(
+  value: unknown,
+  fallback: ReadonlyArray<string>,
+  lookup: EnvLookup,
+): ReadonlyArray<string> | undefined {
+  if (value === undefined) return fallback;
+  if (typeof value === "string") return legacyExpandEnv(value, lookup).split(",");
+  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string")) {
+    return undefined;
+  }
+  return value.map((item) => legacyExpandEnv(item, lookup));
 }
 
 /**
@@ -1834,9 +1850,21 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     apiRaw?.["auto_expose_new_tables"],
     lookup,
   );
+  const apiSchemas = resolveStringSlice(
+    (remoteOverrideKeys.has("api.schemas") ? undefined : envOverride("SUPABASE_API_SCHEMAS")) ??
+      apiRaw?.["schemas"],
+    DEFAULT_API_SCHEMAS,
+    lookup,
+  );
+  if (apiSchemas === undefined) {
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({ message: "failed to parse config: invalid api.schemas." }),
+    );
+  }
 
   const values: LegacyDbTomlValues = {
     envLookup: envOverride,
+    apiSchemas,
     port,
     shadowPort,
     password: passwordRaw !== undefined ? legacyExpandEnv(passwordRaw, lookup) : DEFAULT_PASSWORD,
