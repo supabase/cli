@@ -47,6 +47,12 @@ function decryptIfNeeded(value: string, dotenvPrivateKeys: ReadonlyArray<string>
  * before hashing — Go always hashes the decrypted plaintext, never the
  * ciphertext.
  *
+ * This HMAC is a deterministic configuration fingerprint used to compare a
+ * local secret with the digest returned by the Management API. It is not used
+ * to store or verify user passwords. A deliberately slow password hash would
+ * also be incompatible with the remote digest and would make config diffs
+ * unstable unless its salt were fixed.
+ *
  * @throws When an `encrypted:` value cannot be decrypted with any key.
  */
 export function secretHash(
@@ -57,6 +63,8 @@ export function secretHash(
   if (value.length === 0) return "";
   if (ENV_PATTERN.test(value)) return "";
   const plaintext = decryptIfNeeded(value, dotenvPrivateKeys);
+  // This is a keyed change-detection fingerprint, not a password hash.
+  // codeql[js/insufficient-password-hash]
   const hmac = createHmac("sha256", projectId).update(plaintext).digest("hex");
   return HASHED_PREFIX + hmac;
 }
