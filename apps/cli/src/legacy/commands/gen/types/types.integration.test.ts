@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import type {
@@ -62,7 +62,12 @@ import type {
 import { legacyGenCommand } from "../gen.command.ts";
 import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { legacyGenTypes } from "./types.handler.ts";
-import { parseQueryTimeoutSeconds, resolvePgmetaImage } from "./types.shared.ts";
+import {
+  localDbContainerId,
+  localNetworkId,
+  parseQueryTimeoutSeconds,
+  resolvePgmetaImage,
+} from "./types.shared.ts";
 
 function writeConfig(workdir: string, contents: string) {
   const supabaseDir = join(workdir, "supabase");
@@ -2631,22 +2636,39 @@ describe("legacy gen types", () => {
     },
   );
 
-  it.live("fails local generation when supabase/config.toml is missing", () => {
+  it.live("generates locally with Go defaults when supabase/config.toml is missing", () => {
     const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-no-config-"));
-    const { layer } = setup({ workdir, skipConfig: true });
+    const docker = captureDockerRun();
+    const probes: Array<{ host: string; port: number }> = [];
+    const { layer, out, child } = setup({
+      workdir,
+      skipConfig: true,
+      childStdout: ["generated"],
+      onSpawn: docker.onSpawn,
+      sslProbeLayer: Layer.succeed(LegacyPgDeltaSslProbe, {
+        requireSsl: () => Effect.succeed(false),
+        requireSslForHost: (host, port) =>
+          Effect.sync(() => {
+            probes.push({ host, port });
+            return false;
+          }),
+      }),
+    });
 
     return Effect.gen(function* () {
-      const exit = yield* legacyGenTypes(defaultFlags({ local: true })).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      yield* legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer));
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(String(exit.cause)).toContain(
-          "failed to load config: supabase/config.toml not found",
-        );
-      }
+      const projectId = basename(workdir);
+      expect(child.spawned[0]).toEqual({
+        command: "docker",
+        args: ["container", "inspect", localDbContainerId(projectId)],
+      });
+      expect(child.spawned[1]?.args).toContain(localNetworkId(projectId));
+      expect(probes).toEqual([{ host: "127.0.0.1", port: 54322 }]);
+      expect(docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,graphql_public")).toBe(
+        true,
+      );
+      expect(out.stdoutText).toContain("generated");
     });
   });
 

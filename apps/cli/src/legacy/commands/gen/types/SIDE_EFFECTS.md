@@ -5,7 +5,7 @@
 | Path                                      | Format     | When                                                                                     |
 | ----------------------------------------- | ---------- | ---------------------------------------------------------------------------------------- |
 | `~/.supabase/access-token`                | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` or `--project-id`                      |
-| `<workdir>/supabase/config.toml`          | TOML       | when selecting schemas from config; required for `--local`, best-effort otherwise        |
+| `<workdir>/supabase/config.toml`          | TOML       | when selecting schemas; `--local` uses embedded defaults when the file is missing        |
 | `<workdir>/supabase/.temp/rest-version`   | plain text | `--local` only, when `db.major_version > 14` — forces v9 compat if the tag contains `v9` |
 | `<workdir>/supabase/.temp/pgmeta-version` | plain text | `--local` only — overrides the pg-meta docker image tag                                  |
 
@@ -95,6 +95,8 @@ Not applicable.
 ## Notes
 
 - Exactly one of `--local`, `--linked`, `--project-id`, or `--db-url` must be specified.
+- With `--local`, a missing `supabase/config.toml` uses the embedded config defaults,
+  matching the Go CLI.
 - `--lang` flag accepts `typescript` (default), `go`, `swift`, or `python`. Project-ref
   paths use the Management API for TypeScript, and use a project database host +
   temporary login role + pg-meta for other languages.
