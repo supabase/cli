@@ -44,7 +44,7 @@ func TestNewClient(t *testing.T) {
 		assert.True(t, client.Enabled())
 		assert.Equal(t, "phc_test", gotKey)
 		assert.Equal(t, "https://eu.i.posthog.com", gotConfig.Endpoint)
-		assert.Equal(t, 5*time.Second, gotConfig.ShutdownTimeout)
+		assert.Equal(t, 2*time.Second, gotConfig.ShutdownTimeout)
 		assert.NotNil(t, gotConfig.Logger)
 	})
 

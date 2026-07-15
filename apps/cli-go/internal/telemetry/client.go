@@ -27,7 +27,7 @@ type queueClient interface {
 
 type constructor func(apiKey string, config posthog.Config) (queueClient, error)
 
-const shutdownTimeout = 5 * time.Second
+const shutdownTimeout = 2 * time.Second
 
 type Client struct {
 	client         queueClient
@@ -45,7 +45,8 @@ func NewClient(apiKey string, endpoint string, baseProperties map[string]any, fa
 	}
 	// Without a positive ShutdownTimeout, Close blocks indefinitely when the
 	// endpoint is unreachable, hanging every command on networks that block
-	// PostHog. The default logger prints delivery failures to stderr even for
+	// PostHog; keep it tight because blackholed networks pay the whole timeout
+	// at exit. The default logger prints delivery failures to stderr even for
 	// commands that succeeded, so route them to the --debug logger instead.
 	config := posthog.Config{
 		ShutdownTimeout: shutdownTimeout,
