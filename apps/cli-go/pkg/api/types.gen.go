@@ -511,6 +511,7 @@ const (
 // Defines values for JitStateResponse1UnavailableReason.
 const (
 	PostgresUpgradeRequired JitStateResponse1UnavailableReason = "postgres_upgrade_required"
+	SslEnforcementRequired  JitStateResponse1UnavailableReason = "ssl_enforcement_required"
 	TemporarilyUnavailable  JitStateResponse1UnavailableReason = "temporarily_unavailable"
 )
 
