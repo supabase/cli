@@ -26,7 +26,10 @@ import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConfigFlags } from "../../../shared/legacy-db-config.types.ts";
 import { legacyPoolerConfigFromConnectionString } from "../../../shared/legacy-db-config.parse.ts";
-import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
+import {
+  legacyApplyProjectEnv,
+  legacyReadDbToml,
+} from "../../../shared/legacy-db-config.toml-read.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacyTempPaths } from "../../../shared/legacy-temp-paths.ts";
@@ -529,6 +532,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   yield* Effect.gen(function* () {
     if (flags.local) {
       const config = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      yield* legacyApplyProjectEnv(config.projectEnv, Object.keys(config.projectEnv));
       const projectId = Option.getOrElse(config.projectId, () => path.basename(cliConfig.workdir));
 
       const paths = legacyTempPaths(path, cliConfig.workdir);
@@ -633,5 +637,5 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       schemas.length > 0 ? schemas : schemasFromConfig(loaded?.config.api.schemas),
       false,
     );
-  }).pipe(Effect.ensuring(telemetryState.flush));
+  }).pipe(Effect.scoped, Effect.ensuring(telemetryState.flush));
 });

@@ -2682,6 +2682,8 @@ describe("legacy gen types", () => {
         "SUPABASE_PROJECT_ID=configless-env-project",
         "SUPABASE_DB_PORT=55432",
         "SUPABASE_API_SCHEMAS=private,graphql_public",
+        "SUPABASE_SERVICES_HOSTNAME=host.docker.internal",
+        "SUPABASE_INTERNAL_IMAGE_REGISTRY=mirror.example.com",
         "",
       ].join("\n"),
     );
@@ -2710,9 +2712,14 @@ describe("legacy gen types", () => {
         args: ["container", "inspect", localDbContainerId("configless-env-project")],
       });
       expect(child.spawned[1]?.args).toContain(localNetworkId("configless-env-project"));
-      expect(probes).toEqual([{ host: "127.0.0.1", port: 55432 }]);
+      expect(probes).toEqual([{ host: "host.docker.internal", port: 55432 }]);
       expect(
         docker.env.has("PG_META_GENERATE_TYPES_INCLUDED_SCHEMAS=public,private,graphql_public"),
+      ).toBe(true);
+      expect(
+        child.spawned[1]?.args.some((arg) =>
+          arg.startsWith("mirror.example.com/supabase/postgres-meta:"),
+        ),
       ).toBe(true);
       expect(out.stdoutText).toContain("generated");
     });

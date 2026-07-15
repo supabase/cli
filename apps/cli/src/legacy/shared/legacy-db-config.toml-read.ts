@@ -43,6 +43,7 @@ type EnvLookup = (name: string) => string | undefined;
  * and aborts the command rather than running against the default local database).
  */
 interface LegacyDbTomlValues {
+  readonly projectEnv: Readonly<Record<string, string>>;
   /**
    * Resolves a `SUPABASE_*` env var with Go's precedence: shell env (non-empty)
    * wins, then the loaded project `.env*` files (non-empty), else undefined.
@@ -479,7 +480,10 @@ function resolveStringSlice(
   lookup: EnvLookup,
 ): ReadonlyArray<string> | undefined {
   if (value === undefined) return fallback;
-  if (typeof value === "string") return legacyExpandEnv(value, lookup).split(",");
+  if (typeof value === "string") {
+    const expanded = legacyExpandEnv(value, lookup);
+    return expanded.length === 0 ? [] : expanded.split(",");
+  }
   if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string")) {
     return undefined;
   }
@@ -619,9 +623,12 @@ export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
  * re-checks). The `acquireRelease` finalizer deletes only the keys it set when the
  * scope closes, so in-process test workers don't leak env between cases.
  */
-export const legacyApplyProjectEnv = (loaded: Record<string, string>) =>
+export const legacyApplyProjectEnv = (
+  loaded: Readonly<Record<string, string>>,
+  keys: ReadonlyArray<string> = LEGACY_PROCESS_ENV_APPLY_KEYS,
+) =>
   Effect.forEach(
-    LEGACY_PROCESS_ENV_APPLY_KEYS,
+    keys,
     (key) => {
       const value = loaded[key];
       if (value === undefined || process.env[key] !== undefined) {
@@ -1863,6 +1870,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   }
 
   const values: LegacyDbTomlValues = {
+    projectEnv,
     envLookup: envOverride,
     apiSchemas,
     port,
