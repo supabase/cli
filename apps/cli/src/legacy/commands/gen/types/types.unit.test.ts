@@ -7,7 +7,6 @@ import {
   defaultSchemas,
   legacyRootCaBundle,
   localDbContainerId,
-  localDbPassword,
   localNetworkId,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
@@ -209,7 +208,7 @@ describe("schema and id helpers", () => {
     expect(localDbContainerId(longId)).toBe(`supabase_db_${"a".repeat(40)}`);
   });
 
-  it("reads the services hostname and db password from the environment", () => {
+  it("reads the services hostname from the environment", () => {
     expect(
       withEnv("DOCKER_HOST", undefined, () =>
         withEnv("SUPABASE_SERVICES_HOSTNAME", undefined, () => legacyGetHostname()),
@@ -218,8 +217,6 @@ describe("schema and id helpers", () => {
     expect(withEnv("SUPABASE_SERVICES_HOSTNAME", "db.internal", () => legacyGetHostname())).toBe(
       "db.internal",
     );
-    expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");
-    expect(withEnv("SUPABASE_DB_PASSWORD", "secret", () => localDbPassword())).toBe("secret");
   });
 
   it("brackets ipv6 hosts in the generated postgres url", () => {

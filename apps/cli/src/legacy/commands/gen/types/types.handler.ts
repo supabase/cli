@@ -48,7 +48,6 @@ import {
   defaultSchemas,
   buildPostgresUrl,
   localDbContainerId,
-  localDbPassword,
   localNetworkId,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
@@ -532,10 +531,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   yield* Effect.gen(function* () {
     if (flags.local) {
       const config = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-      yield* legacyApplyProjectEnv(
-        config.projectEnv,
-        Object.keys(config.projectEnv).filter((key) => key !== "SUPABASE_DB_PASSWORD"),
-      );
+      yield* legacyApplyProjectEnv(config.projectEnv, Object.keys(config.projectEnv));
       const projectId = Option.getOrElse(config.projectId, () => path.basename(cliConfig.workdir));
 
       const paths = legacyTempPaths(path, cliConfig.workdir);
@@ -564,7 +560,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           host: "db",
           port: 5432,
           user: "postgres",
-          password: localDbPassword(),
+          password: config.password,
           database: "postgres",
         }),
         host: "db",

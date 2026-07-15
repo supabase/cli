@@ -2179,7 +2179,7 @@ describe("legacy gen types", () => {
     }),
   );
 
-  it.live("uses sanitized local docker ids and env-backed local db passwords", () =>
+  it.live("uses sanitized local docker ids and ignores shell db passwords", () =>
     Effect.tryPromise({
       try: () =>
         withSslProbeServer(async (port) => {
@@ -2218,7 +2218,7 @@ describe("legacy gen types", () => {
             expect(child.spawned[1]?.args).toContain("supabase_network_demo_project_with_spaces");
             expect(
               docker.env.has(
-                "PG_META_DB_URL=postgresql://postgres:secret-password@db:5432/postgres?connect_timeout=10",
+                "PG_META_DB_URL=postgresql://postgres:postgres@db:5432/postgres?connect_timeout=10",
               ),
             ).toBe(true);
           } finally {
