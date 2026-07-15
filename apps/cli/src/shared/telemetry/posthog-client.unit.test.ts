@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { fireAndForgetFetch } from "./posthog-client.ts";
+import { Effect } from "effect";
+import { PostHog } from "posthog-node";
+import { fireAndForgetFetch, scopedPosthogClient } from "./posthog-client.ts";
 
 const BATCH_URL = "https://eu.i.posthog.com/batch/";
 const BATCH_OPTIONS = { method: "POST" as const, headers: {}, body: "{}" };
@@ -34,4 +36,14 @@ describe("fireAndForgetFetch", () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("");
   });
+});
+
+describe("scopedPosthogClient", () => {
+  it.live("captures and shuts down cleanly against an unreachable host", () =>
+    Effect.gen(function* () {
+      const client = yield* scopedPosthogClient("phc_test", "http://127.0.0.1:9");
+      expect(client).toBeInstanceOf(PostHog);
+      client.capture({ event: "verify_event", distinctId: "device-1" });
+    }).pipe(Effect.scoped),
+  );
 });

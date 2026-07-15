@@ -1,11 +1,14 @@
 package telemetry
 
 import (
+	"io"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/posthog/posthog-go"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/supabase/cli/internal/debug"
@@ -55,6 +58,37 @@ func TestNewClient(t *testing.T) {
 		assert.False(t, client.Enabled())
 		assert.NoError(t, client.Capture("device-1", EventCommandExecuted, map[string]any{"command": "login"}, nil))
 		assert.NoError(t, client.Close())
+	})
+	t.Run("routes posthog logs to stderr only in debug mode", func(t *testing.T) {
+		originalStderr := os.Stderr
+		originalDebug := viper.GetBool("DEBUG")
+		reader, writer, err := os.Pipe()
+		require.NoError(t, err)
+		os.Stderr = writer
+		t.Cleanup(func() {
+			os.Stderr = originalStderr
+			viper.Set("DEBUG", originalDebug)
+		})
+
+		configFor := func(debugEnabled bool) posthog.Config {
+			viper.Set("DEBUG", debugEnabled)
+			var gotConfig posthog.Config
+			_, err := NewClient("phc_test", "", nil, func(apiKey string, config posthog.Config) (queueClient, error) {
+				gotConfig = config
+				return &fakeQueue{}, nil
+			})
+			require.NoError(t, err)
+			return gotConfig
+		}
+
+		configFor(false).Logger.Errorf("dropped %d messages", 1)
+		configFor(true).Logger.Errorf("dropped %d messages", 2)
+
+		require.NoError(t, writer.Close())
+		output, err := io.ReadAll(reader)
+		require.NoError(t, err)
+		assert.NotContains(t, string(output), "dropped 1 messages")
+		assert.Contains(t, string(output), "dropped 2 messages")
 	})
 	t.Run("works when debug wraps the default transport", func(t *testing.T) {
 		original := http.DefaultTransport
