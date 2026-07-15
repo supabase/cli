@@ -1,11 +1,14 @@
 package telemetry
 
 import (
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-errors/errors"
 	"github.com/posthog/posthog-go"
+	"github.com/supabase/cli/internal/utils"
 )
 
 type Analytics interface {
@@ -24,6 +27,8 @@ type queueClient interface {
 
 type constructor func(apiKey string, config posthog.Config) (queueClient, error)
 
+const shutdownTimeout = 5 * time.Second
+
 type Client struct {
 	client         queueClient
 	baseProperties posthog.Properties
@@ -38,7 +43,14 @@ func NewClient(apiKey string, endpoint string, baseProperties map[string]any, fa
 			return posthog.NewWithConfig(apiKey, config)
 		}
 	}
-	config := posthog.Config{}
+	// Without a positive ShutdownTimeout, Close blocks indefinitely when the
+	// endpoint is unreachable, hanging every command on networks that block
+	// PostHog. The default logger prints delivery failures to stderr even for
+	// commands that succeeded, so route them to the --debug logger instead.
+	config := posthog.Config{
+		ShutdownTimeout: shutdownTimeout,
+		Logger:          posthog.StdLogger(log.New(utils.GetDebugLogger(), "posthog ", log.LstdFlags), true),
+	}
 	if endpoint != "" {
 		config.Endpoint = endpoint
 	}
