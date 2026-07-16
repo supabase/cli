@@ -76,7 +76,7 @@ const AUTH_FAILURE = {
     code: AUTH_ERROR_CODE.AsymmetricJwt,
     message: "Invalid JWT",
   },
-  UnsupportedTokenAlgorithm: (algorithm: string | undefined) => ({
+  UnsupportedTokenAlgorithm: (algorithm: string) => ({
     code: AUTH_ERROR_CODE.UnsupportedTokenAlgorithm,
     message: `Unsupported JWT algorithm ${algorithm}`,
   }),
@@ -215,6 +215,10 @@ export async function verifyHybridJWT(
     jwtAlgorithm = jose.decodeProtectedHeader(jwt).alg;
   } catch (e) {
     console.error("JWT format error", e);
+    return AUTH_FAILURE.InvalidJwtFormat;
+  }
+
+  if (!jwtAlgorithm) {
     return AUTH_FAILURE.InvalidJwtFormat;
   }
 

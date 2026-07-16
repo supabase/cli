@@ -36,7 +36,7 @@ const AUTH_FAILURE = {
     code: AUTH_ERROR_CODE.AsymmetricJwt,
     message: "Invalid JWT",
   },
-  UnsupportedTokenAlgorithm: (algorithm: string | undefined) => ({
+  UnsupportedTokenAlgorithm: (algorithm: string) => ({
     code: AUTH_ERROR_CODE.UnsupportedTokenAlgorithm,
     message: `Unsupported JWT algorithm ${algorithm}`,
   }),
@@ -139,6 +139,10 @@ export async function verifyRequest(req: Request, config: any, functionConfig: a
     algorithm = decodeJwtAlgorithm(token);
   } catch (error) {
     console.error("JWT format error", error);
+    return getAuthErrorResponse(AUTH_FAILURE.InvalidJwtFormat);
+  }
+
+  if (!algorithm) {
     return getAuthErrorResponse(AUTH_FAILURE.InvalidJwtFormat);
   }
 

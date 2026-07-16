@@ -42,7 +42,7 @@ const AUTH_FUNCTIONS_CONFIG = JSON.stringify({
   },
 });
 
-function jwtWithInvalidSignature(algorithm: string): string {
+function jwtWithInvalidSignature(algorithm?: string): string {
   const header = Buffer.from(JSON.stringify({ alg: algorithm, typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({ sub: "test-user" })).toString("base64url");
   return `${header}.${payload}.invalid`;
@@ -57,6 +57,12 @@ const authFailureCases = [
   {
     name: "invalid JWT format",
     authorization: "Bearer not-a-jwt",
+    code: "UNAUTHORIZED_INVALID_JWT_FORMAT",
+    message: "Invalid JWT format",
+  },
+  {
+    name: "missing JWT algorithm",
+    authorization: `Bearer ${jwtWithInvalidSignature()}`,
     code: "UNAUTHORIZED_INVALID_JWT_FORMAT",
     message: "Invalid JWT format",
   },

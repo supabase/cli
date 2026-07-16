@@ -56,7 +56,7 @@ async function writeProject(cwd: string) {
   );
 }
 
-function jwtWithInvalidSignature(algorithm: string): string {
+function jwtWithInvalidSignature(algorithm?: string): string {
   const header = Buffer.from(JSON.stringify({ alg: algorithm, typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(JSON.stringify({ sub: "test-user" })).toString("base64url");
   return `${header}.${payload}.invalid`;
@@ -71,6 +71,12 @@ const authFailureCases = [
   {
     name: "returns the invalid JWT format error",
     authorization: "Bearer not-a-jwt",
+    code: "UNAUTHORIZED_INVALID_JWT_FORMAT",
+    message: "Invalid JWT format",
+  },
+  {
+    name: "returns the invalid JWT format error when the algorithm is missing",
+    authorization: `Bearer ${jwtWithInvalidSignature()}`,
     code: "UNAUTHORIZED_INVALID_JWT_FORMAT",
     message: "Invalid JWT format",
   },
