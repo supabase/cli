@@ -92,7 +92,7 @@ const CORS_HEADERS: ReadonlyArray<readonly [string, string]> = [
   ["access-control-allow-origin", "*"],
   ["access-control-allow-methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS"],
   ["access-control-allow-headers", "Authorization, Content-Type, apikey, X-Client-Info"],
-  ["access-control-expose-headers", "Content-Range, Range"],
+  ["access-control-expose-headers", "Content-Range, Range, sb-error-code"],
   ["access-control-max-age", "86400"],
 ];
 
