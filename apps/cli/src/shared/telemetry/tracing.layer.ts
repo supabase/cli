@@ -76,6 +76,7 @@ class ExportableSpan implements Tracer.Span {
   }
 
   attribute(key: string, value: unknown): void {
+    if (key.endsWith(".header.apikey")) return;
     this.attributes.set(key, value);
   }
 
