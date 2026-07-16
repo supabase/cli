@@ -123,6 +123,66 @@ describe("legacy secrets set integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("batches large secret sets into requests of at most 100", () => {
+    const { layer, out, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacySecretsSet({
+        projectRef: Option.none(),
+        envFile: Option.none(),
+        secrets: Array.from({ length: 150 }, (_, i) => `KEY${i}=value${i}`),
+      });
+      expect(api.requests).toHaveLength(2);
+      const first = parsePostBody(api.requests[0]!.body);
+      const second = parsePostBody(api.requests[1]!.body);
+      expect(first).toHaveLength(100);
+      expect(second).toHaveLength(50);
+      const names = new Set([...first, ...second].map((entry) => entry.name));
+      for (let i = 0; i < 150; i++) {
+        expect(names.has(`KEY${i}`)).toBe(true);
+      }
+      expect(out.stdoutText).toContain("Finished supabase secrets set.");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("batches 250 secrets into three requests (100/100/50)", () => {
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      yield* legacySecretsSet({
+        projectRef: Option.none(),
+        envFile: Option.none(),
+        secrets: Array.from({ length: 250 }, (_, i) => `KEY${i}=value${i}`),
+      });
+      expect(api.requests).toHaveLength(3);
+      expect(parsePostBody(api.requests[0]!.body)).toHaveLength(100);
+      expect(parsePostBody(api.requests[1]!.body)).toHaveLength(100);
+      expect(parsePostBody(api.requests[2]!.body)).toHaveLength(50);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "rejects the whole upload when a later batch has an invalid entry (no partial update)",
+    () => {
+      const { layer, api } = setup();
+      // Index 120 lands in the SECOND batch (batch 0 covers indices 0-99): a
+      // value exceeding the 24576-byte cap there must fail up-front validation
+      // before batch 0 (which is otherwise entirely valid) is ever sent.
+      const secrets = Array.from({ length: 150 }, (_, i) =>
+        i === 120 ? `KEY${i}=${"x".repeat(24577)}` : `KEY${i}=value${i}`,
+      );
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacySecretsSet({
+            projectRef: Option.none(),
+            envFile: Option.none(),
+            secrets,
+          }),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("sets secrets from --env-file with a relative path (joined to CWD)", () => {
     writeFileSync(join(tempRoot.current, "myfile.env"), "FROM_FILE=fromvalue\n");
     const { layer, api } = setup();

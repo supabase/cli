@@ -7049,6 +7049,74 @@
         "x-endpoint-owners": ["analytics"]
       }
     },
+    "/v1/projects/{ref}/analytics/endpoints/metrics": {
+      "get": {
+        "description": "Prometheus scrape endpoint. Returns metrics of a customer project in the Prometheus open exposition format.",
+        "operationId": "v1-scrape-project-metrics",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Prometheus / OpenMetrics text exposition",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/openmetrics-text": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden action"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          },
+          "500": {
+            "description": "Failed to fetch project's metrics"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          },
+          {
+            "fga_permissions": ["analytics_logs_read"]
+          }
+        ],
+        "summary": "Scrape a project's metrics",
+        "tags": ["Analytics"],
+        "x-badges": [
+          {
+            "name": "OAuth scope: analytics:read",
+            "position": "after"
+          }
+        ],
+        "x-endpoint-owners": ["analytics"],
+        "x-oauth-scope": "analytics:read"
+      }
+    },
     "/v1/projects/{ref}/cli/login-role": {
       "post": {
         "operationId": "v1-create-login-role",
@@ -13018,7 +13086,11 @@
               },
               "unavailableReason": {
                 "type": "string",
-                "enum": ["postgres_upgrade_required", "temporarily_unavailable"]
+                "enum": [
+                  "postgres_upgrade_required",
+                  "ssl_enforcement_required",
+                  "temporarily_unavailable"
+                ]
               }
             },
             "required": ["state", "unavailableReason"]
@@ -13474,6 +13546,7 @@
           },
           "required": ["name", "value"]
         },
+        "maxItems": 100,
         "example": [
           {
             "name": "OPENAI_API_KEY",
