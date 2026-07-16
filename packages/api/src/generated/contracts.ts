@@ -419,7 +419,7 @@ export const V1BulkCreateSecretsInput = Schema.Struct({
         .check(Schema.isPattern(new RegExp("^(?!SUPABASE_).*"))),
       value: Schema.String.check(Schema.isMaxLength(24576)),
     }),
-  ),
+  ).check(Schema.isMaxLength(100)),
 });
 export const V1BulkDeleteSecretsInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
@@ -2421,7 +2421,11 @@ export const V1GetJitAccessConfigOutput = Schema.Union(
     }),
     Schema.Struct({
       state: Schema.Literal("unavailable"),
-      unavailableReason: Schema.Literals(["postgres_upgrade_required", "temporarily_unavailable"]),
+      unavailableReason: Schema.Literals([
+        "postgres_upgrade_required",
+        "ssl_enforcement_required",
+        "temporarily_unavailable",
+      ]),
     }),
   ],
   { mode: "oneOf" },
@@ -4354,6 +4358,12 @@ export const V1RunAQueryInput = Schema.Struct({
   parameters: Schema.optionalKey(Schema.Array(Schema.Json)),
   read_only: Schema.optionalKey(Schema.Boolean),
 });
+export const V1ScrapeProjectMetricsInput = Schema.Struct({
+  ref: Schema.String.check(Schema.isMinLength(20))
+    .check(Schema.isMaxLength(20))
+    .check(Schema.isPattern(new RegExp("^[a-z]+$"))),
+});
+export const V1ScrapeProjectMetricsOutput = Schema.String;
 export const V1SetupAReadReplicaInput = Schema.Struct({
   ref: Schema.String.check(Schema.isMinLength(20))
     .check(Schema.isMaxLength(20))
@@ -5559,7 +5569,11 @@ export const V1UpdateJitAccessConfigOutput = Schema.Union(
     }),
     Schema.Struct({
       state: Schema.Literal("unavailable"),
-      unavailableReason: Schema.Literals(["postgres_upgrade_required", "temporarily_unavailable"]),
+      unavailableReason: Schema.Literals([
+        "postgres_upgrade_required",
+        "ssl_enforcement_required",
+        "temporarily_unavailable",
+      ]),
     }),
   ],
   { mode: "oneOf" },
@@ -6282,6 +6296,7 @@ export const openApiOperationIdMap = {
   "v1-revoke-token": "v1RevokeToken",
   "v1-rollback-migrations": "v1RollbackMigrations",
   "v1-run-a-query": "v1RunAQuery",
+  "v1-scrape-project-metrics": "v1ScrapeProjectMetrics",
   "v1-setup-a-read-replica": "v1SetupAReadReplica",
   "v1-shutdown-realtime": "v1ShutdownRealtime",
   "v1-undo": "v1Undo",
@@ -8275,6 +8290,20 @@ export const operationDefinitions = {
     response: { kind: "void" },
     inputSchema: V1RunAQueryInput,
     outputSchema: V1RunAQueryOutput,
+  },
+  v1ScrapeProjectMetrics: {
+    id: "v1ScrapeProjectMetrics",
+    description:
+      "Prometheus scrape endpoint. Returns metrics of a customer project in the Prometheus open exposition format.",
+    method: "GET",
+    path: "/v1/projects/{ref}/analytics/endpoints/metrics",
+    pathParams: ["ref"],
+    queryParams: [],
+    headerParams: [],
+    requestBody: { kind: "none" },
+    response: { kind: "text" },
+    inputSchema: V1ScrapeProjectMetricsInput,
+    outputSchema: V1ScrapeProjectMetricsOutput,
   },
   v1SetupAReadReplica: {
     id: "v1SetupAReadReplica",
