@@ -85,7 +85,7 @@ function getAuthErrorResponse({ code, message }: AuthFailure) {
 function extractBearerToken(rawToken: string) {
   const tokenParts = rawToken.split(" ");
   const [bearer, token] = tokenParts;
-  if (bearer !== "Bearer" || tokenParts.length !== 2) {
+  if (bearer?.toLowerCase() !== "bearer" || tokenParts.length !== 2) {
     return null;
   }
 

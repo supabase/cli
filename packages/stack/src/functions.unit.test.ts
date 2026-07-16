@@ -224,4 +224,17 @@ describe("stack Functions runtime auth", () => {
 
     expect(response).toBeNull();
   });
+
+  it("accepts a lowercase bearer scheme", async () => {
+    const token = generateJwt(defaultJwtSecret, "anon");
+    const response = await verifyRequest(
+      new Request("http://127.0.0.1/functions/v1/test", {
+        headers: { authorization: `bearer ${token}` },
+      }),
+      { jwtSecret: defaultJwtSecret },
+      { verifyJWT: true },
+    );
+
+    expect(response).toBeNull();
+  });
 });
