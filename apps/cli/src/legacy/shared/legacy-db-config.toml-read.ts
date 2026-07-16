@@ -43,6 +43,7 @@ type EnvLookup = (name: string) => string | undefined;
  * and aborts the command rather than running against the default local database).
  */
 interface LegacyDbTomlValues {
+  readonly projectEnv: Readonly<Record<string, string>>;
   /**
    * Resolves a `SUPABASE_*` env var with Go's precedence: shell env (non-empty)
    * wins, then the loaded project `.env*` files (non-empty), else undefined.
@@ -51,6 +52,7 @@ interface LegacyDbTomlValues {
    * rather than `process.env` alone (e.g. `SUPABASE_EXPERIMENTAL_PG_DELTA`).
    */
   readonly envLookup: (name: string) => string | undefined;
+  readonly apiSchemas: ReadonlyArray<string>;
   /** `[db] port`, default 54322 (`packages/config/src/db.ts`). */
   readonly port: number;
   /** `[db] shadow_port`, default 54320. */
@@ -169,6 +171,7 @@ const DEFAULT_PORT = 54322;
 const DEFAULT_SHADOW_PORT = 54320;
 const DEFAULT_MAJOR_VERSION = 17;
 const DEFAULT_PASSWORD = "postgres";
+const DEFAULT_API_SCHEMAS = ["public", "graphql_public"] as const;
 /** `[edge_runtime] deno_version` default (`config.toml` template). 2 → the current edge-runtime image. */
 const DEFAULT_DENO_VERSION = 2;
 
@@ -273,6 +276,7 @@ function legacyResolveValidatedRemoteProjectId(
  * `AutomaticEnv` — `config.go:635-637`), so the block value must beat the env override.
  */
 const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
+  "api.schemas",
   "db.port",
   "db.shadow_port",
   "db.major_version",
@@ -470,6 +474,22 @@ function resolveConfigInt(value: unknown, lookup: EnvLookup): number | "absent" 
   return "invalid";
 }
 
+function resolveStringSlice(
+  value: unknown,
+  fallback: ReadonlyArray<string>,
+  lookup: EnvLookup,
+): ReadonlyArray<string> | undefined {
+  if (value === undefined) return fallback;
+  if (typeof value === "string") {
+    const expanded = legacyExpandEnv(value, lookup);
+    return expanded.length === 0 ? [] : expanded.split(",");
+  }
+  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === "string")) {
+    return undefined;
+  }
+  return value.map((item) => legacyExpandEnv(item, lookup));
+}
+
 /**
  * Replicates Go's `path.Join("supabase", pattern)` for a relative seed `sql_paths`
  * entry (`pkg/config/config.go:881-886`). Go's `path.Join` runs `path.Clean`, which
@@ -603,9 +623,12 @@ export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
  * re-checks). The `acquireRelease` finalizer deletes only the keys it set when the
  * scope closes, so in-process test workers don't leak env between cases.
  */
-export const legacyApplyProjectEnv = (loaded: Record<string, string>) =>
+export const legacyApplyProjectEnv = (
+  loaded: Readonly<Record<string, string>>,
+  keys: ReadonlyArray<string> = LEGACY_PROCESS_ENV_APPLY_KEYS,
+) =>
   Effect.forEach(
-    LEGACY_PROCESS_ENV_APPLY_KEYS,
+    keys,
     (key) => {
       const value = loaded[key];
       if (value === undefined || process.env[key] !== undefined) {
@@ -1834,9 +1857,22 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     apiRaw?.["auto_expose_new_tables"],
     lookup,
   );
+  const apiSchemas = resolveStringSlice(
+    (remoteOverrideKeys.has("api.schemas") ? undefined : envOverride("SUPABASE_API_SCHEMAS")) ??
+      apiRaw?.["schemas"],
+    DEFAULT_API_SCHEMAS,
+    lookup,
+  );
+  if (apiSchemas === undefined) {
+    return yield* Effect.fail(
+      new LegacyDbConfigLoadError({ message: "failed to parse config: invalid api.schemas." }),
+    );
+  }
 
   const values: LegacyDbTomlValues = {
+    projectEnv,
     envLookup: envOverride,
+    apiSchemas,
     port,
     shadowPort,
     password: passwordRaw !== undefined ? legacyExpandEnv(passwordRaw, lookup) : DEFAULT_PASSWORD,

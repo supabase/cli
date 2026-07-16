@@ -33,6 +33,52 @@ function hasDocker(): boolean {
 const dockerAvailable = hasDocker();
 const SERVE_OFFLINE_STARTUP_TIMEOUT_MS = 60_000;
 const SERVE_OFFLINE_TEST_TIMEOUT_MS = 120_000;
+const AUTH_FUNCTIONS_CONFIG = JSON.stringify({
+  test: {
+    entrypointPath: "/tmp/test/index.ts",
+    importMapPath: "",
+    staticFiles: [],
+    verifyJWT: true,
+  },
+});
+
+function jwtWithInvalidSignature(algorithm: string): string {
+  const header = Buffer.from(JSON.stringify({ alg: algorithm, typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ sub: "test-user" })).toString("base64url");
+  return `${header}.${payload}.invalid`;
+}
+
+const authFailureCases = [
+  {
+    name: "missing authorization",
+    code: "UNAUTHORIZED_NO_AUTH_HEADER",
+    message: "Missing authorization header",
+  },
+  {
+    name: "invalid JWT format",
+    authorization: "Bearer not-a-jwt",
+    code: "UNAUTHORIZED_INVALID_JWT_FORMAT",
+    message: "Invalid JWT format",
+  },
+  {
+    name: "invalid legacy JWT",
+    authorization: `Bearer ${jwtWithInvalidSignature("HS256")}`,
+    code: "UNAUTHORIZED_LEGACY_JWT",
+    message: "Invalid JWT",
+  },
+  {
+    name: "invalid asymmetric JWT",
+    authorization: `Bearer ${jwtWithInvalidSignature("ES256")}`,
+    code: "UNAUTHORIZED_ASYMMETRIC_JWT",
+    message: "Invalid JWT",
+  },
+  {
+    name: "unsupported JWT algorithm",
+    authorization: `Bearer ${jwtWithInvalidSignature("none")}`,
+    code: "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
+    message: "Unsupported JWT algorithm none",
+  },
+];
 
 function containerLogs(container: string): string {
   const result = spawnSync("docker", ["logs", container], { encoding: "utf8" });
@@ -96,6 +142,87 @@ describe("functions serve runtime template (offline)", () => {
         // No remote module resolution occurred (the #45570 failure mode).
         expect(logs).not.toMatch(/deno\.land|jsr\.io/);
         expect(logs).not.toMatch(/dns error|name resolution|worker boot error/i);
+      } finally {
+        spawnSync("docker", ["rm", "-f", container], { stdio: "ignore" });
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.skipIf(!dockerAvailable)(
+    "returns canonical JWT auth failures",
+    { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "supabase-serve-auth-e2e-"));
+      const container = `supabase-serve-auth-e2e-${process.pid.toString()}`;
+      try {
+        await writeFile(join(dir, "index.ts"), await bundleServeMainTemplate());
+
+        const run = spawnSync(
+          "docker",
+          [
+            "run",
+            "-d",
+            "--name",
+            container,
+            "-p",
+            "127.0.0.1::8081",
+            "-e",
+            "SUPABASE_INTERNAL_HOST_PORT=8081",
+            "-e",
+            "SUPABASE_INTERNAL_JWT_SECRET=auth-e2e",
+            "-e",
+            "SUPABASE_URL=http://127.0.0.1:54321",
+            "-e",
+            `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${AUTH_FUNCTIONS_CONFIG}`,
+            "-e",
+            "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=400",
+            "-e",
+            'SUPABASE_JWKS={"keys":[]}',
+            "-v",
+            `${dir}:/app:ro`,
+            "--entrypoint",
+            "edge-runtime",
+            LEGACY_EDGE_RUNTIME_IMAGE,
+            "start",
+            "--main-service=/app",
+            "--port=8081",
+          ],
+          { encoding: "utf8" },
+        );
+        expect(run.status, run.stderr).toBe(0);
+
+        const portResult = spawnSync("docker", ["port", container, "8081/tcp"], {
+          encoding: "utf8",
+        });
+        expect(portResult.status, portResult.stderr).toBe(0);
+        const port = Number(portResult.stdout.trim().split(":").at(-1));
+        expect(port).toBeGreaterThan(0);
+        const url = `http://127.0.0.1:${port}/test`;
+
+        const deadline = Date.now() + SERVE_OFFLINE_STARTUP_TIMEOUT_MS;
+        let ready = false;
+        while (Date.now() < deadline) {
+          try {
+            const response = await fetch(url);
+            if (response.status === 401) {
+              ready = true;
+              break;
+            }
+          } catch {}
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        expect(ready, containerLogs(container)).toBe(true);
+
+        for (const { name, authorization, code, message } of authFailureCases) {
+          const response = await fetch(url, {
+            headers: authorization === undefined ? undefined : { authorization },
+          });
+          expect(response.status, name).toBe(401);
+          expect(response.headers.get("content-type"), name).toContain("application/json");
+          expect(response.headers.get("sb-error-code"), name).toBe(code);
+          expect(await response.json(), name).toEqual({ code, message, msg: message });
+        }
       } finally {
         spawnSync("docker", ["rm", "-f", container], { stdio: "ignore" });
         await rm(dir, { recursive: true, force: true });

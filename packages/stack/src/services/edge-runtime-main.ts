@@ -6,6 +6,42 @@ const placeholder = {
   message: "Edge Functions are not configured for this local stack yet.",
 };
 
+const AUTH_ERROR_CODE = {
+  MissingAuthHeader: "UNAUTHORIZED_NO_AUTH_HEADER",
+  InvalidJwtFormat: "UNAUTHORIZED_INVALID_JWT_FORMAT",
+  LegacyJwt: "UNAUTHORIZED_LEGACY_JWT",
+  AsymmetricJwt: "UNAUTHORIZED_ASYMMETRIC_JWT",
+  UnsupportedTokenAlgorithm: "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
+};
+
+interface AuthFailure {
+  code: string;
+  message: string;
+}
+
+const AUTH_FAILURE = {
+  MissingAuthHeader: {
+    code: AUTH_ERROR_CODE.MissingAuthHeader,
+    message: "Missing authorization header",
+  },
+  InvalidJwtFormat: {
+    code: AUTH_ERROR_CODE.InvalidJwtFormat,
+    message: "Invalid JWT format",
+  },
+  LegacyJwt: {
+    code: AUTH_ERROR_CODE.LegacyJwt,
+    message: "Invalid JWT",
+  },
+  AsymmetricJwt: {
+    code: AUTH_ERROR_CODE.AsymmetricJwt,
+    message: "Invalid JWT",
+  },
+  UnsupportedTokenAlgorithm: (algorithm: string | undefined) => ({
+    code: AUTH_ERROR_CODE.UnsupportedTokenAlgorithm,
+    message: `Unsupported JWT algorithm ${algorithm}`,
+  }),
+};
+
 const configPath =
   typeof Deno === "undefined"
     ? new URL("./functions-runtime-config.json", import.meta.url)
@@ -36,15 +72,64 @@ function bytesEqual(left: Uint8Array, right: Uint8Array) {
   return result === 0;
 }
 
+function getAuthErrorResponse({ code, message }: AuthFailure) {
+  return Response.json(
+    { code, message, msg: message },
+    {
+      status: 401,
+      headers: { "sb-error-code": code },
+    },
+  );
+}
+
+function extractBearerToken(rawToken: string) {
+  const tokenParts = rawToken.split(" ");
+  const [bearer, token] = tokenParts;
+  if (bearer !== "Bearer" || tokenParts.length !== 2) {
+    return null;
+  }
+
+  return token;
+}
+
+function getAuthToken(req: Request): string | AuthFailure {
+  const authHeader = req.headers.get("authorization");
+  const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key");
+
+  // NOTE:(kallebysantos) Kong on legacy CLI stack passes it down as 'Bearer Token' format
+  const cleanSbApiKeyCompatibilityToken = sbApiKeyCompatibilityToken?.replace("Bearer", "")?.trim();
+
+  if (!authHeader && !cleanSbApiKeyCompatibilityToken) {
+    return AUTH_FAILURE.MissingAuthHeader;
+  }
+
+  // NOTE:(kallebysantos) Compatibility mode is triggered when all conditions match:
+  // - API proxy mints a temp token
+  // - Original bearer is not present or is ApiKey
+  const bearerToken = extractBearerToken(authHeader ?? "");
+  const token =
+    !bearerToken || bearerToken.startsWith("sb_") ? cleanSbApiKeyCompatibilityToken : bearerToken;
+
+  if (!token) {
+    return AUTH_FAILURE.InvalidJwtFormat;
+  }
+
+  return token;
+}
+
+function decodeJwtAlgorithm(jwt: string): string | undefined {
+  const parts = jwt.split(".");
+  if (parts.length !== 3) {
+    throw new Error("Invalid JWT format");
+  }
+  const decodedHeader = JSON.parse(new TextDecoder().decode(base64UrlToBytes(parts[0]!)));
+  return typeof decodedHeader.alg === "string" ? decodedHeader.alg : undefined;
+}
+
 async function isValidLocalJwt(secret: string, jwt: string) {
   const parts = jwt.split(".");
   if (parts.length !== 3) return false;
   const [header, payload, signature] = parts;
-  const decodedHeader = JSON.parse(new TextDecoder().decode(base64UrlToBytes(header!)));
-
-  // WARN:(kallebysantos) Go version supports Asymmetric JWTs (ES256 | RS256) via SUPABASE_JWKS env
-  // It must be ported to TS as well
-  if (decodedHeader.alg !== "HS256") return false;
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
@@ -60,31 +145,37 @@ async function isValidLocalJwt(secret: string, jwt: string) {
   return bytesEqual(new Uint8Array(signed), base64UrlToBytes(signature!));
 }
 
-async function verifyRequest(req: Request, config: any, functionConfig: any) {
+export async function verifyRequest(req: Request, config: any, functionConfig: any) {
   if (!functionConfig.verifyJWT || req.method === "OPTIONS") return null;
-  const bearerToken = req.headers.get("authorization")?.slice("Bearer ".length);
-  const sbApiKeyCompatibilityToken = req.headers.get("sb-api-key")?.replace("Bearer", "")?.trim();
-
-  if (!bearerToken && !sbApiKeyCompatibilityToken) {
-    return Response.json({ msg: "Missing authorization header" }, { status: 401 });
+  const token = getAuthToken(req);
+  if (typeof token !== "string") {
+    return getAuthErrorResponse(token);
   }
 
-  // NOTE:(kallebysantos) Compatibility mode is triggered when all conditions match:
-  // - API proxy mints a temp token
-  // - Original bearer is not present or is ApiKey
-  const token =
-    !bearerToken || bearerToken.startsWith("sb_") ? sbApiKeyCompatibilityToken : bearerToken;
-
-  if (!token) {
-    return Response.json({ msg: "Auth header is not 'Bearer {token}'" }, { status: 401 });
-  }
-
+  let algorithm: string | undefined;
   try {
-    if (await isValidLocalJwt(config.jwtSecret, token)) return null;
+    algorithm = decodeJwtAlgorithm(token);
   } catch (error) {
-    console.error("JWT verification failed", error);
+    console.error("JWT format error", error);
+    return getAuthErrorResponse(AUTH_FAILURE.InvalidJwtFormat);
   }
-  return Response.json({ msg: "Invalid JWT" }, { status: 401 });
+
+  if (algorithm === "HS256") {
+    try {
+      if (await isValidLocalJwt(config.jwtSecret, token)) return null;
+    } catch (error) {
+      console.error("JWT verification failed", error);
+    }
+    return getAuthErrorResponse(AUTH_FAILURE.LegacyJwt);
+  }
+
+  if (algorithm === "ES256" || algorithm === "RS256") {
+    // WARN:(kallebysantos) Go version supports Asymmetric JWTs (ES256 | RS256) via SUPABASE_JWKS env
+    // It must be ported to TS as well
+    return getAuthErrorResponse(AUTH_FAILURE.AsymmetricJwt);
+  }
+
+  return getAuthErrorResponse(AUTH_FAILURE.UnsupportedTokenAlgorithm(algorithm));
 }
 
 function dirname(path: string) {

@@ -511,6 +511,7 @@ const (
 // Defines values for JitStateResponse1UnavailableReason.
 const (
 	PostgresUpgradeRequired JitStateResponse1UnavailableReason = "postgres_upgrade_required"
+	SslEnforcementRequired  JitStateResponse1UnavailableReason = "ssl_enforcement_required"
 	TemporarilyUnavailable  JitStateResponse1UnavailableReason = "temporarily_unavailable"
 )
 
@@ -3431,6 +3432,7 @@ type OrganizationResponseV1 struct {
 
 // PgsodiumConfigResponse defines model for PgsodiumConfigResponse.
 type PgsodiumConfigResponse struct {
+	// RootKey The pgsodium root key: 32 bytes, hex-encoded (64 characters).
 	RootKey string `json:"root_key"`
 }
 
@@ -4372,6 +4374,7 @@ type UpdateJitAccessBody struct {
 
 // UpdatePgsodiumConfigBody defines model for UpdatePgsodiumConfigBody.
 type UpdatePgsodiumConfigBody struct {
+	// RootKey The pgsodium root key: 32 bytes, hex-encoded (64 characters).
 	RootKey string `json:"root_key"`
 }
 

@@ -385,4 +385,12 @@ describe("splitLegacyLintsSql", () => {
     expect(setup).toBe("set local search_path = ''");
     expect(query.startsWith("(")).toBe(true);
   });
+
+  it("defaults API-exposure lints to public when pgrst.db_schemas is unset", () => {
+    const [, query] = splitLegacyLintsSql();
+    expect(query).not.toContain("string_to_array(current_setting('pgrst.db_schemas', 't'), ',')");
+    expect(query).toContain(
+      "string_to_array(coalesce(current_setting('pgrst.db_schemas', 't'), 'public'), ',')",
+    );
+  });
 });
